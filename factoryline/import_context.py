@@ -3,8 +3,15 @@
 from types import MappingProxyType
 from dataclasses import dataclass
 from pathlib import Path
+from . import (
+    _db_python_import_before_call,
+    _db_python_self_or_field_mutated,
+    _db_python_server_field_contexts,
+)
 import ast
 import hashlib
+import re
+from copy import deepcopy
 from collections import defaultdict
 from collections import OrderedDict
 
@@ -2393,3 +2400,3009 @@ def _security_fixpoint_loop_findings(
         findings.extend(emitted)
         _security_merge_exit_states(exits, outgoing)
     return findings, exits
+
+
+# Native database import, context and receiver proof helpers.
+
+
+def _db_python_symbols(tree):
+    nodes = tuple(ast.walk(tree))
+    symbols, seen, import_counts = _db_python_initial_symbols(tree, nodes)
+    bound = set()
+    mutated_modules = set()
+    if any(
+        isinstance(node, ast.ImportFrom)
+        and any(alias.name == "*" for alias in node.names)
+        for node in nodes
+    ):
+        bound.update(symbols)
+    for node in nodes:
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bound.add(node.id)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+        elif not _db_python_direct_module_effect(node, symbols, bound, mutated_modules):
+            _db_python_reflective_module_effect(node, symbols, mutated_modules)
+    bound.update(
+        name for name, qualified in symbols.items() if qualified in mutated_modules
+    )
+    bound.update(
+        name
+        for name, qualified in symbols.items()
+        if qualified
+        in {
+            module + "." + member
+            for module, member in (
+                ("sqlite3", "connect"),
+                ("contextlib", "contextmanager"),
+            )
+            if module in mutated_modules
+        }
+    )
+    return symbols, (
+        bound
+        | {name for name, count in seen.items() if count > 1}
+        | {name for name, count in import_counts.items() if count > 1}
+    ) & symbols.keys()
+
+
+def _db_python_initial_symbols(tree, nodes):
+    symbols, seen, import_counts = {}, {}, {}
+    for node in tree.body:
+        for local, qualified in _db_import_bindings(node):
+            seen[local] = seen.get(local, 0) + 1
+            symbols[local] = qualified
+    for node in nodes:
+        for local in _db_python_import_names(node):
+            import_counts[local] = import_counts.get(local, 0) + 1
+    return symbols, seen, import_counts
+
+
+def _db_python_direct_module_effect(node, symbols, bound, mutated_modules):
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and isinstance(node.value, ast.Name)
+    ):
+        if (symbols.get(node.value.id), node.attr) in {
+            ("sqlite3", "connect"),
+            ("sqlite3", "Row"),
+            ("contextlib", "contextmanager"),
+        }:
+            bound.add(node.value.id)
+            mutated_modules.add(symbols[node.value.id])
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"setattr", "delattr"}
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+    ):
+        if symbols.get(node.args[0].id) in {"sqlite3", "contextlib"}:
+            bound.add(node.args[0].id)
+            mutated_modules.add(symbols[node.args[0].id])
+    elif isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        base = node.value
+        if (
+            isinstance(base, ast.Attribute)
+            and base.attr == "__dict__"
+            and isinstance(base.value, ast.Name)
+            and symbols.get(base.value.id) in {"sqlite3", "contextlib"}
+        ):
+            bound.add(base.value.id)
+            mutated_modules.add(symbols[base.value.id])
+    elif (
+        isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(node.value, ast.Name)
+        and symbols.get(node.value.id) in {"sqlite3", "contextlib"}
+    ):
+        bound.add(node.value.id)
+        mutated_modules.add(symbols[node.value.id])
+    else:
+        return False
+    return True
+
+
+def _db_python_reflective_module_effect(node, symbols, mutated_modules):
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"exec", "eval", "globals", "locals", "__import__"}
+    ):
+        mutated_modules.update({"sqlite3", "contextlib"})
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "vars"
+        and not node.args
+    ):
+        mutated_modules.update({"sqlite3", "contextlib"})
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "vars"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and symbols.get(node.args[0].id) in {"sqlite3", "contextlib"}
+    ):
+        mutated_modules.add(symbols[node.args[0].id])
+    elif (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "modules"
+        and isinstance(node.value.value, ast.Name)
+        and node.value.value.id == "sys"
+        and isinstance(node.slice, ast.Constant)
+        and node.slice.value in {"sqlite3", "contextlib"}
+    ):
+        mutated_modules.add(node.slice.value)
+
+
+def _db_import_bindings(node):
+    if isinstance(node, ast.Import):
+        return [
+            (
+                alias.asname or alias.name.split(".")[0],
+                alias.name if alias.asname else alias.name.split(".")[0],
+            )
+            for alias in node.names
+            if alias.name
+            in {"sqlalchemy", "sqlite3", "psycopg", "psycopg2", "contextlib"}
+            or alias.name.startswith("sqlalchemy.")
+        ]
+    if not isinstance(node, ast.ImportFrom) or not node.module:
+        return []
+    if node.module == "flask_sqlalchemy":
+        return [
+            (alias.asname or alias.name, node.module + "." + alias.name)
+            for alias in node.names
+        ]
+    if node.module.startswith("sqlalchemy") or node.module in {
+        "sqlite3",
+        "psycopg",
+        "psycopg2",
+        "contextlib",
+    }:
+        return [
+            (alias.asname or alias.name, node.module + "." + alias.name)
+            for alias in node.names
+        ]
+    if node.module in {"typing", "typing_extensions"}:
+        return [
+            (alias.asname or alias.name, "typing.Annotated")
+            for alias in node.names
+            if alias.name == "Annotated"
+        ]
+    return []
+
+
+def _db_python_resolve(node, symbols, shadowed):
+    if isinstance(node, ast.Name):
+        return symbols.get(node.id) if node.id not in shadowed else None
+    if isinstance(node, ast.Attribute):
+        parent = _db_python_resolve(node.value, symbols, shadowed)
+        return parent + "." + node.attr if parent else None
+    return None
+
+
+def _db_python_call(node, qualified, symbols, shadowed):
+    return (
+        isinstance(node, ast.Call)
+        and _db_python_resolve(node.func, symbols, shadowed) == qualified
+    )
+
+
+def _db_python_sqlite_connect(node, symbols, shadowed):
+    """Exclude sqlite connection factories and unpacked options with unknown provenance."""
+    return (
+        _db_python_call(node, "sqlite3.connect", symbols, shadowed)
+        and 1 <= len(node.args) <= 5
+        and all(not isinstance(arg, ast.Starred) for arg in node.args)
+        and all(
+            kw.arg
+            in {
+                "timeout",
+                "detect_types",
+                "isolation_level",
+                "check_same_thread",
+                "cached_statements",
+                "uri",
+            }
+            for kw in node.keywords
+        )
+    )
+
+
+def _db_python_private_memory(node):
+    """Only the exact SQLite private in-memory database excludes external schema."""
+    return bool(
+        node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == ":memory:"
+    )
+
+
+def _db_python_sqlite_path_kind(value):
+    """Distinguish a literal private DB, literal filename, and unknown target."""
+    if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+        return "unknown"
+    if value.value == ":memory:":
+        return "memory"
+    if value.value.startswith("file:"):
+        return "unknown"
+    return "file"
+
+
+def _db_python_context_path_kind(call, marker):
+    fields = marker.split(":")
+    mode = fields[2]
+    if mode == "fixed":
+        return "memory"
+    if not mode.isdigit() or len(fields) < 5:
+        return "unknown"
+    index = int(mode)
+    name, default = fields[3:5]
+    matches = [kw.value for kw in call.keywords if kw.arg == name]
+    if any(kw.arg is None for kw in call.keywords) or len(matches) > 1:
+        return "unknown"
+    if len(call.args) > index:
+        return "unknown" if matches else _db_python_sqlite_path_kind(call.args[index])
+    if matches:
+        return _db_python_sqlite_path_kind(matches[0])
+    return default if default in {"memory", "file"} else "unknown"
+
+
+def _db_context_traversal_refactor_helpers():
+    """Bind all context traversal extraction helpers into database cache identity."""
+    return (
+        _db_context_traversal_refactor_helpers,
+        _db_python_context_name_stable,
+        _db_python_contextmanager_descriptor,
+        _db_python_contextmanager_argument,
+        _db_python_context_body,
+        _db_python_guard_stable,
+        _db_python_guard_passthrough,
+        _db_python_guard_descriptor,
+        _db_python_guard_mode,
+        _db_python_scope_assignment,
+        _db_python_nested_scope,
+        _db_python_comprehension_scope,
+        _db_python_call_effects,
+        _db_python_call_target,
+        _db_python_apply_evaluated_call,
+        _db_python_evaluated_argument_escapes,
+    )
+
+
+def _db_python_context_name_stable(name, nodes):
+    if (
+        sum(
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and n.name == name
+            for n in nodes
+        )
+        != 1
+    ):
+        return False
+    return not any(
+        isinstance(n, ast.Name)
+        and n.id == name
+        and isinstance(n.ctx, (ast.Store, ast.Del))
+        or isinstance(n, ast.arg)
+        and n.arg == name
+        or isinstance(n, (ast.Import, ast.ImportFrom))
+        and (
+            name in _db_python_import_names(n)
+            or isinstance(n, ast.ImportFrom)
+            and any(a.name == "*" for a in n.names)
+        )
+        or isinstance(n, (ast.Global, ast.Nonlocal))
+        and name in n.names
+        or isinstance(n, ast.Attribute)
+        and isinstance(n.ctx, (ast.Store, ast.Del))
+        and isinstance(n.value, ast.Name)
+        and n.value.id == name
+        or isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id in {"setattr", "delattr"}
+        and n.args
+        and isinstance(n.args[0], ast.Name)
+        and n.args[0].id == name
+        for n in nodes
+    )
+
+
+def _db_python_contextmanagers(tree, symbols, shadowed):
+    """Prove only the fixed, nonescaping same-module SQLite yield wrapper."""
+    definitions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and len(node.decorator_list) == 1
+        and _db_python_resolve(node.decorator_list[0], symbols, shadowed)
+        == "contextlib.contextmanager"
+    ]
+    result = {}
+    if not definitions:
+        return result
+    nodes = tuple(ast.walk(tree))
+    if any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id in {"exec", "eval", "globals", "locals", "vars", "__import__"}
+        for n in nodes
+    ):
+        return result
+    for node in definitions:
+        name = node.name
+        if not _db_python_context_name_stable(name, nodes):
+            continue
+        value = _db_python_contextmanager_descriptor(node, symbols, shadowed)
+        if value is not None:
+            result[name] = value
+    return result
+
+
+def _db_python_contextmanager_descriptor(node, symbols, shadowed):
+    body = node.body
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    if (
+        len(body) not in {2, 4}
+        or not isinstance(body[0], ast.Assign)
+        or len(body[0].targets) != 1
+        or not isinstance(body[0].targets[0], ast.Name)
+    ):
+        return None
+    target = body[0].targets[0].id
+    if not _db_python_sqlite_connect(
+        body[0].value, symbols, shadowed
+    ) or target in _db_python_argument_names(node.args):
+        return None
+    if len(body) == 4:
+        setting, pragma = body[1:3]
+        if not (
+            isinstance(setting, ast.Assign)
+            and len(setting.targets) == 1
+            and isinstance(setting.targets[0], ast.Attribute)
+            and isinstance(setting.targets[0].value, ast.Name)
+            and setting.targets[0].value.id == target
+            and setting.targets[0].attr == "row_factory"
+            and _db_python_resolve(setting.value, symbols, shadowed) == "sqlite3.Row"
+            and isinstance(pragma, ast.Expr)
+            and isinstance(pragma.value, ast.Call)
+            and isinstance(pragma.value.func, ast.Attribute)
+            and isinstance(pragma.value.func.value, ast.Name)
+            and pragma.value.func.value.id == target
+            and pragma.value.func.attr == "execute"
+            and len(pragma.value.args) == 1
+            and not pragma.value.keywords
+            and isinstance(pragma.value.args[0], ast.Constant)
+            and pragma.value.args[0].value == "PRAGMA foreign_keys=ON"
+        ):
+            return None
+    block = body[-1]
+    if (
+        not isinstance(block, ast.Try)
+        or block.handlers
+        or block.orelse
+        or len(block.body) != 1
+        or len(block.finalbody) != 1
+    ):
+        return None
+    yielded = block.body[0]
+    closed = block.finalbody[0]
+    if not (
+        isinstance(yielded, ast.Expr)
+        and isinstance(yielded.value, ast.Yield)
+        and isinstance(yielded.value.value, ast.Name)
+        and yielded.value.value.id == target
+        and isinstance(closed, ast.Expr)
+        and isinstance(closed.value, ast.Call)
+        and not closed.value.args
+        and not closed.value.keywords
+        and isinstance(closed.value.func, ast.Attribute)
+        and closed.value.func.attr == "close"
+        and isinstance(closed.value.func.value, ast.Name)
+        and closed.value.func.value.id == target
+    ):
+        return None
+    return _db_python_contextmanager_argument(node, body)
+
+
+def _db_python_contextmanager_argument(node, body):
+    argument = body[0].value.args[0]
+    parameters = node.args.posonlyargs + node.args.args
+    parameter_name, default = "-", "unknown"
+    if isinstance(argument, ast.Constant) and argument.value == ":memory:":
+        memory = "fixed"
+    elif isinstance(argument, ast.Name) and argument.id in [
+        arg.arg for arg in parameters
+    ]:
+        index = [arg.arg for arg in parameters].index(argument.id)
+        memory = str(index)
+        parameter_name = argument.id
+        first_default = len(parameters) - len(node.args.defaults)
+        if index >= first_default:
+            default = _db_python_sqlite_path_kind(
+                node.args.defaults[index - first_default]
+            )
+        else:
+            default = "missing"
+    else:
+        memory = "unknown"
+    return (
+        f"__sqlite_contextmanager__:{node.lineno}:{memory}:{parameter_name}:{default}"
+    )
+
+
+def _db_python_guarded_contextmanagers(tree, symbols, shadowed):
+    """Prove a simple session/guard/receiver chain, without proving its schema."""
+    nodes = tuple(ast.walk(tree))
+    if any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id in {"exec", "eval", "globals", "locals", "vars", "__import__"}
+        for n in nodes
+    ):
+        return {}
+
+    definitions = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef)
+        and _db_python_guard_stable(n, symbols, shadowed, nodes)
+    ]
+    passthrough = {}
+    for node in definitions:
+        index = _db_python_guard_passthrough(node)
+        if index is not None:
+            passthrough[node.name] = index
+
+    result = {}
+    for node in definitions:
+        descriptor = _db_python_guard_descriptor(node, symbols, passthrough)
+        if descriptor is not None:
+            result[node.name] = descriptor
+    return result
+
+
+def _db_python_guard_passthrough(node):
+    params = node.args.posonlyargs + node.args.args
+    statements = _db_python_context_body(node)
+    if (
+        len(statements) != 1
+        or not isinstance(statements[0], ast.With)
+        or len(statements[0].items) != 1
+    ):
+        return None
+    item = statements[0].items[0]
+    if item.optional_vars is not None or not isinstance(item.context_expr, ast.Name):
+        return None
+    name = item.context_expr.id
+    if name not in [p.arg for p in params]:
+        return None
+    yields = []
+    for statement in statements[0].body:
+        if isinstance(statement, ast.ImportFrom):
+            continue
+        if not isinstance(statement, ast.Expr):
+            break
+        if (
+            isinstance(statement.value, ast.Yield)
+            and isinstance(statement.value.value, ast.Name)
+            and statement.value.value.id == name
+        ):
+            yields.append(statement)
+            continue
+        if not (
+            isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Name)
+            and all(
+                isinstance(a, (ast.Name, ast.Constant)) for a in statement.value.args
+            )
+            and all(
+                k.arg and isinstance(k.value, (ast.Name, ast.Constant))
+                for k in statement.value.keywords
+            )
+        ):
+            break
+    else:
+        if len(yields) == 1 and not any(
+            isinstance(n, ast.Name)
+            and n.id == name
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            for n in ast.walk(node)
+        ):
+            return [p.arg for p in params].index(name)
+
+    return None
+
+
+def _db_python_guard_descriptor(node, symbols, passthrough):
+    statements = _db_python_context_body(node)
+    if (
+        len(statements) != 1
+        or not isinstance(statements[0], ast.With)
+        or len(statements[0].items) != 1
+    ):
+        return None
+    outer = statements[0]
+    item = outer.items[0]
+    if not (
+        isinstance(item.optional_vars, ast.Name)
+        and isinstance(item.context_expr, ast.Call)
+        and isinstance(item.context_expr.func, ast.Name)
+    ):
+        return None
+    if item.context_expr.keywords or not all(
+        isinstance(a, (ast.Name, ast.Constant)) for a in item.context_expr.args
+    ):
+        return None
+    receiver = item.optional_vars.id
+    session = symbols.get(item.context_expr.func.id, "")
+    if (
+        not isinstance(session, str)
+        or not session.startswith("__sqlite_contextmanager__:")
+        or len(outer.body) != 1
+        or not isinstance(outer.body[0], ast.With)
+    ):
+        return None
+    inner = outer.body[0]
+    if (
+        len(inner.items) != 1
+        or inner.items[0].optional_vars is not None
+        or not isinstance(inner.items[0].context_expr, ast.Call)
+    ):
+        return None
+    call = inner.items[0].context_expr
+    if not isinstance(call.func, ast.Name) or call.func.id not in passthrough:
+        return None
+    if call.keywords or not all(
+        isinstance(a, (ast.Name, ast.Constant)) for a in call.args
+    ):
+        return None
+    index = passthrough[call.func.id]
+    if (
+        len(call.args) <= index
+        or not isinstance(call.args[index], ast.Name)
+        or call.args[index].id != receiver
+    ):
+        return None
+    if (
+        len(inner.body) != 1
+        or not isinstance(inner.body[0], ast.Expr)
+        or not isinstance(inner.body[0].value, ast.Yield)
+        or not isinstance(inner.body[0].value.value, ast.Name)
+        or inner.body[0].value.value.id != receiver
+    ):
+        return None
+    return _db_python_guard_mode(node, session, item)
+
+
+def _db_python_guard_mode(node, session, item):
+    mode, name, default = "unknown", "-", "unknown"
+    parts = session.split(":")
+    if parts[2] == "fixed":
+        mode = "fixed"
+    elif parts[2].isdigit() and len(item.context_expr.args) > int(parts[2]):
+        value = item.context_expr.args[int(parts[2])]
+        params = node.args.posonlyargs + node.args.args
+        names = [p.arg for p in params]
+        if isinstance(value, ast.Name) and value.id in names:
+            index = names.index(value.id)
+            mode, name = str(index), value.id
+            first_default = len(params) - len(node.args.defaults)
+            default = (
+                _db_python_sqlite_path_kind(node.args.defaults[index - first_default])
+                if index >= first_default
+                else "missing"
+            )
+        elif _db_python_sqlite_path_kind(value) == "memory":
+            mode = "fixed"
+    return f"__sqlite_contextmanager__:{node.lineno}:{mode}:{name}:{default}:guarded"
+
+
+def _db_python_context_body(node):
+    statements = node.body
+    if (
+        statements
+        and isinstance(statements[0], ast.Expr)
+        and isinstance(statements[0].value, ast.Constant)
+        and isinstance(statements[0].value.value, str)
+    ):
+        return statements[1:]
+    return statements
+
+
+def _db_python_guard_stable(node, symbols, shadowed, nodes):
+    name = node.name
+    if (
+        len(node.decorator_list) != 1
+        or _db_python_resolve(node.decorator_list[0], symbols, shadowed)
+        != "contextlib.contextmanager"
+    ):
+        return False
+    return _db_python_context_name_stable(name, nodes)
+
+
+def _db_python_escaped_receivers(value, connections):
+    """Find SQLite receiver, bound-method or cursor escapes in finite containers."""
+    pending, escaped = [value], set()
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Name) and connections.get(node.id) in {
+            "sqlite",
+            "sqlite_memory",
+            "sqlite_uncertain",
+        }:
+            escaped.add(node.id)
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and connections.get(node.value.id)
+            in {"sqlite", "sqlite_memory", "sqlite_uncertain"}
+        ):
+            escaped.add(node.value.id)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "cursor"
+            and isinstance(node.func.value, ast.Name)
+            and connections.get(node.func.value.id)
+            in {"sqlite", "sqlite_memory", "sqlite_uncertain"}
+        ):
+            escaped.add(node.func.value.id)
+        elif isinstance(node, (ast.Tuple, ast.List, ast.Set, ast.Dict, ast.Starred)):
+            pending.extend(ast.iter_child_nodes(node))
+    return escaped
+
+
+def _db_python_control_flow_branches(node):
+    """Group uncertain control-flow paths so their binding facts stay isolated."""
+    if isinstance(node, ast.If):
+        return [[node.test], node.body, node.orelse]
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return [[node.iter], node.body, node.orelse]
+    if isinstance(node, ast.While):
+        return [[node.test], node.body, node.orelse]
+    if isinstance(node, (ast.Try, getattr(ast, "TryStar", ast.Try))):
+        branches = [node.body]
+        branches.extend(
+            ([handler.type] if handler.type else []) + handler.body
+            for handler in node.handlers
+        )
+        if node.orelse:
+            branches.append(node.orelse)
+        if node.finalbody:
+            branches.append(node.finalbody)
+        return branches
+    if isinstance(node, ast.Match):
+        branches = [[node.subject]]
+        branches.extend(
+            ([case.guard] if case.guard else []) + case.body for case in node.cases
+        )
+        return branches
+    return None
+
+
+def _db_python_invalidate_names(names, engines, connections, sql_bindings):
+    """Forget tracked facts whenever a lexical name is rebound or shadowed."""
+    names = tuple(names)
+    scoped_key = ("sqlite_receiver_schemas",)
+    schemas = dict(sql_bindings.get(scoped_key, {}))
+    escaped_key = ("sqlite_escaped_receivers",)
+    escaped = set(sql_bindings.get(escaped_key, set()))
+    for name in names:
+        engines.pop(name, None)
+        connections.pop(name, None)
+        sql_bindings.pop(name, None)
+        schemas.pop(name, None)
+        escaped.discard(name)
+    if scoped_key in sql_bindings:
+        sql_bindings[scoped_key] = schemas
+    if escaped_key in sql_bindings:
+        sql_bindings[escaped_key] = escaped
+
+
+def _db_python_forget_escaped_schema(names, sql_bindings):
+    """Forwarding cannot rebind the local receiver, but its schema may mutate."""
+    schemas = dict(sql_bindings.get(("sqlite_receiver_schemas",), {}))
+    escaped = set(sql_bindings.get(("sqlite_escaped_receivers",), set()))
+    for name in names:
+        schemas.pop(name, None)
+        escaped.add(name)
+    sql_bindings[("sqlite_receiver_schemas",)] = schemas
+    sql_bindings[("sqlite_escaped_receivers",)] = escaped
+
+
+def _db_python_invalidate_nested_bindings(node, engines, connections, sql_bindings):
+    """Invalidate every same-scope write before evaluating uncertain control flow."""
+    names, wildcard = _db_python_write_names(node)
+    if wildcard:
+        names.update(engines)
+        names.update(connections)
+        names.update(sql_bindings)
+    _db_python_invalidate_names(names, engines, connections, sql_bindings)
+
+
+def _db_python_write_names(node):
+    """Collect same-scope writes while skipping nested execution scopes."""
+    collector = _DBPythonWriteCollector()
+    collector.visit(node)
+    return collector.names, collector.wildcard
+
+
+class _DBPythonWriteCollector(ast.NodeVisitor):
+    """Visit binding writes without treating nested scopes as current locals."""
+
+    def __init__(self):
+        self.names = set()
+        self.wildcard = False
+
+    def visit_Name(self, node):
+        """Record names written or deleted in this lexical scope."""
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self.names.add(node.id)
+
+    def visit_Import(self, node):
+        """Record local names introduced by a plain import statement."""
+        self.names.update(_db_python_import_names(node))
+
+    def visit_ImportFrom(self, node):
+        """Record imported names and whether a wildcard obscures bindings."""
+        self.names.update(_db_python_import_names(node))
+        self.wildcard |= any(alias.name == "*" for alias in node.names)
+
+    def visit_FunctionDef(self, node):
+        """Inspect a function name and expressions evaluated in its outer scope."""
+        self._visit_function_outer_expressions(node)
+
+    def visit_AsyncFunctionDef(self, node):
+        """Inspect an async function name and outer-scope expressions."""
+        self._visit_function_outer_expressions(node)
+
+    def _visit_function_outer_expressions(self, node):
+        self.names.add(node.name)
+        expressions = node.decorator_list + node.args.defaults
+        expressions.extend(value for value in node.args.kw_defaults if value)
+        arguments = (
+            node.args.posonlyargs
+            + node.args.args
+            + node.args.kwonlyargs
+            + ([node.args.vararg] if node.args.vararg else [])
+            + ([node.args.kwarg] if node.args.kwarg else [])
+        )
+        expressions.extend(arg.annotation for arg in arguments if arg.annotation)
+        if node.returns:
+            expressions.append(node.returns)
+        for expression in expressions:
+            self.visit(expression)
+
+    def visit_ClassDef(self, node):
+        """Inspect a class name, decorators, bases, and keyword expressions."""
+        self.names.add(node.name)
+        expressions = node.decorator_list + node.bases
+        expressions.extend(keyword.value for keyword in node.keywords)
+        for expression in expressions:
+            self.visit(expression)
+
+    def visit_Lambda(self, node):
+        """Inspect only lambda defaults evaluated in the surrounding scope."""
+        expressions = node.args.defaults + node.args.kw_defaults
+        for expression in expressions:
+            if expression:
+                self.visit(expression)
+
+    def visit_ListComp(self, node):
+        """Inspect list-comprehension expressions evaluated in this scope."""
+        self._visit_comprehension_expressions(node)
+
+    def visit_SetComp(self, node):
+        """Inspect set-comprehension expressions evaluated in this scope."""
+        self._visit_comprehension_expressions(node)
+
+    def visit_DictComp(self, node):
+        """Inspect dict-comprehension expressions evaluated in this scope."""
+        self._visit_comprehension_expressions(node)
+
+    def visit_GeneratorExp(self, node):
+        """Inspect generator expressions evaluated in this scope."""
+        self._visit_comprehension_expressions(node)
+
+    def _visit_comprehension_expressions(self, node):
+        for generator in node.generators:
+            self.visit(generator.iter)
+            for condition in generator.ifs:
+                self.visit(condition)
+        expressions = (
+            (node.key, node.value) if isinstance(node, ast.DictComp) else (node.elt,)
+        )
+        for expression in expressions:
+            self.visit(expression)
+
+    def visit_ExceptHandler(self, node):
+        """Record the exception target and inspect the handler's bound names."""
+        if node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node):
+        """Record a name captured by a structural pattern."""
+        if node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node):
+        """Record a name captured by a starred structural pattern."""
+        if node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchMapping(self, node):
+        """Record the rest name captured by a mapping pattern."""
+        if node.rest:
+            self.names.add(node.rest)
+        self.generic_visit(node)
+
+
+def _db_python_argument_names(arguments):
+    """Collect all parameter names that shadow module-level connection facts."""
+    values = (
+        arguments.posonlyargs
+        + arguments.args
+        + arguments.kwonlyargs
+        + ([arguments.vararg] if arguments.vararg else [])
+        + ([arguments.kwarg] if arguments.kwarg else [])
+    )
+    return {argument.arg for argument in values}
+
+
+def _db_python_import_names(node):
+    """Return names introduced by an import for conservative symbol shadowing."""
+    if isinstance(node, ast.Import):
+        return {alias.asname or alias.name.split(".")[0] for alias in node.names}
+    if isinstance(node, ast.ImportFrom):
+        return {alias.asname or alias.name for alias in node.names if alias.name != "*"}
+    return set()
+
+
+def _db_python_with_bindings(statement, symbols, shadowed, *, items=None):
+    """Map simple with targets to drivers proven by their context expressions."""
+    bindings = {}
+    for item in statement.items if items is None else items:
+        target = item.optional_vars
+        names = _db_python_target_names(target)
+        driver = None
+        if (
+            isinstance(statement, ast.With)
+            and isinstance(target, ast.Name)
+            and (
+                _db_python_sqlite_connect(item.context_expr, symbols, shadowed)
+                or (
+                    isinstance(item.context_expr, ast.Call)
+                    and isinstance(item.context_expr.func, ast.Name)
+                    and isinstance(symbols.get(item.context_expr.func.id), str)
+                    and symbols[item.context_expr.func.id].startswith(
+                        "__sqlite_contextmanager__:"
+                    )
+                    and item.context_expr.func.id not in shadowed
+                    and int(symbols[item.context_expr.func.id].split(":")[1])
+                    < item.context_expr.lineno
+                    and (
+                        all(
+                            isinstance(arg, ast.Name)
+                            or isinstance(arg, ast.Constant)
+                            and isinstance(arg.value, str)
+                            or isinstance(arg, ast.Attribute)
+                            and getattr(arg, "_db_proven_plain_field", False)
+                            for arg in item.context_expr.args
+                        )
+                        and all(
+                            keyword.arg is not None
+                            and (
+                                isinstance(keyword.value, ast.Name)
+                                or isinstance(keyword.value, ast.Constant)
+                                and isinstance(keyword.value.value, str)
+                                or isinstance(keyword.value, ast.Attribute)
+                                and getattr(
+                                    keyword.value, "_db_proven_plain_field", False
+                                )
+                            )
+                            for keyword in item.context_expr.keywords
+                        )
+                    )
+                )
+            )
+        ):
+            driver = "sqlite"
+            if _db_python_sqlite_connect(item.context_expr, symbols, shadowed):
+                if _db_python_private_memory(item.context_expr):
+                    driver = "sqlite_memory"
+            else:
+                marker = symbols[item.context_expr.func.id]
+                path_kind = _db_python_context_path_kind(item.context_expr, marker)
+                if path_kind == "memory":
+                    driver = "sqlite_memory"
+                elif path_kind == "unknown":
+                    driver = "sqlite_uncertain"
+        for name in names:
+            bindings[name] = driver
+    return bindings
+
+
+def _db_python_target_names(target):
+    """Return local names assigned by a with optional target."""
+    if target is None:
+        return set()
+    return {
+        node.id
+        for node in ast.walk(target)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+
+
+def _db_python_register_assignment(
+    statement, name, symbols, shadowed, engines, connections
+):
+    engines.pop(name, None)
+    connections.pop(name, None)
+    value = (
+        statement.value if isinstance(statement, (ast.Assign, ast.AnnAssign)) else None
+    )
+    if not isinstance(value, ast.Call):
+        return
+    if _db_python_call(value, "sqlalchemy.create_engine", symbols, shadowed):
+        engines[name] = "sqlalchemy"
+    elif _db_python_sqlite_connect(value, symbols, shadowed):
+        connections[name] = (
+            "sqlite_memory" if _db_python_private_memory(value) else "sqlite"
+        )
+    elif any(
+        _db_python_call(value, driver + ".connect", symbols, shadowed)
+        for driver in ("psycopg", "psycopg2")
+    ):
+        connections[name] = "psycopg"
+    elif _db_python_connection_call(value, "connect", engines):
+        connections[name] = "sqlalchemy"
+    elif _db_python_connection_call(value, "cursor", connections):
+        connections[name] = "psycopg"
+
+
+def _db_python_connection_call(value, method, known):
+    return (
+        isinstance(value.func, ast.Attribute)
+        and value.func.attr == method
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id in known
+    )
+
+
+def _db_assignment_targets(statement):
+    if isinstance(statement, ast.Assign):
+        targets = statement.targets
+    elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+        targets = [statement.target]
+    else:
+        return []
+    return sorted(
+        {name for target in targets for name in _db_python_target_names(target)}
+    )
+
+
+def _db_python_context_exports(unique, import_module):
+    """Bind direct context imports only to unique, unmodified captured sources."""
+    candidates = []
+    for module, (_, tree, shadowed, exports) in unique.items():
+        symbols, local_shadowed = _db_python_symbols(tree)
+        summaries = _db_python_contextmanagers(tree, symbols, local_shadowed)
+        symbols.update(summaries)
+        summaries.update(
+            _db_python_guarded_contextmanagers(tree, symbols, local_shadowed)
+        )
+        for name, marker in summaries.items():
+            if name not in shadowed:
+                candidates.append((module, name, marker, exports))
+    trees = [(module, row[1]) for module, row in unique.items()]
+    for provider, name, marker, exports in candidates:
+        if not _db_python_context_export_stable(trees, provider, name, import_module):
+            continue
+        fields = marker.split(":")
+        fields[1] = "0"  # A verified imported binding is available at module entry.
+        exports[name] = ("symbol", ":".join(fields))
+    _db_python_witnessed_field_contexts(unique, import_module)
+    _db_python_server_field_contexts(unique, import_module)
+    _db_python_call_contexts(unique, import_module)
+
+
+def _db_python_witnessed_field_contexts(unique, import_module):
+    from . import _db_python_witnessed_field_contexts_impl
+
+    return _db_python_witnessed_field_contexts_impl(
+        unique,
+        import_module,
+        _db_python_plain_path_fields,
+        _db_python_context_export_stable,
+        _db_python_class_witnesses,
+        _db_python_constructor_called_methods,
+        _db_python_self_or_field_mutated,
+    )
+
+
+def _db_python_call_contexts(unique, import_module):
+    """Bind direct, unshadowed calls to captured resource-bearing functions."""
+    functions = {}
+    rows = [(module, *row[:2]) for module, row in unique.items()]
+    project_trees = [(module, tree) for module, _, tree in rows]
+    for module, path, tree in rows:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                node.__dict__.pop("_db_callee_context", None)
+        digest = getattr(tree, "_db_source_sha256", None)
+        if not isinstance(digest, str):
+            continue
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef) or node.decorator_list:
+                continue
+            if not _db_python_resource_function(node, tree):
+                continue
+            functions[module, node.name] = (node, path, digest, tree, module)
+    for module, path, tree in rows:
+        digest = getattr(tree, "_db_source_sha256", None)
+        if not isinstance(digest, str):
+            continue
+        _db_python_bind_tree_calls(
+            module, path, tree, digest, functions, project_trees, import_module
+        )
+
+
+def _db_python_bind_tree_calls(
+    module, path, tree, digest, functions, project_trees, import_module
+):
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
+    stability = {}
+    for call in ast.walk(tree):
+        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+            continue
+        local = call.func.id
+        options = _db_python_call_options(
+            module, local, call, imports, parents, functions, import_module
+        )
+        if len(options) != 1:
+            continue
+        function, source, source_hash, provider_tree, provider_module = options[0]
+        if not _db_python_call_stable(
+            tree,
+            module,
+            local,
+            function,
+            provider_module,
+            project_trees,
+            import_module,
+            stability,
+        ):
+            continue
+        provider_symbols, provider_shadowed = _db_python_symbols(provider_tree)
+        call._db_callee_context = {
+            "function": function,
+            "source": source,
+            "source_sha256": source_hash,
+            "callsite": path,
+            "callsite_sha256": digest,
+            "line": call.lineno,
+            "symbols": provider_symbols,
+            "shadowed": provider_shadowed,
+        }
+
+
+def _db_python_call_stable(
+    tree,
+    module,
+    local,
+    function,
+    provider_module,
+    project_trees,
+    import_module,
+    stability,
+):
+    caller_key = (module, local)
+    if caller_key not in stability:
+        stability[caller_key] = _db_python_context_export_stable(
+            [(module, tree)], module, local, import_module
+        )
+    provider_key = (provider_module, function.name)
+    if provider_key not in stability:
+        stability[provider_key] = _db_python_context_export_stable(
+            project_trees, provider_module, function.name, import_module
+        )
+    return (
+        stability[caller_key]
+        and stability[provider_key]
+        and not any(
+            isinstance(n, ast.Name)
+            and n.id == local
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            or isinstance(n, ast.arg)
+            and n.arg == local
+            for n in ast.walk(tree)
+        )
+    )
+
+
+def _db_python_resource_function(node, tree):
+    parameters = _db_python_argument_names(node.args)
+    return (
+        any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "execute"
+            and isinstance(n.func.value, ast.Name)
+            and n.func.value.id in parameters
+            for n in ast.walk(node)
+        )
+        and sum(
+            isinstance(n, (ast.FunctionDef, ast.ClassDef)) and n.name == node.name
+            for n in ast.walk(tree)
+        )
+        == 1
+    )
+
+
+def _db_python_call_options(
+    module, local, call, imports, parents, functions, import_module
+):
+    options = []
+    if (module, local) in functions:
+        options.append(functions[module, local])
+    for node in imports:
+        if not _db_python_import_before_call(node, call, parents):
+            continue
+        provider = import_module(module, node)
+        for alias in node.names:
+            if (alias.asname or alias.name) == local and (
+                provider,
+                alias.name,
+            ) in functions:
+                options.append(functions[provider, alias.name])
+    return options
+
+
+def _db_python_transfer_call(
+    call,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    sql_bindings,
+    queries,
+    gaps,
+    execute,
+):
+    """Analyze one captured callee with only caller-proven receiver bindings."""
+    from . import _bind_source_call
+
+    context = getattr(call, "_db_callee_context", None)
+    if not isinstance(context, dict):
+        return False, False
+    # Sibling argument expressions run before the callee. Until their effects
+    # are modeled in order, do not transfer a pre-evaluation receiver state.
+    values = list(call.args) + [keyword.value for keyword in call.keywords]
+    if any(not isinstance(value, (ast.Name, ast.Constant)) for value in values):
+        return False, False
+    try:
+        bound = _bind_source_call(call, context["function"], apply_defaults=False)
+    except ValueError:
+        return False, False
+    actuals = {
+        formal: value.id
+        for formal, value in bound.items()
+        if isinstance(value, ast.Name)
+        and connections.get(value.id) in {"sqlite", "sqlite_memory", "sqlite_uncertain"}
+    }
+    if not actuals:
+        return False, False
+    if len(set(actuals.values())) != len(actuals):
+        gaps.append("python_resource_alias_unresolved:" + context["callsite"])
+        return False, False
+    key = (context["source"], context["source_sha256"], context["function"].lineno)
+    stack = tuple(sql_bindings.get(("sqlite_context_stack",), ()))
+    budget = sql_bindings.setdefault(("sqlite_context_budget",), [0])
+    if key in stack or len(stack) >= 16 or budget[0] >= 64:
+        gaps.append("python_resource_context_limit:" + context["callsite"])
+        return False, False
+    budget[0] += 1
+    local = dict(sql_bindings)
+    local[("sqlite_context_stack",)] = stack + (key,)
+    schemas = sql_bindings.get(("sqlite_receiver_schemas",), {})
+    local[("sqlite_receiver_schemas",)] = {
+        formal: deepcopy(schemas[actual])
+        for formal, actual in actuals.items()
+        if actual in schemas
+    }
+    escaped = sql_bindings.get(("sqlite_escaped_receivers",), set())
+    local[("sqlite_escaped_receivers",)] = {
+        formal for formal, actual in actuals.items() if actual in escaped
+    }
+    start = len(queries)
+    _db_python_scope_native(
+        context["function"].body,
+        context["source"],
+        context["source_sha256"],
+        context["symbols"],
+        context["shadowed"],
+        dialect,
+        sqlglot,
+        exp,
+        {},
+        {formal: connections[actual] for formal, actual in actuals.items()},
+        queries,
+        gaps,
+        local,
+        execute=execute,
+    )
+    for query in queries[start:]:
+        previous = query.get("source_context")
+        query["source_context"] = {
+            "source_path": context["source"],
+            "source_sha256": context["source_sha256"],
+            "callable": context["function"].name,
+            "callsite_path": context["callsite"],
+            "callsite_sha256": context["callsite_sha256"],
+            "callsite_line": context["line"],
+        }
+        if previous:
+            query["source_context"]["callee"] = previous
+    table = _db_python_closed_select(context["function"], set(actuals))
+    readonly = table == "<constant>" or bool(
+        table and all(table in schemas.get(actual, {}) for actual in actuals.values())
+    )
+    if not readonly:
+        _db_python_forget_escaped_schema(actuals.values(), sql_bindings)
+    return True, readonly
+
+
+def _db_python_closed_select(function, receiver_names):
+    """Recognize only a single direct, literal SELECT with no resource escape."""
+    if (
+        len(receiver_names) != 1
+        or len(function.body) != 1
+        or not isinstance(function.body[0], ast.Return)
+    ):
+        return None
+    value = function.body[0].value
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr in {"fetchone", "fetchall"}
+        and not value.args
+        and not value.keywords
+    ):
+        value = value.func.value
+    if not (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id in receiver_names
+        and value.func.attr == "execute"
+        and len(value.args) == 1
+        and not value.keywords
+        and isinstance(value.args[0], ast.Constant)
+        and isinstance(value.args[0].value, str)
+    ):
+        return None
+    words = value.args[0].value.strip().split()
+    if len(words) == 2 and words[0].upper() == "SELECT" and words[1].isdigit():
+        return "<constant>"
+    if (
+        len(words) == 4
+        and words[0].upper() == "SELECT"
+        and words[1].isidentifier()
+        and words[2].upper() == "FROM"
+        and words[3].isidentifier()
+    ):
+        return words[3].lower()
+    return None
+
+
+def _db_python_plain_path_fields(cls, init, path_name):
+    fields = set()
+    for statement in init.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target, value = statement.targets[0], statement.value
+        if (
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "self"
+            and isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == path_name
+            and len(value.args) == 1
+            and isinstance(value.args[0], ast.Name)
+            and not value.keywords
+        ):
+            fields.add(target.attr)
+    for field in tuple(fields):
+        if any(
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name == field
+            or isinstance(n, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(t, ast.Name) and t.id == field
+                for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+            )
+            for n in cls.body
+        ):
+            fields.remove(field)
+            continue
+        stores = [
+            n
+            for n in ast.walk(cls)
+            if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == "self"
+            and n.attr == field
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+        ]
+        if len(stores) != 1:
+            fields.remove(field)
+    return fields
+
+
+def _db_python_class_witnesses(rows, provider, class_name, import_module):
+    """Accept direct captured constructors with effect-free argument expressions."""
+    witnesses = []
+    for module, path, tree in rows:
+        digest = getattr(tree, "_db_source_sha256", None)
+        if not isinstance(digest, str):
+            continue
+        aliases = {class_name} if module == provider else set()
+        for node in tree.body:
+            if (
+                isinstance(node, ast.ImportFrom)
+                and import_module(module, node) == provider
+            ):
+                aliases.update(
+                    a.asname or a.name for a in node.names if a.name == class_name
+                )
+        if not aliases:
+            continue
+        if any(
+            isinstance(n, ast.Name)
+            and n.id in aliases
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            or isinstance(n, ast.arg)
+            and n.arg in aliases
+            for n in ast.walk(tree)
+        ):
+            continue
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for call in ast.walk(tree):
+            if _db_python_class_witness_accepted(call, aliases, parents, tree):
+                witnesses.append({"path": path, "sha256": digest, "call": call})
+    return witnesses
+
+
+def _db_python_class_witness_accepted(call, aliases, parents, tree):
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id in aliases
+    ) or any(k.arg is None for k in call.keywords):
+        return False
+    scope = parents.get(call)
+    while scope is not None and not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)
+    ):
+        scope = parents.get(scope)
+    return all(
+        _db_python_constructor_arg_safe(a, scope, tree) for a in call.args
+    ) and all(
+        _db_python_constructor_arg_safe(k.value, scope, tree) for k in call.keywords
+    )
+
+
+def _db_python_constructor_arg_safe(value, scope, tree):
+    if isinstance(value, ast.Constant):
+        return True
+    if not (
+        isinstance(value, ast.Attribute)
+        and isinstance(value.value, ast.Name)
+        and isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        return False
+    namespace = value.value.id
+    assignments = [
+        n
+        for n in ast.walk(scope)
+        if isinstance(n, ast.Assign)
+        and len(n.targets) == 1
+        and isinstance(n.targets[0], ast.Name)
+        and n.targets[0].id == namespace
+    ]
+    if len(assignments) != 1:
+        return False
+    parsed = assignments[0].value
+    if not (
+        isinstance(parsed, ast.Call)
+        and isinstance(parsed.func, ast.Attribute)
+        and parsed.func.attr == "parse_args"
+        and isinstance(parsed.func.value, ast.Name)
+        and not parsed.args
+        and not parsed.keywords
+    ):
+        return False
+    parser = parsed.func.value.id
+    definitions = [
+        n
+        for n in ast.walk(scope)
+        if isinstance(n, ast.Assign)
+        and len(n.targets) == 1
+        and isinstance(n.targets[0], ast.Name)
+        and n.targets[0].id == parser
+    ]
+    if len(definitions) != 1:
+        return False
+    constructor = definitions[0].value
+    if not (
+        isinstance(constructor, ast.Call)
+        and isinstance(constructor.func, ast.Attribute)
+        and constructor.func.attr == "ArgumentParser"
+        and isinstance(constructor.func.value, ast.Name)
+    ):
+        return False
+    argparse_alias = constructor.func.value.id
+    if (
+        sum(
+            isinstance(n, ast.Import)
+            and any(
+                a.name == "argparse" and (a.asname or a.name) == argparse_alias
+                for a in n.names
+            )
+            for n in tree.body
+        )
+        != 1
+    ):
+        return False
+    if not _db_python_argparse_proven(
+        scope, tree, namespace, parser, argparse_alias, value
+    ):
+        return False
+    return _db_python_argparse_option(
+        scope, parser, value, definitions[0].lineno, assignments[0].lineno
+    )
+
+
+def _db_python_argparse_option(scope, parser, value, parser_line, parse_line):
+    for n in ast.walk(scope):
+        if not (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and isinstance(n.func.value, ast.Name)
+            and n.func.value.id == parser
+            and n.func.attr == "add_argument"
+            and n.args
+        ):
+            continue
+        flag = n.args[0]
+        if (
+            isinstance(flag, ast.Constant)
+            and isinstance(flag.value, str)
+            and flag.value.lstrip("-").replace("-", "_") == value.attr
+            and parser_line < n.lineno < parse_line < value.lineno
+        ):
+            keywords = {k.arg: k.value for k in n.keywords}
+            if len(keywords) != len(n.keywords) or "action" in keywords:
+                return False
+            if "dest" in keywords and not (
+                isinstance(keywords["dest"], ast.Constant)
+                and keywords["dest"].value == value.attr
+            ):
+                return False
+            if "default" in keywords and not _db_python_safe_path_default(
+                keywords["default"]
+            ):
+                return False
+            return any(
+                k.arg == "type"
+                and isinstance(k.value, ast.Name)
+                and k.value.id == "Path"
+                for k in n.keywords
+            )
+    return False
+
+
+def _db_python_argparse_proven(scope, tree, namespace, parser, argparse_alias, value):
+    """Reject rebound/escaped argparse bindings and namespace field writes."""
+    nodes = tuple(ast.walk(scope))
+    parents = {
+        child: parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    return (
+        _db_python_argparse_origin_safe(tree, argparse_alias)
+        and _db_python_argparse_locals_safe(nodes, namespace, parser)
+        and _db_python_argparse_uses_safe(nodes, parents, namespace, parser)
+    )
+
+
+def _db_python_argparse_origin_safe(tree, argparse_alias):
+    if (
+        sum(
+            isinstance(n, ast.ImportFrom)
+            and n.module == "pathlib"
+            and any(
+                a.name == "Path" and (a.asname or a.name) == "Path" for a in n.names
+            )
+            for n in tree.body
+        )
+        != 1
+    ):
+        return False
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, ast.Name)
+            and n.id in {"Path", argparse_alias}
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            or isinstance(n, ast.arg)
+            and n.arg in {"Path", argparse_alias}
+            or isinstance(n, (ast.FunctionDef, ast.ClassDef))
+            and n.name in {"Path", argparse_alias}
+        ):
+            return False
+    return True
+
+
+def _db_python_argparse_locals_safe(nodes, namespace, parser):
+    for name in (namespace, parser):
+        if (
+            sum(
+                isinstance(n, ast.Name)
+                and n.id == name
+                and isinstance(n.ctx, ast.Store)
+                for n in nodes
+            )
+            != 1
+        ):
+            return False
+        if any(isinstance(n, ast.arg) and n.arg == name for n in nodes):
+            return False
+    return True
+
+
+def _db_python_argparse_uses_safe(nodes, parents, namespace, parser):
+    for n in nodes:
+        if (
+            not isinstance(n, ast.Name)
+            or not isinstance(n.ctx, ast.Load)
+            or n.id not in {namespace, parser}
+        ):
+            continue
+        parent = parents.get(n)
+        if (
+            not isinstance(parent, ast.Attribute)
+            or parent.value is not n
+            or not isinstance(parent.ctx, ast.Load)
+        ):
+            return False
+        if n.id == namespace and parent.attr == "__dict__":
+            return False
+        if n.id == parser:
+            call = parents.get(parent)
+            if parent.attr not in {"add_argument", "parse_args", "error"} or not (
+                isinstance(call, ast.Call) and call.func is parent
+            ):
+                return False
+    return True
+
+
+def _db_python_safe_path_default(value):
+    if isinstance(value, ast.Constant):
+        return isinstance(value.value, str) or value.value is None
+    if isinstance(value, ast.Name):
+        return value.id == "__file__"
+    if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div):
+        return _db_python_safe_path_default(
+            value.left
+        ) and _db_python_safe_path_default(value.right)
+    if isinstance(value, ast.Attribute) and value.attr == "parent":
+        return _db_python_safe_path_default(value.value)
+    if isinstance(value, ast.Call) and not value.keywords:
+        if (
+            isinstance(value.func, ast.Name)
+            and value.func.id == "Path"
+            and len(value.args) == 1
+        ):
+            return _db_python_safe_path_default(value.args[0])
+        if (
+            isinstance(value.func, ast.Attribute)
+            and value.func.attr == "resolve"
+            and not value.args
+        ):
+            return _db_python_safe_path_default(value.func.value)
+    return False
+
+
+def _db_python_constructor_called_methods(init, call):
+    params = init.args.posonlyargs + init.args.args
+    defaults = (
+        {
+            p.arg: d.value
+            for p, d in zip(params[-len(init.args.defaults) :], init.args.defaults)
+            if isinstance(d, ast.Constant)
+        }
+        if init.args.defaults
+        else {}
+    )
+    for index, value in enumerate(call.args, 1):
+        if index < len(params):
+            defaults[params[index].arg] = (
+                value.value if isinstance(value, ast.Constant) else None
+            )
+    for keyword in call.keywords:
+        defaults[keyword.arg] = (
+            keyword.value.value if isinstance(keyword.value, ast.Constant) else None
+        )
+    called, pending = set(), list(init.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.If):
+            if isinstance(node.test, ast.Name) and defaults.get(node.test.id) is True:
+                pending.extend(node.body)
+            elif (
+                isinstance(node.test, ast.Name) and defaults.get(node.test.id) is False
+            ):
+                pending.extend(node.orelse)
+        elif (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and isinstance(node.value.func.value, ast.Name)
+            and node.value.func.value.id == "self"
+            and not node.value.args
+            and not node.value.keywords
+        ):
+            called.add(node.value.func.attr)
+    return called
+
+
+def _db_python_context_export_stable(trees, provider, name, import_module):
+    """Reject reflection, possible module mutation, and imported function escapes."""
+    for module, tree in trees:
+        nodes = tuple(ast.walk(tree))
+        imported = _db_python_export_aliases(
+            nodes, module, provider, name, import_module
+        )
+        if imported is None:
+            return False
+        aliases, modules = imported
+        parents = {
+            child: parent for parent in nodes for child in ast.iter_child_nodes(parent)
+        }
+        scopes = {}
+        if any(
+            _db_python_export_scoped_node_unsafe(
+                node, aliases, modules, name, parents, scopes
+            )
+            for node in nodes
+        ):
+            return False
+    return True
+
+
+def _db_python_export_scoped_node_unsafe(node, aliases, modules, name, parents, scopes):
+    visible = _db_python_export_visible_names(node, aliases | modules, parents, scopes)
+    return _db_python_export_node_unsafe(
+        node, aliases & visible, modules & visible, name, parents
+    )
+
+
+def _db_python_export_visible_names(node, names, parents, scopes):
+    """Resolve function locals without applying them to defaults or decorators."""
+    visible, unresolved = set(names), set(names)
+    child = node
+    while (parent := parents.get(child)) is not None:
+        if isinstance(parent, ast.ClassDef):
+            # Class namespaces and their global directives are not function locals.
+            break
+        if (
+            isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and child in parent.body
+        ):
+            if parent not in scopes:
+                scopes[parent] = _db_python_export_scope_bindings(parent)
+            local, global_names = scopes[parent]
+            visible.difference_update(unresolved & local)
+            unresolved.difference_update(local | global_names)
+        child = parent
+    return visible
+
+
+def _db_python_export_scope_bindings(function):
+    body = ast.Module(body=function.body, type_ignores=[])
+    written, _ = _db_python_write_names(body)
+    local = written | _db_python_argument_names(function.args)
+    globals_, nonlocals, imports = set(), set(), set()
+    for node in _db_python_export_scope_nodes(body):
+        if isinstance(node, ast.Global):
+            globals_.update(node.names)
+        elif isinstance(node, ast.Nonlocal):
+            nonlocals.update(node.names)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            imports.update(_db_python_import_names(node))
+    # Imported provider aliases still need escape checks in their local scope.
+    return local - globals_ - nonlocals - imports, globals_ | imports
+
+
+def _db_python_export_scope_nodes(node):
+    yield node
+    for child in ast.iter_child_nodes(node):
+        if not isinstance(
+            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            yield from _db_python_export_scope_nodes(child)
+
+
+def _db_python_export_aliases(nodes, module, provider, name, import_module):
+    aliases = {name} if module == provider else set()
+    modules = set()
+    for node in nodes:
+        if isinstance(node, ast.ImportFrom):
+            if import_module(module, node) == provider:
+                aliases.update(a.asname or a.name for a in node.names if a.name == name)
+            for alias in node.names:
+                if import_module(module, node) + "." + alias.name == provider:
+                    modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            if not _db_python_export_module_aliases(node, provider, modules):
+                return None
+    return aliases, modules
+
+
+def _db_python_export_module_aliases(node, provider, modules):
+    for alias in node.names:
+        if alias.name == provider:
+            if not alias.asname:
+                return False
+            modules.add(alias.asname)
+    return True
+
+
+def _db_python_export_node_unsafe(node, aliases, modules, name, parents):
+    if _db_python_export_call_unsafe(node, aliases, modules):
+        return True
+    if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if isinstance(node.value, ast.Attribute) and node.value.attr in {
+            "__dict__",
+            "modules",
+        }:
+            return True
+    if _db_python_export_attribute_unsafe(node, aliases, name):
+        return True
+    return _db_python_export_reference_unsafe(node, aliases, modules, name, parents)
+
+
+def _db_python_export_call_unsafe(node, aliases, modules):
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        return False
+    if node.func.id in {
+        "exec",
+        "eval",
+        "globals",
+        "locals",
+        "vars",
+        "__import__",
+        "setattr",
+        "delattr",
+    }:
+        return True
+    return bool(
+        node.func.id == "getattr"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id in aliases | modules
+    )
+
+
+def _db_python_export_attribute_unsafe(node, aliases, name):
+    if not isinstance(node, ast.Attribute):
+        return False
+    if node.attr in {
+        name,
+        "connect",
+        "Row",
+        "Path",
+        "contextmanager",
+        "ArgumentParser",
+        "parse_args",
+        "add_argument",
+    } and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return True
+    return (
+        isinstance(node.ctx, (ast.Store, ast.Del))
+        and isinstance(node.value, ast.Name)
+        and node.value.id in aliases
+    )
+
+
+def _db_python_export_reference_unsafe(node, aliases, modules, name, parents):
+    if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+        return False
+    parent = parents.get(node)
+    if node.id in aliases:
+        if not isinstance(parent, ast.Call) or parent.func is not node:
+            return True
+    if node.id in modules:
+        outer = parents.get(parent)
+        if not (
+            isinstance(parent, ast.Attribute)
+            and parent.value is node
+            and parent.attr == name
+            and isinstance(outer, ast.Call)
+            and outer.func is parent
+        ):
+            return True
+    return False
+
+
+def _db_python_export_identity_functions():
+    return (
+        _db_python_export_identity_functions,
+        _db_python_export_scoped_node_unsafe,
+        _db_python_export_visible_names,
+        _db_python_export_scope_bindings,
+        _db_python_export_scope_nodes,
+        _db_python_export_aliases,
+        _db_python_export_module_aliases,
+        _db_python_export_node_unsafe,
+        _db_python_export_call_unsafe,
+        _db_python_export_attribute_unsafe,
+        _db_python_export_reference_unsafe,
+    )
+
+
+# SQLite AST traversal uses a caller-supplied SQL execution callback.
+
+
+def _db_python_query_native(
+    tree,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    queries,
+    gaps,
+    *,
+    execute,
+):
+    engines, connections = ({}, {})
+    _db_python_scope_native(
+        tree.body,
+        path,
+        digest,
+        symbols,
+        shadowed,
+        dialect,
+        sqlglot,
+        exp,
+        engines,
+        connections,
+        queries,
+        gaps,
+        nested_scope_checks=False,
+        execute=execute,
+    )
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            local_names = _db_python_argument_names(node.args)
+            local_connections = {
+                key: value
+                for key, value in connections.items()
+                if key not in local_names
+            }
+            _db_python_scope_native(
+                node.body,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                {
+                    key: value
+                    for key, value in engines.items()
+                    if key not in local_names
+                },
+                local_connections,
+                queries,
+                gaps,
+                execute=execute,
+            )
+        elif isinstance(node, ast.ClassDef):
+            _db_python_query_class(
+                node,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                queries,
+                gaps,
+                execute,
+            )
+
+
+def _db_python_query_class(
+    node, path, digest, symbols, shadowed, dialect, sqlglot, exp, queries, gaps, execute
+):
+    for method in node.body:
+        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _db_python_scope_native(
+                method.body,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                {},
+                {},
+                queries,
+                gaps,
+                execute=execute,
+            )
+            contexts = getattr(method, "_db_field_contexts", ())
+            if len(contexts) > 64:
+                gaps.append("python_resource_context_limit:" + path)
+            for context in contexts[:64]:
+                contextual = deepcopy(method)
+                fields = set(context["plain_fields"])
+                chains = {tuple(chain) for chain in context.get("plain_chains", ())}
+                _db_python_mark_plain_fields(
+                    contextual,
+                    fields,
+                    chains,
+                    context.get("plain_before_line", 1 << 30),
+                )
+                first = len(queries)
+                _db_python_scope_native(
+                    contextual.body,
+                    path,
+                    digest,
+                    symbols,
+                    shadowed,
+                    dialect,
+                    sqlglot,
+                    exp,
+                    {},
+                    {},
+                    queries,
+                    gaps,
+                    execute=execute,
+                )
+                for query in queries[first:]:
+                    previous = query.get("source_context")
+                    query["source_context"] = {
+                        k: v for k, v in context.items() if k != "plain_fields"
+                    }
+                    if previous:
+                        query["source_context"]["callee"] = previous
+
+
+def _db_python_mark_plain_fields(contextual, fields, chains, before):
+    for node in ast.walk(contextual):
+        if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
+            continue
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+            and node.attr in fields
+        ):
+            node._db_proven_plain_field = True
+        elif (
+            isinstance(node.value, ast.Attribute)
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == "self"
+            and (node.value.attr, node.attr) in chains
+            and node.lineno < before
+        ):
+            node._db_proven_plain_field = True
+
+
+def _db_python_local_refactor_identity_functions():
+    from . import _db_witness_identity_functions, _db_server_graph_identity_functions
+
+    return (
+        *_db_witness_identity_functions(),
+        *_db_server_graph_identity_functions(),
+        _db_python_class_witness_accepted,
+        _db_python_local_refactor_identity_functions,
+        _db_python_bind_tree_calls,
+        _db_python_call_stable,
+        _db_python_resource_function,
+        _db_python_call_options,
+        _db_python_query_class,
+        _db_python_mark_plain_fields,
+    )
+
+
+def _db_python_scope_native(
+    statements,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    queries,
+    gaps,
+    sql_bindings=None,
+    nested_scope_checks=True,
+    *,
+    execute,
+):
+    if sql_bindings is None:
+        sql_bindings = {}
+    for statement in statements:
+        value = (
+            statement.value
+            if isinstance(statement, (ast.Assign, ast.AnnAssign))
+            else None
+        )
+        escaped = _db_python_escaped_receivers(value, connections)
+        if escaped:
+            _db_python_forget_escaped_schema(escaped, sql_bindings)
+            gaps.append("python_connection_alias_unsupported:" + path)
+        if not isinstance(statement, (ast.With, ast.AsyncWith)):
+            _db_python_invalidate_nested_bindings(
+                statement, engines, connections, sql_bindings
+            )
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if nested_scope_checks:
+                _db_python_scope_calls_native(
+                    statement,
+                    path,
+                    digest,
+                    symbols,
+                    shadowed,
+                    dialect,
+                    sqlglot,
+                    exp,
+                    engines,
+                    connections,
+                    sql_bindings,
+                    queries,
+                    gaps,
+                    execute=execute,
+                )
+            continue
+        _db_python_scope_assignment(
+            statement, symbols, shadowed, engines, connections, sql_bindings
+        )
+        _db_python_scope_calls_native(
+            statement,
+            path,
+            digest,
+            symbols,
+            shadowed,
+            dialect,
+            sqlglot,
+            exp,
+            engines,
+            connections,
+            sql_bindings,
+            queries,
+            gaps,
+            execute=execute,
+        )
+
+
+def _db_python_scope_assignment(
+    statement, symbols, shadowed, engines, connections, sql_bindings
+):
+    destructured = (
+        isinstance(statement, ast.Assign)
+        and not all(isinstance(target, ast.Name) for target in statement.targets)
+        or isinstance(statement, ast.AnnAssign)
+        and not isinstance(statement.target, ast.Name)
+    )
+    for name in _db_assignment_targets(statement):
+        if destructured:
+            _db_python_invalidate_names((name,), engines, connections, sql_bindings)
+            continue
+        _db_python_register_assignment(
+            statement, name, symbols, shadowed, engines, connections
+        )
+        if isinstance(statement, ast.AugAssign):
+            sql_bindings.pop(name, None)
+            continue
+        value = statement.value
+        literal = _db_python_sql_literal(value, symbols, shadowed, sql_bindings)
+        if literal is not None:
+            sql_bindings[name] = (
+                literal,
+                _db_python_contains_text(value, symbols, shadowed, sql_bindings),
+            )
+        else:
+            sql_bindings.pop(name, None)
+
+
+def _db_python_scope_calls_native(
+    node,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    sql_bindings,
+    queries,
+    gaps,
+    *,
+    execute,
+):
+    """Visit execute calls and nested manager scopes without crossing functions."""
+    pending = [(node, False, None)]
+    while pending:
+        current, evaluated, target = pending.pop()
+        if evaluated:
+            _db_python_apply_evaluated_call(
+                current,
+                target,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                engines,
+                connections,
+                sql_bindings,
+                queries,
+                gaps,
+                execute,
+            )
+            continue
+        if isinstance(
+            current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            _db_python_nested_scope(
+                current,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                engines,
+                connections,
+                sql_bindings,
+                queries,
+                gaps,
+                execute,
+            )
+            continue
+        if _db_python_control_flow_branches(current) is not None:
+            _db_python_isolated_control_flow_calls_native(
+                current,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                engines,
+                connections,
+                sql_bindings,
+                queries,
+                gaps,
+                execute=execute,
+            )
+            continue
+        if isinstance(current, (ast.With, ast.AsyncWith)):
+            _db_python_with_scope_native(
+                current,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                engines,
+                connections,
+                queries,
+                gaps,
+                sql_bindings,
+                execute=execute,
+            )
+            continue
+        if isinstance(
+            current, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            _db_python_comprehension_scope(
+                current,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                engines,
+                connections,
+                sql_bindings,
+                queries,
+                gaps,
+                execute,
+            )
+            continue
+        if isinstance(current, ast.Call):
+            pending.append(
+                (current, True, _db_python_call_target(current, connections))
+            )
+        pending.extend(
+            (child, False, None)
+            for child in reversed(list(ast.iter_child_nodes(current)))
+        )
+
+
+def _db_python_call_target(call, connections):
+    """Capture a direct execute receiver before evaluating its arguments."""
+    target = None
+    if (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "execute"
+        and isinstance(call.func.value, ast.Name)
+    ):
+        name = call.func.value.id
+        target = name, connections.get(name)
+    return target, dict(connections)
+
+
+def _db_python_evaluated_argument_escapes(
+    call, before, connections, bindings, gaps, path
+):
+    """Retain escaped argument provenance without reviving a closed receiver."""
+    arguments = call.args + [keyword.value for keyword in call.keywords]
+    escaped = set().union(
+        *(_db_python_escaped_receivers(argument, before) for argument in arguments)
+    )
+    lost = escaped - connections.keys()
+    if lost:
+        _db_python_forget_escaped_schema(lost, bindings)
+        gaps.append("python_connection_escape_schema_unknown:" + path)
+
+
+def _db_python_apply_evaluated_call(
+    call,
+    target,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    sql_bindings,
+    queries,
+    gaps,
+    execute,
+):
+    """Apply a call once, after its callee and argument expressions were visited."""
+    target, before = target
+    _db_python_evaluated_argument_escapes(
+        call, before, connections, sql_bindings, gaps, path
+    )
+    _db_python_call_effects(
+        call,
+        path,
+        dialect,
+        sqlglot,
+        exp,
+        engines,
+        connections,
+        sql_bindings,
+        queries,
+        gaps,
+        execute,
+    )
+    if not isinstance(call.func, ast.Attribute) or call.func.attr != "execute":
+        return
+    if target is not None:
+        name, driver = target
+        writes, _ = _db_python_write_names(call)
+        if name in writes or connections.get(name) != driver:
+            gaps.append("python_execute_target_changed_during_arguments:" + path)
+            return
+        arguments = call.args + [keyword.value for keyword in call.keywords]
+        if driver in {"sqlite", "sqlite_memory", "sqlite_uncertain"} and any(
+            isinstance(
+                node, (ast.Call, ast.Await, ast.Yield, ast.YieldFrom, ast.Starred)
+            )
+            for argument in arguments
+            for node in ast.walk(argument)
+        ):
+            _db_python_forget_escaped_schema((name,), sql_bindings)
+            gaps.append("python_execute_argument_effect_unproven:" + path)
+            return
+    execute(
+        call,
+        path,
+        digest,
+        symbols,
+        shadowed,
+        dialect,
+        sqlglot,
+        exp,
+        connections,
+        sql_bindings,
+        queries,
+        gaps,
+    )
+
+
+def _db_python_call_effects(
+    current,
+    path,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    sql_bindings,
+    queries,
+    gaps,
+    execute,
+):
+    arguments = list(current.args) + [keyword.value for keyword in current.keywords]
+    handled, readonly = _db_python_transfer_call(
+        current,
+        dialect,
+        sqlglot,
+        exp,
+        engines,
+        connections,
+        sql_bindings,
+        queries,
+        gaps,
+        execute,
+    )
+    escaped = set().union(
+        *(_db_python_escaped_receivers(arg, connections) for arg in arguments)
+    )
+    if escaped and not (handled and readonly):
+        _db_python_forget_escaped_schema(escaped, sql_bindings)
+        gaps.append("python_connection_escape_schema_unknown:" + path)
+    if isinstance(current.func, ast.Attribute) and isinstance(
+        current.func.value, ast.Name
+    ):
+        receiver = current.func.value.id
+        if connections.get(receiver) in {
+            "sqlite",
+            "sqlite_memory",
+            "sqlite_uncertain",
+        } and current.func.attr in {"close", "executescript", "executemany"}:
+            if current.func.attr == "close":
+                _db_python_invalidate_names(
+                    (receiver,), engines, connections, sql_bindings
+                )
+            else:
+                gaps.append("python_connection_method_unsupported:" + path)
+                _db_python_forget_escaped_schema((receiver,), sql_bindings)
+        elif (
+            connections.get(receiver) in {"sqlite", "sqlite_memory", "sqlite_uncertain"}
+            and current.func.attr == "rollback"
+        ):
+            schemas = dict(sql_bindings.get(("sqlite_receiver_schemas",), {}))
+            schemas.pop(receiver, None)
+            sql_bindings["sqlite_receiver_schemas",] = schemas
+
+
+def _db_python_comprehension_scope(
+    current,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    sql_bindings,
+    queries,
+    gaps,
+    execute,
+):
+    escaped = set()
+    first = current.generators[0].iter if current.generators else None
+    first_nodes = set(ast.walk(first)) if first is not None else set()
+    parents = {
+        child: parent
+        for parent in ast.walk(current)
+        for child in ast.iter_child_nodes(parent)
+    }
+    for candidate in ast.walk(current):
+        if (
+            isinstance(candidate, ast.Name)
+            and isinstance(candidate.ctx, ast.Load)
+            and (candidate.id in connections)
+        ):
+            parent = parents.get(candidate)
+            if not (
+                candidate in first_nodes
+                and isinstance(parent, ast.Attribute)
+                and (parent.value is candidate)
+                and (parent.attr == "execute")
+            ):
+                escaped.add(candidate.id)
+        if isinstance(candidate, ast.Call):
+            for argument in list(candidate.args) + [
+                k.value for k in candidate.keywords
+            ]:
+                escaped.update(_db_python_escaped_receivers(argument, connections))
+            func = candidate.func
+            if (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and (func.value.id in connections)
+                and (func.attr != "execute" or candidate not in first_nodes)
+            ):
+                escaped.add(func.value.id)
+    if escaped:
+        _db_python_forget_escaped_schema(escaped, sql_bindings)
+        gaps.append("python_connection_escape_schema_unknown:" + path)
+    executes = [
+        candidate
+        for candidate in ast.walk(current)
+        if isinstance(candidate, ast.Call)
+        and isinstance(candidate.func, ast.Attribute)
+        and (candidate.func.attr == "execute")
+    ]
+    first_executes = (
+        [
+            candidate
+            for candidate in ast.walk(first)
+            if isinstance(candidate, ast.Call)
+            and isinstance(candidate.func, ast.Attribute)
+            and (candidate.func.attr == "execute")
+        ]
+        if first is not None
+        else []
+    )
+    if executes and len(executes) == len(first_executes):
+        _db_python_scope_calls_native(
+            first,
+            path,
+            digest,
+            symbols,
+            shadowed,
+            dialect,
+            sqlglot,
+            exp,
+            engines,
+            connections,
+            sql_bindings,
+            queries,
+            gaps,
+            execute=execute,
+        )
+        return
+    if any(
+        (
+            isinstance(candidate, ast.Call)
+            and isinstance(candidate.func, ast.Attribute)
+            and (candidate.func.attr == "execute")
+            for candidate in ast.walk(current)
+        )
+    ):
+        gaps.append("python_execute_comprehension_scope_unsupported:" + path)
+    return
+
+
+def _db_python_nested_scope(
+    current,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    sql_bindings,
+    queries,
+    gaps,
+    execute,
+):
+    captured = {
+        n.id
+        for n in ast.walk(current)
+        if isinstance(n, ast.Name)
+        and isinstance(n.ctx, ast.Load)
+        and (connections.get(n.id) in {"sqlite", "sqlite_memory", "sqlite_uncertain"})
+    }
+    if captured:
+        _db_python_forget_escaped_schema(captured, sql_bindings)
+        gaps.append("python_connection_escape_schema_unknown:" + path)
+    if (
+        isinstance(current, ast.FunctionDef)
+        and (not current.decorator_list)
+        and (not current.args.defaults)
+        and (not any(current.args.kw_defaults))
+        and (not _db_python_argument_names(current.args) & set(symbols))
+        and (
+            not any(
+                (
+                    isinstance(n, (ast.Global, ast.Nonlocal, ast.Lambda, ast.ClassDef))
+                    or (
+                        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and n is not current
+                    )
+                    or (
+                        isinstance(n, ast.Name)
+                        and n.id in set(connections) | set(engines)
+                    )
+                    for n in ast.walk(current)
+                )
+            )
+        )
+    ):
+        _db_python_scope_native(
+            current.body,
+            path,
+            digest,
+            symbols,
+            shadowed,
+            dialect,
+            sqlglot,
+            exp,
+            {},
+            {},
+            queries,
+            gaps,
+            execute=execute,
+        )
+        return
+    if any(
+        (
+            isinstance(candidate, ast.Call)
+            and isinstance(candidate.func, ast.Attribute)
+            and (candidate.func.attr == "execute")
+            for candidate in ast.walk(current)
+        )
+    ):
+        gaps.append("python_execute_nested_scope_unsupported:" + path)
+    return
+
+
+def _db_python_isolated_control_flow_calls_native(
+    node,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    sql_bindings,
+    queries,
+    gaps,
+    *,
+    execute,
+):
+    """Scan each alternative with a private copy of facts that cannot escape."""
+    for branch in _db_python_control_flow_branches(node):
+        branch_engines = dict(engines)
+        branch_connections = dict(connections)
+        branch_sql = dict(sql_bindings)
+        _db_python_scope_native(
+            branch,
+            path,
+            digest,
+            symbols,
+            shadowed,
+            dialect,
+            sqlglot,
+            exp,
+            branch_engines,
+            branch_connections,
+            queries,
+            gaps,
+            branch_sql,
+            execute=execute,
+        )
+    changed, escaped = (set(), set())
+    for candidate in ast.walk(node):
+        if not isinstance(candidate, ast.Call):
+            continue
+        if (
+            isinstance(candidate.func, ast.Attribute)
+            and isinstance(candidate.func.value, ast.Name)
+            and (
+                connections.get(candidate.func.value.id)
+                in {"sqlite", "sqlite_memory", "sqlite_uncertain"}
+            )
+            and (
+                candidate.func.attr
+                in {"execute", "executemany", "executescript", "rollback", "close"}
+            )
+        ):
+            changed.add(candidate.func.value.id)
+        for argument in list(candidate.args) + [kw.value for kw in candidate.keywords]:
+            escaped.update(_db_python_escaped_receivers(argument, connections))
+    if escaped:
+        _db_python_forget_escaped_schema(escaped, sql_bindings)
+    schemas = dict(sql_bindings.get(("sqlite_receiver_schemas",), {}))
+    for name in changed:
+        schemas.pop(name, None)
+    sql_bindings["sqlite_receiver_schemas",] = schemas
+
+
+def _db_python_with_scope_native(
+    statement,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    queries,
+    gaps,
+    sql_bindings,
+    *,
+    execute,
+):
+    """Analyze a with body using only statically proven SQLite aliases."""
+    for item in statement.items:
+        _db_python_invalidate_nested_bindings(
+            item.context_expr, engines, connections, sql_bindings
+        )
+        _db_python_scope_calls_native(
+            item.context_expr,
+            path,
+            digest,
+            symbols,
+            shadowed,
+            dialect,
+            sqlglot,
+            exp,
+            engines,
+            connections,
+            sql_bindings,
+            queries,
+            gaps,
+            execute=execute,
+        )
+        item_bindings = _db_python_with_bindings(
+            statement, symbols, shadowed, items=(item,)
+        )
+        _db_python_invalidate_names(item_bindings, engines, connections, sql_bindings)
+        for name, driver in item_bindings.items():
+            if driver:
+                connections[name] = driver
+                expression = item.context_expr
+                marker = (
+                    symbols.get(expression.func.id, "")
+                    if isinstance(expression, ast.Call)
+                    and isinstance(expression.func, ast.Name)
+                    else ""
+                )
+                if isinstance(marker, str) and marker.endswith(":guarded"):
+                    _db_python_forget_escaped_schema((name,), sql_bindings)
+                    gaps.append("python_guarded_schema_effect_unknown:" + path)
+    _db_python_scope_native(
+        statement.body,
+        path,
+        digest,
+        symbols,
+        shadowed,
+        dialect,
+        sqlglot,
+        exp,
+        engines,
+        connections,
+        queries,
+        gaps,
+        sql_bindings,
+        execute=execute,
+    )
+
+
+def _db_python_sql_literal(node, symbols, shadowed, bindings=None):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name) and bindings and node.id in bindings:
+        return bindings[node.id][0]
+    if (
+        isinstance(node, ast.Call)
+        and _db_python_is_text_call(node, symbols, shadowed)
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        return node.args[0].value
+    return None
+
+
+def _db_python_is_text_call(node, symbols, shadowed):
+    return _db_python_call(
+        node, "sqlalchemy.text", symbols, shadowed
+    ) or _db_python_call(node, "sqlalchemy.sql.text", symbols, shadowed)
+
+
+def _db_python_contains_text(node, symbols, shadowed, bindings=None):
+    if isinstance(node, ast.Name) and bindings and node.id in bindings:
+        return bindings[node.id][1]
+    return any(
+        isinstance(child, ast.Call)
+        and _db_python_is_text_call(child, symbols, shadowed)
+        for child in ast.walk(node)
+    )
+
+
+def _db_python_module_name(path):
+    parts = list(Path(path).with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _db_python_import_module(current, node):
+    if node.level:
+        package = current.split(".")[:-1]
+        keep = max(0, len(package) - node.level + 1)
+        base = package[:keep]
+        suffix = node.module.split(".") if node.module else []
+        return ".".join(base + suffix)
+    return node.module or ""
+
+
+# SQLite statement execution uses explicit parser and projection callbacks.
+
+
+def _db_python_execute_native(
+    call,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    connections,
+    literal_texts,
+    queries,
+    gaps,
+    *,
+    parse_sql,
+    query,
+    read_statement,
+):
+    receiver = call.func.value
+    name = receiver.id if isinstance(receiver, ast.Name) else None
+    if not call.args:
+        gaps.append("python_execute_sql_missing:" + path)
+        return
+    argument = call.args[0]
+    query_text = _db_python_sql_literal(argument, symbols, shadowed, literal_texts)
+    if name is None or name not in connections:
+        gaps.append("python_execute_receiver_unproven:" + path)
+        return
+    driver = connections[name]
+    if query_text is None or (
+        driver == "sqlalchemy"
+        and (not _db_python_contains_text(argument, symbols, shadowed, literal_texts))
+    ):
+        if driver in {"sqlite", "sqlite_memory", "sqlite_uncertain"}:
+            _db_python_forget_escaped_schema((name,), literal_texts)
+        gaps.append("python_dynamic_or_unwrapped_sql:" + path)
+        return
+    if driver in {"sqlite", "sqlite_memory", "sqlite_uncertain"} and re.fullmatch(
+        "\\s*(?:PRAGMA\\s+foreign_keys\\s*=\\s*ON|PRAGMA\\s+journal_mode\\s*=\\s*WAL|PRAGMA\\s+table_info\\s*\\(\\s*[A-Za-z_][A-Za-z_0-9]*\\s*\\)|BEGIN\\s+IMMEDIATE)\\s*;?\\s*",
+        query_text,
+        re.IGNORECASE,
+    ):
+        return
+    try:
+        statements = parse_sql(sqlglot, query_text, dialect)
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        gaps.append("python_sql_parse_error:" + path)
+        return
+    if (
+        driver in {"sqlite", "sqlite_memory", "sqlite_uncertain"}
+        and len(statements) != 1
+    ):
+        gaps.append("python_sqlite_multiple_statements_unsupported:" + path)
+        return
+    for index, statement in enumerate(statements, 1):
+        location = {
+            "path": path,
+            "sha256": digest,
+            "line": call.lineno,
+            "statement": index,
+        }
+        _db_python_executed_statement(
+            statement,
+            exp,
+            dialect,
+            driver,
+            name,
+            literal_texts,
+            location,
+            queries,
+            gaps,
+            parse_sql=parse_sql,
+            query=query,
+            read_statement=read_statement,
+        )
+
+
+def _db_python_executed_statement(
+    statement,
+    exp,
+    dialect,
+    driver,
+    name,
+    bindings,
+    location,
+    queries,
+    gaps,
+    *,
+    parse_sql,
+    query,
+    read_statement,
+):
+    if isinstance(statement, (exp.Select, exp.Insert, exp.Update, exp.Delete)):
+        _db_python_scoped_query(
+            statement,
+            exp,
+            dialect,
+            driver,
+            name,
+            bindings,
+            location,
+            queries,
+            gaps,
+            parse_sql=parse_sql,
+            query=query,
+            read_statement=read_statement,
+        )
+    elif (
+        driver in {"sqlite", "sqlite_memory", "sqlite_uncertain"}
+        and isinstance(statement, exp.Create)
+        and (statement.kind == "TABLE")
+        and isinstance(statement.this, exp.Schema)
+        and (not statement.args.get("exists"))
+    ):
+        _db_python_scoped_create(
+            statement,
+            exp,
+            dialect,
+            name,
+            bindings,
+            location,
+            queries,
+            gaps,
+            parse_sql=parse_sql,
+            query=query,
+            read_statement=read_statement,
+        )
+    else:
+        schemas = dict(bindings.get(("sqlite_receiver_schemas",), {}))
+        schemas.pop(name, None)
+        bindings["sqlite_receiver_schemas",] = schemas
+        gaps.append("python_executed_non_query_unsupported:" + location["path"])
+
+
+def _db_python_scoped_query(
+    statement,
+    exp,
+    dialect,
+    driver,
+    name,
+    bindings,
+    location,
+    queries,
+    gaps,
+    *,
+    parse_sql,
+    query,
+    read_statement,
+):
+    location["kind"] = (
+        "sqlite" if driver in {"sqlite_memory", "sqlite_uncertain"} else driver
+    ) + "_execute"
+    query(statement, exp, dialect, location, queries, gaps)
+    if driver == "sqlite_memory":
+        queries[-1]["private_schema_only"] = True
+    if driver == "sqlite_uncertain" or name in bindings.get(
+        ("sqlite_escaped_receivers",), set()
+    ):
+        queries[-1]["schema_unknown"] = True
+    scoped = bindings.get(("sqlite_receiver_schemas",), {}).get(name, {})
+    relevant = {
+        table: deepcopy(scoped[table])
+        for table in queries[-1]["tables"]
+        if table in scoped
+    }
+    if relevant:
+        queries[-1]["scoped_tables"] = relevant
+
+
+def _db_python_scoped_create(
+    statement,
+    exp,
+    dialect,
+    name,
+    bindings,
+    location,
+    queries,
+    gaps,
+    *,
+    parse_sql,
+    query,
+    read_statement,
+):
+    if name in bindings.get(("sqlite_escaped_receivers",), set()):
+        gaps.append("python_connection_escaped_schema_unproven:" + location["path"])
+        return
+    key = ("sqlite_receiver_schemas",)
+    schemas = dict(bindings.get(key, {}))
+    local_tables = deepcopy(schemas.get(name, {}))
+    read_statement(
+        statement,
+        exp,
+        location["path"],
+        location["sha256"],
+        location["statement"],
+        dialect,
+        local_tables,
+        [],
+        queries,
+        gaps,
+        line=location["line"],
+    )
+    schemas[name] = local_tables
+    bindings[key] = schemas

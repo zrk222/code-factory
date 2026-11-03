@@ -4901,8 +4901,12 @@ class _SourceTestScope:
                 or not isinstance(targets[0], ast.Name)
                 or targets[0].id != self.secret
                 or binding_occurrences(function.body, self.secret) != targets
-                or self.pytest_root(self.path, self.assignment) is None
             ):
+                return False
+            owner = self.owner_for(self.path, self.assignment)
+            if owner is not None:
+                return self.exercise_owner(self.path, owner)
+            if self.pytest_root(self.path, self.assignment) is None:
                 return False
             owner = parents.get(id(function))
             if not isinstance(owner, ast.ClassDef):

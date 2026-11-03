@@ -27,3 +27,15 @@ correction evidence. Disable unrelated global pytest plugin autoload for these
 local commands. SQLGlot must be available from the declared package environment;
 the private development parser target is not a production import path. These
 commands establish the selected local behavior, not full product or release approval.
+
+## SQLite refinement (post-implementation consolidation)
+The reviewed SQLite refinement reuses this existing feature contract. Original tasks and regression ledger above remain unchanged.
+
+### Additional atomic tasks
+- [ ] T7 | slice=factoryline | files=factoryline/__init__.py,factoryline/intent_quality.py,factoryline/import_context.py,tests/test_sqlite_context_local_schema.py | verify=`python -m pytest -q tests/test_sqlite_context_local_schema.py` | Prove finite receiver contexts and adversarial boundaries. Coherent helper extraction reuses the existing package module and preserves transitive cache identity.
+- [ ] T8 | slice=factoryline | files=factoryline/intent_quality.py,tests/test_sqlite_schema_constraints_and_triggers.py | verify=`python -m pytest -q tests/test_sqlite_schema_constraints_and_triggers.py` | Validate exact SQL grammar and unsupported controls; existing database configuration binding tests remain regression dependencies.
+- [ ] T9 | slice=factoryline | files=factoryline/import_context.py,tests/test_sqlite_export_scope.py | verify=`python -m pytest -q tests/test_sqlite_export_scope.py` | Distinguish lexical locals from imported provider escapes without hiding global mutations.
+- [ ] T10 | slice=factoryline | files=factoryline/import_context.py,tests/test_sqlite_execute_evaluation_order.py | verify=`python -m pytest -q tests/test_sqlite_execute_evaluation_order.py` | Evaluate callee and arguments before the call; preserve argument provenance without reviving a closed receiver or stale schema.
+- [ ] T11 | slice=.factory | files=.factory/sqlite-native-repair/workflow-wmm-contract.json,.factory/sqlite-native-repair/workflow-wmm-observations.json | verify=`factory audit workflows --contract .factory/sqlite-native-repair/workflow-wmm-contract.json --observations .factory/sqlite-native-repair/workflow-wmm-observations.json --json` | Bind final candidate and actual evidence without waivers.
+
+The scoped parser/context regression gate and full WMM coverage gate remain distinct. Passing scoped tests does not close T11 or establish a security pass; unknown guards, callbacks and public entries remain visible.
