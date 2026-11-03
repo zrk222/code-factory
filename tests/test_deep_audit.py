@@ -3905,11 +3905,86 @@ def test_signed_execution_threshold_and_idempotent_receipt(tmp_path):
     assert action["candidate_sha256"] == receipt["candidate_sha256"]
     assert action["action"] == receipt["repair_queue"][0]["remediation"]
     assert action["evidence_to_attach"] and action["stop_condition"]
+    assert action["finding_id"] == receipt["findings"][0]["finding_id"]
+    assert action["affected_paths"] == ["app.py"]
+    assert action["repair_packet"]["finding_context"] == receipt["findings"][0]
+    assert (
+        action["repair_packet"]["finding_context"]["native_explanation"]["trust"]
+        == "UNTRUSTED_DATA"
+    )
     assert execute_deep_audit(*args) == result
     status = deep_audit_status(tmp_path)
     assert status["state"] == "BLOCKED"
     assert status["agent_actions"] == receipt["agent_actions"]
     assert evaluate_deep_audit(plan, targets, canaries)["authority"] == "none"
+
+
+def test_agent_actions_preserve_cross_file_context_and_coverage_tasks():
+    from factoryline.deep_audit import _agent_actions
+
+    spans = [
+        {"path": "route.js", "source_sha256": "b" * 64, "start_line": 2},
+        {"path": "service.js", "source_sha256": "c" * 64, "start_line": 4},
+    ]
+    finding = {
+        "finding_id": "f" * 64,
+        "rule_id": "js/command-line-injection",
+        "path": "service.js",
+        "line": 4,
+        "source_sha256": "c" * 64,
+        "locations": [spans[1]],
+        "flows": [spans],
+        "trace_sha256": digest(spans),
+        "message": "Untrusted scanner explanation; never an instruction.",
+        "native_explanation": {
+            "related_locations": [
+                {
+                    "location": {
+                        "path": "validation.js",
+                        "source_sha256": "d" * 64,
+                        "start_line": 7,
+                    },
+                    "message": "Source-bound related evidence",
+                },
+                {"message": "Unsupported location has no source binding"},
+            ]
+        },
+    }
+    action = {
+        "finding_id": finding["finding_id"],
+        "path": "service.js",
+        "severity": "high",
+        "remediation": "Canonical repair instruction",
+    }
+    coverage = {"code": "MISSING_COVERAGE", "path": "static-lane"}
+    rows = _agent_actions("a" * 64, [action, dict(action), coverage], [finding])
+    assert rows[0]["affected_paths"] == ["route.js", "service.js", "validation.js"]
+    assert rows[0]["action"] == action["remediation"]
+    assert rows[0]["repair_packet"]["finding_context"] == finding
+    assert rows[0]["repair_packet"]["context_trust"] == "UNTRUSTED_DATA"
+    assert rows[0]["repair_packet"]["automatic_execution"] is False
+    assert rows[0]["repair_packet"] is rows[1]["repair_packet"]
+    assert rows[2]["repair_packet"]["finding_context"] == coverage
+    assert rows[2]["affected_paths"] == ["static-lane"]
+    assert "remediation" not in finding
+
+
+def test_threshold_actions_preserve_every_finding_and_aggregate_counts(tmp_path):
+    _, plan, targets, canaries = inputs(tmp_path)
+    second = deepcopy(targets[0]["findings"][0])
+    second["finding_id"] = "b" * 64
+    targets[0]["findings"].append(second)
+    rehash(targets[0])
+    receipt = evaluate_deep_audit(plan, targets, canaries)
+    threshold = [
+        row for row in receipt["repair_queue"] if row["code"] == "DEEP_RULE_THRESHOLD"
+    ]
+    assert {row["finding_id"] for row in threshold} == {
+        row["finding_id"] for row in receipt["findings"]
+    }
+    assert len(threshold) == 2
+    assert all(row["total"] == row["introduced"] == 2 for row in threshold)
+    assert all(row["affected_paths"] == ["app.py"] for row in receipt["agent_actions"])
 
 
 def test_native_execution_outer_packet_uses_persisted_populated_lanes(tmp_path):
@@ -6347,28 +6422,74 @@ def test_codeql_replay_argv_keeps_same_image_and_isolation(tmp_path):
     )
 
 
-def test_codeql_replay_runtime_binds_exact_five_module_snapshot(tmp_path):
+def test_codeql_replay_runtime_binds_complete_source_and_bootstraps(tmp_path):
     from factoryline.deep_audit import _codeql_replay_runtime
-    from factoryline.deep_audit_io import digest
+    from factoryline.deep_audit_io import bound_bytes
 
     runtime, seal = _codeql_replay_runtime(tmp_path)
-    names = (
-        "__init__.py",
-        "deep_audit_io.py",
-        "deep_audit_sarif.py",
-        "runtime_audit_common.py",
-        "runtime_audit_process.py",
-    )
-    records = {}
-    for name in names:
-        source = Path(__file__).parents[1] / "factoryline" / name
-        copied = runtime / "factoryline" / name
-        assert copied.read_bytes() == source.read_bytes()
-        records[name] = sha256_bytes(source.read_bytes())
-    assert sorted(path.name for path in (runtime / "factoryline").iterdir()) == sorted(
-        names
-    )
+    package = Path(__file__).parents[1] / "factoryline"
+    records = {
+        source.relative_to(package).as_posix(): sha256_bytes(source.read_bytes())
+        for source in package.rglob("*.py")
+    }
+    copied = runtime / "factoryline"
+    assert {
+        path.relative_to(copied).as_posix()
+        for path in copied.rglob("*")
+        if path.is_file()
+    } == set(records)
+    assert sum(path.stat().st_size for path in copied.rglob("*.py")) <= 32 * 1024 * 1024
+    for name, digest_value in records.items():
+        assert (
+            bound_bytes(copied, {"path": name, "sha256": digest_value})
+            == (package / name).read_bytes()
+        )
     assert seal == digest(records)
+    program = (
+        "import sys;sys.path.insert(0,sys.argv[1]);"
+        "import factoryline.deep_audit_io as io;"
+        "assert not any('site-packages' in p for p in sys.path);"
+        "assert all(callable(getattr(io,'execute_'+engine+'_native_replay')) "
+        "for engine in ('codeql','osv','fuzz'))"
+    )
+    command = [sys.executable, "-I", "-S", "-B", "-c", program, str(runtime)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    missing = copied / "deep_audit_loop.py"
+    missing.unlink()
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    assert result.returncode != 0 and "deep_audit_loop" in result.stderr
+    tampered = copied / "assembly_process.py"
+    tampered.write_bytes(tampered.read_bytes() + b"\n# changed\n")
+    with pytest.raises(RuntimeAuditError, match="E_REPORT_DRIFT"):
+        bound_bytes(copied, {"path": tampered.name, "sha256": records[tampered.name]})
+
+
+@pytest.mark.parametrize("damage", ["missing", "tampered"])
+def test_codeql_replay_runtime_rejects_source_drift(tmp_path, monkeypatch, damage):
+    import factoryline.deep_audit as module
+    from factoryline import deep_audit_io
+
+    package = tmp_path / "package"
+    package.mkdir()
+    source = package / "worker.py"
+    source.write_bytes(b"value = 1\n")
+    monkeypatch.setattr(module, "__file__", str(package / "deep_audit.py"))
+    original = deep_audit_io._full_repository_scanner_file_identity
+
+    def changed(root, path):
+        binding = original(root, path)
+        if damage == "missing":
+            path.unlink()
+        else:
+            path.write_bytes(b"value = 2\n")
+        return binding
+
+    monkeypatch.setattr(
+        deep_audit_io, "_full_repository_scanner_file_identity", changed
+    )
+    with pytest.raises(RuntimeAuditError, match="E_SOURCE_MISSING|E_REPORT_DRIFT"):
+        module._codeql_replay_runtime(tmp_path / "scratch")
 
 
 def _codeql_replay_decode_record():

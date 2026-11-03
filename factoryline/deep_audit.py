@@ -26,7 +26,6 @@ from .deep_audit_contract import verify_deep_audit_plan
 from .deep_audit_io import LIMIT, digest, local_file, strict_json
 from .deep_audit_sarif import normalize_sarif
 from .runtime_audit_common import RuntimeAuditError, canonical_bytes, sha256_bytes
-from .audit_action_refs import audit_remediation_packet
 
 
 def _execution_gap(code: str, action: str, path: str = ".") -> dict:
@@ -1854,20 +1853,21 @@ def _native_replay_result(
 
 
 def _codeql_replay_runtime(scratch):
-    root = scratch / "runtime"
-    target = root / "factoryline"
-    target.mkdir(parents=True)
-    records = {}
-    for name in (
-        "__init__.py",
-        "deep_audit_io.py",
-        "deep_audit_sarif.py",
-        "runtime_audit_common.py",
-        "runtime_audit_process.py",
-    ):
-        raw = local_file(Path(__file__).parent, name).read_bytes()
-        (target / name).write_bytes(raw)
-        records[name] = sha256_bytes(raw)
+    root, package = scratch / "runtime", Path(__file__).parent
+    records, total = {}, 0
+    for source in sorted(package.rglob("*.py")):
+        name = source.relative_to(package).as_posix()
+        binding = _deep_audit_io._full_repository_scanner_file_identity(
+            package, local_file(package, name)
+        )
+        raw = _deep_audit_io.bound_bytes(package, binding)
+        total += len(raw)
+        if len(records) >= 2000 or total > 32 * 1024 * 1024:
+            raise RuntimeAuditError("E_NATIVE_REPLAY", "runtime source budget exceeded")
+        target = root / "factoryline" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+        records[name] = binding["sha256"]
     return root, digest(records)
 
 
@@ -4072,14 +4072,15 @@ def _threshold_actions(plan: dict, counts: dict) -> list:
             item["baseline"] in {"new", "updated", "unbaselined"} for item in items
         )
         if len(items) > rule["max_total"] or introduced > rule["max_new"]:
-            action = _action("DEEP_RULE_THRESHOLD", rule)
-            action.update(
-                total=len(items),
-                introduced=introduced,
-                max_total=rule["max_total"],
-                max_new=rule["max_new"],
-            )
-            actions.append(action)
+            for finding in items:
+                action = _action("DEEP_RULE_THRESHOLD", rule, finding)
+                action.update(
+                    total=len(items),
+                    introduced=introduced,
+                    max_total=rule["max_total"],
+                    max_new=rule["max_new"],
+                )
+                actions.append(action)
     return actions
 
 
@@ -4112,7 +4113,7 @@ def evaluate_deep_audit(plan: dict, reports: list, canary_reports: list) -> dict
         "findings": sorted(findings, key=lambda item: item["finding_id"]),
         "clusters": clusters,
         "repair_queue": actions,
-        "agent_actions": _agent_actions(plan["candidate_sha256"], actions),
+        "agent_actions": _agent_actions(plan["candidate_sha256"], actions, findings),
         "decision": "BLOCKED" if actions else "READY_FOR_HUMAN_REVIEW",
         "report_hashes": {
             key: value["normalized_sha256"] for key, value in sorted(target.items())
@@ -4126,10 +4127,35 @@ def evaluate_deep_audit(plan: dict, reports: list, canary_reports: list) -> dict
     return {**receipt, "receipt_sha256": digest(receipt)}
 
 
-def _agent_actions(candidate_sha256: str, repair_queue: list[dict]) -> list[dict]:
+def _agent_actions(
+    candidate_sha256: str, repair_queue: list[dict], findings=()
+) -> list[dict]:
     """Expose the repair queue through a stable agent-facing work-item contract."""
-    rows = []
+    from .audit_action_refs import audit_remediation_packet
+
+    rows, packets = [], {}
+    contexts = {finding["finding_id"]: finding for finding in findings}
     for index, item in enumerate(repair_queue, start=1):
+        context = contexts.get(item.get("finding_id"), item)
+        key = item.get("finding_id") or f"action:{index}"
+        if key not in packets:
+            packets[key] = audit_remediation_packet(candidate_sha256, context)
+        paths = {
+            span["path"]
+            for span in [
+                context,
+                *context.get("locations", []),
+                *(step for flow in context.get("flows", []) for step in flow),
+                *(
+                    row["location"]
+                    for row in context.get("native_explanation", {}).get(
+                        "related_locations", []
+                    )
+                    if "location" in row
+                ),
+            ]
+            if span.get("path")
+        }
         severity = str(item.get("severity", "high")).lower()
         security = item.get("review_domain") == "security" or any(
             token in str(item.get("obligation_id", "")).lower()
@@ -4151,9 +4177,9 @@ def _agent_actions(candidate_sha256: str, repair_queue: list[dict]) -> list[dict
                     "Investigate the finding and propose a minimal repair.",
                 ),
                 "evidence_to_attach": "Candidate-bound patch diff, exact validation command, observed before/after behavior, and current hash-bound analyzer receipt.",
-                "affected_paths": [item["path"]] if item.get("path") else [],
+                "affected_paths": sorted(paths),
                 "finding_id": item.get("finding_id"),
-                "repair_packet": audit_remediation_packet(candidate_sha256, item),
+                "repair_packet": packets[key],
                 "stop_condition": item.get(
                     "consequence",
                     "Keep the deep audit BLOCKED until evidence proves the issue resolved.",
@@ -4334,7 +4360,9 @@ def deep_audit_status(root: Path) -> dict:
             "agent_actions": receipt.get(
                 "agent_actions",
                 _agent_actions(
-                    receipt.get("candidate_sha256", ""), receipt["repair_queue"]
+                    receipt.get("candidate_sha256", ""),
+                    receipt["repair_queue"],
+                    receipt["findings"],
                 ),
             ),
             "verification": "self_hash_only_not_signature_or_freshness",
