@@ -626,40 +626,41 @@ def resolve_import_source(
         selected = choice if captured else live_import_path(choice, root_abs)
         if selected in sources and captured_import_path(root_abs, selected):
             matches[kind].add(sources[selected])
-    if (
-        captured
-        and imported
-        and source_index is not None
-        and len(matches["child"]) == len(matches["package"]) == 1
-    ):
+    return _select_resolved_import(
+        matches, captured, imported, source_index, eligible, package_binding_exclude
+    )
+
+
+def _select_resolved_import(
+    matches, captured, imported, source_index, inventory, exclude
+):
+    """Keep legacy selection separate from captured package-attribute checks."""
+    if not captured:
+        return unique_import_source(matches, strict=False)
+    if not imported or source_index is None:
+        return unique_import_source(matches, strict=True)
+    return _captured_import_choice(matches, imported, source_index, inventory, exclude)
+
+
+def _captured_import_choice(matches, imported, source_index, inventory, exclude):
+    """Resolve one captured package binding without weakening ambiguity checks."""
+    package = next(iter(matches["package"])) if len(matches["package"]) == 1 else None
+    if package is None or package.name != "__init__.py":
+        return unique_import_source(matches, strict=True)
+    if len(matches["child"]) == 1:
         child = next(iter(matches["child"]))
-        package = next(iter(matches["package"]))
-        if package.name == "__init__.py" and _captured_child_module_matches(
-            source_index,
-            package,
-            child,
-            imported,
-            inventory=eligible,
-            exclude=package_binding_exclude,
+        if _captured_child_module_matches(
+            source_index, package, child, imported, inventory=inventory, exclude=exclude
         ):
             return child
-    if captured and imported and source_index and len(matches["package"]) == 1:
-        package = next(iter(matches["package"]))
-        if package.name == "__init__.py" and not matches["child"]:
-            binding = _captured_package_binding(
-                source_index,
-                package,
-                imported,
-                eligible,
-                exclude=package_binding_exclude,
-            )
-            return (
-                package
-                if isinstance(binding, ast.stmt)
-                and not isinstance(binding, (ast.Import, ast.ImportFrom))
-                else None
-            )
-    return unique_import_source(matches, strict=captured)
+    if matches["child"] or not source_index:
+        return unique_import_source(matches, strict=True)
+    binding = _captured_package_binding(
+        source_index, package, imported, inventory, exclude=exclude
+    )
+    if not isinstance(binding, ast.stmt):
+        return None
+    return None if isinstance(binding, (ast.Import, ast.ImportFrom)) else package
 
 
 def _captured_child_module_matches(
@@ -1137,6 +1138,8 @@ def import_resolution_helpers():
         ast.walk,
         ast.iter_child_nodes,
         resolve_import_source,
+        _select_resolved_import,
+        _captured_import_choice,
         captured_import_inventory_matches,
         captured_import_parent_modules,
         live_import_path,
