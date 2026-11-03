@@ -1,0 +1,37 @@
+feature: native-database-context
+version: "1.0"
+intent: "Finite SQLite source contexts and validated SQL grammar preserve unresolved authority."
+requirements:
+  - id: database_structure_grounded
+    description: "Native SQL and ORM facts retain captured source provenance."
+    invariant: "No project or database execution."
+    checks: ["database_structure", "_database_structure"]
+  - id: database_gaps_fail_closed
+    description: "Unresolved structure and exceeded budgets retain explicit gaps."
+    invariant: "Unknowns cannot establish completeness."
+    checks: ["database_structure", "_db_result"]
+  - id: database_identity_current
+    description: "Parser, dialect, content and helper identities bind graph and cache reuse."
+    invariant: "Changed source invalidates prior authority."
+    checks: ["_db_code_identity", "_db_cache_key"]
+  - id: database_workflow_shared
+    description: "Scan and context consumers receive the same static database map."
+    invariant: "No schema authority from advisory model output."
+    checks: ["database_structure", "database_workspace_context"]
+  - id: SOURCE_CONTEXT
+    description: "Source hashes and callable contexts remain bound; unknown public entries remain unresolved."
+    invariant: "Retain unknowns."
+    checks: ["_db_python", "database_structure"]
+  - id: SQL_GRAMMAR
+    description: "Bare constraints and narrow trigger grammar retain validated references."
+    invariant: "Unsupported SQL remains explicit."
+    checks: ["_db_constraint_fact", "_db_column_fact", "_db_read_statement"]
+  - id: COMPATIBILITY
+    description: "Existing APIs, caps and frozen study inputs remain unchanged."
+    invariant: "No security or release authority inferred."
+    checks: ["database_structure", "_database_structure"]
+gates:
+  - type: test
+    command: "python -m pytest -q tests/test_sqlite_context_local_schema.py tests/test_database_config_source_binding.py"
+  - type: smoke
+    command: "python -m pytest -q tests/test_sqlite_context_local_schema.py"
