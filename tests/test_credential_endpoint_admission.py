@@ -1019,3 +1019,197 @@ def test_precision257_fixture_consumer_status_classifies_supported_and_unsupport
         )
         is False
     )
+
+
+@pytest.mark.parametrize(
+    ("namespace", "setting"),
+    [
+        ("django.conf.settings", "FEATURE_ENABLED"),
+        ("core.settings", "FEATURE_ENABLED"),
+        ("core.settings", "configured"),
+    ],
+)
+def test_django_sequence_branch_projects_selected_settings_literal(namespace, setting):
+    handler = object.__new__(admission._CredentialHandlerIndex)
+    handler.django_settings = ast.parse(f"{setting} = False")
+    handler.django_settings_module = "core.settings"
+    handler._django_guard_dependencies = {}
+    handler.canonical = lambda _path, node: (
+        namespace + "." + node.attr
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "settings"
+        else None
+    )
+    visited = []
+    handler._django_sequence_statements = (
+        lambda _path, statements, _values, _accepted: (
+            visited.append(statements) or True
+        )
+    )
+    statement = ast.parse(
+        f"if not settings.{setting}:\n    pass\nelse:\n    blocked = True"
+    ).body[0]
+    accepted = set()
+
+    assert handler._django_sequence_branch("urls.py", statement, {}, accepted)
+    assert visited == [statement.body]
+    assert id(statement.orelse[0].targets[0]) in accepted
+    assignment = handler.django_settings.body[0]
+    assert handler._django_guard_dependencies == {(setting, assignment): None}
+
+
+@pytest.mark.parametrize(
+    ("settings_source", "guard", "namespace"),
+    [
+        ("", "settings.FEATURE_ENABLED", "django.conf.settings"),
+        (
+            "FEATURE_ENABLED = os.getenv('FEATURE_ENABLED')",
+            "settings.FEATURE_ENABLED",
+            "django.conf.settings",
+        ),
+        (
+            "FEATURE_ENABLED = True\nFEATURE_ENABLED = False",
+            "settings.FEATURE_ENABLED",
+            "django.conf.settings",
+        ),
+        (
+            "if DEBUG:\n    FEATURE_ENABLED = True",
+            "settings.FEATURE_ENABLED",
+            "django.conf.settings",
+        ),
+        ("configured = False", "settings.configured", "django.conf.settings"),
+        (
+            'MEDIA_URL = "media/"',
+            "settings.MEDIA_URL == '/media/'",
+            "django.conf.settings",
+        ),
+        ("FEATURE_ENABLED = False", "settings.FEATURE_ENABLED", "other.settings"),
+        ("FEATURE_ENABLED = False", "settings.FEATURE_ENABLED", None),
+    ],
+)
+def test_django_sequence_branch_leaves_unclosed_settings_unknown(
+    settings_source, guard, namespace
+):
+    handler = object.__new__(admission._CredentialHandlerIndex)
+    handler.django_settings = ast.parse(settings_source)
+    handler.django_settings_module = "core.settings"
+    handler._django_guard_dependencies = {}
+    handler.canonical = lambda _path, node: (
+        namespace + "." + node.attr
+        if namespace is not None
+        and isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "settings"
+        else None
+    )
+    handler._django_sequence_statements = lambda *_args: pytest.fail(
+        "unknown guard must not select either branch"
+    )
+    statement = ast.parse(f"if {guard}:\n    pass\nelse:\n    pass").body[0]
+
+    assert not handler._django_sequence_branch("urls.py", statement, {}, set())
+    assert not handler._django_guard_dependencies
+
+
+@pytest.mark.parametrize(
+    "settings_source",
+    ["", "DEBUG = True\nDEBUG = False"],
+)
+def test_django_sequence_branch_keeps_debug_default_and_last_literal(settings_source):
+    handler = object.__new__(admission._CredentialHandlerIndex)
+    handler.django_settings = ast.parse(settings_source)
+    handler.django_settings_module = "core.settings"
+    handler._django_guard_dependencies = {}
+    handler.canonical = lambda _path, node: (
+        "django.conf.settings.DEBUG"
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "settings"
+        else None
+    )
+    visited = []
+    handler._django_sequence_statements = (
+        lambda _path, statements, _values, _accepted: (
+            visited.append(statements) or True
+        )
+    )
+    statement = ast.parse("if settings.DEBUG:\n    pass\nelse:\n    pass").body[0]
+
+    assert handler._django_sequence_branch("urls.py", statement, {}, set())
+    assert visited == [statement.orelse]
+
+
+def test_django_reference_reuses_source_span_for_relative_path():
+    from pathlib import Path
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    path = Path("settings.py")
+    raw = b"FEATURE_ENABLED = False\n"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    index = SourceSnapshotIndex(Path("."), {path: tree}, {path: raw}, {path: digest})
+    handler = object.__new__(admission._CredentialHandlerIndex)
+    handler.index = index
+
+    assert handler._django_reference(path, tree.body[0]) == {
+        "path": "settings.py",
+        "sha256": digest,
+        "span": [1, 0, 1, 23],
+    }
+
+
+def test_django_sequence_rejects_large_guard_before_provider_projection():
+    handler = object.__new__(admission._CredentialHandlerIndex)
+    handler.canonical = lambda *_: pytest.fail("guard budget must precede projection")
+    statement = ast.parse(
+        "if " + " or ".join(["settings.FLAG"] * 200) + ":\n    pass"
+    ).body[0]
+    assert not handler._django_sequence_branch("urls.py", statement, {}, set())
+
+
+def test_django_selected_consumer_materializes_guard_roots(monkeypatch):
+    from factoryline import semantic_credential_sensor as sensor
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    settings_path, url_path, view_path = map(
+        Path, ("core/settings.py", "core/urls.py", "images/views.py")
+    )
+    trees = {path: ast.parse("pass") for path in (settings_path, url_path, view_path)}
+    index = SimpleNamespace(
+        snapshots=trees,
+        inventory={path: "0" * 64 for path in trees},
+        validate=lambda _path: True,
+    )
+    context = {"index": index, "aliases": {path: {} for path in trees}}
+    roots_by_tree = {}
+
+    monkeypatch.setattr(
+        sensor, "_security_builtin_identity_closed", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(sensor, "_provider_identity_uncertain", lambda *_a, **_k: False)
+    monkeypatch.setattr(sensor, "_signing_provider_clear", lambda *_a, **_k: True)
+
+    def provider_reads(tree, _aliases, _framework, roots, _nodes, **_kwargs):
+        roots_by_tree[id(tree)] = tuple(roots)
+        return set()
+
+    monkeypatch.setattr(
+        sensor,
+        "_signing_provider_reads",
+        provider_reads,
+    )
+
+    assert admission._django_selected_consumers_closed(
+        context,
+        settings_path,
+        {"FEATURE_ENABLED"},
+        set(),
+        {url_path, view_path},
+        iter(("FEATURE_ENABLED",)),
+    )
+    expected = "django.conf.settings.FEATURE_ENABLED"
+    assert all(
+        expected in roots_by_tree[id(trees[path])] for path in (url_path, view_path)
+    )

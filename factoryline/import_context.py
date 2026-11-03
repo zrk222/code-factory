@@ -2163,29 +2163,38 @@ class _SecurityFlowState(set):
         self.values.pop(name, None)
 
 
-def security_literal_branch_blocks(statement, values=None, *, singleton_identity=False):
+def security_literal_branch_blocks(
+    statement, values=None, *, singleton_identity=False, expression_values=None
+):
     """Select only bounded, side-effect-free literal guards; unknown keeps both arms."""
     from .review_audits import _constant_truth_value
 
     from .credential_role_identity_effects import _validated_exact_scalar
+    from itertools import islice
 
-    known = {
-        name: scalar[0]
-        for name, value in (values or {}).items()
-        for scalar in (_validated_exact_scalar(value),)
-        if all(
-            (
-                not value.unknown,
-                not value.content_unknown,
-                not value.roots,
-                bool(scalar),
-            )
-        )
+    nodes = tuple(islice(ast.walk(statement.test), 129))
+    if len(nodes) > 128:
+        return statement.body, statement.orelse
+    known = {}
+    for node in nodes:
+        if not isinstance(node, (ast.Name, ast.Attribute)):
+            continue
+        name = node.id if isinstance(node, ast.Name) else ast.dump(node)
+        environment = values if isinstance(node, ast.Name) else expression_values
+        value = (environment or {}).get(name)
+        scalar = _validated_exact_scalar(value) if value is not None else ()
+        if scalar and not (value.unknown or value.content_unknown or value.roots):
+            known[name] = scalar[0]
+    projected = {
+        id(child)
+        for node in nodes
+        if isinstance(node, ast.Attribute) and ast.dump(node) in known
+        for child in ast.walk(node.value)
     }
-    nodes = tuple(ast.walk(statement.test))
     allowed = (
         ast.Constant,
         ast.Name,
+        ast.Attribute,
         ast.List,
         ast.Tuple,
         ast.Set,
@@ -2219,9 +2228,13 @@ def security_literal_branch_blocks(statement, values=None, *, singleton_identity
         if type(node.value) in literal_budgets
     )
     if (
-        len(nodes) > 128
-        or any(not isinstance(node, allowed) for node in nodes)
-        or any(isinstance(node, ast.Name) and node.id not in known for node in nodes)
+        any(not isinstance(node, allowed) for node in nodes)
+        or any(
+            isinstance(node, (ast.Name, ast.Attribute))
+            and id(node) not in projected
+            and (node.id if isinstance(node, ast.Name) else ast.dump(node)) not in known
+            for node in nodes
+        )
         or any(measure(value) > limit for value, (measure, limit) in measured_literals)
     ):
         return statement.body, statement.orelse

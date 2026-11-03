@@ -1982,3 +1982,113 @@ def test_import_resolution_helper_binding_and_code_mutation_change_native_epoch(
         patch.setattr(original, "__code__", replacement.__code__)
         assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
     assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
+@pytest.mark.parametrize(
+    "expression,facts,selected",
+    [
+        ("not config.FLAG", {"config.FLAG": False}, True),
+        ("config.FLAG", {"config.FLAG": False}, False),
+        (
+            "config.COUNT == 2 and not config.FLAG",
+            {"config.COUNT": 2, "config.FLAG": False},
+            True,
+        ),
+        (
+            "config.COUNT < 2 or config.FLAG",
+            {"config.COUNT": 2, "config.FLAG": False},
+            False,
+        ),
+        ("config.FLAG", {}, None),
+        ("config.COUNT < 'two' or True", {"config.COUNT": 2}, None),
+        ("config.COUNT < 'two' and False", {"config.COUNT": 2}, None),
+        ("not (config.COUNT < 'two' or True)", {"config.COUNT": 2}, None),
+        ("True or config.COUNT < 'two'", {"config.COUNT": 2}, True),
+        ("False and config.COUNT < 'two'", {"config.COUNT": 2}, False),
+        ("1 in 2 or True", {}, None),
+        ("config.FLAG and config.OTHER", {"config.FLAG": True}, None),
+        ("load().FLAG", {"load().FLAG": False}, None),
+        ("config[0].FLAG", {"config[0].FLAG": False}, None),
+        ("getattr(config, 'FLAG')", {}, None),
+    ],
+)
+def test_source_proven_attribute_guard_facts_select_without_executing(
+    expression, facts, selected
+):
+    from factoryline.credential_role_identity_effects import identity_value
+
+    branch = ast.parse(f"if {expression}:\n    result = 1\nelse:\n    result = 2").body[
+        0
+    ]
+    before = ast.dump(branch, include_attributes=True)
+    projections = {
+        ast.dump(
+            ast.parse(name, mode="eval").body, include_attributes=False
+        ): identity_value(ast.Constant(value=value), {}, strict_calls=True)
+        for name, value in facts.items()
+    }
+    observed = capture.security_literal_branch_blocks(
+        branch, expression_values=projections
+    )
+    expected = (
+        (branch.body, branch.orelse)
+        if selected is None
+        else (branch.body if selected else branch.orelse,)
+    )
+    assert observed == expected
+    assert ast.dump(branch, include_attributes=True) == before
+
+
+@pytest.mark.parametrize("field", ["unknown", "content_unknown", "roots"])
+def test_unproved_attribute_guard_fact_never_selects(field):
+    from dataclasses import replace
+    from factoryline.credential_role_identity_effects import identity_value
+
+    branch = ast.parse(
+        "if not config.FLAG:\n    result = 1\nelse:\n    result = 2"
+    ).body[0]
+    value = identity_value(ast.Constant(value=False), {}, strict_calls=True)
+    value = replace(
+        value, **{field: frozenset({"request"}) if field == "roots" else True}
+    )
+    key = ast.dump(branch.test.operand, include_attributes=False)
+    assert capture.security_literal_branch_blocks(
+        branch, expression_values={key: value}
+    ) == (branch.body, branch.orelse)
+
+
+def test_known_raising_literal_guard_has_no_branch_authority():
+    with pytest.raises(TypeError):
+        _ = 2 < "two" or True
+    with pytest.raises(TypeError):
+        _ = 1 in 2 or True
+    for expression in ("2 < 'two' or True", "1 in 2 or True"):
+        assert (
+            audit._constant_truth_value(ast.parse(expression, mode="eval").body, {})
+            is None
+        )
+
+
+def test_guard_only_reads_values_used_in_its_expression():
+    from factoryline.credential_role_identity_effects import identity_value
+
+    class LookupOnly(dict):
+        def items(self):
+            pytest.fail("guard analysis must not scan the complete source environment")
+
+    branch = ast.parse("if flag:\n    yes = 1\nelse:\n    no = 1").body[0]
+    values = LookupOnly(flag=identity_value(ast.Constant(value=False), {}))
+    assert capture.security_literal_branch_blocks(branch, values) == (branch.orelse,)
+
+
+def test_guard_node_limit_is_checked_before_dumping_subtrees(monkeypatch):
+    branch = ast.parse("if config" + ".field" * 150 + ":\n    yes = 1").body[0]
+
+    def unexpected_dump(*args, **kwargs):
+        pytest.fail("oversized guards must stop before structural-key construction")
+
+    monkeypatch.setattr(capture.ast, "dump", unexpected_dump)
+    assert capture.security_literal_branch_blocks(branch) == (
+        branch.body,
+        branch.orelse,
+    )
