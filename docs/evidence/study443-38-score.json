@@ -1,0 +1,47 @@
+{
+  "schema": "factory.study44338.result.v1",
+  "study_id": "N443-38",
+  "status": "MEASURED_AI_ONLY_USER_AMENDED_PARTIAL_DECISIONS",
+  "engine": {
+    "core_commit": "9dfce4ee85c2995f6ce90aaa976b2822b71fbff9",
+    "engine_sha256": "0d5964e90f89b1ca3b54101203a3d5542252000cc7fd4f7843eebb55300733d0"
+  },
+  "scope": "Native-admitted security findings in preregistered Django-topic Python frame; not general CF precision or current-main measurement.",
+  "selected": 38,
+  "repositories": 38,
+  "max_per_repository": 1,
+  "tp": 30,
+  "fp": 6,
+  "unclear": 2,
+  "decided": 36,
+  "decided_precision": 0.8333333333333334,
+  "conservative_precision": 0.7894736842105263,
+  "qualified_minimum38_decided": false,
+  "original40_or48_complete": false,
+  "label_source": "Two fresh independent Sol6.1high AI reviewers; no outside human adjudication",
+  "reconciliation": "Identical first-pass labels only; two disagreements remainUNCLEAR; no semantic retries",
+  "sampling": "User stopped at existing first38 before reference labels; no label-based topup/replacement; source-hash exposure exclusion validated",
+  "recall_claim": false,
+  "measured_precision_rise": false,
+  "current_main_precision_claim": false,
+  "packet_seal_sha256": "e784b7f68948a6e1d4fbd85c2e8f34c4fa0e4b7f3fa066a9d3eca285983d1b69",
+  "raw_score_sha256": "1219d8a1430fca52db7ce8b74bb02381032eb3b13767783c26d5ac7c0344efab",
+  "record": {
+    "path": "docs/evidence/study443-38-record.json.gz",
+    "sha256": "0a40d490649c95fd895a706343b61a1d32ded267f4407aab9ceb242c0007f4b5",
+    "bytes": 344906
+  },
+  "false_positive_ids": [
+    "N443-38-003",
+    "N443-38-005",
+    "N443-38-020",
+    "N443-38-022",
+    "N443-38-034",
+    "N443-38-035"
+  ],
+  "unresolved_ids": [
+    "N443-38-017",
+    "N443-38-024"
+  ],
+  "frozen_after_reference": "Exposed for subsequent tuning; preserve this first-pass result."
+}
