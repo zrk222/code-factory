@@ -394,6 +394,9 @@ def test_declaration_neighborhood_only_exact_unshadowed_import_references(
     index, finding = _declaration_fixture(
         tmp_path,
         {
+            "aaa_noise.py": "import os\ndef unused(value):\n    return (\n"
+            + "        value, os,\n" * 600
+            + "    )\n",
             "sink.py": "credential = 'fixture'\nimport pickle\nx = pickle.loads(b'')\n",
             "consumer.py": consumer,
             "other.py": "credential = 'different'\n",
@@ -401,6 +404,28 @@ def test_declaration_neighborhood_only_exact_unshadowed_import_references(
     )
     context = _declaration_context(index, finding)
     assert any(row["path"] == "consumer.py" for row in context["excerpts"]) is delivered
+    assert "declaration_reference_search_budget" not in context["truncation"]
+    assert context["edges"] == []
+
+
+def test_declaration_reference_dedup_preserves_distinct_scopes(tmp_path):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "sink.py": "credential = 'fixture'\nimport pickle\nx = pickle.loads(b'')\n",
+            "consumer.py": (
+                "from sink import credential as key\n"
+                "class First:\n    value = key\n"
+                "class Second:\n    value = key\n"
+                "def consume():\n    shadow = lambda key: key\n"
+                "    return (((((key,),),),),)\n"
+            ),
+        },
+    )
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "class First:" in text and "class Second:" in text
+    assert "def consume():" in text
     assert context["edges"] == []
 
 
@@ -585,6 +610,223 @@ def test_declaration_neighborhood_overflow_is_explicit_and_bounded(tmp_path):
     assert len(context["dependency_sources"]) <= 64
     assert len(json.dumps(context).encode()) < 64000
     assert context["status"] == "INCOMPLETE" and context["edges"] == []
+
+
+def test_large_module_global_slices_classmethod_consumer_guard_and_receiver(tmp_path):
+    source = (
+        "credential = 'fixture'\n"
+        + "# module padding\n" * 650
+        + "class Gateway:\n"
+        + "    @classmethod\n"
+        + "    def send(cls):\n"
+        + "        cls.client = Client()\n"
+        + "        if cls.client.ready:\n"
+        + "            cls.client.configure(credential)\n"
+    )
+    index, finding = _declaration_fixture(
+        tmp_path, {"sink.py": source + "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    context = _declaration_context(index, finding)
+    excerpts = [row["content"] for row in context["excerpts"]]
+    text = "\n".join(excerpts)
+    assert "credential = 'fixture'" in text
+    assert "def send(cls):" in text
+    assert "cls.client = Client()" in text
+    assert "cls.client.ready" in text
+    assert "cls.client.configure(credential)" in text
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+    assert context["structural_context"]["authority"] == "none"
+    assert context["structural_context"]["validated_trace_edges"] == 0
+    assert len(excerpts) <= 8
+    for row in context["excerpts"]:
+        assert row["sha256"] == index.inventory[index.root / row["path"]]
+
+
+def test_large_module_global_keeps_parameter_receiver_use_without_fabricating_init(
+    tmp_path,
+):
+    source = (
+        "credential = 'fixture'\n"
+        + "# module padding\n" * 650
+        + "def send(client):\n"
+        + "    if client.ready:\n"
+        + "        client.configure(credential)\n"
+        + "import pickle\n"
+        + "x = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, {"sink.py": source})
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "def send(client):" in text
+    assert "client.configure(credential)" in text
+    assert "client.ready" in text
+    assert "client =" not in text
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+    assert context["structural_context"]["validated_trace_edges"] == 0
+
+
+def test_large_module_global_keeps_with_scope_around_consumer(tmp_path):
+    source = (
+        "credential = 'fixture'\n"
+        + "# module padding\n" * 650
+        + "def send():\n"
+        + "    with isolated_fixture():\n"
+        + "        consume(credential)\n"
+        + "import pickle\nx = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, {"sink.py": source})
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "with isolated_fixture():" in text
+    assert "consume(credential)" in text
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+
+
+def test_large_module_global_keeps_async_with_scope_around_consumer(tmp_path):
+    source = (
+        "credential = 'fixture'\n"
+        + "# module padding\n" * 650
+        + "async def send():\n"
+        + "    async with isolated_fixture():\n"
+        + "        consume(credential)\n"
+        + "import pickle\nx = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, {"sink.py": source})
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "async with isolated_fixture():" in text
+    assert "consume(credential)" in text
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+
+
+def test_large_module_global_keeps_else_polarity_around_consumer(tmp_path):
+    source = (
+        "credential = 'fixture'\n"
+        + "# module padding\n" * 650
+        + "def send():\n"
+        + "    if ready():\n"
+        + "        pass\n"
+        + "    else:\n"
+        + "        consume(credential)\n"
+        + "import pickle\nx = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, {"sink.py": source})
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "if ready():" in text
+    assert "else:" in text
+    assert "consume(credential)" in text
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+
+
+def test_large_module_global_keeps_testcase_class_header_and_base_binding(tmp_path):
+    source = (
+        "from unittest import TestCase\n"
+        "credential = 'fixture'\n"
+        + "# module padding\n" * 650
+        + "class CredentialTests(TestCase):\n"
+        + "    def test_credentials(self):\n"
+        + "        consume(credential)\n"
+        + "import pickle\nx = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, {"sink.py": source})
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "class CredentialTests(TestCase):" in text
+    assert "from unittest import TestCase" in text
+    assert "def test_credentials(self):" in text
+    assert "consume(credential)" in text
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+
+
+def test_large_nested_same_name_uses_reuse_scan_local_binding_facts(
+    tmp_path, monkeypatch
+):
+    import factoryline.audit_rule_search as audit_rule_search
+
+    source = (
+        "credential = 'fixture'\n"
+        + "# module padding\n" * 650
+        + "def outer():\n"
+        + "    def inner():\n"
+        + "        consume(credential)\n"
+        + "        consume(credential)\n"
+        + "        consume(credential)\n"
+        + "import pickle\nx = pickle.loads(b'')\n"
+    )
+    calls = []
+    original = audit_rule_search._declaration_function_bindings
+
+    def counted(function, name):
+        if name == "credential":
+            calls.append((function.name, name))
+        return original(function, name)
+
+    monkeypatch.setattr(audit_rule_search, "_declaration_function_bindings", counted)
+    index, finding = _declaration_fixture(tmp_path, {"sink.py": source})
+    context = _declaration_context(index, finding)
+    assert calls.count(("inner", "credential")) == 1
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "consume(credential)" in text
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+
+
+def test_large_function_local_alias_slices_consumer_guard_and_receiver(tmp_path):
+    source = (
+        "def configure():\n"
+        "    credential = 'fixture'\n"
+        + "    # function padding\n" * 650
+        + "    token = credential\n"
+        + "    client = Client()\n"
+        + "    if client.ready:\n"
+        + "        client.configure(token)\n"
+        + "    import pickle\n"
+        + "    x = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, {"sink.py": source})
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "def configure():" in text
+    assert "token = credential" in text
+    assert "client = Client()" in text
+    assert "client.ready" in text
+    assert "client.configure(token)" in text
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+    assert context["structural_context"]["validated_trace_edges"] == 0
+    assert len(context["excerpts"]) <= 8
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "credential = 'changed'\nclass Gateway:\n    @classmethod\n    def send(cls):\n        return credential\n",
+        "class Gateway:\n    @classmethod\n    def send(cls, credential):\n        return credential\n",
+        "def send():\n    globals()['credential'] = 'changed'\n    return credential\n",
+        "def send():\n    return getattr(settings, 'credential')\n",
+        "def send():\n    transformed = opaque(credential)\n    return transformed\n",
+    ],
+)
+def test_large_same_file_shadow_rebind_and_opaque_uses_stay_unresolved(tmp_path, body):
+    source = "credential = 'fixture'\n" + "# module padding\n" * 650 + body
+    index, finding = _declaration_fixture(
+        tmp_path, {"sink.py": source + "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    context = _declaration_context(index, finding)
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+    assert context["structural_context"]["validated_trace_edges"] == 0
+    assert not any("return credential" in row["content"] for row in context["excerpts"])
+    assert not any(
+        "return transformed" in row["content"] for row in context["excerpts"]
+    )
 
 
 def test_security_producer_nested_call_spans_reach_context_and_public_intake(

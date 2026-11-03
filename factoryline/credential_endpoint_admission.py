@@ -2217,9 +2217,8 @@ def _django_default_authority(finding, context, declaration, observation):
                 "span": _span(statement),
             }
         )
-    selected = _CredentialHandlerIndex(context, framework="django").django_feedback(
-        path, settings
-    )
+    handler = _CredentialHandlerIndex(context, framework="django")
+    selected = handler.django_feedback(path, settings, selected_admin_only=True)
     if selected is None:
         return None
     consumers.extend([selected["root"], *selected["evidence"]])
@@ -2235,6 +2234,18 @@ def _django_default_authority(finding, context, declaration, observation):
         and isinstance(node.args[1], ast.Constant)
         and isinstance(node.args[1].value, str)
     }
+    selected_sources = {
+        path,
+        *(Path(row["path"]) for row in observation["transfers"]),
+        Path(selected["root"]["path"]),
+        *(Path(row["path"]) for row in selected["evidence"]),
+        *(Path(row["path"]) for row in selected["construction_sources"]),
+    }
+    selected_sources = _django_selected_source_paths(
+        context, path, selected_sources, settings, default_guards
+    )
+    if selected_sources is None:
+        return None
     if not _django_selected_consumers_closed(
         context,
         path,
@@ -2248,8 +2259,15 @@ def _django_default_authority(finding, context, declaration, observation):
             "AUTHENTICATION_BACKENDS",
         },
         selected_modules,
+        selected_sources,
     ):
         return None
+    source_hashes = {
+        row["path"]: row["sha256"] for row in observation["supporting_sources"]
+    }
+    source_hashes.update(
+        {index.relative(source): index.inventory[source] for source in selected_sources}
+    )
     return {
         "schema": "factory.security.selected-framework-consumer-authority.v1",
         "proof_scope": "source_bound_selected_framework_feedback_default",
@@ -2258,6 +2276,10 @@ def _django_default_authority(finding, context, declaration, observation):
         "source_role": "published_literal_default",
         "consumer_role": "signed_feedback_integrity",
         "selected_consumer": selected,
+        "supporting_sources": [
+            {"path": source, "sha256": source_hashes[source]}
+            for source in sorted(source_hashes)
+        ],
         "transfers": [
             observation["declaration"],
             *consumers,
@@ -2547,7 +2569,49 @@ def _django_import_namespace_unknown(nodes, aliases, approved):
     )
 
 
-def _django_selected_consumers_closed(context, path, required, selected_modules):
+def _django_selected_source_paths(context, path, sources, projection=None, guards=()):
+    from .import_context import eager_import_closure
+    from .semantic_credential_sensor import _signing_resolve_module
+
+    index = context["index"]
+    if not all(index.validate(source) for source in sources):
+        return None
+    closure_index = index
+    if guards:
+        from types import SimpleNamespace
+
+        closure_index = SimpleNamespace(
+            root=index.root,
+            snapshots={**index.snapshots, path: projection},
+            inventory=index.inventory,
+            validate=index.validate,
+        )
+    closure = eager_import_closure(closure_index, sources, {"django", "rest_framework"})
+    closure["projection_guards"] = [
+        {
+            "path": index.relative(path),
+            "sha256": index.inventory[path],
+            "span": _span(node),
+        }
+        for node in guards
+    ]
+    context.setdefault("selected_import_closures", {})[index.relative(path)] = closure
+    if not closure["closed"]:
+        return None
+    selected = set(sources) | {Path(row["path"]) for row in closure["sources"]}
+    return selected | {
+        source
+        for source, aliases in context["aliases"].items()
+        if any(
+            _signing_resolve_module(context, ast.Constant(value=module), source) == path
+            for module in aliases.values()
+        )
+    }
+
+
+def _django_selected_consumers_closed(
+    context, path, required, selected_modules, selected_sources
+):
     from .semantic_credential_sensor import (
         _signing_provider_clear,
         _signing_resolve_module,
@@ -2589,14 +2653,19 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
         "rest_framework.views.APIView",
         "rest_framework.generics",
     )
-    for source_path, tree in index.snapshots.items():
+    for source_path in selected_sources:
+        tree = index.snapshots.get(source_path)
+        if tree is None or not index.validate(source_path):
+            return False
         aliases = dict(context["aliases"][source_path])
         for alias, canonical in tuple(aliases.items()):
             module, _, member = canonical.rpartition(".")
             if (
                 canonical == "django.conf.settings"
                 or canonical in selected_modules
-                or _signing_resolve_module(context, ast.Constant(value=canonical))
+                or _signing_resolve_module(
+                    context, ast.Constant(value=canonical), source_path
+                )
                 == path
             ):
                 aliases[alias] = "django.conf.settings"
@@ -2604,7 +2673,7 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
                 module == "django.conf.settings"
                 or module.lstrip(".") in selected_modules
                 or _signing_resolve_module(
-                    context, ast.Constant(value=module.lstrip("."))
+                    context, ast.Constant(value=module.lstrip(".")), source_path
                 )
                 == path
             ):
@@ -4190,7 +4259,7 @@ class _CredentialHandlerIndex:
             else None
         )
 
-    def django_feedback(self, path, settings):
+    def django_feedback(self, path, settings, *, selected_admin_only=False):
         """Evaluate the selected URL sequence, retaining only closed feedback effects."""
         from .mock_fixture_provenance import _django_assignment
         from .semantic_credential_sensor import _signing_resolve_module
@@ -4204,7 +4273,11 @@ class _CredentialHandlerIndex:
                 target = _signing_resolve_module(self.context, value, path)
             case _:
                 return None
-        routes = self._django_routes(target, (), ())
+        self._django_route_sources = set()
+        routes = self._django_routes(target, (), (), selected_admin_only)
+        if routes is None and selected_admin_only:
+            self._django_route_sources = set()
+            routes = self._django_routes(target, (), ())
         if routes is None:
             return None
         imports = _django_setting_import_closure(self.context, path) or {
@@ -4233,6 +4306,10 @@ class _CredentialHandlerIndex:
                     *configuration,
                     *provider_refs,
                     *(ref for _, _, refs in routes for ref in refs),
+                ],
+                "construction_sources": [
+                    {"path": p.as_posix(), "sha256": self.index.inventory[p]}
+                    for p in sorted(self._django_route_sources)
                 ],
             }
         return None
@@ -4552,13 +4629,14 @@ class _CredentialHandlerIndex:
                 )
         return False
 
-    def _django_routes(self, path, stack, prefix):
+    def _django_routes(self, path, stack, prefix, selected_admin_only=False):
         if path is None or path in stack or not self.index.validate(path):
             return None
         sequence = self._django_sequence(path)
         if sequence is None:
             return None
-        result = []
+        self._django_route_sources.add(path)
+        result, selected = [], False
         for node, callback_prefix in sequence:
             rows = (
                 [
@@ -4570,15 +4648,28 @@ class _CredentialHandlerIndex:
                 ]
                 if isinstance(node, dict)
                 else self._django_route(
-                    path, node, (*stack, path), prefix, callback_prefix
+                    path,
+                    node,
+                    (*stack, path),
+                    prefix,
+                    callback_prefix,
+                    selected_admin_only,
                 )
             )
             if rows is None:
                 return None
-            result.extend(rows)
+            if not selected:
+                result.extend(rows)
+            selected = (
+                selected
+                or selected_admin_only
+                and any(model == "django.admin.feedback.v1" for _, model, _ in rows)
+            )
         return result
 
-    def _django_route(self, path, node, stack, prefix, callback_prefix=""):
+    def _django_route(
+        self, path, node, stack, prefix, callback_prefix="", selected_admin_only=False
+    ):
         from .semantic_credential_sensor import _signing_resolve_module
 
         if not isinstance(node, ast.Call) or len(node.args) not in {2, 3}:
@@ -4637,7 +4728,10 @@ class _CredentialHandlerIndex:
             ):
                 return [(chain, None, [reference])]
             rows = self._django_routes(
-                _signing_resolve_module(self.context, literal, path), stack, chain
+                _signing_resolve_module(self.context, literal, path),
+                stack,
+                chain,
+                selected_admin_only,
             )
             return (
                 [(r, m, [reference, *refs]) for r, m, refs in rows]

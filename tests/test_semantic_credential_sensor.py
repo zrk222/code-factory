@@ -613,6 +613,13 @@ def test_framework_session_authority_abstains_on_incomplete_or_mutated_roles(
     files = _configuration_files277(_DJANGO_SESSION_START)
     files["service/settings.py"] = replacement
     files.update(extra)
+    if "consumer.py" in extra:
+        files["service/consumer.py"] = files.pop("consumer.py").replace(
+            "from .service.settings", "from .settings"
+        )
+        files["service/start.py"] = (
+            "import service.consumer\n" + files["service/start.py"]
+        )
     row = _configuration_tiers277(files)["ledger"][0]
     assert row["tier"] == "NEEDS_CONTEXT"
     assert row["raw_finding"]["severity"] == "CRITICAL"
@@ -689,9 +696,11 @@ def test_selected_consumer_authority_requires_regenerated_receipt(forgery):
     assert tier == "NEEDS_CONTEXT"
 
 
-@pytest.mark.parametrize("mutated", [False, True])
+@pytest.mark.parametrize(
+    ("mutated", "reachable"), [(False, False), (True, True), (True, False)]
+)
 def test_framework_session_authority_public_cli_receipt_and_independent_reseal(
-    tmp_path, capsys, mutated
+    tmp_path, capsys, mutated, reachable
 ):
     import copy
     import json
@@ -704,6 +713,8 @@ def test_framework_session_authority_public_cli_receipt_and_independent_reseal(
         files["consumer.py"] = (
             "from service.settings import MIDDLEWARE as layers\nlayers.clear()\n"
         )
+        if reachable:
+            files["service/start.py"] = "import consumer\n" + files["service/start.py"]
     for name, source in files.items():
         target = tmp_path / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -728,10 +739,11 @@ def test_framework_session_authority_public_cli_receipt_and_independent_reseal(
     output = capsys.readouterr()
     assert output.err == ""
     report = json.loads(output.out)
-    assert code == (0 if mutated else 1)
+    obstructed = mutated and reachable
+    assert code == (0 if obstructed else 1)
     assert report["audit_coverage"]["complete"] is True
     (row,) = report["finding_tier_report"]["ledger"]
-    assert row["tier"] == ("NEEDS_CONTEXT" if mutated else "SUPPORTED_DEFECT")
+    assert row["tier"] == ("NEEDS_CONTEXT" if obstructed else "SUPPORTED_DEFECT")
     assert row["raw_finding"] == report["findings"][0]
     envelope, truncated = receipts._security_scan_read_receipt(tmp_path)
     assert envelope is not None and not truncated
@@ -744,7 +756,7 @@ def test_framework_session_authority_public_cli_receipt_and_independent_reseal(
     resealed = audit._seal_security_scan(rebuilt)
     assert resealed["finding_tier_report"] == report["finding_tier_report"]
     assert resealed["defect_policy_decision"] == report["defect_policy_decision"]
-    if not mutated:
+    if not obstructed:
         assert row["credential_authority_observation"]["transfers"]
         # A serialized authority assertion cannot survive missing consumer bytes.
         rebuilt = copy.deepcopy(report)
@@ -1661,11 +1673,58 @@ def test_nested_selected_startup_resolves_namespace_packages_at_its_import_root(
     if obstruction == "shadow":
         files[base + "/django/__init__.py"] = ""
     elif obstruction in {"mutation", "escape"}:
-        files["observer.py"] = "import service.settings as cfg\n" + (
+        files[base + "/service/observer.py"] = "import service.settings as cfg\n" + (
             "cfg.MIDDLEWARE.clear()\n" if obstruction == "mutation" else "mutate(cfg)\n"
+        )
+        files[base + "/service/start.py"] = (
+            "import service.observer\n" + files[base + "/service/start.py"]
         )
     row = _captured_secret_tiers(files, base + "/service/settings.py")["ledger"][0]
     assert row["tier"] == ("NEEDS_CONTEXT" if obstruction else "SUPPORTED_DEFECT")
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        "from service.settings import MIDDLEWARE as layers\nlayers.clear()\n",
+        "from .service.settings import MIDDLEWARE as layers\nlayers.clear()\n",
+        "from django.conf import settings\nsettings.MIDDLEWARE = []\n",
+        "import django.contrib.sessions.middleware as backend\nbackend.SessionMiddleware = fake\n",
+    ],
+)
+def test_unselected_sibling_keeps_independent_framework_authority(mutator):
+    files = _configuration_files277(_DJANGO_SESSION_START)
+    files["service/settings.py"] = _DJANGO_SESSION_SETTINGS
+    files["consumer.py"] = mutator
+    row = _configuration_tiers277(files)["ledger"][0]
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["evidence"] == "source_bound_selected_framework_feedback_default"
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+    assert {
+        step["path"] for step in row["credential_authority_observation"]["transfers"]
+    } == {"service/settings.py", "service/start.py", "service/urls.py"}
+
+
+@pytest.mark.parametrize("container", ["workspace", "django"])
+@pytest.mark.parametrize("operation", ["cfg.MIDDLEWARE.clear()", "mutate(cfg)"])
+def test_unselected_outside_startup_root_keeps_framework_authority(
+    container, operation
+):
+    base = container + "/runtime"
+    files = {
+        base + "/service/settings.py": _DJANGO_SESSION_SETTINGS,
+        base + "/service/start.py": _DJANGO_SESSION_START,
+        base
+        + "/service/urls.py": 'from django.contrib import admin\nfrom django.urls import path\nurlpatterns = [path("admin/", admin.site.urls)]\n',
+        "observer.py": "import service.settings as cfg\n" + operation + "\n",
+    }
+    row = _captured_secret_tiers(files, base + "/service/settings.py")["ledger"][0]
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["evidence"] == "source_bound_selected_framework_feedback_default"
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+    assert "observer.py" not in {
+        step["path"] for step in row["credential_authority_observation"]["transfers"]
+    }
 
 
 @pytest.mark.parametrize(

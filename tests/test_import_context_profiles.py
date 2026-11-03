@@ -1072,6 +1072,303 @@ def test_captured_from_import_does_not_assume_package_export_authority(tmp_path)
     )
 
 
+def _captured_test_source_index(root, sources):
+    import hashlib
+
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    trees, hashes = {}, {}
+    for path, raw in sources.items():
+        digest = hashlib.sha256(raw).hexdigest()
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = digest
+        trees[path], hashes[path] = tree, digest
+    return SourceSnapshotIndex(root, trees, sources, hashes)
+
+
+@pytest.mark.parametrize(
+    "caller_text,caller_relative",
+    [
+        ("from pkg import views\n", "consumer.py"),
+        ("from . import views\n", "pkg/consumer.py"),
+    ],
+)
+def test_captured_from_import_resolves_unexported_child_module(
+    tmp_path, caller_text, caller_relative
+):
+    root = tmp_path
+    caller = root / caller_relative
+    package_init = root / "pkg" / "__init__.py"
+    child = root / "pkg" / "views.py"
+    sources = {
+        caller: caller_text.encode(),
+        package_init: b"",
+        child: b"class View: pass\n",
+    }
+    source = _captured_test_source_index(root, sources)
+    node = source.snapshots[caller].body[0]
+    inventory = capture.captured_import_inventory(source)
+
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            node,
+            node.module or "",
+            inventory,
+            "views",
+            captured=True,
+            source_index=source,
+        )
+        == child
+    )
+    assert (
+        capture.import_source_symbol(
+            root,
+            caller,
+            node,
+            node.module or "",
+            "views",
+            child,
+            captured=True,
+            captured_inventory=inventory,
+        )
+        is None
+    )
+
+
+def test_captured_package_reexport_must_resolve_to_the_exact_child(tmp_path):
+    root, caller = tmp_path, tmp_path / "consumer.py"
+    package_init, child = (
+        tmp_path / "pkg" / "__init__.py",
+        tmp_path / "pkg" / "views.py",
+    )
+    sources = {
+        caller: b"from pkg import views\n",
+        package_init: b"from . import views\n",
+        child: b"class View: pass\n",
+    }
+    source = _captured_test_source_index(root, sources)
+    node = source.snapshots[caller].body[0]
+
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            node,
+            "pkg",
+            capture.captured_import_inventory(source),
+            "views",
+            captured=True,
+            source_index=source,
+        )
+        == child
+    )
+
+
+@pytest.mark.parametrize(
+    "package_source,expected",
+    [(b"VERSION = 1\n", "package"), (b"", None)],
+)
+def test_captured_package_attribute_requires_a_finite_initializer_binding(
+    tmp_path, package_source, expected
+):
+    root, caller = tmp_path, tmp_path / "consumer.py"
+    package_init = tmp_path / "pkg" / "__init__.py"
+    source = _captured_test_source_index(
+        root,
+        {caller: b"from pkg import VERSION\n", package_init: package_source},
+    )
+
+    target = capture.resolve_import_source(
+        root,
+        caller,
+        source.snapshots[caller].body[0],
+        "pkg",
+        capture.captured_import_inventory(source),
+        "VERSION",
+        captured=True,
+        source_index=source,
+    )
+
+    assert target == (package_init if expected == "package" else expected)
+
+
+def test_captured_package_large_literal_metadata_is_not_truncated(tmp_path):
+    root, caller = tmp_path, tmp_path / "consumer.py"
+    package_init = tmp_path / "pkg" / "__init__.py"
+    values = ", ".join(str(value) for value in range(300))
+    source = _captured_test_source_index(
+        root,
+        {
+            caller: b"from pkg import VALUES\n",
+            package_init: f"VALUES = [{values}]\n".encode(),
+        },
+    )
+
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            source.snapshots[caller].body[0],
+            "pkg",
+            capture.captured_import_inventory(source),
+            "VALUES",
+            captured=True,
+            source_index=source,
+        )
+        == package_init
+    )
+
+
+def test_eager_import_closure_retains_package_and_selected_child_hashes(tmp_path):
+    root, caller = tmp_path, tmp_path / "consumer.py"
+    package_init, child = (
+        tmp_path / "pkg" / "__init__.py",
+        tmp_path / "pkg" / "views.py",
+    )
+    sources = {
+        caller: b"from pkg import views\n",
+        package_init: b"from . import views\n",
+        child: b"class View: pass\n",
+    }
+    source = _captured_test_source_index(root, sources)
+
+    proof = capture.eager_import_closure(source, [caller], set())
+
+    assert proof["closed"]
+    assert {row["path"] for row in proof["sources"]} == {
+        path.as_posix() for path in sources
+    }
+    assert {row["sha256"] for row in proof["sources"]} == set(source.inventory.values())
+
+
+@pytest.mark.parametrize(
+    "package_source",
+    [
+        b"views = supplied\n",
+        b"def __getattr__(name):\n    return supplied\n",
+        b"globals()['views'] = supplied\n",
+        b"vars()['views'] = supplied\n",
+        b"from builtins import globals as namespace\nnamespace()['views'] = supplied\n",
+        b"import sys\nsys.modules[__name__].views = supplied\n",
+        b"class Exported(unknown):\n    pass\n",
+        b"class Exported(metaclass=unknown):\n    pass\n",
+        b"def exported(value=mutate()):\n    pass\n",
+        b"def exported(value: annotation()):\n    pass\n",
+        b"value = imported.attribute\n",
+        b"value = imported[0]\n",
+        b"value = [item for item in imported]\n",
+        b"value = {[1]}\n",
+        b"value = {[1]: 1}\n",
+    ],
+)
+def test_captured_package_dynamic_or_conflicting_export_stays_ambiguous(
+    tmp_path, package_source
+):
+    root, caller = tmp_path, tmp_path / "consumer.py"
+    package_init, child = (
+        tmp_path / "pkg" / "__init__.py",
+        tmp_path / "pkg" / "views.py",
+    )
+    sources = {
+        caller: b"from pkg import views\n",
+        package_init: package_source,
+        child: b"class View: pass\n",
+    }
+    source = _captured_test_source_index(root, sources)
+    node = source.snapshots[caller].body[0]
+
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            node,
+            "pkg",
+            capture.captured_import_inventory(source),
+            "views",
+            captured=True,
+            source_index=source,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "alias",
+    ["__path__", "__getattr__", "__builtins__"],
+)
+def test_captured_future_import_cannot_bind_package_control_names(tmp_path, alias):
+    root, caller = tmp_path, tmp_path / "consumer.py"
+    package_init, child = (
+        tmp_path / "pkg" / "__init__.py",
+        tmp_path / "pkg" / "views.py",
+    )
+    source = _captured_test_source_index(
+        root,
+        {
+            caller: b"from pkg import views\n",
+            package_init: f"from __future__ import annotations as {alias}\n".encode(),
+            child: b"class View: pass\n",
+        },
+    )
+
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            source.snapshots[caller].body[0],
+            "pkg",
+            capture.captured_import_inventory(source),
+            "views",
+            captured=True,
+            source_index=source,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "child_source",
+    [
+        b"import sys\nsys.modules[__name__] = 42\n",
+        b"import sys\nsys.modules = {}\n",
+        b"import sys\nreplace(sys)\n",
+        b"from sys import modules as registry\nregistry[__name__] = 42\n",
+    ],
+)
+def test_captured_child_module_cannot_replace_its_import_identity(
+    tmp_path, child_source
+):
+    root, caller = tmp_path, tmp_path / "consumer.py"
+    package_init, child = (
+        tmp_path / "pkg" / "__init__.py",
+        tmp_path / "pkg" / "views.py",
+    )
+    source = _captured_test_source_index(
+        root,
+        {
+            caller: b"from pkg import views\n",
+            package_init: b"",
+            child: child_source,
+        },
+    )
+
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            source.snapshots[caller].body[0],
+            "pkg",
+            capture.captured_import_inventory(source),
+            "views",
+            captured=True,
+            source_index=source,
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize("prefix", ["", "src/"])
 def test_captured_dotted_import_rejects_nonpackage_ancestor(prefix):
     root, caller = Path("repository"), Path("repository/consumer.py")
@@ -1082,6 +1379,69 @@ def test_captured_dotted_import_rejects_nonpackage_ancestor(prefix):
     assert (
         audit._oracle_import_source(
             root, caller, node, "pkg.child", inventory, captured=True
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_captured_child_resolution_rejects_missing_or_stale_package_snapshot(
+    tmp_path, stale
+):
+    root, caller = tmp_path, tmp_path / "consumer.py"
+    package_init, child = (
+        tmp_path / "pkg" / "__init__.py",
+        tmp_path / "pkg" / "views.py",
+    )
+    source = _captured_test_source_index(
+        root,
+        {
+            caller: b"from pkg import views\n",
+            package_init: b"",
+            child: b"class View: pass\n",
+        },
+    )
+    inventory = capture.captured_import_inventory(source)
+    if stale:
+        source.snapshots[package_init].body.append(
+            ast.parse("views = replacement\n").body[0]
+        )
+    else:
+        source.snapshots.pop(package_init)
+
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            source.snapshots[caller].body[0],
+            "pkg",
+            inventory,
+            "views",
+            captured=True,
+            source_index=source,
+        )
+        is None
+    )
+
+
+def test_captured_child_resolution_rejects_cross_root_package_ambiguity(tmp_path):
+    root, caller = tmp_path, tmp_path / "consumer.py"
+    sources = {caller: b"from pkg import views\n"}
+    for base in (root, root / "src"):
+        sources[base / "pkg" / "__init__.py"] = b""
+        sources[base / "pkg" / "views.py"] = b"class View: pass\n"
+    source = _captured_test_source_index(root, sources)
+
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            source.snapshots[caller].body[0],
+            "pkg",
+            capture.captured_import_inventory(source),
+            "views",
+            captured=True,
+            source_index=source,
         )
         is None
     )

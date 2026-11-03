@@ -216,10 +216,12 @@ def _declaration_transport_budget(context, finding, index, requirement):
             context["structural_context"]["delivered_excerpts"] -= 1
 
 
-def _declaration_scope(index, path, node):
+def _declaration_scope(
+    index, path, node, kinds=(ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+):
     """Locate lexical context without treating enclosure as an execution edge."""
     while node is not None:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, kinds):
             return node
         node = index.parents[path].get(id(node))
     return index.snapshots[path]
@@ -230,7 +232,27 @@ def _declaration_excerpt(context, index, path, node, capture):
 
     if not _informed_admit(index, path, capture):
         return
-    if isinstance(node, ast.Module):
+    if isinstance(node, tuple):
+        start, end = node
+        lines = index.source_bytes[path].decode("utf-8").splitlines(keepends=True)
+        if (
+            type(start) is not int
+            or type(end) is not int
+            or start < 1
+            or end < start
+            or end > len(lines)
+        ):
+            context["truncation"].append("declaration_neighborhood_budget")
+            return
+        row = dict(
+            path=index.relative(path),
+            sha256=index.inventory[path],
+            start_line=start,
+            end_line=end,
+            content="".join(lines[start - 1 : end]),
+            kind="structural_hint",
+        )
+    elif isinstance(node, ast.Module):
         content = index.source_bytes[path].decode("utf-8")
         row = dict(
             path=index.relative(path),
@@ -293,21 +315,29 @@ def _declaration_reference(index, current, expression, selected, declaration, ca
 
 
 def _declaration_seed(index, path, scope, aliases):
-    """Retain direct class bases and literal captured-module context as hints."""
+    """Retain selected base/decorator bindings and literal module context as hints."""
     from .credential_role_constructor_provider import binding_occurrences
 
     pending, seen = [scope], set()
     while pending and len(seen) < 8:
-        for base in getattr(pending.pop(), "bases", ()):
-            bindings = binding_occurrences(
-                index.snapshots[path].body, getattr(base, "id", "")
-            )
-            if len(bindings) != 1 or bindings[0] in seen:
-                continue
-            seen.add(bindings[0])
-            if isinstance(bindings[0], (ast.ClassDef, ast.Import, ast.ImportFrom)):
-                yield path, bindings[0]
-                pending.append(bindings[0])
+        selected = pending.pop()
+        for expression in (
+            *getattr(selected, "bases", ()),
+            *getattr(selected, "decorator_list", ()),
+        ):
+            names = {
+                node.id
+                for node in ast.walk(expression)
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+            }
+            for name in names:
+                bindings = binding_occurrences(index.snapshots[path].body, name)
+                if len(bindings) != 1 or bindings[0] in seen:
+                    continue
+                seen.add(bindings[0])
+                if isinstance(bindings[0], (ast.ClassDef, ast.Import, ast.ImportFrom)):
+                    yield path, bindings[0]
+                    pending.append(bindings[0])
     for node in ast.walk(scope):
         target = (
             aliases.get(node.value)
@@ -333,6 +363,381 @@ def _declaration_module_aliases(index):
     }
 
 
+def _declaration_binding_statement(index, path, node):
+    while node is not None and not isinstance(node, ast.stmt):
+        node = index.parents[path].get(id(node))
+    return node
+
+
+def _declaration_function_bindings(function, name):
+    from .credential_role_constructor_provider import (
+        binding_occurrences,
+        function_bindings,
+    )
+
+    pending = (
+        list(function.body) if isinstance(function.body, list) else [function.body]
+    )
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
+            return None
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+    if isinstance(function, ast.Lambda):
+        args = [
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        ]
+        args.extend(arg for arg in (function.args.vararg, function.args.kwarg) if arg)
+        return (
+            None
+            if any(arg.arg == name for arg in args)
+            else binding_occurrences([function.body], name)
+        )
+    return function_bindings(function, name, None)
+
+
+def _declaration_binding_fact(capture, scope, name, kind, build):
+    key = (id(scope), name, kind)
+    if key not in capture["bindings"]:
+        capture["bindings"][key] = build()
+    return capture["bindings"][key]
+
+
+def _declaration_name_owner(index, path, use, name, scope, declaration, capture):
+    from .credential_role_constructor_provider import (
+        binding_occurrences,
+        binding_dominates,
+    )
+
+    tree, parents = index.snapshots[path], index.parents[path]
+    functions, current, child = [], use, use
+    while current is not tree:
+        parent = parents.get(id(current))
+        if parent is None:
+            return None
+        if isinstance(parent, ast.ClassDef) and not functions:
+            return None
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            in_body = (
+                child in parent.body
+                if isinstance(parent.body, list)
+                else child is parent.body
+            )
+            if in_body:
+                if parent is scope:
+                    functions.append(parent)
+                    break
+                local = _declaration_binding_fact(
+                    capture,
+                    parent,
+                    name,
+                    "lexical",
+                    lambda: _declaration_function_bindings(parent, name),
+                )
+                if local is None or local:
+                    return None
+                functions.append(parent)
+        child, current = parent, parent
+    if scope is tree:
+        selected = _declaration_binding_fact(
+            capture, tree, name, "module", lambda: binding_occurrences(tree.body, name)
+        )
+        return (
+            (functions[0] if functions else tree)
+            if len(selected) == 1
+            and _declaration_binding_statement(index, path, selected[0]) is declaration
+            else None
+        )
+    if not functions or functions[0] is not scope:
+        return None
+    from .credential_role_constructor_provider import function_bindings
+
+    selected = _declaration_binding_fact(
+        capture, scope, name, "function", lambda: function_bindings(scope, name, None)
+    )
+    return (
+        scope
+        if selected == [declaration]
+        and binding_dominates(declaration, use, parents, scope)
+        else None
+    )
+
+
+def _declaration_use_span(index, path, use, owner, capture):
+    current = use
+    statement = control = None
+    oversized = False
+    controls = (
+        ast.If,
+        ast.While,
+        ast.For,
+        ast.AsyncFor,
+        ast.With,
+        ast.AsyncWith,
+        ast.Try,
+        getattr(ast, "TryStar", ast.Try),
+        ast.Match,
+    )
+    lines = index.source_bytes[path].splitlines(keepends=True)
+    while current is not owner:
+        parent = index.parents[path].get(id(current))
+        if parent is None or isinstance(
+            parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            break
+        if statement is None and isinstance(parent, ast.stmt):
+            statement = parent
+        if isinstance(parent, controls):
+            size = len(b"".join(lines[parent.lineno - 1 : parent.end_lineno]))
+            if size <= 8192:
+                control = parent
+            else:
+                oversized = True
+        current = parent
+    if oversized and "declaration_neighborhood_budget" not in capture["truncation"]:
+        capture["truncation"].append("declaration_neighborhood_budget")
+    return control or statement
+
+
+def _declaration_local_origins(index, path, declaration, scope, tree):
+    from .context_efficiency import _informed_mutation
+    from .credential_role_constructor_provider import binding_occurrences
+
+    targets = (
+        declaration.targets
+        if isinstance(declaration, ast.Assign)
+        else [declaration.target]
+    )
+    names = {
+        node.id
+        for target in targets
+        for node in ast.walk(target)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    origins = []
+    for name in names:
+        if _informed_mutation(tree, name):
+            continue
+        if scope is tree:
+            bindings = binding_occurrences(tree.body, name)
+            unique = (
+                len(bindings) == 1
+                and _declaration_binding_statement(index, path, bindings[0])
+                is declaration
+            )
+        else:
+            unique = _declaration_function_bindings(scope, name) == [declaration]
+        if unique:
+            origins.append((name, scope, declaration))
+    return origins
+
+
+def _declaration_alias_state(index, path, statement, name, tree):
+    from .context_efficiency import _informed_mutation
+    from .credential_role_constructor_provider import binding_occurrences
+
+    target = (
+        statement.targets[0]
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1
+        else statement.target
+        if isinstance(statement, ast.AnnAssign)
+        else None
+    )
+    value = (
+        statement.value if isinstance(statement, (ast.Assign, ast.AnnAssign)) else None
+    )
+    if (
+        not isinstance(target, ast.Name)
+        or target.id == name
+        or not isinstance(value, ast.Name)
+        or value.id != name
+    ):
+        return None
+    alias_scope = _declaration_scope(index, path, statement)
+    if _informed_mutation(tree, target.id):
+        return None
+    if alias_scope is tree:
+        bindings = binding_occurrences(tree.body, target.id)
+        unique = (
+            len(bindings) == 1
+            and _declaration_binding_statement(index, path, bindings[0]) is statement
+        )
+    elif isinstance(alias_scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        unique = _declaration_function_bindings(alias_scope, target.id) == [statement]
+    else:
+        unique = False
+    return (target.id, alias_scope, statement) if unique else None
+
+
+def _declaration_expression_key(node):
+    if isinstance(node, ast.Name):
+        return "name", node.id
+    if isinstance(node, ast.Attribute):
+        parent = _declaration_expression_key(node.value)
+        return ("attribute", parent, node.attr) if parent is not None else None
+    return None
+
+
+def _declaration_receiver_excerpt(context, index, path, use, statement, owner, capture):
+    from .credential_role_constructor_provider import binding_dominates
+
+    if not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return
+    for call in ast.walk(statement):
+        if not isinstance(call, ast.Call) or not any(
+            node is use for node in ast.walk(call)
+        ):
+            continue
+        receiver = call.func.value if isinstance(call.func, ast.Attribute) else None
+        if isinstance(receiver, ast.Name):
+            initializers = _declaration_binding_fact(
+                capture,
+                owner,
+                receiver.id,
+                "lexical",
+                lambda: _declaration_function_bindings(owner, receiver.id),
+            )
+            selected = (
+                initializers[0]
+                if initializers is not None
+                and len(initializers) == 1
+                and binding_dominates(initializers[0], call, index.parents[path], owner)
+                else None
+            )
+        else:
+            key = _declaration_expression_key(receiver)
+            writes = [
+                _declaration_binding_statement(index, path, node)
+                for node in ast.walk(owner)
+                if isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, ast.Store)
+                and key is not None
+                and _declaration_expression_key(node) == key
+            ]
+            writes = [node for node in writes if node is not None]
+            selected = (
+                writes[0]
+                if len(writes) == 1
+                and binding_dominates(writes[0], call, index.parents[path], owner)
+                else None
+            )
+        if selected is not None:
+            _declaration_excerpt(context, index, path, selected, capture)
+
+
+def _declaration_class_context(context, index, path, owner, capture):
+    current = owner
+    while current is not None and not isinstance(current, ast.Module):
+        parent = index.parents[path].get(id(current))
+        if parent is None:
+            return
+        if isinstance(parent, ast.ClassDef):
+            start = min(
+                [parent.lineno, *(node.lineno for node in parent.decorator_list)]
+            )
+            end = parent.body[0].lineno - 1 if parent.body else parent.lineno
+            _declaration_excerpt(
+                context, index, path, (start, max(start, end)), capture
+            )
+            for selected, node in _declaration_seed(index, path, parent, {}):
+                if selected == path:
+                    _declaration_excerpt(context, index, selected, node, capture)
+            return
+        current = parent
+
+
+def _declaration_local_context(context, index, path, use, owner, statement, capture):
+    _declaration_excerpt(context, index, path, statement, capture)
+    _declaration_receiver_excerpt(context, index, path, use, statement, owner, capture)
+    if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        start = min([owner.lineno, *(node.lineno for node in owner.decorator_list)])
+        end = owner.body[0].lineno - 1 if owner.body else owner.lineno
+        _declaration_excerpt(context, index, path, (start, max(start, end)), capture)
+        _declaration_class_context(context, index, path, owner, capture)
+    current = use
+    while current is not owner:
+        parent = index.parents[path].get(id(current))
+        if parent is None:
+            break
+        guard = None
+        if isinstance(parent, (ast.If, ast.While)):
+            guard = parent.test
+        elif isinstance(parent, ast.ExceptHandler):
+            guard = parent.type
+        elif isinstance(parent, ast.match_case):
+            guard = parent.guard
+        elif isinstance(parent, ast.With):
+            guard = next(
+                (
+                    item.context_expr
+                    for item in parent.items
+                    if current in ast.walk(item.context_expr)
+                ),
+                None,
+            )
+        if guard is not None:
+            _declaration_excerpt(context, index, path, guard, capture)
+        current = parent
+
+
+def _declaration_scope_excerpted(index, path, scope, tree, capture):
+    if scope is tree:
+        lines = index.source_bytes[path].decode("utf-8").splitlines()
+        span = index.relative(path), 1, len(lines)
+    else:
+        span = index.relative(path), scope.lineno, scope.end_lineno
+    return span in capture["seen"]
+
+
+def _declaration_local_site(context, index, path, name, origin, binding, use, capture):
+    owner = _declaration_name_owner(index, path, use, name, origin, binding, capture)
+    if owner is None or _declaration_binding_statement(index, path, use) is binding:
+        return None
+    statement = _declaration_use_span(index, path, use, owner, capture)
+    if statement is None:
+        return None
+    _declaration_local_context(context, index, path, use, owner, statement, capture)
+    return _declaration_alias_state(index, path, statement, name, index.snapshots[path])
+
+
+def _declaration_local_frontier(context, index, path, declaration, scope, capture):
+    tree = index.snapshots[path]
+    if scope is not tree and not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        return
+    if _declaration_scope_excerpted(index, path, scope, tree, capture):
+        return
+    loads = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            loads.setdefault(node.id, []).append(node)
+    pending = _declaration_local_origins(index, path, declaration, scope, tree)
+    visited = set()
+    while pending:
+        name, origin, binding = pending.pop()
+        state = name, id(origin), id(binding)
+        if state in visited:
+            continue
+        visited.add(state)
+        for use in loads.get(name, ()):
+            capture["states"] += 1
+            if capture["states"] > 512:
+                context["truncation"].append("declaration_reference_search_budget")
+                return
+            alias = _declaration_local_site(
+                context, index, path, name, origin, binding, use, capture
+            )
+            if alias is not None:
+                pending.append(alias)
+
+
 def _declaration_candidates(context, index, path, declaration, scope, capture):
     """One bounded source frontier: lexical bases, module literals and exact imports."""
     aliases = _declaration_module_aliases(index)
@@ -352,6 +757,13 @@ def _declaration_candidates(context, index, path, declaration, scope, capture):
         if not index.validate(current):
             capture["stale"] = True
             return
+        imported_names = {
+            alias.asname or alias.name.split(".")[0]
+            for statement in ast.walk(index.snapshots[current])
+            if isinstance(statement, (ast.Import, ast.ImportFrom))
+            for alias in statement.names
+        }
+        checked = set()
         for node in ast.walk(index.snapshots[current]):
             literal = (
                 isinstance(node, ast.Constant)
@@ -361,11 +773,34 @@ def _declaration_candidates(context, index, path, declaration, scope, capture):
             reference = (
                 isinstance(node, ast.Name)
                 and isinstance(node.ctx, ast.Load)
+                and node.id in imported_names
                 or isinstance(node, ast.Attribute)
                 and node.attr in names
             )
             if not literal and not reference:
                 continue
+            selected_scope = _declaration_scope(index, current, node)
+            root = node.value if isinstance(node, ast.Attribute) else node
+            identity = (
+                id(selected_scope),
+                None
+                if literal
+                else (
+                    id(
+                        _declaration_scope(
+                            index,
+                            current,
+                            node,
+                            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda),
+                        )
+                    ),
+                    getattr(root, "id", None),
+                    getattr(node, "attr", None),
+                ),
+            )
+            if identity in checked:
+                continue
+            checked.add(identity)
             capture["states"] += 1
             if capture["states"] > 512:
                 context["truncation"].append("declaration_reference_search_budget")
@@ -373,7 +808,7 @@ def _declaration_candidates(context, index, path, declaration, scope, capture):
             if literal or _declaration_reference(
                 index, current, node, path, declaration, capture
             ):
-                yield current, _declaration_scope(index, current, node)
+                yield current, selected_scope
 
 
 def _declaration_neighborhood(context, index, path, declaration):
@@ -389,9 +824,11 @@ def _declaration_neighborhood(context, index, path, declaration):
         bytes=0,
         inspected=0,
         states=0,
+        bindings={},
     )
     scope = _declaration_scope(index, path, declaration)
     _declaration_excerpt(context, index, path, scope, capture)
+    _declaration_local_frontier(context, index, path, declaration, scope, capture)
     for selected, node in _declaration_candidates(
         context, index, path, declaration, scope, capture
     ):

@@ -562,7 +562,15 @@ def captured_import_module(source, path, name):
         return False, None
     inventory = captured_import_inventory(source)
     targets = {
-        resolve_import_source(source.root, path, node, name, inventory, captured=True)
+        resolve_import_source(
+            source.root,
+            path,
+            node,
+            name,
+            inventory,
+            captured=True,
+            source_index=source,
+        )
         for node in statements
     }
     if len(targets) != 1 or None in targets:
@@ -583,7 +591,16 @@ def captured_import_inventory(source):
 
 
 def resolve_import_source(
-    root, path, node, module, eligible, imported=None, *, captured=False
+    root,
+    path,
+    node,
+    module,
+    eligible,
+    imported=None,
+    *,
+    captured=False,
+    source_index=None,
+    package_binding_exclude=None,
 ):
     """Resolve one source candidate, retaining legacy live-path behavior."""
     if captured:
@@ -609,7 +626,349 @@ def resolve_import_source(
         selected = choice if captured else live_import_path(choice, root_abs)
         if selected in sources and captured_import_path(root_abs, selected):
             matches[kind].add(sources[selected])
-    return unique_import_source(matches, strict=captured)
+    return _select_resolved_import(
+        matches, captured, imported, source_index, eligible, package_binding_exclude
+    )
+
+
+def _select_resolved_import(
+    matches, captured, imported, source_index, inventory, exclude
+):
+    """Keep legacy selection separate from captured package-attribute checks."""
+    if not captured:
+        return unique_import_source(matches, strict=False)
+    if not imported or source_index is None:
+        return unique_import_source(matches, strict=True)
+    return _captured_import_choice(matches, imported, source_index, inventory, exclude)
+
+
+def _captured_import_choice(matches, imported, source_index, inventory, exclude):
+    """Resolve one captured package binding without weakening ambiguity checks."""
+    package = next(iter(matches["package"])) if len(matches["package"]) == 1 else None
+    if package is None or package.name != "__init__.py":
+        return unique_import_source(matches, strict=True)
+    if len(matches["child"]) == 1:
+        child = next(iter(matches["child"]))
+        if _captured_child_module_matches(
+            source_index, package, child, imported, inventory=inventory, exclude=exclude
+        ):
+            return child
+    if matches["child"] or not source_index:
+        return unique_import_source(matches, strict=True)
+    binding = _captured_package_binding(
+        source_index, package, imported, inventory, exclude=exclude
+    )
+    if not isinstance(binding, ast.stmt):
+        return None
+    return None if isinstance(binding, (ast.Import, ast.ImportFrom)) else package
+
+
+def _captured_child_module_matches(
+    source_index, package, child, imported, *, inventory, exclude=None
+):
+    """Select a child only when its package initializer has no conflicting export."""
+    binding = _captured_package_binding(
+        source_index, package, imported, inventory, exclude=exclude
+    )
+    if not source_index.validate(child) or not _captured_child_module_identity_stable(
+        source_index, child
+    ):
+        return False
+    if binding is False:
+        return True
+    if not isinstance(binding, ast.stmt):
+        return False
+    statement = binding
+    if isinstance(statement, ast.Import):
+        aliases = [
+            alias
+            for alias in statement.names
+            if (alias.asname or alias.name.split(".")[0]) == imported
+        ]
+        if len(aliases) != 1:
+            return False
+        target = resolve_import_source(
+            source_index.root,
+            package,
+            statement,
+            aliases[0].name,
+            inventory,
+            captured=True,
+            source_index=source_index,
+            package_binding_exclude=statement,
+        )
+        return target == child
+    if not isinstance(statement, ast.ImportFrom):
+        return False
+    aliases = [
+        alias
+        for alias in statement.names
+        if alias.name != "*" and (alias.asname or alias.name) == imported
+    ]
+    if len(aliases) != 1:
+        return False
+    alias = aliases[0]
+    target = resolve_import_source(
+        source_index.root,
+        package,
+        statement,
+        statement.module or "",
+        inventory,
+        alias.name,
+        captured=True,
+        source_index=source_index,
+        package_binding_exclude=statement,
+    )
+    return (
+        target == child
+        and import_source_symbol(
+            source_index.root,
+            package,
+            statement,
+            statement.module or "",
+            alias.name,
+            target,
+            captured=True,
+            captured_inventory=inventory,
+        )
+        is None
+    )
+
+
+def _captured_package_binding(source_index, package, imported, inventory, *, exclude):
+    """Return one finite initializer binding, False for none, or None if uncertain."""
+    from .credential_role_constructor_provider import (
+        SourceSnapshotIndex,
+        binding_statements,
+    )
+    from .credential_role_identity_effects import source_symbol_index
+
+    if not isinstance(source_index, SourceSnapshotIndex):
+        return None
+    snapshots = source_index.snapshots
+    paths = set(snapshots)
+    if (
+        source_index.root != inventory.root
+        or paths != set(source_index.source_bytes)
+        or paths != set(source_index.inventory)
+        or set(inventory.paths) != paths
+        or package not in paths
+        or not source_index.bounded
+    ):
+        return None
+    symbols = source_symbol_index(source_index)
+    if (
+        not isinstance(symbols, dict)
+        or symbols.get("source") is not source_index
+        or symbols.get("modules") is not snapshots
+        or symbols.get("module_paths") != source_index.module_paths()
+        or not source_index.validate(package)
+    ):
+        return None
+    tree = snapshots[package]
+    if not isinstance(tree, ast.Module) or package.name != "__init__.py":
+        return None
+    bindings = [
+        statement
+        for statement in binding_statements(tree.body, imported)
+        if statement is not exclude
+    ]
+    if len(bindings) > 1:
+        return None
+    statement = bindings[0] if bindings else None
+    all_bindings = binding_statements(tree.body, imported)
+    allowed_import = None
+    if (
+        isinstance(exclude, (ast.Import, ast.ImportFrom))
+        and exclude in tree.body
+        and all_bindings == [exclude]
+    ):
+        allowed_import = exclude
+    elif isinstance(statement, (ast.Import, ast.ImportFrom)):
+        allowed_import = statement
+    if _captured_package_namespace_dynamic(tree, allowed_import=allowed_import):
+        return None
+    if not bindings:
+        return False
+    return statement
+
+
+def _captured_package_namespace_dynamic(tree, *, allowed_import=None):
+    """Reject initializer effects outside literal declarations and one checked re-export."""
+    from .credential_role_identity_effects import (
+        _definition_effects_unknown,
+        _immutable_default,
+    )
+
+    return not isinstance(tree, ast.Module) or any(
+        not _captured_package_statement_safe(
+            statement,
+            allowed_import,
+            _definition_effects_unknown,
+            _immutable_default,
+        )
+        for statement in tree.body
+    )
+
+
+def _captured_package_statement_safe(
+    statement, allowed_import, definition_unknown, immutable_default
+):
+    protected = frozenset(
+        (
+            "__build_class__",
+            "__builtins__",
+            "__dir__",
+            "__file__",
+            "__getattr__",
+            "__getattribute__",
+            "__loader__",
+            "__name__",
+            "__package__",
+            "__path__",
+            "__spec__",
+        )
+    )
+    protected_set = set(protected)
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return statement.name not in protected and not definition_unknown(statement)
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        if statement is allowed_import:
+            if len(statement.names) != 1:
+                return False
+            names = (
+                [item.asname or item.name.split(".")[0] for item in statement.names]
+                if isinstance(statement, ast.Import)
+                else [item.asname or item.name for item in statement.names]
+            )
+            return "*" not in names and not (set(names) & protected_set)
+        return (
+            isinstance(statement, ast.ImportFrom)
+            and statement.level == 0
+            and statement.module == "__future__"
+            and all(item.name != "*" for item in statement.names)
+            and not (
+                {item.asname or item.name for item in statement.names} & protected_set
+            )
+        )
+    if isinstance(statement, ast.Pass):
+        return True
+    if isinstance(statement, ast.Expr):
+        return (
+            isinstance(statement.value, ast.Constant)
+            and type(statement.value.value) is str
+        )
+    if isinstance(statement, ast.Assign):
+        return (
+            bool(statement.targets)
+            and all(
+                isinstance(target, ast.Name) and target.id not in protected
+                for target in statement.targets
+            )
+            and _captured_package_literal(statement.value, immutable_default)
+        )
+    return False
+
+
+def _captured_package_literal(node, immutable_default):
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        if immutable_default(current) or _captured_package_unary_literal(current):
+            continue
+        if isinstance(current, ast.Constant):
+            if type(current.value) not in {
+                type(None),
+                bool,
+                int,
+                float,
+                complex,
+                str,
+                bytes,
+                type(Ellipsis),
+            }:
+                return False
+        elif isinstance(current, (ast.List, ast.Tuple, ast.Set)):
+            if isinstance(current, ast.Set) and any(
+                not _captured_package_hashable(item, immutable_default)
+                for item in current.elts
+            ):
+                return False
+            pending.extend(current.elts)
+        elif isinstance(current, ast.Dict):
+            if any(
+                key is None or not _captured_package_hashable(key, immutable_default)
+                for key in current.keys
+            ):
+                return False
+            pending.extend(current.values)
+        else:
+            return False
+    return True
+
+
+def _captured_package_hashable(node, immutable_default):
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        if immutable_default(current) or _captured_package_unary_literal(current):
+            continue
+        if isinstance(current, ast.Constant) and type(current.value) in {
+            type(None),
+            bool,
+            int,
+            float,
+            complex,
+            str,
+            bytes,
+            type(Ellipsis),
+        }:
+            continue
+        if isinstance(current, ast.Tuple):
+            pending.extend(current.elts)
+            continue
+        return False
+    return True
+
+
+def _captured_package_unary_literal(node):
+    if not isinstance(node, ast.UnaryOp) or not isinstance(node.operand, ast.Constant):
+        return False
+    value = node.operand.value
+    return (
+        isinstance(node.op, ast.Not)
+        and type(value)
+        in {type(None), bool, int, float, complex, str, bytes, type(Ellipsis)}
+        or isinstance(node.op, (ast.UAdd, ast.USub))
+        and type(value) in {int, float, complex}
+        or isinstance(node.op, ast.Invert)
+        and type(value) in {bool, int}
+    )
+
+
+def _captured_child_module_identity_stable(source_index, child):
+    """Reject captured child modules that replace their own import identity."""
+    from . import finite_capture, review_audits
+    from .semantic_credential_sensor import _provider_path_conflicts
+
+    tree = source_index.snapshots[child]
+    nodes = tuple(ast.walk(tree))
+    parents = {
+        id(node): parent for parent in nodes for node in ast.iter_child_nodes(parent)
+    }
+    try:
+        mutations = finite_capture.finite_provider_mutation_index(
+            nodes,
+            review_audits._security_aliases(nodes),
+            review_audits,
+            parents,
+        )
+    except (RecursionError, TypeError, ValueError):
+        return False
+    return not any(
+        _provider_path_conflicts(path, attribute, "sys.modules")
+        for path, attribute in mutations
+    )
 
 
 def captured_import_inventory_matches(root, path, node, module, inventory):
@@ -680,7 +1039,35 @@ def unique_import_source(matches, *, strict):
 
 def import_resolution_helpers():
     """Expose current resolver bindings/code to the existing native cache epoch."""
-    from .credential_role_constructor_provider import SourceSnapshotIndex
+    from .credential_role_constructor_provider import (
+        SourceSnapshotIndex,
+        _binds,
+        binding_occurrences,
+        binding_statements,
+    )
+    from .credential_role_identity_effects import (
+        _definition_effects_unknown,
+        _immutable_default,
+        source_symbol_index,
+    )
+    from .finite_capture import (
+        _provider_alias_bindings,
+        _provider_call_argument,
+        _record_provider_capture,
+        _provider_mutation_facts,
+        _provider_mutation_for_node,
+        _provider_paths,
+        _record_provider_paths,
+        _reflective_provider_write,
+        _foreign_provider_mutation_facts,
+        _foreign_provider_inputs,
+        _project_provider_inventory,
+        _foreign_provider_source_bytes,
+        _foreign_provider_source_mutations,
+        finite_provider_mutation_index,
+    )
+    from .review_audits import _resolved_ast_name, _security_aliases
+    from .semantic_credential_sensor import _provider_path_conflicts
 
     return (
         application_configuration_names,
@@ -717,7 +1104,42 @@ def import_resolution_helpers():
         import_source_bases,
         import_child_source_choices,
         import_source_symbol,
+        binding_occurrences,
+        binding_statements,
+        _binds,
+        source_symbol_index,
+        _definition_effects_unknown,
+        _immutable_default,
+        _captured_child_module_matches,
+        _captured_package_binding,
+        _captured_package_namespace_dynamic,
+        _captured_package_statement_safe,
+        _captured_package_literal,
+        _captured_package_hashable,
+        _captured_package_unary_literal,
+        _captured_child_module_identity_stable,
+        finite_provider_mutation_index,
+        _provider_alias_bindings,
+        _provider_call_argument,
+        _record_provider_capture,
+        _provider_mutation_facts,
+        _provider_mutation_for_node,
+        _provider_paths,
+        _record_provider_paths,
+        _reflective_provider_write,
+        _foreign_provider_mutation_facts,
+        _foreign_provider_inputs,
+        _project_provider_inventory,
+        _foreign_provider_source_bytes,
+        _foreign_provider_source_mutations,
+        _resolved_ast_name,
+        _security_aliases,
+        _provider_path_conflicts,
+        ast.walk,
+        ast.iter_child_nodes,
         resolve_import_source,
+        _select_resolved_import,
+        _captured_import_choice,
         captured_import_inventory_matches,
         captured_import_parent_modules,
         live_import_path,
@@ -1050,7 +1472,14 @@ def _eager_import_target(
     index, inventory, path, node, module, imported, standard, models
 ):
     target = resolve_import_source(
-        index.root, path, node, module, inventory, imported=imported, captured=True
+        index.root,
+        path,
+        node,
+        module,
+        inventory,
+        imported=imported,
+        captured=True,
+        source_index=index,
     )
     if target is not None:
         return {"source": target}
