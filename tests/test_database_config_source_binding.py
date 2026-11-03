@@ -11,8 +11,7 @@ from factoryline import review_audits
 @pytest.fixture
 def scan(tmp_path):
     (tmp_path / "app.py").write_text(
-        "import sqlite3\n"
-        "value = 1\n",
+        "import sqlite3\nvalue = 1\n",
         encoding="utf-8",
     )
     (tmp_path / "factory.database.json").write_text(
