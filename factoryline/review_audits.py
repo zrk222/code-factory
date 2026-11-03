@@ -1721,6 +1721,8 @@ def _vacuous_assertion(node: ast.expr, known: dict[str, Any] | None = None) -> b
     truth = _constant_truth_value(node, known or {})
     if truth is not None:
         return truth
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+        return any(_vacuous_assertion(child, known) for child in node.values)
     if not isinstance(node, ast.Compare) or len(node.ops) != 1:
         return False
     if (

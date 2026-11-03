@@ -2347,7 +2347,9 @@ def _copy_worker_modules(root: Path, package_root: Path, sources: set[str]) -> N
     resource.write_bytes((root / "factoryline/data/junie_pack.json").read_bytes())
 
 
-def _run_worker_import(package_root: Path) -> subprocess.CompletedProcess:
+def _run_worker_import(
+    package_root: Path, *, remediation=False
+) -> subprocess.CompletedProcess:
     code = (
         "import importlib.machinery,pathlib,runpy,sys; "
         "assert tuple(sys.meta_path)==(importlib.machinery.BuiltinImporter,"
@@ -2359,7 +2361,11 @@ def _run_worker_import(package_root: Path) -> subprocess.CompletedProcess:
         "import factoryline.deep_audit_loop; "
         "import factoryline.deep_audit_attestation; "
         "import factoryline.runtime_audit_process; "
-        "sys.argv=['factoryline.deep_audit_io','--help']; "
+    )
+    code += (
+        "from factoryline.deep_audit import _agent_actions; _agent_actions('a'*64, [])"
+        if remediation
+        else "sys.argv=['factoryline.deep_audit_io','--help']; "
         "runpy.run_module('factoryline.deep_audit_io',run_name='__main__')"
     )
     return subprocess.run(
@@ -2413,7 +2419,7 @@ def _assert_missing_worker_module_fails(tmp_path: Path) -> None:
         missing_package,
         _WORKER_IMPORT_MODULES - {"factoryline/audit_action_refs.py"},
     )
-    missing = _run_worker_import(missing_package)
+    missing = _run_worker_import(missing_package, remediation=True)
     assert missing.returncode != 0
     assert "No module named 'factoryline.audit_action_refs'" in missing.stderr
 
