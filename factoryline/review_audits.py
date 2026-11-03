@@ -5762,6 +5762,15 @@ def _scan_security_sources(
         primitive_source_bytes_out.update(
             (producer_source_model_out or {}).get("configuration_bytes", {})
         )
+        _verify_security_bindings(
+            workspace,
+            [
+                row
+                for row in database.get("configuration_sources", [])
+                if row["path"] == "factory.database.json"
+            ],
+            captured_out=primitive_source_bytes_out,
+        )
     scanned = {item["path"] for item in bindings}
     extra_bindings = [item for item in context_bindings if item["path"] not in scanned]
     return bindings, findings, counts, outcomes, oracle_edges, extra_bindings
