@@ -64,3 +64,27 @@ def test_class_attribute_does_not_shadow_module_export_in_method():
         "class Worker:\n    connection = 1\n"
         "    def run(self):\n        return connection\n"
     )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "exec('anything')",
+        "eval('anything')",
+        "globals()",
+        "locals()",
+        "vars()",
+        "__import__('database')",
+        "setattr(target, 'connection', attacker)",
+        "delattr(target, 'connection')",
+        "target.__dict__['connection'] = attacker",
+        "sys.modules['database'] = attacker",
+        "database.connect = attacker",
+    ],
+)
+@pytest.mark.parametrize("imported", [False, True])
+def test_resolved_or_absent_aliases_do_not_hide_unsafe_nodes(statement, imported):
+    prefix = "from database import connection\n" if imported else ""
+    assert not stable(
+        prefix + "def outer():\n    def inner(connection):\n        " + statement + "\n"
+    )
