@@ -4,7 +4,7 @@
   "measurement": "posthoc source-role repair replay",
   "fresh_holdout": false,
   "original_score_record": "docs/evidence/study443-38-score.json",
-  "engine_sha256": "09953c6fe36b9ae52a4cfb0706cd5f226847f432859fe904616df06b0524b600",
+  "engine_sha256": "2b559b9f8c751ec23da55a89459861f1c308488f5916b73271b4faa745f061a8",
   "selected": 38,
   "complete": true,
   "known_tp_actions_retained": 30,
@@ -34,8 +34,8 @@
   "workflow_checks_passed": 10,
   "raw_record": {
     "path": "docs/evidence/study443-38-authority-replay.json.gz",
-    "sha256": "453abcbfb569176f789e0cf3f4b3c77f95ac3091a217779638d2d00b46fc6296",
-    "bytes": 59380
+    "sha256": "4b4875a64e5b9b212fef1abf6a6aee0bb4d906286d264dc6a27b36f6970f8351",
+    "bytes": 60188
   },
   "source_files": [
     {
@@ -44,7 +44,7 @@
     },
     {
       "path": "factoryline/credential_identity_audit.py",
-      "git_blob": "3d5e0f61010119db7dd759d6628c4cd65df1eecf"
+      "git_blob": "e70734c32bb133be8780c719c408b71b8992af0d"
     },
     {
       "path": "factoryline/credential_role_identity_effects.py",
@@ -60,5 +60,12 @@
     }
   ],
   "claim": "Exposed control retention and reduced false actions. Original held-out labels stay 30 TP, 6 FP and 2 UNCLEAR. Fresh N444 is outstanding.",
-  "original_blind_score_sha256": "1219d8a1430fca52db7ce8b74bb02381032eb3b13767783c26d5ac7c0344efab"
+  "original_blind_score_sha256": "1219d8a1430fca52db7ce8b74bb02381032eb3b13767783c26d5ac7c0344efab",
+  "pinned_forge_quality": {
+    "version": "0.10.8",
+    "grade": "A",
+    "composite": 99.1,
+    "max_complexity": 10,
+    "attribution_rate": 0.998914223669924
+  }
 }

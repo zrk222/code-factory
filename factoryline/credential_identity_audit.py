@@ -98,11 +98,14 @@ def django_test_domain_evidence(context, path, observation, selected):
         "configuration_source": configuration,
         "supporting_sources": {
             row["path"]: row["sha256"]
-            for row in (
-                configuration,
-                consumer["source"],
-                consumer["model_source"],
-                *((bootstrap,) if bootstrap else ()),
+            for row in filter(
+                None,
+                (
+                    configuration,
+                    consumer["source"],
+                    consumer["model_source"],
+                    bootstrap,
+                ),
             )
         },
         "scope": "captured_test_profile_and_consumers_only",
