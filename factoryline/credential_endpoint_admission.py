@@ -2205,19 +2205,17 @@ def _django_default_authority(finding, context, declaration, observation):
             {item.value for item in values if isinstance(item.value, str)}
         ):
             return None
-        if (
-            name != "INSTALLED_APPS"
-            and not _CredentialHandlerIndex.django_middleware_order(values)
-        ):
-            return None
-        consumers.append(
-            {
-                "path": path.as_posix(),
-                "sha256": index.inventory[path],
-                "span": _span(statement),
-            }
-        )
+        if name != "INSTALLED_APPS":
+            middleware = [item.value for item in values]
+            if any(
+                middleware.count(item) != 1 for item in authorities
+            ) or middleware.index(
+                "django.contrib.sessions.middleware.SessionMiddleware"
+            ) != min(middleware.index(item) for item in authorities):
+                return None
+        consumers.append(statement)
     handler = _CredentialHandlerIndex(context, framework="django")
+    consumers = [handler._django_reference(path, node) for node in consumers]
     selected = handler.django_feedback(path, settings, selected_admin_only=True)
     if selected is None:
         return None
@@ -2252,6 +2250,7 @@ def _django_default_authority(finding, context, declaration, observation):
         {
             *required,
             *_CredentialHandlerIndex._django_feedback_settings(),
+            *(row["setting"] for row in selected["evidence"] if "setting" in row),
             "ROOT_URLCONF",
             "SECRET_KEY",
             "SECRET_KEY_FALLBACKS",
@@ -2260,6 +2259,7 @@ def _django_default_authority(finding, context, declaration, observation):
         },
         selected_modules,
         selected_sources,
+        (row["setting"] for row in selected["evidence"] if "setting" in row),
     ):
         return None
     source_hashes = {
@@ -2283,14 +2283,7 @@ def _django_default_authority(finding, context, declaration, observation):
         "transfers": [
             observation["declaration"],
             *consumers,
-            *(
-                {
-                    "path": path.as_posix(),
-                    "sha256": index.inventory[path],
-                    "span": _span(node),
-                }
-                for node in default_guards
-            ),
+            *(handler._django_reference(path, node) for node in default_guards),
             *observation["transfers"],
         ],
         "runtime_execution": "not_performed",
@@ -2610,7 +2603,7 @@ def _django_selected_source_paths(context, path, sources, projection=None, guard
 
 
 def _django_selected_consumers_closed(
-    context, path, required, selected_modules, selected_sources
+    context, path, required, selected_modules, selected_sources, guard_settings=()
 ):
     from .semantic_credential_sensor import (
         _signing_provider_clear,
@@ -2627,6 +2620,7 @@ def _django_selected_consumers_closed(
     )
     from . import review_audits as audit
 
+    guard_settings = tuple(guard_settings)
     index = context["index"]
     declarations = _django_assignment(index.snapshots[path], "SECRET_KEY")
     literal = declarations[0][1] if len(declarations) == 1 else None
@@ -2748,6 +2742,7 @@ def _django_selected_consumers_closed(
             "django.conf.settings.DEBUG",
             "django.conf.settings.STATIC_URL",
             "django.conf.settings.MEDIA_URL",
+            *("django.conf.settings." + name for name in guard_settings),
         )
         from .semantic_credential_sensor import _signing_provider_reads
 
@@ -4261,10 +4256,12 @@ class _CredentialHandlerIndex:
 
     def django_feedback(self, path, settings, *, selected_admin_only=False):
         """Evaluate the selected URL sequence, retaining only closed feedback effects."""
-        from .mock_fixture_provenance import _django_assignment
+        from .mock_fixture_provenance import _django_assignment, _django_name
         from .semantic_credential_sensor import _signing_resolve_module
 
         self.django_settings, self.django_settings_path = settings, path
+        self.django_settings_module = _django_name(self.symbols, path)
+        self._django_guard_dependencies = {}
         configuration = self._django_feedback_configuration(path, settings)
         if configuration is None:
             return None
@@ -4277,6 +4274,7 @@ class _CredentialHandlerIndex:
         routes = self._django_routes(target, (), (), selected_admin_only)
         if routes is None and selected_admin_only:
             self._django_route_sources = set()
+            self._django_guard_dependencies = {}
             routes = self._django_routes(target, (), ())
         if routes is None:
             return None
@@ -4305,6 +4303,10 @@ class _CredentialHandlerIndex:
                 "evidence": [
                     *configuration,
                     *provider_refs,
+                    *(
+                        {"setting": name, **self._django_reference(path, node)}
+                        for name, node in self._django_guard_dependencies
+                    ),
                     *(ref for _, _, refs in routes for ref in refs),
                 ],
                 "construction_sources": [
@@ -4313,27 +4315,6 @@ class _CredentialHandlerIndex:
                 ],
             }
         return None
-
-    @staticmethod
-    def django_middleware_order(values):
-        """Require unique session, authentication and message middleware in order."""
-        positions = {item.value: n for n, item in enumerate(values)}
-        if any(
-            sum(item.value == name for item in values) != 1
-            for name in (
-                "django.contrib.sessions.middleware.SessionMiddleware",
-                "django.contrib.auth.middleware.AuthenticationMiddleware",
-                "django.contrib.messages.middleware.MessageMiddleware",
-            )
-        ):
-            return False
-        session = positions["django.contrib.sessions.middleware.SessionMiddleware"]
-        return (
-            session
-            < positions["django.contrib.auth.middleware.AuthenticationMiddleware"]
-            and session
-            < positions["django.contrib.messages.middleware.MessageMiddleware"]
-        )
 
     def _django_feedback_configuration(self, path, settings):
         from .mock_fixture_provenance import _django_assignment
@@ -4362,11 +4343,9 @@ class _CredentialHandlerIndex:
         return references
 
     def _django_reference(self, path, node):
-        return {
-            "path": path.as_posix(),
-            "sha256": self.index.inventory[path],
-            "span": _span(node),
-        }
+        from .semantic_credential_sensor import _signing_source_span
+
+        return {**_signing_source_span(self.index, path, node), "path": path.as_posix()}
 
     def _django_sequence(self, path):
         """Interpret ordered container state; every selected-container use is closed."""
@@ -4458,19 +4437,12 @@ class _CredentialHandlerIndex:
         if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)):
             return True
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            arguments = statement.args
-            parameters = [
-                *arguments.posonlyargs,
-                *arguments.args,
-                *arguments.kwonlyargs,
-                arguments.vararg,
-                arguments.kwarg,
-            ]
             headers = [
-                *arguments.defaults,
-                *arguments.kw_defaults,
                 statement.returns,
-                *(p.annotation for p in parameters if p),
+                *(
+                    child.annotation if isinstance(child, ast.arg) else child
+                    for child in ast.iter_child_nodes(statement.args)
+                ),
             ]
             try:
                 for header in filter(None, headers):
@@ -4486,21 +4458,34 @@ class _CredentialHandlerIndex:
             return isinstance(statement, ast.Expr) and isinstance(
                 statement.value, ast.Constant
             )
-        if isinstance(statement.test, ast.Constant) and isinstance(
-            statement.test.value, bool
-        ):
-            selected = statement.test.value
-        elif self.canonical(path, statement.test) == "django.conf.settings.DEBUG":
-            selected = self._django_setting("DEBUG", False)
-        else:
+        from .import_context import security_literal_branch_blocks
+        from itertools import islice
+
+        nodes = tuple(islice(ast.walk(statement.test), 129))
+        if len(nodes) > 128:
             return False
-        if not isinstance(selected, bool):
-            return False
-        active, inactive = (
-            (statement.body, statement.orelse)
-            if selected
-            else (statement.orelse, statement.body)
+        expression_values = {
+            ast.dump(node): projected
+            for node in nodes
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and (canonical := self.canonical(path, node))
+            if (
+                projected := self._django_setting(
+                    canonical,
+                    False if canonical == "django.conf.settings.DEBUG" else None,
+                    projection=True,
+                )
+            )
+            is not None
+        }
+        arms = security_literal_branch_blocks(
+            statement, expression_values=expression_values
         )
+        if len(arms) != 1:
+            return False
+        active = arms[0]
+        inactive = statement.orelse if active is statement.body else statement.body
         accepted.update(
             id(n)
             for item in inactive
@@ -4535,19 +4520,35 @@ class _CredentialHandlerIndex:
             )
         return self._django_static_routes(path, value, provider)
 
-    def _django_setting(self, name, default=None):
+    def _django_setting(self, name, default=None, *, projection=False):
         from .mock_fixture_provenance import _django_assignment
         from .credential_role_constructor_provider import binding_occurrences
+        from .credential_role_identity_effects import identity_value
 
+        namespace, _, name = name.rpartition(".") if projection else ("", "", name)
+        if projection and not (
+            namespace == self.django_settings_module
+            or namespace == "django.conf.settings"
+            and name.isupper()
+            and name not in {"MEDIA_URL", "STATIC_URL"}
+        ):
+            return None
         rows = _django_assignment(self.django_settings, name)
         if not rows:
-            return (
-                None
-                if binding_occurrences(self.django_settings.body, name)
-                else default
-            )
+            if binding_occurrences(self.django_settings.body, name):
+                return None
+            if projection and namespace == "django.conf.settings" and name == "DEBUG":
+                return identity_value(
+                    ast.Constant(value=default), {}, strict_calls=True
+                )
+            return None if projection else default
         if not all(isinstance(value, ast.Constant) for _, value in rows):
             return None
+        if projection:
+            if name != "DEBUG" and len(rows) != 1:
+                return None
+            self._django_guard_dependencies[name, rows[-1][0]] = None
+            return identity_value(rows[-1][1], {}, strict_calls=True)
         return rows[-1][1].value
 
     def _django_static_routes(self, path, call, provider):

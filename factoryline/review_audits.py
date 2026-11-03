@@ -1603,19 +1603,10 @@ _UNKNOWN_CONSTANT = object()
 
 
 def _boolean_operation_value(node: ast.BoolOp, known: dict[str, Any]) -> Any:
-    if isinstance(node.op, ast.Or):
-        for expression in node.values:
-            value = _constant_value(expression, known)
-            if value is _UNKNOWN_CONSTANT:
-                return _UNKNOWN_CONSTANT
-            if bool(value):
-                return value
-        return value
+    stop = isinstance(node.op, ast.Or)
     for expression in node.values:
         value = _constant_value(expression, known)
-        if value is _UNKNOWN_CONSTANT:
-            return _UNKNOWN_CONSTANT
-        if not bool(value):
+        if value is _UNKNOWN_CONSTANT or bool(value) is stop:
             return value
     return value
 
@@ -1650,24 +1641,15 @@ def _comparison_value(node: ast.Compare, known: dict[str, Any]) -> Any:
 
 def _constant_truth_value(node: ast.expr, known: dict[str, Any]) -> bool | None:
     value = _constant_value(node, known)
-    if value is not _UNKNOWN_CONSTANT:
-        return bool(value)
-    if isinstance(node, ast.BoolOp):
-        values = [_constant_truth_value(child, known) for child in node.values]
-        if isinstance(node.op, ast.Or):
-            if True in values:
-                return True
-            return False if all(value is False for value in values) else None
-        if False in values:
-            return False
-        return True if all(value is True for value in values) else None
-    return None
+    return None if value is _UNKNOWN_CONSTANT else bool(value)
 
 
 def _constant_value(node: ast.expr, known: dict[str, Any] | None = None) -> Any:
     known = known or {}
     if isinstance(node, ast.Name):
         return known.get(node.id, _UNKNOWN_CONSTANT)
+    if isinstance(node, ast.Attribute):
+        return known.get(ast.dump(node), _UNKNOWN_CONSTANT)
     if isinstance(node, ast.BinOp):
         return _constant_binary_value(node, known)
     if isinstance(node, ast.BoolOp):
@@ -1739,6 +1721,8 @@ def _vacuous_assertion(node: ast.expr, known: dict[str, Any] | None = None) -> b
     truth = _constant_truth_value(node, known or {})
     if truth is not None:
         return truth
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+        return any(_vacuous_assertion(child, known) for child in node.values)
     if not isinstance(node, ast.Compare) or len(node.ops) != 1:
         return False
     if (

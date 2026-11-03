@@ -47,13 +47,18 @@ _ZAP_LEDGER_EVENTS = {
 }
 
 
-def _safe_text(value: object, maximum: int = 2048) -> str:
-    text = require_str(value, "display text", maximum=maximum)
+def _safe_text(value: object, maximum: int = 2048, *, native=False) -> str:
+    if native:
+        if not isinstance(value, str) or len(value) > maximum:
+            raise RuntimeAuditError("E_FIELD", "native display text exceeds bounds")
+        text = value
+    else:
+        text = require_str(value, "display text", maximum=maximum)
     text = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", text)
     return "".join(
         char
         for char in text
-        if char.isprintable()
+        if (char.isprintable() or native and char in "\n\t")
         and char
         not in "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200b\u200c\u200d\ufeff"
     )
@@ -201,11 +206,11 @@ def _severity(score, default):
 def _sarif_result_finding(result, rules, lane, sources):
     if result.get("kind", "fail") in {"pass", "notApplicable", "informational"}:
         return None
-    location = _location(_list(result.get("locations"), 1, 10)[0], sources)
+    evidence = _sarif_evidence(result, rules.get(result["ruleId"], {}), sources)
+    location = evidence["locations"][0]
     score = (
         rules.get(result["ruleId"], {}).get("properties", {}).get("security-severity")
     )
-    flows = _flows(result, sources)
     finding = _execution_finding(
         lane,
         result["ruleId"],
@@ -213,20 +218,16 @@ def _sarif_result_finding(result, rules, lane, sources):
         location["start_line"],
         _severity(score, result.get("level", "warning")),
         sources,
-        flows=flows,
-        suppressed=bool(result.get("suppressions")),
+        flows=evidence["flows"],
+        suppressed=evidence["suppressed"],
     )
 
-    locations = [
-        _location(item, sources) for item in _list(result.get("locations"), 1, 10)
-    ]
+    finding.update(evidence)
+    locations = evidence["locations"]
     tags = rules.get(result["ruleId"], {}).get("properties", {}).get("tags", [])
-    finding["locations"] = locations
     finding["review_domain"] = (
         "security" if isinstance(tags, list) and "security" in tags else "unclassified"
     )
-    finding["trace_sha256"] = digest({"locations": locations, "flows": flows})
-    finding["trace_depth"] = max((len(flow) for flow in flows), default=0)
     native = (
         _native(result)
         if result.get("partialFingerprints") or result.get("fingerprints")
@@ -2500,6 +2501,150 @@ def _suppression(result: dict) -> list:
     return sorted(output, key=lambda item: (item["kind"], item["status"]))
 
 
+def _sarif_display_text(text, field, remaining, gaps):
+    if not isinstance(text, str):
+        gaps.append({"field": field, "reason": "INVALID_TEXT"})
+        return None
+    limit = min(1024, remaining[0])
+    if len(text) > limit:
+        gaps.append({"field": field, "reason": "TEXT_TRUNCATED"})
+    remaining[0] -= len(text[:limit])
+    return _safe_text(text[:limit], native=True)
+
+
+def _sarif_message(value, field, *, remaining, gaps):
+    if isinstance(value, str):
+        value = {"text": value}
+    if not isinstance(value, dict):
+        gaps.append({"field": field, "reason": "INVALID_MESSAGE"})
+        return {}
+    if "id" in value:
+        gaps.append({"field": field, "reason": "UNRESOLVED_MESSAGE_ID"})
+    output = {}
+    for key in ("text", "markdown"):
+        if key not in value:
+            continue
+        text = _sarif_display_text(value[key], field + "." + key, remaining, gaps)
+        if text is not None:
+            output[key] = text
+    if "arguments" in value:
+        arguments = value["arguments"]
+        if not isinstance(arguments, list):
+            gaps.append({"field": field + ".arguments", "reason": "INVALID_ARGUMENTS"})
+            arguments = []
+        if len(arguments) > 16:
+            gaps.append(
+                {"field": field + ".arguments", "reason": "ARGUMENTS_TRUNCATED"}
+            )
+        output["arguments"] = [
+            _sarif_display_text(
+                argument, f"{field}.arguments[{index}].text", remaining, gaps
+            )
+            for index, argument in enumerate(arguments[:16])
+        ]
+    return output
+
+
+def _sarif_explanation(result, rule, sources):
+    """Bound native display data separately from source/flow identity and authority."""
+    from functools import partial
+
+    gaps = []
+    message = partial(_sarif_message, remaining=[8192], gaps=gaps)
+
+    explanation = {"trust": "UNTRUSTED_DATA", "authority": "none"}
+    explanation["message"] = message(result.get("message", {}), "message")
+    explanation["rule"] = {
+        key: message(rule[key], "rule." + key)
+        for key in ("name", "shortDescription", "fullDescription", "help", "helpUri")
+        if key in rule
+    }
+    tags = _object(rule.get("properties", {})).get("tags", [])
+    explanation["rule"]["cwe"] = (
+        sorted(
+            {
+                "CWE-" + match.group(1)
+                for tag in _list(tags, 0, 128)
+                if isinstance(tag, str)
+                for match in [
+                    re.fullmatch(r"(?:external/cwe/)?cwe-(\d{1,6})", tag, re.I)
+                ]
+                if match
+            }
+        )
+        if isinstance(tags, list)
+        else []
+    )
+    related = []
+    for position, value in enumerate(_list(result.get("relatedLocations", []), 0, 32)):
+        value = _object(value)
+        field = f"relatedLocations[{position}]"
+        row = {"message": message(value.get("message", {}), field + ".message")}
+        if "id" in value:
+            row["id"] = require_int(
+                value["id"], "related location id", minimum=0, maximum=10_000_000
+            )
+        try:
+            row["location"] = _location(value, sources)
+        except RuntimeAuditError as exc:
+            gaps.append({"field": field, "reason": exc.code})
+        related.append(row)
+    explanation["related_locations"] = related
+    contexts = [
+        (f"locations[{index}]", value)
+        for index, value in enumerate(result["locations"])
+    ]
+    for index, flow in enumerate(result.get("codeFlows", [])):
+        field = f"codeFlows[{index}]"
+        contexts.append((field, flow))
+        contexts.extend(
+            (f"{field}.threadFlows[{thread_index}]", thread)
+            for thread_index, thread in enumerate(flow["threadFlows"])
+        )
+    explanation["context_messages"] = [
+        {
+            "field": field + ".message",
+            "message": message(value["message"], field + ".message"),
+        }
+        for field, value in contexts
+        if "message" in value
+    ]
+    explanation["flow_messages"] = []
+    threads = [
+        thread for flow in result.get("codeFlows", []) for thread in flow["threadFlows"]
+    ]
+    for index, thread in enumerate(threads):
+        for step, value in enumerate(thread["locations"]):
+            if "message" in value["location"]:
+                explanation["flow_messages"].append(
+                    {
+                        "flow": index,
+                        "step": step,
+                        "message": message(
+                            value["location"]["message"],
+                            f"flows[{index}][{step}].message",
+                        ),
+                    }
+                )
+    return {**explanation, "gaps": gaps}
+
+
+def _sarif_evidence(result, rule, sources):
+    locations = [
+        _location(item, sources) for item in _list(result.get("locations"), 1, 10)
+    ]
+    flows, suppressions = _flows(result, sources), _suppression(result)
+    return {
+        "locations": locations,
+        "flows": flows,
+        "trace_sha256": digest({"locations": locations, "flows": flows}),
+        "trace_depth": max((len(flow) for flow in flows), default=0),
+        "suppressions": suppressions,
+        "suppressed": any(item["status"] != "rejected" for item in suppressions),
+        "native_explanation": _sarif_explanation(result, rule, sources),
+    }
+
+
 def _usable_native_fingerprint(analyzer: dict, native: dict) -> bool:
     semgrep = analyzer["driver"].lower() in {"semgrep", "semgrep oss"}
     return any(
@@ -2513,7 +2658,7 @@ def _usable_native_fingerprint(analyzer: dict, native: dict) -> bool:
     )
 
 
-def _finding(result: object, analyzer: dict, sources: dict) -> dict:
+def _finding(result: object, analyzer: dict, sources: dict, rules=None) -> dict:
     result = _object(result)
     if "rule" in result:
         raise RuntimeAuditError(
@@ -2521,10 +2666,7 @@ def _finding(result: object, analyzer: dict, sources: dict) -> dict:
         )
     rule = require_str(result.get("ruleId"), "ruleId")
     native = _native(result)
-    flows = _flows(result, sources)
-    locations = [
-        _location(item, sources) for item in _list(result.get("locations"), 1, 10)
-    ]
+    evidence = _sarif_evidence(result, (rules or {}).get(rule, {}), sources)
     native_fingerprint_sha256 = digest(native)
     identity_basis = "sarif_native_fingerprint"
     identity_native = native
@@ -2532,9 +2674,8 @@ def _finding(result: object, analyzer: dict, sources: dict) -> dict:
         identity_basis = "source_location_fallback"
         identity_native = {
             "native_fingerprint_sha256": native_fingerprint_sha256,
-            "locations_sha256": digest(locations),
+            "locations_sha256": digest(evidence["locations"]),
         }
-    suppressions = _suppression(result)
     return {
         "finding_id": digest(
             {
@@ -2559,12 +2700,7 @@ def _finding(result: object, analyzer: dict, sources: dict) -> dict:
             result.get("baselineState", "unbaselined"),
             {"new", "updated", "unchanged", "absent", "unbaselined"},
         ),
-        "locations": locations,
-        "flows": flows,
-        "trace_sha256": digest({"locations": locations, "flows": flows}),
-        "trace_depth": max((len(flow) for flow in flows), default=0),
-        "suppressions": suppressions,
-        "suppressed": any(item["status"] != "rejected" for item in suppressions),
+        **evidence,
     }
 
 
@@ -2647,7 +2783,8 @@ def normalize_sarif(
     _completed(run, analyzer)
     results = _list(run.get("results"), 0, 20_000)
     _check_rule_indices(run, results)
-    findings = [_finding(item, analyzer, source_hashes) for item in results]
+    rules = {item["id"]: item for item in run["tool"]["driver"].get("rules", [])}
+    findings = [_finding(item, analyzer, source_hashes, rules) for item in results]
     identities = [item["finding_id"] for item in findings]
     if len(identities) != len(set(identities)):
         raise RuntimeAuditError(
