@@ -2175,20 +2175,22 @@ def security_literal_branch_blocks(
     nodes = tuple(islice(ast.walk(statement.test), 129))
     if len(nodes) > 128:
         return statement.body, statement.orelse
-    known = {}
-    for node in nodes:
-        if not isinstance(node, (ast.Name, ast.Attribute)):
-            continue
-        name = node.id if isinstance(node, ast.Name) else ast.dump(node)
-        environment = values if isinstance(node, ast.Name) else expression_values
-        value = (environment or {}).get(name)
-        scalar = _validated_exact_scalar(value) if value is not None else ()
-        if scalar and not (value.unknown or value.content_unknown or value.roots):
-            known[name] = scalar[0]
+    known = {
+        name: scalar[0]
+        for kind, env in ((ast.Name, values), (ast.Attribute, expression_values))
+        for node in nodes
+        if isinstance(node, kind)
+        for name in (node.id if kind is ast.Name else ast.dump(node),)
+        for value in ((env or {}).get(name),)
+        if value is not None
+        for scalar in (_validated_exact_scalar(value),)
+        if all((scalar, not value.unknown, not value.content_unknown, not value.roots))
+    }
     projected = {
         id(child)
         for node in nodes
-        if isinstance(node, ast.Attribute) and ast.dump(node) in known
+        if isinstance(node, ast.Attribute)
+        if ast.dump(node) in known
         for child in ast.walk(node.value)
     }
     allowed = (
@@ -2227,22 +2229,21 @@ def security_literal_branch_blocks(
         if isinstance(node, ast.Constant)
         if type(node.value) in literal_budgets
     )
-    if (
-        any(not isinstance(node, allowed) for node in nodes)
-        or any(
-            isinstance(node, (ast.Name, ast.Attribute))
-            and id(node) not in projected
-            and (node.id if isinstance(node, ast.Name) else ast.dump(node)) not in known
-            for node in nodes
-        )
-        or any(measure(value) > limit for value, (measure, limit) in measured_literals)
-    ):
+    invalid_nodes = any(not isinstance(node, allowed) for node in nodes)
+    unbound_reads = any(
+        (node.id if isinstance(node, ast.Name) else ast.dump(node)) not in known
+        for node in nodes
+        if isinstance(node, (ast.Name, ast.Attribute))
+        if id(node) not in projected
+    )
+    oversized_literals = any(
+        measure(value) > limit for value, (measure, limit) in measured_literals
+    )
+    if any((invalid_nodes, unbound_reads, oversized_literals)):
         return statement.body, statement.orelse
     truth = _constant_truth_value(statement.test, known)
-    return (
-        (statement.body if truth else statement.orelse,)
-        if truth is not None
-        else (statement.body, statement.orelse)
+    return {True: (statement.body,), False: (statement.orelse,)}.get(
+        truth, (statement.body, statement.orelse)
     )
 
 
