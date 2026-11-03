@@ -26,7 +26,7 @@ _FINDING_TIER_POLICY = {
     "pickle_byte_origin": "source_edge_observation_only; reconstruction_effects_remain_unassessed",
     "known_format_patterns": "factory.context_efficiency._SECRET_BYTES",
     "known_format_policy": "material_observation_only; authority_and_validity_not_established",
-    "configuration_load_policy": "observation_only_unless_source_bound_selected_framework_feedback_default_is_regenerated",
+    "configuration_load_policy": "regenerated_selected_framework_feedback_default_is_supported; regenerated_configured_test_feedback_requires_context",
     "credential_witness_policy": "recognized_scope_and_current_source_bound_spans_required",
     "claims": "no_precision_or_held_out_measurement",
     "admission_requirements": [
@@ -879,8 +879,6 @@ def _decide_finding_tier(
         if (
             evidence.get("schema")
             == "factory.security.selected-framework-consumer-authority.v1"
-            and evidence.get("proof_scope")
-            == "source_bound_selected_framework_feedback_default"
             and key_matches
             and credential_context is not None
         ):
@@ -891,11 +889,12 @@ def _decide_finding_tier(
             if evidence == operative_signing_default_evidence(
                 finding, credential_context
             ):
-                return (
-                    "SUPPORTED_DEFECT",
-                    "source_bound_selected_framework_feedback_default",
-                    None,
+                tier = (
+                    "NEEDS_CONTEXT"
+                    if evidence.get("authority_domain")
+                    else "SUPPORTED_DEFECT"
                 )
+                return tier, evidence["proof_scope"], None
         recognized = {
             (
                 "captured_same_module_static_wiring",

@@ -3405,17 +3405,308 @@ def _fixture_literal_setting(tree, name):
         return None
 
 
-def _fixture_pytest_options(index):
+def _fixture_project(index):
     from .review_audits import tomllib
 
     raw = index["configuration_bytes"].get("pyproject.toml")
     if not isinstance(raw, bytes):
         return None
     try:
-        options = tomllib.loads(raw.decode("utf8"))["tool"]["pytest"]["ini_options"]
-    except (UnicodeError, ValueError, KeyError, TypeError):
+        return tomllib.loads(raw.decode("utf8"))
+    except (UnicodeError, ValueError):
+        return None
+
+
+def _fixture_pytest_options(index):
+    try:
+        options = _fixture_project(index)["tool"]["pytest"]["ini_options"]
+    except (KeyError, TypeError):
         return None
     return options if isinstance(options, dict) else None
+
+
+def _django_test_collected_methods(index, path, roots, patterns, maps):
+    from . import mock_fixture_provenance as fixture
+    from . import review_audits as audit
+    from .pytest_collection_audit import (
+        _pytest_collection_hook_names,
+        _pytest_file_matches,
+        _pytest_plugin_declaration_active,
+        _pytest_test_disabled,
+    )
+
+    source, relative = index["source"], index["source"].relative(path)
+    if relative is None or not _pytest_file_matches(relative, patterns["python_files"]):
+        return []
+    module = index["modules"][path]
+    if not any(path.is_relative_to(root) for root in roots):
+        return []
+    conftests = fixture._django_test_conftests(index, path)
+    if any(
+        _pytest_collection_hook_names(index["modules"][p], True, False)
+        or any(_pytest_plugin_declaration_active(n) for n in index["modules"][p].body)
+        for p in conftests
+    ) or any(_pytest_plugin_declaration_active(n) for n in module.body):
+        return []
+    if _pytest_collection_hook_names(module, False, True) or binding_occurrences(
+        module.body, "pytestmark"
+    ):
+        return []
+    aliases = fixture._django_imports(index, path)
+    if aliases is None:
+        return []
+    parents, nodes = (
+        audit._oracle_ancestor_map(module.body, module),
+        list(ast.walk(module)),
+    )
+    functions = [n for n in nodes if isinstance(n, ast.FunctionDef)]
+    chains = {}
+    for function in functions:
+        owner = source.parents[path].get(id(function))
+        if isinstance(owner, ast.ClassDef) and id(owner) not in chains:
+            chains[id(owner)] = _fixture_test_chain(index, path, function, maps)
+    unittest = {
+        id(n) for n in functions if chains.get(id(source.parents[path].get(id(n))))
+    }
+    return [
+        (n, chains.get(id(source.parents[path].get(id(n)))))
+        for n in functions
+        if not any(
+            isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+            for parent, _ in parents.get(id(n), ())
+        )
+        and not _pytest_test_disabled(n, parents, nodes)
+        and audit._collected_test_function(
+            relative, n, parents, unittest, aliases, patterns, set(), nodes
+        )
+        and not _django_test_skipped(index, path, n)
+    ]
+
+
+def _django_test_skipped(index, path, function):
+    from . import mock_fixture_provenance as fixture
+
+    skipped = {
+        "pytest.skip",
+        "pytest.mark.skip",
+        "pytest.mark.skipif",
+        "unittest.skip",
+        "unittest.skipIf",
+    }
+    return any(
+        fixture._django_expr(index, path, n.func if isinstance(n, ast.Call) else n)
+        in skipped
+        for n in function.decorator_list
+    ) or any(
+        isinstance(n, ast.Call) and fixture._django_expr(index, path, n.func) in skipped
+        for n in ast.walk(function)
+    )
+
+
+def _django_test_domain_consumer(index, roots, apps, patterns):
+    maps = _fixture_class_maps(index)
+    if maps is None:
+        return None
+    return next(
+        (
+            result
+            for path in index["modules"]
+            if any(path.is_relative_to(root) for root in roots)
+            for result in (
+                _django_test_module_consumer(index, path, roots, apps, patterns, maps),
+            )
+            if result is not None
+        ),
+        None,
+    )
+
+
+def _django_test_module_consumer(index, path, roots, apps, patterns, maps):
+    for test, chain in _django_test_collected_methods(
+        index, path, roots, patterns, maps
+    ):
+        result = _django_test_method_consumer(index, path, test, chain, apps)
+        if result is not None:
+            result["test_owner"] = {
+                "path": index["source"].relative(path),
+                "sha256": index["source"].inventory[path],
+                "span": [
+                    test.lineno,
+                    test.col_offset,
+                    test.end_lineno,
+                    test.end_col_offset,
+                ],
+            }
+            return result
+    return None
+
+
+def _django_test_method_consumer(index, path, test, chain, apps):
+    from . import mock_fixture_provenance as fixture
+
+    candidates = []
+    setup = fixture._app_effective_method(chain["chain"], "setUp") if chain else None
+    if setup:
+        candidates.append((setup[0], setup[1], chain))
+    if chain or _django_test_database_marker(index, path, test):
+        candidates.append((path, test, chain))
+    for owner_path, function, fixture_chain in candidates:
+        calls = (
+            n
+            for statement in function.body
+            if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.Expr))
+            for n in ast.walk(statement)
+            if isinstance(n, ast.Call)
+            and not _has_nested_scope(n, function, index["source"].parents[owner_path])
+        )
+        for call in calls:
+            result = _django_test_data_consumer(
+                index, owner_path, function, call, apps, fixture_chain
+            )
+            if result is not None:
+                if owner_path != path:
+                    result["test_owner_span"] = [
+                        test.lineno,
+                        test.col_offset,
+                        test.end_lineno,
+                        test.end_col_offset,
+                    ]
+                return result
+    return None
+
+
+def _django_test_database_marker(index, path, function):
+    from . import mock_fixture_provenance as fixture
+
+    if not function.name.startswith("test_"):
+        return False
+    return any(
+        fixture._django_expr(index, path, n.func if isinstance(n, ast.Call) else n)
+        == "pytest.mark.django_db"
+        for n in function.decorator_list
+    ) and _django_test_provider_stable(index, "pytest.mark.django_db")
+
+
+def _django_test_provider_stable(index, provider):
+    from . import mock_fixture_provenance as fixture
+
+    for path, tree in index["modules"].items():
+        imports = fixture._django_imports(index, path)
+        if imports is None:
+            return False
+        relevant = any(
+            target == provider
+            or provider.startswith(target + ".")
+            or target.startswith(provider + ".")
+            for target in imports.values()
+        )
+        if relevant and not fixture._app_provider_unchanged(
+            index, path, tree, provider
+        ):
+            return False
+    return True
+
+
+def _django_test_data_consumer(index, path, function, call, apps, chain):
+    from . import mock_fixture_provenance as fixture
+
+    canonical = fixture._django_expr(index, path, call.func, function)
+    if canonical == "django.core.management.call_command":
+        return _django_test_management_consumer(
+            index, path, function, call, apps, chain
+        )
+    if (
+        not chain
+        or not isinstance(call.func, ast.Attribute)
+        or call.func.attr != "create"
+    ):
+        return None
+    manager = call.func.value
+    if not isinstance(manager, ast.Attribute) or manager.attr != "objects":
+        return None
+    resolved = _fixture_symbol(index, path, manager.value, function)
+    if (
+        resolved is None
+        or resolved[0] not in apps.values()
+        or not isinstance(resolved[1], ast.ClassDef)
+    ):
+        return None
+    model, cls = resolved
+    if not _django_test_provider_stable(
+        index, fixture._django_name(index, model) + "." + cls.name
+    ):
+        return None
+    if not any(
+        fixture._django_expr(index, model, base) == "django.db.models.Model"
+        for base in cls.bases
+    ):
+        return None
+    if any(
+        _fixture_class_binding(cls, n)
+        for n in ("objects", "save", "__new__", "__init__")
+    ):
+        return None
+    if (
+        call.args
+        or not call.keywords
+        or not all(
+            keyword.arg and isinstance(keyword.value, ast.Constant)
+            for keyword in call.keywords
+        )
+    ):
+        return None
+    return _django_test_consumer_record(index, path, function, call, model)
+
+
+def _django_test_management_consumer(index, path, function, call, apps, chain):
+    if (
+        chain is not None
+        or len(call.args) < 2
+        or not _django_test_provider_stable(
+            index, "django.core.management.call_command"
+        )
+    ):
+        return None
+    command, app = call.args[:2]
+    if not all(
+        isinstance(n, ast.Constant) and isinstance(n.value, str) for n in (command, app)
+    ):
+        return None
+    model = apps.get(app.value)
+    if (
+        model is None
+        or command.value != "migrate"
+        or call.keywords
+        or not all(isinstance(n, ast.Constant) for n in call.args[2:])
+    ):
+        return None
+    return _django_test_consumer_record(index, path, function, call, model)
+
+
+def _django_test_consumer_record(index, path, function, call, model):
+    return {
+        "profile": "django_transactional_test_database",
+        "source": {
+            "path": index["source"].relative(path),
+            "sha256": index["source"].inventory[path],
+        },
+        "function_span": [
+            function.lineno,
+            function.col_offset,
+            function.end_lineno,
+            function.end_col_offset,
+        ],
+        "effect_span": [
+            call.lineno,
+            call.col_offset,
+            call.end_lineno,
+            call.end_col_offset,
+        ],
+        "model_source": {
+            "path": index["source"].relative(model),
+            "sha256": index["source"].inventory[model],
+        },
+    }
 
 
 def _fixture_settings(index):
@@ -5510,6 +5801,7 @@ def _source_request_parent_statement(expression, function, parents):
 
 def security_value_helper_epoch():
     """Bind cached proofs to the shared value, effect, binding and transfer kernel."""
+    from . import credential_identity_audit
     from . import finite_capture
     from . import semantic_credential_sensor
     from . import credential_role_identity_effects as effects
@@ -5547,6 +5839,7 @@ def security_value_helper_epoch():
         audit._oracle_tree_fingerprint,
         audit.integrity._security_local_helper_definition,
         *_module_function_binding_epoch(effects),
+        *_module_function_binding_epoch(credential_identity_audit),
         *_module_function_binding_epoch(getter),
         *_module_function_binding_epoch(finite_capture),
         *_module_function_binding_epoch(semantic_credential_sensor),

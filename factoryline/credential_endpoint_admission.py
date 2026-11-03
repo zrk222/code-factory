@@ -2168,7 +2168,6 @@ def operative_signing_default_evidence(finding, context):
 def _django_default_authority(finding, context, declaration, observation):
     from .mock_fixture_provenance import _django_assignment
     from .credential_role_constructor_provider import binding_occurrences
-    from .review_audits import _resolved_ast_name
     from .semantic_credential_sensor import _signing_optional_configuration_defaults
 
     index, path = context["index"], Path(finding["path"])
@@ -2268,9 +2267,18 @@ def _django_default_authority(finding, context, declaration, observation):
     source_hashes.update(
         {index.relative(source): index.inventory[source] for source in selected_sources}
     )
+    from .credential_identity_audit import django_test_domain_evidence
+
+    domain = django_test_domain_evidence(context, path, observation, selected)
+    if domain is not None:
+        source_hashes.update(domain.pop("supporting_sources"))
     return {
         "schema": "factory.security.selected-framework-consumer-authority.v1",
-        "proof_scope": "source_bound_selected_framework_feedback_default",
+        "proof_scope": (
+            "source_bound_configured_test_feedback"
+            if domain is not None
+            else "source_bound_selected_framework_feedback_default"
+        ),
         "framework": "django",
         "credential_key": "SECRET_KEY",
         "source_role": "published_literal_default",
@@ -2289,20 +2297,17 @@ def _django_default_authority(finding, context, declaration, observation):
         "runtime_execution": "not_performed",
         "deployment": "UNASSESSED",
         "distribution_runtime_selection": (
-            "captured_settings_loader"
+            "UNASSESSED"
             if any(
-                name.endswith(("pyproject.toml", "setup.cfg"))
-                for name in context.get("captured", {})
-            )
-            or any(
-                isinstance(node, ast.Call)
-                and _resolved_ast_name(node.func, context["aliases"][owner])
-                in {"setuptools.setup", "distutils.core.setup"}
-                for owner, source in index.snapshots.items()
-                for node in ast.walk(source)
+                name in context.get("captured", {})
+                for name in ("pyproject.toml", "setup.cfg", "setup.py")
             )
             else "no_captured_distribution_declaration"
         ),
+        "settings_runtime_selection": "captured_settings_loader",
+        "consumer_effect_phase": "signed_feedback_cookie_acceptance",
+        "rendered_output": "UNASSESSED",
+        "authority_domain": domain,
     }
 
 

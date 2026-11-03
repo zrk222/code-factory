@@ -956,6 +956,240 @@ def _recovery_row(files, name="SECRET_KEY", path="service/settings.py"):
 
 
 @pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"pyproject.toml": '[project]\nname="library"\n'},
+        {"setup.cfg": "[metadata]\nname = library\n"},
+        {"setup.py": 'from setuptools import setup\nsetup(packages=["library"])\n'},
+        {
+            "pyproject.toml": '[build-system]\nbuild-backend="setuptools.build_meta"\n'
+            '[tool.setuptools]\npackages=["library"]\n'
+            '[tool.pytest.ini_options]\nDJANGO_SETTINGS_MODULE="service.settings"\n'
+        },
+    ],
+)
+def test_authority_domain_unshipped_runnable_signer_preserves_authority(metadata):
+    files = _recovery_sources(
+        SETTINGS + 'DEBUG = True\nALLOWED_HOSTS = ["localhost"]\n',
+        extra={"README.md": "This is only a demo and its key is fake.", **metadata},
+    )
+    row = _recovery_row(files)
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    proof = row["credential_authority_observation"]
+    assert proof["distribution_runtime_selection"] == (
+        "UNASSESSED" if metadata else "no_captured_distribution_declaration"
+    )
+    assert proof["settings_runtime_selection"] == "captured_settings_loader"
+    assert proof["consumer_effect_phase"] == "signed_feedback_cookie_acceptance"
+    assert proof["rendered_output"] == "UNASSESSED"
+    assert {ref["path"] for ref in proof["transfers"]} >= {
+        "start.py",
+        "service/urls.py",
+    }
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("distribution_runtime_selection", "shipped_application"),
+        ("settings_runtime_selection", "environment_deployment"),
+        ("rendered_output", "PROVEN"),
+        ("consumer_effect_phase", "rendered_security_feedback"),
+    ],
+)
+def test_authority_domain_native_admission_rejects_forged_assurance(field, value):
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import semantic_credential_sensor as sensor
+
+    files = _recovery_sources()
+    row = _recovery_row(files)
+    finding = row["raw_finding"]
+    proof = copy.deepcopy(row["credential_authority_observation"])
+    proof[field] = value
+    raw = {name: source.encode() for name, source in files.items()}
+    hashes = {name: sha256(source).hexdigest() for name, source in raw.items()}
+    context = sensor.signing_configuration_inventory(raw, hashes)
+    result = binding._decide_finding_tier(
+        finding,
+        True,
+        [finding],
+        [],
+        proof,
+        source_bindings=hashes,
+        credential_context=context,
+    )
+    assert result[0] == "NEEDS_CONTEXT"
+
+
+def _configured_test_domain_sources(mode="model", namespace="verification"):
+    project = (
+        '[build-system]\nbuild-backend="flit_core.buildapi"\n'
+        '[tool.flit.module]\nname="library"\n'
+        '[project.optional-dependencies]\ncheck=["pytest", "pytest-django"]\n'
+        "[tool.pytest.ini_options]\ndjango_find_project=false\n"
+        f'DJANGO_SETTINGS_MODULE="{namespace}.config"\ntestpaths=["{namespace}"]\n'
+    )
+    settings = SETTINGS.replace(
+        '"django.contrib.messages"]',
+        f'"django.contrib.messages", "{namespace}.resource"]',
+    ) + (
+        f'ROOT_URLCONF="{namespace}.urls"\n'
+        f'WSGI_APPLICATION="{namespace}.wsgi.application"\n'
+        'DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}\n'
+    )
+    consumer = (
+        f"from django.test import TestCase\nfrom {namespace}.resource.models import Item\n"
+        "class TestExercise(TestCase):\n"
+        "    def setUp(self):\n        self.obj = Item.objects.create(label='fixture')\n"
+        "    def test_roundtrip(self):\n        self.assertEqual(self.obj.label, 'fixture')\n"
+        if mode == "model"
+        else "import pytest\nfrom django.core.management import call_command\n"
+        "@pytest.mark.django_db\ndef test_database():\n    call_command('migrate', 'resource', 'zero')\n"
+    )
+    return {
+        "pyproject.toml": project,
+        "library/__init__.py": "",
+        f"{namespace}/__init__.py": "",
+        f"{namespace}/config.py": settings,
+        f"{namespace}/urls.py": FEEDBACK_URLS,
+        f"{namespace}/wsgi.py": START.replace(
+            "service.settings", namespace + ".config"
+        ),
+        f"{namespace}/resource/__init__.py": "",
+        f"{namespace}/resource/models.py": "from django.db import models\n"
+        "class Item(models.Model):\n    label = models.CharField(max_length=32)\n",
+        f"{namespace}/test_flow.py": consumer,
+    }
+
+
+@pytest.mark.parametrize("mode", ["model", "migration"])
+@pytest.mark.parametrize("namespace", ["verification", "neutral_resources"])
+def test_authority_domain_requires_configured_transactional_consumers(mode, namespace):
+    files = _configured_test_domain_sources(mode, namespace)
+    row = _recovery_row(files, path=namespace + "/config.py")
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    proof = row["credential_authority_observation"]
+    domain = proof["authority_domain"]
+    assert proof["proof_scope"] == "source_bound_configured_test_feedback"
+    assert domain["role"] == "CONFIGURED_TRANSACTIONAL_TEST_SIGNER"
+    assert domain["application_authority"] == "UNKNOWN"
+    assert domain["isolation_assurance"] == "UNASSESSED"
+    assert domain["consumer"]["effect_span"]
+    assert len(domain["source_inventory_sha256"]) == 64
+
+
+@pytest.mark.parametrize(
+    "counteredge",
+    [
+        "outside_wsgi",
+        "imported_secret",
+        "entrypoint",
+        "root_management",
+        "module_model",
+        "class_model",
+    ],
+)
+def test_authority_domain_independent_application_edge_defeats_test_discharge(
+    counteredge,
+):
+    files = _configured_test_domain_sources()
+    if counteredge == "outside_wsgi":
+        files["live.py"] = START.replace("service.settings", "verification.config")
+    elif counteredge == "root_management":
+        files = {
+            name.replace("config.py", "settings.py"): value.replace(
+                "verification.config", "verification.settings"
+            )
+            for name, value in files.items()
+        }
+        files["manage.py"] = (
+            "import os\nfrom django.core.management import execute_from_command_line\n"
+            "os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'verification.settings')\n"
+            "execute_from_command_line([])\n"
+        )
+    elif counteredge in {"module_model", "class_model"}:
+        operation = "Item.objects.create(label='live')"
+        body = (
+            operation
+            if counteredge == "module_model"
+            else "class Live:\n    value = " + operation
+        )
+        files["live.py"] = (
+            "from verification.resource.models import Item\n" + body + "\n"
+        )
+    elif counteredge == "imported_secret":
+        files["live.py"] = (
+            "from verification.config import SECRET_KEY\nvalue=SECRET_KEY\n"
+        )
+    else:
+        files["pyproject.toml"] += '[project.scripts]\nserve="live:application"\n'
+    selected = (
+        "verification/settings.py"
+        if counteredge == "root_management"
+        else "verification/config.py"
+    )
+    row = _recovery_row(files, path=selected)
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["credential_authority_observation"]["authority_domain"] is None
+
+
+@pytest.mark.parametrize(
+    "rewrite",
+    [
+        lambda files: files.__setitem__(
+            "verification/live.py",
+            START.replace("service.settings", "verification.config"),
+        ),
+        lambda files: files.__setitem__(
+            "verification/test_helper.py",
+            "from verification.resource.models import Item\ndef helper():\n    return Item.objects.create(label='outside')\n",
+        ),
+        lambda files: files["verification/test_flow.py"].replace(
+            "class TestExercise(TestCase)", "class Exercise(object)"
+        ),
+        lambda files: files["verification/test_flow.py"].replace(
+            "    def test_roundtrip", "    def helper_roundtrip"
+        ),
+        lambda files: files.__setitem__(
+            "conftest.py", "pytest_plugins = ['external.plugin']\n"
+        ),
+        lambda files: files.__setitem__("pytest.ini", "[pytest]\ntestpaths = other\n"),
+    ],
+)
+def test_authority_domain_rejects_uncollected_or_competing_test_ownership(rewrite):
+    files = _configured_test_domain_sources()
+    value = rewrite(files)
+    if isinstance(value, str):
+        files["verification/test_flow.py"] = value
+    row = _recovery_row(files, path="verification/config.py")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["credential_authority_observation"]["authority_domain"] is None
+
+
+@pytest.mark.parametrize("missing", ["ownership", "data", "plugin", "provider"])
+def test_authority_domain_hints_without_closed_fixture_role_preserve_signer(missing):
+    files = _configured_test_domain_sources()
+    if missing == "ownership":
+        files["pyproject.toml"] = files["pyproject.toml"].replace(
+            'testpaths=["verification"]', 'testpaths=["other"]'
+        )
+    elif missing == "data":
+        files["verification/test_flow.py"] = "from django.test import TestCase\n"
+    elif missing == "plugin":
+        files["pyproject.toml"] = files["pyproject.toml"].replace(
+            '"pytest-django"', '"pytest"'
+        )
+    else:
+        files["verification/test_flow.py"] += "TestCase._fixture_setup = replacement\n"
+    row = _recovery_row(files, path="verification/config.py")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["credential_authority_observation"]["authority_domain"] is None
+
+
+@pytest.mark.parametrize(
     "helper", ["finite_keys", "import_operand", "scalar_owner", "scalar_capability"]
 )
 def test_primed_native_provider_proof_rechecks_selected_helper_dependencies(
@@ -1498,6 +1732,10 @@ def test_packaging_does_not_negate_captured_settings_loader(metadata):
     assert row["credential_authority_observation"]["deployment"] == "UNASSESSED"
     assert (
         row["credential_authority_observation"]["distribution_runtime_selection"]
+        == "UNASSESSED"
+    )
+    assert (
+        row["credential_authority_observation"]["settings_runtime_selection"]
         == "captured_settings_loader"
     )
     assert (
@@ -2743,3 +2981,94 @@ def test_framework_feedback_authority_binds_hazard_execution_scope(hazard, reach
         assert "mutation.py" not in {p["path"] for p in proof["supporting_sources"]}
         assert proof["runtime_execution"] == "not_performed"
         assert proof["deployment"] == "UNASSESSED"
+
+
+@pytest.mark.parametrize(
+    "deferred",
+    [
+        "lambda: Item.objects.create(label='fixture')",
+        "(Item.objects.create(label='fixture') for _ in [])",
+    ],
+)
+def test_authority_domain_deferred_fixture_is_not_transactional_witness(deferred):
+    files = _configured_test_domain_sources()
+    files["verification/test_flow.py"] = files["verification/test_flow.py"].replace(
+        "Item.objects.create(label='fixture')", deferred
+    )
+    row = _recovery_row(files, path="verification/config.py")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["credential_authority_observation"]["authority_domain"] is None
+
+
+def test_authority_domain_nested_uncalled_test_is_not_collected():
+    files = _configured_test_domain_sources("migration")
+    original = files["verification/test_flow.py"]
+    imports, function = original.split("@pytest.mark.django_db", 1)
+    files["verification/test_flow.py"] = (
+        imports
+        + "def helper():\n"
+        + "".join(
+            "    " + line + "\n"
+            for line in ("@pytest.mark.django_db" + function).splitlines()
+        )
+    )
+    row = _recovery_row(files, path="verification/config.py")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["credential_authority_observation"]["authority_domain"] is None
+
+
+@pytest.mark.parametrize("lookup", ["static", "registry", "dynamic", "appconfig"])
+def test_authority_domain_independent_second_app_effect_vetoes_context(lookup):
+    files = _configured_test_domain_sources()
+    files["verification/config.py"] = files["verification/config.py"].replace(
+        '"verification.resource"]', '"verification.resource", "application"]'
+    )
+    files["application/__init__.py"] = ""
+    files["application/models.py"] = (
+        "from django.db import models\n"
+        "class Other(models.Model):\n    label = models.CharField(max_length=32)\n"
+    )
+    operations = {
+        "static": "from application.models import Other\nOther.objects.create(label='live')\n",
+        "registry": "from django.apps import apps\nOther = apps.get_model('application', 'Other')\n"
+        "Other.objects.create(label='live')\n",
+        "dynamic": "from importlib import import_module\n"
+        "Other = import_module('application.models').Other\n"
+        "Other.objects.create(label='live')\n",
+    }
+    if lookup == "appconfig":
+        files["verification/config.py"] = files["verification/config.py"].replace(
+            '"application"]', '"application.apps.ApplicationConfig"]'
+        )
+        files["application/apps.py"] = (
+            "from django.apps import AppConfig\n"
+            "class ApplicationConfig(AppConfig):\n    name = 'application'\n"
+        )
+    files["live.py"] = operations["static" if lookup == "appconfig" else lookup]
+    row = _recovery_row(files, path="verification/config.py")
+    if lookup == "dynamic":
+        assert row["tier"] == "NEEDS_CONTEXT"
+        assert row["evidence"] is None
+    else:
+        assert row["tier"] == "SUPPORTED_DEFECT"
+    assert (
+        row.get("credential_authority_observation", {}).get("authority_domain") is None
+    )
+
+
+def test_authority_domain_escaping_deferred_test_effect_vetoes_context():
+    files = _configured_test_domain_sources()
+    files["callbacks.py"] = "pending = []\n"
+    files["verification/test_flow.py"] = (
+        "from callbacks import pending\n" + files["verification/test_flow.py"]
+    ).replace(
+        "self.assertEqual(self.obj.label, 'fixture')",
+        "pending.append(lambda: Item.objects.create(label='outside'))",
+    )
+    files["live.py"] = (
+        "from callbacks import pending\n"
+        "def start():\n    return [callback() for callback in pending]\n"
+    )
+    row = _recovery_row(files, path="verification/config.py")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["credential_authority_observation"]["authority_domain"] is None
