@@ -11,11 +11,15 @@ Atomic, executes a command, resumes a checkpoint, or grants authority.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import stat
+import tempfile
+import threading
 from typing import Any
 
 from .agent_license import AgentLicenseError, normalize_agent_identity
@@ -43,6 +47,7 @@ MCP_MARKER = "ATOMIC_MCP_READ_ONLY"
 MAX_BYTES = 1_048_576
 MAX_ITEMS = 128
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
+_ATOMIC_HISTORY_THREAD_LOCK = threading.Lock()
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _STAGE_KINDS = WorkflowNodeKind.values()
 _STAGE_STATUS = AgentRunStatus.values()
@@ -836,23 +841,90 @@ def _handoff_history(
         _compare_historical_handoffs(value, workflow_id, expected)
 
 
-def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    """Create a new immutable receipt without replacing an existing destination."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _is_reparse_path(path: Path) -> bool:
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-    except FileExistsError as exc:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse_flag)
+
+
+@contextmanager
+def _atomic_history_lock(root: Path):
+    """Serialize receipt history checks with an OS-released workspace lock."""
+    directory = root / ".factory"
+    lock_path = directory / ".atomic-history.lock"
+    relative_lock = lock_path.relative_to(root).as_posix()
+    _inside(root, relative_lock, "history lock", exists=False)
+    if _is_reparse_path(directory) or _is_reparse_path(lock_path):
         raise AtomicProofAdapterError(
-            "E_ATOMIC_EVIDENCE_UNVERIFIED",
-            "output receipt already exists; choose a new immutable path",
-        ) from exc
+            "E_ATOMIC_SCOPE_ESCAPE",
+            "history lock path cannot use a link or reparse point",
+        )
+    directory.mkdir(parents=True, exist_ok=True)
+    _inside(root, relative_lock, "history lock", exists=False)
+    if _is_reparse_path(directory) or _is_reparse_path(lock_path):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_SCOPE_ESCAPE",
+            "history lock path cannot use a link or reparse point",
+        )
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_BINARY", 0)
+    with _ATOMIC_HISTORY_THREAD_LOCK:
+        descriptor = os.open(lock_path, flags, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise AtomicProofAdapterError(
+                    "E_ATOMIC_EVIDENCE_UNVERIFIED", "history lock is not a regular file"
+                )
+            if os.name == "nt":
+                import msvcrt
+
+                if not os.fstat(descriptor).st_size:
+                    os.write(descriptor, b"\0")
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(descriptor)
+
+
+def _atomic_bytes(path: Path, encoded: bytes) -> None:
+    """Publish a complete immutable file without replacing an existing destination."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
-            handle.write("\n")
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_EVIDENCE_UNVERIFIED",
+                "output receipt already exists; choose a new immutable path",
+            ) from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _atomic_json(path: Path, payload: dict[str, Any]) -> bytes:
+    """Create and return the canonical bytes of a new immutable JSON receipt."""
+    encoded = (
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    _atomic_bytes(path, encoded)
+    return encoded
 
 
 def _load_atomic_envelope(
@@ -1036,20 +1108,34 @@ def _persist_atomic_receipt(
     out: Path | None,
 ) -> dict[str, Any]:
     receipt = {**core, "receipt_sha256": _sha(core)}
-    destination = (
-        Path(out)
-        if out is not None
-        else Path(".factory")
-        / "atomic"
-        / f"{run_id}-{receipt['receipt_sha256'][:12]}.json"
+    history_target = _inside(
+        workspace,
+        (
+            Path(".factory")
+            / "atomic"
+            / f"{run_id}-{receipt['receipt_sha256'][:12]}.json"
+        ).as_posix(),
+        "history receipt",
+        exists=False,
     )
-    target = _inside(workspace, destination.as_posix(), "out", exists=False)
+    target = (
+        history_target
+        if out is None
+        else _inside(workspace, Path(out).as_posix(), "out", exists=False)
+    )
     if target.exists():
         raise AtomicProofAdapterError(
             "E_ATOMIC_EVIDENCE_UNVERIFIED",
             "output receipt already exists; choose a new immutable path",
         )
-    _atomic_json(target, receipt)
+    if history_target.exists():
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_EVIDENCE_UNVERIFIED",
+            "canonical history receipt already exists; choose a new run identifier",
+        )
+    encoded = _atomic_json(history_target, receipt)
+    if target != history_target:
+        _atomic_bytes(target, encoded)
     return {**receipt, "path": target.relative_to(workspace).as_posix()}
 
 
@@ -1062,19 +1148,20 @@ def import_atomic_run(
     identity = _atomic_run_identity(entry)
     run_id, _, _, autonomy, _, _ = identity
     contract_path, contract_sha256, checked_contract = _oracle_binding(workspace, entry)
-    bundle = _proof_bundle(
-        workspace,
-        entry,
-        contract_path,
-        contract_sha256,
-        checked_contract,
-        autonomy,
-        run_id,
-    )
-    core = _atomic_receipt_core(
-        workspace, source, identity, checked_contract, contract_sha256, bundle
-    )
-    return _persist_atomic_receipt(workspace, run_id, core, out)
+    with _atomic_history_lock(workspace):
+        bundle = _proof_bundle(
+            workspace,
+            entry,
+            contract_path,
+            contract_sha256,
+            checked_contract,
+            autonomy,
+            run_id,
+        )
+        core = _atomic_receipt_core(
+            workspace, source, identity, checked_contract, contract_sha256, bundle
+        )
+        return _persist_atomic_receipt(workspace, run_id, core, out)
 
 
 def verify_atomic_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:

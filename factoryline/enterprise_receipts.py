@@ -12,6 +12,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -121,8 +122,24 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return value
 
 
+def _json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("non-finite JSON number")
+    return number
+
+
+def _json_constant(_value: str) -> None:
+    raise ValueError("non-finite JSON number")
+
+
 def _json_loads(value: str | bytes) -> Any:
-    return json.loads(value, object_pairs_hook=_unique_json_object)
+    return json.loads(
+        value,
+        object_pairs_hook=_unique_json_object,
+        parse_float=_json_float,
+        parse_constant=_json_constant,
+    )
 
 
 def _sha256(value: bytes) -> str:

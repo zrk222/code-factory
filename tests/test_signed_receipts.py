@@ -33,6 +33,71 @@ def test_receipt_validation_rejects_non_receipt_json(tmp_path):
         validate_receipt(path)
 
 
+def test_receipt_validation_bounds_read_before_parsing(tmp_path, monkeypatch):
+    import factoryline.signed_receipts as receipts
+
+    path = tmp_path / "oversized.json"
+    path.write_bytes(
+        b'{"schema":"factory.receipt.v2"}' + b" " * receipts.MAX_RECEIPT_BYTES
+    )
+    monkeypatch.setattr(
+        receipts.json,
+        "loads",
+        lambda *_args, **_kwargs: pytest.fail("parsed oversize receipt"),
+    )
+    with pytest.raises(SignedReceiptError) as error:
+        validate_receipt(path)
+    assert error.value.code == "E_RECEIPT_SIZE"
+
+
+def test_receipt_validation_accepts_exact_byte_limit(tmp_path):
+    import factoryline.signed_receipts as receipts
+
+    path = tmp_path / "boundary.json"
+    prefix = b'{"schema":"factory.receipt.v2"}'
+    path.write_bytes(prefix + b" " * (receipts.MAX_RECEIPT_BYTES - len(prefix)))
+    assert path.stat().st_size == receipts.MAX_RECEIPT_BYTES
+    assert validate_receipt(path)["schema"] == "factory.receipt.v2"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"schema":"factory.receipt.v2","schema":"factory.receipt.v3"}',
+        b'{"schema":"factory.receipt.v2","ok":true,"ok":false}',
+        b'{"schema":"factory.receipt.v2","nested":{"field":1,"field":2}}',
+    ],
+)
+def test_receipt_validation_rejects_duplicate_members(tmp_path, raw):
+    path = tmp_path / "duplicate.json"
+    path.write_bytes(raw)
+    with pytest.raises(SignedReceiptError) as error:
+        validate_receipt(path)
+    assert error.value.code == "E_INVALID_RECEIPT"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"schema":"factory.receipt.v2","value":NaN}',
+        b'{"schema":"factory.receipt.v2","value":Infinity}',
+        b'{"schema":"factory.receipt.v2","value":1e999}',
+        b'{"schema":"factory.receipt.v2","value":"\xff"}',
+        b'{"schema":"factory.receipt.v2","value":'
+        + b"[" * 1200
+        + b"0"
+        + b"]" * 1200
+        + b"}",
+    ],
+)
+def test_receipt_validation_normalizes_invalid_bounded_json(tmp_path, raw):
+    path = tmp_path / "invalid.json"
+    path.write_bytes(raw)
+    with pytest.raises(SignedReceiptError) as error:
+        validate_receipt(path)
+    assert error.value.code == "E_INVALID_RECEIPT"
+
+
 def test_unsigned_receipt_is_never_reported_verified(tmp_path):
     result = receipt_status(_receipt(tmp_path))
     assert result.verdict == "UNSIGNED"

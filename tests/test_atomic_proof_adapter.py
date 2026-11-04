@@ -3,7 +3,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import multiprocessing
+import os
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -268,6 +271,23 @@ def _import(
     return import_atomic_run(root, path.relative_to(root))
 
 
+def _crash_with_history_lock(root: str, acquired) -> None:
+    from factoryline.atomic_proof_adapter import _atomic_history_lock
+
+    with _atomic_history_lock(Path(root)):
+        acquired.set()
+        os._exit(17)
+
+
+def _hold_history_lock(root: str, acquired, release) -> None:
+    from factoryline.atomic_proof_adapter import _atomic_history_lock
+
+    with _atomic_history_lock(Path(root)):
+        acquired.set()
+        if not release.wait(10):
+            raise RuntimeError("test did not release history lock")
+
+
 def test_template_gives_connected_agents_a_secret_free_handoff_shape() -> None:
     template = atomic_envelope_template()
 
@@ -380,6 +400,297 @@ def test_import_rejects_handoff_drift_and_history_drift(tmp_path: Path) -> None:
     with pytest.raises(AtomicProofAdapterError) as raised:
         _import(tmp_path, changed, filename="second.json")
     assert raised.value.code == "E_ATOMIC_HANDOFF_DRIFT"
+
+
+def test_concurrent_conflicting_imports_serialize_history_across_output_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import atomic_proof_adapter as adapter
+
+    first, _ = _envelope(tmp_path, run_id="atomic-race-1")
+    second, _ = _envelope(tmp_path, run_id="atomic-race-2")
+    changed_artifact = _digest("different-build-artifact")
+    second["stages"][1]["artifact_sha256"] = changed_artifact
+    second["handoffs"][1]["artifact_sha256"] = changed_artifact
+    first_path = _write(tmp_path / "first-envelope.json", first)
+    second_path = _write(tmp_path / "second-envelope.json", second)
+
+    first_inside_history = threading.Event()
+    second_inside_history = threading.Event()
+    release_first = threading.Event()
+    original = adapter._handoff_history
+
+    def observed_history(root, workflow_id, handoffs):
+        if threading.current_thread().name == "first-import":
+            first_inside_history.set()
+            assert release_first.wait(5)
+        else:
+            second_inside_history.set()
+        return original(root, workflow_id, handoffs)
+
+    monkeypatch.setattr(adapter, "_handoff_history", observed_history)
+    outcomes: dict[str, object] = {}
+
+    def run(name: str, source: Path, output: str) -> None:
+        try:
+            outcomes[name] = adapter.import_atomic_run(
+                tmp_path,
+                source.relative_to(tmp_path),
+                Path("exports") / output,
+            )
+        except BaseException as exc:
+            outcomes[name] = exc
+
+    first_thread = threading.Thread(
+        name="first-import",
+        target=run,
+        args=("first", first_path, "first.json"),
+    )
+    second_thread = threading.Thread(
+        name="second-import",
+        target=run,
+        args=("second", second_path, "second.json"),
+    )
+    first_thread.start()
+    assert first_inside_history.wait(5)
+    second_thread.start()
+    assert not second_inside_history.wait(0.2)
+    release_first.set()
+    first_thread.join(5)
+    second_thread.join(5)
+
+    assert not first_thread.is_alive() and not second_thread.is_alive()
+    assert isinstance(outcomes["first"], dict)
+    assert isinstance(outcomes["second"], AtomicProofAdapterError)
+    assert outcomes["second"].code == "E_ATOMIC_HANDOFF_DRIFT"
+    history = list((tmp_path / ".factory" / "atomic").glob("*.json"))
+    assert len(history) == 1
+    assert (tmp_path / "exports" / "first.json").read_bytes() == history[0].read_bytes()
+    assert not (tmp_path / "exports" / "second.json").exists()
+
+
+def test_atomic_receipt_publication_never_exposes_partial_final_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import atomic_proof_adapter as adapter
+
+    target = tmp_path / ".factory" / "atomic" / "complete.json"
+    entered_publish = threading.Event()
+    release_publish = threading.Event()
+    failures: list[BaseException] = []
+    original_link = adapter.os.link
+
+    def paused_link(source, destination):
+        entered_publish.set()
+        assert release_publish.wait(5)
+        original_link(source, destination)
+
+    monkeypatch.setattr(adapter.os, "link", paused_link)
+
+    def write() -> None:
+        try:
+            adapter._atomic_json(target, {"complete": True})
+        except BaseException as exc:
+            failures.append(exc)
+
+    writer = threading.Thread(target=write)
+    writer.start()
+    assert entered_publish.wait(5)
+    assert not target.exists()
+    release_publish.set()
+    writer.join(5)
+    assert not writer.is_alive() and not failures
+    assert json.loads(target.read_text(encoding="utf-8")) == {"complete": True}
+    assert not list(target.parent.glob("*.tmp"))
+
+
+def test_atomic_receipt_writer_cleans_failed_temp_and_never_clobbers_incumbent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import atomic_proof_adapter as adapter
+
+    target = tmp_path / ".factory" / "atomic" / "immutable.json"
+    original_fsync = adapter.os.fsync
+
+    def fail_fsync(_descriptor):
+        raise OSError("writer failed")
+
+    monkeypatch.setattr(adapter.os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match="writer failed"):
+        adapter._atomic_json(target, {"attempt": "failed"})
+    assert not target.exists()
+    assert not list(target.parent.glob("*.tmp"))
+
+    monkeypatch.setattr(adapter.os, "fsync", original_fsync)
+    adapter._atomic_json(target, {"version": 1})
+    incumbent = target.read_bytes()
+    with pytest.raises(AtomicProofAdapterError, match="already exists"):
+        adapter._atomic_json(target, {"version": 2})
+    assert target.read_bytes() == incumbent
+    assert not list(target.parent.glob("*.tmp"))
+
+
+def test_atomic_history_lock_serializes_processes_and_releases_after_crash(
+    tmp_path: Path,
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    acquired = context.Event()
+    release = context.Event()
+    holder = context.Process(
+        target=_hold_history_lock, args=(str(tmp_path), acquired, release)
+    )
+    holder.start()
+    assert acquired.wait(10)
+    parent_entered = threading.Event()
+
+    def acquire_in_parent() -> None:
+        from factoryline.atomic_proof_adapter import _atomic_history_lock
+
+        with _atomic_history_lock(tmp_path):
+            parent_entered.set()
+
+    contender = threading.Thread(target=acquire_in_parent)
+    contender.start()
+    assert not parent_entered.wait(0.2)
+    release.set()
+    holder.join(10)
+    contender.join(10)
+    assert holder.exitcode == 0
+    assert not contender.is_alive() and parent_entered.is_set()
+
+    crashed = context.Event()
+    process = context.Process(
+        target=_crash_with_history_lock, args=(str(tmp_path), crashed)
+    )
+    process.start()
+    assert crashed.wait(10)
+    process.join(10)
+    assert process.exitcode == 17
+
+    from factoryline.atomic_proof_adapter import _atomic_history_lock
+
+    with _atomic_history_lock(tmp_path):
+        assert (tmp_path / ".factory" / ".atomic-history.lock").is_file()
+
+
+def test_atomic_history_lock_rejects_factory_directory_symlink_without_outside_write(
+    tmp_path: Path,
+) -> None:
+    from factoryline.atomic_proof_adapter import (
+        AtomicProofAdapterError,
+        _atomic_history_lock,
+    )
+
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-lock-dir"
+    outside.mkdir()
+    try:
+        (tmp_path / ".factory").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"directory symlink creation unavailable: {exc}")
+
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        with _atomic_history_lock(tmp_path):
+            pytest.fail("linked workspace lock directory was accepted")
+    assert raised.value.code == "E_ATOMIC_SCOPE_ESCAPE"
+    assert not (outside / ".atomic-history.lock").exists()
+
+
+def test_atomic_history_lock_rejects_lockfile_symlink_without_target_mutation(
+    tmp_path: Path,
+) -> None:
+    from factoryline.atomic_proof_adapter import (
+        AtomicProofAdapterError,
+        _atomic_history_lock,
+    )
+
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-lock-file"
+    outside.write_bytes(b"")
+    factory = tmp_path / ".factory"
+    factory.mkdir()
+    try:
+        (factory / ".atomic-history.lock").symlink_to(outside)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"file symlink creation unavailable: {exc}")
+
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        with _atomic_history_lock(tmp_path):
+            pytest.fail("linked lock file was accepted")
+    assert raised.value.code == "E_ATOMIC_SCOPE_ESCAPE"
+    assert outside.read_bytes() == b""
+
+
+def test_custom_output_keeps_canonical_history_and_conflict_check(
+    tmp_path: Path,
+) -> None:
+    first, _ = _envelope(tmp_path, run_id="atomic-export-1")
+    first_path = _write(tmp_path / "export-envelope-1.json", first)
+    receipt = import_atomic_run(
+        tmp_path, first_path.relative_to(tmp_path), Path("exports/first.json")
+    )
+    history = list((tmp_path / ".factory" / "atomic").glob("*.json"))
+    assert len(history) == 1
+    exported = tmp_path / "exports" / "first.json"
+    assert Path(str(receipt["path"])) == Path("exports/first.json")
+    assert exported.read_bytes() == history[0].read_bytes()
+
+    second, _ = _envelope(tmp_path, run_id="atomic-export-2")
+    changed_artifact = _digest("custom-path-cannot-bypass-history")
+    second["stages"][1]["artifact_sha256"] = changed_artifact
+    second["handoffs"][1]["artifact_sha256"] = changed_artifact
+    second_path = _write(tmp_path / "export-envelope-2.json", second)
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        import_atomic_run(
+            tmp_path, second_path.relative_to(tmp_path), Path("exports/second.json")
+        )
+    assert raised.value.code == "E_ATOMIC_HANDOFF_DRIFT"
+    assert not (tmp_path / "exports" / "second.json").exists()
+    assert len(list((tmp_path / ".factory" / "atomic").glob("*.json"))) == 1
+
+
+def test_custom_output_collision_is_checked_before_history_commit(
+    tmp_path: Path,
+) -> None:
+    envelope, _ = _envelope(tmp_path)
+    source = _write(tmp_path / "collision-envelope.json", envelope)
+    output = _write(tmp_path / "exports" / "occupied.json", {"owner": "incumbent"})
+    before = output.read_bytes()
+    with pytest.raises(AtomicProofAdapterError, match="already exists"):
+        import_atomic_run(
+            tmp_path, source.relative_to(tmp_path), Path("exports/occupied.json")
+        )
+    assert output.read_bytes() == before
+    assert not list((tmp_path / ".factory" / "atomic").glob("*.json"))
+
+
+def test_custom_export_failure_keeps_committed_canonical_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import atomic_proof_adapter as adapter
+
+    envelope, _ = _envelope(tmp_path)
+    source = _write(tmp_path / "export-failure-envelope.json", envelope)
+    original_link = adapter.os.link
+    calls = 0
+
+    def fail_export(source_path, destination):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("export link failed")
+        original_link(source_path, destination)
+
+    monkeypatch.setattr(adapter.os, "link", fail_export)
+    with pytest.raises(OSError, match="export link failed"):
+        import_atomic_run(
+            tmp_path, source.relative_to(tmp_path), Path("exports/unavailable.json")
+        )
+    history = list((tmp_path / ".factory" / "atomic").glob("*.json"))
+    assert len(history) == 1
+    assert (
+        verify_atomic_receipt(tmp_path, history[0].relative_to(tmp_path))["ok"] is True
+    )
+    assert not (tmp_path / "exports" / "unavailable.json").exists()
+    assert not list((tmp_path / ".factory" / "atomic").glob("*.tmp"))
 
 
 def test_import_requires_hash_equal_checkpoint_for_human_reviewed_resume(
