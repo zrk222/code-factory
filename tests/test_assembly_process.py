@@ -469,10 +469,15 @@ def test_assignment_cannot_prove_its_own_rhs_and_malformed_parents_fail_closed()
 
 
 def test_ci_runs_native_python_matrix_on_all_supported_host_families() -> None:
+    import yaml
+
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "os: [ubuntu-latest, windows-latest, macos-latest]" in workflow
     assert 'python: ["3.10", "3.11", "3.12"]' in workflow
-    assert "runs-on: ${{ matrix.os }}" in workflow
+    jobs = yaml.safe_load(workflow)["jobs"]
+    runner = "${{ matrix.os == 'macos-latest' && 'macos-15-intel' || matrix.os }}"
+    assert jobs["test"]["runs-on"] == runner
+    assert jobs["native-process-parity"]["runs-on"] == runner
     assert "native-process-parity:" in workflow
     assert "os: [ubuntu-latest, macos-latest]" in workflow
     assert "native-process-parity-${{ matrix.os }}" in workflow
