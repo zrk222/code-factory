@@ -378,3 +378,19 @@ def test_opaque_expression_preserves_container_child_roots(expression, tracked):
 def test_lazy_capture_and_asserted_input_domain_do_not_admit(tmp_path, source):
     rows = native(tmp_path, source)
     assert len(rows) == 1 and rows[0]["tier"] != "SUPPORTED_DEFECT"
+
+
+@pytest.mark.parametrize("proven", [False, True])
+def test_shared_receiver_projection_preserves_proof_or_unknown_roots(proven):
+    from factoryline.finite_capture import _security_structural_receiver_value
+
+    expression = ast.parse("self.command", mode="eval").body
+    known = _Value(inert_kind="scalar", scalar_kind="text")
+    aliases = {"self": _Value(roots=frozenset({"receiver"}))}
+    value = known if proven else _Value(unknown=True)
+    result = _security_structural_receiver_value(expression, aliases, value)
+    if proven:
+        assert result is known
+    else:
+        assert result.unknown and result.roots == frozenset({"receiver"})
+    assert aliases == {"self": _Value(roots=frozenset({"receiver"}))}

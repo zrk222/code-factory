@@ -502,8 +502,14 @@ def security_structural_value(
 
         return _security_structural_request_value(expression, leaf, _Value)
     value = identity_value(expression, aliases, strict_calls=True, material_values=True)
+    return _security_structural_receiver_value(expression, aliases, value)
+
+
+def _security_structural_receiver_value(expression, aliases, value):
+    """Preserve proven values; bind receiver fields only for uncertain expressions."""
     if not (value.unknown or value.content_unknown):
         return value
+    from .credential_role_identity_effects import identity_value
     from .credential_role_method_use_getter_audit import selected_receiver_field_value
 
     for field in ast.walk(expression):
