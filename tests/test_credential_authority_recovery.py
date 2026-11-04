@@ -1528,6 +1528,8 @@ def test_authority_domain_independent_application_edge_defeats_test_discharge(
             "conftest.py", "pytest_plugins = ['external.plugin']\n"
         ),
         lambda files: files.__setitem__("pytest.ini", "[pytest]\ntestpaths = other\n"),
+        lambda files: files.__delitem__("pyproject.toml"),
+        lambda files: files.__setitem__("pyproject.toml", "[tool.other]\nflag=true\n"),
     ],
 )
 def test_authority_domain_rejects_uncollected_or_competing_test_ownership(rewrite):

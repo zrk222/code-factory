@@ -42,11 +42,7 @@ def django_test_domain_evidence(context, path, observation, selected):
     """Join a configured test owner to transactional consumers, never to a path hint."""
     from . import mock_fixture_provenance as fixture
 
-    if selected.get(
-        "model"
-    ) != "django.admin.feedback.v1" or "pyproject.toml" not in context.get(
-        "captured", {}
-    ):
+    if selected.get("model") != "django.admin.feedback.v1":
         return None
     source = context["index"]
     index = fixture.application_test_index(
