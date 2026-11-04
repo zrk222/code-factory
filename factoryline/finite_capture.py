@@ -487,10 +487,10 @@ def security_structural_value(
         for name, value in environment.items()
         if isinstance(name, str)
     }
+    builtin = _security_structural_builtin_value(expression, aliases, request_aliases)
+    if builtin is not None:
+        return builtin
     if isinstance(expression, ast.Call):
-        codec = _security_structural_codec(expression, environment, request_aliases)
-        if codec is not None:
-            return codec
         result = _security_structural_helper_call(expression, aliases, request_aliases)
         if result is not None:
             return result
@@ -525,11 +525,19 @@ def _security_structural_receiver_value(expression, aliases, value):
     return identity_value(expression, aliases, strict_calls=True, material_values=True)
 
 
-def _security_structural_codec(expression, environment, request_aliases):
+def _security_structural_builtin_value(expression, environment, request_aliases):
+    """Share proven scalar composition and codecs without bypassing source guards."""
     from .credential_role_identity_effects import _Value
 
+    if isinstance(expression, (ast.BinOp, ast.JoinedStr)):
+        values = {
+            name: _legacy_security_value(value) for name, value in environment.items()
+        }
+        known, value = _security_flow_value(expression, values, request_aliases)
+        return _structural_compat_value(value, "") if known else None
     if not (
-        isinstance(expression.func, ast.Attribute)
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Attribute)
         and expression.func.attr in {"encode", "decode"}
         and not expression.args
         and not expression.keywords

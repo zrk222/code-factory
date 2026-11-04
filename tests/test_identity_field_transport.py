@@ -114,3 +114,33 @@ def test_field_transport_does_not_exempt_opaque_consumer_effects(typed_scalar):
     )
     assert summary.status != "NO_CLASS_EFFECT"
     assert summary.escapes or summary.unknowns
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"unknown": True},
+        {"content_unknown": True},
+        {"inert_kind": None},
+        {"class_roots": frozenset({"class-capability"})},
+        {"items": (("nested", _Value(roots=frozenset({"nested-origin"}))),)},
+    ],
+)
+def test_scalar_flow_bridge_rejects_uncertainty_and_nonscalar_capabilities(changes):
+    import ast
+    from dataclasses import replace
+
+    from factoryline.finite_capture import security_structural_value
+
+    origin = ("REQUEST_SOURCE", (1, 0, 1, 5), "a" * 64)
+    value = _Value(
+        roots=frozenset({"source-origin"}),
+        inert_kind="scalar",
+        scalar_kind="text",
+        trace=(origin,),
+    )
+    result = security_structural_value(
+        ast.parse('"prefix" + item', mode="eval").body,
+        {"item": replace(value, **changes)},
+    )
+    assert result.unknown or result.content_unknown
