@@ -123,6 +123,7 @@ class _SelectedReceiverState:
 
     @staticmethod
     def eligible(field):
+        """Require an ordinary field read on the method receiver parameter."""
         method = getattr(field, "_security_lexical_scope", None)
         return (
             isinstance(field.value, ast.Name)
@@ -133,6 +134,7 @@ class _SelectedReceiverState:
         )
 
     def derive(self):
+        """Join captured same-instance activations into a possible field value."""
         if not self.owner_closed():
             return None
         values = [
@@ -149,6 +151,7 @@ class _SelectedReceiverState:
         return security_structural_join(values)
 
     def owner_closed(self):
+        """Reject inheritance, descriptors and namespace effects outside the model."""
         owner = self.owner
         if (
             owner not in self.tree.body
@@ -167,6 +170,7 @@ class _SelectedReceiverState:
         return self.binding_closed()
 
     def binding_closed(self):
+        """Verify that captured uses do not replace the selected class binding."""
         from . import review_audits as audit
         from .credential_role_constructor_provider import (
             _captured_terminal_provider_mutation,
@@ -183,6 +187,7 @@ class _SelectedReceiverState:
         )
 
     def activation(self, call):
+        """Recognize a direct call to the selected method on a named receiver."""
         return (
             isinstance(call, ast.Call)
             and isinstance(call.func, ast.Attribute)
@@ -191,6 +196,7 @@ class _SelectedReceiverState:
         )
 
     def creation(self, activation, caller):
+        """Bind the unique preceding receiver allocation in its caller."""
         receiver = activation.func.value
         bindings = binding_occurrences(caller.body, receiver.id)
         statement = self.parents.get(id(bindings[0])) if len(bindings) == 1 else None
@@ -209,6 +215,7 @@ class _SelectedReceiverState:
         return statement if selected == (self.path, self.owner) else None
 
     def activation_value(self, activation):
+        """Join constructor data with ordered receiver-preserving method calls."""
         caller, _owner = source_scope(activation, self.parents)
         statement = self.parents.get(id(activation))
         if (
@@ -239,6 +246,7 @@ class _SelectedReceiverState:
         return self.trace(value, creation.value, transfer["statement"], ordered)
 
     def captures_closed(self, caller, receiver):
+        """Reject nested closures retaining the selected receiver identity."""
         from .credential_role_identity_effects import nested_capture_roots
 
         # Inspect nested captures before selecting source order: a closure may
@@ -251,6 +259,7 @@ class _SelectedReceiverState:
         )
 
     def constructor_transfer(self, creation, activation, caller):
+        """Resolve the selected field write from exact constructor arguments."""
         from . import finite_capture as finite, review_integrity as flow
 
         constructor = self.methods["__init__"]
@@ -273,6 +282,7 @@ class _SelectedReceiverState:
         )
 
     def constructor_fields(self, creation, activation, caller):
+        """Project known constructor field values without granting object identity."""
         from . import finite_capture as finite, review_integrity as flow
 
         constructor = self.methods["__init__"]
@@ -308,6 +318,7 @@ class _SelectedReceiverState:
         return fields
 
     def ordered_calls(self, caller, creation, final, receiver):
+        """Collect only direct same-receiver calls between creation and use."""
         selected = []
         for statement in caller.body[
             caller.body.index(creation) + 1 : caller.body.index(final) + 1
@@ -328,6 +339,7 @@ class _SelectedReceiverState:
         return selected
 
     def receiver_call(self, statement, uses, receiver):
+        """Bind an exact method call with no additional receiver escape."""
         from . import review_integrity as flow
 
         call = statement.value if isinstance(statement, ast.Expr) else None
@@ -351,6 +363,7 @@ class _SelectedReceiverState:
         return method
 
     def method_preserves(self, method, fields):
+        """Require closed receiver effects before retaining the selected field."""
         from . import finite_capture as finite
         from .credential_role_identity_effects import summarize_identity_effect
 
@@ -375,6 +388,7 @@ class _SelectedReceiverState:
         )
 
     def identity_inputs(self, method, receiver, fields):
+        """Keep immutable scalar projections distinct from mutable receiver roots."""
         from .credential_role_identity_effects import identity_value
 
         roots = {receiver: _Value(roots=frozenset({"receiver"}))}
@@ -392,6 +406,7 @@ class _SelectedReceiverState:
         return roots
 
     def input_value(self, node, caller, before, seen=(), *, guards=True):
+        """Resolve bounded captured scalar values and their input provenance."""
         if len(seen) > 16:
             return None
         if not guards and isinstance(node, ast.Subscript):
@@ -421,6 +436,7 @@ class _SelectedReceiverState:
     def text_element_value(self, node, caller, before, seen):
         # Type-only projection: no source-origin or selected-value claim. The
         # ordinary text operation returns text whenever its checked index succeeds.
+        """Project a text element type without inventing input provenance."""
         value = self.text_sequence_value(node.value, caller, before, seen)
         if value is None or not self.integer_index(node.slice, caller, before, seen):
             return None
@@ -429,6 +445,7 @@ class _SelectedReceiverState:
         )
 
     def text_sequence_value(self, node, caller, before, seen):
+        """Recognize supported text splitting with source-bound receiver types."""
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             return None
         if (
@@ -454,6 +471,7 @@ class _SelectedReceiverState:
         return self.with_step(value, node, "BUILTIN_TEXT_SEQUENCE_TYPE")
 
     def text_separator(self, node, caller, before, seen):
+        """Require an unchanged built-in text separator or literal default."""
         if isinstance(node, ast.Constant) and node.value is None:
             return True
         value = self.input_value(node, caller, before, seen, guards=False)
@@ -464,6 +482,7 @@ class _SelectedReceiverState:
         )
 
     def integer_index(self, node, caller, before, seen):
+        """Recognize supported integer indices with captured source bindings."""
         if isinstance(node, ast.Constant):
             return type(node.value) is int
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
@@ -477,6 +496,7 @@ class _SelectedReceiverState:
         return self.length_index(node, caller, before, seen)
 
     def length_index(self, node, caller, before, seen):
+        """Bind a supported built-in length call to a text sequence."""
         if not isinstance(node, ast.Call) or len(node.args) != 1 or node.keywords:
             return False
         reader = self.input_reader(caller)
@@ -491,6 +511,7 @@ class _SelectedReceiverState:
         return sequence is not None
 
     def assigned_input(self, node, caller, before, seen, guards):
+        """Follow a unique earlier assignment while retaining input-domain guards."""
         bindings = binding_occurrences(caller.body, node.id)
         assignment = self.parents.get(id(bindings[0])) if len(bindings) == 1 else None
         if (
@@ -512,6 +533,7 @@ class _SelectedReceiverState:
     def source_guards_closed(self, name, caller, after, before):
         # Preserve only an unbounded continuation: finite inclusions or opaque
         # predicates may restrict input to safe values and cannot prove origin.
+        """Reject finite or opaque predicates restricting the proposed input domain."""
         for branch in ast.walk(caller):
             if (
                 not isinstance(branch, (ast.If, ast.While, ast.Assert))
@@ -532,6 +554,7 @@ class _SelectedReceiverState:
 
     @staticmethod
     def finite_exclusion(branch, name):
+        """Recognize a terminating branch excluding one fixed text value."""
         test = branch.test
         if not isinstance(test, ast.Compare) or len(test.ops) != 1:
             return False
@@ -548,6 +571,7 @@ class _SelectedReceiverState:
         return isinstance(excluded[-1], (ast.Return, ast.Raise, ast.Continue))
 
     def input_reader(self, caller):
+        """Build the existing source-bound input reader for this caller."""
         from .audit_log_flow import _LogReader
         from . import review_integrity as flow, review_audits as audit
 
@@ -569,6 +593,7 @@ class _SelectedReceiverState:
         )
 
     def input_provider_closed(self, canonical):
+        """Reject captured rebinding or mutation of the input provider."""
         from . import review_audits as audit
         from .credential_role_constructor_provider import (
             _captured_terminal_provider_mutation,
@@ -581,6 +606,7 @@ class _SelectedReceiverState:
         return self.provider_proofs[canonical]
 
     def input_origin(self, node):
+        """Create an input-origin value with exact captured source evidence."""
         from .semantic_credential_sensor import _security_flow_step
 
         return _Value(
@@ -591,6 +617,7 @@ class _SelectedReceiverState:
         )
 
     def cast_input(self, node, caller, before, seen, reader, name, guards):
+        """Retain input provenance only through a verified built-in string cast."""
         if not reader._builtin_unshadowed(node, name) or not self.input_provider_closed(
             "builtins.str"
         ):
@@ -600,6 +627,7 @@ class _SelectedReceiverState:
 
     @staticmethod
     def with_step(value, node, operation):
+        """Append a source operation without dropping unknowns or existing trace."""
         from .semantic_credential_sensor import _security_flow_step
 
         return (
@@ -609,6 +637,7 @@ class _SelectedReceiverState:
         )
 
     def trace(self, value, creation, store, ordered):
+        """Bind field provenance to constructor storage and ordered receiver calls."""
         value = self.with_step(value, creation, "EXACT_CONSTRUCTOR_ARGUMENT")
         value = self.with_step(value, store, "ORDINARY_FIELD_STORE")
         for call, _method in ordered:

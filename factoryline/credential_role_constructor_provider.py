@@ -1006,6 +1006,20 @@ class SourceSnapshotIndex:
             and sum(len(raw) for raw in source_bytes.values()) <= 32 * 1024 * 1024
         )
 
+    def __deepcopy__(self, memo):
+        """Copy source-owned snapshots while discarding runtime validation state."""
+        clone = type(self).__new__(type(self))
+        memo[id(self)] = clone
+        clone.__init__(
+            self.root,
+            copy.deepcopy(self.snapshots, memo),
+            dict(self.source_bytes),
+            dict(self.inventory),
+        )
+        if hasattr(self, "producer_fingerprints"):
+            clone.producer_fingerprints = dict(self.producer_fingerprints)
+        return clone
+
     def validate(self, path):
         """Validate captured source bytes against the snapshot digest and AST, enforcing the one-megabyte source limit."""
         tree, raw = self.snapshots.get(path), self.source_bytes.get(path)

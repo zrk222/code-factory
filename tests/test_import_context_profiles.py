@@ -37,6 +37,40 @@ def test_captured_inventory_deepcopy_preserves_immutable_paths_and_copies_contai
         copied["tree"].inventory.root = tmp_path / "other"
 
 
+def test_source_snapshot_deepcopy_discards_runtime_memo_and_rebinds_ast(tmp_path):
+    import hashlib
+    import sys
+    from types import SimpleNamespace
+
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    path = tmp_path / "module.py"
+    raw = b"value = 1\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    index.producer_fingerprints = {path: "captured-generation"}
+    index.validate(path)
+    tree._security_source_model = index
+    index.class_chain_memo = SimpleNamespace(audit=sys, entries={"stale": object()})
+
+    copied = deepcopy({"tree": tree, "changes": []})
+    copied_tree = copied["tree"]
+    copied_index = copied_tree._security_source_model
+
+    assert copied_tree is not tree
+    assert copied_index is not index
+    assert copied_index.snapshots[path] is copied_tree
+    assert copied_index.source_bytes is not index.source_bytes
+    assert copied_index.inventory is not index.inventory
+    assert copied_index.producer_fingerprints == index.producer_fingerprints
+    assert copied_index.validated == copied_index.parents == {}
+    assert not hasattr(copied_index, "class_chain_memo")
+    copied["changes"].append("new")
+    assert copied["changes"] == ["new"]
+
+
 @pytest.mark.parametrize(
     "size,tier",
     [

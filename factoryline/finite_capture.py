@@ -507,7 +507,11 @@ def security_structural_value(
 
 def _security_structural_receiver_value(expression, aliases, value):
     """Preserve proven values; bind receiver fields only for uncertain expressions."""
-    if not (value.unknown or value.content_unknown):
+    scope = getattr(expression, "_security_lexical_scope", None)
+    if (
+        not (value.unknown or value.content_unknown)
+        or getattr(scope, "_security_class_scope", None) is None
+    ):
         return value
     from .credential_role_identity_effects import identity_value
     from .credential_role_method_use_getter_audit import selected_receiver_field_value

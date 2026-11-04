@@ -1181,7 +1181,7 @@ def call_argument_roots(call, aliases, *, strict_calls=False):
     args = [*call.args, *(item.value for item in call.keywords)]
     return set().union(
         *(
-            tracked_roots(identity_value(arg, aliases, strict_calls=strict_calls))
+            _role_expression_roots(arg, aliases, strict_calls=strict_calls)
             for arg in args
         )
     )

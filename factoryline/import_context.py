@@ -1939,7 +1939,7 @@ def _bind_security_scope_node(node, scope, shadowed, tree, flow_statement=None):
         calls = getattr(scope, "_security_calls_by_statement", {})
         calls.setdefault(id(flow_statement), []).append(node)
         scope._security_calls_by_statement = calls
-    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.expr)):
         node._security_lexical_scope = scope
     if isinstance(node, ast.Attribute):
         node._security_lexical_scope = scope

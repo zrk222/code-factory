@@ -140,6 +140,19 @@ def test_receiver_value_reaches_admission_with_source_proof(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "expression", ['"echo " + self.command', 'f"echo {self.command}"']
+)
+def test_composed_receiver_value_reaches_admission_with_source_proof(
+    tmp_path, expression
+):
+    source = SOURCE.replace('"echo {}".format(self.command)', expression)
+    rows = native(tmp_path, source)
+    assert len(rows) == 1 and rows[0]["tier"] == "SUPPORTED_DEFECT"
+    flow = rows[0]["raw_finding"]["facts"]["security_precondition"]["input_value_flow"]
+    assert "ORDINARY_FIELD_READ" in {step["operation"] for step in flow["steps"]}
+
+
+@pytest.mark.parametrize(
     "source",
     [
         SOURCE.replace("def run():", "def run(Worker):"),
@@ -387,7 +400,15 @@ def test_shared_receiver_projection_preserves_proof_or_unknown_roots(proven):
     expression = ast.parse("self.command", mode="eval").body
     known = _Value(inert_kind="scalar", scalar_kind="text")
     aliases = {"self": _Value(roots=frozenset({"receiver"}))}
-    value = known if proven else _Value(unknown=True)
+    from factoryline.credential_role_identity_effects import identity_value
+
+    value = (
+        known
+        if proven
+        else identity_value(
+            expression, aliases, strict_calls=True, material_values=True
+        )
+    )
     result = _security_structural_receiver_value(expression, aliases, value)
     if proven:
         assert result is known
