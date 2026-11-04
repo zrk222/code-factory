@@ -5711,8 +5711,8 @@ def _legacy_security_value(value):
 
     if not isinstance(value, _Value) or value.unknown or value.content_unknown:
         return None
-    kind = value.scalar_kind if value.inert_kind == "scalar" else None
-    if kind not in {"text", "bytes"} or value.items or value.class_roots:
+    kind = value.scalar_kind
+    if kind not in {"text", "bytes"}:
         return None
     steps = tuple(
         step for step in value.trace if isinstance(step, tuple) and len(step) == 3

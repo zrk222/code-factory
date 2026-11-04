@@ -7,19 +7,15 @@ from itertools import islice
 from collections.abc import Callable, Mapping
 
 from dataclasses import dataclass, field as _dataclass_field
-from .credential_role_constructor_provider import resolve_class
-
-from .credential_role_constructor_provider import binding_occurrences
-
+from .credential_role_constructor_provider import (
+    SourceSnapshotIndex,
+    binding_occurrences,
+    effective_method,
+    resolve_class,
+)
 from . import credential_role_constructor_provider as _class_binding
-
 from . import credential_role_identity_effects as _identity_effects
-
 from . import credential_role_constructor_provider as _scope_bindings
-
-from .credential_role_constructor_provider import effective_method
-
-from .credential_role_constructor_provider import SourceSnapshotIndex
 
 
 @dataclass(frozen=True)
@@ -2246,8 +2242,9 @@ def own_function_nodes(function, path, index, known_scalars=None):
         if node is function or not isinstance(node, scopes):
             pending.extend(ast.iter_child_nodes(node))
             continue
-        # A nested body has its own scope. Defaults, decorators, annotations,
-        # bases and keywords are evaluated while defining it in the outer scope.
+        if isinstance(node, ast.GeneratorExp):
+            pending.extend(gen.iter for gen in node.generators[:1])
+            continue
         for field, value in ast.iter_fields(node):
             if field == "body":
                 continue
@@ -2319,14 +2316,19 @@ def exported_names(nodes):
 def _definition_effects_unknown(node, *, allowed_decorators=()):
     if isinstance(node, ast.ClassDef):
         return True
+    if isinstance(node, ast.GeneratorExp):
+        if not node.generators or node.generators[0].is_async:
+            return True
+        value = node.generators[0].iter
+        return not _immutable_default(value) or (
+            isinstance(value, ast.Constant) and type(value.value) not in (str, bytes)
+        )
     args = node.args
     params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
     params.extend(arg for arg in (args.vararg, args.kwarg) if arg)
+    decorators = getattr(node, "decorator_list", [])
     return bool(
-        any(
-            item not in allowed_decorators
-            for item in getattr(node, "decorator_list", [])
-        )
+        any(item not in allowed_decorators for item in decorators)
         or any(not _immutable_default(value) for value in args.defaults)
         or any(
             value is not None and not _immutable_default(value)

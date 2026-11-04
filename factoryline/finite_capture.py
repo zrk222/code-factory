@@ -527,14 +527,19 @@ def _security_structural_receiver_value(expression, aliases, value):
 
 def _security_structural_builtin_value(expression, environment, request_aliases):
     """Share proven scalar composition and codecs without bypassing source guards."""
-    from .credential_role_identity_effects import _Value
+    from .credential_role_identity_effects import _Value, identity_value
 
     if isinstance(expression, (ast.BinOp, ast.JoinedStr)):
-        values = {
-            name: _legacy_security_value(value) for name, value in environment.items()
-        }
-        known, value = _security_flow_value(expression, values, request_aliases)
-        return _structural_compat_value(value, "") if known else None
+        values = dict(environment)
+        for child in ast.iter_child_nodes(expression):
+            child = child.value if isinstance(child, ast.FormattedValue) else child
+            if isinstance(child, ast.expr):
+                values[("expression", id(child))] = security_structural_value(
+                    child, environment, request_aliases
+                )
+        return identity_value(
+            expression, values, strict_calls=True, material_values=True
+        )
     if not (
         isinstance(expression, ast.Call)
         and isinstance(expression.func, ast.Attribute)

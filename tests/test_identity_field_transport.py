@@ -144,3 +144,78 @@ def test_scalar_flow_bridge_rejects_uncertainty_and_nonscalar_capabilities(chang
         {"item": replace(value, **changes)},
     )
     assert result.unknown or result.content_unknown
+
+
+def test_generator_capture_keeps_lazy_uses_and_eager_input_separate():
+    import ast
+
+    from factoryline.credential_role_identity_effects import own_function_nodes
+
+    raw = {
+        "module.py": b"def run(self):\n    pending = (consume(self) for item in source(self) if guard(self))\n"
+    }
+    context = signing_configuration_inventory(
+        raw, {name: sha256(value).hexdigest() for name, value in raw.items()}
+    )
+    index, path = context["index"], Path("module.py")
+    function = index.snapshots[path].body[0]
+    calls = {
+        node.func.id
+        for node in own_function_nodes(function, path, index)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert calls == {"source"}
+    summary = summarize_identity_effect(
+        function, path, index, {"self": "receiver"}, strict_calls=True, role_view=True
+    )
+    assert summary.status == "UNKNOWN"
+    assert any(event.kind == "nested_capture" for event in summary.role_events)
+
+
+@pytest.mark.parametrize("iterable", ["None", "True", "1", "1.0", "1j", "..."])
+def test_invalid_generator_construction_cannot_prove_receiver_effects(iterable):
+    raw = {
+        "module.py": (
+            "def run(self):\n"
+            f"    pending = (item for item in {iterable})\n"
+            "    return self\n"
+        ).encode()
+    }
+    context = signing_configuration_inventory(
+        raw, {name: sha256(value).hexdigest() for name, value in raw.items()}
+    )
+    index, path = context["index"], Path("module.py")
+    summary = summarize_identity_effect(
+        index.snapshots[path].body[0],
+        path,
+        index,
+        {"self": "receiver"},
+        strict_calls=True,
+        role_view=True,
+    )
+    assert summary.status == "UNKNOWN"
+    assert "unmodeled nested definition-time effects" in summary.unknowns
+    with pytest.raises(TypeError):
+        eval(f"(item for item in {iterable})")
+
+
+@pytest.mark.parametrize(
+    ("expression", "unknown"),
+    [
+        ("(item for item in ())", False),
+        ("(item for item in (1, (2,)))", False),
+        ('(item for item in "text")', False),
+        ('(item for item in b"text")', False),
+        ('(item for item in b"x" * 2)', False),
+        ("(item async for item in ())", True),
+        ("(item for item in source())", True),
+        ("(item for item in unknown)", True),
+    ],
+)
+def test_generator_construction_requires_proven_builtin_iterable(expression, unknown):
+    import ast
+    from factoryline.credential_role_identity_effects import _definition_effects_unknown
+
+    assert (
+        _definition_effects_unknown(ast.parse(expression, mode="eval").body) is unknown
+    )
