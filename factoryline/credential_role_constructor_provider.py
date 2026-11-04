@@ -2292,7 +2292,14 @@ def resolve_class_chain(index, path, name, imports, classes, audit):
 
 
 def resolve_class_chain_with_terminals(
-    index, path, name, imports, classes, audit, terminal_contracts
+    index,
+    path,
+    name,
+    imports,
+    classes,
+    audit,
+    terminal_contracts,
+    identity_decorators=None,
 ):
     """Resolve captured owners and disclose caller-contracted external C3 terminals."""
     contracts = _terminal_contracts(terminal_contracts)
@@ -2300,7 +2307,15 @@ def resolve_class_chain_with_terminals(
         return None
     memo = {(None, canonical): [(None, canonical)] for canonical in contracts}
     keys = _class_mro(
-        index, (path, name), imports, classes, audit, set(), memo, contracts
+        index,
+        (path, name),
+        imports,
+        classes,
+        audit,
+        set(),
+        memo,
+        contracts,
+        identity_decorators,
     )
     if keys is None:
         return None
@@ -2339,7 +2354,15 @@ def _valid_terminal_contract(canonical, contract):
 
 
 def _class_mro(
-    index, key, imports, classes, audit, active, memo, terminal_contracts=None
+    index,
+    key,
+    imports,
+    classes,
+    audit,
+    active,
+    memo,
+    terminal_contracts=None,
+    identity_decorators=None,
 ):
     if key in memo:
         return memo[key]
@@ -2347,7 +2370,7 @@ def _class_mro(
         return None
     path, name = key
     owner = classes.get(key)
-    if not _class_binding_is_exact(index, path, name, owner):
+    if not _class_binding_is_exact(index, path, name, owner, identity_decorators):
         return None
     active.add(key)
     bases = []
@@ -2364,7 +2387,15 @@ def _class_mro(
     else:
         base_mros = [
             _class_mro(
-                index, base, imports, classes, audit, active, memo, terminal_contracts
+                index,
+                base,
+                imports,
+                classes,
+                audit,
+                active,
+                memo,
+                terminal_contracts,
+                identity_decorators,
             )
             for base in bases
         ]
@@ -2408,7 +2439,19 @@ def _external_class_terminal(index, path, expression, imports, audit, contracts)
         or _captured_module_shadows_terminal(index, path, statement, canonical)
     ):
         return None
-    if _captured_terminal_provider_mutation(index, audit, canonical):
+    derive = partial(_captured_terminal_provider_mutation, index, audit, canonical)
+    memo = getattr(index, "class_chain_memo", None)
+    mutation = (
+        memo.source_model(
+            ("terminal-mutation", canonical),
+            derive,
+            helper_epoch=_constructor_provider_epoch,
+        )
+        if type(memo) is ClassChainMemo
+        and memo.defers_validation(index, imports, memo.classes, audit)
+        else derive()
+    )
+    if mutation:
         return None
     return None, canonical
 
@@ -3223,10 +3266,16 @@ def _terminal_mutation_overlaps(provider, attribute, canonical):
     return _terminal_provider_related(target, canonical)
 
 
-def _class_binding_is_exact(index, path, name, owner):
+def _class_binding_is_exact(index, path, name, owner, identity_decorators=None):
     if (
         owner is None
-        or owner.decorator_list
+        or (
+            owner.decorator_list
+            and (
+                identity_decorators is None
+                or not identity_decorators(index, path, owner)
+            )
+        )
         or owner.keywords
         or not index.validate(path)
     ):
@@ -4261,6 +4310,8 @@ def constructor_provider_helper_epoch():
         _terminal_alias_unmodified,
         _captured_module_shadows_terminal,
         _captured_terminal_provider_mutation,
+        _terminal_source_context_valid,
+        _terminal_provider_mutated,
         finite_capture._shell_import_aliases,
         _django_import_rows,
         _conditional_module_name,

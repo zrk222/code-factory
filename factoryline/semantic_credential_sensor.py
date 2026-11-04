@@ -476,8 +476,8 @@ def validation_modules():
 
 def signing_configuration_inventory(source_bytes, bindings):
     """Build one byte-bound package view; never import or execute target code."""
-    from .credential_role_constructor_provider import SourceSnapshotIndex
-    from .review_audits import _security_aliases
+    from .credential_role_constructor_provider import security_snapshot_model
+    from .review_audits import _oracle_tree_fingerprint, _security_aliases
     from .review_integrity import bind_security_call_scopes
 
     if not _signing_inventory_input_closed(source_bytes, bindings):
@@ -487,8 +487,15 @@ def signing_configuration_inventory(source_bytes, bindings):
     )
     if result is None:
         return None
-    snapshots, captured, inventory = result
-    index = SourceSnapshotIndex(Path("."), snapshots, captured, inventory)
+    snapshots, captured, _inventory = result
+    index = security_snapshot_model(
+        Path("."),
+        snapshots,
+        captured,
+        {path: _oracle_tree_fingerprint(tree) for path, tree in snapshots.items()},
+    )
+    if index is None:
+        return None
     paths = index.module_paths()
     if paths is None:
         return None
@@ -2988,7 +2995,7 @@ def _signing_resolve_module(context, literal, origin=None):
 
 def _django_signing_consumer(target, path, tree, context):
     from . import review_audits as audit
-    from .intent_quality import _canary_main_guard_test
+    from .import_context import captured_django_startup_statements
     from .review_integrity import _security_apply_import_bindings
     from .review_audits import _resolved_ast_name
 
@@ -3006,15 +3013,7 @@ def _django_signing_consumer(target, path, tree, context):
     ):
         return None
     selected = None
-    statements = [
-        child
-        for statement in tree.body
-        for child in (
-            statement.body
-            if isinstance(statement, ast.If) and _canary_main_guard_test(statement.test)
-            else [statement]
-        )
-    ]
+    statements = captured_django_startup_statements(context, path)
     for statement in statements:
         if not (
             isinstance(statement, (ast.Expr, ast.Assign))

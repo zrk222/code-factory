@@ -454,6 +454,59 @@ def _captured_script_target(context, path, parts, origin, setting):
     return candidate
 
 
+def captured_django_management_contract(context, path):
+    """Bind only a closed, invoked management bootstrap to its settings value."""
+    from .semantic_credential_sensor import (
+        _security_builtin_identity_closed,
+        _signing_provider_clear,
+    )
+
+    tree = context["index"].snapshots[path]
+    provider = "from django.core.management import execute_from_command_line"
+    contract = _management_script_contract(
+        tree,
+        [ast.dump(ast.parse(s).body[0]) for s in ("import os", "import sys")],
+        ast.dump(ast.parse(provider).body[0]),
+        ast.dump(ast.parse("def main(): pass").body[0].args),
+        provider,
+    )
+    if contract is not None and _captured_script_imports_safe(
+        context, path, tree, _security_builtin_identity_closed, _signing_provider_clear
+    ):
+        setting, body, _module_provider = contract
+        return {
+            "settings": setting,
+            "statements": [
+                *_script_statements(tree.body)[:-2],
+                *(
+                    child
+                    for node in body
+                    for child in (node.body if isinstance(node, ast.Try) else [node])
+                ),
+            ],
+        }
+    return None
+
+
+def captured_django_startup_statements(context, path):
+    """Use the same invocation proof for consumer and settings-owner analysis."""
+    from .intent_quality import _canary_main_guard_test
+
+    contract = captured_django_management_contract(context, path)
+    if contract is not None:
+        return contract["statements"]
+    tree = context["index"].snapshots[path]
+    return [
+        child
+        for node in tree.body
+        for child in (
+            node.body
+            if isinstance(node, ast.If) and _canary_main_guard_test(node.test)
+            else [node]
+        )
+    ]
+
+
 def captured_script_module(context, parts, origin):
     """Resolve ambiguity only for a closed, ordered default management startup."""
     from .review_audits import _resolved_ast_name
@@ -1083,6 +1136,8 @@ def import_resolution_helpers():
         _captured_import_statement,
         captured_import_inventory,
         captured_script_module,
+        captured_django_management_contract,
+        captured_django_startup_statements,
         _script_statements,
         _script_import_layout,
         _script_main_guard_matches,

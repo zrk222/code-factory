@@ -42,11 +42,7 @@ def django_test_domain_evidence(context, path, observation, selected):
     """Join a configured test owner to transactional consumers, never to a path hint."""
     from . import mock_fixture_provenance as fixture
 
-    if selected.get(
-        "model"
-    ) != "django.admin.feedback.v1" or "pyproject.toml" not in context.get(
-        "captured", {}
-    ):
+    if selected.get("model") != "django.admin.feedback.v1":
         return None
     source = context["index"]
     index = fixture.application_test_index(
@@ -55,7 +51,7 @@ def django_test_domain_evidence(context, path, observation, selected):
         source.source_bytes,
         source.inventory,
         context.get("captured", {}),
-        source_index=None,
+        source_index=source,
     )
     if index is None:
         return None
@@ -68,15 +64,29 @@ def django_test_domain_evidence(context, path, observation, selected):
     if not _django_test_domain_routes(index, path):
         return None
     bootstrap = _django_test_domain_wsgi(index, path, roots)
-    if not _django_test_domain_counteredges(
-        index, path, roots, project, None, bootstrap, patterns
-    ):
+    from .import_context import captured_django_management_contract
+    from .semantic_credential_sensor import _signing_resolve_module
+
+    management = {
+        other: source.inventory[other]
+        for other in source.snapshots
+        if (contract := captured_django_management_contract(context, other)) is not None
+        and _signing_resolve_module(
+            context, ast.Constant(value=contract["settings"]), other
+        )
+        == path
+    }
+    ownership = _django_transactional_owners(index, roots, patterns)
+    if ownership is None:
         return None
-    consumer = _legacy._django_test_domain_consumer(index, roots, apps, patterns)
+    owners, collected = ownership
+    consumer = _legacy._django_test_domain_consumer(
+        index, roots, apps, patterns, collected
+    )
     if consumer is None:
         return None
     if not _django_test_domain_counteredges(
-        index, path, roots, project, consumer, bootstrap, patterns
+        index, path, project, consumer, bootstrap, management, owners
     ):
         return None
     raw = index["configuration_bytes"]["pyproject.toml"]
@@ -87,26 +97,44 @@ def django_test_domain_evidence(context, path, observation, selected):
         "span": [1, 0, len(lines), len(lines[-1].encode("utf8"))],
     }
     return {
-        "schema": "factory.security.configured-test-domain.v1",
-        "role": "CONFIGURED_TRANSACTIONAL_TEST_SIGNER",
+        "schema": "factory.security.configured-test-domain.v2",
+        "role": "CONFIGURED_TEST_INVOCATION_SIGNER",
+        "ownership_scope": "captured_pytest_invocation_not_transaction_isolation",
+        "transactional_consumer_phase": "witness_only",
         "application_authority": "UNKNOWN",
         "isolation_assurance": "UNASSESSED",
         "profile_roots": [p.as_posix() for p in roots],
         "consumer": consumer,
         "bootstrap": bootstrap,
+        "management_loaders": [
+            {"path": source.relative(other), "sha256": digest}
+            for other, digest in management.items()
+        ],
+        "test_invocation_owners": [
+            {
+                "path": source.relative(other),
+                "sha256": source.inventory[other],
+                "span": fixture._evidence_node_span(method),
+            }
+            for other, methods in owners.items()
+            for method in sorted(methods, key=lambda n: n.lineno)
+        ],
         "selected_loader_edges": observation["transfers"],
         "configuration_source": configuration,
         "supporting_sources": {
-            row["path"]: row["sha256"]
-            for row in filter(
-                None,
-                (
-                    configuration,
-                    consumer["source"],
-                    consumer["model_source"],
-                    bootstrap,
-                ),
-            )
+            **{source.relative(other): digest for other, digest in management.items()},
+            **{
+                row["path"]: row["sha256"]
+                for row in filter(
+                    None,
+                    (
+                        configuration,
+                        consumer["source"],
+                        consumer["model_source"],
+                        bootstrap,
+                    ),
+                )
+            },
         },
         "scope": "captured_test_profile_and_consumers_only",
         "source_inventory_sha256": hashlib.sha256(
@@ -289,7 +317,13 @@ def _django_test_domain_wsgi(index, settings_path, roots):
 
 
 def _django_test_domain_counteredges(
-    index, path, roots, project, consumer, bootstrap, patterns
+    index,
+    path,
+    project,
+    consumer,
+    bootstrap,
+    management=(),
+    owners=None,
 ):
     from . import mock_fixture_provenance as fixture
 
@@ -302,7 +336,6 @@ def _django_test_domain_counteredges(
         return False
     settings = fixture._django_name(index, path)
     root = index["source"].root
-    consumer_path = root / consumer["source"]["path"] if consumer else None
     models = {
         fixture._django_name(index, model)
         for model in _django_test_apps(index, path, [root]).values()
@@ -310,7 +343,9 @@ def _django_test_domain_counteredges(
     for other, tree in index["modules"].items():
         if not index["source"].validate(other):
             return False
-        if bootstrap and index["source"].relative(other) == bootstrap["path"]:
+        if other in management or (
+            bootstrap and index["source"].relative(other) == bootstrap["path"]
+        ):
             continue
         imports = fixture._django_imports(index, other)
         if imports is None or any(
@@ -340,8 +375,8 @@ def _django_test_domain_counteredges(
             return False
         if (
             consumer
-            and (other == consumer_path or consumes_model)
-            and _django_test_unowned_effect(index, other, consumer, roots, patterns)
+            and (other == root / consumer["source"]["path"] or consumes_model)
+            and _django_test_unowned_effect(index, other, owners)
         ):
             return False
     return True
@@ -378,53 +413,176 @@ def _django_test_dynamic_model_edge(index, path, models):
     return False
 
 
-def _django_test_unowned_effect(index, path, consumer, roots, patterns):
+def _django_transactional_owners(index, roots, patterns):
+    """Join every collected test lifecycle to its captured class-use closure."""
     from . import mock_fixture_provenance as fixture
 
+    maps = _legacy._fixture_class_maps(index)
+    if maps is None:
+        return None
+    from .credential_role_constructor_provider import ClassChainMemo
+    from . import review_audits as audit
+
     source = index["source"]
-    allowed = (
-        consumer["function_span"]
-        if source.relative(path) == consumer["source"]["path"]
-        else None
-    )
-    collected = None
+    previous = getattr(source, "class_chain_memo", None)
+    source.class_chain_memo = memo = ClassChainMemo(source, maps[1], maps[0], audit)
+    try:
+        with memo.analysis_batch() as batch:
+            owners, classes, collected = {}, set(), {}
+            for path in index["modules"]:
+                collected[path] = tuple(
+                    _legacy._django_test_collected_methods(
+                        index, path, roots, patterns, maps
+                    )
+                )
+                for test, chain in collected[path]:
+                    if not test.decorator_list or _legacy._django_test_database_marker(
+                        index, path, test
+                    ):
+                        owners.setdefault(path, set()).add(test)
+                    for other, _name, cls in chain["chain"] if chain else ():
+                        classes.add((other, cls))
+                        owners.setdefault(other, set()).update(
+                            method
+                            for method in cls.body
+                            if isinstance(method, ast.FunctionDef)
+                            and method.name in {"setUp", "tearDown"}
+                            and not method.decorator_list
+                        )
+    finally:
+        source.class_chain_memo = previous
+    if not batch.accepted:
+        return None
+    for path in owners:
+        owners[path].update(
+            _django_transactional_local_closure(index, path, owners[path])
+        )
+    if any(
+        method.name in {"setUp", "tearDown"}
+        and not _app_object_owner_receiver_closed(method, index["source"].parents[path])
+        for path, methods in owners.items()
+        for method in methods
+    ) or not _django_transactional_class_uses_closed(index, classes, fixture):
+        return None
+    return {path: frozenset(methods) for path, methods in owners.items()}, collected
+
+
+def _django_transactional_local_closure(index, path, roots):
+    """Resolve lexical helper ownership without granting authority to escaping callbacks."""
+    from .credential_role_constructor_provider import binding_occurrences
+
+    parents, owned = index["source"].parents[path], set()
+    for root in tuple(roots):
+        nested = {
+            n
+            for n in ast.walk(root)
+            if isinstance(n, ast.FunctionDef) and n is not root
+        }
+        dependencies = {}
+        eligible = {
+            fn
+            for fn in nested
+            if isinstance(parents.get(id(fn)), ast.FunctionDef)
+            and not (fn.decorator_list or fn.args.defaults or any(fn.args.kw_defaults))
+            and binding_occurrences(parents[id(fn)].body, fn.name) == [fn]
+            and not any(
+                isinstance(n, ast.arg) and n.arg == fn.name
+                for n in ast.walk(parents[id(fn)])
+            )
+        }
+        for function in tuple(eligible):
+            parent = parents[id(function)]
+            refs = [
+                n
+                for n in ast.walk(parent)
+                if isinstance(n, ast.Name)
+                and n.id == function.name
+                and isinstance(n.ctx, ast.Load)
+            ]
+            if any(
+                not isinstance(parents.get(id(n)), ast.Call)
+                or parents[id(n)].func is not n
+                or _legacy._has_nested_scope(n, parent, parents)
+                for n in refs
+            ):
+                eligible.remove(function)
+            dependencies[function] = {
+                parent,
+                *(_legacy._enclosing_function(n, parents) for n in refs),
+            }
+        while removed := {
+            fn for fn in eligible if not dependencies[fn] <= {root, *eligible}
+        }:
+            eligible.difference_update(removed)
+        owned.update(eligible)
+    return owned
+
+
+def _django_transactional_class_uses_closed(index, classes, fixture):
+    from .semantic_credential_sensor import _signing_rejection_or_reflection
+
+    source = index["source"]
+    modules = {fixture._django_name(index, path) for path, _ in classes}
+    for path, tree in index["modules"].items():
+        imports = fixture._django_imports(index, path)
+        if imports is None:
+            return False
+        sensitive = path in {other for other, _ in classes} or any(
+            target == module or target.startswith(module + ".")
+            for target in imports.values()
+            for module in modules
+        )
+        if sensitive and _signing_rejection_or_reflection(tree):
+            return False
+        names = {cls.name for other, cls in classes if other == path} | {
+            name
+            for name, target in imports.items()
+            if any(
+                target == module or target.startswith(module + ".")
+                for module in modules
+            )
+        }
+        parents = source.parents[path]
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Name, ast.Attribute)) or not isinstance(
+                node.ctx, ast.Load
+            ):
+                continue
+            member = fixture._app_member_chain(node)
+            if not member or member[0] not in names:
+                continue
+            selected = _legacy._fixture_symbol(index, path, node)
+            parent = parents.get(id(node))
+            if selected in classes and not (
+                (path, parent) in classes and node in parent.bases
+            ):
+                return False
+            if fixture._django_expr(index, path, node) in modules and not (
+                isinstance(parent, ast.Attribute) and parent.value is node
+            ):
+                return False
+    return True
+
+
+def _django_test_unowned_effect(index, path, owners):
+    from . import mock_fixture_provenance as fixture
+
+    parents = index["source"].parents[path]
+    collected = (owners or {}).get(path, frozenset())
     for call in (
         n for n in ast.walk(index["modules"][path]) if isinstance(n, ast.Call)
     ):
-        function = _legacy._enclosing_function(call, source.parents[path])
+        function = _legacy._enclosing_function(call, parents)
         effect = (
             isinstance(call.func, ast.Attribute)
             and call.func.attr in {"create", "bulk_create", "save"}
             or fixture._django_expr(index, path, call.func, function)
             == "django.core.management.call_command"
         )
-        if not effect:
-            continue
-        if function is None:
-            return True
-        span = [
-            function.lineno,
-            function.col_offset,
-            function.end_lineno,
-            function.end_col_offset,
-        ]
-        if _legacy._has_nested_scope(call, function, source.parents[path]):
-            return True
-        if span == allowed:
-            continue
-        if collected is None:
-            maps = _legacy._fixture_class_maps(index)
-            collected = (
-                {
-                    test
-                    for test, _ in _legacy._django_test_collected_methods(
-                        index, path, roots, patterns, maps
-                    )
-                }
-                if maps
-                else set()
-            )
-        if function not in collected:
+        if effect and (
+            function not in collected
+            or _legacy._has_nested_scope(call, function, parents, allow_eager=True)
+        ):
             return True
     return False
 

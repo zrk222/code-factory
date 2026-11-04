@@ -2451,14 +2451,14 @@ def _enclosing_function(node, parents):
     return None
 
 
-def _has_nested_scope(node, function, parents):
+def _has_nested_scope(node, function, parents, *, allow_eager=False):
+    scopes = (ast.Lambda, ast.GeneratorExp)
+    if not allow_eager:
+        scopes += (ast.ListComp, ast.SetComp, ast.DictComp)
     current = node
     while current is not function:
         current = parents.get(id(current))
-        if current is None or isinstance(
-            current,
-            (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
-        ):
+        if current is None or isinstance(current, scopes):
             return True
     return False
 
@@ -3379,10 +3379,10 @@ def _fixture_class_maps(index):
     return classes, imports
 
 
-def _fixture_chain(index, path, owner, maps, terminal, contract):
+def _fixture_chain(index, path, owner, maps, terminal, contract, *, protected=()):
     from . import review_audits as audit
 
-    return _class_binding.resolve_class_chain_with_terminals(
+    chain = _class_binding.resolve_class_chain_with_terminals(
         index["source"],
         path,
         owner.name,
@@ -3390,7 +3390,83 @@ def _fixture_chain(index, path, owner, maps, terminal, contract):
         maps[0],
         audit,
         {terminal: contract},
+        identity_decorators=lambda source, selected, cls: _fixture_identity_decorators(
+            index, selected, cls
+        ),
     )
+
+    if chain is None or not chain["terminal_assumptions"]:
+        return None
+    if any(
+        _fixture_class_binding(node, key)
+        for _, _, node in chain["chain"]
+        for key in protected
+    ):
+        return None
+    return chain
+
+
+def _fixture_identity_decorators(index, path, owner, *, require_execution=False):
+    """Conditional unittest skip markers preserve C3 identity; opaque decorators do not."""
+    from . import mock_fixture_provenance as fixture
+    from . import review_audits as audit
+
+    source = index["source"]
+    for marker in owner.decorator_list:
+        if not isinstance(marker, ast.Call) or marker.keywords or len(marker.args) != 2:
+            return False
+        canonical = fixture._django_expr(index, path, marker.func)
+        if canonical not in {"unittest.skipIf", "unittest.skipUnless"}:
+            return False
+        name = audit._name(marker.func).split(".")[0]
+        imported = binding_occurrences(source.snapshots[path].body, name)
+        if len(imported) != 1 or imported[0].lineno >= marker.lineno:
+            return False
+        if _class_binding._captured_module_shadows_terminal(
+            source, path, imported[0], canonical
+        ) or _class_binding._captured_terminal_provider_mutation(
+            source, audit, canonical
+        ):
+            return False
+        condition, reason = marker.args
+        if not isinstance(reason, ast.Constant) or not isinstance(reason.value, str):
+            return False
+        values = [condition]
+        if isinstance(condition, ast.Name):
+            rows = [
+                source.parents[path].get(id(node))
+                for node in binding_occurrences(
+                    source.snapshots[path].body, condition.id
+                )
+            ]
+            if (
+                (
+                    require_execution
+                    and (
+                        len(rows) != 1
+                        or source.parents[path].get(id(rows[0]))
+                        is not source.snapshots[path]
+                    )
+                )
+                or not rows
+                or any(
+                    not isinstance(row, (ast.Assign, ast.AnnAssign))
+                    or row.lineno >= marker.lineno
+                    for row in rows
+                )
+            ):
+                return False
+            values = [row.value for row in rows]
+        if any(
+            not isinstance(value, ast.Constant) or type(value.value) is not bool
+            for value in values
+        ) or (
+            require_execution
+            and all(value.value is (canonical == "unittest.skipIf") for value in values)
+        ):
+            # Identity alone is not an execution witness.
+            return False
+    return True
 
 
 def _fixture_literal_setting(tree, name):
@@ -3459,17 +3535,18 @@ def _django_test_collected_methods(index, path, roots, patterns, maps):
         audit._oracle_ancestor_map(module.body, module),
         list(ast.walk(module)),
     )
+    parent_map = source.parents[path]
     functions = [n for n in nodes if isinstance(n, ast.FunctionDef)]
     chains = {}
     for function in functions:
-        owner = source.parents[path].get(id(function))
+        owner = parent_map.get(id(function))
         if isinstance(owner, ast.ClassDef) and id(owner) not in chains:
-            chains[id(owner)] = _fixture_test_chain(index, path, function, maps)
-    unittest = {
-        id(n) for n in functions if chains.get(id(source.parents[path].get(id(n))))
-    }
+            chains[id(owner)] = _fixture_test_chain(
+                index, path, function, maps, ownership_only=True
+            )
+    unittest = {id(n) for n in functions if chains.get(id(parent_map.get(id(n))))}
     return [
-        (n, chains.get(id(source.parents[path].get(id(n)))))
+        (n, chains.get(id(parent_map.get(id(n)))))
         for n in functions
         if not any(
             isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
@@ -3503,28 +3580,30 @@ def _django_test_skipped(index, path, function):
     )
 
 
-def _django_test_domain_consumer(index, roots, apps, patterns):
-    maps = _fixture_class_maps(index)
-    if maps is None:
+def _django_test_domain_consumer(index, roots, apps, patterns, collected=None):
+    maps = _fixture_class_maps(index) if collected is None else None
+    if collected is None and maps is None:
         return None
-    return next(
-        (
-            result
-            for path in index["modules"]
-            if any(path.is_relative_to(root) for root in roots)
-            for result in (
-                _django_test_module_consumer(index, path, roots, apps, patterns, maps),
-            )
-            if result is not None
-        ),
-        None,
+    for path in index["modules"]:
+        if not any(path.is_relative_to(root) for root in roots):
+            continue
+        result = _django_test_module_consumer(
+            index, path, roots, apps, patterns, maps, collected
+        )
+        if result is not None:
+            return result
+    return None
+
+
+def _django_test_module_consumer(
+    index, path, roots, apps, patterns, maps, collected=None
+):
+    rows = (
+        _django_test_collected_methods(index, path, roots, patterns, maps)
+        if collected is None
+        else collected.get(path, ())
     )
-
-
-def _django_test_module_consumer(index, path, roots, apps, patterns, maps):
-    for test, chain in _django_test_collected_methods(
-        index, path, roots, patterns, maps
-    ):
+    for test, chain in rows:
         result = _django_test_method_consumer(index, path, test, chain, apps)
         if result is not None:
             result["test_owner"] = {
@@ -3544,6 +3623,14 @@ def _django_test_module_consumer(index, path, roots, apps, patterns, maps):
 def _django_test_method_consumer(index, path, test, chain, apps):
     from . import mock_fixture_provenance as fixture
 
+    if chain and (
+        test.decorator_list
+        or any(
+            not _fixture_identity_decorators(index, p, cls, require_execution=True)
+            for p, _, cls in chain["chain"]
+        )
+    ):
+        return None
     candidates = []
     setup = fixture._app_effective_method(chain["chain"], "setUp") if chain else None
     if setup:
@@ -3580,11 +3667,24 @@ def _django_test_database_marker(index, path, function):
 
     if not function.name.startswith("test_"):
         return False
-    return any(
-        fixture._django_expr(index, path, n.func if isinstance(n, ast.Call) else n)
-        == "pytest.mark.django_db"
-        for n in function.decorator_list
-    ) and _django_test_provider_stable(index, "pytest.mark.django_db")
+    return (
+        bool(function.decorator_list)
+        and all(
+            fixture._django_expr(index, path, n.func if isinstance(n, ast.Call) else n)
+            == "pytest.mark.django_db"
+            and (
+                not isinstance(n, ast.Call)
+                or (
+                    not n.args
+                    and all(
+                        k.arg and isinstance(k.value, ast.Constant) for k in n.keywords
+                    )
+                )
+            )
+            for n in function.decorator_list
+        )
+        and _django_test_provider_stable(index, "pytest.mark.django_db")
+    )
 
 
 def _django_test_provider_stable(index, provider):
@@ -3777,16 +3877,6 @@ def _fixture_user_model(index, settings, maps):
     owner = maps[0].get((path, name))
     if owner is None:
         return None
-    chain = _fixture_chain(
-        index,
-        path,
-        owner,
-        maps,
-        "django.contrib.auth.models.AbstractUser",
-        "django.AbstractUser.default-manager-password.v1",
-    )
-    if chain is None or not chain["terminal_assumptions"]:
-        return None
     protected = {
         "objects",
         "USERNAME_FIELD",
@@ -3802,13 +3892,15 @@ def _fixture_user_model(index, settings, maps):
         "__new__",
         "__init__",
     }
-    if any(
-        _fixture_class_binding(node, key)
-        for _, _, node in chain["chain"]
-        for key in protected
-    ):
-        return None
-    return chain
+    return _fixture_chain(
+        index,
+        path,
+        owner,
+        maps,
+        "django.contrib.auth.models.AbstractUser",
+        "django.AbstractUser.default-manager-password.v1",
+        protected=protected,
+    )
 
 
 def _fixture_class_binding(owner, name):
@@ -3844,19 +3936,11 @@ def _fixture_testcase_owner_closed(index, path, owner):
     return True
 
 
-def _fixture_test_chain(index, path, function, maps):
+def _fixture_test_chain(index, path, function, maps, *, ownership_only=False):
     owner = index["source"].parents[path].get(id(function))
-    if not isinstance(owner, ast.ClassDef) or function.decorator_list:
-        return None
-    chain = _fixture_chain(
-        index,
-        path,
-        owner,
-        maps,
-        "django.test.TestCase",
-        "django.TestCase.transactional-local-client.v1",
-    )
-    if chain is None or not chain["terminal_assumptions"]:
+    if not isinstance(owner, ast.ClassDef) or (
+        function.decorator_list and not ownership_only
+    ):
         return None
     protected = {
         "client",
@@ -3873,10 +3957,20 @@ def _fixture_test_chain(index, path, function, maps):
         "run",
         "__call__",
     }
-    if any(
-        _fixture_class_binding(node, key)
-        for _, _, node in chain["chain"]
-        for key in protected
+    chain = _fixture_chain(
+        index,
+        path,
+        owner,
+        maps,
+        "django.test.TestCase",
+        "django.TestCase.transactional-local-client.v1",
+        protected=protected,
+    )
+    if chain is None:
+        return None
+    if not ownership_only and any(
+        not _fixture_identity_decorators(index, p, cls, require_execution=True)
+        for p, _, cls in chain["chain"]
     ):
         return None
     return chain
@@ -5204,6 +5298,7 @@ def module_fixture_helper_epoch():
         _fixture_scope,
         _fixture_class_maps,
         _fixture_chain,
+        _fixture_identity_decorators,
         _fixture_literal_setting,
         _fixture_settings,
         _fixture_user_model,
