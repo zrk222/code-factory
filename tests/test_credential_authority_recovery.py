@@ -74,6 +74,86 @@ def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
     }
 
 
+@pytest.mark.parametrize("local_provider", [False, True])
+def test_django_family_guarded_management_loader_reaches_selected_consumer(
+    local_provider,
+):
+    provider = "from django.core.management import execute_from_command_line\n"
+    body = (
+        "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.settings')\n"
+        + (
+            "    try:\n        "
+            + provider
+            + "    except ImportError as exc:\n        raise ImportError('Django required') from exc\n"
+            if local_provider
+            else ""
+        )
+        + "    execute_from_command_line(sys.argv)\n"
+    )
+    startup = (
+        "import os\nimport sys\n"
+        + ("" if local_provider else provider)
+        + "def main():\n"
+        + body
+        + "if __name__ == '__main__':\n    main()\n"
+    )
+    row = _recovery_row(_recovery_sources(startup=startup))
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    proof = row["credential_authority_observation"]
+    assert proof["selected_consumer"]["model"] == "django.admin.feedback.v1"
+    assert any(edge["path"] == "start.py" for edge in proof["transfers"])
+
+
+@pytest.mark.parametrize(
+    "mutation", ["uncalled", "shadowed", "extra_argument", "conditional"]
+)
+def test_django_family_management_loader_requires_closed_invocation(mutation):
+    startup = (
+        "import os\nimport sys\n"
+        "from django.core.management import execute_from_command_line\n"
+        "def main():\n"
+        "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.settings')\n"
+        "    execute_from_command_line(sys.argv)\n"
+        "if __name__ == '__main__':\n    main()\n"
+    )
+    if mutation == "uncalled":
+        startup = startup.replace("    main()\n", "    pass\n")
+    elif mutation == "shadowed":
+        startup = startup.replace("if __name__", "main = lambda: None\nif __name__")
+    elif mutation == "extra_argument":
+        startup = startup.replace("    main()\n", "    main('unproved')\n")
+    else:
+        startup = startup.replace("    main()\n", "    if enabled:\n        main()\n")
+    row = _recovery_row(_recovery_sources(startup=startup))
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+
+
+@pytest.mark.parametrize(
+    "helper",
+    ["captured_django_management_contract", "captured_django_startup_statements"],
+)
+def test_django_family_changed_loader_invalidates_retained_proof_epoch(
+    monkeypatch, helper
+):
+    from factoryline import import_context
+    from factoryline.credential_role_constructor_provider import (
+        _helper_snapshot,
+        helper_epochs_valid,
+    )
+    from factoryline.credential_role_identity_effects import security_value_helper_epoch
+
+    snapshot = _helper_snapshot(security_value_helper_epoch)
+    epochs = {"proof": (security_value_helper_epoch, snapshot)}
+    assert helper_epochs_valid(epochs)
+
+    def replaced(_context, _path):
+        return None
+
+    monkeypatch.setattr(getattr(import_context, helper), "__code__", replaced.__code__)
+    assert not helper_epochs_valid(epochs)
+
+
 FEEDBACK_URLS = (
     "from django.contrib import admin\n"
     "from django.urls import path, include\n"
@@ -1074,11 +1154,302 @@ def test_authority_domain_requires_configured_transactional_consumers(mode, name
     proof = row["credential_authority_observation"]
     domain = proof["authority_domain"]
     assert proof["proof_scope"] == "source_bound_configured_test_feedback"
-    assert domain["role"] == "CONFIGURED_TRANSACTIONAL_TEST_SIGNER"
+    assert domain["role"] == "CONFIGURED_TEST_INVOCATION_SIGNER"
     assert domain["application_authority"] == "UNKNOWN"
     assert domain["isolation_assurance"] == "UNASSESSED"
     assert domain["consumer"]["effect_span"]
     assert len(domain["source_inventory_sha256"]) == 64
+
+
+@pytest.mark.parametrize("mode", ["model", "migration"])
+def test_django_family_management_bootstrap_keeps_configured_test_ownership(mode):
+    files = _configured_test_domain_sources(mode)
+    files["manage.py"] = (
+        "import os\nimport sys\n"
+        "from django.core.management import execute_from_command_line\n"
+        "def main():\n"
+        "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'verification.config')\n"
+        "    execute_from_command_line(sys.argv)\n"
+        "if __name__ == '__main__':\n    main()\n"
+    )
+    row = _recovery_row(files, path="verification/config.py")
+    assert row["tier"] == "NEEDS_CONTEXT"
+    domain = row["credential_authority_observation"]["authority_domain"]
+    assert domain["role"] == "CONFIGURED_TEST_INVOCATION_SIGNER"
+    assert any(edge["path"] == "manage.py" for edge in domain["management_loaders"])
+
+
+@pytest.mark.parametrize(
+    "escape", ["none", "construct", "globals", "module_getattr", "receiver"]
+)
+def test_django_family_inherited_fixture_effects_share_transactional_owner(escape):
+    files = _configured_test_domain_sources()
+    files["verification/support.py"] = (
+        "from verification.resource.models import Item\n"
+        "class SeedMixin:\n"
+        "    def setUp(self):\n        self.obj = Item.objects.create(label='fixture')\n"
+        "class AlternateMixin:\n"
+        "    def setUp(self):\n        self.obj = Item.objects.create(label='other')\n"
+    )
+    files["verification/test_flow.py"] = (
+        "from django.test import TestCase\n"
+        "from verification.support import SeedMixin, AlternateMixin\n"
+        "class TestFirst(SeedMixin, TestCase):\n"
+        "    def test_roundtrip(self):\n        self.assertEqual(self.obj.label, 'fixture')\n"
+        "class TestSecond(AlternateMixin, TestCase):\n"
+        "    def test_roundtrip(self):\n        self.assertEqual(self.obj.label, 'other')\n"
+    )
+    if escape == "construct":
+        files["live.py"] = (
+            "from verification.support import SeedMixin\n"
+            "live = SeedMixin()\nlive.setUp()\n"
+        )
+    elif escape == "globals":
+        files["live.py"] = (
+            "from verification.support import SeedMixin\n"
+            "live = globals()['SeedMixin']()\nlive.setUp()\n"
+        )
+    elif escape == "module_getattr":
+        files["live.py"] = (
+            "import verification.support as helpers\n"
+            "live = getattr(helpers, 'SeedMixin')()\nlive.setUp()\n"
+        )
+    elif escape == "receiver":
+        files["verification/support.py"] = files["verification/support.py"].replace(
+            "        self.obj =",
+            "        global retained\n        retained = self\n        self.obj =",
+            1,
+        )
+    row = _recovery_row(files, path="verification/config.py")
+    escaped = escape != "none"
+    assert row["tier"] == ("SUPPORTED_DEFECT" if escaped else "NEEDS_CONTEXT")
+    domain = row["credential_authority_observation"]["authority_domain"]
+    assert (domain is None) is escaped
+
+
+def test_shared_class_collection_is_independent_of_first_skipped_method():
+    files = _configured_test_domain_sources()
+    files["verification/test_flow.py"] = (
+        files["verification/test_flow.py"]
+        .replace(
+            "from django.test import TestCase",
+            "import unittest\nfrom django.test import TestCase",
+        )
+        .replace(
+            "    def setUp(self):",
+            "    @unittest.skip('optional')\n    def test_optional(self):\n        pass\n    def setUp(self):",
+        )
+    )
+    row = _recovery_row(files, path="verification/config.py")
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["credential_authority_observation"]["authority_domain"] is not None
+
+
+@pytest.mark.parametrize("escape", [False, True])
+def test_shared_decorated_method_does_not_hide_another_class_lifecycle(escape):
+    files = _configured_test_domain_sources()
+    files["verification/support.py"] = (
+        "from verification.resource.models import Item\n"
+        "class SeedMixin:\n"
+        "    def setUp(self):\n        self.obj = Item.objects.create(label='fixture')\n"
+    )
+    files["verification/test_flow.py"] = (
+        "from django.test import TestCase\n"
+        "from verification.support import SeedMixin\n"
+        "class TestFirst(SeedMixin, TestCase):\n"
+        "    def test_roundtrip(self):\n        self.assertEqual(self.obj.label, 'fixture')\n"
+        "class TestSecond(SeedMixin, TestCase):\n"
+        "    @unknown_wrapper\n"
+        "    def test_optional(self):\n        pass\n"
+    )
+    if escape:
+        files["verification/test_flow.py"] = (
+            "from verification.resource.models import Item\n"
+            + files["verification/test_flow.py"]
+        ).replace("        pass", "        Item.objects.create(label='unowned')")
+    row = _recovery_row(files, path="verification/config.py")
+    domain = row.get("credential_authority_observation", {}).get("authority_domain")
+    assert bool(domain) is not escape
+
+
+@pytest.mark.parametrize(
+    "wrapper", ["@opaque\n", "@opaque()\n", "@pytest.mark.django_db(unknown())\n"]
+)
+def test_shared_transactional_free_test_requires_closed_metadata_decorators(wrapper):
+    files = _configured_test_domain_sources("migration")
+    files["verification/test_flow.py"] = files["verification/test_flow.py"].replace(
+        "@pytest.mark.django_db\n", wrapper + "@pytest.mark.django_db\n"
+    )
+    row = _recovery_row(files, path="verification/config.py")
+    assert (
+        row.get("credential_authority_observation", {}).get("authority_domain") is None
+    )
+
+
+def test_shared_test_invocation_context_does_not_claim_unmarked_transaction():
+    files = _configured_test_domain_sources("migration")
+    files["verification/test_other.py"] = (
+        "from verification.resource.models import Item\n"
+        "def test_unmarked():\n    Item.objects.create(label='unmarked-test')\n"
+    )
+    row = _recovery_row(files, path="verification/config.py")
+    assert row["tier"] == "NEEDS_CONTEXT"
+    domain = row["credential_authority_observation"]["authority_domain"]
+    assert domain["role"] == "CONFIGURED_TEST_INVOCATION_SIGNER"
+    assert (
+        domain["ownership_scope"]
+        == "captured_pytest_invocation_not_transaction_isolation"
+    )
+    assert domain["transactional_consumer_phase"] == "witness_only"
+    assert domain["isolation_assurance"] == "UNASSESSED"
+    assert domain["application_authority"] == "UNKNOWN"
+    assert "transactional_owners" not in domain
+    assert "verification/test_other.py" in {
+        owner["path"] for owner in domain["test_invocation_owners"]
+    }
+    assert domain["consumer"]["source"]["path"] != "verification/test_other.py"
+
+
+@pytest.mark.parametrize("escape", ["none", "return", "callback", "shadow"])
+def test_shared_lexical_test_helpers_require_closed_call_ownership(escape):
+    files = _configured_test_domain_sources()
+    body = (
+        "        def create_pair():\n            return Item.objects.create(label='nested')\n"
+        "        def consume_pair():\n            return create_pair()\n"
+        "        consume_pair()\n"
+    )
+    if escape == "return":
+        body += "        return create_pair\n"
+    elif escape == "callback":
+        body += "        pending.append(lambda: create_pair())\n"
+    elif escape == "shadow":
+        body = body.replace(
+            "def consume_pair():", "def consume_pair(create_pair=unknown):"
+        )
+    files["verification/test_flow.py"] += body
+    row = _recovery_row(files, path="verification/config.py")
+    assert bool(
+        row.get("credential_authority_observation", {}).get("authority_domain")
+    ) is (escape == "none")
+
+
+@pytest.mark.parametrize(
+    "expression,eager",
+    [
+        ("[Item.objects.create(label='eager') for _ in range(2)]", True),
+        ("(Item.objects.create(label='deferred') for _ in range(2))", False),
+    ],
+)
+def test_shared_transactional_comprehension_phase_preserves_deferral(expression, eager):
+    files = _configured_test_domain_sources()
+    files["verification/test_flow.py"] += "        values = " + expression + "\n"
+    row = _recovery_row(files, path="verification/config.py")
+    assert (
+        bool(row.get("credential_authority_observation", {}).get("authority_domain"))
+        is eager
+    )
+
+
+@pytest.mark.parametrize("mutation", ["none", "source", "helper", "inventory"])
+def test_shared_terminal_batch_reuses_only_fresh_provider_derivations(
+    monkeypatch, mutation
+):
+    from factoryline import credential_role_constructor_provider as provider
+    from factoryline import mock_fixture_provenance as fixture
+    from factoryline import semantic_credential_sensor as sensor
+
+    files = _configured_test_domain_sources()
+    files["verification/test_flow.py"] += (
+        "class TestSecond(TestCase):\n    def test_other(self):\n        pass\n"
+    )
+    raw = {name: text.encode() for name, text in files.items()}
+    context = sensor.signing_configuration_inventory(
+        raw, {name: sha256(data).hexdigest() for name, data in raw.items()}
+    )
+    source = context["index"]
+    index = fixture.application_test_index(
+        source.root,
+        source.snapshots,
+        source.source_bytes,
+        source.inventory,
+        raw,
+        source_index=source,
+    )
+    roots, _apps, _project, patterns = __import__(
+        "factoryline.credential_identity_audit",
+        fromlist=["_django_test_domain_profile"],
+    )._django_test_domain_profile(index, Path("verification/config.py"))
+    original = provider._captured_terminal_provider_mutation
+    seen = []
+
+    def counted(*args, **kwargs):
+        seen.append(args[2])
+        result = original(*args, **kwargs)
+        if mutation == "source":
+            source.snapshots[Path("verification/test_flow.py")].body.append(
+                ast.parse("tamper = 1").body[0]
+            )
+        elif mutation == "inventory":
+            source.inventory[Path("verification/test_flow.py")] = "0" * 64
+        elif mutation == "helper":
+            monkeypatch.setattr(
+                provider, "_terminal_provider_mutated", lambda *a, **k: False
+            )
+        return result
+
+    monkeypatch.setattr(provider, "_captured_terminal_provider_mutation", counted)
+    from factoryline import credential_identity_audit as authority
+
+    ownership = authority._django_transactional_owners(index, roots, patterns)
+    assert (ownership is not None) is (mutation == "none")
+    assert seen.count("django.test.TestCase") == (2 if mutation == "helper" else 1)
+
+
+@pytest.mark.parametrize("decorator", ["skipIf", "skipUnless"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["none", "provider", "shadow", "effect", "object", "rebound", "conditional"],
+)
+def test_shared_transactional_class_decorators_preserve_only_closed_identity(
+    decorator, mutation
+):
+    files = _configured_test_domain_sources()
+    files["verification/support.py"] = (
+        "from verification.resource.models import Item\n"
+        "class SeedMixin:\n"
+        "    def setUp(self):\n        self.obj = Item.objects.create(label='fixture')\n"
+    )
+    args = "'optional'" if decorator == "skip" else "ENABLED, 'optional'"
+    prefix = (
+        "import unittest\nENABLED = "
+        + ("False" if decorator == "skipIf" else "True")
+        + "\n"
+    )
+    if mutation == "provider":
+        prefix += f"unittest.{decorator} = replacement\n"
+    elif mutation == "shadow":
+        files["unittest.py"] = "def skip(*args):\n    return replacement\n"
+    elif mutation == "effect":
+        args = "unknown()" if decorator == "skip" else "unknown(), 'optional'"
+    elif mutation == "rebound":
+        prefix += "ENABLED = " + ("True" if decorator == "skipIf" else "False") + "\n"
+    elif mutation == "conditional":
+        prefix = "import unittest\nif external:\n    ENABLED = True\nelse:\n    ENABLED = False\n"
+    elif mutation == "object":
+        prefix = "import unittest\nENABLED = unknown()\n"
+        if decorator == "skip":
+            args = "ENABLED"
+    files["verification/test_flow.py"] = (
+        prefix + "from django.test import TestCase\n"
+        "from verification.support import SeedMixin\n"
+        f"@unittest.{decorator}({args})\n"
+        "class TestFirst(SeedMixin, TestCase):\n"
+        "    def test_roundtrip(self):\n        self.assertEqual(self.obj.label, 'fixture')\n"
+    )
+    row = _recovery_row(files, path="verification/config.py")
+    domain = row.get("credential_authority_observation", {}).get("authority_domain")
+    assert bool(domain) is (mutation == "none")
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
 
 
 @pytest.mark.parametrize(

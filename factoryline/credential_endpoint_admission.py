@@ -331,6 +331,7 @@ def endpoint_admission_helpers():
         "credential_role_paths",
         "finite_capture",
         "credential_role_identity_effects",
+        "credential_identity_audit",
         "security_configuration",
         "semantic_credential_sensor",
     )
