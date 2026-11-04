@@ -1153,6 +1153,97 @@ def ingest(tmp_path, payload):
     )
 
 
+def _execution_sarif_fixture():
+    payload = report()
+    payload["runs"][0]["tool"]["driver"]["name"] = "CodeQL"
+    return payload, {
+        "id": "native-codeql",
+        "engine": "codeql",
+        "tool_version": "1",
+    }
+
+
+def test_execution_sarif_coalesces_exact_duplicate_with_native_occurrences():
+    from factoryline.deep_audit_sarif import _execution_sarif
+
+    payload, lane = _execution_sarif_fixture()
+    payload["runs"][0]["results"].append(deepcopy(payload["runs"][0]["results"][0]))
+    findings = _execution_sarif(payload, lane, {"app.py": "a" * 64})
+    assert len(findings) == 1
+    assert findings[0]["native_occurrences"] == [
+        {"run_index": 0, "normalized_finding_index": 0},
+        {"run_index": 0, "normalized_finding_index": 1},
+    ]
+
+
+def test_execution_sarif_coalesces_exact_duplicate_across_runs():
+    from factoryline.deep_audit_sarif import _execution_sarif
+
+    payload, lane = _execution_sarif_fixture()
+    payload["runs"].append(deepcopy(payload["runs"][0]))
+    findings = _execution_sarif(payload, lane, {"app.py": "a" * 64})
+    assert len(findings) == 1
+    assert findings[0]["native_occurrences"] == [
+        {"run_index": 0, "normalized_finding_index": 0},
+        {"run_index": 1, "normalized_finding_index": 0},
+    ]
+
+
+@pytest.mark.parametrize("difference", ["flow", "suppression"])
+def test_execution_sarif_rejects_same_identity_with_different_evidence(difference):
+    from factoryline.deep_audit_sarif import _execution_sarif
+
+    payload, lane = _execution_sarif_fixture()
+    result = deepcopy(payload["runs"][0]["results"][0])
+    if difference == "flow":
+        result["codeFlows"][0]["threadFlows"][0]["locations"][1]["location"] = location(
+            3
+        )
+    else:
+        result["suppressions"] = [{"kind": "external", "status": "accepted"}]
+    payload["runs"][0]["results"].append(result)
+    with pytest.raises(RuntimeAuditError, match="E_SARIF_IDENTITY_COLLISION"):
+        _execution_sarif(payload, lane, {"app.py": "a" * 64})
+
+
+@pytest.mark.parametrize("identity_change", ["fingerprint", "location"])
+def test_execution_sarif_keeps_distinct_identity_and_source_binding(identity_change):
+    from factoryline.deep_audit_sarif import _execution_sarif
+
+    payload, lane = _execution_sarif_fixture()
+    second = deepcopy(payload["runs"][0]["results"][0])
+    if identity_change == "fingerprint":
+        second["partialFingerprints"]["primary/v1"] = "other-stable-id"
+    else:
+        second["locations"] = [location(2)]
+    payload["runs"][0]["results"].append(second)
+    before = _execution_sarif(payload, lane, {"app.py": "a" * 64})
+    after = _execution_sarif(payload, lane, {"app.py": "b" * 64})
+    assert len(before) == len(after) == 2
+    by_id_before = {finding["finding_id"]: finding for finding in before}
+    by_id_after = {finding["finding_id"]: finding for finding in after}
+    assert set(by_id_before) == set(by_id_after)
+    assert all("native_occurrences" not in finding for finding in before)
+    assert all(
+        by_id_before[key]["source_sha256"] != by_id_after[key]["source_sha256"]
+        for key in by_id_before
+    )
+
+
+def test_native_ledger_counts_raw_duplicate_occurrences():
+    from factoryline.deep_audit_sarif import _native_finding_counts_match
+
+    payload, lane = _execution_sarif_fixture()
+    payload["runs"][0]["results"].append(deepcopy(payload["runs"][0]["results"][0]))
+    sources = {"app.py": "a" * 64}
+    assert _native_finding_counts_match(
+        payload, lane, sources, {("app.py", "unsafe"): {"finding": 2}}
+    )
+    assert not _native_finding_counts_match(
+        payload, lane, sources, {("app.py", "unsafe"): {"finding": 1}}
+    )
+
+
 @pytest.mark.parametrize("mode", ["execution", "standalone"])
 @pytest.mark.parametrize(
     "statuses,active",

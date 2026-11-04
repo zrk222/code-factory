@@ -251,18 +251,24 @@ def _sarif_result_finding(result, rules, lane, sources):
     return finding
 
 
-def _sarif_run_findings(run, lane, sources):
+def _sarif_run_findings(run, lane, sources, *, run_index=None):
     driver, analyzer = _sarif_analyzer(run, lane)
     _completed(run, analyzer)
     _check_invocations(run)
     results = _list(run.get("results"), 0, 20_000)
     _check_rule_indices(run, results)
     rules = {item["id"]: item for item in driver.get("rules", [])}
-    return [
-        finding
-        for result in results
-        if (finding := _sarif_result_finding(result, rules, lane, sources)) is not None
-    ]
+    findings = []
+    for result in results:
+        finding = _sarif_result_finding(result, rules, lane, sources)
+        if finding is None:
+            continue
+        if run_index is not None:
+            finding["native_occurrences"] = [
+                {"run_index": run_index, "normalized_finding_index": len(findings)}
+            ]
+        findings.append(finding)
+    return findings
 
 
 def _execution_sarif(report: dict, lane: dict, sources: dict) -> list:
@@ -271,9 +277,35 @@ def _execution_sarif(report: dict, lane: dict, sources: dict) -> list:
     if report.get("version") != "2.1.0":
         raise RuntimeAuditError("E_SARIF_VERSION", "SARIF 2.1.0 required")
     findings = []
-    for run in _list(report.get("runs"), 1, 16):
-        findings.extend(_sarif_run_findings(run, lane, sources))
-    return findings
+    for run_index, run in enumerate(_list(report.get("runs"), 1, 16)):
+        findings.extend(_sarif_run_findings(run, lane, sources, run_index=run_index))
+    unique = {}
+    for finding in findings:
+        occurrences = finding.pop("native_occurrences")
+        identity = finding["finding_id"]
+        existing = unique.get(identity)
+        if existing is None:
+            finding["native_occurrences"] = occurrences
+            unique[identity] = finding
+            continue
+        if canonical_bytes(existing) != canonical_bytes(
+            {**finding, "native_occurrences": existing["native_occurrences"]}
+        ):
+            raise RuntimeAuditError(
+                "E_SARIF_IDENTITY_COLLISION",
+                "same native finding identity has different normalized evidence",
+            )
+        existing["native_occurrences"].extend(occurrences)
+    output = list(unique.values())
+    for finding in output:
+        occurrences = finding["native_occurrences"]
+        if len(occurrences) == 1:
+            del finding["native_occurrences"]
+        else:
+            occurrences.sort(
+                key=lambda item: (item["run_index"], item["normalized_finding_index"])
+            )
+    return output
 
 
 def _execution_osv(report: dict, lane: dict, sources: dict) -> list:
@@ -1185,7 +1217,9 @@ def _native_finding_counts_match(report, lane, sources, observed):
     actual = {}
     for finding in _execution_sarif(report, lane, sources):
         key = (finding["path"], finding["rule_id"])
-        actual[key] = actual.get(key, 0) + 1
+        actual[key] = actual.get(key, 0) + len(
+            finding.get("native_occurrences", (None,))
+        )
     return all(
         observed.get(key, {}).get("finding", 0) == actual.get(key, 0)
         for key in set(observed) | set(actual)
