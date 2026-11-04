@@ -50,6 +50,572 @@ from .semantic_credential_sensor import (
 _HOOKS = {"__getattr__", "__getattribute__", "__setattr__", "__delattr__"}
 
 
+def selected_receiver_field_value(field, index, path):
+    """Return a possible captured scalar path, not complete call-graph authority."""
+    if not _SelectedReceiverState.eligible(field) or index is None or path is None:
+        return None
+    if not index.validate(path):
+        return None
+    if not isinstance(source_scope(field, index.parents[path])[1], ast.ClassDef):
+        return None
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import ClassChainMemo
+
+    memo = getattr(index, "class_chain_memo", None)
+    if memo is None:
+        index.class_chain_memo = memo = ClassChainMemo(index, {}, {}, audit)
+    method, owner = source_scope(field, index.parents[path])
+    key = (
+        "selected-receiver-value",
+        path,
+        id(owner),
+        id(method),
+        field.attr,
+        tuple(sorted(index.inventory.items())),
+    )
+
+    def derive():
+        return _SelectedReceiverState(field, index, path).derive()
+
+    if memo._analysis_batch is not None:
+        result = memo.source_model(key, derive, helper_epoch=_selected_receiver_helpers)
+        return _SelectedReceiverState.with_step(result, field, "ORDINARY_FIELD_READ")
+    with memo.analysis_batch() as batch:
+        result = memo.source_model(key, derive, helper_epoch=_selected_receiver_helpers)
+    return (
+        _SelectedReceiverState.with_step(result, field, "ORDINARY_FIELD_READ")
+        if batch.accepted
+        else None
+    )
+
+
+def _selected_receiver_helpers():
+    from .credential_role_identity_effects import security_value_helper_epoch
+    from .audit_log_flow import _LogReader
+
+    return (
+        *security_value_helper_epoch(),
+        _LogReader._source,
+        _LogReader._builtin_unshadowed,
+        _namespace_effect_unknown,
+        *(
+            getattr(_SelectedReceiverState, name)
+            for name, value in vars(_SelectedReceiverState).items()
+            if callable(value)
+        ),
+    )
+
+
+class _SelectedReceiverState:
+    """Compose existing source, constructor, ownership and effect proofs."""
+
+    def __init__(self, field, index, path):
+        from . import review_audits as audit
+
+        self.field, self.index, self.path = field, index, path
+        self.tree, self.parents = index.snapshots[path], index.parents[path]
+        self.method, self.owner = source_scope(field, self.parents)
+        self.aliases = audit._security_aliases(self.tree.body)
+        self.methods = {
+            n.name: n for n in self.owner.body if isinstance(n, ast.FunctionDef)
+        }
+        self.provider_proofs = {}
+
+    @staticmethod
+    def eligible(field):
+        method = getattr(field, "_security_lexical_scope", None)
+        return (
+            isinstance(field.value, ast.Name)
+            and not field.attr.startswith("__")
+            and isinstance(method, ast.FunctionDef)
+            and bool(method.args.args)
+            and method.args.args[0].arg == field.value.id
+        )
+
+    def derive(self):
+        if not self.owner_closed():
+            return None
+        values = [
+            value
+            for call in ast.walk(self.tree)
+            if self.activation(call)
+            for value in (self.activation_value(call),)
+            if value is not None
+        ]
+        if not values:
+            return None
+        from .finite_capture import security_structural_join
+
+        return security_structural_join(values)
+
+    def owner_closed(self):
+        owner = self.owner
+        if (
+            owner not in self.tree.body
+            or owner.bases
+            or owner.keywords
+            or owner.decorator_list
+        ):
+            return False
+        forbidden = (*_HOOKS, "__new__", "__slots__", self.field.attr)
+        if any(binding_occurrences(owner.body, name) for name in forbidden):
+            return False
+        if "__init__" not in self.methods or _namespace_effect_unknown(
+            self.tree, self.aliases
+        ):
+            return False
+        return self.binding_closed()
+
+    def binding_closed(self):
+        from . import review_audits as audit
+        from .credential_role_constructor_provider import (
+            _captured_terminal_provider_mutation,
+        )
+        from .runtime_audit_integrity import _conditional_module_name
+
+        canonical = (
+            _conditional_module_name(self.index.relative(self.path))
+            + "."
+            + self.owner.name
+        )
+        return not _captured_terminal_provider_mutation(
+            self.index, audit, canonical, local_binding=(self.path, self.owner.name)
+        )
+
+    def activation(self, call):
+        return (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == self.method.name
+            and isinstance(call.func.value, ast.Name)
+        )
+
+    def creation(self, activation, caller):
+        receiver = activation.func.value
+        bindings = binding_occurrences(caller.body, receiver.id)
+        statement = self.parents.get(id(bindings[0])) if len(bindings) == 1 else None
+        if not isinstance(statement, ast.Assign) or statement not in caller.body:
+            return None
+        if not isinstance(statement.value, ast.Call) or caller.body.index(
+            statement
+        ) >= caller.body.index(self.parents[id(activation)]):
+            return None
+        from .credential_role_identity_effects import source_symbol_index
+        from .mock_fixture_provenance import _app_source_symbol
+
+        selected = _app_source_symbol(
+            source_symbol_index(self.index), self.path, statement.value.func, caller
+        )
+        return statement if selected == (self.path, self.owner) else None
+
+    def activation_value(self, activation):
+        caller, _owner = source_scope(activation, self.parents)
+        statement = self.parents.get(id(activation))
+        if (
+            not isinstance(caller, ast.FunctionDef)
+            or not isinstance(statement, ast.Expr)
+            or statement not in caller.body
+        ):
+            return None
+        creation = self.creation(activation, caller)
+        if creation is None or not self.captures_closed(
+            caller, activation.func.value.id
+        ):
+            return None
+        transfer = self.constructor_transfer(creation, activation, caller)
+        if transfer is None:
+            return None
+        value = self.input_value(transfer["actual"], caller, creation.lineno)
+        if value is None or not value.roots:
+            return None
+        fields = self.constructor_fields(creation, activation, caller)
+        ordered = self.ordered_calls(
+            caller, creation, statement, activation.func.value.id
+        )
+        if not ordered or not all(
+            self.method_preserves(selected, fields) for _call, selected in ordered
+        ):
+            return None
+        return self.trace(value, creation.value, transfer["statement"], ordered)
+
+    def captures_closed(self, caller, receiver):
+        from .credential_role_identity_effects import nested_capture_roots
+
+        # Inspect nested captures before selecting source order: a closure may
+        # be declared before allocation and mutate the instance when called later.
+        return not nested_capture_roots(
+            caller,
+            self.path,
+            {receiver: _Value(roots=frozenset({"receiver"}))},
+            self.index,
+        )
+
+    def constructor_transfer(self, creation, activation, caller):
+        from . import finite_capture as finite, review_integrity as flow
+
+        constructor = self.methods["__init__"]
+        try:
+            bound = flow.bind_source_call(
+                creation.value, constructor, receiver=activation.func.value
+            )
+            bound.pop(constructor.args.args[0].arg)
+        except (TypeError, ValueError, KeyError):
+            return None
+        return finite.captured_literal_branch_field_transfer(
+            self.index,
+            self.path,
+            constructor,
+            bound,
+            self.path,
+            caller,
+            self.field.attr,
+            lambda _node: False,
+        )
+
+    def constructor_fields(self, creation, activation, caller):
+        from . import finite_capture as finite, review_integrity as flow
+
+        constructor = self.methods["__init__"]
+        bound = flow.bind_source_call(
+            creation.value, constructor, receiver=activation.func.value
+        )
+        bound.pop(constructor.args.args[0].arg)
+        fields = {}
+        for node in ast.walk(constructor):
+            if not isinstance(node, ast.Attribute) or not isinstance(
+                node.ctx, ast.Store
+            ):
+                continue
+            transfer = finite.captured_literal_branch_field_transfer(
+                self.index,
+                self.path,
+                constructor,
+                bound,
+                self.path,
+                caller,
+                node.attr,
+                lambda _node: False,
+            )
+            value = (
+                self.input_value(
+                    transfer["actual"], caller, creation.lineno, guards=False
+                )
+                if transfer
+                else None
+            )
+            if value is not None:
+                fields[("receiver", node.attr)] = replace(value, roots=frozenset())
+        return fields
+
+    def ordered_calls(self, caller, creation, final, receiver):
+        selected = []
+        for statement in caller.body[
+            caller.body.index(creation) + 1 : caller.body.index(final) + 1
+        ]:
+            uses = [
+                n
+                for n in ast.walk(statement)
+                if isinstance(n, ast.Name)
+                and n.id == receiver
+                and isinstance(n.ctx, ast.Load)
+            ]
+            if not uses:
+                continue
+            call = self.receiver_call(statement, uses, receiver)
+            if call is None:
+                return None
+            selected.append((statement.value, call))
+        return selected
+
+    def receiver_call(self, statement, uses, receiver):
+        from . import review_integrity as flow
+
+        call = statement.value if isinstance(statement, ast.Expr) else None
+        if (
+            not isinstance(call, ast.Call)
+            or not isinstance(call.func, ast.Attribute)
+            or uses != [call.func.value]
+            or call.func.value.id != receiver
+        ):
+            return None
+        method = self.methods.get(call.func.attr)
+        if (
+            method is None
+            or len(binding_occurrences(self.owner.body, method.name)) != 1
+        ):
+            return None
+        try:
+            flow.bind_source_call(call, method, receiver=call.func.value)
+        except (TypeError, ValueError):
+            return None
+        return method
+
+    def method_preserves(self, method, fields):
+        from . import finite_capture as finite
+        from .credential_role_identity_effects import summarize_identity_effect
+
+        receiver = method.args.args[0].arg
+        if method.decorator_list or binding_occurrences(method.body, receiver):
+            return False
+        if not finite._captured_projection_receiver_closed(
+            self.index, self.path, method, receiver
+        ):
+            return False
+        # Immutable scalar data provenance is retained in the returned value.
+        # It is not an object identity that an argument consumer can mutate.
+        roots = self.identity_inputs(method, receiver, fields)
+        summary = summarize_identity_effect(
+            method, self.path, self.index, roots, field_roots=fields
+        )
+        return not (
+            summary.unknowns
+            or summary.class_writes
+            or summary.escapes
+            or "receiver." + self.field.attr in summary.field_writes
+        )
+
+    def identity_inputs(self, method, receiver, fields):
+        from .credential_role_identity_effects import identity_value
+
+        roots = {receiver: _Value(roots=frozenset({"receiver"}))}
+        environment = {**roots, **fields}
+        for expression in ast.walk(method):
+            if not isinstance(expression, ast.expr):
+                continue
+            value = identity_value(
+                expression, environment, strict_calls=True, material_values=True
+            )
+            if value.inert_kind == "scalar" and not (
+                value.unknown or value.content_unknown or value.class_roots
+            ):
+                roots[("expression", id(expression))] = value
+        return roots
+
+    def input_value(self, node, caller, before, seen=(), *, guards=True):
+        if len(seen) > 16:
+            return None
+        if not guards and isinstance(node, ast.Subscript):
+            return self.text_element_value(node, caller, before, seen)
+        if isinstance(node, ast.Constant) and type(node.value) is str:
+            return _constant_identity_value(node)
+        if isinstance(node, ast.Name) and node.id not in seen:
+            return self.assigned_input(node, caller, before, seen, guards)
+        if not isinstance(node, ast.Call):
+            return None
+        reader = self.input_reader(caller)
+        name = reader.resolve(node, reader.aliases)
+        if (
+            name in {"input", "builtins.input"}
+            and reader._source(node)
+            and self.input_provider_closed("builtins.input")
+        ):
+            return self.input_origin(node)
+        if (
+            name in {"str", "builtins.str"}
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            return self.cast_input(node, caller, before, seen, reader, name, guards)
+        return None
+
+    def text_element_value(self, node, caller, before, seen):
+        # Type-only projection: no source-origin or selected-value claim. The
+        # ordinary text operation returns text whenever its checked index succeeds.
+        value = self.text_sequence_value(node.value, caller, before, seen)
+        if value is None or not self.integer_index(node.slice, caller, before, seen):
+            return None
+        return self.with_step(
+            replace(value, roots=frozenset()), node, "BUILTIN_TEXT_ELEMENT_TYPE"
+        )
+
+    def text_sequence_value(self, node, caller, before, seen):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            return None
+        if (
+            node.func.attr not in {"split", "rsplit"}
+            or node.keywords
+            or len(node.args) > 2
+        ):
+            return None
+        value = self.input_value(node.func.value, caller, before, seen, guards=False)
+        if (
+            value is None
+            or value.scalar_kind != "text"
+            or value.unknown
+            or value.content_unknown
+        ):
+            return None
+        if node.args and not self.text_separator(node.args[0], caller, before, seen):
+            return None
+        if len(node.args) == 2 and not self.integer_index(
+            node.args[1], caller, before, seen
+        ):
+            return None
+        return self.with_step(value, node, "BUILTIN_TEXT_SEQUENCE_TYPE")
+
+    def text_separator(self, node, caller, before, seen):
+        if isinstance(node, ast.Constant) and node.value is None:
+            return True
+        value = self.input_value(node, caller, before, seen, guards=False)
+        return (
+            value is not None
+            and value.scalar_kind == "text"
+            and not (value.unknown or value.content_unknown)
+        )
+
+    def integer_index(self, node, caller, before, seen):
+        if isinstance(node, ast.Constant):
+            return type(node.value) is int
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            return self.integer_index(node.operand, caller, before, seen)
+        if isinstance(node, ast.BinOp) and isinstance(
+            node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod)
+        ):
+            return self.integer_index(
+                node.left, caller, before, seen
+            ) and self.integer_index(node.right, caller, before, seen)
+        return self.length_index(node, caller, before, seen)
+
+    def length_index(self, node, caller, before, seen):
+        if not isinstance(node, ast.Call) or len(node.args) != 1 or node.keywords:
+            return False
+        reader = self.input_reader(caller)
+        name = reader.resolve(node, reader.aliases)
+        if name not in {"len", "builtins.len"} or not reader._builtin_unshadowed(
+            node, name
+        ):
+            return False
+        if not self.input_provider_closed("builtins.len"):
+            return False
+        sequence = self.text_sequence_value(node.args[0], caller, before, seen)
+        return sequence is not None
+
+    def assigned_input(self, node, caller, before, seen, guards):
+        bindings = binding_occurrences(caller.body, node.id)
+        assignment = self.parents.get(id(bindings[0])) if len(bindings) == 1 else None
+        if (
+            not isinstance(assignment, (ast.Assign, ast.AnnAssign))
+            or assignment.lineno >= before
+        ):
+            return None
+        if source_scope(assignment, self.parents)[0] is not caller:
+            return None
+        if guards and not self.source_guards_closed(
+            node.id, caller, assignment.lineno, before
+        ):
+            return None
+        value = self.input_value(
+            assignment.value, caller, assignment.lineno, (*seen, node.id), guards=guards
+        )
+        return self.with_step(value, node, "LOCAL_ASSIGN")
+
+    def source_guards_closed(self, name, caller, after, before):
+        # Preserve only an unbounded continuation: finite inclusions or opaque
+        # predicates may restrict input to safe values and cannot prove origin.
+        for branch in ast.walk(caller):
+            if (
+                not isinstance(branch, (ast.If, ast.While, ast.Assert))
+                or not after <= branch.lineno < before
+            ):
+                continue
+            uses = [
+                n
+                for n in ast.walk(branch.test)
+                if isinstance(n, ast.Name) and n.id == name
+            ]
+            if uses and (
+                isinstance(branch, ast.Assert)
+                or not self.finite_exclusion(branch, name)
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def finite_exclusion(branch, name):
+        test = branch.test
+        if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+            return False
+        if not isinstance(test.left, ast.Name) or test.left.id != name:
+            return False
+        if (
+            not isinstance(test.comparators[0], ast.Constant)
+            or type(test.comparators[0].value) is not str
+        ):
+            return False
+        excluded = branch.body if isinstance(test.ops[0], ast.Eq) else branch.orelse
+        if not isinstance(test.ops[0], (ast.Eq, ast.NotEq)) or not excluded:
+            return False
+        return isinstance(excluded[-1], (ast.Return, ast.Raise, ast.Continue))
+
+    def input_reader(self, caller):
+        from .audit_log_flow import _LogReader
+        from . import review_integrity as flow, review_audits as audit
+
+        return _LogReader(
+            str(self.path),
+            caller,
+            self.aliases,
+            [],
+            audit,
+            flow._security_django_request_parameter,
+            flow._security_flask_request_collection,
+            flow._security_flow_bindings,
+            flow.security_call_name,
+            flow._security_module_scope,
+            flow._security_scope_local_names,
+            flow._security_ast_span_contains,
+            {},
+            (),
+        )
+
+    def input_provider_closed(self, canonical):
+        from . import review_audits as audit
+        from .credential_role_constructor_provider import (
+            _captured_terminal_provider_mutation,
+        )
+
+        if canonical not in self.provider_proofs:
+            self.provider_proofs[canonical] = not _captured_terminal_provider_mutation(
+                self.index, audit, canonical
+            )
+        return self.provider_proofs[canonical]
+
+    def input_origin(self, node):
+        from .semantic_credential_sensor import _security_flow_step
+
+        return _Value(
+            roots=frozenset({"source:" + self.index.inventory[self.path]}),
+            inert_kind="scalar",
+            scalar_kind="text",
+            trace=(_security_flow_step(node, "BUILTIN_INPUT"),),
+        )
+
+    def cast_input(self, node, caller, before, seen, reader, name, guards):
+        if not reader._builtin_unshadowed(node, name) or not self.input_provider_closed(
+            "builtins.str"
+        ):
+            return None
+        value = self.input_value(node.args[0], caller, before, seen, guards=guards)
+        return self.with_step(value, node, "BUILTIN_SCALAR_CAST")
+
+    @staticmethod
+    def with_step(value, node, operation):
+        from .semantic_credential_sensor import _security_flow_step
+
+        return (
+            replace(value, trace=(*value.trace, _security_flow_step(node, operation)))
+            if value
+            else None
+        )
+
+    def trace(self, value, creation, store, ordered):
+        value = self.with_step(value, creation, "EXACT_CONSTRUCTOR_ARGUMENT")
+        value = self.with_step(value, store, "ORDINARY_FIELD_STORE")
+        for call, _method in ordered:
+            value = self.with_step(value, call, "POSSIBLE_ORDERED_RECEIVER_ACTIVATION")
+        return value
+
+
 def resolve_declared_field_origin(chain, member, index):
     """Return declaration identity only; ambiguous or mutable fields stay unknown."""
     if not isinstance(member, str) or not member.isidentifier() or not chain:

@@ -501,6 +501,17 @@ def security_structural_value(
         from .credential_role_identity_effects import _security_structural_request_value
 
         return _security_structural_request_value(expression, leaf, _Value)
+    value = identity_value(expression, aliases, strict_calls=True, material_values=True)
+    if not (value.unknown or value.content_unknown):
+        return value
+    from .credential_role_method_use_getter_audit import selected_receiver_field_value
+
+    for field in ast.walk(expression):
+        if isinstance(field, ast.Attribute) and isinstance(field.ctx, ast.Load):
+            _module, index, path = _security_helper_source_context(field, None)
+            projected = selected_receiver_field_value(field, index, path)
+            if projected is not None:
+                aliases[("expression", id(field))] = projected
     return identity_value(expression, aliases, strict_calls=True, material_values=True)
 
 
