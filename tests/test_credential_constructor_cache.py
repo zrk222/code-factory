@@ -2399,3 +2399,269 @@ def test_literal273_keyword_value_requires_exact_closed_consumer(
     assert (result is not None) is accepted
     if result is not None:
         assert result["sinks"] == (call,)
+
+
+@pytest.fixture
+def shared_validation_sources(tmp_path):
+    sources = {
+        tmp_path / "first.py": b"class Client: pass\n",
+        tmp_path / "second.py": b"class Client: pass\nimport os\nos.system(input())\n",
+    }
+    for path, raw in sources.items():
+        path.write_bytes(raw)
+    audit._oracle_context_cache_clear()
+    yield sources
+    audit._oracle_context_cache_clear()
+
+
+def _shared_validation_scan(root, sources, model_out):
+    return audit._scan_security_sources(
+        root,
+        list(sources),
+        (),
+        {},
+        test_file_patterns=set(),
+        producer_source_model_out=model_out,
+    )
+
+
+def _shared_validation_query(source, path):
+    assert source.validate(path)
+    memo = source.class_chain_memo
+    chain = [(path, "Client", source.snapshots[path].body[0])]
+    assert provider.constructor_bindings_inert(chain, source, memo.imports)
+
+
+def test_shared_validation_producer_batches_cold_and_cached_rows(
+    tmp_path, monkeypatch, shared_validation_sources
+):
+    from contextlib import nullcontext
+
+    sources = shared_validation_sources
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            audit, "_security_snapshot_analysis_batch", lambda _: nullcontext()
+        )
+        baseline = _shared_validation_scan(tmp_path, sources, {})
+    audit._oracle_context_cache_clear()
+    assert baseline[0], "The native unsafe-call finding must remain visible."
+    valid, scan = ClassChainMemo.valid, audit._security_scan_file_snapshot
+    cached = provider.consume_cached_security_snapshots
+    checks, queries, cache_hits = [], [], []
+
+    def checked(memo):
+        checks.append(memo)
+        return valid(memo)
+
+    def queried(*args):
+        source = args[4]["_security_source_model"]
+        assert source.class_chain_memo._analysis_batch is not None
+        for _ in range(32):
+            _shared_validation_query(source, args[1])
+            queries.append(source)
+        return scan(*args)
+
+    def from_cache(*args):
+        cache_hits.append(True)
+        return cached(*args)
+
+    monkeypatch.setattr(ClassChainMemo, "valid", checked)
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", queried)
+    monkeypatch.setattr(provider, "consume_cached_security_snapshots", from_cache)
+    owners = []
+    for _ in range(2):
+        owner = {}
+        assert _shared_validation_scan(tmp_path, sources, owner) == baseline
+        assert owner["source"].source_bytes == sources
+        owners.append(owner["source"])
+    assert len(queries) == 128
+    assert checks == [owners[0].class_chain_memo] * 2 + [owners[1].class_chain_memo] * 2
+    assert cache_hits == [True]
+
+
+def _shared_validation_drift(change, source, path, owner, monkeypatch):
+    def changed(*args):
+        return False
+
+    mutations = {
+        "ast": lambda: setattr(source.snapshots[path].body[0], "name", "Changed"),
+        "bytes": lambda: source.source_bytes.update({path: b"pass\n"}),
+        "inventory": lambda: source.inventory.update({path: "0" * 64}),
+        "helper-binding": lambda: monkeypatch.setattr(
+            provider, "_captured_mutations_inert", changed
+        ),
+        "helper-code": lambda: monkeypatch.setattr(
+            provider._captured_mutations_inert, "__code__", changed.__code__
+        ),
+        "memo-index": lambda: setattr(
+            source.class_chain_memo,
+            "index",
+            SourceSnapshotIndex(
+                source.root, source.snapshots, source.source_bytes, source.inventory
+            ),
+        ),
+        "memo-owner": lambda: setattr(source, "class_chain_memo", object()),
+        "source-owner": lambda: owner.update(source=object()),
+    }
+    mutations[change]()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "ast",
+        "bytes",
+        "inventory",
+        "helper-binding",
+        "helper-code",
+        "memo-index",
+        "memo-owner",
+        "source-owner",
+        "callback-error",
+    ],
+)
+@pytest.mark.parametrize("cache_hit", [False, True])
+def test_shared_validation_rejects_provisional_rows_on_drift(
+    tmp_path, monkeypatch, shared_validation_sources, change, cache_hit
+):
+    from factoryline import context_efficiency
+
+    sources, owner, captured, published = shared_validation_sources, {}, [], []
+    active = not cache_hit
+    scan = audit._security_scan_file_snapshot
+    publish = context_efficiency._scan_missing_security_snapshot
+
+    def observed(*args):
+        source = args[4]["_security_source_model"]
+        _shared_validation_query(source, args[1])
+        captured.append(
+            (source, source.class_chain_memo, args[4]["_security_source_context"][1])
+        )
+        row = scan(*args)
+        if active and args[1] == list(sources)[-1]:
+            if change == "callback-error":
+                raise ValueError("synthetic callback failure")
+            _shared_validation_drift(change, source, args[1], owner, monkeypatch)
+        return row
+
+    def published_row(*args, **kwargs):
+        published.append(args)
+        return publish(*args, **kwargs)
+
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", observed)
+    monkeypatch.setattr(
+        context_efficiency, "_scan_missing_security_snapshot", published_row
+    )
+    if cache_hit:
+        _shared_validation_scan(tmp_path, sources, {})
+        captured.clear()
+        published.clear()
+        active = True
+    error = ValueError if change == "callback-error" else audit.RuntimeAuditError
+    with pytest.raises(error) as rejected:
+        _shared_validation_scan(tmp_path, sources, owner)
+    if change != "callback-error":
+        assert rejected.value.code == "E_INPUT_CHANGED"
+    assert len(captured) == 2
+    assert owner["source"] is None
+    assert not published
+    for source, memo, retained in captured:
+        assert memo._analysis_batch is None
+        assert retained == sources
+
+
+def test_shared_validation_none_model_keeps_raw_only_scanning(
+    tmp_path, monkeypatch, shared_validation_sources
+):
+    sources, observed = shared_validation_sources, []
+    baseline = _shared_validation_scan(tmp_path, sources, None)
+    audit._oracle_context_cache_clear()
+    scan = audit._security_scan_file_snapshot
+
+    def raw_only(*args):
+        assert args[4]["_security_source_model"] is None
+        observed.append(args[4]["_security_source_context"][1])
+        return scan(*args)
+
+    monkeypatch.setattr(
+        provider, "security_snapshot_model", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", raw_only)
+    owner = {}
+    assert _shared_validation_scan(tmp_path, sources, owner) == baseline
+    assert owner["source"] is None
+    assert observed == [sources, sources]
+
+
+def test_shared_validation_memo_initialization_failure_revokes_owner(
+    tmp_path, monkeypatch, shared_validation_sources
+):
+    from factoryline import context_efficiency
+
+    sources, owner, captured, calls = shared_validation_sources, {}, [], []
+    build = provider.security_snapshot_model
+
+    def capture(*args, **kwargs):
+        source = build(*args, **kwargs)
+        captured.append((source, args[2]))
+        return source
+
+    def fail_initialization(*args):
+        assert args[0] is captured[-1][0]
+        raise ValueError("synthetic memo initialization failure")
+
+    monkeypatch.setattr(provider, "security_snapshot_model", capture)
+    monkeypatch.setattr(provider, "ClassChainMemo", fail_initialization)
+    monkeypatch.setattr(
+        audit, "_security_scan_file_snapshot", lambda *args: calls.append("scan")
+    )
+    monkeypatch.setattr(
+        context_efficiency,
+        "_scan_missing_security_snapshot",
+        lambda *args: calls.append("publish"),
+    )
+    with pytest.raises(ValueError, match="synthetic memo initialization failure"):
+        _shared_validation_scan(tmp_path, sources, owner)
+    assert len(captured) == 1
+    assert owner["source"] is None
+    assert captured[0][0].source_bytes == captured[0][1] == sources
+    assert calls == []
+
+
+def test_shared_validation_raw_only_rejects_introduced_owner(
+    tmp_path, monkeypatch, shared_validation_sources
+):
+    from factoryline import context_efficiency
+
+    sources, owner, retained, published = shared_validation_sources, {}, [], []
+    introduced, _ = _snapshot(
+        tmp_path, {path.name: raw.decode() for path, raw in sources.items()}
+    )
+    scan = audit._security_scan_file_snapshot
+    publish = context_efficiency._scan_missing_security_snapshot
+
+    def raw_only(*args):
+        assert args[4]["_security_source_model"] is None
+        retained.append(args[4]["_security_source_context"][1])
+        row = scan(*args)
+        if args[1] == list(sources)[-1]:
+            owner["source"] = introduced
+        return row
+
+    def publish_row(*args, **kwargs):
+        published.append(args)
+        return publish(*args, **kwargs)
+
+    monkeypatch.setattr(
+        provider, "security_snapshot_model", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", raw_only)
+    monkeypatch.setattr(
+        context_efficiency, "_scan_missing_security_snapshot", publish_row
+    )
+    with pytest.raises(audit.RuntimeAuditError) as rejected:
+        _shared_validation_scan(tmp_path, sources, owner)
+    assert rejected.value.code == "E_INPUT_CHANGED"
+    assert owner["source"] is None
+    assert retained == [sources, sources]
+    assert not published
