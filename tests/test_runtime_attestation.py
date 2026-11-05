@@ -1670,13 +1670,12 @@ def test_local_mutation_keeps_venv_launcher_path(tmp_path, monkeypatch, explicit
 @pytest.mark.skipif(os.name == "nt", reason="POSIX venv interpreter links")
 def test_local_mutation_preserves_real_symlinked_venv_imports(tmp_path):
     import subprocess
+    import sysconfig
     import venv
 
     _, line = _mutation_project(tmp_path)
     environment = tmp_path / ".venv"
-    venv.EnvBuilder(with_pip=False, symlinks=True, system_site_packages=True).create(
-        environment
-    )
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
     launcher = environment / "bin" / "python"
     assert launcher.is_symlink()
     query = subprocess.run(
@@ -1687,6 +1686,10 @@ def test_local_mutation_preserves_real_symlinked_venv_imports(tmp_path):
         timeout=10,
     )
     site = Path(query.stdout.strip())
+    caller_sites = {sysconfig.get_path(name) for name in ("purelib", "platlib")}
+    (site / "caller-test-dependencies.pth").write_text(
+        "\n".join(sorted(caller_sites)) + "\n", encoding="utf-8"
+    )
     marker = (
         "cf_mutation_venv_" + hashlib.sha256(str(tmp_path).encode()).hexdigest()[:12]
     )
