@@ -1536,7 +1536,7 @@ def import_resolution_helpers():
         *(
             helper
             for helper in _fingerprint_epoch_helpers()
-            if hasattr(helper, "__name__")
+            if callable(helper) and hasattr(helper, "__name__")
         ),
         prepared_security_snapshot_batch,
         getattr(
