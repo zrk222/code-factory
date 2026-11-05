@@ -685,11 +685,27 @@ def _django_name(index, path):
     return ".".join(parts)
 
 
+def _django_package(index, path):
+    source = index["source"]
+    relative = source.relative(path)
+    if relative is None or not source.validate(path):
+        return None
+    module = _django_name(index, path)
+    if module is None:
+        return None
+    if relative == "__init__.py" or relative.endswith("/__init__.py"):
+        return module
+    return module.rpartition(".")[0]
+
+
 def _django_import_targets(index, path, tree):
     from .credential_role_constructor_provider import binding_occurrences
 
-    current = _django_name(index, path)
-    package = current.rpartition(".")[0]
+    if tree is not index["modules"].get(path):
+        return None
+    package = _django_package(index, path)
+    if package is None:
+        return None
     result = {}
     for statement in tree.body:
         rows = _django_import_rows(statement, package)
@@ -3932,15 +3948,12 @@ def _app_expression_name(index, path, node, function=None):
     if isinstance(node, ast.Attribute):
         base = _app_expression_name(index, path, node.value, function)
         return base + "." + node.attr if base else None
-    if not isinstance(node, ast.Name) or not index["source"].validate(path):
+    if not isinstance(node, ast.Name):
         return None
-    tree = index["modules"][path]
-    module = _django_name(index, path)
-    package = (
-        module
-        if index["source"].relative(path).endswith("/__init__.py")
-        else module.rpartition(".")[0]
-    )
+    tree = index["modules"].get(path)
+    package = _django_package(index, path)
+    if tree is None or package is None:
+        return None
     scope = (
         function
         if function is not None and binding_occurrences(function.body, node.id)
