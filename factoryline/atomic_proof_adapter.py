@@ -11,11 +11,15 @@ Atomic, executes a command, resumes a checkpoint, or grants authority.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import stat
+import tempfile
+import threading
 from typing import Any
 
 from .agent_license import AgentLicenseError, normalize_agent_identity
@@ -43,6 +47,7 @@ MCP_MARKER = "ATOMIC_MCP_READ_ONLY"
 MAX_BYTES = 1_048_576
 MAX_ITEMS = 128
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,95}$")
+_ATOMIC_HISTORY_THREAD_LOCK = threading.Lock()
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _STAGE_KINDS = WorkflowNodeKind.values()
 _STAGE_STATUS = AgentRunStatus.values()
@@ -836,36 +841,177 @@ def _handoff_history(
         _compare_historical_handoffs(value, workflow_id, expected)
 
 
-def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    """Create a new immutable receipt without replacing an existing destination."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _windows_history_mutex_name(root: Path) -> str:
+    identity = os.path.normcase(os.path.normpath(str(Path(root).resolve())))
+    key = hashlib.sha256(identity.casefold().encode("utf-8")).hexdigest()
+    return f"Local\\CodeFactoryAtomicHistory-{key}"
+
+
+@contextmanager
+def _windows_history_mutex(root: Path):
+    """Hold a per-workspace Windows mutex; it creates no filesystem paths."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_mutex = kernel32.CreateMutexW
+    create_mutex.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    create_mutex.restype = wintypes.HANDLE
+    wait_for_single_object = kernel32.WaitForSingleObject
+    wait_for_single_object.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    wait_for_single_object.restype = wintypes.DWORD
+    release_mutex = kernel32.ReleaseMutex
+    release_mutex.argtypes = [wintypes.HANDLE]
+    release_mutex.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    handle = create_mutex(None, False, _windows_history_mutex_name(root))
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    owned = False
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-    except FileExistsError as exc:
+        result = wait_for_single_object(handle, 0xFFFFFFFF)
+        if result in {0x00000000, 0x00000080}:
+            owned = True
+        elif result == 0xFFFFFFFF:
+            raise ctypes.WinError(ctypes.get_last_error())
+        else:
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_EVIDENCE_UNVERIFIED", "history mutex wait failed"
+            )
+        # WAIT_ABANDONED grants ownership; atomic receipt files keep history consistent.
+        yield
+    finally:
+        try:
+            if owned and not release_mutex(handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            if not close_handle(handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+
+
+@contextmanager
+def _posix_history_lock(root: Path):
+    """Use parent directory handles and no-follow opens for the POSIX lockfile."""
+    import fcntl
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+    root_fd = factory_fd = lock_fd = None
+    try:
+        try:
+            root_fd = os.open(root, directory_flags)
+            try:
+                os.mkdir(".factory", 0o700, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            factory_fd = os.open(".factory", directory_flags, dir_fd=root_fd)
+            lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+            lock_fd = os.open(
+                ".atomic-history.lock", lock_flags, 0o600, dir_fd=factory_fd
+            )
+            if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
+                raise AtomicProofAdapterError(
+                    "E_ATOMIC_EVIDENCE_UNVERIFIED",
+                    "history lock is not a regular file",
+                )
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_EVIDENCE_UNVERIFIED",
+                "history lock cannot be acquired safely",
+            ) from exc
+        yield
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        if factory_fd is not None:
+            os.close(factory_fd)
+        if root_fd is not None:
+            os.close(root_fd)
+
+
+def _receipt_incumbent_bytes(path: Path, expected: dict[str, Any]) -> bytes:
+    try:
+        with path.open("rb") as handle:
+            encoded = handle.read(MAX_BYTES + 1)
+        incumbent = _strict_json_loads(encoded.decode("utf-8-sig"))
+    except (OSError, ValueError, RecursionError) as exc:
         raise AtomicProofAdapterError(
-            "E_ATOMIC_EVIDENCE_UNVERIFIED",
-            "output receipt already exists; choose a new immutable path",
+            "E_ATOMIC_EVIDENCE_UNVERIFIED", "canonical run receipt became unreadable"
         ) from exc
+    if (
+        len(encoded) > MAX_BYTES
+        or incumbent != expected
+        or not _receipt_valid(incumbent)
+    ):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_EVIDENCE_UNVERIFIED", "canonical run receipt changed during reuse"
+        )
+    return encoded
+
+
+@contextmanager
+def _atomic_history_lock(root: Path):
+    """Serialize reads and writes without Windows workspace-path lock files."""
+    with _ATOMIC_HISTORY_THREAD_LOCK:
+        if os.name == "nt":
+            with _windows_history_mutex(root):
+                yield
+        else:
+            with _posix_history_lock(root):
+                yield
+
+
+def _atomic_bytes(path: Path, encoded: bytes) -> None:
+    """Publish a complete immutable file without replacing an existing destination."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
-            handle.write("\n")
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_EVIDENCE_UNVERIFIED",
+                "output receipt already exists; choose a new immutable path",
+            ) from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _atomic_json(path: Path, payload: dict[str, Any]) -> bytes:
+    """Create and return the canonical bytes of a new immutable JSON receipt."""
+    encoded = (
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    _atomic_bytes(path, encoded)
+    return encoded
 
 
 def _load_atomic_envelope(
     workspace: Path, envelope_path: Path
-) -> tuple[Path, dict[str, Any]]:
+) -> tuple[Path, str, dict[str, Any]]:
     source = _inside(workspace, Path(envelope_path).as_posix(), "envelope", exists=True)
-    if source.stat().st_size > MAX_BYTES:
-        raise AtomicProofAdapterError(
-            "E_ATOMIC_PRIVATE_FIELD", "envelope exceeds 1 MiB"
-        )
     try:
-        envelope = _strict_json_loads(source.read_text(encoding="utf-8-sig"))
+        with source.open("rb") as handle:
+            encoded = handle.read(MAX_BYTES + 1)
+        if len(encoded) > MAX_BYTES:
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_PRIVATE_FIELD", "envelope exceeds 1 MiB"
+            )
+        envelope = _strict_json_loads(encoded.decode("utf-8-sig"))
         _canonical(envelope)
+    except AtomicProofAdapterError:
+        raise
     except (OSError, ValueError, RecursionError) as exc:
         raise AtomicProofAdapterError(
             "E_ATOMIC_ENVELOPE_SCHEMA", "envelope must be valid canonical UTF-8 JSON"
@@ -889,7 +1035,7 @@ def _load_atomic_envelope(
         raise AtomicProofAdapterError(
             "E_ATOMIC_ENVELOPE_SCHEMA", f"envelope.schema must equal {ENVELOPE_SCHEMA}"
         )
-    return source, entry
+    return source, hashlib.sha256(encoded).hexdigest(), entry
 
 
 def _atomic_run_identity(
@@ -992,6 +1138,7 @@ def _proof_bundle(
 def _atomic_receipt_core(
     workspace: Path,
     source: Path,
+    source_sha256: str,
     identity: tuple[str, str, str, str, str, dict[str, str]],
     checked_contract: dict[str, Any],
     contract_sha256: str,
@@ -1004,7 +1151,7 @@ def _atomic_receipt_core(
         "imported_at": _now(),
         "envelope": {
             "path": source.relative_to(workspace).as_posix(),
-            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "sha256": source_sha256,
             "id": envelope_id,
         },
         "run": {"id": identity[0], "status": status},
@@ -1035,22 +1182,86 @@ def _persist_atomic_receipt(
     core: dict[str, Any],
     out: Path | None,
 ) -> dict[str, Any]:
-    receipt = {**core, "receipt_sha256": _sha(core)}
-    destination = (
-        Path(out)
-        if out is not None
-        else Path(".factory")
-        / "atomic"
-        / f"{run_id}-{receipt['receipt_sha256'][:12]}.json"
+    history_directory = workspace / ".factory" / "atomic"
+    exact_history = re.compile(rf"^{re.escape(run_id)}-[0-9a-f]{{12}}\.json$")
+    matching_history = sorted(
+        path
+        for path in history_directory.glob(f"{run_id}-*.json")
+        if exact_history.fullmatch(path.name)
     )
-    target = _inside(workspace, destination.as_posix(), "out", exists=False)
-    if target.exists():
+    if len(matching_history) > 1:
         raise AtomicProofAdapterError(
             "E_ATOMIC_EVIDENCE_UNVERIFIED",
-            "output receipt already exists; choose a new immutable path",
+            "run identifier has multiple canonical history receipts",
         )
-    _atomic_json(target, receipt)
-    return {**receipt, "path": target.relative_to(workspace).as_posix()}
+    receipt = {**core, "receipt_sha256": _sha(core)}
+    history_target = (
+        matching_history[0]
+        if matching_history
+        else _inside(
+            workspace,
+            (
+                Path(".factory")
+                / "atomic"
+                / f"{run_id}-{receipt['receipt_sha256'][:12]}.json"
+            ).as_posix(),
+            "history receipt",
+            exists=False,
+        )
+    )
+    target = (
+        history_target
+        if out is None
+        else _inside(workspace, Path(out).as_posix(), "out", exists=False)
+    )
+    if matching_history:
+        incumbent, history_target = _read_receipt(
+            workspace, history_target.relative_to(workspace)
+        )
+        previous_core = {
+            key: value
+            for key, value in incumbent.items()
+            if key not in {"imported_at", "receipt_sha256"}
+        }
+        proposed_core = {
+            key: value
+            for key, value in receipt.items()
+            if key not in {"imported_at", "receipt_sha256"}
+        }
+        if (
+            previous_core != proposed_core
+            or incumbent.get("run", {}).get("id") != run_id
+        ):
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_EVIDENCE_UNVERIFIED",
+                "run identifier is already bound to different evidence",
+            )
+        encoded = _receipt_incumbent_bytes(history_target, incumbent)
+    else:
+        if target.exists():
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_EVIDENCE_UNVERIFIED",
+                "output receipt already exists; choose a new immutable path",
+            )
+        encoded = _atomic_json(history_target, receipt)
+    if target != history_target:
+        if target.exists():
+            try:
+                with target.open("rb") as handle:
+                    existing_export = handle.read(MAX_BYTES + 1)
+            except OSError as exc:
+                raise AtomicProofAdapterError(
+                    "E_ATOMIC_EVIDENCE_UNVERIFIED", "output receipt is unreadable"
+                ) from exc
+            if len(existing_export) > MAX_BYTES or existing_export != encoded:
+                raise AtomicProofAdapterError(
+                    "E_ATOMIC_EVIDENCE_UNVERIFIED",
+                    "output path contains different immutable evidence",
+                )
+        else:
+            _atomic_bytes(target, encoded)
+    result_receipt = incumbent if matching_history else receipt
+    return {**result_receipt, "path": target.relative_to(workspace).as_posix()}
 
 
 def import_atomic_run(
@@ -1058,23 +1269,30 @@ def import_atomic_run(
 ) -> dict[str, Any]:
     """Validate one Atomic mechanics envelope and write an immutable local receipt."""
     workspace = Path(root).resolve()
-    source, entry = _load_atomic_envelope(workspace, envelope_path)
+    source, source_sha256, entry = _load_atomic_envelope(workspace, envelope_path)
     identity = _atomic_run_identity(entry)
     run_id, _, _, autonomy, _, _ = identity
     contract_path, contract_sha256, checked_contract = _oracle_binding(workspace, entry)
-    bundle = _proof_bundle(
-        workspace,
-        entry,
-        contract_path,
-        contract_sha256,
-        checked_contract,
-        autonomy,
-        run_id,
-    )
-    core = _atomic_receipt_core(
-        workspace, source, identity, checked_contract, contract_sha256, bundle
-    )
-    return _persist_atomic_receipt(workspace, run_id, core, out)
+    with _atomic_history_lock(workspace):
+        bundle = _proof_bundle(
+            workspace,
+            entry,
+            contract_path,
+            contract_sha256,
+            checked_contract,
+            autonomy,
+            run_id,
+        )
+        core = _atomic_receipt_core(
+            workspace,
+            source,
+            source_sha256,
+            identity,
+            checked_contract,
+            contract_sha256,
+            bundle,
+        )
+        return _persist_atomic_receipt(workspace, run_id, core, out)
 
 
 def verify_atomic_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:

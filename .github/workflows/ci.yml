@@ -147,7 +147,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.10", "3.11", "3.12"]
-    runs-on: ${{ matrix.os }}
+    # Preserve check names while avoiding the hosted arm64 capacity shortage.
+    runs-on: ${{ matrix.os == 'macos-latest' && 'macos-15-intel' || matrix.os }}
     timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && matrix.python == '3.11' && 30 || matrix.os == 'windows-latest' && matrix.python == '3.10' && 25 || 20 }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -162,6 +163,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,enterprise]"
+      - name: Preflight scanner source contracts
+        run: >-
+          python -m pytest -q
+          tests/test_review_audits.py::test_security_scan_orchestration_stays_within_complexity_budget
+          tests/test_context_efficiency.py::test_security_scan_reparses_a_tree_changed_by_an_intermediate_consumer
       - name: Preflight public Node intake
         if: matrix.os == 'windows-latest' && matrix.python == '3.10'
         timeout-minutes: 2
@@ -185,7 +191,7 @@ jobs:
             '--deselect=tests/test_audit_rule_search.py::test_declaration_neighborhood_empty_package_passes_public_js_intake
             --deselect=tests/test_audit_rule_search.py::test_security_producer_nested_call_spans_reach_context_and_public_intake
             --deselect=tests/test_audit_rule_search.py::test_contextual_evidence_public_source_intake_to_pending_review' || '' }}
-        run: python -m pytest -n ${{ matrix.os == 'windows-latest' && 3 || 2 }} -q --junitxml=pytest-results.xml --durations=20
+        run: python -m pytest -n ${{ matrix.os == 'macos-latest' && 4 || matrix.os == 'windows-latest' && 3 || 2 }} -q --junitxml=pytest-results.xml --durations=20
       - name: Start runtime coverage receipt
         id: runtime-coverage-start
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
@@ -234,7 +240,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-latest' && 'macos-15-intel' || matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1

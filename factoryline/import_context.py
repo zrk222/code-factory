@@ -1,6 +1,8 @@
 """Shared bounded native import policy and captured source views."""
 
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from . import (
@@ -16,7 +18,367 @@ from collections import defaultdict
 from collections import OrderedDict
 
 
+_FINGERPRINT_EPOCH = ContextVar("factory_structural_fingerprint_epoch", default=None)
+
+
 def structural_ast_fingerprint(tree):
+    """Reuse whole-module digests only inside their owned, validated batch."""
+    epoch = _FINGERPRINT_EPOCH.get()
+    if epoch is None or not epoch.active or type(tree) is not ast.Module:
+        return _uncached_structural_ast_fingerprint(tree)
+    paths = epoch.owned.get(tree)
+    if paths is None:
+        return _uncached_structural_ast_fingerprint(tree)
+    if tree not in epoch.fingerprints:
+        if not all(epoch.index.validate(path) for path in paths):
+            return _uncached_structural_ast_fingerprint(tree)
+        epoch.fingerprints[tree] = _uncached_structural_ast_fingerprint(tree)
+    return epoch.fingerprints[tree]
+
+
+@contextmanager
+def prepared_security_snapshot_batch(audit, workspace, model_out, inputs):
+    """Repair stale derived trees before freezing shared source authority."""
+    accepted = False
+    try:
+        source = (model_out or {}).get("source")
+        if source is not None:
+            _prepare_security_snapshot_owner(
+                audit, workspace, model_out, source, inputs
+            )
+        with audit._security_snapshot_analysis_batch(model_out):
+            yield
+        accepted = True
+    finally:
+        if not accepted and model_out is not None:
+            model_out["source"] = None
+
+
+def _prepare_security_snapshot_owner(audit, workspace, model_out, source, inputs):
+    from .credential_role_constructor_provider import (
+        security_snapshot_model,
+        verified_security_tree,
+    )
+
+    snapshots, fingerprints, retained = inputs
+    inventory = _authenticated_snapshot_inventory(
+        audit, workspace, source, snapshots, fingerprints, retained
+    )
+    original_trees, original_bytes = dict(snapshots), dict(source.source_bytes)
+    original_fingerprints = dict(fingerprints)
+    original_memo = getattr(source, "class_chain_memo", None)
+    stale = [
+        path
+        for path, tree in snapshots.items()
+        if getattr(tree, "_oracle_source_sha256", None) != inventory[path]
+        or audit._oracle_tree_fingerprint(tree) != original_fingerprints[path]
+    ]
+    model = source
+    if stale:
+        audit._verify_security_bindings(
+            workspace,
+            [
+                {
+                    "path": path.relative_to(workspace).as_posix(),
+                    "sha256": value,
+                    "bytes": len(retained[path]),
+                }
+                for path, value in inventory.items()
+            ],
+        )
+        for path in stale:
+            snapshots[path] = verified_security_tree(
+                audit,
+                workspace,
+                path,
+                retained[path],
+                {"sha256": inventory[path]},
+                snapshots[path],
+                original_fingerprints[path],
+                source_context={"_security_source_model": source},
+            )
+        model = security_snapshot_model(
+            workspace, snapshots, retained, original_fingerprints
+        )
+    if not (
+        model is not None
+        and model_out.get("source") is source
+        and fingerprints == original_fingerprints
+        and source.source_bytes == original_bytes
+        and getattr(source, "class_chain_memo", None) is original_memo
+        and _authenticated_snapshot_inventory(
+            audit, workspace, source, original_trees, original_fingerprints, retained
+        )
+        == inventory
+    ):
+        raise audit.RuntimeAuditError("E_INPUT_CHANGED", "Snapshot repair rejected.")
+    model_out["source"] = model
+
+
+def _authenticated_snapshot_inventory(
+    audit, workspace, source, snapshots, fingerprints, retained
+):
+    from .credential_role_constructor_provider import (
+        ClassChainMemo,
+        SourceSnapshotIndex,
+    )
+
+    selected = {path: retained.get(path) for path in snapshots}
+    if not (
+        type(source) is SourceSnapshotIndex
+        and source.root == workspace
+        and source.bounded
+        and source.source_bytes == selected
+        and set(source.snapshots) == set(snapshots) == set(fingerprints)
+        and source.producer_fingerprints == fingerprints
+        and all(source.snapshots[path] is tree for path, tree in snapshots.items())
+        and all(isinstance(raw, bytes) for raw in selected.values())
+    ):
+        raise audit.RuntimeAuditError("E_INPUT_CHANGED", "Snapshot owner changed.")
+    inventory = {
+        path: hashlib.sha256(raw).hexdigest() for path, raw in selected.items()
+    }
+    memo = getattr(source, "class_chain_memo", None)
+    if source.inventory != inventory or (
+        memo is not None
+        and not (
+            type(memo) is ClassChainMemo
+            and memo.index is source
+            and memo.audit is audit
+            and memo.root == workspace
+            and memo.inventory == inventory
+            and memo.names is audit._name
+            and memo._analysis_batch is None
+        )
+    ):
+        raise audit.RuntimeAuditError("E_INPUT_CHANGED", "Snapshot evidence changed.")
+    return inventory
+
+
+@contextmanager
+def fingerprint_epoch(memo, state):
+    """Retire reuse before the producer independently validates batch exit."""
+    from .credential_role_constructor_provider import _helper_snapshot
+
+    if not state.started or memo._analysis_batch is not state:
+        raise ValueError("fingerprint epoch requires a validated producer batch")
+    index, owned = memo.index, {}
+    for path, tree in index.snapshots.items():
+        if type(tree) is ast.Module:
+            owned.setdefault(tree, []).append(path)
+    epoch = SimpleNamespace(
+        index=index,
+        state=state,
+        owned=owned,
+        fingerprints={},
+        active=False,
+        query_facts=None,
+    )
+
+    def helpers():
+        return (
+            *_fingerprint_epoch_helpers(),
+            memo.index,
+            index.root,
+            index.snapshots,
+            index.source_bytes,
+            index.inventory,
+            getattr(index, "class_chain_memo", None),
+            *index.snapshots,
+            *index.snapshots.values(),
+            *index.source_bytes.values(),
+            *index.inventory.values(),
+        )
+
+    state.helper_epoch[fingerprint_epoch] = (helpers, _helper_snapshot(helpers))
+    token = _FINGERPRINT_EPOCH.set(epoch)
+    try:
+        epoch.active = True
+        yield epoch
+    finally:
+        epoch.active = False
+        _FINGERPRINT_EPOCH.reset(token)
+
+
+def bind_fingerprint_epoch(check_binding):
+    """Keep a deferred guard from borrowing another batch's cached digests."""
+    epoch = _FINGERPRINT_EPOCH.get()
+
+    def check():
+        if epoch is not None:
+            if not epoch.active and not epoch.state.accepted:
+                return False
+            if epoch.active and _FINGERPRINT_EPOCH.get() is epoch:
+                return check_binding()
+        token = _FINGERPRINT_EPOCH.set(None)
+        try:
+            return check_binding()
+        finally:
+            _FINGERPRINT_EPOCH.reset(token)
+
+    if epoch is not None and epoch.active:
+        from .credential_role_constructor_provider import _helper_snapshot
+
+        def helpers():
+            return check, check_binding
+
+        epoch.state.helper_epoch[check] = (helpers, _helper_snapshot(helpers))
+    return check
+
+
+def _fingerprint_epoch_helpers():
+    """Use the producer's existing callable identity/code epoch protocol."""
+    from . import credential_role_constructor_provider as provider
+    from . import credential_role_identity_effects as effects
+
+    return (
+        fingerprint_epoch,
+        fingerprint_epoch.__wrapped__,
+        bind_fingerprint_epoch,
+        _fingerprint_epoch_helpers,
+        structural_ast_fingerprint,
+        _uncached_structural_ast_fingerprint,
+        _structural_ast_leaf_digest,
+        _structural_ast_fields,
+        _iter_ast_nodes,
+        _FINGERPRINT_EPOCH,
+        SimpleNamespace,
+        ast.Module,
+        ast.AST,
+        ast.dump,
+        ast.parse,
+        ast.iter_child_nodes,
+        hashlib.sha256,
+        OrderedDict,
+        provider.SourceSnapshotIndex,
+        provider.SourceSnapshotIndex.__init__,
+        provider.SourceSnapshotIndex.validate,
+        provider.SourceSnapshotIndex._matches_snapshot,
+        provider._ast_matches_source,
+        provider._view,
+        provider.copy.deepcopy,
+        provider.ast,
+        provider.hashlib,
+        effects.bind_fingerprint_epoch,
+        provider.ClassChainMemo,
+        getattr(provider.ClassChainMemo, "valid", None),
+        getattr(provider.ClassChainMemo, "matches", None),
+        getattr(provider.ClassChainMemo, "analysis_batch", None),
+        getattr(
+            getattr(provider.ClassChainMemo, "analysis_batch", None),
+            "__wrapped__",
+            None,
+        ),
+        provider._helper_snapshot,
+        provider._helper_identity,
+        provider._provider_snapshot,
+        provider._same_helper_epoch,
+        provider.helper_epochs_valid,
+        epoch_binding_occurrences,
+        binding_walker_epoch,
+        _owned_ast_query_facts,
+        _owned_ast_query_nodes,
+        _captured_import_candidates,
+        _raw_import_candidates,
+        _bind_import_parent_mapping,
+        _captured_import_statement,
+        provider.binding_occurrences,
+        provider._binding_occurrence_events,
+        provider._binds,
+        provider._SCOPES,
+        provider._COMPREHENSIONS,
+        ast.walk,
+        ast.iter_fields,
+    )
+
+
+def _owned_ast_query_nodes(epoch):
+    """Build strong node membership once, enrolling every owning module path."""
+    nodes = {}
+    for module, paths in epoch.owned.items():
+        if not all(epoch.index.validate(path) for path in paths):
+            continue
+        pending = [module]
+        while pending:
+            node = pending.pop()
+            row = nodes.get(id(node))
+            owners = row[1:] if row is not None else ()
+            if module in owners:
+                continue
+            nodes[id(node)] = (node, *owners, module)
+            pending.extend(ast.iter_child_nodes(node))
+    return nodes
+
+
+def _owned_ast_query_facts(epoch, roots, *, source=None):
+    """Accept exact owned root identities, never foreign source-index authority."""
+    if (
+        epoch is None
+        or not epoch.active
+        or source is not None
+        and source is not epoch.index
+    ):
+        return None
+    if epoch.query_facts is None:
+        epoch.query_facts = SimpleNamespace(
+            nodes=_owned_ast_query_nodes(epoch), bindings={}, imports={}
+        )
+    nodes = epoch.query_facts.nodes
+    if not roots or any(nodes.get(id(node), (None,))[0] is not node for node in roots):
+        return None
+    try:
+        hash(roots)
+    except TypeError:
+        return None
+    return epoch.query_facts
+
+
+def binding_walker_epoch():
+    """Retain the existing explicit per-pass walker's dependency key semantics."""
+    from . import credential_role_constructor_provider as provider
+
+    return tuple(
+        (
+            helper,
+            getattr(helper, "__code__", None),
+            id(getattr(helper, "__defaults__", None)),
+        )
+        for helper in (
+            provider.binding_occurrences,
+            provider._binding_occurrence_events,
+            provider._binds,
+            provider.ast.walk,
+            provider.ast.iter_child_nodes,
+            provider.ast.iter_fields,
+        )
+    ) + (provider.ast.NamedExpr, provider._SCOPES, provider._COMPREHENSIONS)
+
+
+def epoch_binding_occurrences(statements, name, per_pass_facts):
+    """Share ordered owned roots and immutable name results only for default None."""
+    epoch = _FINGERPRINT_EPOCH.get()
+    if (
+        per_pass_facts is not None
+        or type(name) is not str
+        or epoch is None
+        or not epoch.active
+    ):
+        return statements, None
+    roots = tuple(statements)
+    facts = _owned_ast_query_facts(epoch, roots)
+    if facts is None:
+        return roots, None
+    from .credential_role_constructor_provider import _binding_occurrence_events
+
+    canonical, events, names = facts.bindings.setdefault(roots, (roots, {}, {}))
+    if name not in names:
+        names[name] = tuple(
+            _binding_occurrence_events(canonical, name, per_pass_facts=events)
+        )
+    return roots, names[name]
+
+
+def _uncached_structural_ast_fingerprint(tree):
     """Hash declared syntax with bounded per-call reuse, excluding sidecars."""
     memo, active = OrderedDict(), set()
     frames = [
@@ -607,17 +969,7 @@ def captured_import_module(source, path, name):
     tree = source.snapshots.get(path)
     if not isinstance(tree, ast.Module) or not source.validate(path):
         return False, None
-    parents = getattr(source, "parents", {}).get(path)
-    nodes = (
-        ast.walk(tree)
-        if parents is None
-        else {
-            parent
-            for parent in parents.values()
-            if isinstance(parent, (ast.Import, ast.ImportFrom))
-        }
-    )
-    statements = [node for node in nodes if _captured_import_statement(node, name)]
+    statements = _captured_import_candidates(source, path, tree, name)
     if not statements:
         return False, None
     inventory = captured_import_inventory(source)
@@ -637,6 +989,55 @@ def captured_import_module(source, path, name):
         return True, None
     target = next(iter(targets))
     return True, target if source.validate(target) else None
+
+
+def _raw_import_candidates(source, path, tree, name):
+    """Keep the original parent-map or AST-walk candidate selection semantics."""
+    parents = getattr(source, "parents", {}).get(path)
+    nodes = (
+        ast.walk(tree)
+        if parents is None
+        else {
+            parent
+            for parent in parents.values()
+            if isinstance(parent, (ast.Import, ast.ImportFrom))
+        }
+    )
+    return tuple(node for node in nodes if _captured_import_statement(node, name))
+
+
+def _bind_import_parent_mapping(epoch, source, path):
+    """Reject cached candidate publication after parent-map sidecar drift."""
+    from .credential_role_constructor_provider import _helper_snapshot
+
+    key = (_bind_import_parent_mapping, source, path)
+    if key not in epoch.state.helper_epoch:
+
+        def parents():
+            mapping = source.parents.get(path)
+            return source.parents, mapping, *mapping, *mapping.values()
+
+        epoch.state.helper_epoch[key] = (parents, _helper_snapshot(parents))
+
+
+def _captured_import_candidates(source, path, tree, name):
+    """Cache exact matcher candidates while resolving and validating targets fresh."""
+    parents = getattr(source, "parents", None)
+    if (
+        type(name) is not str
+        or type(parents) is not dict
+        or type(parents.get(path)) is not dict
+    ):
+        return _raw_import_candidates(source, path, tree, name)
+    epoch = _FINGERPRINT_EPOCH.get()
+    facts = _owned_ast_query_facts(epoch, (tree,), source=source)
+    if facts is None:
+        return _raw_import_candidates(source, path, tree, name)
+    key = tree, path, name
+    if key not in facts.imports:
+        _bind_import_parent_mapping(epoch, source, path)
+        facts.imports[key] = _raw_import_candidates(source, path, tree, name)
+    return facts.imports[key]
 
 
 def captured_import_inventory(source):
@@ -1104,6 +1505,8 @@ def import_resolution_helpers():
         _binds,
         binding_occurrences,
         binding_statements,
+        security_snapshot_model,
+        verified_security_tree,
     )
     from .credential_role_identity_effects import (
         _definition_effects_unknown,
@@ -1130,6 +1533,21 @@ def import_resolution_helpers():
     from .semantic_credential_sensor import _provider_path_conflicts
 
     return (
+        *(
+            helper
+            for helper in _fingerprint_epoch_helpers()
+            if callable(helper) and hasattr(helper, "__name__")
+        ),
+        prepared_security_snapshot_batch,
+        getattr(
+            prepared_security_snapshot_batch,
+            "__wrapped__",
+            prepared_security_snapshot_batch,
+        ),
+        _prepare_security_snapshot_owner,
+        _authenticated_snapshot_inventory,
+        security_snapshot_model,
+        verified_security_tree,
         application_configuration_names,
         application_profile_configuration,
         captured_import_module,
@@ -1939,7 +2357,7 @@ def _bind_security_scope_node(node, scope, shadowed, tree, flow_statement=None):
         calls = getattr(scope, "_security_calls_by_statement", {})
         calls.setdefault(id(flow_statement), []).append(node)
         scope._security_calls_by_statement = calls
-    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.expr)):
         node._security_lexical_scope = scope
     if isinstance(node, ast.Attribute):
         node._security_lexical_scope = scope

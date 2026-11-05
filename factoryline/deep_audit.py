@@ -4203,16 +4203,7 @@ def _write_receipt(root: Path, receipt: dict) -> Path:
     raw = canonical_bytes(receipt)
     if len(raw) > LIMIT:
         raise RuntimeAuditError("E_DEEP_LIMIT", "receipt exceeds byte budget")
-    try:
-        with path.open("xb") as stream:
-            stream.write(raw)
-    except FileExistsError:
-        checked = local_file(root, path.relative_to(root).as_posix())
-        with checked.open("rb") as stream:
-            if stream.read(LIMIT + 1) != raw:
-                raise RuntimeAuditError(
-                    "E_RECEIPT_COLLISION", "existing receipt differs"
-                )
+    _publish_content_addressed_file(root, path, raw, "existing receipt differs")
     return path
 
 
@@ -4233,17 +4224,33 @@ def _write_review_evidence(root: Path, packet: dict) -> Path:
             "E_DEEP_LIMIT", "review evidence packet exceeds byte budget"
         )
     path = directory / (packet["packet_sha256"] + ".json")
-    try:
-        with path.open("xb") as stream:
-            stream.write(raw)
-    except FileExistsError:
-        checked = local_file(root, path.relative_to(root).as_posix())
-        with checked.open("rb") as stream:
-            if stream.read(LIMIT + 1) != raw:
-                raise RuntimeAuditError(
-                    "E_RECEIPT_COLLISION", "existing review evidence differs"
-                )
+    _publish_content_addressed_file(root, path, raw, "existing review evidence differs")
     return path
+
+
+def _publish_content_addressed_file(
+    root: Path, path: Path, raw: bytes, collision_message: str
+) -> None:
+    """Publish complete bytes at a content-addressed path without replacing it."""
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            if stream.write(raw) != len(raw):
+                raise OSError("short write while preparing audit evidence")
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            checked = local_file(root, path.relative_to(root).as_posix())
+            with checked.open("rb") as stream:
+                if stream.read(LIMIT + 1) != raw:
+                    raise RuntimeAuditError("E_RECEIPT_COLLISION", collision_message)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def execute_deep_audit(

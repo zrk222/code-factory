@@ -17,9 +17,11 @@ import re
 from typing import Any, Callable, Mapping
 from array import array
 
+_NATIVE_OBSERVATION_KEYS = ("code", "path", "line", "column")
+
 
 def retain_native_observations(tree, path, findings):
-    """Retain bounded producer reports on their existing source generation only."""
+    """Index complete producer reports by finding on their source generation."""
     model = getattr(tree, "_security_source_model", None)
     raw = model.source_bytes.get(path) if model is not None else None
     if (
@@ -27,19 +29,95 @@ def retain_native_observations(tree, path, findings):
         and model.snapshots.get(path) is tree
         and model.validate(path)
     ):
-        observations = json.dumps(
-            [
-                {
-                    **{key: row[key] for key in ("code", "path", "line", "column")},
-                    "security_precondition": row["facts"]["security_precondition"],
-                }
-                for row in findings
-                if row.get("facts", {}).get("security_precondition")
-            ],
-            sort_keys=True,
+        grouped = {}
+        for row in findings:
+            if row.get("facts", {}).get("security_precondition"):
+                identity = tuple(row[key] for key in _NATIVE_OBSERVATION_KEYS)
+                grouped.setdefault(identity, []).append(
+                    {
+                        **dict(zip(_NATIVE_OBSERVATION_KEYS, identity)),
+                        "security_precondition": row["facts"]["security_precondition"],
+                    }
+                )
+        entries = {}
+        for identity, rows in grouped.items():
+            encoded = json.dumps(rows, sort_keys=True, ensure_ascii=True)
+            entries[identity] = {
+                "count": len(rows),
+                "sha256": sha256(encoded.encode()).hexdigest(),
+                "chunks": tuple(
+                    encoded[i : i + 64000] for i in range(0, len(encoded), 64000)
+                ),
+            }
+        tree._secondary_native_observations = (
+            raw,
+            {
+                "schema": "factory.native-observation-retention.v2",
+                "count": sum(entry["count"] for entry in entries.values()),
+                "entries": entries,
+                "index_sha256": _native_observation_index_digest(entries),
+            },
         )
-        if len(observations.encode("utf-8")) <= 64000:
-            tree._secondary_native_observations = (raw, observations)
+
+
+def _native_observation_index_digest(entries):
+    rows = [(key, entry["count"], entry["sha256"]) for key, entry in entries.items()]
+    if any(not isinstance(key, tuple) or len(key) != 4 for key, _, _ in rows):
+        raise ValueError("invalid native observation identity key")
+    return sha256(json.dumps(rows, ensure_ascii=True).encode()).hexdigest()
+
+
+def _native_observation_entry(payload, finding):
+    entries = payload["entries"]
+    counts = [entry["count"] for entry in entries.values()]
+    if (
+        payload["schema"] != "factory.native-observation-retention.v2"
+        or type(payload["count"]) is not int
+        or any(type(count) is not int or count < 1 for count in counts)
+        or sum(counts) != payload["count"]
+        or _native_observation_index_digest(entries) != payload["index_sha256"]
+    ):
+        raise ValueError("inconsistent native observation inventory")
+    return entries.get(tuple(finding.get(key) for key in _NATIVE_OBSERVATION_KEYS))
+
+
+def _native_observation_delivery(payload, finding):
+    """Decode only this finding; retained observations have no proof authority."""
+    from .jev_classifier import JevClassificationError
+
+    try:
+        if isinstance(payload, str):
+            return [
+                row
+                for row in json.loads(payload)
+                if all(
+                    row.get(key) == finding.get(key) for key in _NATIVE_OBSERVATION_KEYS
+                )
+            ], None
+        entry = _native_observation_entry(payload, finding)
+        rows = []
+        if entry is not None:
+            encoded = "".join(entry["chunks"])
+            if sha256(encoded.encode()).hexdigest() != entry["sha256"]:
+                raise ValueError("native observation digest mismatch")
+            rows = json.loads(encoded)
+            if len(rows) != entry["count"] or any(
+                any(
+                    row.get(key) != finding.get(key) for key in _NATIVE_OBSERVATION_KEYS
+                )
+                for row in rows
+            ):
+                raise ValueError("native observation identity/count mismatch")
+        return rows, {
+            "status": "COMPLETE",
+            "authority": "none",
+            "retained_observations": payload["count"],
+            "delivered_observations": len(rows),
+            "delivery": "EXACT_FINDING_SUBSET",
+            "retention": "COMPLETE_CHUNKED",
+        }
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        raise JevClassificationError("NATIVE_OBSERVATION_TRANSPORT_INVALID") from error
 
 
 def build_retrieval_context(finding, index, requirement, retriever):
@@ -62,19 +140,15 @@ def build_retrieval_context(finding, index, requirement, retriever):
         and observed[0] is index.source_bytes[path]
         and index.validate(path)
     ):
+        rows, transport = _native_observation_delivery(observed[1], finding)
         context["producer_reported_preconditions"] = {
             "status": "REPORTED_NOT_INDEPENDENTLY_VERIFIED",
             "authority": "none",
             "source_sha256": index.inventory[path],
-            "observations": [
-                row
-                for row in json.loads(observed[1])
-                if all(
-                    row.get(key) == finding.get(key)
-                    for key in ("code", "path", "line", "column")
-                )
-            ],
+            "observations": rows,
         }
+        if transport is not None:
+            context["producer_precondition_transport"] = transport
     if retriever is not None:
         retriever.enrich(context, index, requirement)
     else:

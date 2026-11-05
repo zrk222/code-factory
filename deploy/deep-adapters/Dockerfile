@@ -7,8 +7,8 @@ USER 0:0
 # Valid-Until is disabled only for this historical snapshot; signature and
 # package hash verification remain enforced by apt.
 RUN printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/20261008T000000Z/\nSuites: forky sid\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n' > /etc/apt/sources.list.d/debian.sources \
-    && apt-get update \
-    && apt-get -t forky install -y --no-install-recommends ca-certificates libbz2-1.0 libcrypt1 libdb5.3t64 libffi8 libgdbm6t64 liblzma5 libncursesw6 libreadline8t64 libsqlite3-0 libssl3t64=3.6.5-1 openssl=3.6.5-1 openssl-provider-legacy=3.6.5-1 libuuid1 zlib1g libzstd1 \
+    && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 --error-on=any update \
+    && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -t forky install -y --no-install-recommends ca-certificates libbz2-1.0 libcrypt1 libdb5.3t64 libffi8 libgdbm6t64 liblzma5 libncursesw6 libreadline8t64 libsqlite3-0 libssl3t64=3.6.5-1 openssl=3.6.5-1 openssl-provider-legacy=3.6.5-1 libuuid1 zlib1g libzstd1 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=python-source /usr/local/ /usr/local/
 COPY deploy/deep-adapters/requirements-bootstrap.txt /tmp/requirements-bootstrap.txt

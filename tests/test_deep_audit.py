@@ -3925,6 +3925,105 @@ def test_signed_execution_threshold_and_idempotent_receipt(tmp_path):
     assert evaluate_deep_audit(plan, targets, canaries)["authority"] == "none"
 
 
+@pytest.fixture(params=["receipt", "review"])
+def content_addressed_writer(request):
+    from factoryline.deep_audit import _write_receipt, _write_review_evidence
+
+    if request.param == "receipt":
+        payload = {"receipt_sha256": "a" * 64, "value": "complete"}
+        return _write_receipt, payload, ".factory/deep-audits"
+    payload = {"packet_sha256": "b" * 64, "value": "complete"}
+    return _write_review_evidence, payload, ".factory/review-evidence"
+
+
+def test_content_addressed_writer_does_not_publish_while_temp_is_incomplete(
+    tmp_path, monkeypatch, content_addressed_writer
+):
+    import threading
+
+    from factoryline import deep_audit
+
+    writer, payload, relative_directory = content_addressed_writer
+    original_fsync = deep_audit.os.fsync
+    writing = threading.Event()
+    resume = threading.Event()
+
+    def paused_fsync(descriptor):
+        writing.set()
+        assert resume.wait(5)
+        return original_fsync(descriptor)
+
+    monkeypatch.setattr(deep_audit.os, "fsync", paused_fsync)
+    thread = threading.Thread(target=writer, args=(tmp_path, payload))
+    thread.start()
+    assert writing.wait(5)
+    assert list((tmp_path / relative_directory).glob("*.json")) == []
+    resume.set()
+    thread.join(5)
+    assert not thread.is_alive()
+    assert len(list((tmp_path / relative_directory).glob("*.json"))) == 1
+
+
+def test_content_addressed_writer_identical_race_is_idempotent(
+    tmp_path, monkeypatch, content_addressed_writer
+):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    from factoryline import deep_audit
+
+    writer, payload, _ = content_addressed_writer
+    original_fsync = deep_audit.os.fsync
+    barrier = threading.Barrier(2)
+
+    def synchronized_fsync(descriptor):
+        barrier.wait(5)
+        return original_fsync(descriptor)
+
+    monkeypatch.setattr(deep_audit.os, "fsync", synchronized_fsync)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        paths = list(pool.map(lambda _: writer(tmp_path, payload), range(2)))
+    assert paths[0] == paths[1]
+    assert paths[0].read_bytes() == deep_audit.canonical_bytes(payload)
+
+
+def test_content_addressed_writer_preserves_conflicting_incumbent(
+    tmp_path, content_addressed_writer
+):
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    writer, payload, relative_directory = content_addressed_writer
+    path = tmp_path / relative_directory / f"{payload[next(iter(payload))]}.json"
+    path.parent.mkdir(parents=True)
+    incumbent = b"pre-existing invalid bytes"
+    path.write_bytes(incumbent)
+    with pytest.raises(RuntimeAuditError, match="E_RECEIPT_COLLISION"):
+        writer(tmp_path, payload)
+    assert path.read_bytes() == incumbent
+
+
+def test_content_addressed_writer_failure_cleans_temp_and_allows_retry(
+    tmp_path, monkeypatch, content_addressed_writer
+):
+    from factoryline import deep_audit
+
+    writer, payload, relative_directory = content_addressed_writer
+    original_fsync = deep_audit.os.fsync
+
+    def failing_fsync(_descriptor):
+        raise OSError("injected fsync failure")
+
+    monkeypatch.setattr(deep_audit.os, "fsync", failing_fsync)
+    with pytest.raises(OSError, match="injected fsync failure"):
+        writer(tmp_path, payload)
+    directory = tmp_path / relative_directory
+    assert list(directory.glob("*.tmp")) == []
+    assert list(directory.glob("*.json")) == []
+    monkeypatch.setattr(deep_audit.os, "fsync", original_fsync)
+    path = writer(tmp_path, payload)
+    assert path.read_bytes() == deep_audit.canonical_bytes(payload)
+
+
 def test_agent_actions_preserve_cross_file_context_and_coverage_tasks():
     from factoryline.deep_audit import _agent_actions
 

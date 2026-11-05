@@ -1198,6 +1198,114 @@ def test_native_observation_boundary_requires_exact_capture_generation(tmp_path)
     assert "producer_reported_preconditions" not in rebuilt
 
 
+def test_native_observation_aggregate_overflow_keeps_each_finding(tmp_path):
+    from factoryline.audit_rule_search import (
+        build_retrieval_context,
+        retain_native_observations,
+    )
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\n" + "x = pickle.loads(b'local')\n" * 100,
+        },
+    )
+    path = tmp_path / "sink.py"
+    tree = index.snapshots[path]
+    tree._security_source_model = index
+    finding["code"] = "SECURITY_UNSAFE_DESERIALIZATION"
+    producers = [
+        dict(
+            finding,
+            line=line,
+            facts={
+                "security_precondition": {
+                    "marker": str(line),
+                    "detail": "x" * 1000,
+                }
+            },
+        )
+        for line in range(2, 102)
+    ]
+    assert len(json.dumps(producers)) > 64000
+    retain_native_observations(tree, path, producers)
+    context = build_retrieval_context(finding, index, "serialized input origin", None)
+    assert context["producer_precondition_transport"]["retained_observations"] == 100
+    assert context["producer_precondition_transport"]["delivered_observations"] == 1
+    delivered = context["producer_reported_preconditions"]["observations"]
+    assert delivered[0]["security_precondition"]["marker"] == str(finding["line"])
+    assert context["producer_reported_preconditions"]["authority"] == "none"
+
+
+@pytest.mark.parametrize("encoded_size", [64000, 64001])
+def test_native_observation_chunk_boundary_is_lossless(tmp_path, encoded_size):
+    from factoryline.audit_rule_search import (
+        build_retrieval_context,
+        retain_native_observations,
+    )
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'local')\n"}
+    )
+    path = tmp_path / "sink.py"
+    tree = index.snapshots[path]
+    tree._security_source_model = index
+    finding["code"] = "SECURITY_UNSAFE_DESERIALIZATION"
+    premise = {"detail": ""}
+    producer = dict(finding, facts={"security_precondition": premise})
+    retained = {
+        **{key: producer[key] for key in ("code", "path", "line", "column")},
+        "security_precondition": premise,
+    }
+    premise["detail"] = "x" * (
+        encoded_size - len(json.dumps([retained], sort_keys=True))
+    )
+    retain_native_observations(tree, path, [producer])
+    entry = next(iter(tree._secondary_native_observations[1]["entries"].values()))
+    assert sum(map(len, entry["chunks"])) == encoded_size
+    assert all(len(chunk.encode()) <= 64000 for chunk in entry["chunks"])
+    context = build_retrieval_context(finding, index, "serialized input origin", None)
+    assert (
+        context["producer_reported_preconditions"]["observations"][0][
+            "security_precondition"
+        ]
+        == premise
+    )
+    entry["chunks"] = ("corrupted",)
+    with pytest.raises(
+        JevClassificationError, match="NATIVE_OBSERVATION_TRANSPORT_INVALID"
+    ):
+        build_retrieval_context(finding, index, "serialized input origin", None)
+
+
+def test_native_observation_zero_is_explicit_and_duplicates_are_preserved(tmp_path):
+    from factoryline.audit_rule_search import (
+        build_retrieval_context,
+        retain_native_observations,
+    )
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'local')\n"}
+    )
+    path = tmp_path / "sink.py"
+    tree = index.snapshots[path]
+    tree._security_source_model = index
+    finding["code"] = "SECURITY_UNSAFE_DESERIALIZATION"
+    retain_native_observations(tree, path, [])
+    empty = build_retrieval_context(finding, index, "serialized input origin", None)
+    assert empty["producer_precondition_transport"]["retained_observations"] == 0
+    assert empty["producer_reported_preconditions"]["observations"] == []
+    premise = {"detail": "\u00e9" * 12000}
+    producer = dict(finding, facts={"security_precondition": premise})
+    retain_native_observations(tree, path, [producer, producer])
+    observed = build_retrieval_context(finding, index, "serialized input origin", None)
+    assert observed["producer_precondition_transport"]["retained_observations"] == 2
+    rows = observed["producer_reported_preconditions"]["observations"]
+    assert len(rows) == 2 and all(
+        row["security_precondition"] == premise for row in rows
+    )
+
+
 def test_hybrid_enrich_boundary_preserves_capture_and_advisory_authority(tmp_path):
     from factoryline.audit_rule_search import (
         HybridSourceRetriever,
@@ -4580,3 +4688,73 @@ def test_public_cdte_export_writes_aggregate_only_report(tmp_path: Path) -> None
     assert report["marker"] == "CDTE_PUBLIC_REPORT"
     assert report["scans"] == 0
     assert "NO_CONSTRAINT_TEXT_EXPORTED" in report["markers"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "schema": "factory.native-observation-retention.v2",
+            "count": 1,
+            "entries": {},
+        },
+        {
+            "schema": "factory.native-observation-retention.v2",
+            "count": 0,
+            "entries": [],
+        },
+        {
+            "schema": "factory.native-observation-retention.v2",
+            "count": False,
+            "entries": {},
+        },
+        {
+            "schema": "factory.native-observation-retention.v2",
+            "count": -1,
+            "entries": {},
+        },
+        {
+            "schema": "factory.native-observation-retention.v2",
+            "count": 1,
+            "entries": {"bad": {"count": True}},
+        },
+        {},
+        None,
+        "[1]",
+        "not-json",
+    ],
+)
+def test_native_observation_malformed_inventory_is_not_complete(payload):
+    from factoryline.audit_rule_search import _native_observation_delivery
+
+    with pytest.raises(
+        JevClassificationError, match="NATIVE_OBSERVATION_TRANSPORT_INVALID"
+    ):
+        _native_observation_delivery(
+            payload, {"code": "SECURITY_TEST", "path": "app.py", "line": 1, "column": 0}
+        )
+
+
+@pytest.mark.parametrize("key", ["unrelated", ("SECURITY_OTHER", "sink.py", 2, 0)])
+def test_native_observation_rekey_cannot_hide_retained_rows(tmp_path, key):
+    from factoryline.audit_rule_search import (
+        build_retrieval_context,
+        retain_native_observations,
+    )
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'local')\n"}
+    )
+    path = tmp_path / "sink.py"
+    tree = index.snapshots[path]
+    tree._security_source_model = index
+    finding["code"] = "SECURITY_UNSAFE_DESERIALIZATION"
+    producer = dict(finding, facts={"security_precondition": {"detail": "retained"}})
+    retain_native_observations(tree, path, [producer])
+    entries = tree._secondary_native_observations[1]["entries"]
+    original = next(iter(entries))
+    entries[key] = entries.pop(original)
+    with pytest.raises(
+        JevClassificationError, match="NATIVE_OBSERVATION_TRANSPORT_INVALID"
+    ):
+        build_retrieval_context(finding, index, "origin", None)

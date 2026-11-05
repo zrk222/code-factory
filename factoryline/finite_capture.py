@@ -487,10 +487,10 @@ def security_structural_value(
         for name, value in environment.items()
         if isinstance(name, str)
     }
+    builtin = _security_structural_builtin_value(expression, aliases, request_aliases)
+    if builtin is not None:
+        return builtin
     if isinstance(expression, ast.Call):
-        codec = _security_structural_codec(expression, environment, request_aliases)
-        if codec is not None:
-            return codec
         result = _security_structural_helper_call(expression, aliases, request_aliases)
         if result is not None:
             return result
@@ -501,14 +501,48 @@ def security_structural_value(
         from .credential_role_identity_effects import _security_structural_request_value
 
         return _security_structural_request_value(expression, leaf, _Value)
+    value = identity_value(expression, aliases, strict_calls=True, material_values=True)
+    return _security_structural_receiver_value(expression, aliases, value)
+
+
+def _security_structural_receiver_value(expression, aliases, value):
+    """Preserve proven values; bind receiver fields only for uncertain expressions."""
+    scope = getattr(expression, "_security_lexical_scope", None)
+    if (
+        not (value.unknown or value.content_unknown)
+        or getattr(scope, "_security_class_scope", None) is None
+    ):
+        return value
+    from .credential_role_identity_effects import identity_value
+    from .credential_role_method_use_getter_audit import selected_receiver_field_value
+
+    for field in ast.walk(expression):
+        if isinstance(field, ast.Attribute) and isinstance(field.ctx, ast.Load):
+            _module, index, path = _security_helper_source_context(field, None)
+            projected = selected_receiver_field_value(field, index, path)
+            if projected is not None:
+                aliases[("expression", id(field))] = projected
     return identity_value(expression, aliases, strict_calls=True, material_values=True)
 
 
-def _security_structural_codec(expression, environment, request_aliases):
-    from .credential_role_identity_effects import _Value
+def _security_structural_builtin_value(expression, environment, request_aliases):
+    """Share proven scalar composition and codecs without bypassing source guards."""
+    from .credential_role_identity_effects import _Value, identity_value
 
+    if isinstance(expression, (ast.BinOp, ast.JoinedStr)):
+        values = dict(environment)
+        for child in ast.iter_child_nodes(expression):
+            child = child.value if isinstance(child, ast.FormattedValue) else child
+            if isinstance(child, ast.expr):
+                values[("expression", id(child))] = security_structural_value(
+                    child, environment, request_aliases
+                )
+        return identity_value(
+            expression, values, strict_calls=True, material_values=True
+        )
     if not (
-        isinstance(expression.func, ast.Attribute)
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Attribute)
         and expression.func.attr in {"encode", "decode"}
         and not expression.args
         and not expression.keywords

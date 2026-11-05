@@ -2399,3 +2399,1239 @@ def test_literal273_keyword_value_requires_exact_closed_consumer(
     assert (result is not None) is accepted
     if result is not None:
         assert result["sinks"] == (call,)
+
+
+@pytest.fixture
+def shared_validation_sources(tmp_path):
+    sources = {
+        tmp_path / "first.py": b"class Client: pass\n",
+        tmp_path / "second.py": b"class Client: pass\nimport os\nos.system(input())\n",
+    }
+    for path, raw in sources.items():
+        path.write_bytes(raw)
+    audit._oracle_context_cache_clear()
+    yield sources
+    audit._oracle_context_cache_clear()
+
+
+def _shared_validation_scan(root, sources, model_out):
+    return audit._scan_security_sources(
+        root,
+        list(sources),
+        (),
+        {},
+        test_file_patterns=set(),
+        producer_source_model_out=model_out,
+    )
+
+
+def _shared_validation_query(source, path):
+    assert source.validate(path)
+    memo = source.class_chain_memo
+    chain = [(path, "Client", source.snapshots[path].body[0])]
+    assert provider.constructor_bindings_inert(chain, source, memo.imports)
+
+
+def test_shared_validation_producer_batches_cold_and_cached_rows(
+    tmp_path, monkeypatch, shared_validation_sources
+):
+    from contextlib import contextmanager
+
+    sources = shared_validation_sources
+
+    @contextmanager
+    def unbatched(_):
+        yield
+
+    with monkeypatch.context() as patch:
+        patch.setattr(audit, "_security_snapshot_analysis_batch", unbatched)
+        baseline = _shared_validation_scan(tmp_path, sources, {})
+    audit._oracle_context_cache_clear()
+    assert baseline[0], "The native unsafe-call finding must remain visible."
+    valid, scan = ClassChainMemo.valid, audit._security_scan_file_snapshot
+    cached = provider.consume_cached_security_snapshots
+    checks, queries, cache_hits = [], [], []
+
+    def checked(memo):
+        checks.append(memo)
+        return valid(memo)
+
+    def queried(*args):
+        source = args[4]["_security_source_model"]
+        assert source.class_chain_memo._analysis_batch is not None
+        for _ in range(32):
+            _shared_validation_query(source, args[1])
+            queries.append(source)
+        return scan(*args)
+
+    def from_cache(*args):
+        cache_hits.append(True)
+        return cached(*args)
+
+    monkeypatch.setattr(ClassChainMemo, "valid", checked)
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", queried)
+    monkeypatch.setattr(provider, "consume_cached_security_snapshots", from_cache)
+    owners = []
+    for _ in range(2):
+        owner = {}
+        assert _shared_validation_scan(tmp_path, sources, owner) == baseline
+        assert owner["source"].source_bytes == sources
+        owners.append(owner["source"])
+    assert len(queries) == 128
+    assert checks == [owners[0].class_chain_memo] * 2 + [owners[1].class_chain_memo] * 2
+    assert cache_hits == [True]
+
+
+def _shared_validation_drift(change, source, path, owner, monkeypatch):
+    def changed(*args):
+        return False
+
+    mutations = {
+        "ast": lambda: setattr(source.snapshots[path].body[0], "name", "Changed"),
+        "bytes": lambda: source.source_bytes.update({path: b"pass\n"}),
+        "inventory": lambda: source.inventory.update({path: "0" * 64}),
+        "helper-binding": lambda: monkeypatch.setattr(
+            provider, "_captured_mutations_inert", changed
+        ),
+        "helper-code": lambda: monkeypatch.setattr(
+            provider._captured_mutations_inert, "__code__", changed.__code__
+        ),
+        "memo-index": lambda: setattr(
+            source.class_chain_memo,
+            "index",
+            SourceSnapshotIndex(
+                source.root, source.snapshots, source.source_bytes, source.inventory
+            ),
+        ),
+        "memo-owner": lambda: setattr(source, "class_chain_memo", object()),
+        "source-owner": lambda: owner.update(source=object()),
+    }
+    mutations[change]()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "ast",
+        "bytes",
+        "inventory",
+        "helper-binding",
+        "helper-code",
+        "memo-index",
+        "memo-owner",
+        "source-owner",
+        "callback-error",
+    ],
+)
+@pytest.mark.parametrize("cache_hit", [False, True])
+def test_shared_validation_rejects_provisional_rows_on_drift(
+    tmp_path, monkeypatch, shared_validation_sources, change, cache_hit
+):
+    from factoryline import context_efficiency
+
+    sources, owner, captured, published = shared_validation_sources, {}, [], []
+    active = not cache_hit
+    scan = audit._security_scan_file_snapshot
+    publish = context_efficiency._scan_missing_security_snapshot
+
+    def observed(*args):
+        source = args[4]["_security_source_model"]
+        _shared_validation_query(source, args[1])
+        captured.append(
+            (source, source.class_chain_memo, args[4]["_security_source_context"][1])
+        )
+        row = scan(*args)
+        if active and args[1] == list(sources)[-1]:
+            if change == "callback-error":
+                raise ValueError("synthetic callback failure")
+            _shared_validation_drift(change, source, args[1], owner, monkeypatch)
+        return row
+
+    def published_row(*args, **kwargs):
+        published.append(args)
+        return publish(*args, **kwargs)
+
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", observed)
+    monkeypatch.setattr(
+        context_efficiency, "_scan_missing_security_snapshot", published_row
+    )
+    if cache_hit:
+        _shared_validation_scan(tmp_path, sources, {})
+        captured.clear()
+        published.clear()
+        active = True
+    error = ValueError if change == "callback-error" else audit.RuntimeAuditError
+    with pytest.raises(error) as rejected:
+        _shared_validation_scan(tmp_path, sources, owner)
+    if change != "callback-error":
+        assert rejected.value.code == "E_INPUT_CHANGED"
+    assert len(captured) == 2
+    assert owner["source"] is None
+    assert not published
+    for source, memo, retained in captured:
+        assert memo._analysis_batch is None
+        assert retained == sources
+
+
+def test_shared_validation_none_model_keeps_raw_only_scanning(
+    tmp_path, monkeypatch, shared_validation_sources
+):
+    sources, observed = shared_validation_sources, []
+    baseline = _shared_validation_scan(tmp_path, sources, None)
+    audit._oracle_context_cache_clear()
+    scan = audit._security_scan_file_snapshot
+
+    def raw_only(*args):
+        assert args[4]["_security_source_model"] is None
+        observed.append(args[4]["_security_source_context"][1])
+        return scan(*args)
+
+    monkeypatch.setattr(
+        provider, "security_snapshot_model", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", raw_only)
+    owner = {}
+    assert _shared_validation_scan(tmp_path, sources, owner) == baseline
+    assert owner["source"] is None
+    assert observed == [sources, sources]
+
+
+def test_shared_validation_memo_initialization_failure_revokes_owner(
+    tmp_path, monkeypatch, shared_validation_sources
+):
+    from factoryline import context_efficiency
+
+    sources, owner, captured, calls = shared_validation_sources, {}, [], []
+    build = provider.security_snapshot_model
+
+    def capture(*args, **kwargs):
+        source = build(*args, **kwargs)
+        captured.append((source, args[2]))
+        return source
+
+    def fail_initialization(*args):
+        assert args[0] is captured[-1][0]
+        raise ValueError("synthetic memo initialization failure")
+
+    monkeypatch.setattr(provider, "security_snapshot_model", capture)
+    monkeypatch.setattr(provider, "ClassChainMemo", fail_initialization)
+    monkeypatch.setattr(
+        audit, "_security_scan_file_snapshot", lambda *args: calls.append("scan")
+    )
+    monkeypatch.setattr(
+        context_efficiency,
+        "_scan_missing_security_snapshot",
+        lambda *args: calls.append("publish"),
+    )
+    with pytest.raises(ValueError, match="synthetic memo initialization failure"):
+        _shared_validation_scan(tmp_path, sources, owner)
+    assert len(captured) == 1
+    assert owner["source"] is None
+    assert captured[0][0].source_bytes == captured[0][1] == sources
+    assert calls == []
+
+
+def test_shared_validation_raw_only_rejects_introduced_owner(
+    tmp_path, monkeypatch, shared_validation_sources
+):
+    from factoryline import context_efficiency
+
+    sources, owner, retained, published = shared_validation_sources, {}, [], []
+    introduced, _ = _snapshot(
+        tmp_path, {path.name: raw.decode() for path, raw in sources.items()}
+    )
+    scan = audit._security_scan_file_snapshot
+    publish = context_efficiency._scan_missing_security_snapshot
+
+    def raw_only(*args):
+        assert args[4]["_security_source_model"] is None
+        retained.append(args[4]["_security_source_context"][1])
+        row = scan(*args)
+        if args[1] == list(sources)[-1]:
+            owner["source"] = introduced
+        return row
+
+    def publish_row(*args, **kwargs):
+        published.append(args)
+        return publish(*args, **kwargs)
+
+    monkeypatch.setattr(
+        provider, "security_snapshot_model", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", raw_only)
+    monkeypatch.setattr(
+        context_efficiency, "_scan_missing_security_snapshot", publish_row
+    )
+    with pytest.raises(audit.RuntimeAuditError) as rejected:
+        _shared_validation_scan(tmp_path, sources, owner)
+    assert rejected.value.code == "E_INPUT_CHANGED"
+    assert owner["source"] is None
+    assert retained == [sources, sources]
+    assert not published
+
+
+@pytest.fixture
+def fingerprint_memo(tmp_path):
+    index, paths = _snapshot(
+        tmp_path,
+        {
+            "caller.py": "from helper import helper\ndef caller(value):\n    return helper(value)\n",
+            "helper.py": "def helper(value):\n    return value\n",
+            "unused.py": "class Unused: pass\n",
+        },
+    )
+    memo = ClassChainMemo(index, {}, {}, audit)
+    index.class_chain_memo = memo
+    return memo, paths
+
+
+def _fingerprint_guard(memo, paths):
+    from factoryline import credential_role_identity_effects as identity
+
+    path = paths["caller.py"]
+    tree = memo.index.snapshots[path]
+    tree._security_source_model = memo.index
+    caller = tree.body[1]
+    caller._security_parent_scope = tree
+    call = caller.body[0].value
+    call._security_lexical_scope = caller
+    call._security_flow_statement = caller.body[0]
+    resolved = identity.resolve_source_identity_call(
+        call, path, memo.index, lexical_scope=caller, defer_negative_binding=True
+    )
+    assert resolved is not None
+    assert resolved.negative_binding_check is not None
+    return resolved.negative_binding_check
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "VALUE = 1\n",
+            "a717d1bd18786f167a3787e175ae879a6c931362a734e4e5f18dff8469559658",
+        ),
+        (
+            "\n".join(f"value_{i} = {i}" for i in range(200)) + "\n",
+            "0eff7622c4fafa0db07dc0dc8423b9cde187386ecc11a7e797bcb5b1cf3d7ce2",
+        ),
+    ],
+)
+def test_fingerprint_epoch_preserves_original_canonical_digest(
+    tmp_path, source, expected
+):
+    from factoryline import import_context as context
+
+    index, paths = _snapshot(tmp_path, {"module.py": source})
+    tree = index.snapshots[paths["module.py"]]
+    memo = ClassChainMemo(index, {}, {}, audit)
+    assert context.structural_ast_fingerprint(tree) == expected
+    with memo.analysis_batch() as batch:
+        assert context.structural_ast_fingerprint(tree) == expected
+        tree._security_sidecar = "excluded"
+        assert context.structural_ast_fingerprint(tree) == expected
+    assert batch.accepted
+    assert context.structural_ast_fingerprint(tree) == expected
+
+
+def test_fingerprint_epoch_computes_owned_modules_once_and_keeps_fallbacks_fresh(
+    fingerprint_memo, monkeypatch
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    tree = memo.index.snapshots[paths["caller.py"]]
+    unowned = ast.parse("value = 1")
+    original, calls = context._uncached_structural_ast_fingerprint, []
+
+    def observed(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(context, "_uncached_structural_ast_fingerprint", observed)
+    assert not memo.index.validated
+    for _ in range(2):
+        context.structural_ast_fingerprint(tree)
+    assert calls == [tree, tree]
+    calls.clear()
+    with memo.analysis_batch() as batch:
+        for _ in range(40):
+            context.structural_ast_fingerprint(tree)
+        assert memo.index.validated[paths["caller.py"]]
+        for value in (unowned, tree.body[0]):
+            context.structural_ast_fingerprint(value)
+            context.structural_ast_fingerprint(value)
+        assert calls == [tree, unowned, unowned, tree.body[0], tree.body[0]]
+    assert batch.accepted
+    context.structural_ast_fingerprint(tree)
+    assert calls[-1] is tree and len(calls) == 6
+
+
+def test_fingerprint_epoch_enrolls_previously_unused_modules(fingerprint_memo):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    path = paths["unused.py"]
+    assert path not in memo.index.validated
+    with memo.analysis_batch() as batch:
+        context.structural_ast_fingerprint(memo.index.snapshots[path])
+        assert memo.index.validated[path]
+        memo.index.snapshots[path].body[0].name = "Altered"
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "field",
+        "fields",
+        "location",
+        "tree",
+        "bytes",
+        "inventory",
+        "root",
+        "owner",
+        "index",
+    ],
+)
+def test_fingerprint_epoch_rejects_boundary_source_mutations(
+    fingerprint_memo, tmp_path, mutation
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    index, path = memo.index, paths["helper.py"]
+    tree = index.snapshots[path]
+    with memo.analysis_batch() as batch:
+        context.structural_ast_fingerprint(tree)
+        if mutation == "field":
+            tree.body[0].name = "changed"
+        elif mutation == "fields":
+            tree._fields = (*tree._fields, "extra")
+            tree.extra = ast.Constant("changed")
+        elif mutation == "location":
+            tree.body[0].lineno += 1
+        elif mutation == "tree":
+            replacement = ast.parse(index.source_bytes[path])
+            replacement._oracle_source_sha256 = index.inventory[path]
+            index.snapshots[path] = replacement
+        elif mutation == "bytes":
+            index.source_bytes[path] += b"# changed\n"
+        elif mutation == "inventory":
+            index.inventory[path] = "0" * 64
+        elif mutation == "root":
+            index.root = tmp_path / "different"
+        elif mutation == "owner":
+            index.class_chain_memo = ClassChainMemo(index, {}, {}, audit)
+        else:
+            memo.index = SourceSnapshotIndex(
+                index.root, index.snapshots, index.source_bytes, index.inventory
+            )
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "structural_ast_fingerprint",
+        "_uncached_structural_ast_fingerprint",
+        "_structural_ast_leaf_digest",
+        "_structural_ast_fields",
+        "_iter_ast_nodes",
+        "bind_fingerprint_epoch",
+        "_fingerprint_epoch_helpers",
+        "lease-factory",
+        "binding-alias",
+        "validate",
+        "ast-match",
+        "memo-valid",
+        "ast-dump",
+    ],
+)
+def test_fingerprint_epoch_rejects_helper_binding_and_code_drift(
+    fingerprint_memo, monkeypatch, name, mutation
+):
+    from factoryline import import_context as context
+    from factoryline import credential_role_identity_effects as identity
+
+    targets = {
+        "lease-factory": (context.fingerprint_epoch, "__wrapped__"),
+        "binding-alias": (identity, "bind_fingerprint_epoch"),
+        "validate": (SourceSnapshotIndex, "validate"),
+        "ast-match": (provider, "_ast_matches_source"),
+        "memo-valid": (ClassChainMemo, "valid"),
+        "ast-dump": (ast, "dump"),
+    }
+    target, attribute = targets.get(name, (context, name))
+
+    def changed(*args, **kwargs):
+        return True
+
+    memo, paths = fingerprint_memo
+    with memo.analysis_batch() as batch:
+        context.structural_ast_fingerprint(memo.index.snapshots[paths["caller.py"]])
+        if mutation == "binding":
+            monkeypatch.setattr(target, attribute, changed)
+        else:
+            monkeypatch.setattr(
+                getattr(target, attribute), "__code__", changed.__code__
+            )
+    assert not batch.accepted
+
+
+def test_fingerprint_epoch_reuses_deferred_binding_capture_digests(
+    fingerprint_memo, monkeypatch
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    original, calls = context._uncached_structural_ast_fingerprint, []
+
+    def observed(tree):
+        calls.append(tree)
+        return original(tree)
+
+    monkeypatch.setattr(context, "_uncached_structural_ast_fingerprint", observed)
+    with memo.analysis_batch() as batch:
+        for _ in range(25):
+            assert _fingerprint_guard(memo, paths)()
+        for name in ("caller.py", "helper.py"):
+            assert calls.count(memo.index.snapshots[paths[name]]) == 1
+    assert batch.accepted
+
+
+@pytest.mark.parametrize("target", ["wrapper", "source-guard"])
+def test_fingerprint_epoch_registers_generated_guard_code(fingerprint_memo, target):
+    memo, paths = fingerprint_memo
+    with memo.analysis_batch() as batch:
+        guard = _fingerprint_guard(memo, paths)
+        assert guard()
+        selected = guard
+        if target == "source-guard":
+            cells = dict(zip(guard.__code__.co_freevars, guard.__closure__))
+            selected = cells["check_binding"].cell_contents
+        selected.__code__ = selected.__code__.replace(
+            co_consts=tuple(
+                True if value is False else value
+                for value in selected.__code__.co_consts
+            )
+        )
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize("creation", ["standalone", "accepted"])
+def test_fingerprint_epoch_old_guard_cannot_borrow_a_new_cache(
+    fingerprint_memo, creation
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    if creation == "accepted":
+        with memo.analysis_batch() as previous:
+            guard = _fingerprint_guard(memo, paths)
+            assert guard()
+        assert previous.accepted and guard()
+    else:
+        guard = _fingerprint_guard(memo, paths)
+        assert guard()
+    tree = memo.index.snapshots[paths["helper.py"]]
+    with memo.analysis_batch() as current:
+        context.structural_ast_fingerprint(tree)
+        tree.body[0].lineno += 1
+        assert not guard()
+    assert not current.accepted
+
+
+def test_fingerprint_epoch_rejected_guard_cannot_recover_after_restore(
+    fingerprint_memo,
+):
+    memo, paths = fingerprint_memo
+    tree = memo.index.snapshots[paths["helper.py"]]
+    with memo.analysis_batch() as batch:
+        guard = _fingerprint_guard(memo, paths)
+        assert guard()
+        tree.body[0].lineno += 1
+    assert not batch.accepted
+    tree.body[0].lineno -= 1
+    assert not guard()
+    with memo.analysis_batch() as fresh:
+        assert _fingerprint_guard(memo, paths)()
+        assert not guard()
+    assert fresh.accepted
+
+
+def test_fingerprint_epoch_copied_context_retires_before_fresh_exit(
+    fingerprint_memo, monkeypatch
+):
+    from contextvars import copy_context
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    original, boundaries = memo.valid, []
+
+    def checked():
+        boundaries.append(context._FINGERPRINT_EPOCH.get())
+        return original()
+
+    monkeypatch.setattr(memo, "valid", checked)
+    tree = memo.index.snapshots[paths["helper.py"]]
+    with memo.analysis_batch() as batch:
+        before = context.structural_ast_fingerprint(tree)
+        guard = _fingerprint_guard(memo, paths)
+        copied = copy_context()
+        lease = context._FINGERPRINT_EPOCH.get()
+    assert batch.accepted and not lease.active
+    assert boundaries == [None, None]
+    tree.body[0].lineno += 1
+    assert copied.run(context.structural_ast_fingerprint, tree) != before
+    assert not copied.run(guard)
+
+
+def test_fingerprint_epoch_nested_failure_restores_outer_lease(
+    fingerprint_memo, tmp_path
+):
+    from contextvars import copy_context
+    from factoryline import import_context as context
+
+    memo, _ = fingerprint_memo
+    _, inner = _memo(tmp_path / "inner")
+    with memo.analysis_batch() as outer:
+        lease = context._FINGERPRINT_EPOCH.get()
+        with pytest.raises(RuntimeError, match="nested failure"):
+            with inner.analysis_batch() as rejected:
+                inner_lease = context._FINGERPRINT_EPOCH.get()
+                copied = copy_context()
+                guard = context.bind_fingerprint_epoch(lambda: True)
+                raise RuntimeError("nested failure")
+        assert context._FINGERPRINT_EPOCH.get() is lease and lease.active
+        assert not inner_lease.active and not rejected.accepted
+        assert not copied.run(guard)
+    assert outer.accepted and context._FINGERPRINT_EPOCH.get() is None
+
+
+def test_fingerprint_epoch_enter_failure_clears_batch(fingerprint_memo, monkeypatch):
+    from contextlib import contextmanager
+    from factoryline import import_context as context
+
+    memo, _ = fingerprint_memo
+    states = []
+
+    @contextmanager
+    def fail_enter(memo, state):
+        states.append(state)
+        raise RuntimeError("lease enter failure")
+        yield
+
+    monkeypatch.setattr(context, "fingerprint_epoch", fail_enter)
+    with pytest.raises(RuntimeError, match="lease enter failure"):
+        with memo.analysis_batch():
+            pytest.fail("must not enter an invalid lease")
+    assert len(states) == 1 and not states[0].accepted
+    assert memo._analysis_batch is None and context._FINGERPRINT_EPOCH.get() is None
+
+
+@pytest.fixture
+def query_facts_memo(tmp_path):
+    index, paths = _snapshot(
+        tmp_path,
+        {
+            "source.py": "import target\nx = 1\nx = 2\ndef outer():\n    x = 3\n    return x\n",
+            "target.py": "VALUE = 1\n",
+        },
+    )
+    memo = ClassChainMemo(index, {}, {}, audit)
+    index.class_chain_memo = memo
+    return memo, paths
+
+
+def test_query_facts_reconstructed_roots_share_events_and_name_results(
+    query_facts_memo, monkeypatch
+):
+    calls, walk = [], ast.iter_child_nodes
+
+    def observed(node):
+        calls.append(node)
+        return walk(node)
+
+    monkeypatch.setattr(ast, "iter_child_nodes", observed)
+    memo, paths = query_facts_memo
+    statements = memo.index.snapshots[paths["source.py"]].body
+    expected = provider.binding_statements(statements, "x")
+    assert [row.lineno for row in expected] == [2, 3]
+    with memo.analysis_batch() as batch:
+        assert provider.binding_statements(list(statements), "x") == expected
+        after_first = len(calls)
+        for _ in range(20):
+            actual = provider.binding_statements(list(statements), "x")
+            assert actual == expected
+            actual.clear()
+        assert provider.binding_statements(list(statements), "different") == []
+        assert len(calls) == after_first
+        assert set(memo.index.validated) == set(memo.index.snapshots)
+        assert provider.function_bindings(statements[-1], "x", audit)
+        assert provider.function_bindings(statements[-1], "different", audit) == []
+    assert batch.accepted
+
+
+@pytest.mark.parametrize(
+    "source,name,expected",
+    [
+        ("x=1\nx=2\n", "x", [("Name", 2), ("Name", 1)]),
+        ("def nested():\n    x=1\nclass Owner:\n    x=2\nx=3\n", "x", [("Name", 5)]),
+        ("[target := item for item in values]\n", "target", [("Name", 1)]),
+        ("[target := item for item in values]\n", "item", []),
+        (
+            "from target import *\ndel x\nx=1\n",
+            "x",
+            [("Name", 3), ("Name", 2), ("ImportFrom", 1)],
+        ),
+        ("from target import *\ndel x\nx=1\n", "other", [("ImportFrom", 1)]),
+        ("x=x=1\n", "x", [("Name", 1), ("Name", 1)]),
+        ("async def nested():\n    x=1\nvalue=lambda:(x:=1)\n", "x", []),
+    ],
+)
+def test_query_facts_preserves_raw_order_scopes_duplicates_and_bindings(
+    tmp_path, source, name, expected
+):
+    index, paths = _snapshot(tmp_path, {"source.py": source})
+    statements = index.snapshots[paths["source.py"]].body
+    raw = provider.binding_occurrences(statements, name, per_pass_facts=False)
+    assert [(type(node).__name__, node.lineno) for node in raw] == expected
+    memo = ClassChainMemo(index, {}, {}, audit)
+    with memo.analysis_batch() as batch:
+        for _ in range(2):
+            assert provider.binding_occurrences(list(statements), name) == raw
+    assert batch.accepted
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_query_facts_unowned_generator_is_consumed_once(query_facts_memo, mixed):
+    memo, paths = query_facts_memo
+    unowned = ast.parse("x=7").body[0]
+    roots = [unowned]
+    if mixed:
+        roots.insert(0, memo.index.snapshots[paths["source.py"]].body[1])
+    yielded = []
+
+    def statements():
+        for node in roots:
+            yielded.append(node)
+            yield node
+
+    raw = provider.binding_occurrences(roots, "x", per_pass_facts=False)
+    with memo.analysis_batch() as batch:
+        assert provider.binding_occurrences(statements(), "x") == raw
+    assert batch.accepted and yielded == roots
+
+
+def test_query_facts_preserves_explicit_cache_and_unsupported_fallbacks(
+    query_facts_memo,
+):
+    from factoryline import import_context as context
+
+    memo, paths = query_facts_memo
+    statements = memo.index.snapshots[paths["source.py"]].body
+    with memo.analysis_batch() as batch:
+        lease = context._FINGERPRINT_EPOCH.get()
+        cache = {}
+        first = provider.binding_occurrences(statements, "x", per_pass_facts=cache)
+        assert any(
+            key[0] == "binding-occurrence-events" and key[1] == id(statements)
+            for key in cache
+        )
+        first.clear()
+        assert (
+            len(provider.binding_occurrences(statements, "x", per_pass_facts=cache))
+            == 2
+        )
+        for option in (False, [], object()):
+            assert (
+                len(
+                    provider.binding_occurrences(statements, "x", per_pass_facts=option)
+                )
+                == 2
+            )
+        assert provider.binding_occurrences(statements, object()) == []
+        assert lease.query_facts is None
+    assert batch.accepted
+
+
+def test_query_facts_import_candidates_reuse_but_resolution_stays_fresh(
+    query_facts_memo, monkeypatch
+):
+    from factoryline import import_context as context
+
+    memo, paths = query_facts_memo
+    source, path, target = memo.index, paths["source.py"], paths["target.py"]
+    select, resolve = context._captured_import_statement, context.resolve_import_source
+    selections, resolutions = [], []
+
+    def selected(*args):
+        selections.append(args[-1])
+        return select(*args)
+
+    def resolved(*args, **kwargs):
+        resolutions.append(args)
+        return resolve(*args, **kwargs)
+
+    monkeypatch.setattr(context, "_captured_import_statement", selected)
+    monkeypatch.setattr(context, "resolve_import_source", resolved)
+    with memo.analysis_batch() as batch:
+        for _ in range(10):
+            assert context.captured_import_module(source, path, "target") == (
+                True,
+                target,
+            )
+        assert selections == ["target"] and len(resolutions) == 10
+        assert context.captured_import_module(source, path, "absent") == (False, None)
+        assert selections == ["target", "absent"]
+        source.source_bytes[target] += b"# target changed\n"
+        assert context.captured_import_module(source, path, "target") == (True, None)
+        assert selections == ["target", "absent"] and len(resolutions) == 11
+    assert not batch.accepted
+
+
+def test_query_facts_import_inventory_remains_fresh(query_facts_memo):
+    from factoryline import import_context as context
+
+    memo, paths = query_facts_memo
+    index, path, target = memo.index, paths["source.py"], paths["target.py"]
+    with memo.analysis_batch() as batch:
+        assert context.captured_import_module(index, path, "target") == (True, target)
+        del index.snapshots[target], index.source_bytes[target], index.inventory[target]
+        assert context.captured_import_module(index, path, "target") == (True, None)
+    assert not batch.accepted
+
+
+def test_query_facts_import_resolution_ambiguity_remains_fresh(tmp_path, monkeypatch):
+    from factoryline import import_context as context
+
+    index, paths = _snapshot(
+        tmp_path,
+        {
+            "source.py": "import target\nimport target as alternate\n",
+            "target.py": "VALUE=1\n",
+        },
+    )
+    memo = ClassChainMemo(index, {}, {}, audit)
+    original, ambiguous = context.resolve_import_source, False
+
+    def resolve(*args, **kwargs):
+        if ambiguous and args[2].names[0].asname == "alternate":
+            return None
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(context, "resolve_import_source", resolve)
+    with memo.analysis_batch() as batch:
+        assert context.captured_import_module(index, paths["source.py"], "target") == (
+            True,
+            paths["target.py"],
+        )
+        ambiguous = True
+        assert context.captured_import_module(index, paths["source.py"], "target") == (
+            True,
+            None,
+        )
+    assert batch.accepted
+
+
+def test_query_facts_parent_drift_blocks_producer_publication(tmp_path, monkeypatch):
+    from factoryline import context_efficiency, import_context as context
+
+    sources = {
+        tmp_path / "source.py": b"import target\nx=1\n",
+        tmp_path / "target.py": b"VALUE=1\n",
+    }
+    for path, raw in sources.items():
+        path.write_bytes(raw)
+    scan, owner, retained, published = audit._security_scan_file_snapshot, {}, [], []
+
+    def consume(*args):
+        source = args[4]["_security_source_model"]
+        assert context.captured_import_module(source, tmp_path / "source.py", "target")[
+            0
+        ]
+        retained.append(args[4]["_security_source_context"][1])
+        row = scan(*args)
+        if args[1] == tmp_path / "target.py":
+            source.parents[tmp_path / "source.py"] = {}
+        return row
+
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", consume)
+    monkeypatch.setattr(
+        context_efficiency,
+        "_scan_missing_security_snapshot",
+        lambda *args: published.append(args),
+    )
+    with pytest.raises(audit.RuntimeAuditError) as rejected:
+        _shared_validation_scan(tmp_path, sources, owner)
+    assert rejected.value.code == "E_INPUT_CHANGED"
+    assert owner["source"] is None and not published
+    assert retained == [sources, sources]
+
+
+@pytest.mark.parametrize("mutation", ["value", "inner", "outer", "key"])
+def test_query_facts_import_parent_mapping_drift_rejects(query_facts_memo, mutation):
+    from factoryline import import_context as context
+
+    memo, paths = query_facts_memo
+    index, path = memo.index, paths["source.py"]
+    with memo.analysis_batch() as batch:
+        assert context.captured_import_module(index, path, "target")[0]
+        mapping = index.parents[path]
+        if mutation == "value":
+            key = next(
+                key for key, value in mapping.items() if isinstance(value, ast.Import)
+            )
+            mapping[key] = ast.Import(names=[ast.alias(name="other")])
+        elif mutation == "inner":
+            index.parents[path] = dict(mapping)
+        elif mutation == "outer":
+            index.parents = dict(index.parents)
+        else:
+            mapping[id(object())] = ast.Import(names=[ast.alias(name="other")])
+        assert context.captured_import_module(index, path, "target")[0]
+    assert not batch.accepted
+
+
+def test_query_facts_foreign_import_source_stays_uncached(
+    query_facts_memo, monkeypatch
+):
+    from factoryline import import_context as context
+
+    memo, paths = query_facts_memo
+    index = memo.index
+    foreign = SourceSnapshotIndex(
+        index.root, index.snapshots, index.source_bytes, index.inventory
+    )
+    original, calls = context._raw_import_candidates, []
+
+    def observed(*args):
+        calls.append(args)
+        return original(*args)
+
+    monkeypatch.setattr(context, "_raw_import_candidates", observed)
+    with memo.analysis_batch() as batch:
+        for _ in range(2):
+            assert context.captured_import_module(
+                foreign, paths["source.py"], "target"
+            )[0]
+        assert len(calls) == 2
+    assert batch.accepted
+
+
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "epoch_binding_occurrences",
+        "binding_walker_epoch",
+        "_owned_ast_query_facts",
+        "_owned_ast_query_nodes",
+        "_captured_import_candidates",
+        "_raw_import_candidates",
+        "_bind_import_parent_mapping",
+        "_captured_import_statement",
+        "raw-events",
+        "binds",
+        "walk",
+        "iter-fields",
+    ],
+)
+def test_query_facts_helper_changes_reject(
+    query_facts_memo, monkeypatch, name, mutation
+):
+    from factoryline import import_context as context
+
+    targets = {
+        "raw-events": (provider, "_binding_occurrence_events"),
+        "binds": (provider, "_binds"),
+        "walk": (ast, "walk"),
+        "iter-fields": (ast, "iter_fields"),
+    }
+    target, attribute = targets.get(name, (context, name))
+    original = getattr(target, attribute)
+
+    def changed(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    memo, paths = query_facts_memo
+    with memo.analysis_batch() as batch:
+        provider.binding_occurrences(memo.index.snapshots[paths["source.py"]].body, "x")
+        context.captured_import_module(memo.index, paths["source.py"], "target")
+        if mutation == "binding":
+            monkeypatch.setattr(target, attribute, changed)
+        else:
+            monkeypatch.setattr(
+                original,
+                "__code__",
+                original.__code__.replace(co_filename="changed-query-helper"),
+            )
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize("name", ["_SCOPES", "_COMPREHENSIONS"])
+def test_query_facts_scope_contract_changes_reject(query_facts_memo, monkeypatch, name):
+    memo, paths = query_facts_memo
+    with memo.analysis_batch() as batch:
+        provider.binding_occurrences(memo.index.snapshots[paths["source.py"]].body, "x")
+        monkeypatch.setattr(provider, name, (*getattr(provider, name), ast.Module))
+    assert not batch.accepted
+
+
+def test_query_facts_copied_context_retires_to_raw_behavior(query_facts_memo):
+    from contextvars import copy_context
+
+    memo, paths = query_facts_memo
+    tree = memo.index.snapshots[paths["source.py"]]
+    roots = [tree.body[1]]
+    with memo.analysis_batch() as batch:
+        assert len(provider.binding_occurrences(roots, "x")) == 1
+        copied = copy_context()
+    assert batch.accepted
+    roots[0].targets[0].id = "changed"
+    assert copied.run(provider.binding_occurrences, list(roots), "x") == []
+
+
+@pytest.mark.parametrize(
+    "mutation", ["field", "location", "bytes", "inventory", "root", "owner"]
+)
+def test_query_facts_enrolled_source_changes_reject(
+    query_facts_memo, tmp_path, mutation
+):
+    memo, paths = query_facts_memo
+    index, path = memo.index, paths["source.py"]
+    with memo.analysis_batch() as batch:
+        assert provider.binding_occurrences(index.snapshots[path].body, "x")
+        if mutation == "field":
+            index.snapshots[path].body[1].targets[0].id = "other"
+        elif mutation == "location":
+            index.snapshots[path].body[1].lineno += 1
+        elif mutation == "bytes":
+            index.source_bytes[path] += b"# changed\n"
+        elif mutation == "inventory":
+            index.inventory[path] = "0" * 64
+        elif mutation == "root":
+            index.root = tmp_path / "other"
+        else:
+            index.class_chain_memo = object()
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize("unsupported", ["name", "parents"])
+def test_query_facts_unsupported_import_inputs_use_raw_fallback(
+    query_facts_memo, unsupported
+):
+    from types import MappingProxyType
+    from factoryline import import_context as context
+
+    class Name(str):
+        pass
+
+    memo, paths = query_facts_memo
+    index, path = memo.index, paths["source.py"]
+    assert index.validate(path)
+    name = "target"
+    if unsupported == "name":
+        name = Name(name)
+    else:
+        index.parents[path] = MappingProxyType(index.parents[path])
+    with memo.analysis_batch() as batch:
+        assert context.captured_import_module(index, path, name) == (
+            True,
+            paths["target.py"],
+        )
+        assert context._FINGERPRINT_EPOCH.get().query_facts is None
+    assert batch.accepted
+
+
+@pytest.fixture
+def prepared_snapshot_inputs(tmp_path):
+    sources = {
+        tmp_path / "source.py": b"from target import value\nVALUE=value\n",
+        tmp_path / "target.py": b"value=1\nimport os\nos.system(input())\n",
+    }
+    for path, raw in sources.items():
+        path.write_bytes(raw)
+    trees = {path: ast.parse(raw) for path, raw in sources.items()}
+    for path, tree in trees.items():
+        tree._oracle_source_sha256 = hashlib.sha256(sources[path]).hexdigest()
+    fingerprints = {
+        path: audit._oracle_tree_fingerprint(tree) for path, tree in trees.items()
+    }
+    source = provider.security_snapshot_model(tmp_path, trees, sources, fingerprints)
+    assert source is not None
+    source.class_chain_memo = ClassChainMemo(source, {}, {}, audit)
+    return trees, fingerprints, sources, {"source": source}
+
+
+def _prepared_snapshot_consume(root, inputs, scanner):
+    from factoryline.context_efficiency import _consume_security_snapshots
+
+    trees, fingerprints, retained, owner = inputs
+    return _consume_security_snapshots(
+        root,
+        list(retained),
+        trees,
+        fingerprints,
+        {},
+        retained,
+        {},
+        (),
+        {},
+        set(),
+        scanner,
+        owner,
+    )
+
+
+def _prepared_metadata_drift(source, change, root):
+    path = next(iter(source.snapshots))
+    if change == "root":
+        source.root = root / "changed"
+    elif change == "inventory":
+        source.inventory[path] = "0" * 64
+    elif change == "bytes":
+        source.source_bytes[path] += b"# changed captured bytes\n"
+    elif change == "memo":
+        source.class_chain_memo = ClassChainMemo(source, {}, {}, audit)
+
+
+@pytest.mark.parametrize("change", ["root", "inventory", "bytes"])
+def test_prepared_snapshot_rejects_preentry_metadata_drift(
+    tmp_path, prepared_snapshot_inputs, change
+):
+    inputs, calls = prepared_snapshot_inputs, []
+    original = dict(inputs[2])
+    _prepared_metadata_drift(inputs[3]["source"], change, tmp_path)
+    with pytest.raises(audit.RuntimeAuditError):
+        _prepared_snapshot_consume(tmp_path, inputs, lambda *args: calls.append(args))
+    assert inputs[0] == {} and inputs[2] == original
+    assert inputs[3]["source"] is None and not calls
+
+
+@pytest.mark.parametrize("stage", ["fingerprint", "reparse"])
+@pytest.mark.parametrize("change", ["root", "inventory", "bytes", "memo"])
+def test_prepared_snapshot_reauthenticates_after_callbacks(
+    tmp_path, prepared_snapshot_inputs, monkeypatch, stage, change
+):
+    inputs, calls, mutations = prepared_snapshot_inputs, [], []
+    source, retained = inputs[3]["source"], dict(inputs[2])
+    if change != "memo":
+        del source.class_chain_memo
+
+    def mutate():
+        if not mutations:
+            mutations.append(change)
+            _prepared_metadata_drift(source, change, tmp_path)
+
+    if stage == "fingerprint":
+        original = audit._oracle_tree_fingerprint
+
+        def fingerprint(tree):
+            value = original(tree)
+            mutate()
+            return value
+
+        monkeypatch.setattr(audit, "_oracle_tree_fingerprint", fingerprint)
+    else:
+        next(iter(inputs[0].values())).body.append(ast.Pass())
+        original = audit._measure_parse
+
+        def parse(*args, **kwargs):
+            tree = original(*args, **kwargs)
+            mutate()
+            return tree
+
+        monkeypatch.setattr(audit, "_measure_parse", parse)
+    with pytest.raises(audit.RuntimeAuditError) as rejected:
+        _prepared_snapshot_consume(tmp_path, inputs, lambda *args: calls.append(args))
+    assert rejected.value.code == "E_INPUT_CHANGED" and mutations == [change]
+    assert inputs[0] == {} and inputs[2] == retained
+    assert inputs[3]["source"] is None and not calls
+
+
+def test_prepared_snapshot_repairs_crossfile_ast_with_shared_authority(
+    tmp_path, prepared_snapshot_inputs, monkeypatch
+):
+    from factoryline import context_efficiency as context
+
+    inputs = prepared_snapshot_inputs
+    original_source = inputs[3]["source"]
+    sources = dict(inputs[2])
+    baseline = _shared_validation_scan(tmp_path, sources, {})
+    assert baseline[0]
+    audit._oracle_context_cache_clear()
+    consume, scan = (
+        context._consume_security_snapshots,
+        audit._security_scan_file_snapshot,
+    )
+    seen, owners = [], []
+
+    def stale(*args):
+        source = args[-1]["source"]
+        owners.append(source)
+        for tree in args[2].values():
+            tree.body.append(ast.Pass())
+        return consume(*args)
+
+    def scanned(*args):
+        source = args[4]["_security_source_model"]
+        assert source is not None and source is not owners[0]
+        assert source.source_bytes == sources
+        assert set(source.snapshots) == set(sources)
+        assert source.class_chain_memo._analysis_batch is not None
+        assert all(source.validate(path) for path in sources)
+        seen.append(source)
+        return scan(*args)
+
+    monkeypatch.setattr(context, "_consume_security_snapshots", stale)
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", scanned)
+    owner = {}
+    assert _shared_validation_scan(tmp_path, sources, owner) == baseline
+    assert len(seen) == 2 and seen[0] is seen[1] is owner["source"]
+    assert owner["source"] is not original_source
+
+
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_binding_occurrence_events",
+        "_raw_import_candidates",
+        "epoch_binding_occurrences",
+        "_owned_ast_query_nodes",
+        "_owned_ast_query_facts",
+        "binding_walker_epoch",
+        "_captured_import_candidates",
+        "prepared_security_snapshot_batch",
+        "_prepare_security_snapshot_owner",
+        "_authenticated_snapshot_inventory",
+        "_uncached_structural_ast_fingerprint",
+        "bind_fingerprint_epoch",
+    ],
+)
+def test_query_facts_inner_helpers_invalidate_native_context(
+    tmp_path, monkeypatch, mutation, name
+):
+    from factoryline import import_context as context
+
+    target = provider if name == "_binding_occurrence_events" else context
+    original = getattr(target, name)
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def changed(*args, **kwargs):
+        return False
+
+    with monkeypatch.context() as patch:
+        if mutation == "binding":
+            patch.setattr(target, name, changed)
+        else:
+            patch.setattr(
+                original,
+                "__code__",
+                original.__code__.replace(co_filename="changed-native-query-helper"),
+            )
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before

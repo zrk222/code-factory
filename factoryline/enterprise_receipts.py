@@ -12,6 +12,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ RESULT_SCHEMA = "factory.enterprise.result.v1"
 DEFAULT_MAX_REVOCATION_AGE_SECONDS = 86400
 MAX_REVOCATION_AGE_SECONDS = 604800
 MAX_REVOCATION_ENTRIES = 4096
+MAX_JSON_DEPTH = 128
 
 
 class EnterpriseReceiptError(RuntimeError):
@@ -121,8 +123,49 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return value
 
 
+def _json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("non-finite JSON number")
+    return number
+
+
+def _json_constant(_value: str) -> None:
+    raise ValueError("non-finite JSON number")
+
+
+def _check_json_depth(value: str) -> None:
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in value:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise ValueError("JSON nesting exceeds maximum depth")
+        elif character in "]}":
+            depth = max(0, depth - 1)
+
+
 def _json_loads(value: str | bytes) -> Any:
-    return json.loads(value, object_pairs_hook=_unique_json_object)
+    if isinstance(value, bytes):
+        value = value.decode(json.detect_encoding(value), "surrogatepass")
+    _check_json_depth(value)
+    return json.loads(
+        value,
+        object_pairs_hook=_unique_json_object,
+        parse_float=_json_float,
+        parse_constant=_json_constant,
+    )
 
 
 def _sha256(value: bytes) -> str:

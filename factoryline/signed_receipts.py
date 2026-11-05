@@ -17,11 +17,13 @@ import subprocess
 import sys
 from typing import Sequence
 
+from .enterprise_receipts import _json_loads
 
 RESULT_SCHEMA = "factory.sigstore.result.v1"
 DEFAULT_TIMEOUT_SECONDS = 300
 CI_RECEIPT_SCHEMA = "factory.receipt.ci.v1"
 CI_CHECK_SCHEMA = "factory.receipt.ci.check.v1"
+MAX_RECEIPT_BYTES = 1_000_000
 CI_COMMANDS = (
     ("tests", ("python", "-m", "pytest", "-n", "2", "-q", "--junitxml=ci-tests.xml")),
     (
@@ -496,8 +498,20 @@ def validate_receipt(receipt_path: Path) -> dict:
     """Validate receipt structure or raise SignedReceiptError with a stable code."""
     path = Path(receipt_path)
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_RECEIPT_BYTES + 1)
+        if len(raw) > MAX_RECEIPT_BYTES:
+            raise SignedReceiptError("E_RECEIPT_SIZE", "receipt exceeds byte limit")
+        payload = _json_loads(raw.decode("utf-8"))
+    except SignedReceiptError:
+        raise
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        ValueError,
+        RecursionError,
+    ) as exc:
         raise SignedReceiptError("E_INVALID_RECEIPT", str(exc)) from exc
     if not isinstance(payload, dict):
         raise SignedReceiptError("E_INVALID_RECEIPT", "receipt must be a JSON object")

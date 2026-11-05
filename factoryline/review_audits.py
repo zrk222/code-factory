@@ -14,7 +14,7 @@ from .import_context import (
     _bound_names as _bound_names,
 )
 from collections import OrderedDict
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from hashlib import sha256
@@ -5641,6 +5641,31 @@ def _security_scan_database_context(
     )
 
 
+@contextmanager
+def _security_snapshot_analysis_batch(model_out):
+    """Keep producer results provisional until source and helper checks pass."""
+    from .credential_role_constructor_provider import ClassChainMemo
+
+    source = (model_out or {}).get("source")
+    accepted = False
+    try:
+        memo = getattr(source, "class_chain_memo", None)
+        if source is not None and memo is None:
+            memo = ClassChainMemo(source, {}, {}, sys.modules[__name__])
+            source.class_chain_memo = memo
+        with memo.analysis_batch() if memo is not None else nullcontext() as batch:
+            yield
+        accepted = source is (model_out or {}).get("source")
+        if batch is not None:
+            accepted = accepted and batch.accepted and memo.index is source
+            accepted = accepted and source.class_chain_memo is memo
+        if not accepted:
+            raise RuntimeAuditError("E_INPUT_CHANGED", "Shared batch rejected.")
+    finally:
+        if not accepted and model_out is not None:
+            model_out["source"] = None
+
+
 def _scan_security_sources(
     workspace: Path,
     files: list[Path],
@@ -5681,25 +5706,24 @@ def _scan_security_sources(
     snapshot_rows = {}
 
     def consume_security_snapshots(snapshots, fingerprints, contexts, retained):
-        """Run the fixed scanner closure while its producer-owned trees are live."""
+        """Publish staged rows only after the owned producer batch is accepted."""
         from .context_efficiency import _consume_security_snapshots
 
-        snapshot_rows.update(
-            _consume_security_snapshots(
-                workspace,
-                files,
-                snapshots,
-                fingerprints,
-                contexts,
-                retained,
-                scoped_reads,
-                tenant_read_calls,
-                tenant_read_bindings,
-                test_file_patterns,
-                _security_scan_file_snapshot,
-                producer_source_model_out,
-            )
+        rows = _consume_security_snapshots(
+            workspace,
+            files,
+            snapshots,
+            fingerprints,
+            contexts,
+            retained,
+            scoped_reads,
+            tenant_read_calls,
+            tenant_read_bindings,
+            test_file_patterns,
+            _security_scan_file_snapshot,
+            producer_source_model_out,
         )
+        snapshot_rows.update(rows)
 
     contexts, context_bindings, oracle_edges, source_bytes = _project_oracle_context(
         workspace,

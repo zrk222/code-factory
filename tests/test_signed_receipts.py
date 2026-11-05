@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -31,6 +32,106 @@ def test_receipt_validation_rejects_non_receipt_json(tmp_path):
     path.write_text('{"schema":"other.v1"}', encoding="utf-8")
     with pytest.raises(SignedReceiptError, match="E_INVALID_RECEIPT"):
         validate_receipt(path)
+
+
+def test_receipt_validation_bounds_read_before_parsing(tmp_path, monkeypatch):
+    import factoryline.signed_receipts as receipts
+
+    path = tmp_path / "oversized.json"
+    path.write_bytes(
+        b'{"schema":"factory.receipt.v2"}' + b" " * receipts.MAX_RECEIPT_BYTES
+    )
+    monkeypatch.setattr(
+        receipts.json,
+        "loads",
+        lambda *_args, **_kwargs: pytest.fail("parsed oversize receipt"),
+    )
+    with pytest.raises(SignedReceiptError) as error:
+        validate_receipt(path)
+    assert error.value.code == "E_RECEIPT_SIZE"
+
+
+def test_receipt_validation_accepts_exact_byte_limit(tmp_path):
+    import factoryline.signed_receipts as receipts
+
+    path = tmp_path / "boundary.json"
+    prefix = b'{"schema":"factory.receipt.v2"}'
+    path.write_bytes(prefix + b" " * (receipts.MAX_RECEIPT_BYTES - len(prefix)))
+    assert path.stat().st_size == receipts.MAX_RECEIPT_BYTES
+    assert validate_receipt(path)["schema"] == "factory.receipt.v2"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"schema":"factory.receipt.v2","schema":"factory.receipt.v3"}',
+        b'{"schema":"factory.receipt.v2","ok":true,"ok":false}',
+        b'{"schema":"factory.receipt.v2","nested":{"field":1,"field":2}}',
+    ],
+)
+def test_receipt_validation_rejects_duplicate_members(tmp_path, raw):
+    path = tmp_path / "duplicate.json"
+    path.write_bytes(raw)
+    with pytest.raises(SignedReceiptError) as error:
+        validate_receipt(path)
+    assert error.value.code == "E_INVALID_RECEIPT"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"schema":"factory.receipt.v2","value":NaN}',
+        b'{"schema":"factory.receipt.v2","value":Infinity}',
+        b'{"schema":"factory.receipt.v2","value":1e999}',
+        b'{"schema":"factory.receipt.v2","value":"\xff"}',
+        b'{"schema":"factory.receipt.v2","value":'
+        + b"[" * 1200
+        + b"0"
+        + b"]" * 1200
+        + b"}",
+    ],
+)
+def test_receipt_validation_normalizes_invalid_bounded_json(tmp_path, raw):
+    path = tmp_path / "invalid.json"
+    path.write_bytes(raw)
+    with pytest.raises(SignedReceiptError) as error:
+        validate_receipt(path)
+    assert error.value.code == "E_INVALID_RECEIPT"
+
+
+def test_enterprise_json_depth_is_bounded_before_parse_and_ignores_string_delimiters(
+    monkeypatch,
+):
+    from factoryline import enterprise_receipts as receipts
+
+    previous_limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(max(previous_limit, 5000))
+        delimiters = 'quoted braces { [ and escaped quote: "'
+        at_limit = (
+            "[" * receipts.MAX_JSON_DEPTH
+            + json.dumps(delimiters)
+            + "]" * receipts.MAX_JSON_DEPTH
+        )
+        parsed = receipts._json_loads(at_limit)
+        assert len(parsed) == 1
+
+        bom_bytes = b"\xef\xbb\xbf" + at_limit.encode("utf-8")
+        assert receipts._json_loads(bom_bytes) == parsed
+
+        def unexpected_parse(*_args, **_kwargs):
+            pytest.fail("excessive nesting reached json.loads")
+
+        monkeypatch.setattr(receipts.json, "loads", unexpected_parse)
+        excessive = (
+            "[" * (receipts.MAX_JSON_DEPTH + 1)
+            + "0"
+            + "]" * (receipts.MAX_JSON_DEPTH + 1)
+        )
+        with pytest.raises(ValueError, match="maximum depth"):
+            receipts._json_loads(excessive)
+    finally:
+        sys.setrecursionlimit(previous_limit)
 
 
 def test_unsigned_receipt_is_never_reported_verified(tmp_path):

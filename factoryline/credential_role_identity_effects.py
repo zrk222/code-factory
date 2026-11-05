@@ -7,19 +7,16 @@ from itertools import islice
 from collections.abc import Callable, Mapping
 
 from dataclasses import dataclass, field as _dataclass_field
-from .credential_role_constructor_provider import resolve_class
-
-from .credential_role_constructor_provider import binding_occurrences
-
+from .credential_role_constructor_provider import (
+    SourceSnapshotIndex,
+    binding_occurrences,
+    effective_method,
+    resolve_class,
+)
 from . import credential_role_constructor_provider as _class_binding
-
 from . import credential_role_identity_effects as _identity_effects
-
 from . import credential_role_constructor_provider as _scope_bindings
-
-from .credential_role_constructor_provider import effective_method
-
-from .credential_role_constructor_provider import SourceSnapshotIndex
+from .import_context import bind_fingerprint_epoch
 
 
 @dataclass(frozen=True)
@@ -427,7 +424,7 @@ def _source_identity_binding_check(
             additional_bindings=bindings[1:],
         )
 
-    return check_binding
+    return bind_fingerprint_epoch(check_binding)
 
 
 def _source_identity_generation_changed(
@@ -827,18 +824,18 @@ def _structural_interpolated_scalars(node, values):
 
 def _unknown_expression(node, aliases, *, strict_calls=False, material_values=False):
     roots = set()
-    if isinstance(node, ast.expr):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and not node.args
-            and not node.keywords
-        ):
-            roots.update(tracked_roots(aliases.get(node.func.id, _Value())))
-        else:
-            for child in ast.walk(node):
-                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
-                    roots.update(tracked_roots(aliases.get(child.id, _Value())))
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and not (node.args or node.keywords)
+    ):
+        roots.update(tracked_roots(aliases.get(node.func.id, _Value())))
+    elif isinstance(node, ast.AST):
+        for child in ast.iter_child_nodes(node):
+            value = identity_value(
+                child, aliases, strict_calls=strict_calls, material_values=True
+            )
+            roots.update(tracked_roots(value))
     return _Value(
         roots=frozenset(roots),
         unknown=material_values or bool(roots),
@@ -1181,7 +1178,7 @@ def call_argument_roots(call, aliases, *, strict_calls=False):
     args = [*call.args, *(item.value for item in call.keywords)]
     return set().union(
         *(
-            tracked_roots(identity_value(arg, aliases, strict_calls=strict_calls))
+            _role_expression_roots(arg, aliases, strict_calls=strict_calls)
             for arg in args
         )
     )
@@ -1214,8 +1211,6 @@ def nested_capture_roots(
     function, path, aliases, index, *, strict_calls=False, effects=None
 ):
     """Collect tracked roots captured by nested scopes and mark unresolved captures as unknown in strict mode."""
-    pass
-
     captured, tracked = set(), set(aliases)
     for node in ast.walk(function):
         _capture_nested_scope(
@@ -1235,7 +1230,8 @@ def nested_capture_roots(
 def _capture_nested_scope(
     node, function, path, tracked, aliases, index, strict_calls, effects, captured
 ):
-    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    scopes += (ast.Lambda, ast.GeneratorExp)
     if node is function or not isinstance(node, scopes):
         return
     parent = index.parents[path].get(id(node))
@@ -1874,9 +1870,9 @@ def identity_fields(fields, index):
 
 
 def _identity_field_value(key, root, index):
-    literal = (
-        _source_literal(root, index) if isinstance(root, SourceFieldLiteral) else None
-    )
+    literal = root if isinstance(root, _Value) else None
+    if isinstance(root, SourceFieldLiteral):
+        literal = _source_literal(root, index)
     if not _identity_field_key_valid(key, root, literal):
         return None
     return literal if literal is not None else _Value(roots=frozenset({root}))
@@ -2234,7 +2230,8 @@ def captured_function_valid(function, path, index):
 
 def own_function_nodes(function, path, index, known_scalars=None):
     """Walk lexical bodies and eager nested headers without trusting parent metadata."""
-    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    scopes += (ast.Lambda, ast.GeneratorExp)
     pending, result = deque([function]), []
     while pending:
         node = pending.popleft()
@@ -2246,8 +2243,9 @@ def own_function_nodes(function, path, index, known_scalars=None):
         if node is function or not isinstance(node, scopes):
             pending.extend(ast.iter_child_nodes(node))
             continue
-        # A nested body has its own scope. Defaults, decorators, annotations,
-        # bases and keywords are evaluated while defining it in the outer scope.
+        if isinstance(node, ast.GeneratorExp):
+            pending.extend(gen.iter for gen in node.generators[:1])
+            continue
         for field, value in ast.iter_fields(node):
             if field == "body":
                 continue
@@ -2319,14 +2317,19 @@ def exported_names(nodes):
 def _definition_effects_unknown(node, *, allowed_decorators=()):
     if isinstance(node, ast.ClassDef):
         return True
+    if isinstance(node, ast.GeneratorExp):
+        if not node.generators or node.generators[0].is_async:
+            return True
+        value = node.generators[0].iter
+        return not _immutable_default(value) or (
+            isinstance(value, ast.Constant) and type(value.value) not in (str, bytes)
+        )
     args = node.args
     params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
     params.extend(arg for arg in (args.vararg, args.kwarg) if arg)
+    decorators = getattr(node, "decorator_list", [])
     return bool(
-        any(
-            item not in allowed_decorators
-            for item in getattr(node, "decorator_list", [])
-        )
+        any(item not in allowed_decorators for item in decorators)
         or any(not _immutable_default(value) for value in args.defaults)
         or any(
             value is not None and not _immutable_default(value)
@@ -2736,7 +2739,8 @@ def summarize_identity_effect(
     roots: Mapping[str, str | SourceFieldLiteral | _Value],
     *,
     resolve_call: CallResolver | None = None,
-    field_roots: Mapping[tuple[str, str], str | SourceFieldLiteral] | None = None,
+    field_roots: Mapping[tuple[str, str], str | SourceFieldLiteral | _Value]
+    | None = None,
     strict_calls=False,
     max_depth=4,
     state_budget=512,
@@ -3238,7 +3242,10 @@ class _Analyzer:
     def _call(self, call, path, aliases, depth, active, out, *, capture_returns=False):
         if literal_dict_update(call, aliases, strict_calls=self.strict_calls):
             return
-        if call_has_unknown_value(call, aliases, strict_calls=self.strict_calls):
+        involved = call_tracked_roots(call, aliases, strict_calls=self.strict_calls)
+        if call_has_unknown_value(call, aliases, strict_calls=self.strict_calls) and (
+            involved or self.strict_calls or self.role_view
+        ):
             out.unknowns.add("call receives an unresolved tracked value")
             _add_role_event(
                 out,
@@ -3258,7 +3265,6 @@ class _Analyzer:
             )
             if not capture_returns:
                 return
-        involved = call_tracked_roots(call, aliases, strict_calls=self.strict_calls)
         if not involved and not self.strict_calls:
             if self.role_view:
                 out.unknowns.add("unresolved ambient call may reach tracked identity")

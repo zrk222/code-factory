@@ -486,24 +486,23 @@ def _binds(node, name):
 
 def binding_occurrences(statements, name, *, per_pass_facts=None):
     """Collect name bindings while respecting nested scopes and named-expression targets in comprehensions."""
+    from .import_context import epoch_binding_occurrences
+
+    statements, rows = epoch_binding_occurrences(statements, name, per_pass_facts)
+    if rows is not None:
+        return list(rows)
+    return _binding_occurrence_events(statements, name, per_pass_facts=per_pass_facts)
+
+
+def _binding_occurrence_events(statements, name, *, per_pass_facts=None):
+    """Retain raw traversal and the explicit per-pass structural event cache."""
+    from .import_context import binding_walker_epoch
+
     match per_pass_facts:
         case dict() as cache:
             record_events = True
             statement_nodes = tuple(statements)
-            walker_epoch = tuple(
-                (
-                    helper,
-                    getattr(helper, "__code__", None),
-                    id(getattr(helper, "__defaults__", None)),
-                )
-                for helper in (
-                    binding_occurrences,
-                    _binds,
-                    ast.walk,
-                    ast.iter_child_nodes,
-                    ast.iter_fields,
-                )
-            ) + (ast.NamedExpr, _SCOPES, _COMPREHENSIONS)
+            walker_epoch = binding_walker_epoch()
             cache_key = (
                 "binding-occurrence-events",
                 id(statements),
@@ -1005,6 +1004,20 @@ class SourceSnapshotIndex:
             and all(isinstance(raw, bytes) for raw in source_bytes.values())
             and sum(len(raw) for raw in source_bytes.values()) <= 32 * 1024 * 1024
         )
+
+    def __deepcopy__(self, memo):
+        """Copy source-owned snapshots while discarding runtime validation state."""
+        clone = type(self).__new__(type(self))
+        memo[id(self)] = clone
+        clone.__init__(
+            self.root,
+            copy.deepcopy(self.snapshots, memo),
+            dict(self.source_bytes),
+            dict(self.inventory),
+        )
+        if hasattr(self, "producer_fingerprints"):
+            clone.producer_fingerprints = dict(self.producer_fingerprints)
+        return clone
 
     def validate(self, path):
         """Validate captured source bytes against the snapshot digest and AST, enforcing the one-megabyte source limit."""
@@ -2217,6 +2230,8 @@ class ClassChainMemo:
     @contextmanager
     def analysis_batch(self):
         """Defer repeated fresh checks until the producer's all-evidence exit."""
+        from .import_context import fingerprint_epoch
+
         if self._analysis_batch is not None:
             raise ValueError("nested analysis batch")
         state = SimpleNamespace(started=self.valid(), accepted=False, helper_epoch={})
@@ -2226,8 +2241,9 @@ class ClassChainMemo:
         self._analysis_batch = state
         completed = False
         try:
-            yield state
-            completed = True
+            with fingerprint_epoch(self, state):
+                yield state
+                completed = True
         finally:
             self._analysis_batch = None
             fresh = self.valid()
