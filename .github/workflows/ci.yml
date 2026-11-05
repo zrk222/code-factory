@@ -199,7 +199,7 @@ jobs:
             '--deselect=tests/test_audit_rule_search.py::test_declaration_neighborhood_empty_package_passes_public_js_intake
             --deselect=tests/test_audit_rule_search.py::test_security_producer_nested_call_spans_reach_context_and_public_intake
             --deselect=tests/test_audit_rule_search.py::test_contextual_evidence_public_source_intake_to_pending_review' || '' }}
-        run: python -m pytest -n ${{ matrix.os == 'macos-latest' && 4 || matrix.os == 'windows-latest' && 3 || 2 }} -q --junitxml=pytest-results.xml --durations=20
+        run: python -m pytest -n ${{ matrix.os == 'windows-latest' && 3 || 2 }} ${{ matrix.os == 'macos-latest' && '--dist=worksteal' || '' }} -q --junitxml=pytest-results.xml --durations=20
       - name: Start runtime coverage receipt
         id: runtime-coverage-start
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
