@@ -663,11 +663,7 @@ def _fixture_literal_candidates(tree, audit):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         literal = audit._secret_literal(node)
         target = targets[0] if len(targets) == 1 else None
-        if (
-            literal is None
-            or not isinstance(target, ast.Name)
-            or not audit._SECRET_ASSIGNMENT.search(target.id)
-        ):
+        if literal is None or not audit._literal_credential_candidate(node, target):
             continue
         candidates.append((node, target, literal))
     return candidates
@@ -709,6 +705,7 @@ def _captured_fixture_configuration(root, bindings, read_source, limit):
 def provider_context_cache_helpers(contracts):
     """Return the source inventory and cache helpers in the cache epoch."""
     from . import credential_role_constructor_provider as roles
+    from .review_audits import _literal_credential_candidate
 
     return (
         roles.security_snapshot_model,
@@ -766,6 +763,7 @@ def provider_context_cache_helpers(contracts):
         _cached_import_binding,
         _cached_import_path,
         _fixture_literal_candidates,
+        _literal_credential_candidate,
         bind_django_fixture_context,
         bind_application_fixture_context,
         _fixture_literal_evidence,

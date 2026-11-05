@@ -4647,7 +4647,7 @@ class CapturedOriginProjection:
         return True, result["return_values"][0]
 
 
-SCOPE_API_CONTRACT_EPOCH = "test-scope-pyjwt-2.10.1-v1"
+SCOPE_API_CONTRACT_EPOCH = "test-scope-pyjwt-2.10.1-settings-v2"
 
 
 def _scope_value_roots(value):
@@ -5073,45 +5073,17 @@ class _SourceTestScope:
         from .pytest_collection_audit import (
             _pytest_collection_hook_names,
             _pytest_collection_settings,
-            _pytest_config_data,
             _pytest_file_matches,
             _pytest_plugin_declaration_active,
+            captured_pytest_configuration,
         )
-        from .review_audits import MAX_BYTES, _TEST_FILE_PATTERNS
 
         configurations = self.index.get("configuration_bytes")
-        if not isinstance(configurations, dict):
-            return None
-        selected = None
-        for name, section, raw in (
-            (name, section, configurations[name])
-            for name, section in (
-                ("pytest.toml", "toml-pytest"),
-                (".pytest.toml", "toml-pytest"),
-                ("pytest.ini", "pytest"),
-                (".pytest.ini", "pytest"),
-                ("pyproject.toml", "pyproject"),
-                ("tox.ini", "pytest"),
-                ("setup.cfg", "tool:pytest"),
-            )
-            if configurations.get(name) is not None
-        ):
-            if not isinstance(raw, bytes) or len(raw) > MAX_BYTES:
-                return None
-            _patterns, identity = _pytest_config_data(
-                raw, name, section, set(_TEST_FILE_PATTERNS)
-            )
-            state = identity.get("state")
-            if state == "absent-section":
-                continue
-            if state != "read":
-                return None
-            selected = identity
-            break
+        selected = captured_pytest_configuration(configurations)
         if selected is None:
             # No captured config does not prove absence of a higher-priority config.
             return None
-        settings = _pytest_collection_settings(selected)
+        settings = _pytest_collection_settings(selected["identity"])
         for path, tree in self.index["modules"].items():
             if not self.source.validate(path) or not isinstance(
                 relative := self.source.relative(path), str
@@ -5474,6 +5446,17 @@ class _SourceTestScope:
 
     def exercise(self):
         """Check all captured origin uses and exercise every validated test owner."""
+        trial = object.__new__(type(self))
+        trial.__dict__ = {
+            **self.__dict__,
+            **{
+                name: dict(getattr(self, name))
+                for name in ("objects", "witnesses", "owners", "pytest_owners")
+            },
+        }
+        if trial.configured_settings_scope():
+            self.__dict__.update(trial.__dict__)
+            return True
         if (
             not self.view
             or not self.view.complete
@@ -5518,6 +5501,183 @@ class _SourceTestScope:
             self.exercise_pytest_root(path, function, owner)
             for path, function, owner in self.pytest_owners.values()
         )
+
+    def configured_settings_scope(self):
+        """Bind a declared test settings load independently of deployment assurance."""
+        from .pytest_collection_audit import (
+            captured_pytest_configuration,
+            captured_pytest_django_provider,
+        )
+
+        if self.fact is None or self.fact.source_role != "module_literal":
+            return False
+        if self.secret != "SECRET_KEY" or not self.source.validate(self.path):
+            return False
+        provider = captured_pytest_django_provider(self.index["configuration_bytes"])
+        if provider is None or self.fixture._django_provider_root_shadowed(
+            self.index["module_paths"], "pytest_django"
+        ):
+            return False
+        if binding_occurrences(self.index["modules"][self.path].body, self.secret) != [
+            self.assignment.targets[0]
+            if isinstance(self.assignment, ast.Assign)
+            else self.assignment.target
+        ]:
+            return False
+        selected = captured_pytest_configuration(self.index["configuration_bytes"])
+        if selected is None or self._pytest_collection() is None:
+            return False
+        options = selected["options"]
+        module = options.get("DJANGO_SETTINGS_MODULE")
+        if (
+            not isinstance(module, str)
+            or self.fixture._django_mod(self.index, module)[0] != self.path
+            or options.get("DJANGO_CONFIGURATION")
+        ):
+            return False
+        collected = self.configured_settings_invocations(selected)
+        if not collected or not self.configured_settings_uses(module, collected):
+            return False
+        self.witness(self.path, self.assignment, "configured_test_settings_binding")
+        for path, function in (
+            (path, fn) for path, functions in collected.items() for fn in functions
+        ):
+            self.witness(path, function, "declared_pytest_settings_invocation")
+        self.settings_selection = {
+            "selection_assurance": "SOURCE_BOUND_CONDITIONAL",
+            "execution_status": "NOT_EXECUTED",
+            "provider_activation": "NOT_OBSERVED",
+            "provider": provider,
+            "configuration": selected["identity"],
+        }
+        return True
+
+    def configured_settings_invocations(self, selected):
+        """Reuse source-bound pytest/unittest inheritance and collection semantics."""
+        from pathlib import Path
+
+        from .pytest_collection_audit import _pytest_collection_settings
+
+        maps = self.audit._legacy._fixture_class_maps(self.index)
+        if maps is None:
+            return {}
+        patterns = _pytest_collection_settings(selected["identity"])
+        roots = selected["options"].get("testpaths", ["."])
+        roots = roots.split() if isinstance(roots, str) else roots
+        if (
+            not isinstance(roots, list)
+            or not roots
+            or not all(
+                isinstance(root, str)
+                and not Path(root).is_absolute()
+                and ".." not in Path(root).parts
+                for root in roots
+            )
+        ):
+            return {}
+        roots = [self.source.root / root for root in roots]
+        collected = {
+            path: tuple(
+                function
+                for function, _chain in self.audit._legacy._django_test_collected_methods(
+                    self.index, path, roots, patterns, maps
+                )
+            )
+            for path in self.index["modules"]
+        }
+        return {path: functions for path, functions in collected.items() if functions}
+
+    def configured_settings_uses(self, module, collected):
+        """Keep runtime selectors, namespace escapes and direct consumers unresolved."""
+        from .semantic_credential_sensor import (
+            _DJANGO_LOADER_ROOTS,
+            _signing_provider_clear,
+        )
+
+        if not self.view or not self.view.complete:
+            return False
+        if self.view._data_reflection_conflict(self.fact):
+            return False
+        for path, tree in self.index["modules"].items():
+            if not self.source.validate(path):
+                return False
+            aliases = self.fixture._django_imports(self.index, path)
+            if aliases is None or not _signing_provider_clear(
+                tree,
+                aliases,
+                "django",
+                roots=(
+                    *_DJANGO_LOADER_ROOTS,
+                    "django.conf.settings.SECRET_KEY",
+                    "django.conf.settings.SECRET_KEY_FALLBACKS",
+                    "pytest.main",
+                    "pytest_django",
+                ),
+            ):
+                return False
+            if any(
+                self.configured_settings_counteredge(path, node, module)
+                for node in ast.walk(tree)
+            ):
+                return False
+        uses = self.view._module_uses(
+            self.fact,
+            lambda path, node: self.origin_use(path, node)
+            if self.audit._legacy._enclosing_function(node, self.source.parents[path])
+            in collected.get(path, ())
+            else None,
+        )
+        if uses is None:
+            return False
+        return all(
+            self.exercise_owner(path, owner) for path, owner in self.owners.values()
+        ) and all(
+            self.exercise_pytest_root(path, function, owner)
+            for path, function, owner in self.pytest_owners.values()
+        )
+
+    def configured_settings_counteredge(self, path, node, module):
+        """Reject unresolved selection or key replacement with shared provider identities."""
+        if isinstance(node, ast.Constant) and node.value == module:
+            return True
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and self.canonical(path, node.value) == "os.environ"
+        ):
+            return not isinstance(node.slice, ast.Constant) or node.slice.value in {
+                "DJANGO_SETTINGS_MODULE",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+                "PYTEST_ADDOPTS",
+                "PYTEST_PLUGINS",
+            }
+        if not isinstance(node, ast.Call):
+            return False
+        canonical = self.canonical(path, node.func)
+        if canonical in {"os.putenv", "os.unsetenv"}:
+            return True
+        if canonical == "os.environ.setdefault" and node.args:
+            selector = node.args[0]
+            return isinstance(selector, ast.Constant) and (
+                selector.value
+                in {
+                    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+                    "PYTEST_ADDOPTS",
+                    "PYTEST_PLUGINS",
+                }
+                or selector.value == "DJANGO_SETTINGS_MODULE"
+                and (len(node.args) != 2 or not isinstance(node.args[1], ast.Constant))
+            )
+        if canonical == "django.test.override_settings":
+            return bool(node.args) or any(
+                item.arg in {None, "SECRET_KEY", "SECRET_KEY_FALLBACKS"}
+                for item in node.keywords
+            )
+        return canonical in {
+            "django.conf.settings.configure",
+            "importlib.import_module",
+            "pytest.main",
+        }
 
     def exercise_pytest_root(self, path, function, owner):
         """Interpret one selected pytest invocation with the shared transfer closure."""
@@ -5629,6 +5789,11 @@ def _source_test_scope_evidence(index, path, assignment, secret):
         "isolation_assurance": "UNASSESSED",
         "provider_runtime_version": "UNASSESSED",
         "semantic_model": SCOPE_API_CONTRACT_EPOCH,
+        **(
+            {"settings_selection": proof.settings_selection}
+            if hasattr(proof, "settings_selection")
+            else {}
+        ),
         "witness_sources": witnesses,
         "consumer_use_closure": {
             "schema": "factory.test-scope-consumer-closure.v1",

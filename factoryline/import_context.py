@@ -1500,6 +1500,16 @@ def unique_import_source(matches, *, strict):
 
 def import_resolution_helpers():
     """Expose current resolver bindings/code to the existing native cache epoch."""
+    from .pytest_collection_audit import (
+        captured_pytest_configuration,
+        captured_pytest_django_provider,
+        _pytest_django_requirement,
+        _pytest_configuration_options,
+        _pytest_settings_selection_overridden,
+        _pytest_effective_settings_options,
+        _pytest_django_project_declarations,
+        _pytest_config_data,
+    )
     from .credential_role_constructor_provider import (
         SourceSnapshotIndex,
         _binds,
@@ -1538,6 +1548,14 @@ def import_resolution_helpers():
             for helper in _fingerprint_epoch_helpers()
             if callable(helper) and hasattr(helper, "__name__")
         ),
+        captured_pytest_configuration,
+        captured_pytest_django_provider,
+        _pytest_django_requirement,
+        _pytest_configuration_options,
+        _pytest_settings_selection_overridden,
+        _pytest_effective_settings_options,
+        _pytest_django_project_declarations,
+        _pytest_config_data,
         prepared_security_snapshot_batch,
         getattr(
             prepared_security_snapshot_batch,
