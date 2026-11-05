@@ -1621,6 +1621,98 @@ def test_local_production_mutation_capture_records_real_all_case_failure(tmp_pat
     _assert_local_candidate_negative_controls(result)
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_local_mutation_keeps_venv_launcher_path(tmp_path, monkeypatch, explicit):
+    from factoryline import runtime_audit_runner as runner
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    _, line = _mutation_project(tmp_path)
+    launcher = tmp_path / ".venv" / "bin" / "python"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_bytes(b"venv launcher")
+    base = tmp_path / "base-python"
+    base.write_bytes(b"base interpreter")
+    original_resolve = Path.resolve
+    monkeypatch.setattr(
+        Path,
+        "resolve",
+        lambda path, *args, **kwargs: base
+        if path == launcher
+        else original_resolve(path, *args, **kwargs),
+    )
+    monkeypatch.setattr(runner.sys, "executable", str(launcher))
+    selected = []
+
+    def observe(*args):
+        selected.append(args[-1])
+        raise RuntimeAuditError(
+            "E_TEST_INTERPRETER", "launcher captured before execution"
+        )
+
+    monkeypatch.setattr(runner, "_run_mutation_trials", observe)
+    options = {"python_executable": launcher} if explicit else {}
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        line,
+        "app.py",
+        "value",
+        "return 1",
+        "return 0",
+        ".factory/launcher-check",
+        **options,
+    )
+    assert selected == [launcher.absolute()]
+    assert result["error_code"] == "E_TEST_INTERPRETER"
+    assert result["cleanup"]["removed"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX venv interpreter links")
+def test_local_mutation_preserves_real_symlinked_venv_imports(tmp_path):
+    import subprocess
+    import venv
+
+    _, line = _mutation_project(tmp_path)
+    environment = tmp_path / ".venv"
+    venv.EnvBuilder(with_pip=False, symlinks=True, system_site_packages=True).create(
+        environment
+    )
+    launcher = environment / "bin" / "python"
+    assert launcher.is_symlink()
+    query = subprocess.run(
+        [str(launcher), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    site = Path(query.stdout.strip())
+    marker = (
+        "cf_mutation_venv_" + hashlib.sha256(str(tmp_path).encode()).hexdigest()[:12]
+    )
+    (site / (marker + ".py")).write_text("EXPECTED = 1\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        f"import {marker}\ndef value():\n    return {marker}.EXPECTED\n",
+        encoding="utf-8",
+    )
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        line,
+        "app.py",
+        "value",
+        f"return {marker}.EXPECTED",
+        "return 0",
+        ".factory/venv-capture",
+        python_executable=launcher,
+    )
+    assert result["status"] == "OBSERVED"
+    assert result["v3_candidate_projection"]["status"] == "CANDIDATE"
+    assert result["source_unchanged"] is True
+    assert result["cleanup"]["removed"] is True
+    _assert_local_candidate_negative_controls(result)
+
+
 def _assert_local_candidate_envelope(result):
     projection = result["v3_candidate_projection"]
     assert result["schema"] == "factory.local-production-mutation-capture.v1"
