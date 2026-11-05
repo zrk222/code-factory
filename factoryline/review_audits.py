@@ -5709,8 +5709,7 @@ def _scan_security_sources(
         """Publish staged rows only after the owned producer batch is accepted."""
         from .context_efficiency import _consume_security_snapshots
 
-        batch = _security_snapshot_analysis_batch(producer_source_model_out)
-        rows = batch(_consume_security_snapshots)(
+        rows = _consume_security_snapshots(
             workspace,
             files,
             snapshots,

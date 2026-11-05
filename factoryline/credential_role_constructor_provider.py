@@ -486,24 +486,23 @@ def _binds(node, name):
 
 def binding_occurrences(statements, name, *, per_pass_facts=None):
     """Collect name bindings while respecting nested scopes and named-expression targets in comprehensions."""
+    from .import_context import epoch_binding_occurrences
+
+    statements, rows = epoch_binding_occurrences(statements, name, per_pass_facts)
+    if rows is not None:
+        return list(rows)
+    return _binding_occurrence_events(statements, name, per_pass_facts=per_pass_facts)
+
+
+def _binding_occurrence_events(statements, name, *, per_pass_facts=None):
+    """Retain raw traversal and the explicit per-pass structural event cache."""
+    from .import_context import binding_walker_epoch
+
     match per_pass_facts:
         case dict() as cache:
             record_events = True
             statement_nodes = tuple(statements)
-            walker_epoch = tuple(
-                (
-                    helper,
-                    getattr(helper, "__code__", None),
-                    id(getattr(helper, "__defaults__", None)),
-                )
-                for helper in (
-                    binding_occurrences,
-                    _binds,
-                    ast.walk,
-                    ast.iter_child_nodes,
-                    ast.iter_fields,
-                )
-            ) + (ast.NamedExpr, _SCOPES, _COMPREHENSIONS)
+            walker_epoch = binding_walker_epoch()
             cache_key = (
                 "binding-occurrence-events",
                 id(statements),

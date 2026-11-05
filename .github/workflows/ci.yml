@@ -163,6 +163,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,enterprise]"
+      - name: Preflight scanner source contracts
+        run: >-
+          python -m pytest -q
+          tests/test_review_audits.py::test_security_scan_orchestration_stays_within_complexity_budget
+          tests/test_context_efficiency.py::test_security_scan_reparses_a_tree_changed_by_an_intermediate_consumer
       - name: Preflight public Node intake
         if: matrix.os == 'windows-latest' && matrix.python == '3.10'
         timeout-minutes: 2

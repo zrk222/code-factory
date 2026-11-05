@@ -819,49 +819,49 @@ def _consume_security_snapshots(
     """Consume trees while retaining an owned source model for later consumers."""
     from . import test_oracle_misuse as oracle
     from . import review_audits as audit
+    from .import_context import prepared_security_snapshot_batch
 
     security_only = audit._SECURITY_ONLY_SCAN.get() is True
-    rows, state = (
-        {},
-        (
-            ({}, {})
-            if security_only
-            else oracle.source_callback_snapshot_state(snapshots, fingerprints)
-        ),
-    )
     provider_mutations = {}
+    scopes = scoped_reads or {}
     try:
-        for path in files:
-            if (tree := snapshots.pop(path, None)) is None:
-                continue
-            scope = (scoped_reads or {}).get(
-                path.relative_to(workspace).as_posix(), (scoped_reads or {}).get("", {})
-            )
-            calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
-            bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
-            context = {
-                **contexts.get(path, {}),
-                "_tenant_policy_applies": scope.get("_policy_applies", False),
-                "_security_source_context": (workspace, retained),
-                "_security_provider_mutation_cache": provider_mutations,
-                "_security_source_model": (source_model_out or {}).get("source"),
-            }
+        with prepared_security_snapshot_batch(
+            audit, workspace, source_model_out, (snapshots, fingerprints, retained)
+        ):
+            rows, state = {}, ({}, {})
             if not security_only:
-                bind = oracle.source_callback_snapshot_context
-                context.update(
-                    bind(context.get("captured_imports", {}), workspace, *state)
+                state = oracle.source_callback_snapshot_state(snapshots, fingerprints)
+            for path in files:
+                if (tree := snapshots.pop(path, None)) is None:
+                    continue
+                relative = path.relative_to(workspace).as_posix()
+                scope = scopes.get(relative, scopes.get("", {}))
+                calls = set(tenant_read_calls) | set(scope.get("calls", ()))
+                calls = tuple(sorted(calls))
+                bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
+                context = {
+                    **contexts.get(path, {}),
+                    "_tenant_policy_applies": scope.get("_policy_applies", False),
+                    "_security_source_context": (workspace, retained),
+                    "_security_provider_mutation_cache": provider_mutations,
+                    "_security_source_model": (source_model_out or {}).get("source"),
+                }
+                if not security_only:
+                    bind = oracle.source_callback_snapshot_context
+                    context.update(
+                        bind(context.get("captured_imports", {}), workspace, *state)
+                    )
+                rows[path] = scan_snapshot(
+                    workspace,
+                    path,
+                    calls,
+                    bindings,
+                    context,
+                    test_file_patterns,
+                    retained.get(path),
+                    tree,
+                    fingerprints.get(path),
                 )
-            rows[path] = scan_snapshot(
-                workspace,
-                path,
-                calls,
-                bindings,
-                context,
-                test_file_patterns,
-                retained.get(path),
-                tree,
-                fingerprints.get(path),
-            )
     finally:
         snapshots.clear()
     return rows
