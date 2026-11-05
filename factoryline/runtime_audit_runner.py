@@ -935,7 +935,8 @@ def capture_local_production_mutation(
     )
     prepared["root"] = root
     evidence = prepared["evidence"]
-    interpreter = Path(python_executable or sys.executable).resolve(strict=True)
+    # Resolving a venv launcher can select its base Python and lose venv packages.
+    interpreter = Path(python_executable or sys.executable).absolute()
     if not interpreter.is_file():
         raise RuntimeAuditError(
             "E_MUTATION_INPUT", "interpreter must be a regular file"

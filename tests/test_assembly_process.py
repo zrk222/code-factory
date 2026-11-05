@@ -476,7 +476,7 @@ def test_ci_runs_native_python_matrix_on_all_supported_host_families() -> None:
     assert 'python: ["3.10", "3.11", "3.12"]' in workflow
     jobs = yaml.safe_load(workflow)["jobs"]
     runner = "${{ matrix.os == 'macos-latest' && 'macos-15-intel' || matrix.os }}"
-    assert jobs["test"]["runs-on"] == runner
+    assert jobs["test"]["runs-on"] == "${{ matrix.os }}"
     assert jobs["native-process-parity"]["runs-on"] == runner
     assert "native-process-parity:" in workflow
     assert "os: [ubuntu-latest, macos-latest]" in workflow
