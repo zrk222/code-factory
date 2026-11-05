@@ -6,7 +6,9 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -570,7 +572,10 @@ def test_atomic_history_lock_serializes_processes_and_releases_after_crash(
     from factoryline.atomic_proof_adapter import _atomic_history_lock
 
     with _atomic_history_lock(tmp_path):
-        assert (tmp_path / ".factory" / ".atomic-history.lock").is_file()
+        if os.name == "nt":
+            assert not (tmp_path / ".factory").exists()
+        else:
+            assert (tmp_path / ".factory" / ".atomic-history.lock").is_file()
 
 
 def test_atomic_history_lock_rejects_factory_directory_symlink_without_outside_write(
@@ -588,10 +593,16 @@ def test_atomic_history_lock_rejects_factory_directory_symlink_without_outside_w
     except (OSError, NotImplementedError) as exc:
         pytest.skip(f"directory symlink creation unavailable: {exc}")
 
+    if os.name == "nt":
+        with _atomic_history_lock(tmp_path):
+            pass
+        assert not (outside / ".atomic-history.lock").exists()
+        return
+
     with pytest.raises(AtomicProofAdapterError) as raised:
         with _atomic_history_lock(tmp_path):
             pytest.fail("linked workspace lock directory was accepted")
-    assert raised.value.code == "E_ATOMIC_SCOPE_ESCAPE"
+    assert raised.value.code == "E_ATOMIC_EVIDENCE_UNVERIFIED"
     assert not (outside / ".atomic-history.lock").exists()
 
 
@@ -612,11 +623,69 @@ def test_atomic_history_lock_rejects_lockfile_symlink_without_target_mutation(
     except (OSError, NotImplementedError) as exc:
         pytest.skip(f"file symlink creation unavailable: {exc}")
 
+    if os.name == "nt":
+        with _atomic_history_lock(tmp_path):
+            pass
+        assert outside.read_bytes() == b""
+        return
+
     with pytest.raises(AtomicProofAdapterError) as raised:
         with _atomic_history_lock(tmp_path):
             pytest.fail("linked lock file was accepted")
-    assert raised.value.code == "E_ATOMIC_SCOPE_ESCAPE"
+    assert raised.value.code == "E_ATOMIC_EVIDENCE_UNVERIFIED"
     assert outside.read_bytes() == b""
+
+
+def test_posix_lock_acquisition_error_is_normalized_and_closes_parent_handles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import atomic_proof_adapter as adapter
+
+    opened = []
+    closed = []
+
+    def fake_open(path, *_args, **_kwargs):
+        if Path(path) == tmp_path:
+            opened.append(11)
+            return 11
+        if path == ".factory":
+            opened.append(12)
+            return 12
+        raise OSError("injected no-follow lock open failure")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "fcntl",
+        SimpleNamespace(LOCK_EX=1, flock=lambda *_args: None),
+    )
+    monkeypatch.setattr(adapter.os, "open", fake_open)
+    monkeypatch.setattr(adapter.os, "mkdir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(adapter.os, "close", closed.append)
+
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        with adapter._posix_history_lock(tmp_path):
+            pytest.fail("failed lock acquisition entered its critical section")
+    assert raised.value.code == "E_ATOMIC_EVIDENCE_UNVERIFIED"
+    assert opened == [11, 12]
+    assert closed == [12, 11]
+
+
+def test_windows_history_mutex_uses_canonical_workspace_identity_and_no_filesystem(
+    tmp_path: Path,
+) -> None:
+    if os.name != "nt":
+        pytest.skip("Windows named mutex contract")
+    from factoryline.atomic_proof_adapter import (
+        _atomic_history_lock,
+        _windows_history_mutex_name,
+    )
+
+    alias = tmp_path / "child" / ".."
+    assert _windows_history_mutex_name(tmp_path) == _windows_history_mutex_name(alias)
+    assert not (tmp_path / ".factory").exists()
+    with _atomic_history_lock(tmp_path):
+        assert not (tmp_path / ".factory").exists()
+    assert not (tmp_path / ".factory").exists()
 
 
 def test_custom_output_keeps_canonical_history_and_conflict_check(
@@ -632,6 +701,12 @@ def test_custom_output_keeps_canonical_history_and_conflict_check(
     exported = tmp_path / "exports" / "first.json"
     assert Path(str(receipt["path"])) == Path("exports/first.json")
     assert exported.read_bytes() == history[0].read_bytes()
+    repeated = import_atomic_run(
+        tmp_path, first_path.relative_to(tmp_path), Path("exports/first.json")
+    )
+    assert repeated["receipt_sha256"] == receipt["receipt_sha256"]
+    assert exported.read_bytes() == history[0].read_bytes()
+    assert len(list((tmp_path / ".factory" / "atomic").glob("*.json"))) == 1
 
     second, _ = _envelope(tmp_path, run_id="atomic-export-2")
     changed_artifact = _digest("custom-path-cannot-bypass-history")
@@ -645,6 +720,24 @@ def test_custom_output_keeps_canonical_history_and_conflict_check(
     assert raised.value.code == "E_ATOMIC_HANDOFF_DRIFT"
     assert not (tmp_path / "exports" / "second.json").exists()
     assert len(list((tmp_path / ".factory" / "atomic").glob("*.json"))) == 1
+
+
+def test_prefix_related_run_ids_keep_distinct_canonical_history(
+    tmp_path: Path,
+) -> None:
+    child, _ = _envelope(tmp_path, run_id="run-child")
+    child_receipt = _import(tmp_path, child, filename="run-child-envelope.json")
+    parent, _ = _envelope(tmp_path, run_id="run")
+    parent_receipt = _import(tmp_path, parent, filename="run-envelope.json")
+
+    assert child_receipt["run"]["id"] == "run-child"
+    assert parent_receipt["run"]["id"] == "run"
+    names = sorted(
+        path.name for path in (tmp_path / ".factory" / "atomic").glob("*.json")
+    )
+    assert len(names) == 2
+    assert any(name.startswith("run-child-") for name in names)
+    assert f"run-{parent_receipt['receipt_sha256'][:12]}.json" in names
 
 
 def test_custom_output_collision_is_checked_before_history_commit(
@@ -691,6 +784,53 @@ def test_custom_export_failure_keeps_committed_canonical_history(
     )
     assert not (tmp_path / "exports" / "unavailable.json").exists()
     assert not list((tmp_path / ".factory" / "atomic").glob("*.tmp"))
+
+    monkeypatch.setattr(adapter.os, "link", original_link)
+    recovered = import_atomic_run(
+        tmp_path, source.relative_to(tmp_path), Path("exports/unavailable.json")
+    )
+    assert (tmp_path / "exports" / "unavailable.json").read_bytes() == history[
+        0
+    ].read_bytes()
+    assert (
+        recovered["receipt_sha256"]
+        == json.loads(history[0].read_text(encoding="utf-8"))["receipt_sha256"]
+    )
+
+    changed = copy.deepcopy(envelope)
+    changed["envelope_id"] = "different-envelope"
+    changed_path = _write(tmp_path / "changed-same-run-envelope.json", changed)
+    incumbent = history[0].read_bytes()
+    with pytest.raises(AtomicProofAdapterError, match="already bound"):
+        import_atomic_run(
+            tmp_path,
+            changed_path.relative_to(tmp_path),
+            Path("exports/changed.json"),
+        )
+    assert history[0].read_bytes() == incumbent
+    assert not (tmp_path / "exports" / "changed.json").exists()
+    assert len(list((tmp_path / ".factory" / "atomic").glob("*.json"))) == 1
+
+
+def test_atomic_receipt_binds_exact_envelope_bytes_loaded_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import atomic_proof_adapter as adapter
+
+    envelope, _ = _envelope(tmp_path)
+    source = _write(tmp_path / "mutable-envelope.json", envelope)
+    loaded_bytes = source.read_bytes()
+    original_identity = adapter._atomic_run_identity
+
+    def mutate_after_load(entry):
+        identity = original_identity(entry)
+        source.write_bytes(b"changed after parser read")
+        return identity
+
+    monkeypatch.setattr(adapter, "_atomic_run_identity", mutate_after_load)
+    receipt = import_atomic_run(tmp_path, source.relative_to(tmp_path))
+    assert receipt["envelope"]["sha256"] == hashlib.sha256(loaded_bytes).hexdigest()
+    assert source.read_bytes() == b"changed after parser read"
 
 
 def test_import_requires_hash_equal_checkpoint_for_human_reviewed_resume(

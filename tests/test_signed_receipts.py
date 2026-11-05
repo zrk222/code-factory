@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -96,6 +97,41 @@ def test_receipt_validation_normalizes_invalid_bounded_json(tmp_path, raw):
     with pytest.raises(SignedReceiptError) as error:
         validate_receipt(path)
     assert error.value.code == "E_INVALID_RECEIPT"
+
+
+def test_enterprise_json_depth_is_bounded_before_parse_and_ignores_string_delimiters(
+    monkeypatch,
+):
+    from factoryline import enterprise_receipts as receipts
+
+    previous_limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(max(previous_limit, 5000))
+        delimiters = 'quoted braces { [ and escaped quote: "'
+        at_limit = (
+            "[" * receipts.MAX_JSON_DEPTH
+            + json.dumps(delimiters)
+            + "]" * receipts.MAX_JSON_DEPTH
+        )
+        parsed = receipts._json_loads(at_limit)
+        assert len(parsed) == 1
+
+        bom_bytes = b"\xef\xbb\xbf" + at_limit.encode("utf-8")
+        assert receipts._json_loads(bom_bytes) == parsed
+
+        def unexpected_parse(*_args, **_kwargs):
+            pytest.fail("excessive nesting reached json.loads")
+
+        monkeypatch.setattr(receipts.json, "loads", unexpected_parse)
+        excessive = (
+            "[" * (receipts.MAX_JSON_DEPTH + 1)
+            + "0"
+            + "]" * (receipts.MAX_JSON_DEPTH + 1)
+        )
+        with pytest.raises(ValueError, match="maximum depth"):
+            receipts._json_loads(excessive)
+    finally:
+        sys.setrecursionlimit(previous_limit)
 
 
 def test_unsigned_receipt_is_never_reported_verified(tmp_path):
