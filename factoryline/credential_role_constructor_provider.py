@@ -2231,6 +2231,8 @@ class ClassChainMemo:
     @contextmanager
     def analysis_batch(self):
         """Defer repeated fresh checks until the producer's all-evidence exit."""
+        from .import_context import fingerprint_epoch
+
         if self._analysis_batch is not None:
             raise ValueError("nested analysis batch")
         state = SimpleNamespace(started=self.valid(), accepted=False, helper_epoch={})
@@ -2240,8 +2242,9 @@ class ClassChainMemo:
         self._analysis_batch = state
         completed = False
         try:
-            yield state
-            completed = True
+            with fingerprint_epoch(self, state):
+                yield state
+                completed = True
         finally:
             self._analysis_batch = None
             fresh = self.valid()

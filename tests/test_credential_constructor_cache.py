@@ -2435,13 +2435,16 @@ def _shared_validation_query(source, path):
 def test_shared_validation_producer_batches_cold_and_cached_rows(
     tmp_path, monkeypatch, shared_validation_sources
 ):
-    from contextlib import nullcontext
+    from contextlib import contextmanager
 
     sources = shared_validation_sources
+
+    @contextmanager
+    def unbatched(_):
+        yield
+
     with monkeypatch.context() as patch:
-        patch.setattr(
-            audit, "_security_snapshot_analysis_batch", lambda _: nullcontext()
-        )
+        patch.setattr(audit, "_security_snapshot_analysis_batch", unbatched)
         baseline = _shared_validation_scan(tmp_path, sources, {})
     audit._oracle_context_cache_clear()
     assert baseline[0], "The native unsafe-call finding must remain visible."
@@ -2665,3 +2668,364 @@ def test_shared_validation_raw_only_rejects_introduced_owner(
     assert owner["source"] is None
     assert retained == [sources, sources]
     assert not published
+
+
+@pytest.fixture
+def fingerprint_memo(tmp_path):
+    index, paths = _snapshot(
+        tmp_path,
+        {
+            "caller.py": "from helper import helper\ndef caller(value):\n    return helper(value)\n",
+            "helper.py": "def helper(value):\n    return value\n",
+            "unused.py": "class Unused: pass\n",
+        },
+    )
+    memo = ClassChainMemo(index, {}, {}, audit)
+    index.class_chain_memo = memo
+    return memo, paths
+
+
+def _fingerprint_guard(memo, paths):
+    from factoryline import credential_role_identity_effects as identity
+
+    path = paths["caller.py"]
+    tree = memo.index.snapshots[path]
+    tree._security_source_model = memo.index
+    caller = tree.body[1]
+    caller._security_parent_scope = tree
+    call = caller.body[0].value
+    call._security_lexical_scope = caller
+    call._security_flow_statement = caller.body[0]
+    resolved = identity.resolve_source_identity_call(
+        call, path, memo.index, lexical_scope=caller, defer_negative_binding=True
+    )
+    assert resolved is not None
+    assert resolved.negative_binding_check is not None
+    return resolved.negative_binding_check
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "VALUE = 1\n",
+            "a717d1bd18786f167a3787e175ae879a6c931362a734e4e5f18dff8469559658",
+        ),
+        (
+            "\n".join(f"value_{i} = {i}" for i in range(200)) + "\n",
+            "0eff7622c4fafa0db07dc0dc8423b9cde187386ecc11a7e797bcb5b1cf3d7ce2",
+        ),
+    ],
+)
+def test_fingerprint_epoch_preserves_original_canonical_digest(
+    tmp_path, source, expected
+):
+    from factoryline import import_context as context
+
+    index, paths = _snapshot(tmp_path, {"module.py": source})
+    tree = index.snapshots[paths["module.py"]]
+    memo = ClassChainMemo(index, {}, {}, audit)
+    assert context.structural_ast_fingerprint(tree) == expected
+    with memo.analysis_batch() as batch:
+        assert context.structural_ast_fingerprint(tree) == expected
+        tree._security_sidecar = "excluded"
+        assert context.structural_ast_fingerprint(tree) == expected
+    assert batch.accepted
+    assert context.structural_ast_fingerprint(tree) == expected
+
+
+def test_fingerprint_epoch_computes_owned_modules_once_and_keeps_fallbacks_fresh(
+    fingerprint_memo, monkeypatch
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    tree = memo.index.snapshots[paths["caller.py"]]
+    unowned = ast.parse("value = 1")
+    original, calls = context._uncached_structural_ast_fingerprint, []
+
+    def observed(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(context, "_uncached_structural_ast_fingerprint", observed)
+    assert not memo.index.validated
+    for _ in range(2):
+        context.structural_ast_fingerprint(tree)
+    assert calls == [tree, tree]
+    calls.clear()
+    with memo.analysis_batch() as batch:
+        for _ in range(40):
+            context.structural_ast_fingerprint(tree)
+        assert memo.index.validated[paths["caller.py"]]
+        for value in (unowned, tree.body[0]):
+            context.structural_ast_fingerprint(value)
+            context.structural_ast_fingerprint(value)
+        assert calls == [tree, unowned, unowned, tree.body[0], tree.body[0]]
+    assert batch.accepted
+    context.structural_ast_fingerprint(tree)
+    assert calls[-1] is tree and len(calls) == 6
+
+
+def test_fingerprint_epoch_enrolls_previously_unused_modules(fingerprint_memo):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    path = paths["unused.py"]
+    assert path not in memo.index.validated
+    with memo.analysis_batch() as batch:
+        context.structural_ast_fingerprint(memo.index.snapshots[path])
+        assert memo.index.validated[path]
+        memo.index.snapshots[path].body[0].name = "Altered"
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "field",
+        "fields",
+        "location",
+        "tree",
+        "bytes",
+        "inventory",
+        "root",
+        "owner",
+        "index",
+    ],
+)
+def test_fingerprint_epoch_rejects_boundary_source_mutations(
+    fingerprint_memo, tmp_path, mutation
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    index, path = memo.index, paths["helper.py"]
+    tree = index.snapshots[path]
+    with memo.analysis_batch() as batch:
+        context.structural_ast_fingerprint(tree)
+        if mutation == "field":
+            tree.body[0].name = "changed"
+        elif mutation == "fields":
+            tree._fields = (*tree._fields, "extra")
+            tree.extra = ast.Constant("changed")
+        elif mutation == "location":
+            tree.body[0].lineno += 1
+        elif mutation == "tree":
+            replacement = ast.parse(index.source_bytes[path])
+            replacement._oracle_source_sha256 = index.inventory[path]
+            index.snapshots[path] = replacement
+        elif mutation == "bytes":
+            index.source_bytes[path] += b"# changed\n"
+        elif mutation == "inventory":
+            index.inventory[path] = "0" * 64
+        elif mutation == "root":
+            index.root = tmp_path / "different"
+        elif mutation == "owner":
+            index.class_chain_memo = ClassChainMemo(index, {}, {}, audit)
+        else:
+            memo.index = SourceSnapshotIndex(
+                index.root, index.snapshots, index.source_bytes, index.inventory
+            )
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "structural_ast_fingerprint",
+        "_uncached_structural_ast_fingerprint",
+        "_structural_ast_leaf_digest",
+        "_structural_ast_fields",
+        "_iter_ast_nodes",
+        "bind_fingerprint_epoch",
+        "_fingerprint_epoch_helpers",
+        "lease-factory",
+        "binding-alias",
+        "validate",
+        "ast-match",
+        "memo-valid",
+        "ast-dump",
+    ],
+)
+def test_fingerprint_epoch_rejects_helper_binding_and_code_drift(
+    fingerprint_memo, monkeypatch, name, mutation
+):
+    from factoryline import import_context as context
+    from factoryline import credential_role_identity_effects as identity
+
+    targets = {
+        "lease-factory": (context.fingerprint_epoch, "__wrapped__"),
+        "binding-alias": (identity, "bind_fingerprint_epoch"),
+        "validate": (SourceSnapshotIndex, "validate"),
+        "ast-match": (provider, "_ast_matches_source"),
+        "memo-valid": (ClassChainMemo, "valid"),
+        "ast-dump": (ast, "dump"),
+    }
+    target, attribute = targets.get(name, (context, name))
+
+    def changed(*args, **kwargs):
+        return True
+
+    memo, paths = fingerprint_memo
+    with memo.analysis_batch() as batch:
+        context.structural_ast_fingerprint(memo.index.snapshots[paths["caller.py"]])
+        if mutation == "binding":
+            monkeypatch.setattr(target, attribute, changed)
+        else:
+            monkeypatch.setattr(
+                getattr(target, attribute), "__code__", changed.__code__
+            )
+    assert not batch.accepted
+
+
+def test_fingerprint_epoch_reuses_deferred_binding_capture_digests(
+    fingerprint_memo, monkeypatch
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    original, calls = context._uncached_structural_ast_fingerprint, []
+
+    def observed(tree):
+        calls.append(tree)
+        return original(tree)
+
+    monkeypatch.setattr(context, "_uncached_structural_ast_fingerprint", observed)
+    with memo.analysis_batch() as batch:
+        for _ in range(25):
+            assert _fingerprint_guard(memo, paths)()
+        for name in ("caller.py", "helper.py"):
+            assert calls.count(memo.index.snapshots[paths[name]]) == 1
+    assert batch.accepted
+
+
+@pytest.mark.parametrize("target", ["wrapper", "source-guard"])
+def test_fingerprint_epoch_registers_generated_guard_code(fingerprint_memo, target):
+    memo, paths = fingerprint_memo
+    with memo.analysis_batch() as batch:
+        guard = _fingerprint_guard(memo, paths)
+        assert guard()
+        selected = guard
+        if target == "source-guard":
+            cells = dict(zip(guard.__code__.co_freevars, guard.__closure__))
+            selected = cells["check_binding"].cell_contents
+        selected.__code__ = selected.__code__.replace(
+            co_consts=tuple(
+                True if value is False else value
+                for value in selected.__code__.co_consts
+            )
+        )
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize("creation", ["standalone", "accepted"])
+def test_fingerprint_epoch_old_guard_cannot_borrow_a_new_cache(
+    fingerprint_memo, creation
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    if creation == "accepted":
+        with memo.analysis_batch() as previous:
+            guard = _fingerprint_guard(memo, paths)
+            assert guard()
+        assert previous.accepted and guard()
+    else:
+        guard = _fingerprint_guard(memo, paths)
+        assert guard()
+    tree = memo.index.snapshots[paths["helper.py"]]
+    with memo.analysis_batch() as current:
+        context.structural_ast_fingerprint(tree)
+        tree.body[0].lineno += 1
+        assert not guard()
+    assert not current.accepted
+
+
+def test_fingerprint_epoch_rejected_guard_cannot_recover_after_restore(
+    fingerprint_memo,
+):
+    memo, paths = fingerprint_memo
+    tree = memo.index.snapshots[paths["helper.py"]]
+    with memo.analysis_batch() as batch:
+        guard = _fingerprint_guard(memo, paths)
+        assert guard()
+        tree.body[0].lineno += 1
+    assert not batch.accepted
+    tree.body[0].lineno -= 1
+    assert not guard()
+    with memo.analysis_batch() as fresh:
+        assert _fingerprint_guard(memo, paths)()
+        assert not guard()
+    assert fresh.accepted
+
+
+def test_fingerprint_epoch_copied_context_retires_before_fresh_exit(
+    fingerprint_memo, monkeypatch
+):
+    from contextvars import copy_context
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    original, boundaries = memo.valid, []
+
+    def checked():
+        boundaries.append(context._FINGERPRINT_EPOCH.get())
+        return original()
+
+    monkeypatch.setattr(memo, "valid", checked)
+    tree = memo.index.snapshots[paths["helper.py"]]
+    with memo.analysis_batch() as batch:
+        before = context.structural_ast_fingerprint(tree)
+        guard = _fingerprint_guard(memo, paths)
+        copied = copy_context()
+        lease = context._FINGERPRINT_EPOCH.get()
+    assert batch.accepted and not lease.active
+    assert boundaries == [None, None]
+    tree.body[0].lineno += 1
+    assert copied.run(context.structural_ast_fingerprint, tree) != before
+    assert not copied.run(guard)
+
+
+def test_fingerprint_epoch_nested_failure_restores_outer_lease(
+    fingerprint_memo, tmp_path
+):
+    from contextvars import copy_context
+    from factoryline import import_context as context
+
+    memo, _ = fingerprint_memo
+    _, inner = _memo(tmp_path / "inner")
+    with memo.analysis_batch() as outer:
+        lease = context._FINGERPRINT_EPOCH.get()
+        with pytest.raises(RuntimeError, match="nested failure"):
+            with inner.analysis_batch() as rejected:
+                inner_lease = context._FINGERPRINT_EPOCH.get()
+                copied = copy_context()
+                guard = context.bind_fingerprint_epoch(lambda: True)
+                raise RuntimeError("nested failure")
+        assert context._FINGERPRINT_EPOCH.get() is lease and lease.active
+        assert not inner_lease.active and not rejected.accepted
+        assert not copied.run(guard)
+    assert outer.accepted and context._FINGERPRINT_EPOCH.get() is None
+
+
+def test_fingerprint_epoch_enter_failure_clears_batch(fingerprint_memo, monkeypatch):
+    from contextlib import contextmanager
+    from factoryline import import_context as context
+
+    memo, _ = fingerprint_memo
+    states = []
+
+    @contextmanager
+    def fail_enter(memo, state):
+        states.append(state)
+        raise RuntimeError("lease enter failure")
+        yield
+
+    monkeypatch.setattr(context, "fingerprint_epoch", fail_enter)
+    with pytest.raises(RuntimeError, match="lease enter failure"):
+        with memo.analysis_batch():
+            pytest.fail("must not enter an invalid lease")
+    assert len(states) == 1 and not states[0].accepted
+    assert memo._analysis_batch is None and context._FINGERPRINT_EPOCH.get() is None

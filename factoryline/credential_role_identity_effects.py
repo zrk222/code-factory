@@ -16,6 +16,7 @@ from .credential_role_constructor_provider import (
 from . import credential_role_constructor_provider as _class_binding
 from . import credential_role_identity_effects as _identity_effects
 from . import credential_role_constructor_provider as _scope_bindings
+from .import_context import bind_fingerprint_epoch
 
 
 @dataclass(frozen=True)
@@ -423,7 +424,7 @@ def _source_identity_binding_check(
             additional_bindings=bindings[1:],
         )
 
-    return check_binding
+    return bind_fingerprint_epoch(check_binding)
 
 
 def _source_identity_generation_changed(

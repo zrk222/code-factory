@@ -1,6 +1,8 @@
 """Shared bounded native import policy and captured source views."""
 
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from . import (
@@ -16,7 +18,137 @@ from collections import defaultdict
 from collections import OrderedDict
 
 
+_FINGERPRINT_EPOCH = ContextVar("factory_structural_fingerprint_epoch", default=None)
+
+
 def structural_ast_fingerprint(tree):
+    """Reuse whole-module digests only inside their owned, validated batch."""
+    epoch = _FINGERPRINT_EPOCH.get()
+    if epoch is None or not epoch.active or type(tree) is not ast.Module:
+        return _uncached_structural_ast_fingerprint(tree)
+    paths = epoch.owned.get(tree)
+    if paths is None:
+        return _uncached_structural_ast_fingerprint(tree)
+    if tree not in epoch.fingerprints:
+        if not all(epoch.index.validate(path) for path in paths):
+            return _uncached_structural_ast_fingerprint(tree)
+        epoch.fingerprints[tree] = _uncached_structural_ast_fingerprint(tree)
+    return epoch.fingerprints[tree]
+
+
+@contextmanager
+def fingerprint_epoch(memo, state):
+    """Retire reuse before the producer independently validates batch exit."""
+    from .credential_role_constructor_provider import _helper_snapshot
+
+    if not state.started or memo._analysis_batch is not state:
+        raise ValueError("fingerprint epoch requires a validated producer batch")
+    index, owned = memo.index, {}
+    for path, tree in index.snapshots.items():
+        if type(tree) is ast.Module:
+            owned.setdefault(tree, []).append(path)
+    epoch = SimpleNamespace(
+        index=index, state=state, owned=owned, fingerprints={}, active=False
+    )
+
+    def helpers():
+        return (
+            *_fingerprint_epoch_helpers(),
+            memo.index,
+            index.root,
+            index.snapshots,
+            index.source_bytes,
+            index.inventory,
+            getattr(index, "class_chain_memo", None),
+            *index.snapshots,
+            *index.snapshots.values(),
+            *index.source_bytes.values(),
+            *index.inventory.values(),
+        )
+
+    state.helper_epoch[fingerprint_epoch] = (helpers, _helper_snapshot(helpers))
+    token = _FINGERPRINT_EPOCH.set(epoch)
+    try:
+        epoch.active = True
+        yield epoch
+    finally:
+        epoch.active = False
+        _FINGERPRINT_EPOCH.reset(token)
+
+
+def bind_fingerprint_epoch(check_binding):
+    """Keep a deferred guard from borrowing another batch's cached digests."""
+    epoch = _FINGERPRINT_EPOCH.get()
+
+    def check():
+        if epoch is not None:
+            if not epoch.active and not epoch.state.accepted:
+                return False
+            if epoch.active and _FINGERPRINT_EPOCH.get() is epoch:
+                return check_binding()
+        token = _FINGERPRINT_EPOCH.set(None)
+        try:
+            return check_binding()
+        finally:
+            _FINGERPRINT_EPOCH.reset(token)
+
+    if epoch is not None and epoch.active:
+        from .credential_role_constructor_provider import _helper_snapshot
+
+        def helpers():
+            return check, check_binding
+
+        epoch.state.helper_epoch[check] = (helpers, _helper_snapshot(helpers))
+    return check
+
+
+def _fingerprint_epoch_helpers():
+    """Use the producer's existing callable identity/code epoch protocol."""
+    from . import credential_role_constructor_provider as provider
+    from . import credential_role_identity_effects as effects
+
+    return (
+        fingerprint_epoch,
+        fingerprint_epoch.__wrapped__,
+        bind_fingerprint_epoch,
+        _fingerprint_epoch_helpers,
+        structural_ast_fingerprint,
+        _uncached_structural_ast_fingerprint,
+        _structural_ast_leaf_digest,
+        _structural_ast_fields,
+        _iter_ast_nodes,
+        _FINGERPRINT_EPOCH,
+        SimpleNamespace,
+        ast.Module,
+        ast.AST,
+        ast.dump,
+        ast.parse,
+        ast.iter_child_nodes,
+        hashlib.sha256,
+        OrderedDict,
+        provider.SourceSnapshotIndex,
+        provider.SourceSnapshotIndex.__init__,
+        provider.SourceSnapshotIndex.validate,
+        provider.SourceSnapshotIndex._matches_snapshot,
+        provider._ast_matches_source,
+        provider._view,
+        provider.copy.deepcopy,
+        provider.ast,
+        provider.hashlib,
+        effects.bind_fingerprint_epoch,
+        provider.ClassChainMemo.valid,
+        provider.ClassChainMemo.matches,
+        provider.ClassChainMemo.analysis_batch,
+        provider.ClassChainMemo.analysis_batch.__wrapped__,
+        provider._helper_snapshot,
+        provider._helper_identity,
+        provider._provider_snapshot,
+        provider._same_helper_epoch,
+        provider.helper_epochs_valid,
+    )
+
+
+def _uncached_structural_ast_fingerprint(tree):
     """Hash declared syntax with bounded per-call reuse, excluding sidecars."""
     memo, active = OrderedDict(), set()
     frames = [

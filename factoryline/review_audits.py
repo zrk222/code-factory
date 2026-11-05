@@ -5709,21 +5709,21 @@ def _scan_security_sources(
         """Publish staged rows only after the owned producer batch is accepted."""
         from .context_efficiency import _consume_security_snapshots
 
-        with _security_snapshot_analysis_batch(producer_source_model_out):
-            rows = _consume_security_snapshots(
-                workspace,
-                files,
-                snapshots,
-                fingerprints,
-                contexts,
-                retained,
-                scoped_reads,
-                tenant_read_calls,
-                tenant_read_bindings,
-                test_file_patterns,
-                _security_scan_file_snapshot,
-                producer_source_model_out,
-            )
+        batch = _security_snapshot_analysis_batch(producer_source_model_out)
+        rows = batch(_consume_security_snapshots)(
+            workspace,
+            files,
+            snapshots,
+            fingerprints,
+            contexts,
+            retained,
+            scoped_reads,
+            tenant_read_calls,
+            tenant_read_bindings,
+            test_file_patterns,
+            _security_scan_file_snapshot,
+            producer_source_model_out,
+        )
         snapshot_rows.update(rows)
 
     contexts, context_bindings, oracle_edges, source_bytes = _project_oracle_context(
