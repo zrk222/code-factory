@@ -20,7 +20,7 @@
     },
     {
       "path": "tests/test_credential_authority_recovery.py",
-      "sha256": "b8dde23e2ddd7b7c35e152a88f6d27e487e8c7f5a455eb98bdc802a52f3d9497",
+      "sha256": "ec6ad9e8d2ae096c121dec1ebda4ed27b7d19f1f1bdbb83f338736a0132b1a7e",
       "kind": "test"
     }
   ],
@@ -82,8 +82,10 @@
   "validation": {
     "python_310_passed": 212,
     "python_311_passed": 211,
-    "reuse": "Original 210/209 test definitions and all production bytes unchanged; two additional direct source-binding controls passed per profile",
-    "quality": "A",
+    "latest_targeted_passed_per_profile": 24,
+    "reuse": "All production bytes and other test definitions unchanged; 22 equivalent rejection cases and two direct source-binding controls passed per profile. Prior repository attribution reused with unchanged public-helper direct test.",
+    "case_input_equivalence_sha256": "f249815d35cda2f86d0268c6e0e3d2226bcf9cbef5b786ca2202ac3c68212c85",
+    "quality": "A (prior tracked-source report, reused)",
     "maximum_complexity": 10,
     "repo_wide_attribution": 0.9989229940764675,
     "architecture": "HEALTHY",
@@ -136,13 +138,28 @@
       "kind": "terminal"
     },
     {
-      "path": ".factory/shared-validation-performance/data-request-account-direct-310-current.json",
-      "sha256": "cf9cbff2ba64dbff6ae4ad49362af6b62e5303922b96c955f19e65f8e2e6545d",
+      "path": ".factory/shared-validation-performance/data-request-account-table-310.json",
+      "sha256": "cb6b29949439586b945548ce01cd3e81196783947691561f92504cfa2d637630",
       "kind": "terminal"
     },
     {
-      "path": ".factory/shared-validation-performance/data-request-account-direct-311-current.json",
-      "sha256": "c5ab6947ec5924d0250cea97cbb1cdb53de6975dc5ed87e2bf3108a9ff996473",
+      "path": ".factory/shared-validation-performance/data-request-account-table-311.json",
+      "sha256": "6356d27755f3ffe3a4748385020badca549c21549461ca268f2af72b7a6d7a3d",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-table-format.json",
+      "sha256": "a2a8ae0c3e929983eba682f0d59a0ff74ddc80705dcad5245701f3a80a85bef9",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-table-lint.json",
+      "sha256": "e710e8085be3454bd5ff8997ef0f37edddb3b05657dc302799e2d93cca2cd263",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-c901-closed.json",
+      "sha256": "c51c7b9a3106f14c2e91ad6ef2d4e98f804613166e78dd370a50b8e16a38339c",
       "kind": "terminal"
     },
     {
@@ -151,13 +168,8 @@
       "kind": "terminal"
     },
     {
-      "path": ".factory/shared-validation-performance/data-request-account-attribution-format-current.json",
-      "sha256": "70fc2cefad37edf41d70579977f25fd70a4bb013c86ed692018d1041bcbe12ba",
-      "kind": "terminal"
-    },
-    {
-      "path": ".factory/shared-validation-performance/data-request-account-attribution-lint-current.json",
-      "sha256": "27a88f557b76a5a388a6ac9dc89148c1ecc3d79c8a5e041872f21fda320d80d6",
+      "path": ".factory/shared-validation-performance/request-case-table-reuse.json",
+      "sha256": "7c125cd1480843fa91f16cf57f185665c965fd69d72a8ef7bccb6344db7dd959",
       "kind": "terminal"
     }
   ],
