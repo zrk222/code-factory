@@ -478,7 +478,7 @@ def _toml_pytest_pattern_value(text, section):
     return _pytest_pattern_value(text, section)
 
 
-def captured_pytest_configuration(captured):
+def captured_pytest_configuration(captured, *, source_role_only=False):
     """Select captured root configuration with collection's exact precedence."""
     from .review_audits import _TEST_FILE_PATTERNS
 
@@ -511,7 +511,9 @@ def captured_pytest_configuration(captured):
             return None
         if options is _ABSENT_PYTEST_SECTION:
             options = {}
-        effective = _pytest_captured_invocation_options(captured, options)
+        effective = _pytest_captured_invocation_options(
+            captured, options, source_role_only=source_role_only
+        )
         if effective is None:
             return None
         return {"identity": identity, "options": effective}
@@ -1628,7 +1630,9 @@ def _pytest_settings_selection_overridden(options):
     return _pytest_effective_settings_options(options) is None
 
 
-def _pytest_effective_settings_options(options, *, coverage_provider=False):
+def _pytest_effective_settings_options(
+    options, *, coverage_provider=False, source_role_only=False
+):
     """Apply exact captured --ds selection; other source overrides stay unknown."""
     if not isinstance(options, dict):
         return None
@@ -1640,7 +1644,7 @@ def _pytest_effective_settings_options(options, *, coverage_provider=False):
     if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
         return None
     projection = _pytest_argument_projection(
-        tokens, coverage_provider=coverage_provider
+        tokens, coverage_provider=coverage_provider, source_role_only=source_role_only
     )
     if projection is None:
         return None
@@ -1649,11 +1653,11 @@ def _pytest_effective_settings_options(options, *, coverage_provider=False):
     return effective
 
 
-def _pytest_captured_invocation_options(captured, options):
+def _pytest_captured_invocation_options(captured, options, *, source_role_only=False):
     """Reconcile captured tox argv/environment with the selected config defaults."""
     coverage_provider = _pytest_cov_provider(captured)
     effective = _pytest_effective_settings_options(
-        options, coverage_provider=coverage_provider
+        options, coverage_provider=coverage_provider, source_role_only=source_role_only
     )
     if effective is None or "tox.ini" not in captured:
         return effective
@@ -1808,7 +1812,9 @@ _PYTEST_ARGUMENT_EFFECTS = (
 )
 
 
-def _pytest_argument_projection(tokens, *, coverage_provider=False):
+def _pytest_argument_projection(
+    tokens, *, coverage_provider=False, source_role_only=False
+):
     """Project one allowlisted argument grammar onto settings selection."""
     if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
         return None
@@ -1816,7 +1822,10 @@ def _pytest_argument_projection(tokens, *, coverage_provider=False):
     arguments = iter(tokens)
     for token in arguments:
         effect = _pytest_argument_effect(
-            token, arguments, coverage_provider=coverage_provider
+            token,
+            arguments,
+            coverage_provider=coverage_provider,
+            source_role_only=source_role_only,
         )
         if effect is None:
             return None
@@ -1824,7 +1833,9 @@ def _pytest_argument_projection(tokens, *, coverage_provider=False):
     return projection
 
 
-def _pytest_argument_effect(token, arguments, *, coverage_provider):
+def _pytest_argument_effect(
+    token, arguments, *, coverage_provider, source_role_only=False
+):
     """Project one recognized argument or refuse its missing/unknown effect."""
     if token == "--":
         return None
@@ -1840,6 +1851,8 @@ def _pytest_argument_effect(token, arguments, *, coverage_provider):
         return {"DJANGO_SETTINGS_MODULE": module}
     effect = dict(_PYTEST_ARGUMENT_EFFECTS).get(flag)
     if effect is None or effect[1] == "coverage" and not coverage_provider:
+        return None
+    if effect[1] in {"database-reuse", "debugger-class"} and not source_role_only:
         return None
     arity = effect[0]
     if arity == 0:
@@ -2188,7 +2201,8 @@ def _pytest_django_user_configuration(index, path, function):
         "setup.cfg",
     }
     selected = captured_pytest_configuration(
-        {name: raw for name, raw in captured.items() if name in config_names}
+        {name: raw for name, raw in captured.items() if name in config_names},
+        source_role_only=True,
     )
     if selected is None:
         return None

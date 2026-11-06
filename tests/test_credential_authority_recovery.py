@@ -3679,6 +3679,56 @@ def test_captured_django_user_fixture_and_request_role_is_source_bound(tmp_path)
 
 
 @pytest.mark.parametrize(
+    "external,eligible",
+    [
+        ("callback = lambda value: value\n", True),
+        (
+            "def operate():\n"
+            "    from tests.test_user_flow import test_created_user as invoke\n"
+            "    return lambda: invoke(None, None)\n",
+            False,
+        ),
+        (
+            "class Operations:\n"
+            "    from tests.test_user_flow import test_created_user as invoke\n"
+            "    result = invoke(None, None)\n",
+            False,
+        ),
+        (
+            "class Operations:\n"
+            "    import tests.test_user_flow\n"
+            "    result = tests.test_user_flow.test_created_user(None, None)\n",
+            False,
+        ),
+    ],
+)
+def test_django_user_role_preserves_nested_import_escape_controls(
+    tmp_path, external, eligible
+):
+    evidence, *_ = _request_user_role_projection(
+        tmp_path, _REQUEST_USER_TEST, extra_sources={"operations.py": external}
+    )
+    assert evidence["eligible"] is eligible, evidence
+
+
+@pytest.mark.parametrize("flag", ["--reuse-db", "--pdbcls=pudb.debugger:Debugger"])
+def test_django_user_role_runtime_options_do_not_relax_generic_settings(tmp_path, flag):
+    from factoryline.pytest_collection_audit import _pytest_effective_settings_options
+
+    assert _pytest_effective_settings_options({"addopts": flag}) is None
+    evidence, *_ = _request_user_role_projection(
+        tmp_path,
+        _REQUEST_USER_TEST,
+        project=_REQUEST_USER_PROJECT + f'addopts = "{flag}"\n',
+    )
+    assert evidence["eligible"] is True, evidence
+    receipt = evidence["test_fixture_provider"]
+    assert receipt["runtime_effects_unassessed"] == [flag.partition("=")[0]]
+    assert receipt["runtime_assurance"] == "UNASSESSED"
+    assert evidence["isolation_assurance"] == "UNASSESSED"
+
+
+@pytest.mark.parametrize(
     ("parameters", "eligible"),
     [
         ("rf, *, django_user_model", True),

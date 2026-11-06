@@ -3954,16 +3954,15 @@ def _app_expression_name(index, path, node, function=None):
     package = _django_package(index, path)
     if tree is None or package is None:
         return None
-    scope = (
-        function
-        if function is not None and binding_occurrences(function.body, node.id)
-        else tree
+    body = getattr(function, "body", ())
+    body = (body,) if isinstance(body, ast.AST) else body
+    bindings = binding_occurrences(body, node.id) or binding_occurrences(
+        tree.body, node.id
     )
-    bindings = binding_occurrences(scope.body, node.id)
     if len(bindings) != 1 or not isinstance(bindings[0], (ast.Import, ast.ImportFrom)):
         return None
     if isinstance(
-        function, (ast.FunctionDef, ast.AsyncFunctionDef)
+        function, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
     ) and node.id in _argument_names(function):
         return None
     rows = _django_import_rows(bindings[0], package)
@@ -4901,7 +4900,10 @@ def _app_source_symbol(
 
         if function is not None and (
             expression.id in _argument_names(function)
-            or binding_occurrences(function.body, expression.id)
+            or binding_occurrences(
+                [function.body] if isinstance(function, ast.Lambda) else function.body,
+                expression.id,
+            )
         ):
             return None
         canonical = _django_name(index, path) + "." + expression.id
@@ -5857,25 +5859,30 @@ def _application_test_secret_from_local_binding(
 
 
 def _app_test_function_external_uses_clear(index, selected_path, selected_function):
+    from .credential_role_constructor_provider import _scope_scope_bindings
+
     source = index["source"]
+    target = _django_name(index, selected_path)
     if not all(source.validate(path) for path in index["modules"]):
         return False
     for path, tree in index["modules"].items():
-        parents = source.parents[path]
         for node in ast.walk(tree):
             if (
                 path != selected_path
-                and isinstance(node, ast.ImportFrom)
-                and any(alias.name == "*" for alias in node.names)
+                and isinstance(node, (ast.Import, ast.ImportFrom))
+                and any(
+                    name in {target, target + "." + selected_function.name, "*"}
+                    or target.startswith(name + ".")
+                    for _, name in _django_import_rows(
+                        node, _django_package(index, path)
+                    )
+                    or [("", "*")]
+                )
             ):
                 return False
             if not isinstance(getattr(node, "ctx", None), ast.Load):
                 continue
-            owner = node
-            while owner is not None and not isinstance(
-                owner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
-            ):
-                owner = parents.get(id(owner))
+            owner = _scope_scope_bindings(node, source.parents[path], None)
             if path == selected_path and owner is selected_function:
                 continue
             selected = _app_source_symbol(index, path, node, owner)
