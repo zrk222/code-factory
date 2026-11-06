@@ -5916,6 +5916,8 @@ def security_value_helper_epoch():
     from .mock_fixture_provenance import (
         _app_source_symbol,
         _app_expression_name,
+        _django_package,
+        _django_import_targets,
         _django_name,
         _django_mod,
     )
@@ -5931,6 +5933,8 @@ def security_value_helper_epoch():
         *constructor_provider_helper_epoch(),
         _app_source_symbol,
         _app_expression_name,
+        _django_package,
+        _django_import_targets,
         _django_name,
         _django_mod,
         IdentityReturnProjection,
@@ -5944,10 +5948,6 @@ def security_value_helper_epoch():
         *_module_function_binding_epoch(getter),
         *_module_function_binding_epoch(finite_capture),
         *_module_function_binding_epoch(semantic_credential_sensor),
-        identity_value,
-        _identity_call_value,
-        _subscript_value,
-        _container_value,
         _attribute_value,
         _unknown_expression,
         _value_trace,

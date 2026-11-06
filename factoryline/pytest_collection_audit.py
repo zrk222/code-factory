@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import configparser
+import hashlib
+import re
+import shlex
 from contextlib import contextmanager
 from contextvars import ContextVar
 from fnmatch import fnmatchcase
@@ -435,39 +438,372 @@ def _pytest_config_data(data, relative, section, defaults):
 
 
 def _pytest_pattern_value(text, section):
+    options = _pytest_configuration_options(text, section)
+    if not isinstance(options, dict):
+        return options
+    if not _supported_pytest_function_patterns(options):
+        return _INVALID_PYTEST_CONFIG
+    if _pytest_config_uses_custom_collection(options):
+        return _pytest_custom_collection_state(options)
+    return _pytest_patterns_from_options(options)
+
+
+def _pytest_configuration_options(text, section):
+    """Use the same raw option parser for collection and captured authority roles."""
     if section in {"pyproject", "toml-pytest"}:
-        return _toml_pytest_pattern_value(text, section)
+        document = tomllib.loads(text)
+        options = (
+            document.get("pytest")
+            if section == "toml-pytest"
+            else document.get("tool", {}).get("pytest")
+        )
+        if options is None:
+            return _ABSENT_PYTEST_SECTION
+        if not isinstance(options, dict):
+            return _INVALID_PYTEST_CONFIG
+        options = options.get("ini_options", options)
+        return options if isinstance(options, dict) else _INVALID_PYTEST_CONFIG
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
     parser.read_string(text)
     if section not in parser:
         return _ABSENT_PYTEST_SECTION
     parser.defaults().clear()
-    options = dict(parser.items(section))
-    if not _supported_pytest_function_patterns(options):
-        return _INVALID_PYTEST_CONFIG
-    if _pytest_config_uses_custom_collection(options):
-        return _pytest_custom_collection_state(options)
-    return _pytest_patterns_from_options(options)
+    return dict(parser.items(section))
 
 
 def _toml_pytest_pattern_value(text, section):
-    document = tomllib.loads(text)
-    pytest = (
-        document.get("pytest")
-        if section == "toml-pytest"
-        else document.get("tool", {}).get("pytest")
-    )
-    if pytest is None:
-        return _ABSENT_PYTEST_SECTION
-    options = pytest.get("ini_options", pytest)
+    return _pytest_pattern_value(text, section)
+
+
+def captured_pytest_configuration(captured):
+    """Select captured root configuration with collection's exact precedence."""
+    from .review_audits import _TEST_FILE_PATTERNS
+
+    if not isinstance(captured, dict):
+        return None
+    for name, section in (
+        ("pytest.toml", "toml-pytest"),
+        (".pytest.toml", "toml-pytest"),
+        ("pytest.ini", "pytest"),
+        (".pytest.ini", "pytest"),
+        ("pyproject.toml", "pyproject"),
+        ("tox.ini", "pytest"),
+        ("setup.cfg", "tool:pytest"),
+    ):
+        if name not in captured:
+            continue
+        raw = captured[name]
+        if not isinstance(raw, bytes):
+            return None
+        _files, identity = _pytest_config_data(
+            raw, name, section, set(_TEST_FILE_PATTERNS)
+        )
+        if identity["state"] == "absent-section":
+            continue
+        if identity["state"] != "read":
+            return None
+        try:
+            options = _pytest_configuration_options(raw.decode("utf-8"), section)
+        except (UnicodeError, ValueError, configparser.Error):
+            return None
+        if options is _ABSENT_PYTEST_SECTION:
+            options = {}
+        effective = _pytest_captured_invocation_options(captured, options)
+        if effective is None:
+            return None
+        return {"identity": identity, "options": effective}
+    return None
+
+
+def _pytest_settings_selection_overridden(options):
+    """Do not credit a config default when captured argv selects another source."""
+    return _pytest_effective_settings_options(options) is None
+
+
+def _pytest_effective_settings_options(options):
+    """Apply exact captured --ds selection; other source overrides stay unknown."""
     if not isinstance(options, dict):
-        return _INVALID_PYTEST_CONFIG
-    if not _supported_pytest_function_patterns(options):
-        return _INVALID_PYTEST_CONFIG
-    if _pytest_config_uses_custom_collection(options):
-        return _pytest_custom_collection_state(options)
-    return _pytest_patterns_from_options(options)
+        return None
+    value = options.get("addopts", "")
+    try:
+        tokens = shlex.split(value) if isinstance(value, str) else value
+    except ValueError:
+        return None
+    if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
+        return None
+    if not _pytest_tox_arguments_closed(tokens):
+        return None
+    if any(
+        token == "--"
+        or token.startswith("--ds")
+        and token != "--ds"
+        and not token.startswith("--ds=")
+        or token.split("=", 1)[0]
+        in {"--dc", "--rootdir", "-c", "--config-file", "-o", "--override-ini"}
+        or token.startswith(("-c", "-o"))
+        for token in tokens
+    ):
+        return None
+    effective = dict(options)
+    arguments = iter(tokens)
+    for token in arguments:
+        if token == "--ds" or token.startswith("--ds="):
+            module = next(arguments, None) if token == "--ds" else token[5:]
+            if not isinstance(module, str) or not all(
+                part.isidentifier() for part in module.split(".")
+            ):
+                return None
+            effective["DJANGO_SETTINGS_MODULE"] = module
+    return effective
+
+
+def _pytest_captured_invocation_options(captured, options):
+    """Reconcile captured tox argv/environment with the selected config defaults."""
+    effective = _pytest_effective_settings_options(options)
+    if effective is None or "tox.ini" not in captured:
+        return effective
+    try:
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read_string(captured["tox.ini"].decode("utf-8"))
+        invocations = [
+            (
+                section,
+                parser.get(
+                    section,
+                    "commands",
+                    fallback=parser.get("testenv", "commands", fallback=""),
+                ),
+            )
+            for section in parser.sections()
+            if section == "testenv" or section.startswith("testenv:")
+        ]
+        selections = [
+            selection
+            for section, commands in invocations
+            for line in commands.splitlines()
+            if line.strip()
+            for selection in [_pytest_tox_selection(parser, section, line, options)]
+        ]
+    except (AttributeError, UnicodeError, ValueError, configparser.Error):
+        return None
+    if not selections:
+        return None
+    if any(selection is None for selection in selections) or any(
+        selection != selections[0] for selection in selections[1:]
+    ):
+        return None
+    result = selections[0]
+    result["captured_invocations"] = {
+        "path": "tox.ini",
+        "sha256": hashlib.sha256(captured["tox.ini"]).hexdigest(),
+        "commands": invocations,
+        "profile": "CAPTURED_LITERAL_COMMANDS_ONLY",
+        "execution_status": "NOT_EXECUTED",
+    }
+    return result
+
+
+def _pytest_tox_selection(parser, section, line, options):
+    """Bind a literal default pytest invocation; unknown wrappers stay unresolved."""
+    tokens = shlex.split(line)
+    prefix = 3 if tokens[:3] == ["python", "-m", "pytest"] else 1
+    if not tokens or (prefix == 1 and tokens[0] != "pytest"):
+        return None
+    args = tokens[prefix:]
+    if not _pytest_tox_context_closed(parser, section) or any(
+        "{" in token or "}" in token for token in args
+    ):
+        return None
+    environment = _pytest_tox_environment(parser, section)
+    if environment is None:
+        return None
+    effective = dict(options)
+    if "DJANGO_SETTINGS_MODULE" in environment:
+        effective["DJANGO_SETTINGS_MODULE"] = environment["DJANGO_SETTINGS_MODULE"]
+    # Configuration addopts precede command arguments, but their --ds still
+    # outranks the environment; apply them together in argparse order.
+    configured = effective.get("addopts", "")
+    configured = shlex.split(configured) if isinstance(configured, str) else configured
+    if not isinstance(configured, list):
+        return None
+    selected = _pytest_effective_settings_options(
+        {**effective, "addopts": configured + args}
+    )
+    if selected is None or not _pytest_tox_arguments_closed(args):
+        return None
+    selected["addopts"] = options.get("addopts", "")
+    return selected
+
+
+def _pytest_tox_context_closed(parser, section):
+    """Only this literal INI command subset is modeled, not arbitrary Tox execution."""
+    supported = {"commands", "setenv", "passenv", "deps", "description"}
+    return not any(
+        key not in supported
+        for owner in {"testenv", section}
+        if parser.has_section(owner)
+        for key in parser.options(owner)
+    )
+
+
+def _pytest_tox_environment(parser, section):
+    """Only literal environment assignments with closed selector inheritance count."""
+    selectors = {
+        "PYTEST_ADDOPTS",
+        "PYTEST_PLUGINS",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+        "DJANGO_SETTINGS_MODULE",
+        "DJANGO_CONFIGURATION",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PATH",
+        "VIRTUAL_ENV",
+    }
+    passthrough = parser.get(
+        section, "passenv", fallback=parser.get("testenv", "passenv", fallback="")
+    )
+    if any(
+        fnmatchcase(name, pattern.upper())
+        for pattern in re.split(r"[\s,]+", passthrough)
+        for name in selectors
+    ):
+        return None
+    environment = {}
+    configured = parser.get(
+        section, "setenv", fallback=parser.get("testenv", "setenv", fallback="")
+    )
+    for item in configured.splitlines():
+        if not item.strip() or item.lstrip().startswith("#"):
+            continue
+        name, separator, value = item.strip().partition("=")
+        name, value = name.strip().upper(), value.strip()
+        if not separator or not name.isidentifier() or "{" in value or "}" in value:
+            return None
+        if name in selectors - {"DJANGO_SETTINGS_MODULE"}:
+            return None
+        environment[name] = value
+    module = environment.get("DJANGO_SETTINGS_MODULE", "unused")
+    return (
+        environment if all(part.isidentifier() for part in module.split(".")) else None
+    )
+
+
+def _pytest_tox_arguments_closed(args):
+    """Do not credit tests excluded by an unmodeled command target or selector."""
+    arguments = iter(args)
+    for token in arguments:
+        if token == "--ds":
+            if next(arguments, None) is None:
+                return False
+        elif not (token.startswith("--ds=") or token in {"-q", "-v", "-vv"}):
+            return False
+    return True
+
+
+def captured_pytest_django_provider(captured):
+    """Bind a declared plugin dependency; activation and execution stay unobserved."""
+    for name, raw in captured.items():
+        if not isinstance(raw, bytes):
+            return None
+        try:
+            text = raw.decode("utf-8")
+            if name == "pyproject.toml":
+                declarations = _pytest_django_project_declarations(tomllib.loads(text))
+                declared = bool(declarations)
+            elif name == "requirements.txt":
+                declared = any(
+                    _pytest_django_requirement(line) for line in text.splitlines()
+                )
+            elif name == "tox.ini":
+                parser = configparser.ConfigParser(interpolation=None)
+                parser.read_string(text)
+                dependencies = parser.get("testenv", "deps", fallback="")
+                commands = parser.get("testenv", "commands", fallback="")
+                declared = any(
+                    _pytest_django_requirement(line)
+                    for line in dependencies.splitlines()
+                ) and any(
+                    re.match(r"^(?:python\s+-m\s+)?pytest(?:\s|$)", line.strip())
+                    for line in commands.splitlines()
+                )
+            else:
+                continue
+        except (UnicodeError, ValueError, configparser.Error):
+            return None
+        if declared:
+            return {
+                "path": name,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "provider": "pytest_django",
+                "declaration_only": True,
+                **({"declarations": declarations} if name == "pyproject.toml" else {}),
+            }
+    return None
+
+
+def _pytest_django_project_declarations(project):
+    """Retain dependency-group premises without claiming installation/activation."""
+    metadata = project.get("project", {})
+    if not isinstance(metadata, dict):
+        return []
+    groups = {"project.dependencies": metadata.get("dependencies", [])}
+    for prefix, collection in (
+        ("project.optional-dependencies", metadata.get("optional-dependencies", {})),
+        ("dependency-groups", project.get("dependency-groups", {})),
+    ):
+        if not isinstance(collection, dict):
+            return []
+        groups.update(
+            {prefix + "." + name: value for name, value in collection.items()}
+        )
+    declarations = [
+        {"group": group, "requirement": item}
+        for group, values in groups.items()
+        if isinstance(values, list)
+        for item in values
+        if isinstance(item, str) and _pytest_django_requirement(item)
+    ]
+    tools = project.get("tool", {})
+    if not isinstance(tools, dict):
+        return []
+    poetry = tools.get("poetry", {})
+    if not isinstance(poetry, dict) or not isinstance(poetry.get("group", {}), dict):
+        return []
+    poetry_groups = {
+        "tool.poetry.dependencies": poetry.get("dependencies", {}),
+        "tool.poetry.dev-dependencies": poetry.get("dev-dependencies", {}),
+        **{
+            "tool.poetry.group." + name + ".dependencies": group.get("dependencies", {})
+            for name, group in poetry.get("group", {}).items()
+            if isinstance(group, dict) and group.get("optional", False) is False
+        },
+    }
+    for group, values in poetry_groups.items():
+        if not isinstance(values, dict):
+            return []
+        # Tables may select markers, sources, extras or optional installation.
+        declarations.extend(
+            {"group": group, "requirement": "pytest-django " + constraint}
+            for name, constraint in values.items()
+            if name.lower().replace("_", "-") == "pytest-django"
+            and isinstance(constraint, str)
+            and re.fullmatch(
+                r"(?:\*|[\^~<>=!0-9][0-9.*,+<>=!~^| -]*)", constraint.strip()
+            )
+        )
+    return declarations
+
+
+def _pytest_django_requirement(line):
+    """Unresolved requirement markers/includes never establish a plugin contract."""
+    return bool(
+        re.fullmatch(
+            r"\s*pytest[-_]django(?:\s*[<>=!~][A-Za-z0-9.*,+<>=!~ -]+)?\s*",
+            line,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _supported_pytest_function_patterns(options):

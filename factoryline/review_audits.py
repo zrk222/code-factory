@@ -1491,26 +1491,27 @@ def _url_quoting_charset(value: str) -> bool:
 
 def _credential_role_witness(node, target, aliases):
     """Describe a symbolic declaration; it is not a non-credential exemption."""
-    import sys
-
     from .provenance import credential_role_witness
 
     return credential_role_witness(sys.modules[__name__], node, target, aliases)
 
 
+def _literal_credential_candidate(node, target):
+    """Share detection eligibility without constructing or classifying a finding."""
+    from .context_efficiency import _SECRET_BYTES
+
+    return isinstance(target, ast.Name) and (
+        bool(_SECRET_ASSIGNMENT.search(target.id))
+        or (value := _secret_literal(node)) is not None
+        and any(pattern.search(value.encode("utf-8")) for pattern in _SECRET_BYTES)
+    )
+
+
 def _literal_assignment_diagnostic(
     relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr, aliases=None
 ) -> dict[str, Any] | None:
-    if not isinstance(target, ast.Name):
+    if not _literal_credential_candidate(node, target):
         return None
-    if not _SECRET_ASSIGNMENT.search(target.id):
-        from .context_efficiency import _SECRET_BYTES
-
-        value = _secret_literal(node)
-        if value is None or not any(
-            pattern.search(value.encode("utf-8")) for pattern in _SECRET_BYTES
-        ):
-            return None
     return _security_finding(
         "SECURITY_HARDCODED_SECRET",
         relative,

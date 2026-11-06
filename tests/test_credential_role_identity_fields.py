@@ -1490,3 +1490,214 @@ def test_scalar_guard_binding_helper_invalidates_cached_role_evidence(
     assert audit._app_source_role_epoch(index) != epoch
     audit.application_plaintext_effect_evidence(*args)
     assert len(index["profiles"]) == 2
+
+
+def _captured_django_import_targets(files, importer):
+    from factoryline.mock_fixture_provenance import _django_import_targets
+    from factoryline.credential_role_identity_effects import source_symbol_index
+
+    root = Path(".")
+    modules, source_bytes, inventory = {}, {}, {}
+    for name, source in files.items():
+        path = Path(name)
+        raw = textwrap.dedent(source).encode()
+        tree = ast.parse(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        tree._oracle_source_sha256 = digest
+        modules[path], source_bytes[path], inventory[path] = tree, raw, digest
+    source = SourceSnapshotIndex(root, modules, source_bytes, inventory)
+    index = source_symbol_index(source)
+    path = Path(importer)
+    return _django_import_targets(index, path, modules[path])
+
+
+def test_package_initializer_relative_import_uses_its_package_context():
+    targets = _captured_django_import_targets(
+        {
+            "seo_optimizer/__init__.py": "from .version import VERSION\n",
+            "seo_optimizer/version.py": 'VERSION = "1"\n',
+        },
+        "seo_optimizer/__init__.py",
+    )
+    assert targets == {"VERSION": "seo_optimizer.version.VERSION"}
+
+
+def test_app_expression_name_uses_package_initializer_relative_imports():
+    from factoryline.mock_fixture_provenance import _app_expression_name
+    from factoryline.credential_role_identity_effects import source_symbol_index
+
+    files = {
+        "seo_optimizer/__init__.py": "from .version import VERSION as RELEASE\n",
+        "seo_optimizer/version.py": 'VERSION = "1"\n',
+    }
+    modules, source_bytes, inventory = {}, {}, {}
+    for name, source_text in files.items():
+        path = Path(name)
+        raw = textwrap.dedent(source_text).encode()
+        tree = ast.parse(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        tree._oracle_source_sha256 = digest
+        modules[path], source_bytes[path], inventory[path] = tree, raw, digest
+    source = SourceSnapshotIndex(Path("."), modules, source_bytes, inventory)
+    index = source_symbol_index(source)
+    assert (
+        _app_expression_name(
+            index,
+            Path("seo_optimizer/__init__.py"),
+            ast.Name(id="RELEASE", ctx=ast.Load()),
+        )
+        == "seo_optimizer.version.VERSION"
+    )
+
+
+def test_nested_initializer_and_module_relative_import_contexts():
+    files = {
+        "app/__init__.py": "",
+        "app/sub/__init__.py": "from .local import VALUE\nfrom ..root import ROOT\n",
+        "app/sub/local.py": "VALUE = 1\n",
+        "app/root.py": "ROOT = 1\n",
+        "app/sub/views.py": "from .local import VALUE\nfrom ..root import ROOT\n",
+    }
+    package = _captured_django_import_targets(files, "app/sub/__init__.py")
+    module = _captured_django_import_targets(files, "app/sub/views.py")
+    assert package == {"VALUE": "app.sub.local.VALUE", "ROOT": "app.root.ROOT"}
+    assert module == {"VALUE": "app.sub.local.VALUE", "ROOT": "app.root.ROOT"}
+
+
+@pytest.mark.parametrize(
+    "files, importer, expected",
+    [
+        (
+            {"pkg/__init__.py": "from .missing import VALUE\n"},
+            "pkg/__init__.py",
+            {"VALUE": "pkg.missing.VALUE"},
+        ),
+        (
+            {"pkg/__init__.py": "from . import *\n"},
+            "pkg/__init__.py",
+            None,
+        ),
+        (
+            {"pkg/__init__.py": "from .local import VALUE as ITEM\n"},
+            "pkg/__init__.py",
+            {"ITEM": "pkg.local.VALUE"},
+        ),
+        (
+            {
+                "pkg/__init__.py": (
+                    "from .local import VALUE as ITEM\n"
+                    "from .other import VALUE as ITEM\n"
+                )
+            },
+            "pkg/__init__.py",
+            None,
+        ),
+        (
+            {"pkg/__init__.py": "from .local import VALUE\nVALUE = 2\n"},
+            "pkg/__init__.py",
+            None,
+        ),
+    ],
+)
+def test_package_relative_import_resolution_preserves_negative_guards(
+    files, importer, expected
+):
+    assert _captured_django_import_targets(files, importer) == expected
+
+
+def test_stale_initializer_source_cannot_supply_import_identity():
+    from factoryline.mock_fixture_provenance import (
+        _app_expression_name,
+        _django_import_targets,
+    )
+    from factoryline.credential_role_identity_effects import source_symbol_index
+
+    raw = b"from .version import VERSION\n"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    path, provider = Path("pkg/__init__.py"), Path("pkg/version.py")
+    provider_raw = b"VERSION = 1\n"
+    source = SourceSnapshotIndex(
+        Path("."),
+        {path: tree, provider: ast.parse(provider_raw)},
+        {path: raw, provider: provider_raw},
+        {
+            path: digest,
+            provider: hashlib.sha256(provider_raw).hexdigest(),
+        },
+    )
+    index = source_symbol_index(source)
+    source.source_bytes[path] = b"from .other import VERSION\n"
+    assert _django_import_targets(index, path, tree) is None
+    assert (
+        _app_expression_name(index, path, ast.Name(id="VERSION", ctx=ast.Load()))
+        is None
+    )
+
+
+@pytest.mark.parametrize("helper", ["_django_package", "_django_import_targets"])
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_package_resolver_changes_invalidate_independent_role_epoch(
+    monkeypatch, helper, mutation
+):
+    from factoryline import credential_identity_audit as audit
+    from factoryline import credential_role_identity_effects as effects
+    from factoryline import mock_fixture_provenance as fixture
+
+    _path, _tree, index = _application_role_index("value = 'ordinary text'\n")
+    original = getattr(fixture, helper)
+    assert original in effects.security_value_helper_epoch()
+    assert original in effects.module_fixture_helper_epoch()
+    epoch = audit._app_source_role_epoch(index)
+
+    def replacement(*args, **kwargs):
+        return None
+
+    if mutation == "binding":
+        monkeypatch.setattr(fixture, helper, replacement)
+    else:
+        monkeypatch.setattr(original, "__code__", replacement.__code__)
+    assert audit._app_source_role_epoch(index) != epoch
+
+
+def test_shared_security_epoch_still_covers_deduplicated_value_functions():
+    from factoryline import credential_role_identity_effects as effects
+
+    epoch = effects.security_value_helper_epoch()
+    assert all(
+        helper in epoch
+        for helper in (
+            effects.identity_value,
+            effects._identity_call_value,
+            effects._subscript_value,
+            effects._container_value,
+        )
+    )
+
+
+def test_import_target_resolution_rejects_unindexed_ast_and_invalid_source():
+    from factoryline.mock_fixture_provenance import _django_import_targets
+    from factoryline.credential_role_identity_effects import source_symbol_index
+
+    raw = b"from .version import VERSION\n"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    path, provider = Path("pkg/__init__.py"), Path("pkg/version.py")
+    provider_raw = b"VERSION = 1\n"
+    provider_tree = ast.parse(provider_raw)
+    provider_tree._oracle_source_sha256 = hashlib.sha256(provider_raw).hexdigest()
+    source = SourceSnapshotIndex(
+        Path("."),
+        {path: tree, provider: provider_tree},
+        {path: raw, provider: provider_raw},
+        {
+            path: digest,
+            provider: hashlib.sha256(provider_raw).hexdigest(),
+        },
+    )
+    index = source_symbol_index(source)
+    assert _django_import_targets(index, path, ast.parse(raw)) is None
+    source.source_bytes[path] = b"from .other import VERSION\n"
+    assert _django_import_targets(index, path, tree) is None

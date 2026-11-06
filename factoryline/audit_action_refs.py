@@ -818,7 +818,13 @@ def _security_scan_verification_state(audit, core, captured, primitive):
         "source-role-v1",
         "source-role-v2",
         "source-role-v3",
-    } or core.get("state") not in {"CLEAN", "FINDINGS", "REVIEW_REQUIRED", "BLOCKED"}:
+    } or core.get("state") not in {
+        "CLEAN",
+        "FINDINGS",
+        "REVIEW_REQUIRED",
+        "BLOCKED",
+        "INCOMPLETE",
+    }:
         return None
     sources = primitive._trusted_core_complete_sources(core, captured, audit)
     tenant = primitive._trusted_core_tenant_arguments(core, audit)
