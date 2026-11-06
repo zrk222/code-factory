@@ -6273,9 +6273,10 @@ def test_shared_configuration374_native_scan_records_selector_without_admission(
         ("--ds=tests.settings", "tests.settings"),
         ("--ds tests.settings", "tests.settings"),
         (["--ds=other.settings", "--ds", "tests.settings"], "tests.settings"),
+        # A custom debugger plugin invocation is outside the closed argv allowlist.
         (
             "--reuse-db --ds=tests.settings --pdbcls=pudb.debugger:Debugger",
-            "tests.settings",
+            None,
         ),
         ("--ds", None),
         ("--ds=", None),
@@ -6295,6 +6296,66 @@ def test_captured_settings_selection_models_exact_cli_precedence(addopts, select
     result = _pytest_effective_settings_options(options)
     assert (result.get("DJANGO_SETTINGS_MODULE") if result else None) == selected
     assert options["DJANGO_SETTINGS_MODULE"] == "default.settings"
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "-k selected",
+        "-m integration",
+        "--ignore=checks/private",
+        "--deselect=checks/test_private.py::test_value",
+    ],
+)
+def test_configured_pytest_addopts_selectors_leave_settings_unresolved(selector):
+    from factoryline.pytest_collection_audit import _pytest_effective_settings_options
+
+    options = {
+        "DJANGO_SETTINGS_MODULE": "support.configuration",
+        "addopts": selector,
+    }
+    assert _pytest_effective_settings_options(options) is None
+
+
+@pytest.mark.parametrize(
+    "config,tox,selected",
+    [
+        (
+            b"[pytest]\nDJANGO_SETTINGS_MODULE=config.settings\n",
+            b"[testenv]\nsetenv=\n    DJANGO_SETTINGS_MODULE=env.settings\n"
+            b"commands=pytest --ds=cli.settings\n",
+            "cli.settings",
+        ),
+        (
+            b"[pytest]\nDJANGO_SETTINGS_MODULE=config.settings\n",
+            b"[testenv]\nsetenv=\n    DJANGO_SETTINGS_MODULE=env.settings\n"
+            b"commands=pytest\n",
+            "env.settings",
+        ),
+        (
+            b"[pytest]\nDJANGO_SETTINGS_MODULE=config.settings\n"
+            b"addopts=--ds=addopts.settings\n",
+            b"[testenv]\nsetenv=\n    DJANGO_SETTINGS_MODULE=env.settings\n"
+            b"commands=pytest\n",
+            "addopts.settings",
+        ),
+    ],
+)
+def test_captured_tox_settings_option_order_is_config_env_then_command(
+    config, tox, selected
+):
+    from factoryline.pytest_collection_audit import (
+        _pytest_captured_invocation_options,
+        captured_pytest_configuration,
+    )
+
+    options = captured_pytest_configuration({"pytest.ini": config})["options"]
+    result = _pytest_captured_invocation_options(
+        {"pytest.ini": config, "tox.ini": tox}, options
+    )
+    assert result["DJANGO_SETTINGS_MODULE"] == selected
+    assert result["captured_invocations"]["execution_status"] == "NOT_EXECUTED"
+    assert result["captured_invocations"]["profile"] == "CAPTURED_LITERAL_COMMANDS_ONLY"
 
 
 @pytest.mark.parametrize(

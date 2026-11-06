@@ -1508,6 +1508,11 @@ def import_resolution_helpers():
         _pytest_settings_selection_overridden,
         _pytest_effective_settings_options,
         _pytest_django_project_declarations,
+        _pytest_captured_invocation_options,
+        _pytest_tox_selection,
+        _pytest_tox_context_closed,
+        _pytest_tox_environment,
+        _pytest_tox_arguments_closed,
         _pytest_config_data,
     )
     from .credential_role_constructor_provider import (
@@ -1555,6 +1560,11 @@ def import_resolution_helpers():
         _pytest_settings_selection_overridden,
         _pytest_effective_settings_options,
         _pytest_django_project_declarations,
+        _pytest_captured_invocation_options,
+        _pytest_tox_selection,
+        _pytest_tox_context_closed,
+        _pytest_tox_environment,
+        _pytest_tox_arguments_closed,
         _pytest_config_data,
         prepared_security_snapshot_batch,
         getattr(

@@ -5549,6 +5549,7 @@ class _SourceTestScope:
             "provider_activation": "NOT_OBSERVED",
             "provider": provider,
             "configuration": selected["identity"],
+            "invocation": selected["options"].get("captured_invocations"),
         }
         return True
 

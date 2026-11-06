@@ -509,7 +509,7 @@ def captured_pytest_configuration(captured):
             return None
         if options is _ABSENT_PYTEST_SECTION:
             options = {}
-        effective = _pytest_effective_settings_options(options)
+        effective = _pytest_captured_invocation_options(captured, options)
         if effective is None:
             return None
         return {"identity": identity, "options": effective}
@@ -531,6 +531,8 @@ def _pytest_effective_settings_options(options):
     except ValueError:
         return None
     if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
+        return None
+    if not _pytest_tox_arguments_closed(tokens):
         return None
     if any(
         token == "--"
@@ -554,6 +556,149 @@ def _pytest_effective_settings_options(options):
                 return None
             effective["DJANGO_SETTINGS_MODULE"] = module
     return effective
+
+
+def _pytest_captured_invocation_options(captured, options):
+    """Reconcile captured tox argv/environment with the selected config defaults."""
+    effective = _pytest_effective_settings_options(options)
+    if effective is None or "tox.ini" not in captured:
+        return effective
+    try:
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read_string(captured["tox.ini"].decode("utf-8"))
+        invocations = [
+            (
+                section,
+                parser.get(
+                    section,
+                    "commands",
+                    fallback=parser.get("testenv", "commands", fallback=""),
+                ),
+            )
+            for section in parser.sections()
+            if section == "testenv" or section.startswith("testenv:")
+        ]
+        selections = [
+            selection
+            for section, commands in invocations
+            for line in commands.splitlines()
+            if line.strip()
+            for selection in [_pytest_tox_selection(parser, section, line, options)]
+        ]
+    except (AttributeError, UnicodeError, ValueError, configparser.Error):
+        return None
+    if not selections:
+        return None
+    if any(selection is None for selection in selections) or any(
+        selection != selections[0] for selection in selections[1:]
+    ):
+        return None
+    result = selections[0]
+    result["captured_invocations"] = {
+        "path": "tox.ini",
+        "sha256": hashlib.sha256(captured["tox.ini"]).hexdigest(),
+        "commands": invocations,
+        "profile": "CAPTURED_LITERAL_COMMANDS_ONLY",
+        "execution_status": "NOT_EXECUTED",
+    }
+    return result
+
+
+def _pytest_tox_selection(parser, section, line, options):
+    """Bind a literal default pytest invocation; unknown wrappers stay unresolved."""
+    tokens = shlex.split(line)
+    prefix = 3 if tokens[:3] == ["python", "-m", "pytest"] else 1
+    if not tokens or (prefix == 1 and tokens[0] != "pytest"):
+        return None
+    args = tokens[prefix:]
+    if not _pytest_tox_context_closed(parser, section) or any(
+        "{" in token or "}" in token for token in args
+    ):
+        return None
+    environment = _pytest_tox_environment(parser, section)
+    if environment is None:
+        return None
+    effective = dict(options)
+    if "DJANGO_SETTINGS_MODULE" in environment:
+        effective["DJANGO_SETTINGS_MODULE"] = environment["DJANGO_SETTINGS_MODULE"]
+    # Configuration addopts precede command arguments, but their --ds still
+    # outranks the environment; apply them together in argparse order.
+    configured = effective.get("addopts", "")
+    configured = shlex.split(configured) if isinstance(configured, str) else configured
+    if not isinstance(configured, list):
+        return None
+    selected = _pytest_effective_settings_options(
+        {**effective, "addopts": configured + args}
+    )
+    if selected is None or not _pytest_tox_arguments_closed(args):
+        return None
+    selected["addopts"] = options.get("addopts", "")
+    return selected
+
+
+def _pytest_tox_context_closed(parser, section):
+    """Only this literal INI command subset is modeled, not arbitrary Tox execution."""
+    supported = {"commands", "setenv", "passenv", "deps", "description"}
+    return not any(
+        key not in supported
+        for owner in {"testenv", section}
+        if parser.has_section(owner)
+        for key in parser.options(owner)
+    )
+
+
+def _pytest_tox_environment(parser, section):
+    """Only literal environment assignments with closed selector inheritance count."""
+    selectors = {
+        "PYTEST_ADDOPTS",
+        "PYTEST_PLUGINS",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+        "DJANGO_SETTINGS_MODULE",
+        "DJANGO_CONFIGURATION",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PATH",
+        "VIRTUAL_ENV",
+    }
+    passthrough = parser.get(
+        section, "passenv", fallback=parser.get("testenv", "passenv", fallback="")
+    )
+    if any(
+        fnmatchcase(name, pattern.upper())
+        for pattern in re.split(r"[\s,]+", passthrough)
+        for name in selectors
+    ):
+        return None
+    environment = {}
+    configured = parser.get(
+        section, "setenv", fallback=parser.get("testenv", "setenv", fallback="")
+    )
+    for item in configured.splitlines():
+        if not item.strip() or item.lstrip().startswith("#"):
+            continue
+        name, separator, value = item.strip().partition("=")
+        name, value = name.strip().upper(), value.strip()
+        if not separator or not name.isidentifier() or "{" in value or "}" in value:
+            return None
+        if name in selectors - {"DJANGO_SETTINGS_MODULE"}:
+            return None
+        environment[name] = value
+    module = environment.get("DJANGO_SETTINGS_MODULE", "unused")
+    return (
+        environment if all(part.isidentifier() for part in module.split(".")) else None
+    )
+
+
+def _pytest_tox_arguments_closed(args):
+    """Do not credit tests excluded by an unmodeled command target or selector."""
+    arguments = iter(args)
+    for token in arguments:
+        if token == "--ds":
+            if next(arguments, None) is None:
+                return False
+        elif not (token.startswith("--ds=") or token in {"-q", "-v", "-vv"}):
+            return False
+    return True
 
 
 def captured_pytest_django_provider(captured):

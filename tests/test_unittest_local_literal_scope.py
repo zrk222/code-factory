@@ -208,11 +208,105 @@ def configured_authority_scope(tmp_path, configuration, extra=None):
 
 
 @pytest.mark.parametrize(
+    "tox,config,expected",
+    [
+        (
+            b"[testenv]\nsetenv=\n    DJANGO_SETTINGS_MODULE=environment.settings\n"
+            b"commands=pytest --ds=support.configuration\n",
+            b"[pytest]\nDJANGO_SETTINGS_MODULE=config.settings\n",
+            "support.configuration",
+        ),
+        (
+            b"[testenv]\nsetenv=\n    DJANGO_SETTINGS_MODULE=support.configuration\n"
+            b"commands=pytest\n",
+            b"[pytest]\nDJANGO_SETTINGS_MODULE=config.settings\n",
+            "support.configuration",
+        ),
+        (
+            b"[testenv]\nsetenv=\n    DJANGO_SETTINGS_MODULE=environment.settings\n"
+            b"commands=pytest\n",
+            b"[pytest]\nDJANGO_SETTINGS_MODULE=config.settings\n"
+            b"addopts=--ds=support.configuration\n",
+            "support.configuration",
+        ),
+    ],
+)
+def test_captured_tox_settings_authority_follows_effective_invocation(
+    tmp_path, tox, config, expected
+):
+    index, path, assignment = configured_authority_scope(
+        tmp_path, {"pytest.ini": config, "tox.ini": tox}
+    )
+    result = scope._source_test_scope_evidence(index, path, assignment, "SECRET_KEY")
+    assert result is not None
+    selection = result["settings_selection"]
+    from factoryline.pytest_collection_audit import (
+        _pytest_captured_invocation_options,
+        captured_pytest_configuration,
+    )
+
+    config_selection = captured_pytest_configuration({"pytest.ini": config})
+    effective = _pytest_captured_invocation_options(
+        {"pytest.ini": config, "tox.ini": tox}, config_selection["options"]
+    )
+    assert effective["DJANGO_SETTINGS_MODULE"] == expected
+    assert selection["execution_status"] == "NOT_EXECUTED"
+    assert selection["provider_activation"] == "NOT_OBSERVED"
+    assert selection["invocation"]["profile"] == "CAPTURED_LITERAL_COMMANDS_ONLY"
+
+
+@pytest.mark.parametrize(
+    "tox",
+    [
+        # Named testenvs with distinct authorities leave selection ambiguous.
+        b"[testenv:one]\ncommands=pytest --ds=support.configuration\n"
+        b"[testenv:two]\ncommands=pytest --ds=other.settings\n",
+        # Pass-through selectors can change pytest's runtime environment.
+        b"[testenv]\npassenv=PYTEST_ADDOPTS\ncommands=pytest\n",
+        b"[testenv]\npassenv=PYTEST_*\ncommands=pytest\n",
+        b"[testenv]\npassenv=DJANGO_SETTINGS_*\ncommands=pytest\n",
+        # Dynamic substitution and unmodeled command targets/selectors are open.
+        b"[testenv]\ncommands=pytest --ds={env:SETTINGS}\n",
+        b"[testenv]\ncommands=pytest checks/test_feature.py\n",
+        b"[testenv]\ncommands=pytest -k feature\n",
+        b"[testenv]\ncommands=pytest -m integration\n",
+        # cwd and command hooks can affect imports or execute other setup.
+        b"[testenv]\nchangedir=checks\ncommands=pytest\n",
+        b"[testenv]\ncommands_pre=python prepare.py\ncommands=pytest\n",
+        b"[testenv]\ncommands_post=python cleanup.py\ncommands=pytest\n",
+        # Unmodeled install behavior and path replacement can change authority.
+        b"[testenv]\ninstall_command=python -m pip install {opts} {packages}\ncommands=pytest\n",
+        b"[testenv]\nsetenv=PATH=/custom/tools\ncommands=pytest\n",
+        # Malformed settings options cannot prove the selected module.
+        b"[testenv]\ncommands=pytest --ds\n",
+        b"[testenv]\ncommands=pytest --ds=../settings\n",
+        # Default positional arguments are caller-controlled and unresolved.
+        b"[testenv]\ncommands=pytest {posargs}\n",
+    ],
+)
+def test_captured_tox_settings_authority_rejects_unmodeled_invocations(tmp_path, tox):
+    index, path, assignment = configured_authority_scope(
+        tmp_path,
+        {
+            "pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n",
+            "tox.ini": tox,
+        },
+    )
+    assert (
+        scope._source_test_scope_evidence(index, path, assignment, "SECRET_KEY") is None
+    )
+
+
+@pytest.mark.parametrize(
     "name,raw",
     [
         ("pytest.ini", b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n"),
         (".pytest.ini", b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n"),
-        ("tox.ini", b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n"),
+        (
+            "tox.ini",
+            b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n"
+            b"[testenv]\ncommands=pytest\n",
+        ),
         ("setup.cfg", b"[tool:pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n"),
         (
             "pyproject.toml",
@@ -257,6 +351,18 @@ def test_configured_settings_authority_uses_shared_collection_parser(
         },
         {
             "pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\naddopts=-oDJANGO_SETTINGS_MODULE=other.settings\n"
+        },
+        {
+            "pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\naddopts=-k selected\n"
+        },
+        {
+            "pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\naddopts=-m integration\n"
+        },
+        {
+            "pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\naddopts=--ignore=checks/private\n"
+        },
+        {
+            "pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\naddopts=--deselect=checks/test_private.py::test_value\n"
         },
         {
             "pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\ntestpaths=other\n"
