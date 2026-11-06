@@ -2331,6 +2331,7 @@ _UNMODELED_BUILTIN_COLLECTION = object()
 
 
 def captured_pytest_helpers():
+    """Bind live parser predicates and immutable policies into cache epochs."""
     return tuple(
         value
         for name, value in globals().items()

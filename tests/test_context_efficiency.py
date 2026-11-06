@@ -6063,6 +6063,8 @@ def test_precision257_context_profiles_and_fixture_binders_fail_closed():
     )
     names = {
         "requirements.txt",
+        "pyproject.toml",
+        "tox.ini",
         "pytest.toml",
         ".pytest.toml",
         "pytest.ini",

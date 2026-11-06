@@ -5562,6 +5562,7 @@ class _SourceTestScope:
         return True
 
     def configured_settings_authority(self, profile):
+        """Join a declared runner to its captured selector and provider evidence."""
         from .pytest_collection_audit import (
             captured_distribution_provider,
             captured_pytest_configuration,
@@ -5597,6 +5598,7 @@ class _SourceTestScope:
         return (provider, module, selected, native) if provider is not None else None
 
     def configured_settings_invocation_profile(self):
+        """Project the shared invocation profile from captured source bytes."""
         import hashlib
         from .pytest_collection_audit import captured_test_invocation_profile
 
@@ -5624,6 +5626,7 @@ class _SourceTestScope:
         )
 
     def witness_native_settings_profile(self, profile):
+        """Bind each native bootstrap milestone to its exact source node."""
         roles = {
             "settings_selector_span": "native_django_settings_selector",
             "setup_span": "modeled_implicit_settings_load",
@@ -5647,6 +5650,7 @@ class _SourceTestScope:
         return True
 
     def configured_settings_invocations(self, selected, profile=None):
+        """Collect source-bound test owners selected by the declared runner."""
         from pathlib import Path
 
         from .pytest_collection_audit import _pytest_collection_settings
@@ -5771,6 +5775,7 @@ class _SourceTestScope:
         )
 
     def configured_settings_counteredge(self, path, node, module):
+        """Refuse selectors or consumers outside the closed invocation proof."""
         if self.configured_settings_framework_counteredge(path, node):
             return True
         selector = id(node) in self.native_profile_nodes
@@ -5820,6 +5825,7 @@ class _SourceTestScope:
         }
 
     def configured_settings_framework_counteredge(self, path, node):
+        """Reject implicit key effects and unclosed settings namespace uses."""
         from .pytest_collection_audit import (
             DJANGO_IMPLICIT_KEY_EFFECTS,
             DJANGO_IMPLICIT_KEY_METHODS,
@@ -5908,17 +5914,10 @@ class _SourceTestScope:
 
     def exercise_owner(self, path, owner):
         """Interpret setup and each declared test with a distinct modeled receiver."""
-        setup, teardown = (
-            next(
-                (
-                    n
-                    for n in owner.body
-                    if isinstance(n, ast.FunctionDef) and n.name == name
-                ),
-                None,
-            )
-            for name in ("setUp", "tearDown")
-        )
+        lifecycle = {}
+        for node in owner.body:
+            if isinstance(node, ast.FunctionDef) and node.name in {"setUp", "tearDown"}:
+                lifecycle.setdefault(node.name, node)
         tests = [
             n
             for n in owner.body
@@ -5926,17 +5925,17 @@ class _SourceTestScope:
         ]
         if not tests:
             return False
-        for number, test in enumerate(tests):
+        for test in tests:
             identity = (
                 "test-invocation:" + self.source.relative(path) + ":" + str(test.lineno)
             )
             receiver = _Value(class_roots=frozenset({identity}))
             self.objects[identity] = (path, owner)
-            functions = (
-                ([setup] if setup is not None else [])
-                + [test]
-                + ([teardown] if teardown is not None else [])
-            )
+            functions = [
+                f
+                for f in (lifecycle.get("setUp"), test, lifecycle.get("tearDown"))
+                if f is not None
+            ]
             entries = [
                 (path, f, {f.args.args[0].arg: receiver})
                 for f in functions

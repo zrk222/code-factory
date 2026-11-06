@@ -528,7 +528,7 @@ def application_profile_configuration(root, read_source, limit):
 
     bindings, identities, valid = [], {}, True
     total_bytes = 0
-    directory = root / ".github" / "workflows"
+    directory = Path(root) / ".github" / "workflows"
     try:
         if _has_reparse_ancestor(directory):
             raise ValueError("linked_workflow_configuration")
