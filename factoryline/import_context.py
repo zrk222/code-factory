@@ -498,29 +498,53 @@ def _shell_import_aliases(nodes, audit, provider, *, package=None):
     return {**audit._security_aliases(nodes), **relative}
 
 
-def application_configuration_names():
-    """Name bounded root inputs shared by capture, sealing and role rebuilding."""
-    return frozenset(
-        {
-            "requirements.txt",
-            "pyproject.toml",
-            "tox.ini",
-            "pytest.toml",
-            ".pytest.toml",
-            "pytest.ini",
-            ".pytest.ini",
-            "setup.cfg",
-        }
-    )
+def application_configuration_names(paths=()):
+    """Select the same canonical configuration inputs at every proof boundary."""
+    names = {
+        "requirements.txt",
+        "pyproject.toml",
+        "tox.ini",
+        "pytest.toml",
+        ".pytest.toml",
+        "pytest.ini",
+        ".pytest.ini",
+        "setup.cfg",
+    }
+    if isinstance(paths, (dict, list, tuple, set, frozenset)):
+        names.update(
+            name
+            for name in paths
+            if isinstance(name, str)
+            and re.fullmatch(r"\.github/workflows/[^/\\:\x00]+\.ya?ml", name)
+        )
+    return frozenset(names)
 
 
 def application_profile_configuration(root, read_source, limit):
     """Capture unparsed selector bytes; neither presence nor content grants authority."""
+    from itertools import islice
+    from .context_efficiency import _has_reparse_ancestor
+    from .review_audits import MAX_SECURITY_SOURCE_FILES
+
     bindings, identities, valid = [], {}, True
-    # The existing type-check configuration capture owns pyproject.toml/tox.ini.
-    for name in sorted(
-        application_configuration_names() - {"pyproject.toml", "tox.ini"}
-    ):
+    total_bytes = 0
+    directory = root / ".github" / "workflows"
+    try:
+        if _has_reparse_ancestor(directory):
+            raise ValueError("linked_workflow_configuration")
+        paths = (
+            [
+                p.relative_to(root).as_posix()
+                for p in islice(directory.iterdir(), MAX_SECURITY_SOURCE_FILES + 1)
+            ]
+            if directory.exists()
+            else []
+        )
+        if len(paths) > MAX_SECURITY_SOURCE_FILES:
+            raise ValueError("workflow_inventory_exceeds_capture_profile")
+    except (OSError, ValueError) as exc:
+        return [], {"workflow_inventory": {"state": str(exc)}}, False
+    for name in sorted(application_configuration_names(paths)):
         identity = {"path": name}
         try:
             raw = read_source(root, name)
@@ -530,6 +554,13 @@ def application_profile_configuration(root, read_source, limit):
             identity["state"] = "missing" if missing else code
             valid = valid and missing
         else:
+            total_bytes += len(raw)
+            if total_bytes > 32 * 1024 * 1024:
+                identities[name] = {
+                    **identity,
+                    "state": "configuration_capture_byte_budget",
+                }
+                return bindings, identities, False
             if len(raw) > limit:
                 identity.update(state="oversized", bytes=len(raw))
                 valid = False
@@ -539,7 +570,9 @@ def application_profile_configuration(root, read_source, limit):
                     "sha256": hashlib.sha256(raw).hexdigest(),
                     "bytes": len(raw),
                 }
-                bindings.append(binding)
+                # Type-check capture already owns these two positive bindings.
+                if name not in {"pyproject.toml", "tox.ini"}:
+                    bindings.append(binding)
                 identity.update(binding, state="read")
         identities[name] = identity
     return bindings, identities, valid
@@ -1068,9 +1101,11 @@ def presentation_role_helpers():
     """Bind data-role caches to their shared origin, transfer and consumer machinery."""
     from . import credential_role_paths as paths, finite_capture as transfer
     from . import credential_role_constructor_provider as roles
+    from .pytest_collection_audit import captured_pytest_helpers
 
     return (
         presentation_role_helpers,
+        *captured_pytest_helpers(),
         *(
             helper
             for name, helper in vars(paths).items()
@@ -1555,21 +1590,7 @@ def unique_import_source(matches, *, strict):
 
 def import_resolution_helpers():
     """Expose current resolver bindings/code to the existing native cache epoch."""
-    from .pytest_collection_audit import (
-        captured_pytest_configuration,
-        captured_pytest_django_provider,
-        _pytest_django_requirement,
-        _pytest_configuration_options,
-        _pytest_settings_selection_overridden,
-        _pytest_effective_settings_options,
-        _pytest_django_project_declarations,
-        _pytest_captured_invocation_options,
-        _pytest_tox_selection,
-        _pytest_tox_context_closed,
-        _pytest_tox_environment,
-        _pytest_tox_arguments_closed,
-        _pytest_config_data,
-    )
+    from .pytest_collection_audit import captured_pytest_helpers
     from .credential_role_constructor_provider import (
         SourceSnapshotIndex,
         _binds,
@@ -1608,19 +1629,7 @@ def import_resolution_helpers():
             for helper in _fingerprint_epoch_helpers()
             if callable(helper) and hasattr(helper, "__name__")
         ),
-        captured_pytest_configuration,
-        captured_pytest_django_provider,
-        _pytest_django_requirement,
-        _pytest_configuration_options,
-        _pytest_settings_selection_overridden,
-        _pytest_effective_settings_options,
-        _pytest_django_project_declarations,
-        _pytest_captured_invocation_options,
-        _pytest_tox_selection,
-        _pytest_tox_context_closed,
-        _pytest_tox_environment,
-        _pytest_tox_arguments_closed,
-        _pytest_config_data,
+        *captured_pytest_helpers(),
         prepared_security_snapshot_batch,
         getattr(
             prepared_security_snapshot_batch,

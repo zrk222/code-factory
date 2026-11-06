@@ -1,0 +1,108 @@
+{
+  "schema": "factory.precision.repair.v1",
+  "scope": "Exposed N447 development replay; not fresh held-out, actionable-tier precision or recall",
+  "base_commit": "d449dde586a94a4a8493796df45750c849ebc9a8",
+  "change": "One captured workflow/runner/provider profile shared by settings-role proof, independent reconstruction and cache epochs; implicit consumers and namespace escapes veto test-only exclusion",
+  "engine_source_sha256": "de71a7f8613dc6bfc85786bb7859f7b004578041c6d33ea88267e5f3be0bffc3",
+  "candidate_windows_byte_sha256": {
+    "factoryline/audit_action_refs.py": "8f464dd2a1cc676083d0bf577ae1042f40e8e81e1109f64719e8ba97cfed1b55",
+    "factoryline/context_efficiency.py": "bb4d30d3fc2615c76789138a4744cb526d04d61b9b242f50fe7747ef1d4809c7",
+    "factoryline/credential_role_method_use_getter_audit.py": "9ff3ce4413edf4776943f7e829336f36a981998b97cf293497219b08af38e831",
+    "factoryline/import_context.py": "4dca63976b641c8b615b3ad99acfc487216204fdb9498f88bbda055cece17bc8",
+    "factoryline/primitive_observation_binding.py": "4fb9e48b7ecb9b48831b1d026c62e3ccd47bfceeafc9c9f150fad27deffc64c3",
+    "factoryline/pytest_collection_audit.py": "44a0126ea200f564e48110001e2abb3eb16652a064410619310cda5cb8fc0f94",
+    "factoryline/review_audits.py": "ccb7f6176faf6a94c2f0f7291131605508ab6c575a19a375be5e83b1e931f63a",
+    "tests/test_context_efficiency.py": "7ab2499de895d7f8274f8691bad3e252b22cecb4c1f85a924febbd2ea5ddaa34",
+    "tests/test_mock_fixture_provenance.py": "20c15599f361ff2d5588ceea465e099966a2965e00bf2f245d906f9ad967d59e",
+    "tests/test_unittest_local_literal_scope.py": "33c97a512d5a0e0d8a20c72bd662eabf35ebab2ac07f1cbbded5f8b8a1979fc0"
+  },
+  "labels": {
+    "source": "Two unchanged AI reviewer references; no outside human adjudication",
+    "join_verified": true,
+    "reviewers": {
+      "A": {
+        "path": ".factory/precision447-fresh/reviews/A/review.json",
+        "sha256": "e8a84f575804a92e354a85dfb45e99861baaecafb0a3a4909d97145953c41725"
+      },
+      "B": {
+        "path": ".factory/precision447-fresh/reviews/B/review.json",
+        "sha256": "3f478b825846d16e8eae1b5fac20555850cc714d901af83b06109404a6b85dab"
+      }
+    },
+    "original_score": {
+      "path": ".factory/precision447-fresh/official-score.json",
+      "sha256": "e49e264ac38eec056699973d568ed088045736ac57ddff38706decec24e94e29"
+    }
+  },
+  "sampling": {
+    "cases": 40,
+    "repositories": 32,
+    "max_cases_per_repository": 2,
+    "status": "Exposed engineering panel; no new sampling or blind labels"
+  },
+  "original_raw_alert_reference": {
+    "TP": 6,
+    "FP": 29,
+    "UNCLEAR": 5,
+    "selected_active": 40,
+    "decided": 35,
+    "decided_precision": 0.17142857142857143
+  },
+  "accepted_base_remaining_alerts": {
+    "TP": 6,
+    "FP": 27,
+    "UNCLEAR": 5,
+    "decided_precision": 0.18181818181818182
+  },
+  "candidate_remaining_alerts": {
+    "TP": 6,
+    "FP": 26,
+    "UNCLEAR": 5,
+    "selected_active": 37,
+    "decided": 32,
+    "decided_precision": 0.1875
+  },
+  "additional_fp_removed": [
+    "N447-003"
+  ],
+  "previously_removed_fp": [
+    "N447-005",
+    "N447-006"
+  ],
+  "known_tp_losses": 0,
+  "unclear_losses": 0,
+  "original30": {
+    "checked": 30,
+    "test_scope_tp_exclusions": 0,
+    "scope": "Full application/presentation role exclusion check, not 30 public endpoint scans"
+  },
+  "public_cli": {
+    "case": "N447-003",
+    "profile": "audit security --security-only --defect-policy source-role-v3",
+    "base_target_alerts": 1,
+    "candidate_target_alerts": 0,
+    "raw_ledger_rows": 1,
+    "candidate_tier": "PROVEN_PRIMITIVE",
+    "files_audited": 26,
+    "files_discovered": 26,
+    "conservation": "PASS",
+    "exit_code": 2,
+    "state": "REVIEW_REQUIRED",
+    "base_seconds": 36.726,
+    "candidate_seconds": 31.379
+  },
+  "validation": {
+    "Windows_Python_3_10": 435,
+    "Windows_Python_3_11": 435,
+    "failures": 0,
+    "lint_format_C901": "PASS",
+    "architecture": "HEALTHY",
+    "core_modules": "133/133",
+    "new_modules_dependencies_or_cap_raises": 0,
+    "paired40_seconds": 29.344,
+    "review": "Independent bounded ECC AI source review"
+  },
+  "metric_boundary": "18.75% is remaining decided raw-alert precision on exposed cases. It is not SUPPORTED_DEFECT precision, a fresh held-out result, or a new TP gain. Original sealed labels and scores remain unchanged.",
+  "next_precision_gap": "Shared positive consumer-effect witnesses: current native authority models selected admin feedback only; other auth/session routes still need exact provider, bootstrap, reachability and import closure.",
+  "global_p0_complete": false
+}

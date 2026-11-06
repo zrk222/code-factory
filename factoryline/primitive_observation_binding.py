@@ -350,7 +350,7 @@ def _trusted_core_source_binding(
             (
                 path != "factory.database.json"
                 if database_configuration
-                else path not in application_configuration_names()
+                else path not in application_configuration_names((path,))
             )
             if configuration
             else relative.suffix != ".py"
@@ -3650,7 +3650,7 @@ def _application_class_source_inputs(source_bytes, bindings, configs):
     """Validate current full-source and selected configuration bytes before rebuilding class facts."""
     from .import_context import application_configuration_names
 
-    configuration_names = application_configuration_names()
+    configuration_names = application_configuration_names(configs)
     if (
         not isinstance(source_bytes, dict)
         or not isinstance(bindings, dict)

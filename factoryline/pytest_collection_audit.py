@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import configparser
+import ast
 import hashlib
 import re
 import shlex
 from contextlib import contextmanager
 from contextvars import ContextVar
 from fnmatch import fnmatchcase
+import yaml
 
 try:
     import tomllib
@@ -516,12 +518,1117 @@ def captured_pytest_configuration(captured):
     return None
 
 
+def captured_test_invocation_profile(
+    index, configuration_bytes, invocation_sources, *, configuration_identities
+):
+    """Return DECLARED, NO_TEST_INVOCATION or UNRESOLVED for all captured workflows."""
+    result = _captured_test_invocation_profile(
+        index,
+        configuration_bytes,
+        invocation_sources,
+        configuration_identities=configuration_identities,
+    )
+    if result is not None:
+        return result
+    return {
+        "schema": "factory.captured-test-invocation-profile.v1",
+        "status": "UNRESOLVED",
+        "reason": "capture-or-invocation-closure-failed",
+        "execution_status": "NOT_EXECUTED",
+        "runner": None,
+        "selector": None,
+        "workflows": [],
+        "invocations": [],
+        "workflow_dispositions": [],
+        "sources": {
+            name: {
+                "path": name,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": len(raw),
+                "verification": "UNRESOLVED",
+            }
+            for name, raw in invocation_sources.items()
+            if isinstance(name, str) and isinstance(raw, bytes)
+        }
+        if isinstance(invocation_sources, dict)
+        else {},
+        "deployment_assurance": "UNASSESSED",
+    }
+
+
+def _captured_test_invocation_profile(
+    index, configuration_bytes, invocation_sources, *, configuration_identities
+):
+    """Bind captured workflow argv to one pytest or native Django test runner."""
+    source_rows = _captured_profile_source_rows(
+        index, configuration_bytes, invocation_sources, configuration_identities
+    )
+    if source_rows is None:
+        return None
+    source = index["source"]
+    projected = _captured_workflow_projection(
+        index, invocation_sources, configuration_identities, source
+    )
+    if projected is None:
+        return None
+    workflows, workflow_dispositions = projected
+    if not workflows:
+        return {
+            "schema": "factory.captured-test-invocation-profile.v1",
+            "status": "NO_TEST_INVOCATION",
+            "reason": "all-captured-workflows-are-valid-noncontributors",
+            "execution_status": "NOT_EXECUTED",
+            "runner": None,
+            "selector": None,
+            "workflows": workflow_dispositions,
+            "invocations": [],
+            "workflow_dispositions": workflow_dispositions,
+            "sources": source_rows,
+            "configuration_identities": {
+                name: {
+                    key: identity[key]
+                    for key in ("path", "state", "sha256", "bytes")
+                    if key in identity
+                }
+                for name, identity in configuration_identities.items()
+                if identity["state"] == "read"
+            },
+            "environment": "SOURCE_DECLARED_HASHES_ONLY",
+            "deployment_assurance": "UNASSESSED",
+        }
+    if (
+        len(
+            {
+                row["runner"]["kind"]
+                if isinstance(row["runner"], dict)
+                else row["runner"]
+                for row in workflows
+            }
+        )
+        != 1
+    ):
+        return None
+    runner = (
+        workflows[0]["runner"]["kind"]
+        if isinstance(workflows[0]["runner"], dict)
+        else workflows[0]["runner"]
+    )
+    if runner == "pytest":
+        selection = captured_pytest_configuration(configuration_bytes)
+        if selection is None:
+            return None
+        for row in workflows:
+            args = (
+                row["argv"][3:]
+                if row["argv"][:2] == ["python", "-m"]
+                else row["argv"][1:]
+            )
+            projection = _pytest_argument_projection(args)
+            if projection is None:
+                return None
+            row["selector_effects"] = projection
+        identity = selection["identity"]
+        selector = {
+            "configuration": {
+                key: identity[key]
+                for key in ("path", "sha256", "bytes", "state")
+                if key in identity
+            },
+            "settings_module": selection["options"].get("DJANGO_SETTINGS_MODULE"),
+            "python_files": _pytest_collection_settings(identity)["python_files"],
+            "python_functions": _pytest_collection_settings(identity)[
+                "python_functions"
+            ],
+            "python_classes": _pytest_collection_settings(identity)["python_classes"],
+        }
+    else:
+        selector = workflows[0]["runner"]
+        if len({row["runner"]["settings_module"] for row in workflows}) != 1:
+            return None
+    return {
+        "schema": "factory.captured-test-invocation-profile.v1",
+        "status": "DECLARED",
+        "execution_status": "NOT_EXECUTED",
+        "runner": runner,
+        "selector": selector,
+        "workflows": workflows,
+        "invocations": workflows,
+        "workflow_dispositions": workflow_dispositions,
+        "configuration_identities": {
+            name: {
+                key: configuration_identities[name][key]
+                for key in ("path", "state", "sha256", "bytes")
+                if key in configuration_identities[name]
+            }
+            for name in sorted(configuration_identities)
+            if configuration_identities[name]["state"] == "read"
+            and (
+                name in {row["workflow"] for row in workflows}
+                or runner == "pytest"
+                and name in configuration_bytes
+            )
+        },
+        "sources": source_rows,
+        "environment": "SOURCE_DECLARED_HASHES_ONLY",
+        "deployment_assurance": "UNASSESSED",
+        "coordinate_units": {
+            "workflow_span": "1-based-line, 0-based-unicode-column",
+            "python_span": "1-based-line, 0-based-UTF8-byte-column",
+        },
+    }
+
+
+def _captured_profile_source_rows(
+    index, configuration_bytes, invocation_sources, configuration_identities
+):
+    if not all(
+        isinstance(value, dict)
+        for value in (
+            index,
+            configuration_bytes,
+            invocation_sources,
+            configuration_identities,
+        )
+    ):
+        return None
+    source = index.get("source")
+    if not source or not isinstance(getattr(source, "inventory", None), dict):
+        return None
+    if not _captured_configuration_identities_valid(
+        configuration_bytes, configuration_identities
+    ):
+        return None
+    rows = {}
+    for name, raw in sorted(invocation_sources.items()):
+        row = _captured_invocation_source_row(
+            name, raw, source, configuration_identities
+        )
+        if row is None:
+            return None
+        rows[name] = row
+    return rows
+
+
+def _captured_configuration_identities_valid(configuration_bytes, identities):
+    for name, identity in sorted(identities.items()):
+        if (
+            not isinstance(identity, dict)
+            or identity.get("path") != name
+            or identity.get("state") not in {"read", "missing"}
+        ):
+            return False
+        raw = configuration_bytes.get(name)
+        if identity["state"] == "read" and (
+            not isinstance(raw, bytes)
+            or identity.get("sha256") != hashlib.sha256(raw).hexdigest()
+            or identity.get("bytes") != len(raw)
+        ):
+            return False
+        if identity["state"] == "missing" and raw is not None:
+            return False
+    return True
+
+
+def _captured_invocation_source_row(name, raw, source, identities):
+    from pathlib import PurePosixPath
+
+    path = PurePosixPath(name)
+    if (
+        not isinstance(raw, bytes)
+        or path.is_absolute()
+        or ".." in path.parts
+        or path.as_posix() != name
+    ):
+        return None
+    digest = hashlib.sha256(raw).hexdigest()
+    if path.suffix == ".py":
+        selected = source.root.joinpath(*path.parts)
+        if (
+            selected not in source.snapshots
+            or source.inventory.get(selected) != digest
+            or source.source_bytes.get(selected) != raw
+            or not source.validate(selected)
+        ):
+            return None
+    elif path.suffix in {".yaml", ".yml"}:
+        identity = identities.get(name)
+        if (
+            not name.startswith(".github/workflows/")
+            or not isinstance(identity, dict)
+            or identity.get("state") != "read"
+            or identity.get("sha256") != digest
+            or identity.get("bytes") != len(raw)
+        ):
+            return None
+    else:
+        return None
+    return {"path": name, "sha256": digest, "bytes": len(raw)}
+
+
+def _captured_workflow_projection(
+    index, invocation_sources, configuration_identities, source
+):
+    from .mock_fixture_provenance import _django_imports
+
+    workflows, dispositions = [], []
+    try:
+        for name, raw in sorted(invocation_sources.items()):
+            if name.endswith((".yaml", ".yml")):
+                found = _captured_workflow_rows(
+                    name,
+                    raw,
+                    invocation_sources,
+                    configuration_identities,
+                    index,
+                    source,
+                    _django_imports,
+                )
+                if found is None:
+                    return None
+                rows, disposition = found
+                workflows.extend(rows)
+                dispositions.append(disposition)
+    except (UnicodeError, ValueError, TypeError, yaml.YAMLError):
+        return None
+    return workflows, dispositions
+
+
+def _captured_workflow_rows(
+    name, raw, invocation_sources, identities, index, source, django_imports
+):
+    from pathlib import PurePosixPath
+
+    document = yaml.compose(raw.decode("utf-8"))
+    jobs = _captured_yaml_mapping_value(document, "jobs")
+    if not isinstance(jobs, yaml.MappingNode):
+        return None
+    context = {
+        "workflow": name,
+        "workflow_if": _captured_yaml_mapping_value(document, "if"),
+        "workflow_env": _captured_yaml_mapping_value(document, "env"),
+        "workflow_cwd": _captured_yaml_mapping_value(
+            _captured_yaml_mapping_value(document, "defaults"), "run"
+        ),
+        "yaml_lines": raw.decode("utf-8").splitlines(),
+    }
+    if isinstance(context["workflow_cwd"], yaml.MappingNode):
+        context["workflow_cwd"] = _captured_yaml_mapping_value(
+            context["workflow_cwd"], "working-directory"
+        )
+    if context["workflow_cwd"] is not None and not isinstance(
+        context["workflow_cwd"], yaml.ScalarNode
+    ):
+        return None
+    rows = []
+    for _, job in jobs.value:
+        found = _captured_job_rows(
+            job,
+            context,
+            invocation_sources,
+            identities,
+            index,
+            source,
+            django_imports,
+            PurePosixPath,
+        )
+        if found is None:
+            return None
+        rows.extend(found)
+    return rows, {"path": name, "status": "DECLARED" if rows else "NO_TEST_INVOCATION"}
+
+
+def _captured_job_rows(
+    job,
+    context,
+    invocation_sources,
+    identities,
+    index,
+    source,
+    django_imports,
+    posix_path,
+):
+    steps = _captured_yaml_mapping_value(job, "steps")
+    if not isinstance(steps, yaml.SequenceNode):
+        return []
+    defaults = _captured_yaml_mapping_value(
+        _captured_yaml_mapping_value(job, "defaults"), "run"
+    )
+    job_cwd = (
+        _captured_yaml_mapping_value(defaults, "working-directory")
+        if defaults
+        else None
+    )
+    if job_cwd is not None and not isinstance(job_cwd, yaml.ScalarNode):
+        return None
+    job_context = {
+        **context,
+        "job_if": _captured_yaml_mapping_value(job, "if"),
+        "job_env": _captured_yaml_mapping_value(job, "env"),
+        "job_cwd": job_cwd,
+    }
+    effects, rows = [], []
+    for step in steps.value:
+        found = _captured_step_rows(
+            step,
+            job_context,
+            effects,
+            invocation_sources,
+            identities,
+            index,
+            source,
+            django_imports,
+            posix_path,
+        )
+        if found is None:
+            return None
+        step_rows, step_effects = found
+        rows.extend(step_rows)
+        effects.extend(
+            row for row in step_effects if row["scope"] == "workflow-next-step"
+        )
+    return rows
+
+
+def _captured_step_rows(
+    step,
+    context,
+    prior_effects,
+    invocation_sources,
+    identities,
+    index,
+    source,
+    django_imports,
+    posix_path,
+):
+    run = _captured_yaml_mapping_value(step, "run")
+    if not isinstance(run, yaml.ScalarNode) or run.tag != "tag:yaml.org,2002:str":
+        return [], []
+    step_cwd = _captured_yaml_mapping_value(step, "working-directory")
+    if step_cwd is not None and not isinstance(step_cwd, yaml.ScalarNode):
+        return None
+    cwd = (
+        step_cwd.value
+        if step_cwd
+        else context["job_cwd"].value
+        if context["job_cwd"]
+        else context["workflow_cwd"].value
+        if context["workflow_cwd"]
+        else "."
+    )
+    if not _captured_repository_relative(cwd):
+        return None
+    env = _captured_yaml_environment(
+        ("workflow", context["workflow_env"]),
+        ("job", context["job_env"]),
+        ("step", _captured_yaml_mapping_value(step, "env")),
+    )
+    if env is None:
+        return None
+    return _captured_step_commands(
+        run,
+        step,
+        context,
+        prior_effects,
+        invocation_sources,
+        index,
+        source,
+        django_imports,
+        posix_path,
+        cwd,
+        env,
+    )
+
+
+def _captured_step_commands(
+    run,
+    step,
+    context,
+    prior_effects,
+    invocation_sources,
+    index,
+    source,
+    django_imports,
+    posix_path,
+    cwd,
+    env,
+):
+    rows, effects, shell_env = [], [], []
+    for start, end, command in _captured_shell_commands(run.value):
+        found = _captured_step_command(
+            command,
+            start,
+            end,
+            run,
+            step,
+            context,
+            prior_effects,
+            invocation_sources,
+            index,
+            source,
+            django_imports,
+            posix_path,
+            cwd,
+            env,
+            shell_env,
+            effects,
+        )
+        if found is None:
+            return None
+        row, row_effects, row_env = found
+        effects.extend(row_effects)
+        shell_env.extend(row_env)
+        if row:
+            rows.append(row)
+    return rows, effects
+
+
+def _captured_step_command(
+    command,
+    start,
+    end,
+    run,
+    step,
+    context,
+    prior_effects,
+    invocation_sources,
+    index,
+    source,
+    django_imports,
+    posix_path,
+    cwd,
+    env,
+    shell_env,
+    effects,
+):
+    try:
+        argv = shlex.split(command, comments=True)
+    except ValueError:
+        return None
+    if not argv:
+        return [], [], []
+    row_effects = _captured_shell_effects(argv, command, start)
+    if _captured_shell_target_unresolved(argv, command):
+        return None
+    if "${{" in command or _captured_shell_compound(command):
+        return [], row_effects, []
+    row_env = _captured_shell_environment(argv, command, start)
+    row = _captured_invocation_row(
+        argv,
+        context,
+        run,
+        start,
+        end,
+        context["yaml_lines"],
+        cwd,
+        env,
+        [*shell_env, *row_env],
+        [*effects, *row_effects],
+        prior_effects,
+        step,
+    )
+    if row is None:
+        return None
+    if not row:
+        return row, row_effects, row_env
+    if argv[0].rsplit("/", 1)[-1] not in {"python", "python3", "python.exe"}:
+        return row, row_effects, row_env
+    runner_path = (posix_path(cwd) / argv[1]).as_posix()
+    if (
+        not _captured_repository_relative(argv[1])
+        or runner_path not in invocation_sources
+    ):
+        return None
+    path = source.root.joinpath(*posix_path(runner_path).parts)
+    runner = _captured_django_runner(
+        index, path, source.snapshots.get(path), django_imports(index, path)
+    )
+    if runner is None:
+        return None
+    row.update(script=runner_path, runner=runner)
+    return row, row_effects, row_env
+
+
+def _captured_shell_target_unresolved(argv, command):
+    if "${{" in command:
+        return _captured_test_like_command(argv) or _captured_unknown_python_command(
+            argv
+        )
+    return _captured_shell_compound(command) and (
+        _captured_test_like_command(argv) or any(arg.endswith(".py") for arg in argv)
+    )
+
+
+def _captured_shell_compound(command):
+    return any(token in command for token in ("&&", "||", ";", "|", ">", "<"))
+
+
+def _captured_invocation_row(
+    argv,
+    context,
+    run,
+    start,
+    end,
+    lines,
+    cwd,
+    env,
+    shell_env,
+    effects,
+    prior_effects,
+    step,
+):
+    python_script = (
+        argv[0].rsplit("/", 1)[-1] in {"python", "python3", "python.exe"}
+        and len(argv) == 2
+        and argv[1].endswith(".py")
+    )
+    pytest = (
+        argv[0] == "pytest"
+        or argv[:2] == ["python", "-m"]
+        and len(argv) >= 3
+        and argv[2] == "pytest"
+    )
+    if not (python_script or pytest):
+        return (
+            None
+            if _captured_test_like_command(argv)
+            or _captured_unknown_python_command(argv)
+            else {}
+        )
+    conditions = _captured_workflow_conditions(
+        context["workflow_if"],
+        context["job_if"],
+        _captured_yaml_mapping_value(step, "if"),
+    )
+    if conditions is None or _captured_environment_conflict(
+        env, shell_env, effects, prior_effects
+    ):
+        return None
+    row_line = run.start_mark.line + start + 1
+    row_end = run.start_mark.line + end + 1
+    row = {
+        "workflow": context["workflow"],
+        "argv": argv,
+        "cwd": cwd,
+        "span": [
+            row_line,
+            len(lines[row_line - 1]) - len(lines[row_line - 1].lstrip()),
+            row_end,
+            len(lines[row_end - 1]),
+        ],
+        "condition": conditions,
+        "declared_environment": [*env, *shell_env],
+    }
+    if pytest:
+        row["runner"] = "pytest"
+    return row
+
+
+def _captured_test_like_command(argv):
+    tokens = [str(value).lower().replace("\\", "/") for value in argv]
+    return any(
+        token in {"pytest", "tox", "nox", "unittest", "manage.py", "discoverrunner"}
+        or token.endswith("/manage.py")
+        or token.endswith("/pytest")
+        or token.endswith(".py")
+        and "test" in token.rsplit("/", 1)[-1]
+        for token in tokens
+    )
+
+
+def _captured_shell_commands(script):
+    lines = script.splitlines()
+    start, parts = 0, []
+    for index, line in enumerate(lines):
+        if not parts:
+            start = index
+        continued = line.rstrip().endswith("\\")
+        parts.append(line.rstrip()[:-1] if continued else line)
+        if not continued:
+            yield start, index, " ".join(parts)
+            parts = []
+    if parts:
+        yield start, len(lines) - 1, " ".join(parts)
+
+
+def _captured_unknown_python_command(argv):
+    tokens = [str(value).lower().replace("\\", "/") for value in argv]
+    if tokens[0].rsplit("/", 1)[-1] in {"python", "python3", "python.exe"}:
+        if len(tokens) > 1 and tokens[1] == "-m":
+            return len(tokens) < 3 or tokens[2] not in {
+                "pip",
+                "sphinx",
+                "build",
+                "setuptools",
+                "twine",
+                "compileall",
+                "ensurepip",
+            }
+        return len(tokens) > 1 and (tokens[1].endswith(".py") or tokens[1] == "-c")
+    return any(
+        token.endswith(".py") or token in {"python", "python3", "pytest", "tox", "nox"}
+        for token in tokens
+    )
+
+
+def _captured_yaml_mapping_value(node, key):
+    if not isinstance(node, yaml.MappingNode):
+        return None
+    matches = [value for name, value in node.value if name.value == key]
+    if len(matches) > 1:
+        raise ValueError("duplicate workflow key")
+    return matches[0] if len(matches) == 1 else None
+
+
+def _captured_repository_relative(value):
+    from pathlib import PurePosixPath
+
+    return bool(
+        isinstance(value, str)
+        and value
+        and "${{" not in value
+        and "\\" not in value
+        and ":" not in value
+        and not PurePosixPath(value).is_absolute()
+        and ".." not in PurePosixPath(value).parts
+        and PurePosixPath(value).as_posix() == value
+    )
+
+
+def _captured_workflow_conditions(*nodes):
+    conditions = []
+    for node in nodes:
+        if node is None:
+            continue
+        if (
+            not isinstance(node, yaml.ScalarNode)
+            or node.tag != "tag:yaml.org,2002:bool"
+            or node.value.lower() != "true"
+        ):
+            return None
+        conditions.append(
+            {
+                "state": "literal-true",
+                "span": [
+                    node.start_mark.line + 1,
+                    node.start_mark.column,
+                    node.end_mark.line + 1,
+                    node.end_mark.column,
+                ],
+            }
+        )
+    return conditions or [{"state": "unconditional"}]
+
+
+def _captured_yaml_environment(*scopes):
+    rows = []
+    for scope, node in scopes:
+        if node is None:
+            continue
+        if not isinstance(node, yaml.MappingNode):
+            return None
+        for key, value in node.value:
+            if key.tag != "tag:yaml.org,2002:str" or not isinstance(
+                value, yaml.ScalarNode
+            ):
+                return None
+            raw = value.value.encode("utf-8")
+            rows.append(
+                {
+                    "name": key.value,
+                    "scope": scope,
+                    "value_sha256": hashlib.sha256(raw).hexdigest(),
+                    "span": [
+                        key.start_mark.line + 1,
+                        key.start_mark.column,
+                        value.end_mark.line + 1,
+                        value.end_mark.column,
+                    ],
+                }
+            )
+    return rows
+
+
+def _captured_shell_environment(argv, command, start):
+    rows = []
+    if argv[0] in {".", "source", "eval", "exec", "env"}:
+        return [
+            {
+                "name": "<dynamic-shell-environment>",
+                "scope": "workflow-shell",
+                "value_sha256": hashlib.sha256(command.encode()).hexdigest(),
+                "line_offset": start,
+            }
+        ]
+    assignments = argv[1:] if argv[0] == "export" else argv
+    for token in assignments:
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", token)
+        if match:
+            rows.append(
+                {
+                    "name": match.group(1),
+                    "scope": "workflow-shell",
+                    "value_sha256": hashlib.sha256(match.group(2).encode()).hexdigest(),
+                    "line_offset": start,
+                }
+            )
+        elif argv[0] != "export":
+            break
+    return rows
+
+
+def _captured_shell_effects(argv, command, start):
+    """Find shell effects that can change later command selection or reachability."""
+    rows = []
+    dynamic = any(token in command for token in ("&&", "||", ";", "|", ">", "<"))
+    control = re.search(
+        r"\b(?:if|then|elif|else|fi|for|while|until|case|function|do|done)\b", command
+    )
+    if dynamic or control or any(arg in {"cd", "pushd", "popd"} for arg in argv):
+        rows.append(
+            {
+                "name": "<unmodeled-shell-effect>",
+                "scope": "workflow-shell",
+                "value_sha256": hashlib.sha256(command.encode()).hexdigest(),
+                "line_offset": start,
+            }
+        )
+    env_write = re.search(
+        r"(?:>>?|\|)\s*\$\{?GITHUB_(?:ENV|PATH)\}?\b", command, re.IGNORECASE
+    )
+    if env_write:
+        names = re.findall(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", command, re.MULTILINE)
+        for name in names or ["<dynamic-github-env>"]:
+            rows.append(
+                {
+                    "name": name,
+                    "scope": "workflow-next-step",
+                    "value_sha256": hashlib.sha256(command.encode()).hexdigest(),
+                    "line_offset": start,
+                }
+            )
+    return rows
+
+
+def _captured_environment_conflict(*rows):
+    selector_names = {
+        "PATH",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "VIRTUAL_ENV",
+        "DJANGO_SETTINGS_MODULE",
+        "DJANGO_CONFIGURATION",
+        "GITHUB_PATH",
+        "GITHUB_ENV",
+        "PYTEST_ADDOPTS",
+        "PYTEST_PLUGINS",
+        "PYTEST_CONFIG",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+        "TOX_ENV",
+        "NOX_CURRENT_SESSION",
+    }
+    return any(
+        row["name"] == "<dynamic-shell-environment>"
+        or row["name"] in {"<unmodeled-shell-effect>", "<dynamic-github-env>"}
+        or row["name"].upper() in selector_names
+        or row["name"].upper().startswith(("PYTEST_", "TOX_", "NOX_"))
+        for collection in rows
+        for row in collection
+    )
+
+
+# These APIs may consume configured settings or hide unmodeled consumers.
+# A catalog hit is an unresolved effect, never proof that the key was used.
+# Model basis: https://docs.djangoproject.com/en/5.2/ref/settings/#secret-key
+DJANGO_IMPLICIT_KEY_EFFECTS = frozenset(
+    {
+        "__import__",
+        "builtins.__import__",
+        "__builtins__",
+        "sys.modules",
+        "builtins.__dict__",
+        "django.utils.module_loading.import_string",
+        "pkgutil.resolve_name",
+        *(
+            prefix + name
+            for prefix in ("", "builtins.")
+            for name in ("globals", "locals", "vars", "dir", "eval", "exec", "compile")
+        ),
+        "django.setup",
+        "django.conf.LazySettings",
+        "django.conf.Settings",
+        "django.utils.crypto.salted_hmac",
+        "django.core.wsgi.get_wsgi_application",
+        "django.core.asgi.get_asgi_application",
+        "django.core.management.execute_from_command_line",
+        *(
+            "django.core.signing." + name
+            for name in (
+                "dumps",
+                "loads",
+                "Signer",
+                "TimestampSigner",
+                "get_cookie_signer",
+            )
+        ),
+        "django.contrib.auth.tokens.default_token_generator",
+        "django.contrib.auth.tokens.PasswordResetTokenGenerator",
+        *(
+            "django.contrib.auth." + name
+            for name in ("login", "get_user", "update_session_auth_hash")
+        ),
+        *(
+            "django.contrib.sessions.backends." + name
+            for name in (
+                "base.SessionBase",
+                "db.SessionStore",
+                "cached_db.SessionStore",
+                "cache.SessionStore",
+                "file.SessionStore",
+                "signed_cookies.SessionStore",
+            )
+        ),
+        "django.contrib.sessions.middleware.SessionMiddleware",
+        "django.contrib.auth.middleware.AuthenticationMiddleware",
+        "django.contrib.messages.storage.cookie.CookieStorage",
+        "django.contrib.messages.storage.fallback.FallbackStorage",
+        *(
+            prefix + name
+            for prefix in ("django.contrib.messages.", "django.contrib.messages.api.")
+            for name in ("add_message", "debug", "info", "success", "warning", "error")
+        ),
+    }
+)
+DJANGO_IMPLICIT_KEY_METHODS = frozenset(
+    {
+        "__dict__",
+        "__class__",
+        "__globals__",
+        "__getattribute__",
+        "__subclasses__",
+        "__mro__",
+        "__base__",
+        "__bases__",
+        "__builtins__",
+        "_wrapped",
+        "set_signed_cookie",
+        "get_signed_cookie",
+        "get_session_auth_hash",
+        "get_session_auth_fallback_hash",
+    }
+)
+
+
+def _captured_django_runner(index, path, tree, aliases):
+    """Bind a captured Django setup and DiscoverRunner invocation by imports."""
+    if not isinstance(tree, ast.Module) or not isinstance(aliases, dict):
+        return None
+    from .import_context import captured_django_startup_statements
+    from .intent_quality import _canary_main_guard_test
+
+    statements = _captured_native_guard_body(tree, _canary_main_guard_test)
+    if statements is None or len(statements) not in {4, 5}:
+        return None
+    startup = captured_django_startup_statements(
+        {"index": index["source"], "aliases": {path: aliases}}, path
+    )
+    if startup[-len(statements) :] != statements:
+        return None
+    selector, setup, allocation, invocation, *exit_statements = statements
+    if not _captured_selector_assignment(selector, aliases):
+        return None
+    if not _captured_setup_call(setup, aliases) or not _captured_runner_allocation(
+        allocation, aliases
+    ):
+        return None
+    variable = allocation.targets[0].id
+    if (
+        not isinstance(invocation, ast.Assign)
+        or len(invocation.targets) != 1
+        or not isinstance(invocation.targets[0], ast.Name)
+    ):
+        return None
+    call = invocation.value
+    if (
+        not isinstance(call, ast.Call)
+        or not isinstance(call.func, ast.Attribute)
+        or call.func.attr != "run_tests"
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != variable
+        or len(call.args) != 1
+        or not isinstance(call.args[0], ast.List)
+        or call.args[0].elts
+        or call.keywords
+    ):
+        return None
+    if exit_statements and not _captured_system_exit(
+        exit_statements[0], aliases, invocation.targets[0].id
+    ):
+        return None
+    settings_module = _captured_selector_assignment(selector, aliases)
+    return {
+        "kind": "django.DiscoverRunner",
+        "settings_module": settings_module,
+        "bootstrap_effect": "MODELED_IMPLICIT_SETTINGS_LOAD",
+        "settings_selector_span": [
+            selector.lineno,
+            selector.col_offset,
+            selector.end_lineno,
+            selector.end_col_offset,
+        ],
+        "effect_model": "django.settings-module-import-uppercase-attributes.v1",
+        "setup_span": [
+            setup.lineno,
+            setup.col_offset,
+            setup.end_lineno,
+            setup.end_col_offset,
+        ],
+        "runner_allocation_span": [
+            allocation.lineno,
+            allocation.col_offset,
+            allocation.end_lineno,
+            allocation.end_col_offset,
+        ],
+        "runner_span": [
+            invocation.lineno,
+            invocation.col_offset,
+            invocation.end_lineno,
+            invocation.end_col_offset,
+        ],
+        "settings_selector": "SOURCE_BOUND_LITERAL",
+    }
+
+
+def _captured_native_guard_body(tree, main_guard_test):
+    body = [
+        node
+        for node in tree.body
+        if not (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        )
+    ]
+    guards = [
+        node for node in body if isinstance(node, ast.If) and main_guard_test(node.test)
+    ]
+    if len(guards) != 1 or body[-1] is not guards[0] or guards[0].orelse:
+        return None
+    if any(not isinstance(node, (ast.Import, ast.ImportFrom)) for node in body[:-1]):
+        return None
+    return guards[0].body
+
+
+def _captured_setup_call(node, aliases):
+    from .review_audits import _resolved_ast_name
+
+    return bool(
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and _resolved_ast_name(node.value.func, aliases) == "django.setup"
+        and not node.value.args
+        and not node.value.keywords
+    )
+
+
+def _captured_runner_allocation(node, aliases):
+    from .review_audits import _resolved_ast_name
+
+    if (
+        not isinstance(node, ast.Assign)
+        or len(node.targets) != 1
+        or not isinstance(node.targets[0], ast.Name)
+    ):
+        return False
+    call = node.value
+    if (
+        not isinstance(call, ast.Call)
+        or _resolved_ast_name(call.func, aliases) != "django.test.runner.DiscoverRunner"
+        or call.args
+        or len(call.keywords) != 1
+    ):
+        return False
+    keyword = call.keywords[0]
+    return (
+        keyword.arg == "verbosity"
+        and isinstance(keyword.value, ast.Constant)
+        and type(keyword.value.value) is int
+    )
+
+
+def _captured_selector_assignment(node, aliases):
+    from .review_audits import _resolved_ast_name
+
+    if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+        return None
+    target = node.targets[0]
+    if (
+        not isinstance(target, ast.Subscript)
+        or not isinstance(target.slice, ast.Constant)
+        or target.slice.value != "DJANGO_SETTINGS_MODULE"
+        or _resolved_ast_name(target.value, aliases) != "os.environ"
+    ):
+        return None
+    value = node.value
+    return (
+        value.value
+        if isinstance(value, ast.Constant)
+        and isinstance(value.value, str)
+        and value.value
+        else None
+    )
+
+
+def _captured_system_exit(node, aliases, result_name):
+    from .review_audits import _resolved_ast_name
+
+    if not (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and _resolved_ast_name(node.value.func, aliases) == "sys.exit"
+        and len(node.value.args) == 1
+        and not node.value.keywords
+    ):
+        return False
+    argument = node.value.args[0]
+    if isinstance(argument, ast.Call):
+        return (
+            _resolved_ast_name(argument.func, aliases) in {"bool", "builtins.bool"}
+            and len(argument.args) == 1
+            and not argument.keywords
+            and isinstance(argument.args[0], ast.Name)
+            and argument.args[0].id == result_name
+        )
+    allowed = (
+        ast.Expression,
+        ast.Name,
+        ast.Load,
+        ast.Constant,
+        ast.BoolOp,
+        ast.And,
+        ast.Or,
+        ast.UnaryOp,
+        ast.Not,
+        ast.Compare,
+        ast.Eq,
+        ast.NotEq,
+        ast.Gt,
+        ast.GtE,
+        ast.Lt,
+        ast.LtE,
+    )
+    return all(
+        isinstance(child, allowed)
+        and (not isinstance(child, ast.Name) or child.id == result_name)
+        for child in ast.walk(ast.Expression(argument))
+    )
+
+
 def _pytest_settings_selection_overridden(options):
     """Do not credit a config default when captured argv selects another source."""
     return _pytest_effective_settings_options(options) is None
 
 
-def _pytest_effective_settings_options(options):
+def _pytest_effective_settings_options(options, *, coverage_provider=False):
     """Apply exact captured --ds selection; other source overrides stay unknown."""
     if not isinstance(options, dict):
         return None
@@ -532,35 +1639,22 @@ def _pytest_effective_settings_options(options):
         return None
     if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
         return None
-    if not _pytest_tox_arguments_closed(tokens):
-        return None
-    if any(
-        token == "--"
-        or token.startswith("--ds")
-        and token != "--ds"
-        and not token.startswith("--ds=")
-        or token.split("=", 1)[0]
-        in {"--dc", "--rootdir", "-c", "--config-file", "-o", "--override-ini"}
-        or token.startswith(("-c", "-o"))
-        for token in tokens
-    ):
+    projection = _pytest_argument_projection(
+        tokens, coverage_provider=coverage_provider
+    )
+    if projection is None:
         return None
     effective = dict(options)
-    arguments = iter(tokens)
-    for token in arguments:
-        if token == "--ds" or token.startswith("--ds="):
-            module = next(arguments, None) if token == "--ds" else token[5:]
-            if not isinstance(module, str) or not all(
-                part.isidentifier() for part in module.split(".")
-            ):
-                return None
-            effective["DJANGO_SETTINGS_MODULE"] = module
+    effective.update(projection)
     return effective
 
 
 def _pytest_captured_invocation_options(captured, options):
     """Reconcile captured tox argv/environment with the selected config defaults."""
-    effective = _pytest_effective_settings_options(options)
+    coverage_provider = _pytest_cov_provider(captured)
+    effective = _pytest_effective_settings_options(
+        options, coverage_provider=coverage_provider
+    )
     if effective is None or "tox.ini" not in captured:
         return effective
     try:
@@ -583,7 +1677,15 @@ def _pytest_captured_invocation_options(captured, options):
             for section, commands in invocations
             for line in commands.splitlines()
             if line.strip()
-            for selection in [_pytest_tox_selection(parser, section, line, options)]
+            for selection in [
+                _pytest_tox_selection(
+                    parser,
+                    section,
+                    line,
+                    options,
+                    coverage_provider=coverage_provider,
+                )
+            ]
         ]
     except (AttributeError, UnicodeError, ValueError, configparser.Error):
         return None
@@ -604,7 +1706,7 @@ def _pytest_captured_invocation_options(captured, options):
     return result
 
 
-def _pytest_tox_selection(parser, section, line, options):
+def _pytest_tox_selection(parser, section, line, options, *, coverage_provider=False):
     """Bind a literal default pytest invocation; unknown wrappers stay unresolved."""
     tokens = shlex.split(line)
     prefix = 3 if tokens[:3] == ["python", "-m", "pytest"] else 1
@@ -628,9 +1730,12 @@ def _pytest_tox_selection(parser, section, line, options):
     if not isinstance(configured, list):
         return None
     selected = _pytest_effective_settings_options(
-        {**effective, "addopts": configured + args}
+        {**effective, "addopts": configured + args},
+        coverage_provider=coverage_provider,
     )
-    if selected is None or not _pytest_tox_arguments_closed(args):
+    if selected is None or not _pytest_tox_arguments_closed(
+        args, coverage_provider=coverage_provider
+    ):
         return None
     selected["addopts"] = options.get("addopts", "")
     return selected
@@ -689,121 +1794,432 @@ def _pytest_tox_environment(parser, section):
     )
 
 
-def _pytest_tox_arguments_closed(args):
-    """Do not credit tests excluded by an unmodeled command target or selector."""
-    arguments = iter(args)
+_PYTEST_ARGUMENT_EFFECTS = (
+    ("-q", (0, "report")),
+    ("-v", (0, "report")),
+    ("-vv", (0, "report")),
+    ("-ra", (0, "report")),
+    ("--strict-markers", (0, "validation")),
+    ("--junitxml", (1, "report-output")),
+    ("--cov", ("optional", "coverage")),
+    ("--cov-report", (1, "coverage")),
+)
+
+
+def _pytest_argument_projection(tokens, *, coverage_provider=False):
+    """Project one allowlisted argument grammar onto settings selection."""
+    if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
+        return None
+    projection = {}
+    arguments = iter(tokens)
     for token in arguments:
-        if token == "--ds":
-            if next(arguments, None) is None:
-                return False
-        elif not (token.startswith("--ds=") or token in {"-q", "-v", "-vv"}):
-            return False
-    return True
-
-
-def captured_pytest_django_provider(captured):
-    """Bind a declared plugin dependency; activation and execution stay unobserved."""
-    for name, raw in captured.items():
-        if not isinstance(raw, bytes):
+        effect = _pytest_argument_effect(
+            token, arguments, coverage_provider=coverage_provider
+        )
+        if effect is None:
             return None
-        try:
-            text = raw.decode("utf-8")
-            if name == "pyproject.toml":
-                declarations = _pytest_django_project_declarations(tomllib.loads(text))
-                declared = bool(declarations)
-            elif name == "requirements.txt":
-                declared = any(
-                    _pytest_django_requirement(line) for line in text.splitlines()
-                )
-            elif name == "tox.ini":
-                parser = configparser.ConfigParser(interpolation=None)
-                parser.read_string(text)
-                dependencies = parser.get("testenv", "deps", fallback="")
-                commands = parser.get("testenv", "commands", fallback="")
-                declared = any(
-                    _pytest_django_requirement(line)
-                    for line in dependencies.splitlines()
-                ) and any(
-                    re.match(r"^(?:python\s+-m\s+)?pytest(?:\s|$)", line.strip())
-                    for line in commands.splitlines()
-                )
-            else:
-                continue
-        except (UnicodeError, ValueError, configparser.Error):
+        projection.update(effect)
+    return projection
+
+
+def _pytest_argument_effect(token, arguments, *, coverage_provider):
+    """Project one recognized argument or refuse its missing/unknown effect."""
+    if token == "--":
+        return None
+    flag, separator, inline_value = token.partition("=")
+    if token == "--ds" or flag == "--ds" and separator:
+        module = next(arguments, None) if token == "--ds" else inline_value
+        if (
+            not isinstance(module, str)
+            or not module
+            or not all(part.isidentifier() for part in module.split("."))
+        ):
             return None
-        if declared:
-            return {
-                "path": name,
-                "sha256": hashlib.sha256(raw).hexdigest(),
-                "provider": "pytest_django",
-                "declaration_only": True,
-                **({"declarations": declarations} if name == "pyproject.toml" else {}),
-            }
-    return None
+        return {"DJANGO_SETTINGS_MODULE": module}
+    effect = dict(_PYTEST_ARGUMENT_EFFECTS).get(flag)
+    if effect is None or effect[1] == "coverage" and not coverage_provider:
+        return None
+    arity = effect[0]
+    if arity == 0:
+        return {} if not separator else None
+    if arity == "optional":
+        return (
+            {} if not separator or _pytest_argument_value_valid(inline_value) else None
+        )
+    value = inline_value if separator else next(arguments, None)
+    if not separator and isinstance(value, str) and value.startswith("-"):
+        return None
+    return {} if _pytest_argument_value_valid(value) else None
 
 
-def _pytest_django_project_declarations(project):
-    """Retain dependency-group premises without claiming installation/activation."""
-    metadata = project.get("project", {})
-    if not isinstance(metadata, dict):
-        return []
-    groups = {"project.dependencies": metadata.get("dependencies", [])}
-    for prefix, collection in (
-        ("project.optional-dependencies", metadata.get("optional-dependencies", {})),
-        ("dependency-groups", project.get("dependency-groups", {})),
+def _pytest_argument_value_valid(value):
+    return (
+        isinstance(value, str) and bool(value) and "{" not in value and "}" not in value
+    )
+
+
+def _pytest_tox_arguments_closed(args, *, coverage_provider=False):
+    """Use the same selector and effect grammar for literal Tox argv."""
+    return (
+        _pytest_argument_projection(args, coverage_provider=coverage_provider)
+        is not None
+    )
+
+
+def _pytest_cov_provider(captured):
+    """Require coverage to be declared in the selected captured test profile."""
+    if not isinstance(captured, dict) or any(
+        not isinstance(value, bytes) for value in captured.values()
     ):
-        if not isinstance(collection, dict):
-            return []
-        groups.update(
-            {prefix + "." + name: value for name, value in collection.items()}
+        return False
+    if "tox.ini" in captured:
+        try:
+            profiles = _pytest_cov_tox_profiles(captured["tox.ini"])
+            if profiles:
+                return all(profiles)
+        except (UnicodeError, configparser.Error):
+            return False
+    try:
+        project = (
+            tomllib.loads(captured["pyproject.toml"].decode())
+            if "pyproject.toml" in captured
+            else {}
         )
-    declarations = [
-        {"group": group, "requirement": item}
-        for group, values in groups.items()
-        if isinstance(values, list)
-        for item in values
-        if isinstance(item, str) and _pytest_django_requirement(item)
-    ]
+        if _pytest_cov_project(project):
+            return True
+        requirements = captured.get("requirements.txt", b"").decode()
+    except (UnicodeError, ValueError):
+        return False
+    return any(_pytest_cov_requirement(line) for line in requirements.splitlines())
+
+
+def _pytest_cov_tox_profiles(raw):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read_string(raw.decode())
+    profiles = []
+    for section in parser.sections():
+        if section != "testenv" and not section.startswith("testenv:"):
+            continue
+        commands = parser.get(
+            section, "commands", fallback=parser.get("testenv", "commands", fallback="")
+        )
+        if not any(
+            re.match(r"^(?:python\s+-m\s+)?pytest(?:\s|$)", line.strip())
+            for line in commands.splitlines()
+        ):
+            continue
+        dependencies = parser.get(
+            section, "deps", fallback=parser.get("testenv", "deps", fallback="")
+        )
+        profiles.append(
+            any(_pytest_cov_requirement(line) for line in dependencies.splitlines())
+        )
+    return profiles
+
+
+def _pytest_cov_project(project):
+    metadata = project.get("project", {})
+    dependencies = (
+        metadata.get("dependencies", []) if isinstance(metadata, dict) else []
+    )
+    if not isinstance(dependencies, list) or not all(
+        isinstance(line, str) for line in dependencies
+    ):
+        return False
+    if any(_pytest_cov_requirement(line) for line in dependencies):
+        return True
     tools = project.get("tool", {})
-    if not isinstance(tools, dict):
-        return []
-    poetry = tools.get("poetry", {})
-    if not isinstance(poetry, dict) or not isinstance(poetry.get("group", {}), dict):
-        return []
-    poetry_groups = {
-        "tool.poetry.dependencies": poetry.get("dependencies", {}),
-        "tool.poetry.dev-dependencies": poetry.get("dev-dependencies", {}),
-        **{
-            "tool.poetry.group." + name + ".dependencies": group.get("dependencies", {})
-            for name, group in poetry.get("group", {}).items()
+    poetry = tools.get("poetry", {}) if isinstance(tools, dict) else {}
+    if not isinstance(poetry, dict):
+        return False
+    groups = [poetry.get("dependencies", {}), poetry.get("dev-dependencies", {})]
+    named = poetry.get("group", {})
+    if isinstance(named, dict):
+        groups.extend(
+            group.get("dependencies", {})
+            for group in named.values()
             if isinstance(group, dict) and group.get("optional", False) is False
-        },
-    }
-    for group, values in poetry_groups.items():
-        if not isinstance(values, dict):
-            return []
-        # Tables may select markers, sources, extras or optional installation.
-        declarations.extend(
-            {"group": group, "requirement": "pytest-django " + constraint}
-            for name, constraint in values.items()
-            if name.lower().replace("_", "-") == "pytest-django"
-            and isinstance(constraint, str)
-            and re.fullmatch(
-                r"(?:\*|[\^~<>=!0-9][0-9.*,+<>=!~^| -]*)", constraint.strip()
-            )
         )
-    return declarations
+    return any(
+        isinstance(dependencies, dict)
+        and any(
+            name.lower().replace("_", "-") == "pytest-cov" and isinstance(value, str)
+            for name, value in dependencies.items()
+        )
+        for dependencies in groups
+    )
 
 
-def _pytest_django_requirement(line):
-    """Unresolved requirement markers/includes never establish a plugin contract."""
-    return bool(
+def _pytest_cov_requirement(line):
+    return (
         re.fullmatch(
-            r"\s*pytest[-_]django(?:\s*[<>=!~][A-Za-z0-9.*,+<>=!~ -]+)?\s*",
+            r"\s*pytest[-_]cov(?:\s*[<>=!~][A-Za-z0-9.*,+<>=!~ -]+)?\s*",
             line,
             re.IGNORECASE,
         )
+        is not None
     )
+
+
+def captured_distribution_provider(captured, distribution, *, include_optional=False):
+    """Bind an exact captured distribution declaration, never installation or activation."""
+    canonical = _distribution_name(distribution)
+    if (
+        canonical is None
+        or not isinstance(captured, dict)
+        or any(not isinstance(name, str) for name in captured)
+    ):
+        return None
+    matches = []
+    for name in ("requirements.txt", "pyproject.toml", "tox.ini"):
+        if name not in captured:
+            continue
+        resolved = _captured_provider_file(
+            name, captured[name], canonical, include_optional
+        )
+        if resolved is None:
+            return None
+        raw, declarations = resolved
+        if declarations:
+            matches.append((name, raw, declarations))
+    if not matches:
+        return None
+    name, raw, declarations = matches[0]
+    return {
+        "path": name,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "provider": canonical,
+        "declaration_only": True,
+        "declarations": declarations,
+    }
+
+
+def _captured_provider_file(name, raw, canonical, include_optional):
+    if not isinstance(raw, bytes):
+        return None
+    try:
+        decoded = raw.decode("utf-8")
+        if name == "requirements.txt":
+            declarations = _distribution_requirement_file(decoded, canonical)
+        elif name == "pyproject.toml":
+            declarations = _distribution_project_declarations(
+                tomllib.loads(decoded), canonical, include_optional=include_optional
+            )
+        else:
+            parser = configparser.ConfigParser(interpolation=None)
+            parser.read_string(decoded)
+            commands = parser.get("testenv", "commands", fallback="")
+            declarations = (
+                _distribution_requirement_file(
+                    parser.get("testenv", "deps", fallback=""), canonical
+                )
+                if commands.strip()
+                else None
+            )
+            if canonical == "pytest-django" and not any(
+                re.match(r"^(?:python\s+-m\s+)?pytest(?:\s|$)", line.strip())
+                for line in commands.splitlines()
+            ):
+                declarations = []
+    except (UnicodeError, ValueError, configparser.Error):
+        return None
+    return (raw, declarations) if declarations is not None else None
+
+
+def captured_pytest_django_provider(captured):
+    """Preserve the legacy pytest plugin declaration receipt and provider spelling."""
+    result = captured_distribution_provider(
+        captured, "pytest-django", include_optional=True
+    )
+    if result is None:
+        return None
+    return {
+        "path": result["path"],
+        "sha256": result["sha256"],
+        "provider": "pytest_django",
+        "declaration_only": True,
+        **(
+            {"declarations": result["declarations"]}
+            if result["path"] == "pyproject.toml"
+            else {}
+        ),
+    }
+
+
+def _distribution_project_declarations(
+    project, distribution, *, include_optional=False
+):
+    """Read required project/Poetry declarations; optional groups cannot supply providers."""
+    if not isinstance(project, dict):
+        return None
+    declarations = _distribution_project_metadata(
+        project.get("project", {}), distribution, include_optional
+    )
+    tools = project.get("tool", {})
+    if declarations is None or not isinstance(tools, dict):
+        return None
+    dependency_groups = _distribution_dependency_groups(
+        project.get("dependency-groups", {}), distribution, include_optional
+    )
+    if dependency_groups is None:
+        return None
+    poetry = _distribution_poetry_declarations(tools.get("poetry", {}), distribution)
+    if poetry is None:
+        return None
+    return declarations + dependency_groups + poetry
+
+
+def _distribution_dependency_groups(groups, distribution, include_optional):
+    if not isinstance(groups, dict):
+        return None
+    declarations = []
+    for group, values in groups.items():
+        found = _distribution_declarations(
+            values, "dependency-groups." + group, distribution
+        )
+        if found is None:
+            return None
+        if include_optional:
+            declarations.extend(found)
+    return declarations
+
+
+def _distribution_project_metadata(metadata, distribution, include_optional):
+    if not isinstance(metadata, dict):
+        return None
+    declarations = []
+    for field, group in (
+        ("dependencies", "project.dependencies"),
+        ("optional-dependencies", "project.optional-dependencies"),
+    ):
+        values = metadata.get(field, [] if field == "dependencies" else {})
+        if field == "dependencies":
+            if not isinstance(values, list) or not all(
+                isinstance(item, str) for item in values
+            ):
+                return None
+            found = _distribution_declarations(values, group, distribution)
+            if found is None:
+                return None
+            declarations.extend(found)
+            continue
+        if not isinstance(values, dict):
+            return None
+        for subgroup, items in values.items():
+            found = _distribution_declarations(
+                items, group + "." + subgroup, distribution
+            )
+            if found is None:
+                return None
+            if include_optional:
+                declarations.extend(found)
+    return declarations
+
+
+def _distribution_poetry_declarations(poetry, distribution):
+    groups = _distribution_poetry_groups(poetry, distribution)
+    if groups is None:
+        return None
+    declarations = []
+    for group, values in groups:
+        if not isinstance(values, dict):
+            return None
+        for name, constraint in values.items():
+            if not isinstance(name, str) or _distribution_name(name) != distribution:
+                continue
+            if not isinstance(constraint, str) or not re.fullmatch(
+                r"(?:\*|[\^~<>=!0-9][0-9.*,+<>=!~^| -]*)", constraint.strip()
+            ):
+                return None
+            declarations.append(
+                {"group": group, "requirement": f"{distribution} {constraint}"}
+            )
+    return declarations
+
+
+def _distribution_poetry_groups(poetry, distribution):
+    if not isinstance(poetry, dict) or not isinstance(poetry.get("group", {}), dict):
+        return None
+    groups = [
+        ("tool.poetry.dependencies", poetry.get("dependencies", {})),
+        ("tool.poetry.dev-dependencies", poetry.get("dev-dependencies", {})),
+    ]
+    for name, group in poetry.get("group", {}).items():
+        if (
+            not isinstance(group, dict)
+            or type(group.get("optional", False)) is not bool
+        ):
+            return None
+        dependencies = group.get("dependencies", {})
+        if not isinstance(dependencies, dict):
+            return None
+        if group.get("optional", False) is False:
+            groups.append(("tool.poetry.group." + name + ".dependencies", dependencies))
+        elif distribution in {
+            _distribution_name(key) for key in dependencies if isinstance(key, str)
+        }:
+            return None
+    return groups
+
+
+def _distribution_name(value):
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*", value
+    ):
+        return None
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+
+def _distribution_candidate(line):
+    match = (
+        re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", line)
+        if isinstance(line, str)
+        else None
+    )
+    return _distribution_name(match.group(1)) if match else None
+
+
+def _distribution_requirement(line, distribution):
+    match = (
+        re.fullmatch(
+            r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)(?:\s*([<>=!~][A-Za-z0-9.*,+<>=!~ -]*))?\s*",
+            line,
+        )
+        if isinstance(line, str)
+        else None
+    )
+    return bool(match and _distribution_name(match.group(1)) == distribution)
+
+
+def _distribution_declarations(lines, group, distribution):
+    declarations = []
+    for line in lines:
+        candidate = _distribution_candidate(line)
+        if candidate == distribution:
+            if not _distribution_requirement(line, distribution):
+                return None
+            declarations.append({"group": group, "requirement": line.strip()})
+    return declarations
+
+
+def _distribution_requirement_file(text, distribution):
+    lines = text.splitlines()
+    if any(
+        line.strip().startswith(
+            ("-r", "--requirement", "-c", "--constraint", "-e", "--editable")
+        )
+        for line in lines
+    ):
+        return None
+    return _distribution_declarations(lines, "requirements.txt", distribution)
+
+
+def _pytest_django_project_declarations(project):
+    return _distribution_project_declarations(project, "pytest-django") or []
+
+
+def _pytest_django_requirement(line):
+    return _distribution_requirement(line, "pytest-django")
 
 
 def _supported_pytest_function_patterns(options):
@@ -912,3 +2328,22 @@ _UNSUPPORTED_PYTEST_CONFIG = object()
 
 
 _UNMODELED_BUILTIN_COLLECTION = object()
+
+
+def captured_pytest_helpers():
+    return tuple(
+        value
+        for name, value in globals().items()
+        if callable(value) and getattr(value, "__module__", None) == __name__
+    ) + (
+        _PYTEST_ARGUMENT_EFFECTS,
+        DJANGO_IMPLICIT_KEY_EFFECTS,
+        DJANGO_IMPLICIT_KEY_METHODS,
+        yaml.compose,
+        yaml.Loader,
+        yaml.MappingNode,
+        yaml.SequenceNode,
+        yaml.ScalarNode,
+        shlex.split,
+        shlex.shlex,
+    )

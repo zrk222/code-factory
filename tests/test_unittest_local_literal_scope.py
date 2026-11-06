@@ -198,7 +198,9 @@ def configured_authority_scope(tmp_path, configuration, extra=None):
         tree._oracle_source_sha256 = digest
         modules[path], raw_sources[path], inventory[path] = tree, raw, digest
     for name, raw in configuration.items():
-        (tmp_path / name).write_bytes(raw)
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
     index = application_test_index(
         tmp_path, modules, raw_sources, inventory, configuration
     )
@@ -483,6 +485,750 @@ def test_configured_settings_authority_needs_captured_provider(tmp_path, depende
     )
     assert (
         scope._source_test_scope_evidence(index, path, assignment, "SECRET_KEY") is None
+    )
+
+
+def test_pytest_effect_projection_shares_general_and_tox_reporting_grammar():
+    import shlex
+
+    from factoryline.pytest_collection_audit import (
+        _pytest_effective_settings_options,
+        _pytest_tox_arguments_closed,
+    )
+
+    addopts = "-ra -v --strict-markers --junitxml=reports/results.xml"
+    effective = _pytest_effective_settings_options(
+        {"DJANGO_SETTINGS_MODULE": "support.configuration", "addopts": addopts}
+    )
+    assert effective["DJANGO_SETTINGS_MODULE"] == "support.configuration"
+    assert _pytest_tox_arguments_closed(shlex.split(addopts))
+
+
+def captured_test_profile(
+    tmp_path,
+    *,
+    workflow,
+    script=None,
+    extra_sources=None,
+    other_workflows=None,
+    reverse_inputs=False,
+):
+    from factoryline.pytest_collection_audit import captured_test_invocation_profile
+
+    workflow_path = ".github/workflows/ci.yml"
+    workflow_inputs = {workflow_path: workflow.encode()}
+    workflow_inputs.update(
+        {name: text.encode() for name, text in (other_workflows or {}).items()}
+    )
+    if reverse_inputs:
+        workflow_inputs = dict(reversed(list(workflow_inputs.items())))
+    invocation_sources = dict(workflow_inputs)
+    modules, source_bytes, inventory = {}, {}, {}
+    configuration_bytes = dict(workflow_inputs)
+    identities = {
+        name: {
+            "path": name,
+            "state": "read",
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+        for name, raw in workflow_inputs.items()
+    }
+    if script is not None:
+        script_path = tmp_path / "runtests.py"
+        raw = script.encode()
+        script_path.write_bytes(raw)
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+        modules[script_path], source_bytes[script_path] = tree, raw
+        inventory[script_path] = tree._oracle_source_sha256
+        invocation_sources["runtests.py"] = raw
+    if extra_sources:
+        for name, text in extra_sources.items():
+            path = tmp_path / name
+            raw = text.encode()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+            tree = ast.parse(raw)
+            tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+            modules[path], source_bytes[path] = tree, raw
+            inventory[path] = tree._oracle_source_sha256
+    if not modules:
+        path = tmp_path / "probe.py"
+        raw = b""
+        path.write_bytes(raw)
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+        modules[path], source_bytes[path] = tree, raw
+        inventory[path] = tree._oracle_source_sha256
+    index = application_test_index(
+        tmp_path, modules, source_bytes, inventory, configuration_bytes
+    )
+    return captured_test_invocation_profile(
+        index,
+        configuration_bytes,
+        invocation_sources,
+        configuration_identities=identities,
+    )
+
+
+_NATIVE_RUNNER_SOURCE = (
+    "import os\n"
+    "import django\n"
+    "from django.test.runner import DiscoverRunner\n"
+    'if __name__ == "__main__":\n'
+    '    os.environ["DJANGO_SETTINGS_MODULE"] = "tests.settings"\n'
+    "    django.setup()\n"
+    "    test_runner = DiscoverRunner(verbosity=2)\n"
+    "    failures = test_runner.run_tests([])\n"
+)
+
+
+@pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ({}, True),
+        (
+            {
+                "helper.py": "from django.conf import settings\nvalue = getattr(settings, 'UNRELATED_OPTION', {})\n"
+            },
+            True,
+        ),
+        ({"runtime.py": "import django\ndjango.setup()\n"}, False),
+        (
+            {
+                "runtime.py": "from django import setup as boot\nloader = boot\nloader()\n"
+            },
+            False,
+        ),
+        (
+            {
+                "runtime.py": "from django.test.runner import DiscoverRunner\nDiscoverRunner.run_tests = replacement\n"
+            },
+            False,
+        ),
+        (
+            {
+                "runtime.py": "from django.test.runner import DiscoverRunner as Runner\nsetattr(Runner, 'run_tests', replacement)\n"
+            },
+            False,
+        ),
+        (
+            {
+                "runtime.py": "from django.conf import settings\nsend(settings.SECRET_KEY)\n"
+            },
+            False,
+        ),
+        (
+            {
+                "runtime.py": "from django.conf import settings\nsend(getattr(settings, 'SECRET_KEY'))\n"
+            },
+            False,
+        ),
+        (
+            {
+                "runtime.py": "from django.conf import settings\nsend(settings.SECRET_KEY_FALLBACKS)\n"
+            },
+            False,
+        ),
+        (
+            {"runtime.py": "from django.conf import settings\nsend(vars(settings))\n"},
+            False,
+        ),
+        ({"checks/test_feature.py": "def test_feature():\n    assert True\n"}, False),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import settings\nsend(getattr(settings, '__dict__')['SECRET_KEY'])\n"
+            },
+            False,
+            id="copied-getter-dict",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import settings\nsend(getattr(settings, '_wrapped').SECRET_KEY)\n"
+            },
+            False,
+            id="copied-getter-wrapped",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import settings\nsend(getattr(settings, '__getattribute__')('SECRET_KEY'))\n"
+            },
+            False,
+            id="copied-getter-protocol",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import settings\nsend(settings._wrapped.SECRET_KEY)\n"
+            },
+            False,
+            id="copied-direct-wrapped",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.core.wsgi import get_wsgi_application\napplication = get_wsgi_application()\n"
+            },
+            False,
+            id="implicit-wsgi",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.core.asgi import get_asgi_application\napplication = get_asgi_application()\n"
+            },
+            False,
+            id="implicit-asgi",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.core.management import execute_from_command_line\nexecute_from_command_line([])\n"
+            },
+            False,
+            id="implicit-management",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.core import signing\ntoken = signing.dumps({'user_id': 1})\n"
+            },
+            False,
+            id="implicit-live-signing",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.core import signing\nemit = getattr(signing, 'dumps')\ntoken = emit({'user_id': 1})\n"
+            },
+            False,
+            id="implicit-reflected-signing",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.core.signing import dumps as emit\ntoken = emit({'user_id': 1})\n"
+            },
+            False,
+            id="implicit-aliased-signing",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.contrib.auth.tokens import default_token_generator\ntoken = default_token_generator.make_token(user)\n"
+            },
+            False,
+            id="implicit-reset-token",
+        ),
+        pytest.param(
+            {"runtime.py": "token = user.get_session_auth_hash()\n"},
+            False,
+            id="implicit-session-hash",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.contrib.auth import get_user_model\nUser = get_user_model()\n"
+            },
+            True,
+            id="unrelated-user-model",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "mod = __import__('django.core.signing', fromlist=['dumps'])\ntoken = mod.dumps({'user_id': 1})\n"
+            },
+            False,
+            id="implicit-builtin-import",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from builtins import __import__ as load\nmod = load('django.core.signing', fromlist=['dumps'])\ntoken = mod.dumps({'user_id': 1})\n"
+            },
+            False,
+            id="implicit-import-alias",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "import builtins\nload = getattr(builtins, '__import__')\nmod = load('django.core.signing', fromlist=['dumps'])\ntoken = mod.dumps({'user_id': 1})\n"
+            },
+            False,
+            id="implicit-reflected-import",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "namespace = globals()['__builtins__']\nmod = namespace['__import__']('django.core.signing', fromlist=['dumps'])\ntoken = mod.dumps({'user_id': 1})\n"
+            },
+            False,
+            id="implicit-import-from-globals",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "import sys\nregistry = getattr(sys, 'modules')\nmod = registry['django.core.signing']\ntoken = mod.dumps({'user_id': 1})\n"
+            },
+            False,
+            id="implicit-reflected-module-registry",
+        ),
+        pytest.param(
+            {"runtime.py": "import sys\nversion = sys.version_info\n"},
+            True,
+            id="unrelated-version-metadata",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.utils.crypto import salted_hmac\ntoken = salted_hmac('scope', 'payload')\n"
+            },
+            False,
+            id="implicit-default-hmac",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.utils.crypto import get_random_string\nvalue = get_random_string(12)\n"
+            },
+            True,
+            id="unrelated-random-data",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import settings\ncfg = settings\nsend(cfg.SECRET_KEY)\n"
+            },
+            False,
+            id="copied-namespace-alias",
+        ),
+        pytest.param(
+            {"runtime.py": "from django.conf import settings\nconsume(settings)\n"},
+            False,
+            id="copied-namespace-argument",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import settings\ncfg = getattr(settings, 'MISSING_PUBLIC', settings)\nsend(cfg.SECRET_KEY)\n"
+            },
+            False,
+            id="copied-namespace-default",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import settings\nsettings.SIGNING_BACKEND = 'external.Signer'\n"
+            },
+            False,
+            id="copied-settings-mutation",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import LazySettings\ncfg = LazySettings()\nsend(cfg.SECRET_KEY)\n"
+            },
+            False,
+            id="copied-lazy-settings-factory",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import Settings\ncfg = Settings('support.configuration')\nsend(cfg.SECRET_KEY)\n"
+            },
+            False,
+            id="copied-explicit-settings-factory",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import settings\ndef getattr(obj, name, default=None):\n    send(obj.SECRET_KEY)\nvalue = getattr(settings, 'PUBLIC_OPTION', {})\n"
+            },
+            False,
+            id="shadowed-settings-getter",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.conf import settings\ndef consume(getattr):\n    return getattr(settings, 'PUBLIC_OPTION', {})\n"
+            },
+            False,
+            id="parameter-settings-getter",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from builtins import getattr as read\nfrom django.conf import settings\nvalue = read(settings, 'PUBLIC_OPTION', {})\n"
+            },
+            True,
+            id="qualified-settings-getter",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from django.contrib.auth import get_user_model\nnamespace = getattr(get_user_model, '__globals__')\nsend(namespace['settings'].SECRET_KEY)\n"
+            },
+            False,
+            id="implicit-function-namespace",
+        ),
+        pytest.param(
+            {
+                "runtime.py": "from builtins import getattr as read\nfrom django.contrib.auth import get_user_model\nnamespace = read(get_user_model, '__globals__')\nsend(namespace['settings'].SECRET_KEY)\n"
+            },
+            False,
+            id="implicit-aliased-function-namespace",
+        ),
+        pytest.param(
+            {
+                "poison.py": "import builtins\nbuiltins.getattr = replacement\n",
+                "runtime.py": "import poison\nfrom django.conf import settings\nvalue = getattr(settings, 'PUBLIC_OPTION', {})\n",
+            },
+            False,
+            id="cross-source-builtin-mutation",
+        ),
+    ],
+)
+def test_native_settings_scope_closes_all_captured_provider_effects(
+    tmp_path, extra, expected
+):
+    index, path, assignment = configured_authority_scope(
+        tmp_path,
+        {
+            "requirements.txt": b"Django>=4.2\n",
+            ".github/workflows/ci.yml": b"jobs:\n  test:\n    steps:\n      - run: python runtests.py\n",
+        },
+        {
+            "runtests.py": _NATIVE_RUNNER_SOURCE.replace(
+                "tests.settings", "support.configuration"
+            ),
+            "checks/test_feature.py": "from unittest import TestCase\nclass Checks(TestCase):\n    def test_feature(self):\n        assert True\n",
+            **extra,
+        },
+    )
+    result = scope._source_test_scope_evidence(index, path, assignment, "SECRET_KEY")
+    assert (result is not None) is expected
+    if expected:
+        assert (
+            result["settings_selection"]["invocation"]["runner"]
+            == "django.DiscoverRunner"
+        )
+        assert any(
+            w["role"] == "modeled_implicit_settings_load"
+            for w in result["witness_sources"]
+        )
+
+
+@pytest.mark.parametrize(
+    "ending", ["", "    sys.exit(failures)\n", "    sys.exit(bool(failures))\n"]
+)
+def test_captured_invocation_profile_binds_native_django_bootstrap(tmp_path, ending):
+    workflow = (
+        "jobs:\n  test:\n    steps:\n      - run: |\n          python runtests.py\n"
+    )
+    script = "import sys\n" + _NATIVE_RUNNER_SOURCE + ending
+    profile = captured_test_profile(tmp_path, workflow=workflow, script=script)
+    assert profile["status"] == "DECLARED"
+    assert profile["execution_status"] == "NOT_EXECUTED"
+    assert profile["runner"] == "django.DiscoverRunner"
+    assert profile["selector"]["settings_module"] == "tests.settings"
+    assert profile["selector"]["bootstrap_effect"] == "MODELED_IMPLICIT_SETTINGS_LOAD"
+    assert profile["selector"]["setup_span"][0] < profile["selector"]["runner_span"][0]
+    assert (
+        profile["sources"]["runtests.py"]["sha256"]
+        == hashlib.sha256(script.encode()).hexdigest()
+    )
+    profile = captured_test_profile(
+        tmp_path,
+        workflow=workflow,
+        script=script,
+        other_workflows={
+            ".github/workflows/dependabot-auto-merge.yml": "jobs:\n  update:\n    steps:\n      - run: gh pr view\n",
+            ".github/workflows/update-hooks.yml": "jobs:\n  update:\n    steps:\n      - run: prek run --all-files\n",
+        },
+    )
+    assert profile["status"] == "DECLARED"
+    assert len(profile["sources"]) == 4
+    assert [item["status"] for item in profile["workflow_dispositions"]] == [
+        "DECLARED",
+        "NO_TEST_INVOCATION",
+        "NO_TEST_INVOCATION",
+    ]
+
+
+@pytest.mark.parametrize(
+    "workflow,script,extra_sources",
+    [
+        (
+            "jobs:\n  test:\n    steps:\n      - run: python runtests.py --tag smoke\n",
+            _NATIVE_RUNNER_SOURCE,
+            None,
+        ),
+        (
+            "jobs:\n  test:\n    steps:\n      - working-directory: tests\n        run: python runtests.py\n",
+            _NATIVE_RUNNER_SOURCE,
+            None,
+        ),
+        (
+            "jobs:\n  test:\n    steps:\n      - run: python runtests.py\n",
+            _NATIVE_RUNNER_SOURCE.replace(
+                "    django.setup()\n", "    if False:\n        django.setup()\n"
+            ),
+            None,
+        ),
+        (
+            "jobs:\n  test:\n    steps:\n      - run: python runtests.py\n",
+            _NATIVE_RUNNER_SOURCE,
+            {"django.py": "# shadow provider\n"},
+        ),
+    ],
+)
+def test_captured_native_invocation_refuses_unbound_argv_cwd_or_bootstrap(
+    tmp_path, workflow, script, extra_sources
+):
+    assert (
+        captured_test_profile(
+            tmp_path,
+            workflow=workflow,
+            script=script,
+            extra_sources=extra_sources,
+        )["status"]
+        == "UNRESOLVED"
+    )
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        "jobs:\n  test:\n    steps:\n      - run: |\n          cd tests\n          python runtests.py\n",
+        "jobs:\n  test:\n    steps:\n      - run: |\n          if false; then\n            echo skip\n          fi\n          python runtests.py\n",
+        "jobs:\n  test:\n    steps:\n      - run: |\n          export PYTHONPATH=/outside && echo ready\n          python runtests.py\n",
+        "jobs:\n  test:\n    steps:\n      - run: echo 'PYTHONPATH=/outside' >> $GITHUB_ENV\n"
+        "      - run: python runtests.py\n",
+        "jobs:\n  test:\n    steps:\n      - working-directory: C:\\\\outside\n        run: python runtests.py\n",
+    ],
+)
+def test_captured_native_invocation_refuses_shell_selection_or_path_mutations(
+    tmp_path, workflow
+):
+    assert (
+        captured_test_profile(
+            tmp_path, workflow=workflow, script=_NATIVE_RUNNER_SOURCE
+        )["status"]
+        == "UNRESOLVED"
+    )
+
+
+def test_captured_pytest_invocation_needs_bound_selector_or_absence(tmp_path):
+    workflow = "jobs:\n  test:\n    steps:\n      - run: pytest -ra\n"
+    assert captured_test_profile(tmp_path, workflow=workflow)["status"] == "UNRESOLVED"
+
+
+def test_captured_workflows_without_test_entry_are_explicit_noncontributors(tmp_path):
+    profile = captured_test_profile(
+        tmp_path,
+        workflow="jobs:\n  update:\n    steps:\n      - run: gh pr view\n",
+    )
+    assert profile["status"] == "NO_TEST_INVOCATION"
+    assert profile["workflows"] == [
+        {"path": ".github/workflows/ci.yml", "status": "NO_TEST_INVOCATION"}
+    ]
+
+
+def test_captured_native_profile_is_independent_of_input_mapping_order(tmp_path):
+    workflow = "jobs:\n  test:\n    steps:\n      - run: python runtests.py\n"
+    extras = {
+        ".github/workflows/z.yml": "jobs:\n  update:\n    steps:\n      - run: gh pr view\n",
+        ".github/workflows/a.yml": "jobs:\n  update:\n    steps:\n      - run: echo update\n",
+    }
+    expected = captured_test_profile(
+        tmp_path,
+        workflow=workflow,
+        script=_NATIVE_RUNNER_SOURCE,
+        other_workflows=extras,
+    )
+    actual = captured_test_profile(
+        tmp_path,
+        workflow=workflow,
+        script=_NATIVE_RUNNER_SOURCE,
+        other_workflows=extras,
+        reverse_inputs=True,
+    )
+    assert actual == expected
+
+
+def test_captured_distribution_provider_binds_django_requirement_bytes():
+    import hashlib
+
+    from factoryline.pytest_collection_audit import captured_distribution_provider
+
+    raw = b"Django>=3.2,<5\n"
+    result = captured_distribution_provider({"requirements.txt": raw}, "Django")
+    assert result == {
+        "path": "requirements.txt",
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "provider": "django",
+        "declaration_only": True,
+        "declarations": [
+            {"group": "requirements.txt", "requirement": "Django>=3.2,<5"}
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"Django-extra>=3.2\n",
+        b"Django[postgres]>=3.2\n",
+        b"Django>=3.2; python_version<'3.12'\n",
+        b"Django @ https://example.invalid/django.whl\n",
+        b"Django>=3.2\n-r base.txt\n",
+    ],
+)
+def test_captured_distribution_provider_rejects_non_exact_or_included_requirements(raw):
+    from factoryline.pytest_collection_audit import captured_distribution_provider
+
+    assert captured_distribution_provider({"requirements.txt": raw}, "django") is None
+
+
+def test_captured_distribution_provider_reads_required_project_dependency_only():
+    from factoryline.pytest_collection_audit import captured_distribution_provider
+
+    raw = b'[project]\ndependencies = ["Django>=4,<6"]\n'
+    result = captured_distribution_provider({"pyproject.toml": raw}, "django")
+    assert result["provider"] == "django"
+    assert result["declarations"] == [
+        {"group": "project.dependencies", "requirement": "Django>=4,<6"}
+    ]
+    optional = (
+        b"[project]\ndependencies = []\n"
+        b'[project.optional-dependencies]\ntest = ["Django>=4"]\n'
+    )
+    assert (
+        captured_distribution_provider({"pyproject.toml": optional}, "django") is None
+    )
+
+
+def test_generic_provider_keeps_legacy_pytest_django_receipt_shape():
+    from factoryline.pytest_collection_audit import captured_pytest_django_provider
+
+    result = captured_pytest_django_provider(
+        {"requirements.txt": b"pytest_django>=4.5\n"}
+    )
+    assert result["provider"] == "pytest_django"
+    assert result["declaration_only"] is True
+    assert "declarations" not in result
+
+
+@pytest.mark.parametrize("flag", ["-q", "-v", "-vv"])
+def test_captured_tox_selection_accepts_legacy_report_flags(flag):
+    from factoryline.pytest_collection_audit import (
+        _pytest_captured_invocation_options,
+    )
+
+    tox = (
+        "[testenv]\nsetenv=\n    DJANGO_SETTINGS_MODULE=environment.settings\n"
+        f"commands=pytest {flag}\n"
+    ).encode()
+    selected = _pytest_captured_invocation_options(
+        {"tox.ini": tox}, {"DJANGO_SETTINGS_MODULE": "config.settings"}
+    )
+    assert selected["DJANGO_SETTINGS_MODULE"] == "environment.settings"
+    assert selected["captured_invocations"]["commands"] == [
+        ("testenv", f"pytest {flag}")
+    ]
+
+
+def test_pytest_coverage_flags_require_same_profile_provider():
+    from factoryline.pytest_collection_audit import captured_pytest_configuration
+
+    config = (
+        b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n"
+        b"addopts=--cov=package --cov-report=term-missing\n"
+    )
+    selected = captured_pytest_configuration(
+        {"pytest.ini": config, "requirements.txt": b"pytest-cov>=5\n"}
+    )
+    assert selected["options"]["DJANGO_SETTINGS_MODULE"] == "support.configuration"
+    assert (
+        captured_pytest_configuration(
+            {
+                "pytest.ini": config,
+                "pyproject.toml": b'[project.optional-dependencies]\ntest=["pytest-cov"]\n',
+            }
+        )
+        is None
+    )
+    assert (
+        captured_pytest_configuration(
+            {
+                "pytest.ini": config,
+                "pyproject.toml": b'[dependency-groups]\ntest=["pytest-cov"]\n',
+            }
+        )
+        is None
+    )
+
+
+def test_malformed_project_dependencies_refuse_captured_provider_selection():
+    from factoryline.pytest_collection_audit import (
+        captured_pytest_configuration,
+        captured_pytest_django_provider,
+    )
+
+    captured = {
+        "pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n"
+        b"addopts=--cov=package\n",
+        "pyproject.toml": b"[project]\ndependencies=1\n",
+    }
+    assert captured_pytest_configuration(captured) is None
+    assert captured_pytest_django_provider(captured) is None
+
+
+def test_pytest_coverage_accepts_default_poetry_dependency():
+    from factoryline.pytest_collection_audit import captured_pytest_configuration
+
+    raw = (
+        b'[tool.poetry.dependencies]\npytest-cov="^5"\n'
+        b"[tool.pytest.ini_options]\n"
+        b'DJANGO_SETTINGS_MODULE="support.configuration"\n'
+        b'addopts="--junitxml=report.xml --cov=package --cov-report=term-missing"\n'
+    )
+    selected = captured_pytest_configuration({"pyproject.toml": raw})
+    assert selected["options"]["DJANGO_SETTINGS_MODULE"] == "support.configuration"
+
+
+def test_pytest_coverage_accepts_provider_in_same_tox_profile():
+    from factoryline.pytest_collection_audit import captured_pytest_configuration
+
+    selected = captured_pytest_configuration(
+        {
+            "pytest.ini": b"[pytest]\n"
+            b"DJANGO_SETTINGS_MODULE=support.configuration\n"
+            b"addopts=--cov=package\n",
+            "tox.ini": b"[testenv]\ndeps=pytest-cov\ncommands=pytest\n",
+        }
+    )
+    assert selected["options"]["DJANGO_SETTINGS_MODULE"] == "support.configuration"
+
+
+def test_pytest_coverage_provider_cannot_be_borrowed_from_tox_sibling():
+    from factoryline.pytest_collection_audit import captured_pytest_configuration
+
+    config = b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\naddopts=--cov=package\n"
+    tox = (
+        b"[testenv:fast]\ndeps=pytest\ncommands=pytest\n"
+        b"[testenv:coverage]\ndeps=pytest-cov\ncommands=pytest\n"
+    )
+    assert (
+        captured_pytest_configuration(
+            {
+                "pytest.ini": config,
+                "tox.ini": tox,
+                "pyproject.toml": b'[project.optional-dependencies]\ntest=["pytest-cov"]\n',
+            }
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "addopts,coverage_provider",
+    [
+        ("--junitxml --ds=production.settings", False),
+        ("--cov-report --ds=production.settings", True),
+        ("--reuse-db", False),
+        ("--nomigrations", False),
+        ("--autocheck", False),
+        ("-o DJANGO_SETTINGS_MODULE=other.settings", False),
+    ],
+)
+def test_pytest_effect_projection_rejects_swallowed_and_unknown_effects(
+    addopts, coverage_provider
+):
+    from factoryline.pytest_collection_audit import _pytest_effective_settings_options
+
+    assert (
+        _pytest_effective_settings_options(
+            {"DJANGO_SETTINGS_MODULE": "support.configuration", "addopts": addopts},
+            coverage_provider=coverage_provider,
+        )
+        is None
     )
 
 

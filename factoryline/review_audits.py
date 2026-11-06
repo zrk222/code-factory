@@ -3739,7 +3739,7 @@ def _oracle_context_cache_key(
         for module in (test_callback_closure, integrity)
     )
     helpers += mock_fixture_provenance.CACHE_HELPERS + tuple(
-        vars(mock_fixture_provenance).get(helper.__name__)
+        vars(mock_fixture_provenance).get(getattr(helper, "__name__", ""))
         for helper in mock_fixture_provenance.CACHE_HELPERS
     )
     helpers += async_runner_fixture_helpers() + protocol_call_helpers()

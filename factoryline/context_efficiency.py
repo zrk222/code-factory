@@ -489,12 +489,14 @@ def typecheck_cache_helpers(contracts):
     )
 
 
-def _application_profile_bytes(root, bindings, read_source, limit):
-    selected = {
-        row["path"]: row
-        for row in bindings
-        if row["path"] in application_configuration_names()
-    }
+def _application_profile_bytes(
+    root, bindings, read_source, limit, *, names=None, required=()
+):
+    if names is None:
+        names = application_configuration_names([row["path"] for row in bindings])
+    selected = {row["path"]: row for row in bindings if row["path"] in names}
+    if not set(required) <= set(selected):
+        return None
     result = {}
     for name, binding in selected.items():
         try:
@@ -683,23 +685,17 @@ def _fixture_literal_evidence(tree, audit, resolve, metadata=None, candidates=No
 
 def _captured_fixture_configuration(root, bindings, read_source, limit):
     """Re-read only known configuration inputs, rejecting a changed capture."""
-    selected = {
-        row["path"]: row
-        for row in bindings
-        if row["path"] in {"pyproject.toml", "tox.ini"}
-    }
-    if set(selected) != {"pyproject.toml", "tox.ini"}:
-        return {}
-    result = {}
-    for name, binding in selected.items():
-        try:
-            raw = read_source(root, name)
-        except (OSError, ValueError, RuntimeError):
-            return {}
-        if len(raw) > limit or hashlib.sha256(raw).hexdigest() != binding["sha256"]:
-            return {}
-        result[name] = raw
-    return result
+    return (
+        _application_profile_bytes(
+            root,
+            bindings,
+            read_source,
+            limit,
+            names={"pyproject.toml", "tox.ini"},
+            required={"pyproject.toml", "tox.ini"},
+        )
+        or {}
+    )
 
 
 def provider_context_cache_helpers(contracts):
