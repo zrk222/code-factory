@@ -5751,3 +5751,244 @@ def record_use(
         }
         for hops in paths
     ]
+
+
+def _presentation_local_api_url_uses(role_index, fact, path, declaration):
+    """Close local string reads through aliases and verified string operations to mock URL slots."""
+    from .finite_capture import captured_value_use_closure
+    from .credential_role_constructor_provider import (
+        binding_dominates,
+        binding_occurrences,
+    )
+
+    source = role_index.source
+    if (
+        fact.source_role != "local_literal"
+        or not role_index.complete
+        or not source.validate(path)
+    ):
+        return None
+    parents = source.parents[path]
+
+    def scope_of(node):
+        while node is not None:
+            if isinstance(
+                node,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.Lambda,
+                    ast.ClassDef,
+                    ast.ListComp,
+                    ast.SetComp,
+                    ast.DictComp,
+                    ast.GeneratorExp,
+                ),
+            ):
+                return node
+            node = parents.get(id(node))
+        return None
+
+    function = scope_of(declaration)
+    origin = binding_occurrences(function.body, fact.member) if function else []
+    if (
+        function is None
+        or declaration not in function.body
+        or len(origin) != 1
+        or not isinstance(origin[0], ast.Name)
+        or parents.get(id(origin[0])) is not declaration
+        or role_index._data_reflection_conflict(fact)
+    ):
+        return None
+    loads = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name)
+        and node.id == fact.member
+        and isinstance(node.ctx, ast.Load)
+    ]
+    if not loads or any(
+        scope_of(node) is not function
+        or not binding_dominates(declaration, node, parents, function)
+        for node in loads
+    ):
+        return None
+
+    def consumer(scope, node):
+        return (
+            node
+            if (
+                scope is function
+                and role_index._data_role(path, node, allow_mock_url=True)
+                == "MOCK_RESPONSE_URL"
+            )
+            else None
+        )
+
+    found = {}
+    for load in loads:
+        closure = captured_value_use_closure(
+            function,
+            load,
+            parents,
+            scope_of,
+            lambda _scope: (),
+            consumer,
+            field_successors=lambda scope,
+            node,
+            current_parents: _presentation_local_api_url_successors(
+                role_index, path, function, scope, node, current_parents
+            ),
+        )
+        if closure is None:
+            return None
+        found.update((id(node), node) for node in closure["sinks"])
+    return [
+        role_index._witness(path, node, "MOCK_RESPONSE_URL") for node in found.values()
+    ] or None
+
+
+def _presentation_local_api_url_successors(
+    role_index, path, function, scope, node, parents
+):
+    parent = parents.get(id(node))
+    if isinstance(parent, ast.Subscript) and parent.value is node:
+        return _presentation_local_api_url_slice_successor(scope, parent)
+    return _presentation_local_api_url_format_successor(
+        role_index, path, function, scope, node, parent
+    )
+
+
+def _presentation_local_api_url_slice_successor(scope, parent):
+    if not isinstance(parent.ctx, ast.Load):
+        return ()
+    part = parent.slice
+    if isinstance(part, ast.Constant) and type(part.value) is int:
+        return [(scope, parent)]
+    if isinstance(part, ast.Slice) and all(
+        item is None or isinstance(item, ast.Constant) and type(item.value) is int
+        for item in (part.lower, part.upper, part.step)
+    ):
+        return [(scope, parent)]
+    return ()
+
+
+def _presentation_local_api_url_format_successor(
+    role_index, path, function, scope, node, parent
+):
+    if not isinstance(parent, ast.Call) or not isinstance(parent.func, ast.Attribute):
+        return None
+    if parent.func.attr != "format" or node not in parent.args or parent.keywords:
+        return None
+    if any(isinstance(arg, ast.Starred) for arg in parent.args):
+        return ()
+    template = _presentation_local_api_url_template(role_index, path, function, parent)
+    if template is None:
+        return ()
+    if not _presentation_local_api_url_format_accepts(
+        role_index, path, function, node, parent.args, template
+    ):
+        return ()
+    return [(scope, parent)]
+
+
+def _presentation_local_api_url_format_accepts(
+    role_index, path, function, node, arguments, template
+):
+    from string import Formatter
+    from .finite_capture import captured_call_scalar
+
+    try:
+        fields = Formatter().parse(template)
+        values, marker = [], None
+        for argument in arguments:
+            if argument is node:
+                marker = f"__CF_LOCAL_ORIGIN_{len(values)}__"
+                values.append(marker)
+                continue
+            scalar = captured_call_scalar(role_index.source, path, function, argument)
+            if scalar is None or type(scalar[0]) is not str:
+                return False
+            values.append(scalar[0])
+        for _, field, spec, conversion in fields:
+            if field is not None and (
+                spec or conversion or not field.isdigit() and field != ""
+            ):
+                return False
+        return marker in Formatter().vformat(template, values, {})
+    except (ValueError, IndexError, KeyError):
+        return None
+
+
+def _presentation_local_api_url_template(role_index, path, function, call):
+    from .credential_role_constructor_provider import (
+        declaration_fact,
+        import_is_stable,
+        module_literal_binding,
+    )
+
+    source, receiver = role_index.source, call.func.value
+    if not isinstance(receiver, ast.Name):
+        return None
+    binding = role_index.imports.get(path, {}).get(receiver.id)
+    if (
+        binding
+        and binding[1] is not None
+        and import_is_stable(path, receiver.id, source, role_index.audit)
+    ):
+        module_path, member = binding
+    elif not binding:
+        module_path, member = path, receiver.id
+    else:
+        return None
+    tree = source.snapshots.get(module_path)
+    if tree is None or not source.validate(module_path):
+        return None
+    targets = binding_occurrences(tree.body, member)
+    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+        return None
+    assignment = source.parents[module_path].get(id(targets[0]))
+    template_fact = declaration_fact(source, module_path, assignment)
+    if (
+        template_fact is None
+        or template_fact.source_role != "module_literal"
+        or not module_literal_binding(
+            template_fact, module_path, source, targets[0], role_index.audit
+        )
+        or role_index._data_reflection_conflict(template_fact)
+    ):
+        return None
+    uses = role_index._module_uses(
+        template_fact,
+        lambda use_path, use: "FORMAT_RECEIVER"
+        if _presentation_local_api_url_format_receiver(role_index, use_path, use)
+        else None,
+    )
+    if not uses or not any(
+        row["path"] == source.relative(path)
+        and row["span"]
+        == [
+            receiver.lineno,
+            receiver.col_offset,
+            receiver.end_lineno,
+            receiver.end_col_offset,
+        ]
+        for row in uses
+    ):
+        return None
+    return template_fact._literal
+
+
+def _presentation_local_api_url_format_receiver(role_index, path, node):
+    parent = role_index.source.parents[path].get(id(node))
+    call = (
+        role_index.source.parents[path].get(id(parent)) if parent is not None else None
+    )
+    return bool(
+        isinstance(node, ast.Name)
+        and isinstance(parent, ast.Attribute)
+        and parent.value is node
+        and parent.attr == "format"
+        and isinstance(call, ast.Call)
+        and call.func is parent
+    )

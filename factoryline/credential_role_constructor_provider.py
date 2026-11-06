@@ -18,9 +18,6 @@ from . import (
     finite_capture as _finite_capture,
 )
 
-"""Check captured constructor and selector providers without executing code."""
-
-
 DYNAMIC_HOOKS = set(
     "__getattr__ __getattribute__ __setattr__ __delattr__ __dict__ __mro__ __bases__".split()
 )
@@ -1326,6 +1323,12 @@ class PresentationRoleIndex:
         )
         self.references, self.reflected_members = {}, set()
         self.reflective_paths, self.calls = set(), []
+        reflection_names = set(
+            "globals locals eval exec __dict__ __globals__ __getattribute__ _getframe "
+            "currentframe stack walk_stack f_locals f_globals f_builtins f_back "
+            "ag_frame gi_frame cr_frame tb_frame __traceback__ __builtins__ compile "
+            "__import__ attrgetter methodcaller getattr setattr delattr vars".split()
+        )
         self.provider_aliases, self.provider_mutations = {}, set()
         self.star_imports = False
         self._data_paths = source.module_paths() if self.complete else None
@@ -1341,22 +1344,24 @@ class PresentationRoleIndex:
                 if isinstance(node, (ast.Name, ast.Attribute)):
                     name = node.id if isinstance(node, ast.Name) else node.attr
                     self.references.setdefault(name, []).append((path, node))
-                    if name in {
-                        "getattr",
-                        "setattr",
-                        "delattr",
-                        "vars",
-                        "__getattribute__",
-                        "__dict__",
-                    }:
+                    if name == "compile":
+                        head = (
+                            node.id
+                            if isinstance(node, ast.Name)
+                            else getattr(node.value, "id", None)
+                        )
+                        name = (
+                            "compile"
+                            if aliases.get(head)
+                            in {None, "builtins", "builtins.compile"}
+                            else ""
+                        )
+                    if name in reflection_names:
                         self.reflective_paths.add(path)
-                if (
-                    isinstance(node, ast.ImportFrom)
-                    and node.module == "builtins"
-                    and any(
-                        alias.name in {"getattr", "setattr", "delattr", "vars"}
-                        for alias in node.names
-                    )
+                if isinstance(node, ast.ImportFrom) and any(
+                    alias.name in reflection_names
+                    and (alias.name != "compile" or node.module == "builtins")
+                    for alias in node.names
                 ):
                     self.reflective_paths.add(path)
                 if isinstance(node, ast.Call):
@@ -1389,6 +1394,11 @@ class PresentationRoleIndex:
                     else self._module_uses(fact, self._data_role)
                 )
                 profile = "STATIC_API_DATA_ROLE"
+        elif fact.source_role == "local_literal":
+            from .credential_role_paths import _presentation_local_api_url_uses
+
+            uses = _presentation_local_api_url_uses(self, fact, path, node)
+            profile = "STATIC_API_DATA_ROLE"
         else:
             uses, profile = None, None
         if not uses:
@@ -1548,29 +1558,22 @@ class PresentationRoleIndex:
     def _data_reflection_conflict(self, fact):
         """Dynamic namespace access cannot establish complete scalar-use closure."""
         origin = self.source.root / fact.path
-        if self.star_imports:
-            return True
-        for name in (
-            "globals",
-            "locals",
-            "eval",
-            "exec",
-            "__dict__",
-            "__globals__",
-            "__getattribute__",
-        ):
-            for path, node in self.references.get(name, ()):
-                if path == origin:
-                    return True
-                if (
+        return (
+            self.star_imports
+            or (fact.source_role == "local_literal" and bool(self.reflective_paths))
+            or any(
+                path == origin
+                or (
                     isinstance(node, ast.Attribute)
                     and isinstance(node.value, ast.Name)
                     and self._namespace_alias(path, node.value.id, fact)
-                ):
-                    return True
-        return False
+                )
+                for name in "globals locals eval exec __dict__ __globals__ __getattribute__".split()
+                for path, node in self.references.get(name, ())
+            )
+        )
 
-    def _data_role(self, path, node):
+    def _data_role(self, path, node, allow_mock_url=False):
         """Model argument roles, never identifier spelling or test-directory names."""
         parents = self.source.parents[path]
         parent = parents.get(id(node))
@@ -1594,17 +1597,18 @@ class PresentationRoleIndex:
             ),
         }
         selected = roles.get(canonical)
+        if canonical == "responses.add" and allow_mock_url:
+            selected = ("url", "MOCK_RESPONSE_URL")
         if selected is None or not self._data_provider_stable(
             path, call.func, canonical
         ):
             return None
         keyword, role = selected
+        position = int(canonical == "responses.add")
         if role == "PLUGIN_LOADER_NAME" and len(call.args) + len(call.keywords) != 1:
             return None
-        actuals = [
-            *call.args[:1],
-            *(kw.value for kw in call.keywords if kw.arg == keyword),
-        ]
+        actuals = list(call.args[position : position + 1])
+        actuals.extend(kw.value for kw in call.keywords if kw.arg == keyword)
         return role if len(actuals) == 1 and actuals[0] is node else None
 
     def _data_provider_stable(self, path, expression, canonical):

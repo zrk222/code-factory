@@ -1,0 +1,120 @@
+{
+  "schema": "factory.precision.repair.v1",
+  "scope": "Exposed N447 development replay; not a fresh held-out study or whole-scanner recall measurement",
+  "change": "Shared local literal/use closure for modeled mock URL arguments; captured-import proof regeneration; source/helper epoch invalidation; reflected namespace uses remain active",
+  "base_commit": "1bccfb61c912281e9343a33c4b2185ed0e16ee36",
+  "candidate_windows_byte_sha256": {
+    "factoryline/context_efficiency.py": "5d38fde553187de6943868a09c8c4b1c500794a8660345ad90cc9d3ef440ae8d",
+    "factoryline/credential_role_constructor_provider.py": "57751f453e8df5bd53681483e214c95eff55e21a6672dc0b116df3cbc352c505",
+    "factoryline/credential_role_paths.py": "246c30fca40254343ff90a16bc0904565c221ebe2d417e2bed4da91cedb01be6",
+    "factoryline/import_context.py": "b938b0501746d9842134543e01480ce28591ad3145d3d50966dcf8cded8a6d66",
+    "factoryline/primitive_observation_binding.py": "814e456aae036c27b5739d50a6861871a49bfbed92588ac9b2785f1cc4be3015",
+    "tests/test_context_efficiency.py": "02e87ae3773787539d464d84e81c4a4d77e28afab66ebb1678ffeddad45ad1cd",
+    "tests/test_mock_fixture_provenance.py": "feabda0de23bf287996643862a7fa13a048c22a7732d1e3ea3ba04378c911a06"
+  },
+  "engine_source_sha256": "c59ceabb30fd476a4140452542e0b91f53710cf115ac995b002cb76559fd8749",
+  "reference_labels": {
+    "source": "Two original AI reviewers; no external human adjudication",
+    "unchanged": true,
+    "sealed_join_verified": true,
+    "reviews": {
+      "A": {
+        "path": ".factory/precision447-fresh/reviews/A/review.json",
+        "sha256": "e8a84f575804a92e354a85dfb45e99861baaecafb0a3a4909d97145953c41725"
+      },
+      "B": {
+        "path": ".factory/precision447-fresh/reviews/B/review.json",
+        "sha256": "3f478b825846d16e8eae1b5fac20555850cc714d901af83b06109404a6b85dab"
+      }
+    },
+    "official_score": {
+      "path": ".factory/precision447-fresh/official-score.json",
+      "sha256": "e49e264ac38eec056699973d568ed088045736ac57ddff38706decec24e94e29"
+    }
+  },
+  "before": {
+    "TP": 6,
+    "FP": 29,
+    "UNCLEAR": 5,
+    "selected_active": 40,
+    "decided": 35,
+    "decided_precision": 0.17142857142857143
+  },
+  "after": {
+    "TP": 6,
+    "FP": 27,
+    "UNCLEAR": 5,
+    "selected_active": 38,
+    "decided": 33,
+    "decided_precision": 0.18181818181818182
+  },
+  "changed_cases": [
+    {
+      "id": "N447-005",
+      "path": "tests/test_pwned.py",
+      "line": 36,
+      "label": "FP",
+      "active_after": false,
+      "raw_ledger_tier": "PROVEN_PRIMITIVE"
+    },
+    {
+      "id": "N447-006",
+      "path": "tests/test_pwned.py",
+      "line": 84,
+      "label": "FP",
+      "active_after": false,
+      "raw_ledger_tier": "PROVEN_PRIMITIVE"
+    }
+  ],
+  "known_tp_losses_current40": 0,
+  "unclear_losses_current40": 0,
+  "original30": {
+    "checked": 30,
+    "new_role_exclusions": 0,
+    "scope": "Full application/presentation role generation; not thirty new public CLI scans"
+  },
+  "public_endpoint": {
+    "invocations": 1,
+    "both_cases_verified_from_same_report": true,
+    "seconds": 8.813,
+    "files_audited": 11,
+    "files_discovered": 11,
+    "raw_findings_conserved": 8,
+    "active_before": 8,
+    "active_after": 5,
+    "unlabeled_third_removal_gets_no_precision_credit": true,
+    "compressed_report_sha256": "7b9469affebdf2c33af5c99b0d98a90922af20eef60a884d470215ce5f027639"
+  },
+  "validation": {
+    "python_profiles": {
+      "310": {
+        "passed": 319,
+        "seconds": 22.362,
+        "record_sha256": "c5c8e67bf7b0cbca7d9f20aef2b7f2219963ca5ca763bc65979636fdfdc0347f"
+      },
+      "311": {
+        "passed": 319,
+        "seconds": 17.534,
+        "record_sha256": "142a36f36a9ea57facec04b56b2d397f7549f45b3e2115902ca37b3bed557889"
+      }
+    },
+    "native_reflection_controls": {
+      "passed": 28,
+      "variants": 7,
+      "profiles": "source-only/original-config, cache-off/on",
+      "workspace_imports_verified": true,
+      "receipt_sha256": "1b480cc81cbf2b12f1341f3ce8fa21ff04fe1e1f7ccfddf48134199c8e878b75"
+    },
+    "replay_seconds": 14.906,
+    "replay_sha256": "0b1953b2ada7612ff1d1e241a597ef639fc3ced3ab098eb285c26541e3aad874",
+    "ecc": "Independent Luna High source review; final provider/compiler distinction rechecked"
+  },
+  "unresolved": [
+    "Fresh qualified held-out cohort",
+    "Whole-scanner recall",
+    "External human label review",
+    "Full public CLI endpoint retention for original30",
+    "Runtime/dependency behavior outside captured source"
+  ],
+  "global_p0_complete": false
+}
