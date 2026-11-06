@@ -3607,6 +3607,43 @@ def _request_user_role_projection(
     )
 
 
+@pytest.mark.parametrize("settings_drift", [False, True])
+def test_captured_pytest_django_user_fixture_binds_settings_bytes(
+    tmp_path, settings_drift
+):
+    from factoryline.mock_fixture_provenance import (
+        _app_has_dynamic_scope,
+        application_test_index,
+    )
+    from factoryline.pytest_collection_audit import captured_pytest_django_user_fixture
+
+    _, _, _, source_bytes, inventory, configuration, _ = _request_user_role_projection(
+        tmp_path, _REQUEST_USER_TEST
+    )
+    modules = {path: ast.parse(raw) for path, raw in source_bytes.items()}
+    for path, tree in modules.items():
+        tree._oracle_source_sha256 = inventory[path]
+    settings_path = tmp_path / "app/settings.py"
+    if settings_drift:
+        source_bytes[settings_path] += b"\nAUTH_USER_MODEL = 'accounts.CustomUser'\n"
+    index = application_test_index(
+        tmp_path, modules, source_bytes, inventory, configuration
+    )
+    assert index is not None
+    path = tmp_path / "tests/test_user_flow.py"
+    function = next(n for n in modules[path].body if isinstance(n, ast.FunctionDef))
+    proof = captured_pytest_django_user_fixture(
+        index, path, function, "password", _app_has_dynamic_scope
+    )
+    if settings_drift:
+        assert proof is None
+    else:
+        assert (
+            proof["fixture_provider"]["settings"]["sha256"] == inventory[settings_path]
+        )
+        assert proof["profile"] == "SOURCE_BOUND_TEST_ACCOUNT_ENROLLMENT"
+
+
 def test_captured_django_user_fixture_and_request_role_is_source_bound(tmp_path):
     evidence, declaration, raw, source_bytes, *_ = _request_user_role_projection(
         tmp_path, _REQUEST_USER_TEST

@@ -20,7 +20,7 @@
     },
     {
       "path": "tests/test_credential_authority_recovery.py",
-      "sha256": "285a32e60e7a35104231b86b0246d7264f4a18018e26d1aaa8d32e20f2316d9c",
+      "sha256": "b8dde23e2ddd7b7c35e152a88f6d27e487e8c7f5a455eb98bdc802a52f3d9497",
       "kind": "test"
     }
   ],
@@ -80,10 +80,12 @@
     "remaining": "Settings SECRET_KEY remains NEEDS_CONTEXT"
   },
   "validation": {
-    "python_310_passed": 210,
-    "python_311_passed": 209,
+    "python_310_passed": 212,
+    "python_311_passed": 211,
+    "reuse": "Original 210/209 test definitions and all production bytes unchanged; two additional direct source-binding controls passed per profile",
     "quality": "A",
     "maximum_complexity": 10,
+    "repo_wide_attribution": 0.9989229940764675,
     "architecture": "HEALTHY",
     "review": "Independent AI source review; no external human adjudication"
   },
@@ -131,6 +133,31 @@
     {
       "path": ".factory/shared-validation-performance/data-request-account-original30-sealed.json",
       "sha256": "7ef15254d6ec5099cba864cecb43bb99afb00e28ad601f9eee1085a0e4fa8c96",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-direct-310-current.json",
+      "sha256": "cf9cbff2ba64dbff6ae4ad49362af6b62e5303922b96c955f19e65f8e2e6545d",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-direct-311-current.json",
+      "sha256": "c5ab6947ec5924d0250cea97cbb1cdb53de6975dc5ed87e2bf3108a9ff996473",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-ci-quality-tracked-fixed.json",
+      "sha256": "25c7e61ec26c6cb359f1a942960bb3b96eaa7682aefaf4826ba8b50548465e0f",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-attribution-format-current.json",
+      "sha256": "70fc2cefad37edf41d70579977f25fd70a4bb013c86ed692018d1041bcbe12ba",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-attribution-lint-current.json",
+      "sha256": "27a88f557b76a5a388a6ac9dc89148c1ecc3d79c8a5e041872f21fda320d80d6",
       "kind": "terminal"
     }
   ],
