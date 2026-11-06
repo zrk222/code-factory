@@ -7156,7 +7156,18 @@ def test_native_helper_catalogs_bind_live_predicate_code_and_catalog_schema(
     assert provenance.public_symbolic_binding in direct
     assert provenance.bind_public_symbolic_consumers in direct
     workspace = integrity.fixed_program_workspace_helpers()
-    assert workspace and all(callable(value) for value in workspace)
+    from factoryline import pytest_collection_audit as collection
+
+    policies = (
+        collection._PYTEST_ARGUMENT_EFFECTS,
+        collection.DJANGO_IMPLICIT_KEY_EFFECTS,
+        collection.DJANGO_IMPLICIT_KEY_METHODS,
+    )
+    assert workspace and all(
+        callable(value) or any(value is policy for policy in policies)
+        for value in workspace
+    )
+    assert all(any(value is policy for value in workspace) for policy in policies)
     before = provider._helper_snapshot(integrity.credential_consumer_helpers)
     original = provenance.public_symbolic_binding
 

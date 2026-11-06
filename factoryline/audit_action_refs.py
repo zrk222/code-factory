@@ -482,7 +482,7 @@ def _application_configuration_hashes(class_profiles):
             continue
         for name, digest in configured.items():
             if (
-                name in application_configuration_names()
+                name in application_configuration_names((name,))
                 and isinstance(digest, str)
                 and len(digest) == 64
             ):

@@ -5644,6 +5644,7 @@ def test_fixture_collection_preserves_callback_order_and_copy_boundary(metadata)
 
 def test_new_shared_provider_helpers_are_epoch_enrolled():
     from factoryline.import_context import presentation_role_helpers
+    from factoryline.pytest_collection_audit import captured_pytest_helpers
 
     helpers = _context_refactor.provider_context_cache_helpers(
         _audit_refactor.contracts
@@ -5658,6 +5659,206 @@ def test_new_shared_provider_helpers_are_epoch_enrolled():
         )
     )
     assert all(helper in helpers for helper in presentation_role_helpers())
+    assert all(helper in helpers for helper in captured_pytest_helpers())
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "_PYTEST_ARGUMENT_EFFECTS",
+        "DJANGO_IMPLICIT_KEY_EFFECTS",
+        "DJANGO_IMPLICIT_KEY_METHODS",
+    ],
+)
+def test_pytest_argument_policy_change_invalidates_context_epoch(
+    tmp_path, monkeypatch, policy
+):
+    from factoryline import pytest_collection_audit as collection
+    from factoryline.credential_role_constructor_provider import (
+        _helper_snapshot,
+        _same_helper_epoch,
+    )
+
+    def epoch():
+        return _context_refactor.provider_context_cache_helpers(
+            _audit_refactor.contracts
+        )
+
+    before = _helper_snapshot(epoch)
+    assert before is not None
+    native_before = _audit_refactor._oracle_context_cache_key(tmp_path, [], {})
+    previous = getattr(collection, policy)
+    changed = (
+        previous[1:] if isinstance(previous, tuple) else previous - {min(previous)}
+    )
+    monkeypatch.setattr(collection, policy, changed)
+    after = _helper_snapshot(epoch)
+    assert after is not None
+    assert not _same_helper_epoch(before, after)
+    assert _audit_refactor._oracle_context_cache_key(tmp_path, [], {}) != native_before
+
+
+def test_workflow_configuration_bytes_reach_independent_role_inputs(tmp_path):
+    import hashlib
+
+    from factoryline.audit_action_refs import _application_configuration_hashes
+    from factoryline.import_context import application_profile_configuration
+    from factoryline.primitive_observation_binding import (
+        _application_class_source_inputs,
+        _trusted_core_source_binding,
+    )
+    from factoryline.pytest_collection_audit import captured_pytest_configuration
+
+    name = ".github/workflows/test pipeline.yaml"
+    workflow = tmp_path / name
+    workflow.parent.mkdir(parents=True)
+    raw = b"jobs:\n  test:\n    steps:\n      - run: python runtests.py\n"
+    workflow.write_bytes(raw)
+
+    def read(root, relative):
+        return (root / relative).read_bytes()
+
+    bindings, identities, valid = application_profile_configuration(
+        tmp_path, read, 4096
+    )
+    assert valid and identities[name]["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert identities["pyproject.toml"]["state"] == "missing"
+    configs = _context_refactor._application_profile_bytes(
+        tmp_path, bindings, read, 4096
+    )
+    assert configs == {name: raw}
+    hashes = {name: hashlib.sha256(raw).hexdigest()}
+    assert (
+        _application_configuration_hashes([{"configuration_sha256": hashes}]) == hashes
+    )
+    assert _trusted_core_source_binding(bindings[0], configuration=True) == (
+        name,
+        hashes[name],
+    )
+    python_source = b"def test_placeholder():\n    pass\n"
+    captured = {"test_placeholder.py": python_source, **configs}
+    digests = {
+        path: hashlib.sha256(data).hexdigest() for path, data in captured.items()
+    }
+    assert _application_class_source_inputs(captured, digests, hashes) is not None
+    assert captured_pytest_configuration(configs) is None
+    workflow.write_bytes(raw + b"# changed after capture\n")
+    assert (
+        _context_refactor._application_profile_bytes(tmp_path, bindings, read, 4096)
+        is None
+    )
+    assert (
+        _application_class_source_inputs(
+            {**captured, name: workflow.read_bytes()}, digests, hashes
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../ci.yml",
+        ".github/workflows/../ci.yml",
+        ".github/workflows/nested/ci.yml",
+        ".github\\workflows\\ci.yml",
+    ],
+)
+def test_workflow_configuration_binding_refuses_noncanonical_paths(name):
+    from factoryline.primitive_observation_binding import _trusted_core_source_binding
+
+    assert (
+        _trusted_core_source_binding(
+            {"path": name, "sha256": "0" * 64}, configuration=True
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("relative", [".github", ".github/workflows"])
+def test_workflow_configuration_capture_refuses_linked_directory(
+    tmp_path, monkeypatch, relative
+):
+    from pathlib import Path
+    from types import SimpleNamespace
+    from factoryline.import_context import application_profile_configuration
+
+    directory = tmp_path / relative
+    original = Path.lstat
+
+    def lstat(path):
+        if path == directory:
+            return SimpleNamespace(st_mode=0o040755, st_file_attributes=0x400)
+        return original(path)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+
+    def read(*args):
+        raise AssertionError("linked workflow directory must not be read")
+
+    bindings, identities, valid = application_profile_configuration(
+        tmp_path, read, 4096
+    )
+    assert not valid and bindings == []
+    assert identities["workflow_inventory"]["state"] == "linked_workflow_configuration"
+
+
+def test_workflow_configuration_inventory_stops_at_existing_capture_profile(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+    from factoryline.import_context import application_profile_configuration
+    from factoryline.review_audits import MAX_SECURITY_SOURCE_FILES
+
+    directory = tmp_path / ".github" / "workflows"
+    directory.mkdir(parents=True)
+    original, visited = Path.iterdir, []
+
+    def entries(path):
+        if path == directory:
+            for number in range(MAX_SECURITY_SOURCE_FILES * 2):
+                visited.append(number)
+                yield directory / f"{number}.yml"
+        else:
+            yield from original(path)
+
+    monkeypatch.setattr(Path, "iterdir", entries)
+
+    def read(*args):
+        raise AssertionError("oversized directory must be refused before reads")
+
+    bindings, identities, valid = application_profile_configuration(
+        tmp_path, read, 4096
+    )
+    assert not valid and bindings == []
+    assert len(visited) == MAX_SECURITY_SOURCE_FILES + 1
+    assert (
+        identities["workflow_inventory"]["state"]
+        == "workflow_inventory_exceeds_capture_profile"
+    )
+
+
+def test_workflow_configuration_capture_stops_at_existing_byte_profile(tmp_path):
+    from factoryline.import_context import application_profile_configuration
+
+    directory = tmp_path / ".github" / "workflows"
+    directory.mkdir(parents=True)
+    for number in range(40):
+        (directory / f"{number}.yml").touch()
+    raw, reads = b"x" * (1024 * 1024), []
+
+    def read(root, relative):
+        reads.append(relative)
+        return raw
+
+    bindings, identities, valid = application_profile_configuration(
+        tmp_path, read, len(raw)
+    )
+    assert not valid and len(bindings) == 32 and len(reads) == 33
+    assert any(
+        row["state"] == "configuration_capture_byte_budget"
+        for row in identities.values()
+    )
 
 
 def test_presentation_role_rebuild_uses_captured_imports_outside_cwd(
@@ -5862,6 +6063,8 @@ def test_precision257_context_profiles_and_fixture_binders_fail_closed():
     )
     names = {
         "requirements.txt",
+        "pyproject.toml",
+        "tox.ini",
         "pytest.toml",
         ".pytest.toml",
         "pytest.ini",

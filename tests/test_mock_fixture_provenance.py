@@ -4300,6 +4300,60 @@ def test_constructor_source_method_role_cli_retains_raw_and_live(tmp_path, capsy
     )
 
 
+@pytest.mark.parametrize(
+    "variant",
+    ["closed", "second_setup", "setup_alias", "copied_key", "settings_reflection"],
+)
+def test_native_django_settings_scope_closes_framework_carrier(tmp_path, variant):
+    _write(tmp_path, "pyproject.toml", '[project]\ndependencies = ["Django"]\n')
+    _write(
+        tmp_path,
+        ".github/workflows/ci.yml",
+        "name: CI\non: [push]\njobs:\n  test:\n    steps:\n      - run: python runtests.py\n",
+    )
+    _write(tmp_path, "tests/__init__.py", "")
+    _write(tmp_path, "tests/settings.py", "SECRET_KEY = 'test-scope-key-6724'\n")
+    _write(
+        tmp_path,
+        "tests/test_case.py",
+        "from django.test import TestCase\nclass NativeChecks(TestCase):\n    def test_local(self):\n        self.assertTrue(True)\n",
+    )
+    _write(
+        tmp_path,
+        "runtests.py",
+        "import os\nimport django\nfrom django.test.runner import DiscoverRunner\n"
+        'if __name__ == "__main__":\n'
+        '    os.environ["DJANGO_SETTINGS_MODULE"] = "tests.settings"\n'
+        "    django.setup()\n    runner = DiscoverRunner(verbosity=1)\n"
+        "    failures = runner.run_tests([])\n",
+    )
+    extra = {
+        "second_setup": "import django\ndjango.setup()\n",
+        "setup_alias": "import django\nsetup = django.setup\n",
+        "copied_key": "from django.conf import settings\nsend(settings.SECRET_KEY)\n",
+        "settings_reflection": "from django.conf import settings\nsend(vars(settings))\n",
+    }.get(variant)
+    if extra:
+        _write(tmp_path, "support.py", extra)
+        runner = tmp_path / "runtests.py"
+        runner.write_text(
+            "import support\n" + runner.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if variant == "closed":
+        assert not active, report
+        assert any(
+            row.get("facts", {}).get("fixture_evidence", {}).get("profile")
+            == "SOURCE_BOUND_TEST_SCOPE_ONLY"
+            for row in report.get("primitive_observations", [])
+        ), report
+    else:
+        assert active, report
+
+
 _REQUEST_SIGNING273 = """from slack_sdk.signature import SignatureVerifier
 from typing import Optional, Dict, Sequence, Union
 class Response:
