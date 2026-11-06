@@ -3012,48 +3012,49 @@ def _django_signing_consumer(target, path, tree, context):
         for node in ast.walk(tree)
     ):
         return None
-    selected = None
+    selected = False  # Unseen; None records a first default that cannot bind target.
     statements = captured_django_startup_statements(context, path)
     for statement in statements:
+        bindings = _security_apply_import_bindings(statements, {}, statement, audit)
+        potential = aliases | bindings
+        call = statement.value if type(statement) in (ast.Expr, ast.Assign) else None
+        defaults = [
+            node
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Call)
+            and _resolved_ast_name(node.func, potential) == "os.environ.setdefault"
+        ]
+        if (defaults and defaults != [call]) or any(
+            default.keywords
+            or len(default.args) != 2
+            or not all(
+                isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                for arg in default.args
+            )
+            for default in defaults
+        ):
+            return None
         if not (
-            isinstance(statement, (ast.Expr, ast.Assign))
-            and isinstance(call := statement.value, ast.Call)
-            and security_precondition_path_possible(call)
+            isinstance(call, ast.Call) and security_precondition_path_possible(call)
         ):
             continue
-        name = _resolved_ast_name(
-            call.func, _security_apply_import_bindings(statements, {}, statement, audit)
-        )
-        if (
-            name == "os.environ.setdefault"
-            and len(call.args) == 2
-            and not call.keywords
-        ):
-            if (
-                isinstance(call.args[0], ast.Constant)
-                and call.args[0].value == "DJANGO_SETTINGS_MODULE"
-            ):
+        name = _resolved_ast_name(call.func, bindings)
+        if name == "os.environ.setdefault":
+            if call.args[0].value == "DJANGO_SETTINGS_MODULE" and selected is False:
                 resolved = _signing_resolve_module(context, call.args[1], path)
                 selected = None
-                if resolved == target:
-                    parts = call.args[1].value.split(".")
-                    execution_root = resolved.parents[len(parts) - 1]
-                    if _signing_framework_external(context, "django", execution_root):
-                        selected = call
-        elif name in {
-            "django.core.wsgi.get_wsgi_application",
-            "django.core.asgi.get_asgi_application",
-            "django.core.management.execute_from_command_line",
-        }:
-            arguments = (
-                not call.args
-                if name != "django.core.management.execute_from_command_line"
-                else (
-                    len(call.args) == 1
-                    and _resolved_ast_name(call.args[0], aliases) == "sys.argv"
-                )
+                if resolved == target and _signing_framework_external(
+                    context,
+                    "django",
+                    resolved.parents[len(call.args[1].value.split(".")) - 1],
+                ):
+                    selected = call
+        elif name in _DJANGO_LOADER_ROOTS[:-1]:
+            expected = (
+                ["sys.argv"] if name.endswith("execute_from_command_line") else []
             )
-            if selected is not None and arguments and not call.keywords:
+            arguments = [_resolved_ast_name(arg, aliases) for arg in call.args]
+            if selected and arguments == expected and not call.keywords:
                 return {
                     "framework": "django",
                     "transfers": [
