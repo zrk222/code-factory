@@ -3509,3 +3509,386 @@ def test_authority_domain_escaping_deferred_test_effect_vetoes_context():
     row = _recovery_row(files, path="verification/config.py")
     assert row["tier"] == "SUPPORTED_DEFECT"
     assert row["credential_authority_observation"]["authority_domain"] is None
+
+
+_REQUEST_USER_SETTINGS = (
+    "SECRET_KEY = 'captured-test-only-key'\n"
+    "INSTALLED_APPS = ['django.contrib.auth', 'django.contrib.contenttypes']\n"
+    "DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}}\n"
+)
+_REQUEST_USER_PROJECT = (
+    '[project]\nname = "request-user-controls"\n'
+    'dependencies = ["Django", "pytest", "pytest-django"]\n'
+    "[tool.pytest.ini_options]\n"
+    'DJANGO_SETTINGS_MODULE = "app.settings"\n'
+)
+_REQUEST_USER_EXTRA_ONLY = (
+    '[project]\nname = "request-user-controls"\n'
+    '[project.optional-dependencies]\ntest = ["Django", "pytest", "pytest-django"]\n'
+    "[tool.pytest.ini_options]\n"
+    'DJANGO_SETTINGS_MODULE = "app.settings"\n'
+)
+_REQUEST_USER_TEST = """
+from app.views import profile
+
+def test_created_user(rf, django_user_model):
+    username = "created-user"
+    password = "fictional-request-password"
+    user = django_user_model.objects.create_user(username=username, password=password)
+    request = rf.get("/profile")
+    request.user = user
+    response = profile(request)
+    assert response == username
+"""
+
+
+def _request_user_role_projection(
+    tmp_path,
+    test_source,
+    *,
+    settings=None,
+    conftest=None,
+    project=None,
+    extra_sources=None,
+):
+    from factoryline.mock_fixture_provenance import (
+        application_test_index,
+        application_test_secret_evidence,
+    )
+
+    files = {
+        "app/__init__.py": "",
+        "app/settings.py": (_REQUEST_USER_SETTINGS if settings is None else settings),
+        "app/views.py": (
+            "def profile(request):\n    return request.user.get_username()\n"
+        ),
+        "tests/__init__.py": "",
+        "tests/test_user_flow.py": test_source,
+    }
+    if conftest is not None:
+        files["tests/conftest.py"] = conftest
+    files.update(extra_sources or {})
+    modules, source_bytes, inventory = {}, {}, {}
+    for relative, text in files.items():
+        path = tmp_path / relative
+        raw = text.encode()
+        digest = sha256(raw).hexdigest()
+        tree = ast.parse(raw, filename=relative)
+        tree._oracle_source_sha256 = digest
+        modules[path], source_bytes[path], inventory[path] = tree, raw, digest
+    test_path = tmp_path / "tests/test_user_flow.py"
+    declaration = next(
+        node
+        for node in ast.walk(modules[test_path])
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "password"
+    )
+    project = _REQUEST_USER_PROJECT if project is None else project
+    configuration = {"pyproject.toml": project.encode()}
+    index = application_test_index(
+        tmp_path,
+        modules,
+        source_bytes,
+        inventory,
+        configuration,
+    )
+    return (
+        application_test_secret_evidence(
+            index, test_path, declaration.value.lineno, declaration.value.value
+        ),
+        declaration,
+        source_bytes[test_path],
+        source_bytes,
+        inventory,
+        configuration,
+        project.encode(),
+    )
+
+
+def test_captured_django_user_fixture_and_request_role_is_source_bound(tmp_path):
+    evidence, declaration, raw, source_bytes, *_ = _request_user_role_projection(
+        tmp_path, _REQUEST_USER_TEST
+    )
+    assert evidence["eligible"] is True
+    assert evidence["classification"] == "APPLICATION_TEST_CREDENTIAL_ROLE"
+    assert evidence["source_sha256"] == sha256(raw).hexdigest()
+    assert evidence["declaration_span"][0] == declaration.lineno
+    assert evidence["consumer_use_closure"]["complete"] is True
+    assert isinstance(evidence["consumer_use_closure"], dict)
+    assert evidence["witness_sources"]
+    assert all(
+        len(item["sha256"]) == 64 for item in evidence["witness_sources"].values()
+    )
+    receipt = evidence["test_fixture_provider"]
+    captured = {
+        path.relative_to(tmp_path).as_posix(): data
+        for path, data in source_bytes.items()
+    }
+    assert receipt["schema"] == "factory.pytest-django-user-fixture.v1"
+    assert (
+        receipt["test"]["sha256"]
+        == sha256(captured[receipt["test"]["path"]]).hexdigest()
+    )
+    assert (
+        receipt["settings"]["sha256"]
+        == sha256(captured[receipt["settings"]["path"]]).hexdigest()
+    )
+    assert evidence["runtime_assurance"] == "INCOMPLETE"
+    assert evidence["transport_role"] == "UNASSESSED"
+    assert evidence["isolation_assurance"] == "UNASSESSED"
+    assert evidence["target_execution"] == "not_performed"
+
+
+@pytest.mark.parametrize(
+    ("parameters", "eligible"),
+    [
+        ("rf, *, django_user_model", True),
+        ("rf, django_user_model=ForeignUser", False),
+        ("rf, *, django_user_model=ForeignUser", False),
+        ("rf, django_user_model, /", False),
+    ],
+)
+def test_captured_django_user_role_requires_injected_fixture(
+    tmp_path, parameters, eligible
+):
+    source = _REQUEST_USER_TEST.replace(
+        "def test_created_user(rf, django_user_model):",
+        f"def test_created_user({parameters}):",
+    )
+    evidence, *_ = _request_user_role_projection(tmp_path, source)
+    assert evidence["eligible"] is eligible, evidence
+
+
+def test_captured_django_user_role_does_not_require_request_exercise(tmp_path):
+    source = _REQUEST_USER_TEST.replace(
+        "def test_created_user(rf, django_user_model):",
+        "def test_created_user(django_user_model):",
+    ).replace(
+        '    request = rf.get("/profile")\n'
+        "    request.user = user\n"
+        "    response = profile(request)\n"
+        "    assert response == username\n",
+        "    assert user.get_username() == username\n",
+    )
+    evidence, *_ = _request_user_role_projection(tmp_path, source)
+    assert evidence["eligible"] is True
+    assert evidence["classification"] == "APPLICATION_TEST_CREDENTIAL_ROLE"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "outbound",
+        "fixture_override",
+        "dynamic_plugin_namespace",
+        "imported_fixture_override",
+        "plugin_fixture_override",
+        "autouse_model_mutation",
+        "create_user_monkeypatch",
+        "manager_monkeypatch",
+        "local_shadow",
+        "kwargs_expansion",
+        "operational",
+        "operational_caller",
+        "operational_alias_export",
+        "operational_module_reflection",
+        "custom_user_model",
+        "database_router",
+        "imported_user_model",
+        "dynamic_user_model",
+        "dynamic_globals_user_model",
+        "aliased_globals_user_model",
+        "optional_extra_only",
+        "star_import_operational_caller",
+    ],
+)
+def test_django_user_role_rejects_unclosed_creation_context(tmp_path, mutation):
+    source = _REQUEST_USER_TEST
+    settings = _REQUEST_USER_SETTINGS
+    conftest = None
+    project = _REQUEST_USER_PROJECT
+    extra_sources = None
+    if mutation == "outbound":
+        source = source.replace(
+            "    assert response == username\n",
+            "    assert response == username\n"
+            "    requests.post('https://example.invalid', data=password)\n",
+        )
+    elif mutation == "fixture_override":
+        conftest = (
+            "import pytest\n"
+            "@pytest.fixture\n"
+            "def django_user_model():\n    return FakeUserProvider()\n"
+        )
+    elif mutation == "dynamic_plugin_namespace":
+        conftest = (
+            "_name = 'pytest_' + 'plugins'\n"
+            "globals()[_name] = ['tests.override_plugin']\n"
+        )
+        extra_sources = {
+            "tests/override_plugin.py": (
+                "import pytest\n@pytest.fixture\n"
+                "def django_user_model():\n    return ForeignManager()\n"
+            )
+        }
+    elif mutation == "imported_fixture_override":
+        conftest = "from .override_plugin import django_user_model\n"
+        extra_sources = {
+            "tests/override_plugin.py": (
+                "import pytest\n@pytest.fixture\n"
+                "def django_user_model():\n    return ForeignManager()\n"
+            )
+        }
+    elif mutation == "plugin_fixture_override":
+        conftest = "from app.plugin_config import pytest_plugins\n"
+        extra_sources = {
+            "app/plugin_config.py": 'pytest_plugins = ["app.fixture_plugin"]\n',
+            "app/fixture_plugin.py": (
+                "import pytest\n"
+                "@pytest.fixture\n"
+                "def django_user_model():\n    return FakeUserProvider()\n"
+            ),
+        }
+    elif mutation == "autouse_model_mutation":
+        conftest = (
+            "import pytest\n"
+            "@pytest.fixture(autouse=True)\n"
+            "def change_model(settings):\n"
+            "    settings.AUTH_USER_MODEL = choose_model()\n"
+        )
+    elif mutation == "create_user_monkeypatch":
+        conftest = (
+            "import pytest\n"
+            "@pytest.fixture(autouse=True)\n"
+            "def patch_create_user(monkeypatch, django_user_model):\n"
+            "    monkeypatch.setattr(\n"
+            "        django_user_model.objects, 'create_user', foreign_factory\n"
+            "    )\n"
+        )
+    elif mutation == "manager_monkeypatch":
+        source = source.replace(
+            "def test_created_user(rf, django_user_model):",
+            "def test_created_user(rf, django_user_model, monkeypatch):",
+        ).replace(
+            "    user = django_user_model.objects.create_user(",
+            "    monkeypatch.setattr(\n"
+            "        django_user_model, 'objects', ExfiltratingManager()\n"
+            "    )\n"
+            "    user = django_user_model.objects.create_user(",
+        )
+    elif mutation == "local_shadow":
+        source = source.replace(
+            '    username = "created-user"\n',
+            "    django_user_model = supplied_provider\n"
+            '    username = "created-user"\n',
+        )
+    elif mutation == "operational":
+        source = source.replace(
+            "def test_created_user(", "def create_operational_user("
+        )
+    elif mutation == "kwargs_expansion":
+        source = source.replace(
+            "username=username, password=password",
+            'username=username, **{"password": password}',
+        )
+    elif mutation == "operational_caller":
+        extra_sources = {
+            "app/operations.py": (
+                "from tests.test_user_flow import test_created_user\n"
+                "test_created_user(None, None)\n"
+            )
+        }
+    elif mutation == "operational_alias_export":
+        extra_sources = {
+            "app/operations.py": (
+                "from tests.test_user_flow import test_created_user as run_fixture_test\n"
+                "def dispatch():\n    run_fixture_test(None, None)\n"
+                "def export():\n    return run_fixture_test\n"
+            )
+        }
+    elif mutation == "star_import_operational_caller":
+        extra_sources = {
+            "app/operations.py": (
+                "from tests.test_user_flow import *\ntest_created_user(None, User)\n"
+            )
+        }
+    elif mutation == "operational_module_reflection":
+        extra_sources = {
+            "app/operations.py": (
+                "import tests.test_user_flow as m\n"
+                "getattr(m, 'test_created_user')(None, User)\n"
+            )
+        }
+    elif mutation == "custom_user_model":
+        settings += "AUTH_USER_MODEL = 'app.CustomUser'\n"
+    elif mutation == "database_router":
+        settings += "DATABASE_ROUTERS = ['app.ProductionRouter']\n"
+    elif mutation == "imported_user_model":
+        settings = "from .base import AUTH_USER_MODEL\n" + settings
+        extra_sources = {"app/base.py": "AUTH_USER_MODEL = 'app.CustomUser'\n"}
+    elif mutation == "dynamic_user_model":
+        settings += "import os\nAUTH_USER_MODEL = os.getenv('USER_MODEL')\n"
+    elif mutation in {"dynamic_globals_user_model", "aliased_globals_user_model"}:
+        settings += (
+            "setting_name = 'AUTH_USER_' + 'MODEL'\n"
+            "globals()[setting_name] = 'accounts.CustomUser'\n"
+        )
+        if mutation == "aliased_globals_user_model":
+            settings = "from builtins import globals as namespace\n" + settings.replace(
+                "globals()[", "namespace()["
+            )
+    else:
+        project = _REQUEST_USER_EXTRA_ONLY
+    evidence, *_ = _request_user_role_projection(
+        tmp_path,
+        source,
+        settings=settings,
+        conftest=conftest,
+        project=project,
+        extra_sources=extra_sources,
+    )
+    assert evidence["eligible"] is False, evidence
+
+
+@pytest.mark.parametrize(
+    "tamper", ["profile", "closure", "provider_source", "fixture_provider"]
+)
+def test_django_user_role_verifier_rejects_tampered_evidence(tmp_path, tamper):
+    from factoryline.primitive_observation_binding import _application_fixture_use_proof
+
+    evidence, _, _, source_bytes, inventory, configuration, project_bytes = (
+        _request_user_role_projection(tmp_path, _REQUEST_USER_TEST)
+    )
+    assert evidence["eligible"] is True
+    evidence = copy.deepcopy(evidence)
+    bindings = {
+        path.relative_to(tmp_path).as_posix(): digest
+        for path, digest in inventory.items()
+    }
+    captured = {
+        path.relative_to(tmp_path).as_posix(): raw for path, raw in source_bytes.items()
+    }
+    captured["pyproject.toml"] = project_bytes
+    configuration_hashes = {
+        name: sha256(raw).hexdigest() for name, raw in configuration.items()
+    }
+    bindings.update(configuration_hashes)
+    evidence.update(
+        inventory_sha256="captured-inventory",
+        configuration_sha256=configuration_hashes,
+    )
+    facts = {"name": "password"}
+    assert _application_fixture_use_proof(evidence, bindings, facts, captured)
+    altered = copy.deepcopy(evidence)
+    if tamper == "profile":
+        altered["profile"] = "UNSUPPORTED_TEST_ACCOUNT_PROFILE"
+    elif tamper == "provider_source":
+        provider_source = next(iter(altered["witness_sources"].values()))
+        provider_source["sha256"] = "0" * 64
+    elif tamper == "fixture_provider":
+        altered["test_fixture_provider"]["settings"]["sha256"] = "0" * 64
+    else:
+        altered["consumer_use_closure"]["complete"] = False
+    assert not _application_fixture_use_proof(altered, bindings, facts, captured)

@@ -1,0 +1,143 @@
+{
+  "schema": "factory.exposed-repair-record.v1",
+  "repair": "Shared captured pytest-django account enrollment and independent proof reconstruction",
+  "baseline_commit": "dd4395cf1c5192437d8f3493308eb836a5664596",
+  "candidate_sources": [
+    {
+      "path": "factoryline/mock_fixture_provenance.py",
+      "sha256": "00cc6fa01ea09839291df492b9c80e6dad7e9823a672a8d348ec25aa96496259",
+      "kind": "source"
+    },
+    {
+      "path": "factoryline/pytest_collection_audit.py",
+      "sha256": "03471905c09cbeda248123266e7deaa2bbdf6b1d436640c3daf354126150552a",
+      "kind": "source"
+    },
+    {
+      "path": "factoryline/primitive_observation_binding.py",
+      "sha256": "4664c066e39d52543650b69bf38b2b484ed34ab1bfc4423a0d990a4733717be0",
+      "kind": "source"
+    },
+    {
+      "path": "tests/test_credential_authority_recovery.py",
+      "sha256": "285a32e60e7a35104231b86b0246d7264f4a18018e26d1aaa8d32e20f2316d9c",
+      "kind": "test"
+    }
+  ],
+  "engine_source_sha256": "fc4b19d39e36ba0712d03b35163864c4e1ad6c41cb07ef0903d2005586cda44a",
+  "measurement": "Exposed N447 raw-alert classification replay; not fresh held-out or native actionable-tier precision",
+  "immutable_reference": {
+    "path": ".factory/precision447-fresh/official-score.json",
+    "sha256": "e49e264ac38eec056699973d568ed088045736ac57ddff38706decec24e94e29"
+  },
+  "reviewer_references": {
+    "A": {
+      "path": ".factory/precision447-fresh/reviews/A/review.json",
+      "sha256": "e8a84f575804a92e354a85dfb45e99861baaecafb0a3a4909d97145953c41725"
+    },
+    "B": {
+      "path": ".factory/precision447-fresh/reviews/B/review.json",
+      "sha256": "3f478b825846d16e8eae1b5fac20555850cc714d901af83b06109404a6b85dab"
+    }
+  },
+  "paired_delta": {
+    "before": {
+      "TP": 6,
+      "FP": 26,
+      "UNCLEAR": 5,
+      "selected_active": 37,
+      "decided": 32,
+      "decided_precision": 0.1875
+    },
+    "after": {
+      "TP": 6,
+      "FP": 24,
+      "UNCLEAR": 5,
+      "selected_active": 35,
+      "decided": 30,
+      "decided_precision": 0.2
+    },
+    "new_fp_exclusions": [
+      "N447-028",
+      "N447-029"
+    ],
+    "known_tp_losses": 0,
+    "unclear_losses": 0
+  },
+  "concentration": "Both newly corrected alerts are from one captured repository and file",
+  "original30": {
+    "role_checks": 30,
+    "tp_exclusions": 0,
+    "scope": "Role exclusion checks, not full endpoint recall"
+  },
+  "endpoint": {
+    "files_audited": 36,
+    "active_before": 3,
+    "active_after": 1,
+    "raw_rows_retained": 3,
+    "seconds": 26.954,
+    "exit_code": 2,
+    "remaining": "Settings SECRET_KEY remains NEEDS_CONTEXT"
+  },
+  "validation": {
+    "python_310_passed": 210,
+    "python_311_passed": 209,
+    "quality": "A",
+    "maximum_complexity": 10,
+    "architecture": "HEALTHY",
+    "review": "Independent AI source review; no external human adjudication"
+  },
+  "receipts": [
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-310-sealed.json",
+      "sha256": "65a3743edf2489e381bb4c2785184579032d64abb68b1f27193ac26d74257ab4",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-311-sealed.json",
+      "sha256": "7ab9c7ff14f48925d7ecc119d296009785f26af361f954910f504adc20233c3d",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-quality-sealed.json",
+      "sha256": "6bf7f41a7c71d649e2a0f03b762049b1bd6994718c2be92f0ce1fab23dd11a0f",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-architecture-sealed.json",
+      "sha256": "91a919d0d06c7147770d381d4be5d130f0e2361aff8ff8646c69baccba35802d",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-lint-sealed.json",
+      "sha256": "55fbded97a0f9265ef60aaa94415df54723cb1df9b209c317f8766743d643b24",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-format-sealed.json",
+      "sha256": "c0ee47833adad0952d5d504253ede47643030fd4614aaf7659f132c6f2244534",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-endpoint-sealed.json",
+      "sha256": "3b375c880c168667d3df99c65f8c4e18e184819bd8722a94569ad5797937549c",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-paired40-sealed.json",
+      "sha256": "3209181481f3312dec07816dfbbcb238d6c82eb2b6acd3335e8ceebc6ba1e036",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-original30-sealed.json",
+      "sha256": "7ef15254d6ec5099cba864cecb43bb99afb00e28ad601f9eee1085a0e4fa8c96",
+      "kind": "terminal"
+    }
+  ],
+  "limits": [
+    "No fresh held-out claim",
+    "No whole-scanner recall claim",
+    "Runtime database isolation unassessed",
+    "No release claim"
+  ]
+}
