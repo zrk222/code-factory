@@ -3,16 +3,16 @@
   "scope": "Exposed N447 development replay; not fresh held-out, actionable-tier precision or recall",
   "base_commit": "d449dde586a94a4a8493796df45750c849ebc9a8",
   "change": "One captured workflow/runner/provider profile shared by settings-role proof, independent reconstruction and cache epochs; implicit consumers and namespace escapes veto test-only exclusion",
-  "engine_source_sha256": "de71a7f8613dc6bfc85786bb7859f7b004578041c6d33ea88267e5f3be0bffc3",
+  "engine_source_sha256": "f0522f568550b6fb235bf18f11834cfeb4793bdf7d8bca5c1c4b39e724fd036e",
   "candidate_windows_byte_sha256": {
     "factoryline/audit_action_refs.py": "8f464dd2a1cc676083d0bf577ae1042f40e8e81e1109f64719e8ba97cfed1b55",
     "factoryline/context_efficiency.py": "bb4d30d3fc2615c76789138a4744cb526d04d61b9b242f50fe7747ef1d4809c7",
     "factoryline/credential_role_method_use_getter_audit.py": "9ff3ce4413edf4776943f7e829336f36a981998b97cf293497219b08af38e831",
-    "factoryline/import_context.py": "4dca63976b641c8b615b3ad99acfc487216204fdb9498f88bbda055cece17bc8",
+    "factoryline/import_context.py": "31dbc4d5897162968dc9cd70de0e2f91e226c80166519dce24e98e402d6f9d2a",
     "factoryline/primitive_observation_binding.py": "4fb9e48b7ecb9b48831b1d026c62e3ccd47bfceeafc9c9f150fad27deffc64c3",
     "factoryline/pytest_collection_audit.py": "44a0126ea200f564e48110001e2abb3eb16652a064410619310cda5cb8fc0f94",
     "factoryline/review_audits.py": "ccb7f6176faf6a94c2f0f7291131605508ab6c575a19a375be5e83b1e931f63a",
-    "tests/test_context_efficiency.py": "7ab2499de895d7f8274f8691bad3e252b22cecb4c1f85a924febbd2ea5ddaa34",
+    "tests/test_context_efficiency.py": "94099371513ea4275511f7a20b9ccf9d8b082b26b52db5207c00bdd10c15d4e6",
     "tests/test_mock_fixture_provenance.py": "20c15599f361ff2d5588ceea465e099966a2965e00bf2f245d906f9ad967d59e",
     "tests/test_unittest_local_literal_scope.py": "33c97a512d5a0e0d8a20c72bd662eabf35ebab2ac07f1cbbded5f8b8a1979fc0"
   },
@@ -89,17 +89,23 @@
     "exit_code": 2,
     "state": "REVIEW_REQUIRED",
     "base_seconds": 36.726,
-    "candidate_seconds": 31.379
+    "candidate_seconds": 30.011
   },
   "validation": {
     "Windows_Python_3_10": 435,
     "Windows_Python_3_11": 435,
     "failures": 0,
     "lint_format_C901": "PASS",
+    "published_Forge_0_10_8_repaired_files": {
+      "grade": "A",
+      "max_complexity": 10,
+      "static_test_attribution": 1.0,
+      "scope": "Two repaired files; full repository quality enforced by hosted CI"
+    },
     "architecture": "HEALTHY",
     "core_modules": "133/133",
     "new_modules_dependencies_or_cap_raises": 0,
-    "paired40_seconds": 29.344,
+    "paired40_seconds": 16.451,
     "review": "Independent bounded ECC AI source review"
   },
   "metric_boundary": "18.75% is remaining decided raw-alert precision on exposed cases. It is not SUPPORTED_DEFECT precision, a fresh held-out result, or a new TP gain. Original sealed labels and scores remain unchanged.",

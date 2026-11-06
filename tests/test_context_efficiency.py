@@ -5644,6 +5644,7 @@ def test_fixture_collection_preserves_callback_order_and_copy_boundary(metadata)
 
 def test_new_shared_provider_helpers_are_epoch_enrolled():
     from factoryline.import_context import presentation_role_helpers
+    from factoryline.pytest_collection_audit import captured_pytest_helpers
 
     helpers = _context_refactor.provider_context_cache_helpers(
         _audit_refactor.contracts
@@ -5658,6 +5659,7 @@ def test_new_shared_provider_helpers_are_epoch_enrolled():
         )
     )
     assert all(helper in helpers for helper in presentation_role_helpers())
+    assert all(helper in helpers for helper in captured_pytest_helpers())
 
 
 @pytest.mark.parametrize(

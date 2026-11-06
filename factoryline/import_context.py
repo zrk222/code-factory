@@ -550,9 +550,11 @@ def application_profile_configuration(root, read_source, limit):
             raw = read_source(root, name)
         except (OSError, ValueError, RuntimeError) as exc:
             code = getattr(exc, "code", type(exc).__name__)
-            missing = isinstance(exc, FileNotFoundError) or code == "E_SOURCE_MISSING"
+            missing = any(
+                (isinstance(exc, FileNotFoundError), code == "E_SOURCE_MISSING")
+            )
             identity["state"] = "missing" if missing else code
-            valid = valid and missing
+            valid = all((valid, missing))
         else:
             total_bytes += len(raw)
             if total_bytes > 32 * 1024 * 1024:
@@ -560,7 +562,8 @@ def application_profile_configuration(root, read_source, limit):
                     **identity,
                     "state": "configuration_capture_byte_budget",
                 }
-                return bindings, identities, False
+                valid = False
+                break
             if len(raw) > limit:
                 identity.update(state="oversized", bytes=len(raw))
                 valid = False
@@ -570,12 +573,15 @@ def application_profile_configuration(root, read_source, limit):
                     "sha256": hashlib.sha256(raw).hexdigest(),
                     "bytes": len(raw),
                 }
-                # Type-check capture already owns these two positive bindings.
-                if name not in {"pyproject.toml", "tox.ini"}:
-                    bindings.append(binding)
+                bindings.append(binding)
                 identity.update(binding, state="read")
         identities[name] = identity
-    return bindings, identities, valid
+    # Type-check capture owns these two bindings; share all capture identities.
+    return (
+        [row for row in bindings if row["path"] not in {"pyproject.toml", "tox.ini"}],
+        identities,
+        valid,
+    )
 
 
 @dataclass(frozen=True)
