@@ -118,6 +118,9 @@ def test_django_startup_defaults_preserve_first_settings_selection(
         "os.environ.setdefault('UNRELATED', mutate_environment())\n",
         "if os.getenv('MODE') == 'other':\n"
         "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
+        "if os.getenv('MODE') == 'other':\n"
+        "    from os import environ as selected_env\n"
+        "    selected_env.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
         "try:\n    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n"
         "except Exception:\n    pass\n",
     ],

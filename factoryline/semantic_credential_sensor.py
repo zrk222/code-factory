@@ -3016,12 +3016,13 @@ def _django_signing_consumer(target, path, tree, context):
     statements = captured_django_startup_statements(context, path)
     for statement in statements:
         bindings = _security_apply_import_bindings(statements, {}, statement, audit)
+        potential = aliases | bindings
         call = statement.value if type(statement) in (ast.Expr, ast.Assign) else None
         defaults = [
             node
             for node in ast.walk(statement)
             if isinstance(node, ast.Call)
-            and _resolved_ast_name(node.func, bindings) == "os.environ.setdefault"
+            and _resolved_ast_name(node.func, potential) == "os.environ.setdefault"
         ]
         if (defaults and defaults != [call]) or any(
             default.keywords
