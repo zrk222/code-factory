@@ -74,6 +74,67 @@ def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
     }
 
 
+@pytest.mark.parametrize(
+    "first,second,supported",
+    [
+        ("service.other", "service.settings", False),
+        ("service.settings", "service.other", True),
+        ("service.settings", "service.settings", True),
+        ("missing.settings", "service.settings", False),
+    ],
+)
+def test_django_startup_defaults_preserve_first_settings_selection(
+    first, second, supported
+):
+    startup = (
+        "import os\nfrom django.core.wsgi import get_wsgi_application\n"
+        "os.environ.setdefault('UNRELATED', 'service.other')\n"
+        f"os.environ.setdefault('DJANGO_SETTINGS_MODULE', {first!r})\n"
+        f"os.environ.setdefault('DJANGO_SETTINGS_MODULE', {second!r})\n"
+        "application = get_wsgi_application()\n"
+    )
+    row = _recovery_row(
+        _recovery_sources(startup=startup, extra={"service/other.py": SETTINGS})
+    )
+    assert row["tier"] == ("SUPPORTED_DEFECT" if supported else "NEEDS_CONTEXT")
+    assert row["raw_finding"]["facts"]["name"] == "SECRET_KEY"
+    if supported:
+        proof = row["credential_authority_observation"]
+        assert proof["selected_consumer"]["model"] == "django.admin.feedback.v1"
+        assert any(
+            edge["path"] == "start.py" and edge["span"][0] == 4
+            for edge in proof["transfers"]
+        )
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "os.environ.setdefault(unknown_key, 'service.other')\n",
+        "os.environ.setdefault('DJANGO_' + 'SETTINGS_MODULE', 'service.other')\n",
+        "os.environ.setdefault('DJANGO_SETTINGS_MODULE', value='service.other')\n",
+        "os.environ.setdefault(*selection)\n",
+        "selected: str = os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
+        "os.environ.setdefault('UNRELATED', mutate_environment())\n",
+        "if os.getenv('MODE') == 'other':\n"
+        "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
+        "try:\n    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n"
+        "except Exception:\n    pass\n",
+    ],
+)
+@pytest.mark.parametrize("interface", ["wsgi", "asgi"])
+def test_django_startup_defaults_refuse_unresolved_prior_selection(prefix, interface):
+    startup = START.replace(
+        "os.environ.setdefault", prefix + "os.environ.setdefault", 1
+    )
+    startup = startup.replace("wsgi", interface)
+    row = _recovery_row(
+        _recovery_sources(startup=startup, extra={"service/other.py": SETTINGS})
+    )
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["facts"]["name"] == "SECRET_KEY"
+
+
 @pytest.mark.parametrize("local_provider", [False, True])
 def test_django_family_guarded_management_loader_reaches_selected_consumer(
     local_provider,
