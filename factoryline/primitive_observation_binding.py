@@ -3696,6 +3696,7 @@ def _presentation_data_role_recomputes(evidence, bindings, facts, source_bytes):
     from .credential_role_constructor_provider import PresentationRoleIndex
     from .mock_fixture_provenance import application_test_index
     from .context_efficiency import provider_context_cache_helpers
+    from .import_context import captured_symbol_imports
 
     try:
         index = _application_role_rebuild_index(
@@ -3721,11 +3722,9 @@ def _presentation_data_role_recomputes(evidence, bindings, facts, source_bytes):
         )
         cache = index.setdefault("profiles", {})
         if key not in cache:
-            eligible = {path.resolve(): path for path in modules}
-            imports = {
-                path: audit._oracle_imports(source.root, path, tree, eligible)
-                for path, tree in modules.items()
-            }
+            imports = captured_symbol_imports(source, audit)
+            if imports is None:
+                return False
             cache[key] = PresentationRoleIndex(source, imports, audit)
         path = Path(evidence.get("source", ""))
         if path not in modules:

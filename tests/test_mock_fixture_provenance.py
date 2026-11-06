@@ -2341,7 +2341,7 @@ class Holder:
 
 
 def _metadata143_projection(
-    tmp_path, text, member, owner=None, extras=None, stale=False
+    tmp_path, text, member, owner=None, extras=None, stale=False, function=None
 ):
     from factoryline import review_audits as audit
     from factoryline.credential_role_constructor_provider import (
@@ -2369,14 +2369,25 @@ def _metadata143_projection(
             if isinstance(node, ast.ClassDef) and node.name == owner
         )
         if owner
+        else next(
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function
+        )
+        if function
         else tree
     )
     declaration = next(
         node
         for node in scope.body
-        if isinstance(node, ast.Assign)
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == member
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(
+            node.targets[0] if isinstance(node, ast.Assign) else node.target,
+            ast.Name,
+        )
+        and (node.targets[0] if isinstance(node, ast.Assign) else node.target).id
+        == member
     )
     if stale:
         files[path] += b"\n# changed"
@@ -2442,6 +2453,233 @@ def test_data_role263_keeps_unknown_escape_or_provider_change(tmp_path, suffix, 
         extras=extras,
     )
     assert evidence["eligible"] is False
+
+
+def test_local_data_role_closes_captured_string_format_to_mock_url(tmp_path):
+    evidence = _metadata143_projection(
+        tmp_path,
+        "import responses\nfrom django_pwned.api import API_ENDPOINT\n"
+        "def test_route():\n"
+        "    digest: str = '667245565F95194F23408B0EA21A0D02C4EEA81D'\n"
+        "    prefix = digest[:5]\n"
+        "    url = API_ENDPOINT.format(prefix)\n"
+        "    responses.add(responses.GET, url=url, body='fixture')\n",
+        "digest",
+        extras={
+            "django_pwned/__init__.py": "",
+            "django_pwned/api.py": "API_ENDPOINT = 'https://example.invalid/range/{}'\n",
+        },
+        function="test_route",
+    )
+    assert evidence["eligible"] is True
+    assert evidence["profile"] == "STATIC_API_DATA_ROLE"
+    assert {row["role"] for row in evidence["uses"]} == {"MOCK_RESPONSE_URL"}
+
+
+def test_module_secret_key_mock_url_keeps_module_role_unknown(tmp_path):
+    evidence = _metadata143_projection(
+        tmp_path,
+        "import responses\nSECRET_KEY = 'test-secret-value'\n"
+        "responses.add(responses.GET, SECRET_KEY, body='fixture')\n",
+        "SECRET_KEY",
+    )
+    assert evidence["eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "source,extras,stale",
+    [
+        (
+            "import responses\nfrom django_pwned.api import API_ENDPOINT\n"
+            "def test_route():\n"
+            "    digest = 'real-password-value'\n"
+            "    responses.add(responses.GET, API_ENDPOINT.format(digest), body=digest)\n",
+            {
+                "django_pwned/__init__.py": "",
+                "django_pwned/api.py": "API_ENDPOINT = 'https://example.invalid/{}'\n",
+            },
+            False,
+        ),
+        (
+            "import requests\nfrom django_pwned.api import API_ENDPOINT\n"
+            "def test_route():\n"
+            "    digest = 'real-password-value'\n"
+            "    requests.get(API_ENDPOINT.format(digest), auth=digest)\n",
+            {
+                "django_pwned/__init__.py": "",
+                "django_pwned/api.py": "API_ENDPOINT = 'https://example.invalid/{}'\n",
+            },
+            False,
+        ),
+        (
+            "import responses\nfrom django_pwned.api import API_ENDPOINT\n"
+            "def test_route(API_ENDPOINT):\n"
+            "    digest = 'real-password-value'\n"
+            "    responses.add(responses.GET, API_ENDPOINT.format(digest))\n",
+            {
+                "django_pwned/__init__.py": "",
+                "django_pwned/api.py": "API_ENDPOINT = 'https://example.invalid/{}'\n",
+            },
+            False,
+        ),
+        (
+            "import responses\ndef test_route():\n"
+            "    digest = 'real-password-value'\n"
+            "    responses.add(responses.GET, endpoint.format(digest))\n",
+            {},
+            False,
+        ),
+        (
+            "import responses\nfrom django_pwned.api import API_ENDPOINT\n"
+            "def test_route():\n"
+            "    digest = 'real-password-value'\n"
+            "    responses.add(responses.GET, API_ENDPOINT.format(digest))\n",
+            {
+                "django_pwned/__init__.py": "",
+                "django_pwned/api.py": "API_ENDPOINT = 'https://example.invalid/{0} {}'\n",
+            },
+            False,
+        ),
+        (
+            "import responses\nfrom django_pwned.api import API_ENDPOINT\n"
+            "def test_route():\n"
+            "    digest = 'real-password-value'\n"
+            "    responses.add(responses.GET, API_ENDPOINT.format(digest))\n",
+            {
+                "django_pwned/__init__.py": "",
+                "django_pwned/api.py": "API_ENDPOINT = 'https://example.invalid/{5}'\n",
+            },
+            False,
+        ),
+        (
+            "import responses\nfrom django_pwned.api import API_ENDPOINT\n"
+            "def test_route():\n"
+            "    digest = 'real-password-value'\n"
+            "    responses.add(responses.GET, API_ENDPOINT.format(digest))\n",
+            {
+                "django_pwned/__init__.py": "",
+                "django_pwned/api.py": "API_ENDPOINT = 'https://example.invalid/{}'\n",
+            },
+            True,
+        ),
+    ],
+)
+def test_local_data_role_rejects_mixed_unknown_or_stale_uses(
+    tmp_path, source, extras, stale
+):
+    evidence = _metadata143_projection(
+        tmp_path, source, "digest", extras=extras, stale=stale, function="test_route"
+    )
+    assert evidence["eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "imports,extra,extras",
+    [
+        (
+            "import sys\n",
+            '    leaked = sys._getframe().f_back.f_locals["digest"]\n',
+            {},
+        ),
+        (
+            "from builtins import locals as namespace\n",
+            '    leaked = namespace()["digest"]\n',
+            {},
+        ),
+        (
+            "import builtins as b\n",
+            '    read = b.locals\n    leaked = read()["digest"]\n',
+            {},
+        ),
+        (
+            "from inspect import currentframe as capture\n",
+            '    leaked = capture().f_back.f_locals["digest"]\n',
+            {},
+        ),
+        (
+            "import sys\n",
+            "    frame = sys._getframe().f_back\n"
+            '    leaked = getattr(frame, "f_" + "locals")["digest"]\n',
+            {},
+        ),
+        (
+            "from reader import leak\n",
+            "    leaked = leak()\n",
+            {
+                "reader.py": "import inspect\n"
+                "def leak():\n"
+                '    return inspect.currentframe().f_back.f_locals["digest"]\n'
+            },
+        ),
+        ("", '    code = compile("pass", "capture", "exec")\n', {}),
+        (
+            "import builtins as b\n",
+            '    code = b.compile("pass", "capture", "exec")\n',
+            {},
+        ),
+        (
+            "import builtins as b\n",
+            '    namespace = b\n    code = namespace.compile("pass", "capture", "exec")\n',
+            {},
+        ),
+        (
+            "from builtins import compile as build\n",
+            '    code = build("pass", "capture", "exec")\n',
+            {},
+        ),
+    ],
+)
+def test_local_data_role_rejects_reflected_local_namespace_uses(
+    tmp_path, imports, extra, extras
+):
+    source = (
+        "import responses\n"
+        "from django_pwned.api import API_ENDPOINT\n" + imports + "def test_route():\n"
+        "    digest = 'real-password-value'\n"
+        "    url = API_ENDPOINT.format(digest[:5])\n"
+        "    responses.add(responses.GET, url=url, body='fixture')\n" + extra
+    )
+    evidence = _metadata143_projection(
+        tmp_path,
+        source,
+        "digest",
+        extras={
+            "django_pwned/__init__.py": "",
+            "django_pwned/api.py": "API_ENDPOINT = 'https://example.invalid/{}'\n",
+            **extras,
+        },
+        function="test_route",
+    )
+    assert evidence["eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "imports,operation",
+    [
+        ("import sys\n", "version = sys.version_info"),
+        ("import re\n", "pattern = re.compile('.*')"),
+        ("from re import compile\n", "pattern = compile('.*')"),
+    ],
+)
+def test_local_data_role_does_not_reject_provider_metadata(
+    tmp_path, imports, operation
+):
+    evidence = _metadata143_projection(
+        tmp_path,
+        "import responses\n" + imports + "from django_pwned.api import API_ENDPOINT\n"
+        "def test_route():\n"
+        "    digest = 'real-password-value'\n"
+        f"    {operation}\n"
+        "    responses.add(responses.GET, API_ENDPOINT.format(digest[:5]))\n",
+        "digest",
+        extras={
+            "django_pwned/__init__.py": "",
+            "django_pwned/api.py": "API_ENDPOINT = 'https://example.invalid/{}'\n",
+        },
+        function="test_route",
+    )
+    assert evidence["eligible"] is True
+    assert {row["role"] for row in evidence["uses"]} == {"MOCK_RESPONSE_URL"}
 
 
 def test_data_role263_native_partition_preserves_real_credential(tmp_path):

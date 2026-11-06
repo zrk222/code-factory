@@ -1051,6 +1051,61 @@ def captured_import_inventory(source):
     return cached[1]
 
 
+def captured_symbol_imports(source, audit):
+    """Resolve a validated snapshot's symbols without consulting the verifier CWD."""
+    if not source.bounded or not all(
+        source.validate(path) for path in source.snapshots
+    ):
+        return None
+    inventory = captured_import_inventory(source)
+    return {
+        path: audit._oracle_imports(source.root, path, tree, inventory, captured=True)
+        for path, tree in source.snapshots.items()
+    }
+
+
+def presentation_role_helpers():
+    """Bind data-role caches to their shared origin, transfer and consumer machinery."""
+    from . import credential_role_paths as paths, finite_capture as transfer
+    from . import credential_role_constructor_provider as roles
+
+    return (
+        presentation_role_helpers,
+        *(
+            helper
+            for name, helper in vars(paths).items()
+            if name.startswith("_presentation_local_api_url_")
+        ),
+        *(
+            helper
+            for name, helper in vars(transfer).items()
+            if name.startswith(
+                ("captured_value_use_", "_captured_value_", "_captured_call_scalar")
+            )
+            or name
+            in {
+                "_captured_field_successors",
+                "captured_call_scalar",
+                "_captured_unique_scalar_assignment",
+                "_INVALID_CAPTURED_SUCCESSORS",
+            }
+        ),
+        *(
+            getattr(roles, name)
+            for name in (
+                "binding_dominates",
+                "_binding_precedes_sibling",
+                "module_literal_binding",
+                "import_is_stable",
+                "_valid_literal_assignment",
+                "_target_member",
+                "_declaration_role",
+                "_fact",
+            )
+        ),
+    )
+
+
 def resolve_import_source(
     root,
     path,
@@ -1649,6 +1704,7 @@ def import_resolution_helpers():
         _select_resolved_import,
         _captured_import_choice,
         captured_import_inventory_matches,
+        captured_symbol_imports,
         captured_import_parent_modules,
         live_import_path,
         captured_relative_import,

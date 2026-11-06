@@ -706,6 +706,7 @@ def provider_context_cache_helpers(contracts):
     """Return the source inventory and cache helpers in the cache epoch."""
     from . import credential_role_constructor_provider as roles
     from .review_audits import _literal_credential_candidate
+    from .import_context import presentation_role_helpers
 
     return (
         roles.security_snapshot_model,
@@ -714,6 +715,7 @@ def provider_context_cache_helpers(contracts):
         roles.security_source_snapshots,
         roles.consume_cached_security_snapshots,
         roles.PresentationRoleIndex,
+        *presentation_role_helpers(),
         *(
             getattr(roles, name)
             for name in (

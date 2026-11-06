@@ -5643,6 +5643,8 @@ def test_fixture_collection_preserves_callback_order_and_copy_boundary(metadata)
 
 
 def test_new_shared_provider_helpers_are_epoch_enrolled():
+    from factoryline.import_context import presentation_role_helpers
+
     helpers = _context_refactor.provider_context_cache_helpers(
         _audit_refactor.contracts
     )
@@ -5654,6 +5656,146 @@ def test_new_shared_provider_helpers_are_epoch_enrolled():
             _context_refactor._fixture_literal_candidates,
             _context_refactor._fixture_literal_evidence,
         )
+    )
+    assert all(helper in helpers for helper in presentation_role_helpers())
+
+
+def test_presentation_role_rebuild_uses_captured_imports_outside_cwd(
+    tmp_path, monkeypatch
+):
+    import hashlib
+
+    from factoryline import credential_role_paths
+    from factoryline.primitive_observation_binding import (
+        _presentation_data_role_recomputes,
+    )
+
+    project = tmp_path / "project"
+    (project / "django_pwned").mkdir(parents=True)
+    (project / "tests").mkdir()
+    files = {
+        "django_pwned/__init__.py": "",
+        "django_pwned/api.py": ('API_ENDPOINT = "https://api.example.invalid/{}/v1"\n'),
+        "tests/__init__.py": "",
+        "tests/settings.py": "DEBUG = False\n",
+        "tests/test_fixture.py": (
+            "import responses\n"
+            "from django_pwned.api import API_ENDPOINT\n"
+            "@responses.activate\n"
+            "def test_call():\n"
+            "    client_secret = 'ghp_aaaaaaaaaaaaaaaaaaaa'\n"
+            "    responses.add(responses.GET, API_ENDPOINT.format(client_secret), json={})\n"
+        ),
+        "pyproject.toml": (
+            "[tool.pytest.ini_options]\n"
+            'DJANGO_SETTINGS_MODULE = "tests.settings"\n'
+            'norecursedirs = ".git"\n'
+            "django_find_project = false\n"
+            'pythonpath = ["."]\n'
+        ),
+    }
+    for relative, content in files.items():
+        path = project / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    report = security_scan(project, cache_enabled=False, defect_policy="source-role-v3")
+    observations = [
+        row
+        for row in report["primitive_observations"]
+        if row.get("path") == "tests/test_fixture.py"
+        and row.get("code") == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(observations) == 1
+    observation = observations[0]
+    evidence = observation["facts"]["fixture_evidence"]
+    assert evidence["eligible"] is True
+    assert evidence["profile"] == "STATIC_API_DATA_ROLE"
+    assert evidence["uses"][0]["role"] == "MOCK_RESPONSE_URL"
+    assert not any(
+        row.get("path") == "tests/test_fixture.py"
+        and row.get("code") == "SECURITY_HARDCODED_SECRET"
+        for row in report["findings"]
+    )
+
+    source_bytes = {name: (project / name).read_bytes() for name in files}
+    bindings = {
+        name: hashlib.sha256(raw).hexdigest() for name, raw in source_bytes.items()
+    }
+    facts = observation["facts"]
+    from factoryline.mock_fixture_provenance import application_test_index
+    from factoryline.primitive_observation_binding import (
+        _application_class_source_inputs,
+        _application_role_rebuild_index,
+    )
+
+    captured = _application_class_source_inputs(
+        source_bytes, bindings, evidence["configuration_sha256"]
+    )
+    assert captured is not None
+    rebuilt_index = _application_role_rebuild_index(
+        captured,
+        bindings,
+        source_bytes,
+        evidence["configuration_sha256"],
+        application_test_index,
+    )
+    assert rebuilt_index is not None
+    from factoryline import review_audits as audit
+    from factoryline.credential_role_constructor_provider import PresentationRoleIndex
+    from factoryline.import_context import captured_symbol_imports
+    from factoryline.primitive_observation_binding import _jwt_declaration_targets
+
+    rebuilt_source = rebuilt_index["source"]
+    rebuilt_imports = captured_symbol_imports(rebuilt_source, audit)
+    assert rebuilt_imports is not None
+    rebuilt_path = Path(evidence["source"])
+    rebuilt_targets = _jwt_declaration_targets(
+        rebuilt_index["modules"][rebuilt_path], facts
+    )
+    assert len(rebuilt_targets) == 1
+    regenerated = PresentationRoleIndex(
+        rebuilt_source, rebuilt_imports, audit
+    ).evidence(rebuilt_path, rebuilt_targets[0][0])
+    assert regenerated["eligible"] is True, regenerated
+    expected_evidence = {
+        **regenerated,
+        "source": rebuilt_path.as_posix(),
+        "source_sha256": bindings[rebuilt_path.as_posix()],
+        "declaration_span": facts["declaration_span"],
+        "inventory_sha256": evidence["inventory_sha256"],
+        "configuration_sha256": evidence["configuration_sha256"],
+        "isolation_assurance": "UNASSESSED",
+    }
+    assert evidence == expected_evidence, {
+        key: (evidence.get(key), expected_evidence.get(key))
+        for key in set(evidence) | set(expected_evidence)
+        if evidence.get(key) != expected_evidence.get(key)
+    }
+    assert (
+        _presentation_data_role_recomputes(evidence, bindings, facts, source_bytes)
+        is True
+    )
+
+    helpers_before = _context_refactor.provider_context_cache_helpers(
+        _audit_refactor.contracts
+    )
+    old_handler = credential_role_paths._presentation_local_api_url_uses
+    monkeypatch.setattr(
+        credential_role_paths,
+        "_presentation_local_api_url_uses",
+        lambda *_args, **_kwargs: (),
+    )
+    helpers_after = _context_refactor.provider_context_cache_helpers(
+        _audit_refactor.contracts
+    )
+    assert old_handler in helpers_before
+    assert credential_role_paths._presentation_local_api_url_uses in helpers_after
+    assert credential_role_paths._presentation_local_api_url_uses not in helpers_before
+    assert (
+        _presentation_data_role_recomputes(evidence, bindings, facts, source_bytes)
+        is False
     )
 
 
