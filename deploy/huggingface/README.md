@@ -43,6 +43,14 @@ labels and a timeout on case 005.
 The original sealed reference measured 83.33% among 36 decided alerts and
 78.95% across all 38 cases. Two AI reviewers supplied the labels.
 
+### What’s new in 0.49.6
+
+1. **Pre-PR review.** `factory change pre-pr <manifest>` combines candidate source, planned checks, oracle evidence, and feature verification in one receipt. Add `--execute` to run the declared checks.
+2. **Repair continuity.** `factory senior fix` returns `NO_PROGRESS` for a repeated failed candidate and `STEP_BACK` when the round budget is spent. The default budget stops before a fourth round.
+3. **Incident intake.** Reviewed incidents produce source-bound regression packets marked `EXPOSED_NOT_EXECUTED`. Replay evidence records what was exercised.
+4. **Scan evidence.** Native scans bind collection receipts before sealing. Collection drift marks the evidence incomplete and requires a fresh seal.
+5. **CLI and editors.** `factory home` prints a local invitation to star the repo. Editor releases are VS Code and Open VSX 1.3.3 and JetBrains 1.3.4.
+
 ### The complete factory
 
 - **FactoryLine** Coordinates local audits, evidence, and review decisions.

@@ -29,6 +29,14 @@ the workflow helps.
 - **ForgeLine** builds scoped changes and challenges their checks.
 - **SpecLine** defines the intent, requirements, and acceptance criteria those checks must prove.
 
+### What’s new in 0.49.6
+
+1. **Pre-PR review.** `factory change pre-pr <manifest>` combines candidate source, planned checks, oracle evidence, and feature verification in one receipt. Add `--execute` to run the declared checks.
+2. **Repair continuity.** `factory senior fix` returns `NO_PROGRESS` for a repeated failed candidate and `STEP_BACK` when the round budget is spent. The default budget stops before a fourth round.
+3. **Incident intake.** Reviewed incidents produce source-bound regression packets marked `EXPOSED_NOT_EXECUTED`. Replay evidence records what was exercised.
+4. **Scan evidence.** Native scans bind collection receipts before sealing. Collection drift marks the evidence incomplete and requires a fresh seal.
+5. **CLI and editors.** `factory home` prints a local invitation to star the repo. Editor releases are VS Code and Open VSX 1.3.3 and JetBrains 1.3.4.
+
 ### Precision and product walkthrough
 
 The exposed N443-38 replay measured **88.24% decided actionable precision**
