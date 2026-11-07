@@ -1,5 +1,18 @@
 # Code Factory
 
+## Current release
+
+**Code Factory core 0.49.6 · VS Code and Open VSX 1.3.3 · JetBrains 1.3.4**
+
+[Release and downloads](https://github.com/zrk222/code-factory/releases/tag/v0.49.6) · [Four annotated UI screenshots](#product-walkthrough)
+
+The exposed N443-38 replay measured **88.24% decided actionable precision**
+(30/34) versus 85.71% on the same observed cases. It returned 37 of 38 cases and
+retained all 30 original true positives. The original sealed first-pass reference
+was 83.33% on decided labels (30/36) and 78.95% counting all 38 selected cases.
+Two blind AI reviewers supplied the labels.
+[Case ledger](https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json)
+
 Your agent handed you a change. Now you need to decide what to accept.
 Code Factory brings the findings, source context and recorded checks into one
 review trail. Inspect a finding, choose the repair, and rerun the affected checks.
@@ -25,15 +38,6 @@ Python static result does not establish runtime coverage or release approval.
 Use `--static-only` for the Python-only path; the default also orchestrates
 other applicable evidence lanes. JavaScript, shell and other language audits
 require external workers.
-
-## Current source preview — core 0.49.0, VS Code 1.3.0, JetBrains 1.3.0
-
-The bounded security review follows values through supported local helpers to
-HTTP, file, and SQL sinks, and checks an upload directory separately from its
-sanitized filename. Studio surfaces a shared next action; optional JEV
-integration remains advisory; unavailable evaluations stay incomplete. These changes are not a claim of
-exhaustive analysis or measured detection accuracy. Review findings, run the
-affected checks, and decide what to accept before using a repair.
 
 Want a visual workspace? Run `factory studio --root .`. Need options?
 `factory --help` shows the short path; `factory --help-all` shows all commands.
@@ -73,14 +77,7 @@ Run a basic scan when you want a quick local review.
 4. **Scan evidence.** Native scans bind collection receipts before sealing. Collection drift marks the evidence incomplete and requires a fresh seal.
 5. **CLI and editors.** `factory home` prints a local invitation to star the repo. Editor releases are VS Code and Open VSX 1.3.3 and JetBrains 1.3.4.
 
-### Precision and product walkthrough
-
-The exposed N443-38 replay measured **88.24% decided actionable precision**
-(30/34) versus 85.71% on the same observed cases. It returned 37 of 38 cases and
-retained all 30 original true positives. The original sealed first-pass reference
-was 83.33% on decided labels (30/36) and 78.95% counting all 38 selected cases.
-Two blind AI reviewers supplied the labels.
-[Case ledger](https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json)
+### Product walkthrough
 
 The captures use a fictional workspace. Its one-file scan reports a planted
 security finding with complete source coverage and incomplete overall evidence.
@@ -110,6 +107,9 @@ software, guarantee that defects are absent, or approve a release.
 architecture engine. SpecLine, HSF, and Prestige are advanced internal lanes
 that appear only when a project declares the corresponding scope; they are not
 separate products a new user must learn before running a scan.
+
+<details>
+<summary>Earlier Graph Ops examples</summary>
 
 ## Graph Ops in action
 
@@ -147,6 +147,8 @@ cards keep checks without a bound result explicitly marked not run.
 The labels explain an [original local Assembly capture](docs/assets/marketplace/factoryline-0.44-live-dashboard.png).
 That pictured run is waiting for human input; it does not imply release approval
 or that every check passed.
+
+</details>
 
 </details>
 
@@ -218,8 +220,7 @@ not infer that those results still apply after source changes.
 The prior snapshot's [repository self-audit receipt](evidence/self-audit/quality-reassessment-2026-10-04.json)
 records **A (97.9/100)** and 1,055/1,085 functions attributed to test intent
 (97.24%). That static measurement applies to its recorded source digest and is
-superseded for this candidate by the clean tracked-snapshot result above; it is
-not runtime coverage or certification.
+describes static test-intent attribution for that snapshot.
 
 ForgeLine 0.10.8 computes Python complexity for public module functions and
 public class methods in its recorded `metrics.scope.code_files`; names starting
@@ -242,8 +243,7 @@ separate outcomes. See [release channels](docs/RELEASE_CHANNELS.md).
 
 Architecture health checks growth budgets. ForgeLine's repository inventory
 and feature QA are separate checks. The [current gap review](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md)
-records historical parser behavior; the current candidate's pinned-parser result
-is listed above. CF requires ForgeLine 0.10.8 and checks real MJS, TS, and TSX
+records historical parser behavior. CF requires ForgeLine 0.10.8 and checks real MJS, TS, and TSX
 feature QA during `factory doctor --strict`. Static signals are neither
 executed coverage nor a security certification.
 
@@ -262,9 +262,9 @@ executed coverage nor a security certification.
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
 
-## Native agent-harness preview — current source candidate
+## Earlier native agent-harness preview
 
-Status: Current source preview only; published Code Factory 0.48.1 remains unchanged. Local-wheel inclusion is not claimed.
+The examples below describe the earlier 0.48.1 development preview.
 
 The native harness keeps incident checkpoints for recovery, binds review
 context shards to source, and compares candidate repairs without applying them.
@@ -276,7 +276,7 @@ explicitly registered by the caller. Their observations are experimental, not
 model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
 Junie while keeping execution and identity limits visible.
 
-## Native scanner expansion — core 0.49.0 / editor 1.3.0 source preview
+## Native scanner changes introduced in core 0.49.0
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.

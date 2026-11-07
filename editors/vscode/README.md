@@ -312,9 +312,9 @@ Public exports carry distributions only, never per-reviewer rows.
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
 
-## Native agent-harness preview — current source candidate
+## Earlier native agent-harness preview
 
-Status: Current source preview only; published Code Factory 0.48.1 remains unchanged. Local-wheel inclusion is not claimed.
+The examples below describe the earlier 0.48.1 development preview.
 
 The native harness keeps incident checkpoints for recovery, binds review
 context shards to source, and compares candidate repairs without applying them.
