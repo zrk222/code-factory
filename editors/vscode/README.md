@@ -4,6 +4,9 @@
 
 Governance infrastructure for high-stakes agentic workloads.
 
+This documentation-only update does not change extension runtime behavior.
+It pairs with Code Factory core 0.49.6.
+
 You have a change open and a review to finish. FactoryLine keeps local audit
 findings and receipts beside your VS Code workspace, so you can follow a finding
 back to its file, choose what to repair, and check the result before accepting it.
