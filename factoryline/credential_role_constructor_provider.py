@@ -2135,13 +2135,9 @@ def _current_cache_epoch(state, key, helper_epoch, before):
 
 
 def _ast_matches_source(raw, tree):
-    try:
-        parsed = ast.parse(raw)
-        return ast.dump(parsed, include_attributes=True) == ast.dump(
-            tree, include_attributes=True
-        )
-    except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
-        return False
+    from .ops_telemetry import captured_ast_matches_source
+
+    return captured_ast_matches_source(raw, tree)
 
 
 def _helper_snapshot(helper_epoch):

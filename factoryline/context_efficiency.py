@@ -1032,7 +1032,28 @@ def _scan_security_source(
         tree._oracle_source_sha256 = binding["sha256"]
         encoding, _ = tokenize.detect_encoding(io.BytesIO(data).readline)
         tree._oracle_source_lines = data.decode(encoding).splitlines()
-    except (OSError, UnicodeError, audit.RuntimeAuditError) as exc:
+        security_only = (oracle_context or {}).get("_security_only", False)
+        security_only = security_only is True or audit._SECURITY_ONLY_SCAN.get() is True
+        findings = (
+            []
+            if security_only is True
+            else audit.contracts.implementation_findings(
+                relative, tree, data, oracle_context
+            )
+        )
+        findings.extend(
+            audit._security_scan_tree(
+                workspace,
+                path,
+                tree,
+                tenant_read_calls,
+                tenant_read_bindings,
+                oracle_context,
+                test_file_patterns,
+                (oracle_context or {}).get("_tenant_policy_applies", False),
+            )
+        )
+    except (OSError, UnicodeError, RecursionError, audit.RuntimeAuditError) as exc:
         return _security_source_failure(
             audit,
             binding,
@@ -1054,27 +1075,6 @@ def _scan_security_source(
             "syntax_error",
             detail="invalid Python syntax",
         )
-    security_only = (oracle_context or {}).get("_security_only", False)
-    security_only = security_only is True or audit._SECURITY_ONLY_SCAN.get() is True
-    findings = (
-        []
-        if security_only is True
-        else audit.contracts.implementation_findings(
-            relative, tree, data, oracle_context
-        )
-    )
-    findings.extend(
-        audit._security_scan_tree(
-            workspace,
-            path,
-            tree,
-            tenant_read_calls,
-            tenant_read_bindings,
-            oracle_context,
-            test_file_patterns,
-            (oracle_context or {}).get("_tenant_policy_applies", False),
-        )
-    )
     return binding, findings, "audited"
 
 

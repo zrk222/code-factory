@@ -7,6 +7,7 @@ but never prompts, paths, arguments, source, or logs.
 
 from __future__ import annotations
 
+import ast
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -173,6 +174,24 @@ def _measure_parse(parser, data: bytes, root: Path, path: Path):
         # Python 3.10 reports null-byte source as ValueError, later versions
         # as SyntaxError. Normalize only the parser's malformed-source case.
         raise SyntaxError(str(exc), (filename, None, None, None)) from exc
+
+
+def captured_ast_matches_source(raw, tree):
+    """Compare captured syntax and spans without trusting scanner sidecars."""
+    try:
+        parsed = ast.parse(raw)
+        try:
+            return ast.dump(parsed, include_attributes=True) == ast.dump(
+                tree, include_attributes=True
+            )
+        except RecursionError:
+            from .import_context import _uncached_structural_ast_fingerprint
+
+            return _uncached_structural_ast_fingerprint(
+                parsed
+            ) == _uncached_structural_ast_fingerprint(tree)
+    except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
+        return False
 
 
 def _measured_phase(name: str):

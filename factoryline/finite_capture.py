@@ -4526,7 +4526,14 @@ def _foreign_provider_source_mutations(
         nodes, foreign_aliases, parents, bindings = _foreign_provider_inputs(
             module, data, source_hash, alias_reader
         )
-    except (SyntaxError, UnicodeError, AttributeError, TypeError, ValueError):
+    except (
+        SyntaxError,
+        UnicodeError,
+        AttributeError,
+        TypeError,
+        ValueError,
+        RecursionError,
+    ):
         return {(path.partition(".")[0], "*") for path in aliases.values()}
     nodes, bindings = _project_provider_inventory(
         nodes, foreign_aliases, parents, bindings, inventory_projector

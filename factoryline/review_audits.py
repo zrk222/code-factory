@@ -257,13 +257,14 @@ def _name(node: ast.AST) -> str:
 
 def _body_nodes(node: ast.AST):
     """Nested functions/classes/lambdas are not calls in the inspected body."""
-    yield node
-    if isinstance(
-        node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-    ):
-        return
-    for child in ast.iter_child_nodes(node):
-        yield from _body_nodes(child)
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        yield current
+        if not isinstance(
+            current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            pending.extend(reversed(tuple(ast.iter_child_nodes(current))))
 
 
 def _calls(body: list[ast.stmt]) -> set[str]:

@@ -639,6 +639,8 @@ def source_current(index, path):
 
 
 def _source_current(index, path):
+    from .ops_telemetry import captured_ast_matches_source
+
     if not index.validate(path):
         return False
     tree, raw = index.snapshots.get(path), index.source_bytes.get(path)
@@ -647,12 +649,7 @@ def _source_current(index, path):
         return False
     if getattr(tree, "_oracle_source_sha256", None) != digest:
         return False
-    try:
-        return ast.dump(ast.parse(raw), include_attributes=True) == ast.dump(
-            tree, include_attributes=True
-        )
-    except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
-        return False
+    return captured_ast_matches_source(raw, tree)
 
 
 def source_span(index, path, node, role):

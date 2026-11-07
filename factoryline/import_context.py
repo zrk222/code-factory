@@ -2443,46 +2443,49 @@ def _security_ast_span_contains(node, container):
 
 
 def _bind_security_scope_node(node, scope, shadowed, tree, flow_statement=None):
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        _bind_security_function(node, scope, shadowed, tree, flow_statement)
-        return
-    if isinstance(node, ast.ClassDef):
-        _bind_security_class(node, scope, shadowed, tree, flow_statement)
-        return
-    if isinstance(node, ast.Call):
-        node._security_shadowed_names = shadowed
-        node._security_lexical_scope = scope
-        node._security_flow_statement = flow_statement
-        calls = getattr(scope, "_security_calls_by_statement", {})
-        calls.setdefault(id(flow_statement), []).append(node)
-        scope._security_calls_by_statement = calls
-    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.expr)):
-        node._security_lexical_scope = scope
-    if isinstance(node, ast.Attribute):
-        node._security_lexical_scope = scope
-        node._security_flow_statement = flow_statement
-    for child in ast.iter_child_nodes(node):
-        direct = child if node is scope else flow_statement
-        _bind_security_scope_node(child, scope, shadowed, tree, direct)
+    pending = [(node, scope, shadowed, flow_statement)]
+    while pending:
+        current, scope, shadowed, statement = pending.pop()
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            pending.extend(
+                reversed(
+                    _bind_security_function(current, scope, shadowed, tree, statement)
+                )
+            )
+            continue
+        if isinstance(current, ast.ClassDef):
+            pending.extend(
+                reversed(_bind_security_class(current, scope, shadowed, statement))
+            )
+            continue
+        if isinstance(current, ast.Call):
+            current._security_shadowed_names = shadowed
+            calls = getattr(scope, "_security_calls_by_statement", {})
+            calls.setdefault(id(statement), []).append(current)
+            scope._security_calls_by_statement = calls
+        if isinstance(current, (ast.Assign, ast.AnnAssign, ast.expr)):
+            current._security_lexical_scope = scope
+        if isinstance(current, (ast.Call, ast.Attribute)):
+            current._security_flow_statement = statement
+        pending.extend(
+            (child, scope, shadowed, child if current is scope else statement)
+            for child in reversed(tuple(ast.iter_child_nodes(current)))
+        )
 
 
 def _bind_security_function(node, scope, shadowed, tree, flow_statement):
     arguments = node.args
     body = node.body if isinstance(node.body, list) else [node.body]
     definition_statement = flow_statement or node
-    for decorator in getattr(node, "decorator_list", []):
-        _bind_security_scope_node(
-            decorator, scope, shadowed, tree, definition_statement
-        )
-    for default in [*arguments.defaults, *arguments.kw_defaults]:
-        if default is not None:
-            _bind_security_scope_node(
-                default, scope, shadowed, tree, definition_statement
-            )
-    for annotation in _function_annotations(node):
-        _bind_security_scope_node(
-            annotation, scope, shadowed, tree, definition_statement
-        )
+    outer = [
+        *getattr(node, "decorator_list", ()),
+        *(
+            item
+            for item in (*arguments.defaults, *arguments.kw_defaults)
+            if item is not None
+        ),
+        *_function_annotations(node),
+    ]
     lexical_parent = (
         getattr(scope, "_security_parent_scope", tree)
         if isinstance(scope, ast.ClassDef)
@@ -2505,24 +2508,21 @@ def _bind_security_function(node, scope, shadowed, tree, flow_statement):
     node._security_scope_kind = "function"
     node._security_calls_by_statement = {}
     child_shadowed = shadowed | arguments_names | node._security_local_names
-    for child in body:
-        _bind_security_scope_node(child, node, child_shadowed, tree, child)
+    return [(child, scope, shadowed, definition_statement) for child in outer] + [
+        (child, node, child_shadowed, child) for child in body
+    ]
 
 
-def _bind_security_class(node, scope, shadowed, tree, flow_statement):
-    for child in [*node.decorator_list, *node.bases]:
-        _bind_security_scope_node(child, scope, shadowed, tree, flow_statement or node)
-    for keyword in node.keywords:
-        _bind_security_scope_node(
-            keyword.value, scope, shadowed, tree, flow_statement or node
-        )
+def _bind_security_class(node, scope, shadowed, flow_statement):
+    outer = [*node.decorator_list, *node.bases, *(item.value for item in node.keywords)]
     node._security_parent_scope = scope
     node._security_scope_kind = "class"
     node._security_local_names = _security_scope_local_names(node)
     node._security_nonlocal_names = _security_scope_nonlocal_names(node)
     node._security_calls_by_statement = {}
-    for child in node.body:
-        _bind_security_scope_node(child, node, shadowed, tree, child)
+    return [(child, scope, shadowed, flow_statement or node) for child in outer] + [
+        (child, node, shadowed, child) for child in node.body
+    ]
 
 
 def _function_annotations(node):

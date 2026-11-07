@@ -144,6 +144,48 @@ def test_uncompilable_ast_cannot_issue_security_action(tmp_path, capsys, prefix)
 
 
 @pytest.mark.parametrize(
+    "expression",
+    [
+        *(
+            pytest.param("+".join(["1"] * terms), id=f"sum-{terms}")
+            for terms in (500, 1200, 2200, 4000)
+        ),
+        pytest.param("lambda: " * 500 + "1", id="nested-lambda"),
+    ],
+)
+def test_deep_expression_does_not_erase_other_files(tmp_path, capsys, expression):
+    from factoryline.cli import main
+
+    (tmp_path / "deep.py").write_text("value = " + expression + "\n")
+    sibling = b'API_TOKEN = "ghp_aaaaaaaaaaaaaaaaaaaa"\n'
+    (tmp_path / "sibling.py").write_bytes(sibling)
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                "source-role-v3",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["audit_coverage"]["complete"] is False
+    assert result["defect_policy_decision"]["state"] == "BLOCKED"
+    assert {(row["path"], row["code"]) for row in result["findings"]} == {
+        ("deep.py", "SECURITY_SOURCE_UNREADABLE"),
+        ("sibling.py", "SECURITY_HARDCODED_SECRET"),
+    }
+    source = next(row for row in result["sources"] if row["path"] == "sibling.py")
+    assert source["sha256"] == sha256(sibling).hexdigest()
+
+
+@pytest.mark.parametrize(
     "first,second,supported",
     [
         ("service.other", "service.settings", False),
