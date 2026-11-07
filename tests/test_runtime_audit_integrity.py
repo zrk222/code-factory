@@ -119,15 +119,14 @@ def test_builtin_collection_modes_do_not_admit_invalid_or_plugin_options(
     (tmp_path / "pytest.ini").write_text(
         "[pytest]\naddopts = " + addopts + "\n", encoding="utf-8"
     )
-    if addopts == "--doctest-modules -p plugin":
-        patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
-        assert patterns == set()
-        assert identity["collection_state"] == "UNKNOWN"
-        with pytest.raises(review_audits.ReviewAuditError):
-            _pytest_collection_config(tmp_path)
-        return
+    patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+    assert patterns == set()
+    assert identity["collection_state"] == "UNKNOWN"
+    assert identity["state"] == (
+        "unsupported" if addopts == "--doctest-modules -p plugin" else "invalid"
+    )
     with pytest.raises(review_audits.ReviewAuditError):
-        _pytest_collection_config(tmp_path, allow_unknown=True)
+        _pytest_collection_config(tmp_path)
 
 
 @pytest.mark.parametrize(

@@ -18,6 +18,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 _ADVISORY_COLLECTION = ContextVar("advisory_pytest_collection", default=False)
+_UNAVAILABLE_COLLECTION_INPUTS = frozenset({"invalid", "oversized", "unreadable"})
 _UNRESOLVED_CONFIG_REASONS = {
     "invalid": "malformed_collection_configuration",
     "oversized": "oversized_collection_configuration",
@@ -290,19 +291,26 @@ def _pytest_collection_source_identity(
             "Cannot determine pytest test collection: custom collection hooks "
             "or pytest plugins are unsupported."
         )
-    reason = _UNRESOLVED_CONFIG_REASONS.get(identity.get("state"))
+    input_state = identity.get("state")
+    reason = _UNRESOLVED_CONFIG_REASONS.get(input_state)
     unknown = bool(hooks or reason)
+    if unknown:
+        reason = reason or _pytest_collection_hook_gap_reason(hooks)
+    if reason == "unavailable_collection_source":
+        input_state = "unreadable"
     return {
         **identity,
         **(
             {
-                "state": "unsupported",
+                "state": input_state
+                if input_state in _UNAVAILABLE_COLLECTION_INPUTS
+                else "unsupported",
                 "collection_state": "UNKNOWN",
                 "mode": {
                     True: "static_without_collection",
                     False: "security_only",
                 }[bool(_ADVISORY_COLLECTION.get())],
-                "reason": reason or _pytest_collection_hook_gap_reason(hooks),
+                "reason": reason,
                 "python_files": [],
                 "python_functions": [],
                 "python_classes": [],
