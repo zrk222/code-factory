@@ -491,7 +491,9 @@ def _toml_pytest_pattern_value(text, section):
     return _pytest_pattern_value(text, section)
 
 
-def captured_pytest_configuration(captured, *, source_role_only=False):
+def captured_pytest_configuration(
+    captured, *, source_role_only=False, include_tox_invocations=True
+):
     """Select captured root configuration with collection's exact precedence."""
     from .review_audits import _TEST_FILE_PATTERNS
 
@@ -525,7 +527,10 @@ def captured_pytest_configuration(captured, *, source_role_only=False):
         if options is _ABSENT_PYTEST_SECTION:
             options = {}
         effective = _pytest_captured_invocation_options(
-            captured, options, source_role_only=source_role_only
+            captured,
+            options,
+            source_role_only=source_role_only,
+            include_tox_invocations=include_tox_invocations,
         )
         if effective is None:
             return None
@@ -629,7 +634,9 @@ def _captured_test_invocation_profile(
         else workflows[0]["runner"]
     )
     if runner == "pytest":
-        selection = captured_pytest_configuration(configuration_bytes)
+        selection = captured_pytest_configuration(
+            configuration_bytes, include_tox_invocations=False
+        )
         if selection is None:
             return None
         settings_module = selection["options"].get("DJANGO_SETTINGS_MODULE")
@@ -731,6 +738,8 @@ def _captured_profile_source_rows(
 
 
 def _captured_configuration_identities_valid(configuration_bytes, identities):
+    if configuration_bytes.keys() - identities.keys():
+        return False
     for name, identity in sorted(identities.items()):
         if (
             not isinstance(identity, dict)
@@ -1670,8 +1679,13 @@ def _pytest_effective_settings_options(
     return effective
 
 
-def _pytest_captured_invocation_options(captured, options, *, source_role_only=False):
+def _pytest_captured_invocation_options(
+    captured, options, *, source_role_only=False, include_tox_invocations=True
+):
     """Reconcile captured tox argv/environment with the selected config defaults."""
+    if not include_tox_invocations and "tox.ini" in captured:
+        captured = captured.copy()
+        captured.pop("tox.ini")
     coverage_provider = _pytest_cov_provider(captured)
     effective = _pytest_effective_settings_options(
         options, coverage_provider=coverage_provider, source_role_only=source_role_only
