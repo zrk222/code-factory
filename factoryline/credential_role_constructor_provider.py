@@ -2110,17 +2110,17 @@ def _derive_cached_model(self, key, derive, helper_epoch):
     epoch = _current_cache_epoch(state, key, helper_epoch, before)
     if epoch is None:
         return derive()
-    cache_key = (key, helper_epoch is not None)
-    cached = self.source_models.get(cache_key)
-    if cached is not None and _same_helper_epoch(cached[0], epoch):
-        return cached[1]
+    models = self.source_models.setdefault((key, helper_epoch is not None), [])
+    for cached_epoch, model in models:
+        if _same_helper_epoch(cached_epoch, epoch):
+            return model
     value = derive()
     if helper_epoch is not None and not _same_helper_epoch(
         epoch, _helper_snapshot(helper_epoch)
     ):
         state.helper_epoch[key] = (helper_epoch, None)
     else:
-        self.source_models[cache_key] = (epoch, value)
+        models.append((epoch, value))
     return value
 
 
