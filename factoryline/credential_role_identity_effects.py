@@ -3485,26 +3485,6 @@ def _fixture_literal_setting(tree, name):
         return None
 
 
-def _fixture_project(index):
-    from .review_audits import tomllib
-
-    raw = index["configuration_bytes"].get("pyproject.toml")
-    if not isinstance(raw, bytes):
-        return None
-    try:
-        return tomllib.loads(raw.decode("utf8"))
-    except (UnicodeError, ValueError):
-        return None
-
-
-def _fixture_pytest_options(index):
-    try:
-        options = _fixture_project(index)["tool"]["pytest"]["ini_options"]
-    except (KeyError, TypeError):
-        return None
-    return options if isinstance(options, dict) else None
-
-
 def _django_test_collected_methods(index, path, roots, patterns, maps):
     from . import mock_fixture_provenance as fixture
     from . import review_audits as audit
@@ -3815,9 +3795,15 @@ def _django_test_consumer_record(index, path, function, call, model):
 
 def _fixture_settings(index):
     from . import mock_fixture_provenance as fixture
+    from .pytest_collection_audit import captured_pytest_configuration
 
-    options = _fixture_pytest_options(index)
-    if options is None or options.get("django_find_project") is not False:
+    selection = captured_pytest_configuration(index["configuration_bytes"])
+    if selection is None:
+        return None
+    options = selection["options"]
+    if str(options.get("django_find_project")).lower() != "false" or options.get(
+        "pythonpath"
+    ) not in (None, "", ".", [], ["."]):
         return None
     selected = options.get("DJANGO_SETTINGS_MODULE")
     if (
@@ -5323,7 +5309,6 @@ def module_fixture_helper_epoch():
         _fixture_setup_owner_is_supported,
         _fixture_setup_call_is_supported,
         _fixture_demanded_providers_clear,
-        _fixture_pytest_options,
         _fixture_selected_user_model,
         _fixture_create_user_provider,
         _fixture_resolve_user_model_provider,
