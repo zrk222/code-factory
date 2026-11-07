@@ -208,7 +208,7 @@ jobs:
               raise SystemExit("release_contract escapes the workspace") from exc
           PY
           source_args=()
-          if [[ "$RELEASE_REF" == "vscode-v1.2.0" || "$RELEASE_REF" == "vscode-v1.2.1" ]]; then source_args=(--source CHANGELOG.md); fi
+          if [[ "$RELEASE_REF" == "vscode-v1.2.0" || "$RELEASE_REF" == "vscode-v1.2.1" || "$RELEASE_REF" == "vscode-v1.3.3" ]]; then source_args=(--source CHANGELOG.md); fi
           python scripts/prepare_release_contract.py \
             --root . \
             --feature "openvsx-${RELEASE_REF//+/-}" \

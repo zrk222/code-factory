@@ -167,7 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           source_args=()
-          if [[ "$RELEASE_REF" == "jetbrains-v1.2.0" ]]; then source_args=(--source CHANGELOG.md); fi
+          if [[ "$RELEASE_REF" == "jetbrains-v1.2.0" || "$RELEASE_REF" == "jetbrains-v1.3.4" ]]; then source_args=(--source CHANGELOG.md); fi
           python scripts/prepare_release_contract.py \
             --root . \
             --feature "jetbrains-${RELEASE_REF}" \
