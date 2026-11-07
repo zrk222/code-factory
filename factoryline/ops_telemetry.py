@@ -15,6 +15,7 @@ from pathlib import Path
 import tempfile
 import time
 import uuid
+import warnings
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -156,9 +157,16 @@ def _measure_hash(name: str, hasher, data: bytes) -> str:
 
 
 def _measure_parse(parser, data: bytes, root: Path, path: Path):
+    """Return an AST only after Python validates its compilation context."""
     filename = path.relative_to(root).as_posix()
     try:
-        return _measure_call("source_parse", parser, data, filename=filename)
+        tree = _measure_call("source_parse", parser, data, filename=filename)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            _measure_call(
+                "source_compile", compile, tree, filename, "exec", dont_inherit=True
+            )
+        return tree
     except ValueError as exc:
         if type(exc) is not ValueError or b"\x00" not in data:
             raise

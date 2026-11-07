@@ -75,6 +75,75 @@ def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
 
 
 @pytest.mark.parametrize(
+    "prefix",
+    [
+        "return\n",
+        "break\n",
+        "def invalid():\n    nonlocal absent\n",
+        "def invalid(a, a):\n    pass\n",
+    ],
+)
+def test_uncompilable_ast_cannot_issue_security_action(tmp_path, capsys, prefix):
+    from factoryline.cli import main
+    from factoryline.credential_role_paths import regenerate_security_source_model
+    from factoryline.finite_capture import captured_sink_evidence
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+
+    files = _recovery_sources(
+        settings=prefix + SETTINGS,
+        extra={"sibling.py": 'API_TOKEN = "ghp_aaaaaaaaaaaaaaaaaaaa"\n'},
+    )
+    captured = {name: source.encode() for name, source in files.items()}
+    hashes = {name: sha256(raw).hexdigest() for name, raw in captured.items()}
+    assert isinstance(ast.parse(files["service/settings.py"]), ast.Module)
+    assert regenerate_security_source_model(captured, hashes) is None
+    assert signing_configuration_inventory(captured, hashes) is None
+    sink_source = (prefix + "import pickle\nresult = pickle.loads(data)\n").encode()
+    sink_tree = ast.parse(sink_source)
+    sink = captured_sink_evidence(
+        sink_tree.body[-1].value,
+        source_path=tmp_path / "sink.py",
+        source_sha256=sha256(sink_source).hexdigest(),
+        source_bytes=sink_source,
+        tree=sink_tree,
+    )
+    assert sink["code"] == "SINK_SOURCE_STALE"
+    assert sink["truncation"] == ["source_parse_failed"]
+    for name, raw in captured.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                "source-role-v3",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["audit_coverage"]["complete"] is False
+    assert all(
+        action["finding_context"]["code"] == "QUALITY_SYNTAX_ERROR"
+        for action in result["agent_actions"]
+    )
+    assert {(row["path"], row["code"]) for row in result["findings"]} == {
+        ("service/settings.py", "QUALITY_SYNTAX_ERROR"),
+        ("sibling.py", "SECURITY_HARDCODED_SECRET"),
+    }
+    sibling = next(row for row in result["sources"] if row["path"] == "sibling.py")
+    assert sibling["sha256"] == hashes["sibling.py"]
+
+
+@pytest.mark.parametrize(
     "first,second,supported",
     [
         ("service.other", "service.settings", False),

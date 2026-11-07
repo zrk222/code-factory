@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+from pathlib import Path
 
 
 def _native_span(node):
@@ -156,8 +157,11 @@ def _captured_sink_index(index, path_arg, raw, path, schema):
 
 
 def _captured_sink_raw_tree(path, raw, tree, schema):
+    from .ops_telemetry import _measure_parse
+
+    source = Path(path)
     try:
-        parsed = ast.parse(raw, filename=path)
+        parsed = _measure_parse(ast.parse, raw, source.parent, source)
         if tree is not None and ast.dump(parsed, include_attributes=True) != ast.dump(
             tree, include_attributes=True
         ):

@@ -2401,6 +2401,7 @@ def tls_security_finding(call, relative, node, aliases=None):
 def regenerate_security_source_model(sources, bindings):
     """Build a verifier-owned graph once from the complete hash-checked Python set."""
     from pathlib import Path
+    from .ops_telemetry import _measure_parse
     from .primitive_observation_binding import _jwt_bound_source_inventory
 
     if not isinstance(sources, dict) or not isinstance(bindings, dict):
@@ -2421,7 +2422,7 @@ def regenerate_security_source_model(sources, bindings):
 
     try:
         trees = {
-            path: ast.parse(raw, filename=path.as_posix())
+            path: _measure_parse(ast.parse, raw, Path("."), path)
             for path, raw in captured.items()
         }
         for path, tree in trees.items():

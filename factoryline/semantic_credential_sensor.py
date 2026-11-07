@@ -533,7 +533,8 @@ def _signing_inventory_input_closed(source_bytes, bindings):
 
 
 def _signing_inventory_snapshots(source_bytes, bindings, bind_security_call_scopes):
-    # The sole caller has already validated the complete input shape and bounds.
+    from .ops_telemetry import _measure_parse
+
     snapshots, captured, inventory = {}, {}, {}
     for name, digest in bindings.items():
         raw, path = source_bytes.get(name), Path(name)
@@ -542,7 +543,7 @@ def _signing_inventory_snapshots(source_bytes, bindings, bind_security_call_scop
         if path.suffix != ".py":
             continue
         try:
-            tree = ast.parse(raw)
+            tree = _measure_parse(ast.parse, raw, Path("."), path)
         except (SyntaxError, ValueError, UnicodeError, RecursionError):
             return None
         tree._oracle_source_sha256 = digest
