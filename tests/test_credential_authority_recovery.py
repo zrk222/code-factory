@@ -3711,8 +3711,21 @@ def test_django_user_role_preserves_nested_import_escape_controls(
     assert evidence["eligible"] is eligible, evidence
 
 
-@pytest.mark.parametrize("flag", ["--reuse-db", "--pdbcls=pudb.debugger:Debugger"])
-def test_django_user_role_runtime_options_do_not_relax_generic_settings(tmp_path, flag):
+@pytest.mark.parametrize(
+    "flag,eligible",
+    [
+        ("--reuse-db", True),
+        ("--pdbcls=pudb.debugger:Debugger", True),
+        ("--pdbcls=pudb.debugger:Outer.Debugger", True),
+        ("--pdbcls=pudb.debugger", False),
+        ("--pdbcls=pudb.debugger:", False),
+        ("--pdbcls=:Debugger", False),
+        ("--pdbcls=pudb:Outer:Debugger", False),
+    ],
+)
+def test_django_user_role_runtime_options_do_not_relax_generic_settings(
+    tmp_path, flag, eligible
+):
     from factoryline.pytest_collection_audit import _pytest_effective_settings_options
 
     assert _pytest_effective_settings_options({"addopts": flag}) is None
@@ -3721,7 +3734,9 @@ def test_django_user_role_runtime_options_do_not_relax_generic_settings(tmp_path
         _REQUEST_USER_TEST,
         project=_REQUEST_USER_PROJECT + f'addopts = "{flag}"\n',
     )
-    assert evidence["eligible"] is True, evidence
+    assert evidence["eligible"] is eligible, evidence
+    if not eligible:
+        return
     receipt = evidence["test_fixture_provider"]
     assert receipt["runtime_effects_unassessed"] == [flag.partition("=")[0]]
     assert receipt["runtime_assurance"] == "UNASSESSED"

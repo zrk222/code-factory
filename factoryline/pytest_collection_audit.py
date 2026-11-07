@@ -1867,7 +1867,8 @@ def _pytest_argument_effect(
     if (
         flag == "--pdbcls"
         and re.fullmatch(
-            r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?::[A-Za-z_]\w*)?", value or ""
+            r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*",
+            value or "",
         )
         is None
     ):

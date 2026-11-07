@@ -10,7 +10,7 @@
     },
     {
       "path": "factoryline/pytest_collection_audit.py",
-      "sha256": "ed1bc208b828ed195dcd5b284eae2d379243eee9849bd1773f2a30481f5e41e1",
+      "sha256": "d5aa38066604bfa8d7362ef3ea0bff103c02cc16f127ce3160c2d0e967cdd3cd",
       "kind": "source"
     },
     {
@@ -20,11 +20,11 @@
     },
     {
       "path": "tests/test_credential_authority_recovery.py",
-      "sha256": "65d6531baadaf607d4120fb1677a5ed7f5948c21d824a84c53ac65c844a21fe4",
+      "sha256": "6334bf10ed916489a9cb4f29ed60371a222a1dad690599bcdb6fec6630caacc0",
       "kind": "test"
     }
   ],
-  "engine_source_sha256": "c4908f9145333e246cc39612eb6c92ba0cc8099ef0494d572a48a7582d855044",
+  "engine_source_sha256": "84e6d9837303319e63872c8f85b6df6a45e3d864492ac615fc1babbac9e9e2fc",
   "measurement": "Exposed N447 raw-alert classification replay; not fresh held-out or native actionable-tier precision",
   "immutable_reference": {
     "path": ".factory/precision447-fresh/official-score.json",
@@ -75,14 +75,16 @@
     "active_before": 3,
     "active_after": 1,
     "raw_rows_retained": 3,
-    "seconds": 26.125,
+    "seconds": 25.287,
     "exit_code": 2,
     "remaining": "Settings SECRET_KEY remains NEEDS_CONTEXT"
   },
   "validation": {
-    "python_310_passed": 240,
-    "python_311_passed": 240,
-    "scope": "Current production: focused account-role, strict selector, endpoint, and lambda canary controls; explicit lint/format/C901 and hosted-equivalent tracked-source quality",
+    "current_affected_python_310_passed": 71,
+    "current_affected_python_311_passed": 71,
+    "baseline_python_310_passed": 240,
+    "baseline_python_311_passed": 240,
+    "scope": "Prior 240/profile retained; final delta is one debugger-option grammar constant plus its tests. Current 71/profile affected selector/account controls, engine-bound endpoint and panels rerun. Current lint/format/C901 and hosted-equivalent quality pass.",
     "quality": "A",
     "maximum_complexity": 10,
     "repo_wide_attribution": 0.9989229940764675,
@@ -90,6 +92,56 @@
     "review": "Independent AI source review; no external human adjudication"
   },
   "receipts": [
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-310.json",
+      "sha256": "18601bbabce3cb4f1f1c6fbf8ed2de6ac597d63d4993493bba5fec43d462d58a",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-parser-311.json",
+      "sha256": "bc9aa246c4d36f14ec9831eeeffcd5101498fc409dbd81becd023ace266891bc",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-quality.json",
+      "sha256": "2e74aaaf257296c9e4c2d7d5523f130b35185dc0d5b8e32bf565faf278fa581c",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-architecture.json",
+      "sha256": "ebac203ea88a409f7ba2afe0a7b8ad66a662d1ce360c87f92eabf615525335e9",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-lint.json",
+      "sha256": "5d7f03adafa28a364f8ea061e1cce843182630ff1ec1162eb74c6673943986c2",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-format.json",
+      "sha256": "909ee95250e6a01c80da00a930eea6b258b77be8b027707cc3baf8ad890e4a38",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-endpoint.json",
+      "sha256": "74c9f3b9c49884320e33b6c6e45d1f96d1ea1eae47829ec5af7c2e0c509fb9ad",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-paired40.json",
+      "sha256": "fc3ff3a5f866f6e61241c4a934e9c91f36a9dbf2fffca3db5e05527e3f415bc9",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-original30.json",
+      "sha256": "092f381b6327f9c65337acc4059e8ce8bd6cdc2ef2f7915ec35ef22f393cc0e1",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-c901.json",
+      "sha256": "acbc5b6b229feb244ce5b481e7eb546279c51bdff627fb4da276ca7b004cd068",
+      "kind": "terminal"
+    },
     {
       "path": ".factory/shared-validation-performance/data-request-account-final-310.json",
       "sha256": "4e246f23a21883115ea6fd3d060ca2fc37765be2cb04e90f00e7ff3b4cdb8673",
@@ -101,43 +153,8 @@
       "kind": "terminal"
     },
     {
-      "path": ".factory/shared-validation-performance/data-request-account-final-quality.json",
-      "sha256": "f12e5523dbfc30764b6163d3d68e4a753451dc4b2f71a517d622837df2b080d7",
-      "kind": "terminal"
-    },
-    {
-      "path": ".factory/shared-validation-performance/data-request-account-final-architecture.json",
-      "sha256": "94fc20fc2f14590ac97d7627f118cb886cf4725787d330b06b9cce3dd1fe3a4f",
-      "kind": "terminal"
-    },
-    {
-      "path": ".factory/shared-validation-performance/data-request-account-final-lint.json",
-      "sha256": "4f83e438145bf50b5a9f745eeefe269d4cae3ab279ecbb39c08aaa5003f40e83",
-      "kind": "terminal"
-    },
-    {
-      "path": ".factory/shared-validation-performance/data-request-account-final-format.json",
-      "sha256": "c2d4c840d6944ff989fe1b3222d47b1f00ebc6481947a40251a57e9407a70c4d",
-      "kind": "terminal"
-    },
-    {
-      "path": ".factory/shared-validation-performance/data-request-account-final-endpoint.json",
-      "sha256": "a7b0a7d3dbdbca0453966939d95167d5f2214ffd86ab3fef5ac03539a41b4ad7",
-      "kind": "terminal"
-    },
-    {
-      "path": ".factory/shared-validation-performance/data-request-account-final-paired40.json",
-      "sha256": "00b0fd6cc24cc61a5935fe76897de955ee13b65e637d089c055e15470719d7b1",
-      "kind": "terminal"
-    },
-    {
-      "path": ".factory/shared-validation-performance/data-request-account-final-original30.json",
-      "sha256": "d0b317222729bbb8cf5f448efff2bd63fe736c6f15a579fef1fe58def12c2ffd",
-      "kind": "terminal"
-    },
-    {
-      "path": ".factory/shared-validation-performance/data-request-account-final-c901.json",
-      "sha256": "51900640ebf18a5bce6a1d2246bfc5e5f8a33508777f00f7375d3b4453d817ae",
+      "path": ".factory/shared-validation-performance/pdb-grammar-delta.json",
+      "sha256": "6d2025be607912a8741adf8811f9045af4f98703bcd9a5adcda21cffab251151",
       "kind": "terminal"
     }
   ],
