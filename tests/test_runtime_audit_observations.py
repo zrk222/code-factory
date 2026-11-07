@@ -1279,6 +1279,200 @@ def test_security_scan_cli_writes_receipt_consumed_by_mission_control(
     assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
 
 
+def test_collection_transaction_cli_seals_admin_handoff_once(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline import audit_action_refs as actions
+    from factoryline.cli import main
+    from test_credential_authority_recovery import _recovery_sources
+
+    for name, body in _recovery_sources().items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf8")
+    calls = []
+    partition = actions._security_scan_partition_native_rows
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return partition(*args, **kwargs)
+
+    monkeypatch.setattr(actions, "_security_scan_partition_native_rows", counted)
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    report = json.loads(capsys.readouterr().out)
+    receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert code == 1 and len(calls) == 1
+    assert receipt["report"] == report
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["finding_conservation"]["native_rows"] == "VERIFIED"
+    ledger = report["finding_tier_report"]["ledger"]
+    assert len(ledger) == 1 and ledger[0]["tier"] == "SUPPORTED_DEFECT"
+    raw = ledger[0]["raw_finding"]
+    assert raw["facts"] == {"name": "SECRET_KEY"}
+    assert raw in report["findings"]
+    assert len(report["agent_actions"]) == 1
+    assert report["agent_actions"][0]["finding_context"] == raw
+    assert report["agent_actions"][0]["candidate_sha256"] == report["candidate_sha256"]
+    assert (
+        report["oracle_context"]["pytest_collection"]["capture_state"]
+        == "stable_pre_post"
+    )
+
+
+def test_collection_transaction_cli_rejects_aba_configuration(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline import review_audits as audit
+    from factoryline.cli import main
+
+    config = tmp_path / "pytest.ini"
+    original = "[pytest]\npython_files = test_*.py\n"
+    config.write_text(original)
+    (tmp_path / "app.py").write_text("VALUE = 1\n")
+    scan = audit._scan_security_sources
+
+    def changed_scan(*args, **kwargs):
+        config.write_text("[pytest]\npython_files = check_*.py\n")
+        try:
+            return scan(*args, **kwargs)
+        finally:
+            config.write_text(original)
+
+    monkeypatch.setattr(audit, "_scan_security_sources", changed_scan)
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert captured.out, captured.err
+    report = json.loads(captured.out)
+    collection = report["oracle_context"]["pytest_collection"]
+    observations = collection["capture_observations"]
+    assert config.read_text() == original
+    assert observations["before"] == observations["post_scan"]
+    assert observations["scan"]["sha256"] != observations["before"]["sha256"]
+    assert collection["capture_state"] == "changed_during_scan"
+    assert code != 0 and report["state"] in {"INCOMPLETE", "BLOCKED"}
+    assert report["defect_policy_decision"]["clean"] is False
+    assert report["defect_policy_decision"]["release_approved"] is False
+
+
+@pytest.mark.parametrize("failure", ["during_seal", "final_capture"])
+def test_collection_transaction_cli_final_guard_fails_closed(
+    tmp_path, monkeypatch, capsys, failure
+):
+    from factoryline import review_audits as audit, mission_control_status as status
+    from factoryline.cli import main
+
+    config = tmp_path / "pytest.ini"
+    config.write_text("[pytest]\npython_files = test_*.py\n")
+    (tmp_path / "app.py").write_text("VALUE = 1\n")
+    if failure == "during_seal":
+        seal = audit._seal_security_scan
+        changed = []
+
+        def mutate_after_seal(*args, **kwargs):
+            result = seal(*args, **kwargs)
+            if not changed:
+                changed.append(True)
+                config.write_text("[pytest]\npython_files = check_*.py\n")
+            return result
+
+        monkeypatch.setattr(audit, "_seal_security_scan", mutate_after_seal)
+    else:
+        snapshot = status.security_scan_pytest_collection_snapshot
+        captures = []
+
+        def fail_final(*args, **kwargs):
+            captures.append(1)
+            if len(captures) == 3:
+                raise OSError("injected final collection capture failure")
+            return snapshot(*args, **kwargs)
+
+        monkeypatch.setattr(
+            status, "security_scan_pytest_collection_snapshot", fail_final
+        )
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert captured.out, captured.err
+    report = json.loads(captured.out)
+    receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert receipt["report"] == report
+    collection = report["oracle_context"]["pytest_collection"]
+    assert collection["capture_state"] == (
+        "changed_during_scan" if failure == "during_seal" else "collection_unresolved"
+    )
+    if failure == "final_capture":
+        assert len(captures) == 3
+        assert collection["capture_observations"]["final"] is None
+    assert code != 0 and report["state"] in {"INCOMPLETE", "BLOCKED"}
+    assert report["defect_policy_decision"]["clean"] is False
+    assert report["defect_policy_decision"]["release_approved"] is False
+
+
+def test_collection_transaction_source_limit_stays_blocked(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline import review_audits as audit
+    from factoryline.cli import main
+
+    (tmp_path / "one.py").write_text("VALUE = 1\n")
+    (tmp_path / "two.py").write_text("VALUE = 2\n")
+    monkeypatch.setattr(audit, "MAX_SECURITY_SOURCE_FILES", 1)
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    report = json.loads(capsys.readouterr().out)
+    receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert code == 2 and report["state"] == "BLOCKED"
+    assert receipt["report"] == report
+    assert report["audit_coverage"]["complete"] is False
+    assert (
+        report["oracle_context"]["pytest_collection"]["capture_state"]
+        == "stable_pre_post"
+    )
+    assert report["agent_actions"] == []
+
+
 def test_security_scan_cli_write_failure_is_bounded_and_does_not_leak_path(
     tmp_path: Path, monkeypatch, capsys
 ):

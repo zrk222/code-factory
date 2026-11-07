@@ -5839,6 +5839,7 @@ def _security_scan_report(
     defect_policy: str = "legacy-v1",
     tenant_read_configuration: dict | None = None,
     producer_source_model=None,
+    collection_observation: dict | None = None,
 ) -> dict[str, Any]:
     from .audit_action_refs import security_scan_report
 
@@ -5865,13 +5866,12 @@ def _security_scan_report(
             defect_policy=defect_policy,
             tenant_read_configuration=tenant_read_configuration,
             producer_source_model=producer_source_model,
+            collection_observation=collection_observation,
         )
 
 
 def _oracle_bound_row(workspace: Path, row: dict, sources: dict) -> None:
     """Require both original test and mutated production source in this scan."""
-    import sys
-
     from .runtime_audit_integrity import oracle_bound_row
 
     return oracle_bound_row(sys.modules[__name__], workspace, row, sources)
@@ -5879,16 +5879,12 @@ def _oracle_bound_row(workspace: Path, row: dict, sources: dict) -> None:
 
 def _reconcile_runtime_oracles(workspace: Path, core: dict, evidence: tuple) -> dict:
     """Credit only signed same-test mutation observations, keeping static history."""
-    import sys
-
     from .runtime_audit_integrity import reconcile_runtime_oracles
 
     return reconcile_runtime_oracles(sys.modules[__name__], workspace, core, evidence)
 
 
 def _validate_tenant_scopes(workspace: Path, scopes: dict | None) -> dict:
-    import sys
-
     from .runtime_audit_integrity import validate_tenant_scopes
 
     return validate_tenant_scopes(sys.modules[__name__], workspace, scopes)
@@ -5926,6 +5922,7 @@ def security_scan(
     max_files: int | None = None,
     security_only: bool = False,
     tenant_read_configuration: dict | None = None,
+    bind_collection_receipt: bool = False,
 ) -> dict[str, Any]:
     """Scan captured Python sources with bounded security and oracle evidence."""
     from .audit_action_refs import security_scan as scan
@@ -5948,6 +5945,7 @@ def security_scan(
         max_files=max_files,
         security_only=security_only,
         tenant_read_configuration=tenant_read_configuration,
+        bind_collection_receipt=bind_collection_receipt,
     )
 
 

@@ -469,6 +469,15 @@ def security_scan_pytest_collection_snapshot(
     return {**identity, "patterns": sorted(patterns)}
 
 
+def _capture_security_scan_collection(root, security_only):
+    try:
+        return security_scan_pytest_collection_snapshot(
+            root, security_only=security_only
+        )
+    except Exception:
+        return None
+
+
 def prepare_security_scan_receipt_report(
     root: Path,
     report: dict[str, Any],
@@ -479,40 +488,131 @@ def prepare_security_scan_receipt_report(
     """Bind pre/post scan pytest config observations before writing a local receipt."""
     from .review_audits import _seal_security_scan
 
-    prepared = copy.deepcopy(report)
     after = security_scan_pytest_collection_snapshot(root, security_only=security_only)
-    stable = before_collection == after
-    collection = {
-        **after,
-        "capture_state": "stable_pre_post" if stable else "changed_during_scan",
-    }
+    prepared = _bind_security_scan_collection_observation(
+        report, before_collection, after
+    )
+    return _seal_security_scan(prepared)
+
+
+def _bind_security_scan_collection_observation(
+    report,
+    before,
+    after,
+    *,
+    scan_identity=None,
+    final=None,
+    final_checked=False,
+    strict_transaction=False,
+):
+    """Bind collection observations into a report before its independent seal."""
+    prepared = copy.deepcopy(report)
     oracle = prepared.get("oracle_context")
     if not isinstance(oracle, dict):
         raise ValueError("security scan oracle context is malformed")
+    if scan_identity is None:
+        scan_identity = oracle.get("static_pytest_collection")
+    scan_known = (
+        isinstance(scan_identity, dict)
+        and scan_identity.get("collection_state") != "UNKNOWN"
+    )
+    scan_matches = not strict_transaction or (
+        scan_known
+        and isinstance(before, dict)
+        and {key: value for key, value in before.items() if key != "patterns"}
+        == scan_identity
+    )
+    before_known = (
+        isinstance(before, dict) and before.get("collection_state") != "UNKNOWN"
+    )
+    after_known = isinstance(after, dict) and after.get("collection_state") != "UNKNOWN"
+    final_known = isinstance(final, dict) and final.get("collection_state") != "UNKNOWN"
+    previous = oracle.get("pytest_collection")
+    prior_state = previous.get("capture_state") if isinstance(previous, dict) else None
+    prior_drift = prior_state == "changed_during_scan"
+    diverged = (
+        prior_drift
+        or isinstance(before, dict)
+        and isinstance(after, dict)
+        and before != after
+        or strict_transaction
+        and before_known
+        and scan_known
+        and not scan_matches
+        or final_checked
+        and isinstance(final, dict)
+        and isinstance(after, dict)
+        and final != after
+    )
+    stable = (
+        isinstance(before, dict)
+        and isinstance(after, dict)
+        and before == after
+        and scan_matches
+        and (not strict_transaction or before_known and after_known and scan_known)
+        and (not final_checked or final_known and final == after)
+        and not prior_drift
+    )
+    capture_state = (
+        "stable_pre_post"
+        if stable
+        else "changed_during_scan"
+        if diverged
+        else "collection_unresolved"
+    )
+    collection = {
+        **(after if isinstance(after, dict) else {}),
+        "capture_state": capture_state,
+        "capture_observations": {
+            "before": before,
+            **({"scan": scan_identity} if strict_transaction else {}),
+            "post_scan": after,
+        },
+    }
+    if final_checked:
+        collection["capture_observations"]["final"] = final
     oracle["pytest_collection"] = collection
     configs = oracle.get("configuration_sources")
     if not isinstance(configs, list):
         raise ValueError("security scan configuration manifest is malformed")
-    if isinstance(after.get("path"), str):
-        row = {
-            "path": after["path"],
-            "sha256": after.get("sha256"),
-            "bytes": after.get("bytes"),
-        }
-        if row not in configs:
-            configs.append(row)
+    observed = (after, final) if final_checked else (after,)
+    for item in observed:
+        if isinstance(item, dict) and isinstance(item.get("path"), str):
+            row = {
+                "path": item["path"],
+                "sha256": item.get("sha256"),
+                "bytes": item.get("bytes"),
+            }
+            existing_index = next(
+                (
+                    index
+                    for index, existing in enumerate(configs)
+                    if isinstance(existing, dict)
+                    and existing.get("path") == row["path"]
+                ),
+                None,
+            )
+            if existing_index is None:
+                configs.append(row)
+            else:
+                configs[existing_index] = row
             configs.sort(key=lambda item: item.get("path", ""))
     if not stable:
-        prepared["state"] = "INCOMPLETE"
+        if prepared.get("state") != "BLOCKED":
+            prepared["state"] = "INCOMPLETE"
+        reason = (
+            "Pytest collection configuration changed during the scan; rerun before relying on coverage."
+            if diverged
+            else "Pytest collection configuration could not be verified; rerun before relying on coverage."
+        )
         prepared["action_summary"] = (
-            str(prepared.get("action_summary", ""))
-            + " Pytest collection configuration changed during the scan; rerun before relying on coverage."
+            str(prepared.get("action_summary", "")) + " " + reason
         ).strip()
     prepared["source_manifest_sha256"] = _security_scan_hash(
         {"sources": prepared.get("sources", []), "oracle_context": oracle},
         ensure_ascii=False,
     )
-    return _seal_security_scan(prepared)
+    return prepared
 
 
 def _security_scan_receipt_directory(root: Path, *, create: bool) -> Path:
