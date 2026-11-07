@@ -458,52 +458,53 @@ def _trusted_core_tenant_arguments(core, audit):
 
 
 def _trusted_core_native_security_rows(captured, tenant, audit):
+    from .runtime_audit_common import RuntimeAuditError
+
     calls, argument_bindings, applies = tenant
     native_rows = []
     captured_paths = {Path(path): raw for path, raw in captured.items()}
-    source_context = (Path("."), captured_paths)
     source_model = _regenerate_source_model(
         captured,
         {path: hashlib.sha256(raw).hexdigest() for path, raw in captured.items()},
     )
     if source_model is None:
         return None
-    provider_mutation_cache = {}
-    for path in captured_paths:
-        if path.suffix != ".py":
-            continue
-        tree = source_model.snapshots[path]
-        rows = audit._security_scan_tree(
-            Path("."),
-            path,
-            tree,
-            calls,
-            argument_bindings,
-            {
-                "_security_source_context": source_context,
-                "_security_provider_mutation_cache": provider_mutation_cache,
-                "_security_source_model": source_model,
-            },
-            tenant_policy_applies=applies,
-            security_only=True,
-        )
-        native_rows.extend(
-            row
-            for row in rows
-            if isinstance(row, dict)
-            and isinstance(row.get("code"), str)
-            and row["code"].startswith("SECURITY_")
-        )
-    native_rows.sort(
+    context = {
+        "_security_source_context": (Path("."), captured_paths),
+        "_security_provider_mutation_cache": {},
+        "_security_source_model": source_model,
+    }
+    try:
+        with audit._security_snapshot_analysis_batch({"source": source_model}):
+            for path in (path for path in captured_paths if path.suffix == ".py"):
+                rows = audit._security_scan_tree(
+                    Path("."),
+                    path,
+                    source_model.snapshots[path],
+                    calls,
+                    argument_bindings,
+                    context.copy(),
+                    tenant_policy_applies=applies,
+                    security_only=True,
+                )
+                native_rows.extend(
+                    row
+                    for row in rows
+                    if isinstance(row, dict)
+                    and isinstance(row.get("code"), str)
+                    and row["code"].startswith("SECURITY_")
+                )
+    except RuntimeAuditError:
+        return None
+    return sorted(
+        native_rows,
         key=lambda row: (
             row.get("path", ""),
             row.get("line", 0),
             row.get("column", 0),
             row.get("code", ""),
-        )
+        ),
     )
-
-    return native_rows
 
 
 def _trusted_core_surface_matches(core, native_rows):
@@ -786,7 +787,7 @@ def _finding_credential_evidence(
         and partition == "VALIDATED"
         and _matches_regenerated_finding(finding, native_rows)
     ):
-        return None, None
+        return None, None, None
     from . import semantic_credential_sensor as sensor
 
     if "inventory" not in cache:
@@ -803,12 +804,9 @@ def _finding_credential_evidence(
         else None
     )
     if credential is None and named:
-        from .credential_endpoint_admission import operative_signing_default_evidence
-
-        credential = sensor.flask_credential_authority_evidence(
-            finding, inventory
-        ) or operative_signing_default_evidence(finding, inventory)
-    return signing, credential
+        credential = sensor.flask_credential_authority_evidence(finding, inventory)
+        return signing, credential, inventory if credential is None else None
+    return signing, credential, None
 
 
 def _decide_finding_tier(
@@ -821,7 +819,15 @@ def _decide_finding_tier(
     source_bindings=None,
     credential_context=None,
 ):
-    evidence = credential_evidence
+    from .credential_endpoint_admission import operative_signing_default_evidence
+
+    generated = (
+        operative_signing_default_evidence(finding, credential_context)
+        if bound and credential_evidence is None and credential_context is not None
+        else None
+    )
+    details = {"credential_authority_observation": generated} if generated else None
+    evidence = generated or credential_evidence
     if (
         bound
         and isinstance(evidence, dict)
@@ -845,8 +851,8 @@ def _decide_finding_tier(
         signing = contract == ("pyjwt", "verified_bearer_rejection")
         authority = "signing" if signing else "credential"
         role = (
-            "conditional_published" if signing else "published_literal"
-        ) + "_default"
+            "conditional_published_default" if signing else "published_literal_default"
+        )
         schema = f"factory.security.{authority}-default-authority.v1"
         scope = f"source_bound_operative_{authority}_default"
         if (
@@ -861,7 +867,7 @@ def _decide_finding_tier(
             and evidence.get("source_role") == role
             and key_matches
         ):
-            return "SUPPORTED_DEFECT", scope, None
+            return "SUPPORTED_DEFECT", scope, details
         if (
             evidence.get("proof_scope") == "source_bound_flask_session_authority"
             and evidence.get("framework") == "flask"
@@ -875,38 +881,36 @@ def _decide_finding_tier(
                 or evidence.get("consumer_role") == "flask_login_session"
             )
         ):
-            return "SUPPORTED_DEFECT", "source_bound_flask_session_authority", None
+            return "SUPPORTED_DEFECT", "source_bound_flask_session_authority", details
         if (
             evidence.get("schema")
             == "factory.security.selected-framework-consumer-authority.v1"
             and key_matches
             and credential_context is not None
-        ):
-            from .credential_endpoint_admission import (
-                operative_signing_default_evidence,
+            and (
+                generated is not None
+                or evidence
+                == operative_signing_default_evidence(finding, credential_context)
             )
-
-            if evidence == operative_signing_default_evidence(
-                finding, credential_context
-            ):
-                tier = (
-                    "NEEDS_CONTEXT"
-                    if evidence.get("authority_domain")
-                    else "SUPPORTED_DEFECT"
-                )
-                return tier, evidence["proof_scope"], None
-        recognized = {
-            (
-                "captured_same_module_static_wiring",
-                "factory.security.private-key-auth-flow.v1",
-                "embedded_private_key",
-                "django_password_verifier",
-            ): "source_bound_private_key_http_authentication_flow",
-        }
+        ):
+            tier = (
+                "NEEDS_CONTEXT"
+                if evidence.get("authority_domain")
+                else "SUPPORTED_DEFECT"
+            )
+            return tier, evidence["proof_scope"], details
         fields = "proof_scope", "schema", "source_role", "consumer_role"
-        signature = tuple(map(evidence.get, fields))
-        if signature in recognized:
-            return "SUPPORTED_DEFECT", recognized[signature], None
+        if tuple(map(evidence.get, fields)) == (
+            "captured_same_module_static_wiring",
+            "factory.security.private-key-auth-flow.v1",
+            "embedded_private_key",
+            "django_password_verifier",
+        ):
+            return (
+                "SUPPORTED_DEFECT",
+                "source_bound_private_key_http_authentication_flow",
+                details,
+            )
     regenerated_precondition = {}
     if bound and _matches_regenerated_precondition_finding(
         finding, native_rows, regenerated_precondition
@@ -914,7 +918,8 @@ def _decide_finding_tier(
         return (
             "SUPPORTED_DEFECT",
             "source_bound_native_security_precondition",
-            {
+            (details or {})
+            | {
                 "source_bound_security_precondition": copy.deepcopy(
                     regenerated_precondition
                 )
@@ -924,9 +929,9 @@ def _decide_finding_tier(
         return (
             "PROVEN_PRIMITIVE",
             "current_native_source_bound_primitive_partition",
-            None,
+            details,
         )
-    return "NEEDS_CONTEXT", None, None
+    return "NEEDS_CONTEXT", None, details
 
 
 def _finding_missing_premises(finding, bound):
@@ -5060,7 +5065,7 @@ def _finding_tier_ledger_row(
     native_rows = _finding_native_rows(
         finding, captured, bound_source, regenerated, source_bytes, bindings
     )
-    signing_evidence, credential_evidence = _finding_credential_evidence(
+    signing_evidence, credential_evidence, context = _finding_credential_evidence(
         finding,
         native_rows,
         bound_source,
@@ -5077,7 +5082,7 @@ def _finding_tier_ledger_row(
         primitive_rows,
         credential_evidence,
         source_bindings=bindings,
-        credential_context=signing_cache.get("inventory"),
+        credential_context=context,
     )
     identity = _tier_sha256(
         {
@@ -5134,6 +5139,9 @@ def _finding_tier_ledger_row(
     )
     if signing_evidence is not None:
         row["static_consumer_observation"] = signing_evidence
+    credential_evidence = credential_evidence or (evidence_details or {}).pop(
+        "credential_authority_observation", None
+    )
     if credential_evidence is not None:
         row["credential_authority_observation"] = credential_evidence
     closure = (
@@ -5146,7 +5154,7 @@ def _finding_tier_ledger_row(
         row.setdefault("missing_premises", []).append(
             "source_bound_eager_provider_import_closure"
         )
-    if evidence_details is not None:
+    if evidence_details:
         witness = evidence_details.get("source_bound_security_precondition")
         if isinstance(witness, dict) and bound_source:
             row["source_bound_security_precondition"] = {

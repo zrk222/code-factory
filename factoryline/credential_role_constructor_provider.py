@@ -2093,9 +2093,7 @@ def _presentation_namespace_binding(source, path, alias, binding):
 
 
 _FUNCTION = object()
-
 _BOUND_METHOD = object()
-
 _PROVIDER = object()
 
 
@@ -2109,25 +2107,31 @@ def source_model(self, key, derive, *, helper_epoch=None):
 def _derive_cached_model(self, key, derive, helper_epoch):
     state = self._analysis_batch
     before = _helper_snapshot(helper_epoch) if helper_epoch is not None else ()
-    cache_key = key if helper_epoch is None else (key, _helper_epoch_key(before or ()))
-    if not _cache_epoch_ready(state, key, helper_epoch, before):
+    epoch = _current_cache_epoch(state, key, helper_epoch, before)
+    if epoch is None:
         return derive()
-    if cache_key not in self.source_models:
-        self.source_models[cache_key] = (before, derive())
+    cache_key = (key, helper_epoch is not None)
+    cached = self.source_models.get(cache_key)
+    if cached is not None and _same_helper_epoch(cached[0], epoch):
+        return cached[1]
+    value = derive()
     if helper_epoch is not None and not _same_helper_epoch(
-        before, _helper_snapshot(helper_epoch)
+        epoch, _helper_snapshot(helper_epoch)
     ):
         state.helper_epoch[key] = (helper_epoch, None)
-    return self.source_models[cache_key][1]
+    else:
+        self.source_models[cache_key] = (epoch, value)
+    return value
 
 
-def _cache_epoch_ready(state, key, helper_epoch, before):
+def _current_cache_epoch(state, key, helper_epoch, before):
     if helper_epoch is None:
-        return True
+        return before
     prior = state.helper_epoch.setdefault(key, (helper_epoch, before))
-    if not _same_helper_epoch(prior[1], before) or before is None:
-        state.helper_epoch[key] = (helper_epoch, None)
-    return before is not None
+    if _same_helper_epoch(prior[1], before):
+        return prior[1]
+    state.helper_epoch[key] = (helper_epoch, None)
+    return before
 
 
 def _ast_matches_source(raw, tree):
@@ -2172,14 +2176,10 @@ def _helper_identity(value):
 def _same_helper_epoch(left, right):
     if left is None or right is None or len(left) != len(right):
         return False
-    return all(
+    return left is right or all(
         len(a) == len(b) and all(x is y for x, y in zip(a, b))
         for a, b in zip(left, right)
     )
-
-
-def _helper_epoch_key(epoch):
-    return tuple(tuple(id(part) for part in value) for value in epoch)
 
 
 def helper_epochs_valid(epochs):
@@ -2254,6 +2254,8 @@ class ClassChainMemo:
             state.accepted = (
                 completed and fresh and helper_epochs_valid(state.helper_epoch)
             )
+            if not state.accepted:
+                self.source_models.clear()
 
     def defers_validation(self, index, imports, classes, audit):
         """Allow batched analysis to defer validation only for the memo's matching index and current source views."""
