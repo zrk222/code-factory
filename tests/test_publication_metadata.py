@@ -644,6 +644,11 @@ def test_hosted_release_and_editor_versions_are_declared():
     )
     assert re.fullmatch(r"\d+\.\d+\.\d+", intellij_version)
     assert f'version = "{intellij_version}"' in gradle
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert (
+        f"Code Factory core {__version__} · VS Code and Open VSX {vscode['version']}"
+        f" · JetBrains {intellij_version}" in readme
+    )
     assert f"factoryline-intellij-{intellij_version}.zip" in release_channels
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow

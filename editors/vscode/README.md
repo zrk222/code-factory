@@ -2,16 +2,15 @@
 
 ## VS Code 1.3.3
 
-This documentation-only update does not change extension runtime behavior. It
-can be used with Code Factory core 0.49.6; publishing the optional core package
-is a separate release step. Marketplace status must be confirmed from provider
-read-back.
+Governance infrastructure for high-stakes agentic workloads.
+
+This documentation-only update does not change extension runtime behavior.
+It pairs with Code Factory core 0.49.6.
 
 You have a change open and a review to finish. FactoryLine keeps local audit
 findings and receipts beside your VS Code workspace, so you can follow a finding
 back to its file, choose what to repair, and check the result before accepting it.
-Start with **FactoryLine: Run CF + ForgeLine Audits**. This preview accompanies
-the packages prepared for VS Marketplace and Open VSX.
+Start with **FactoryLine: Run CF + ForgeLine Audits**.
 
 **Run First Proof** is a setup demonstration that checks the local
 CLI; it does not assess repository code. For a repository assessment, run
@@ -27,17 +26,39 @@ the local evidence path, use **PRD Grill** with
 inspect **Proof Debt** in Plan-to-Proof Review. Star Code Factory on GitHub if
 the workflow helps.
 
-![CF Studio product mission form with fictional sample text](../../docs/assets/marketplace/cf-product-mission-20261016.jpg)
+### The complete factory
 
-Actual Product Mission form with sample text entered through the interface. No
-interview, build, or deployment is claimed by this image.
+- **FactoryLine** coordinates local audits, evidence, and review decisions.
+- **ForgeLine** builds scoped changes and challenges their checks.
+- **SpecLine** defines the intent, requirements, and acceptance criteria those checks must prove.
 
-![Graph Ops security findings from a fictional Python file](../../docs/assets/marketplace/cf-audit-findings-20261016.jpg)
+### What’s new in 0.49.6
 
-Actual Graph Ops projection of a local scan of one fictional Python file. It
-shows two planted findings, complete source coverage for that file, and
-`INCOMPLETE` evidence; runtime lanes were not run. This is demonstration
-evidence, not a benchmark.
+1. **Pre-PR review.** `factory change pre-pr <manifest>` combines candidate source, planned checks, oracle evidence, and feature verification in one receipt. Add `--execute` to run the declared checks.
+2. **Repair continuity.** `factory senior fix` returns `NO_PROGRESS` for a repeated failed candidate and `STEP_BACK` when the round budget is spent. The default budget stops before a fourth round.
+3. **Incident intake.** Reviewed incidents produce source-bound regression packets marked `EXPOSED_NOT_EXECUTED`. Replay evidence records what was exercised.
+4. **Scan evidence.** Native scans bind collection receipts before sealing. Collection drift marks the evidence incomplete and requires a fresh seal.
+5. **CLI and editors.** `factory home` prints a local invitation to star the repo. Editor releases are VS Code and Open VSX 1.3.3 and JetBrains 1.3.4.
+
+### Precision and product walkthrough
+
+The exposed N443-38 replay measured **88.24% decided actionable precision**
+(30/34) versus 85.71% on the same observed cases. It returned 37 of 38 cases and
+retained all 30 original true positives. The original sealed first-pass reference
+was 83.33% on decided labels (30/36) and 78.95% counting all 38 selected cases.
+Two blind AI reviewers supplied the labels.
+[Case ledger](https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json)
+
+The captures use a fictional workspace. Its one-file scan reports a planted
+security finding with complete source coverage and incomplete overall evidence.
+
+![Factory Studio Product Mission draft with intent and review callouts](https://github.com/zrk222/code-factory/releases/download/v0.49.6/studio-product-mission-0496.png)
+
+![Graph Ops guide for choosing the next proof](https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-proof-guide-0496.png)
+
+![Graph Ops local scan with source coverage and incomplete evidence](https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-findings-0496.png)
+
+![Expanded Graph Ops finding with its source line and rationale](https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-finding-detail-0496.png)
 
 ## VS Code release 1.1.3
 
@@ -291,9 +312,9 @@ Public exports carry distributions only, never per-reviewer rows.
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
 
-## Native agent-harness preview — current source candidate
+## Earlier native agent-harness preview
 
-Status: Current source preview only; published Code Factory 0.48.1 remains unchanged. Local-wheel inclusion is not claimed.
+The examples below describe the earlier 0.48.1 development preview.
 
 The native harness keeps incident checkpoints for recovery, binds review
 context shards to source, and compares candidate repairs without applying them.

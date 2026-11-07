@@ -31,6 +31,14 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
     assert "retained all 30 original true positives" in page
     assert "returned 37 of 38 cases" in page
     assert "Case 005 timed out" in page
+    for surface in (page, readme):
+        assert "88.24% decided actionable precision" in surface
+        assert "83.33% among 36 decided alerts" in surface
+        assert "JetBrains 1.3.4" in surface
+        assert "The complete factory" in surface
+        assert all(name in surface for name in ("FactoryLine", "ForgeLine", "SpecLine"))
+        assert "415 targeted tests passed" not in surface
+        assert "1.1.4 candidate" not in surface
     assert f"https://pypi.org/project/factoryline-code-factory/{__version__}/" in page
     assert f"https://github.com/zrk222/code-factory/releases/tag/v{__version__}" in page
     assert "Code Factory 0.48.1 candidate" not in page
@@ -106,8 +114,16 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "factory graph ops --root . --json" in page
     assert "PRD Grill" in readme
     assert "factory prd grill PRD.md --root . --mode quick" in page
-    assert "graph-ops-dashboard-current.png" in page
-    assert "graph-ops-audit-telemetry-current.png" in page
+    for name in (
+        "studio-product-mission-0496.png",
+        "graph-ops-proof-guide-0496.png",
+        "graph-ops-findings-0496.png",
+        "graph-ops-finding-detail-0496.png",
+    ):
+        assert f"/releases/download/v{__version__}/{name}" in page
+        assert f"/releases/download/v{__version__}/{name}" in readme
+    assert "graph-ops-dashboard-current.png" not in page
+    assert "graph-ops-audit-telemetry-current.png" not in page
     assert "factoryline-logo-480.png" in page
     assert "code-factory-quickstart-v0171.mp4" not in page
     assert "how-it-works/" not in page

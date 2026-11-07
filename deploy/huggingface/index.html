@@ -113,7 +113,7 @@
   <main id="main">
     <div class="shell hero">
       <div>
-        <div class="eyebrow">Open source · Local first · Evidence backed</div>
+        <div class="eyebrow">Governance infrastructure for high-stakes agentic workloads</div>
         <h1>Audit code.<br>Review evidence.<br>Resolve defects.</h1>
         <p class="lede"><strong>Your agent has finished a change. Your review comes next.</strong> Follow a local finding back to its source, inspect the recorded checks, and choose the repair you want to make. Rerun the affected checks and keep the evidence with the change before deciding what to accept. This static preview shows the workflow; it does not scan or upload your repository.</p>
         <p class="boundary"><strong>Code Factory 0.49.6</strong> binds collection evidence before native scan sealing and carries it into audit handoffs. <a href="https://pypi.org/project/factoryline-code-factory/0.49.6/" target="_blank" rel="noopener noreferrer">PyPI package 0.49.6</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.49.6" target="_blank" rel="noopener noreferrer">GitHub release 0.49.6</a>.</p>
@@ -130,13 +130,33 @@
         </div>
       </div>
       <figure class="visual">
-        <img src="assets/graph-ops-audit-telemetry-current.png" alt="Updated local Graph Ops UI with separately labeled deep-scan, deep-evaluation, runtime-lane, and individual-test results.">
-        <figcaption>Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.</figcaption>
+        <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/studio-product-mission-0496.png" alt="Factory Studio Product Mission draft with intent and review callouts" width="1440" height="900" loading="lazy">
+        <figcaption>Factory Studio Product Mission with fictional example input.</figcaption>
       </figure>
     </div>
 
-    <section aria-labelledby="current-video"><div class="shell"><h2 id="current-video">Current CF/FL audit workflow · 60-second walkthrough</h2><video controls preload="none" poster="assets/graph-ops-dashboard-current.png" style="width:100%;border-radius:16px"><source src="assets/remotion-factory-engine.mp4" type="video/mp4"></video><p>Silent captioned Remotion walkthrough, refreshed October 8, 2026. Genuine local captures; diagrams describe evidence requirements.</p></div></section>
-    <section aria-labelledby="latest-telemetry"><div class="shell"><h2 id="latest-telemetry">0.49.6 — source-bound audit handoffs</h2><p>The exposed N443-38 regression replay returned 37 of 38 cases and retained all 30 original true positives. One false positive was withheld from the action list. Four false positives and two unclear cases remained admitted. Case 005 timed out. <a href="https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json" target="_blank" rel="noopener noreferrer">Read the case ledger</a>.</p><p>Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.</p><figure class="dashboard-feature"><img src="assets/graph-ops-dashboard-current.png" alt="Current local Graph Ops dashboard with labelled operational telemetry"><figcaption>Actual local dashboard capture. Missing evidence remains visible.</figcaption></figure></div></section>
+    <section aria-labelledby="latest-telemetry">
+      <div class="shell">
+        <h2 id="latest-telemetry">Code Factory 0.49.6</h2>
+        <p>The exposed N443-38 replay measured <strong>88.24% decided actionable precision</strong> (30/34), up from 85.71% on the same observed cases. It returned 37 of 38 cases and retained all 30 original true positives. Two labels remained unclear. Case 005 timed out.</p>
+        <p>The original sealed reference measured 83.33% among 36 decided alerts and 78.95% across all 38 cases. Two AI reviewers supplied the labels. <a href="https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json" target="_blank" rel="noopener noreferrer">Read the case ledger</a>.</p>
+        <p><a href="https://huggingface.co/spaces/zrk222/code-factory/blob/24d51e618d685618725a850ba34be6a7df88a6d9/factoryline_code_factory-0.49.6-py3-none-any.whl" target="_blank" rel="noopener noreferrer">Get the verified wheel</a> · <a href="https://doi.org/10.5281/zenodo.24029905" target="_blank" rel="noopener noreferrer">Zenodo record</a></p>
+        <h3>What’s new in 0.49.6</h3>
+        <ol>
+          <li><strong>Pre-PR review.</strong> <code>factory change pre-pr &lt;manifest&gt;</code> combines candidate source, planned checks, oracle evidence, and feature verification in one receipt. Add <code>--execute</code> to run the declared checks.</li>
+          <li><strong>Repair continuity.</strong> <code>factory senior fix</code> returns <code>NO_PROGRESS</code> for a repeated failed candidate and <code>STEP_BACK</code> when the round budget is spent. The default budget stops before a fourth round.</li>
+          <li><strong>Incident intake.</strong> Reviewed incidents produce source-bound regression packets marked <code>EXPOSED_NOT_EXECUTED</code>. Replay evidence records what was exercised.</li>
+          <li><strong>Scan evidence.</strong> Native scans bind collection receipts before sealing. Collection drift marks the evidence incomplete and requires a fresh seal.</li>
+          <li><strong>CLI and editors.</strong> <code>factory home</code> prints a local invitation to star the repo. Editor releases are VS Code and Open VSX 1.3.3 and JetBrains 1.3.4.</li>
+        </ol>
+        <h3>The complete factory</h3>
+        <ul>
+          <li><strong>FactoryLine</strong> Coordinates local audits, evidence, and review decisions.</li>
+          <li><strong>ForgeLine</strong> Builds scoped changes and challenges their checks.</li>
+          <li><strong>SpecLine</strong> Defines the intent, requirements, and acceptance criteria those checks must prove.</li>
+        </ul>
+      </div>
+    </section>
     <section id="audit-update" aria-labelledby="audit-update-title">
       <div class="shell">
         <div class="section-head">
@@ -156,18 +176,14 @@
           <article class="card"><span>Seeded demonstration</span><h3>Review a finding and a repaired case</h3><p>This seeded local example applies a declared tenant-read contract to sample inputs and presents the review workflow. It is illustrative only, not a release certification. CI verification is still required.</p></article>
         </div>
         <div class="grid">
-          <article class="card"><span>Added</span><h3>Native editor paths</h3><p>VS Code/Open VSX 1.1.4 candidate provides an Explorer evidence tree; JetBrains 1.1.4 candidate provides a CF + ForgeLine tab and updated Junie guidance; OpenCode provides native tools and a session audit hook. Agents select authorized workers through one deep audit CLI.</p></article>
+          <article class="card"><span>Current editor releases</span><h3>Review evidence in your IDE</h3><p>VS Code and Open VSX 1.3.3 show local evidence and source locations in Explorer. JetBrains 1.3.4 carries forward saved-file synchronization before local commands and starts Factory Studio in the background.</p></article>
           <article class="card"><span>During a run</span><h3>Progress with evidence</h3><p>Deep-audit execution records lane progress, cancellation, source bindings, and coverage gaps. Unsupported or missing evidence remains incomplete.</p></article>
           <article class="card"><span>After a run</span><h3>Actionable repair tasks</h3><p>Findings include source locations and remediation guidance. Fresh candidate evidence is required after a repair; a disappearing finding alone does not prove a fix.</p></article>
           <article class="card"><span>Agent review</span><h3>A separate specialty reviewer</h3><p>Specialty AI audit evidence is available: source reviews, identified defects, and reviewed corrections. <a href="https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354" target="_blank" rel="noopener noreferrer">Open the agent review and evidence →</a> Test and CI receipts remain separately identified.</p></article>
         </div>
         <p class="boundary"><strong>Current limits:</strong> CF pattern and guard-path audits require a project policy; its security scan inspects Python ASTs. ForgeLine repo-wide QA is a static inventory. Native Gitleaks input accounting and full-depth certification remain incomplete. Muse catalogues and workflows do not establish Meta marketplace approval.</p>
         <p class="boundary"><a href="https://github.com/zrk222/code-factory/blob/main/docs/DEEP_DEFECT_COMPLETION.md" target="_blank" rel="noopener noreferrer">Read the audit implementation and limits →</a></p>
-        <figure class="dashboard-feature">
-          <img src="assets/graph-ops-audit-telemetry-current.png" alt="Updated actual Graph Ops audit results panel: native deep scan, evaluated deep audit, runtime assurance lanes, and individually searchable JUnit test cases.">
-          <figcaption><span><strong>1. Native deep scan</strong> Run state, recorded candidate hash, findings, and coverage gaps.</span><span><strong>2. Deep evaluation</strong> Receipt state and bounded finding chains.</span><span><strong>3. Runtime lanes</strong> Separate signed lane outcomes and next repairs.</span><span><strong>4. Every reported test</strong> Searchable JUnit cases with counts and an explicit unbound-candidate label.</span></figcaption>
-        </figure>
-        <p class="boundary">The image is a local Code Factory capture. This static HF Space does not run code or ingest a visitor's repository. JUnit cases appear only after a local test runner writes <code>.factory/test-reports/pytest.xml</code>; reports over 10,000 cases or malformed inputs are marked incomplete.</p>
+        <p class="boundary">JUnit cases appear after a local test runner writes <code>.factory/test-reports/pytest.xml</code>. Reports over 10,000 cases or malformed inputs are marked incomplete.</p>
       </div>
     </section>
     <section id="proof">
@@ -275,12 +291,13 @@ factory proofsearch frontier plan frontier.request.json \
     <section id="tour">
       <div class="shell">
         <div class="section-head">
-          <h2>Inspect current CF/FL audit telemetry.</h2>
-          <p>October 8 local captures show the dashboard and individually reported tests. Missing runtime evidence remains visible.</p>
+          <h2>Explore the current Factory Studio and Graph Ops views.</h2>
+          <p>These annotated views use the released interface and a fictional local workspace.</p>
         </div>
         <div class="gallery">
-          <img src="assets/graph-ops-dashboard-current.png" alt="October 8 local Graph Ops dashboard with evidence states and repair telemetry.">
-          <img src="assets/graph-ops-audit-telemetry-current.png" alt="October 8 local audit panel with searchable JUnit outcomes and explicit missing evidence.">
+          <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-proof-guide-0496.png" alt="Graph Ops guide for choosing the next proof" width="1440" height="900" loading="lazy">
+          <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-findings-0496.png" alt="Graph Ops local scan with source coverage and incomplete evidence" width="1440" height="900" loading="lazy">
+          <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-finding-detail-0496.png" alt="Expanded Graph Ops finding with its source line and rationale" width="1440" height="900" loading="lazy">
 
           <article class="card"><span>First local run</span><h3>Run First Proof</h3><p>Run one local command in a disposable sandbox. The healthy control passes; the hollow negative control is caught and bound to a privacy-safe Proof Card.</p><p><a href="#first-run">Run the demo →</a> · <a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md" target="_blank" rel="noopener noreferrer">Marketplace kit</a></p></article>
         </div>
@@ -462,12 +479,10 @@ Never substitute CI or repository traffic for installs.</code></pre>
     <section>
       <div class="shell">
         <div class="section-head">
-          <h2>Current dashboard captures and historical creator evidence.</h2>
-          <p>Inspect current local audit telemetry. The separate 60-day creator case is historical evidence, not a current benchmark.</p>
+          <h2>Creator case study and visual identity.</h2>
+          <p>The 60-day creator case documents one historical workflow.</p>
         </div>
         <div class="gallery">
-          <img src="assets/graph-ops-dashboard-current.png" alt="October 8 local Graph Ops dashboard with evidence states and repair telemetry.">
-
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/code-factory-60-day-personal-case-study.png" alt="One-user 60-day Code Factory case study with observed metadata and modeled capacity clearly separated.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/factoryline-logo-480.png" alt="Current FactoryLine blue logo with a green verification check.">
         </div>
