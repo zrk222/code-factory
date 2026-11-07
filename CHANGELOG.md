@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.49.6 — 2026-11-06
+
+- Add guarded pre-PR evaluation, source-bound incident-to-regression packets,
+  and repair continuation integrity checks.
+- Bind collection receipts before native scan sealing. Collection drift
+  produces incomplete evidence and requires a fresh seal.
+- Align core 0.49.6, VS Code/Open VSX 1.3.3 and JetBrains 1.3.4 metadata.
+
 ## 0.49.5 — 2026-10-31
 
 - Guard namespace resolution against non-import bindings and trace credential

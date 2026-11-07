@@ -12,7 +12,8 @@ from factoryline.release_decision import (
     render_release_decision_card,
 )
 import io
-from zipfile import ZIP_DEFLATED, ZipFile
+import struct
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 from scripts.jetbrains_marketplace_measurement import (
     BASELINE_SCHEMA,
     MEASUREMENT_SCHEMA,
@@ -354,22 +355,32 @@ def test_intellij_workflow_cancels_superseded_commits_on_same_ref() -> None:
 
 
 def _write_plugin_archive(
-    path: Path, *, plugin_id: str = "app.factoryline", version: str = "0.7.2"
+    path: Path,
+    *,
+    plugin_id: str = "app.factoryline",
+    version: str = "0.7.2",
+    duplicate_manifest: bool = False,
+    extra_plugin_jar: bool = False,
+    plugin_compression: int = ZIP_DEFLATED,
 ) -> None:
     plugin_jar = io.BytesIO()
-    with ZipFile(plugin_jar, "w", ZIP_DEFLATED) as jar:
-        jar.writestr(
-            "META-INF/plugin.xml",
-            f"""<idea-plugin>
+    with ZipFile(plugin_jar, "w", plugin_compression) as jar:
+        manifest = f"""<idea-plugin>
                 <id>{plugin_id}</id>
                 <name>FactoryLine AI Proof</name>
                 <version>{version}</version>
-            </idea-plugin>""",
-        )
+            </idea-plugin>"""
+        jar.writestr("META-INF/plugin.xml", manifest)
+        if duplicate_manifest:
+            jar.writestr("META-INF/plugin.xml", manifest)
     with ZipFile(path, "w", ZIP_DEFLATED) as distribution:
         distribution.writestr(
             "factoryline-intellij/lib/factoryline-intellij.jar", plugin_jar.getvalue()
         )
+        if extra_plugin_jar:
+            distribution.writestr(
+                "factoryline-intellij/lib/extra-plugin.jar", plugin_jar.getvalue()
+            )
 
 
 def test_manifest_round_trip_binds_archive_and_release_inputs(tmp_path: Path) -> None:
@@ -431,6 +442,89 @@ def test_manifest_rejects_tampered_archive(tmp_path: Path) -> None:
             release_ref="jetbrains-v0.7.2",
             commit=COMMIT,
             channel="default",
+        )
+
+
+def test_manifest_rejects_duplicate_outer_archive_paths(tmp_path: Path) -> None:
+    archive = tmp_path / "factoryline-intellij.zip"
+    _write_plugin_archive(archive)
+
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        with ZipFile(archive, "a", ZIP_DEFLATED) as distribution:
+            distribution.writestr(
+                "factoryline-intellij/lib/factoryline-intellij.jar", b"duplicate"
+            )
+
+    with pytest.raises(ArtifactError, match="duplicate archive paths"):
+        create_manifest(
+            archive, release_ref="jetbrains-v0.7.2", commit=COMMIT, channel="default"
+        )
+
+
+def test_manifest_rejects_nested_duplicate_archive_paths(tmp_path: Path) -> None:
+    archive = tmp_path / "factoryline-intellij.zip"
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        _write_plugin_archive(archive, duplicate_manifest=True)
+
+    with pytest.raises(ArtifactError, match="duplicate archive paths"):
+        create_manifest(
+            archive, release_ref="jetbrains-v0.7.2", commit=COMMIT, channel="default"
+        )
+
+
+def test_manifest_requires_one_plugin_manifest(tmp_path: Path) -> None:
+    archive = tmp_path / "factoryline-intellij.zip"
+    _write_plugin_archive(archive, extra_plugin_jar=True)
+
+    with pytest.raises(ArtifactError, match="more than one plugin.xml manifest"):
+        create_manifest(
+            archive, release_ref="jetbrains-v0.7.2", commit=COMMIT, channel="default"
+        )
+
+
+def test_manifest_reads_all_outer_entries_and_rejects_bad_crc(tmp_path: Path) -> None:
+    archive = tmp_path / "factoryline-intellij.zip"
+    _write_plugin_archive(archive)
+    with ZipFile(archive, "a", ZIP_STORED) as distribution:
+        distribution.writestr("factoryline-intellij/extra.bin", b"unvalidated payload")
+    with ZipFile(archive) as distribution:
+        info = distribution.getinfo("factoryline-intellij/extra.bin")
+        data_offset = (
+            info.header_offset + 30 + len(info.filename.encode()) + len(info.extra)
+        )
+    damaged = bytearray(archive.read_bytes())
+    damaged[data_offset] ^= 0x01
+    archive.write_bytes(damaged)
+
+    with pytest.raises(ArtifactError, match="CRC failure|full ZIP integrity read"):
+        create_manifest(
+            archive, release_ref="jetbrains-v0.7.2", commit=COMMIT, channel="default"
+        )
+
+
+def test_manifest_reads_nested_jar_entries_and_rejects_bad_crc(tmp_path: Path) -> None:
+    archive = tmp_path / "factoryline-intellij.zip"
+    _write_plugin_archive(archive, plugin_compression=ZIP_STORED)
+    with ZipFile(archive) as distribution:
+        jar_bytes = distribution.read(
+            "factoryline-intellij/lib/factoryline-intellij.jar"
+        )
+    nested = bytearray(jar_bytes)
+    with ZipFile(io.BytesIO(jar_bytes)) as plugin_jar:
+        info = plugin_jar.getinfo("META-INF/plugin.xml")
+        filename_length, extra_length = struct.unpack_from(
+            "<HH", nested, info.header_offset + 26
+        )
+        data_offset = info.header_offset + 30 + filename_length + extra_length
+    nested[data_offset] ^= 0x01
+    with ZipFile(archive, "w", ZIP_DEFLATED) as distribution:
+        distribution.writestr(
+            "factoryline-intellij/lib/factoryline-intellij.jar", bytes(nested)
+        )
+
+    with pytest.raises(ArtifactError, match="CRC failure|full ZIP integrity read"):
+        create_manifest(
+            archive, release_ref="jetbrains-v0.7.2", commit=COMMIT, channel="default"
         )
 
 

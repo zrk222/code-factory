@@ -511,6 +511,10 @@ def test_disabled_release_policy_rejects_otherwise_valid_exception(
     [
         ("core", "0.48.2", "v0.48.2", "pypi"),
         ("core", "0.49.5", "v0.49.5", "pypi"),
+        ("core", "0.49.6", "v0.49.6", "pypi"),
+        ("vscode", "1.3.3", "vscode-v1.3.3", "openvsx"),
+        ("vscode", "1.3.3", "vscode-v1.3.3", "vscode-marketplace"),
+        ("jetbrains", "1.3.4", "jetbrains-v1.3.4", "jetbrains-marketplace"),
         ("vscode", "1.3.2", "vscode-v1.3.2", "openvsx"),
         ("vscode", "1.3.2", "vscode-v1.3.2", "vscode-marketplace"),
         ("jetbrains", "1.3.2", "jetbrains-v1.3.2", "jetbrains-marketplace"),
@@ -545,6 +549,17 @@ def test_exact_current_version_opt_in_allows_disabled_policy_monthly_cap(
         "monthly_cap_exception": True,
         "one_time_version_opt_in": version,
     }
+    if version in {"0.49.6", "1.3.3", "1.3.4"}:
+        value["owner_request_record"] = {
+            "request": "published now",
+            "recorded_at": issued.isoformat(),
+            "scope": [
+                "core 0.49.6",
+                "VS Code/Open VSX 1.3.3",
+                "JetBrains 1.3.4",
+            ],
+            "candidate_sha": "a" * 40,
+        }
     path.write_text(json.dumps(value), encoding="utf-8")
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GITHUB_ACTOR", "zrk222")
@@ -598,6 +613,21 @@ def test_exact_current_version_opt_in_allows_disabled_policy_monthly_cap(
                 tmp_path, path, source, channel, tag, {"approved_by": "zrk222"}
             )
     path.write_text(json.dumps(value), encoding="utf-8")
+
+    if version in {"0.49.6", "1.3.3", "1.3.4"}:
+        for request_record in [
+            None,
+            {**value["owner_request_record"], "request": "unrecorded"},
+            {**value["owner_request_record"], "candidate_sha": "b" * 40},
+            {**value["owner_request_record"], "scope": ["core only"]},
+        ]:
+            changed = {**value, "owner_request_record": request_record}
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with pytest.raises(ValueError, match="owner request"):
+                candidate._cadence_exception_payload(
+                    tmp_path, path, source, channel, tag, {"approved_by": "zrk222"}
+                )
+        path.write_text(json.dumps(value), encoding="utf-8")
 
     monkeypatch.setenv("GITHUB_ACTOR", "other-user")
     with pytest.raises(ValueError, match="requires owner dispatch"):

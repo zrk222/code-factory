@@ -638,12 +638,7 @@ def _run_bounded_security(args: Any) -> int:
                 [*contract_bindings, *getattr(args, "tenant_read_binding", [])]
             )
         )
-        from .mission_control_status import security_scan_pytest_collection_snapshot
-
         security_only = getattr(args, "security_only", False)
-        before_collection = security_scan_pytest_collection_snapshot(
-            Path(args.root), security_only=security_only
-        )
         result = security_scan(
             Path(args.root),
             tenant_read_calls=calls,
@@ -661,6 +656,7 @@ def _run_bounded_security(args: Any) -> int:
                 if getattr(args, "defect_policy", "legacy-v1") != "legacy-v1"
                 else {}
             ),
+            bind_collection_receipt=True,
         )
         from .mission_control_status import (
             prepare_security_scan_receipt_report,
@@ -668,10 +664,7 @@ def _run_bounded_security(args: Any) -> int:
         )
 
         result = prepare_security_scan_receipt_report(
-            Path(args.root),
-            result,
-            before_collection=before_collection,
-            security_only=security_only,
+            Path(args.root), result, security_only=security_only
         )
         write_security_scan_receipt(Path(args.root), result)
     except (ReviewAuditError, OSError, ValueError) as error:

@@ -649,7 +649,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
     assert f"`factoryline-code-factory=={__version__}`" in release_channels
     assert (
-        f"Core {__version__} and editor {vscode['version']} artifacts must bind to one final source commit."
+        f"Core {__version__} and editor {vscode['version']}/1.3.4 artifacts must bind to one final source commit."
         in release_channels
     )
 
@@ -947,8 +947,8 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         metadata["related_identifiers"][0]["identifier"]
         == "https://github.com/zrk222/code-factory"
     )
-    assert metadata["version"] == "0.46.7"
-    assert metadata["publication_date"] == "2026-09-09"
+    assert metadata["version"] == "0.49.6"
+    assert metadata["publication_date"] == "2026-11-06"
     assert "read-only Agent Proof Bridge" in metadata["description"]
     assert "Proof Worklog" in metadata["description"]
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]

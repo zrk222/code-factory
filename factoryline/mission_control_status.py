@@ -469,50 +469,190 @@ def security_scan_pytest_collection_snapshot(
     return {**identity, "patterns": sorted(patterns)}
 
 
+def _capture_security_scan_collection(root, security_only):
+    try:
+        return security_scan_pytest_collection_snapshot(
+            root, security_only=security_only
+        )
+    except Exception:
+        return None
+
+
 def prepare_security_scan_receipt_report(
     root: Path,
     report: dict[str, Any],
-    before_collection: dict[str, Any],
+    before_collection: dict[str, Any] | None = None,
     *,
     security_only: bool = False,
 ) -> dict[str, Any]:
     """Bind pre/post scan pytest config observations before writing a local receipt."""
-    from .review_audits import _seal_security_scan
+    from . import review_audits
 
-    prepared = copy.deepcopy(report)
+    if before_collection is None:
+        oracle = report.get("oracle_context")
+        current = oracle.get("pytest_collection") if isinstance(oracle, dict) else None
+        observations = (
+            current.get("capture_observations") if isinstance(current, dict) else None
+        )
+        if not isinstance(observations, dict):
+            observations = {}
+        before = observations.get("before")
+        after = observations.get("post_scan")
+        scan = (
+            oracle.get("static_pytest_collection") if isinstance(oracle, dict) else None
+        )
+        strict = "scan" in observations
+        if (
+            not isinstance(before, dict)
+            or not isinstance(after, dict)
+            or (strict and not isinstance(scan, dict))
+        ):
+            final = _capture_security_scan_collection(root, security_only)
+            prepared = _bind_security_scan_collection_observation(
+                report,
+                before,
+                after,
+                scan_identity=scan,
+                final=final,
+                final_checked=True,
+                strict_transaction=strict,
+            )
+            return review_audits._seal_security_scan(prepared)
+        from .audit_action_refs import _finish_security_scan_collection_receipt
+
+        return _finish_security_scan_collection_receipt(
+            review_audits,
+            Path(root).resolve(),
+            report,
+            before,
+            after,
+            scan,
+            security_only,
+            strict_transaction=strict,
+        )
+
     after = security_scan_pytest_collection_snapshot(root, security_only=security_only)
-    stable = before_collection == after
-    collection = {
-        **after,
-        "capture_state": "stable_pre_post" if stable else "changed_during_scan",
-    }
+    prepared = _bind_security_scan_collection_observation(
+        report, before_collection, after
+    )
+    return review_audits._seal_security_scan(prepared)
+
+
+def _bind_security_scan_collection_observation(
+    report,
+    before,
+    after,
+    *,
+    scan_identity=None,
+    final=None,
+    final_checked=False,
+    strict_transaction=False,
+):
+    """Bind collection observations into a report before its independent seal."""
+    prepared = copy.deepcopy(report)
     oracle = prepared.get("oracle_context")
     if not isinstance(oracle, dict):
         raise ValueError("security scan oracle context is malformed")
+    if scan_identity is None:
+        scan_identity = oracle.get("static_pytest_collection")
+    scan_matches = not strict_transaction or (
+        isinstance(scan_identity, dict)
+        and isinstance(before, dict)
+        and {key: value for key, value in before.items() if key != "patterns"}
+        == scan_identity
+    )
+    previous = oracle.get("pytest_collection")
+    prior_state = previous.get("capture_state") if isinstance(previous, dict) else None
+    prior_drift = prior_state == "changed_during_scan"
+    diverged = (
+        prior_drift
+        or isinstance(before, dict)
+        and isinstance(after, dict)
+        and before != after
+        or strict_transaction
+        and isinstance(before, dict)
+        and isinstance(scan_identity, dict)
+        and not scan_matches
+        or final_checked
+        and isinstance(final, dict)
+        and isinstance(after, dict)
+        and final != after
+    )
+    stable = (
+        isinstance(before, dict)
+        and isinstance(after, dict)
+        and before == after
+        and scan_matches
+        and (not strict_transaction or isinstance(scan_identity, dict))
+        and (not final_checked or isinstance(final, dict) and final == after)
+        and not prior_drift
+    )
+    capture_state = (
+        "stable_pre_post"
+        if stable
+        else "changed_during_scan"
+        if diverged
+        else "collection_unresolved"
+    )
+    collection = {
+        **(after if isinstance(after, dict) else {}),
+        "capture_state": capture_state,
+        "capture_observations": {
+            "before": before,
+            **({"scan": scan_identity} if strict_transaction else {}),
+            "post_scan": after,
+        },
+    }
+    if final_checked:
+        collection["capture_observations"]["final"] = final
     oracle["pytest_collection"] = collection
     configs = oracle.get("configuration_sources")
     if not isinstance(configs, list):
         raise ValueError("security scan configuration manifest is malformed")
-    if isinstance(after.get("path"), str):
-        row = {
-            "path": after["path"],
-            "sha256": after.get("sha256"),
-            "bytes": after.get("bytes"),
-        }
-        if row not in configs:
-            configs.append(row)
+    observed = (after, final) if final_checked else (after,)
+    for item in observed:
+        if isinstance(item, dict) and isinstance(item.get("path"), str):
+            row = {
+                "path": item["path"],
+                "sha256": item.get("sha256"),
+                "bytes": item.get("bytes"),
+            }
+            existing_index = next(
+                (
+                    index
+                    for index, existing in enumerate(configs)
+                    if isinstance(existing, dict)
+                    and existing.get("path") == row["path"]
+                ),
+                None,
+            )
+            if existing_index is None:
+                configs.append(row)
+            else:
+                configs[existing_index] = row
             configs.sort(key=lambda item: item.get("path", ""))
     if not stable:
-        prepared["state"] = "INCOMPLETE"
+        coverage = prepared.get("audit_coverage")
+        source_limit_blocked = (
+            oracle.get("mode") == "not_assessed_source_limit"
+            or isinstance(coverage, dict)
+            and coverage.get("measurement_state") == "blocked"
+        )
+        if prepared.get("state") != "BLOCKED" or not source_limit_blocked:
+            prepared["state"] = "INCOMPLETE"
+        reason = (
+            "Pytest collection configuration changed during the scan; rerun before relying on coverage."
+            if diverged
+            else "Pytest collection configuration could not be verified; rerun before relying on coverage."
+        )
         prepared["action_summary"] = (
-            str(prepared.get("action_summary", ""))
-            + " Pytest collection configuration changed during the scan; rerun before relying on coverage."
+            str(prepared.get("action_summary", "")) + " " + reason
         ).strip()
     prepared["source_manifest_sha256"] = _security_scan_hash(
         {"sources": prepared.get("sources", []), "oracle_context": oracle},
         ensure_ascii=False,
     )
-    return _seal_security_scan(prepared)
+    return prepared
 
 
 def _security_scan_receipt_directory(root: Path, *, create: bool) -> Path:
@@ -767,7 +907,7 @@ def _security_scan_pytest_collection(
     sealed = {
         key: value
         for key, value in identity.items()
-        if key not in {"patterns", "capture_state"}
+        if key not in {"patterns", "capture_state", "capture_observations"}
     }
     if sealed != current_identity or patterns != sorted(current_patterns):
         return "PYTEST_COLLECTION_CONFIG_CHANGED"

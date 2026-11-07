@@ -25,9 +25,12 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
     assert "CI verification is still required" in page
     assert "published Code Factory 0.48.1 remains unchanged" not in readme
     assert "published Code Factory 0.48.2 remains unchanged" not in page
-    assert f"Code Factory {__version__}:" in page
+    assert f"<strong>Code Factory {__version__}</strong>" in page
     assert f"Code Factory {__version__} is published" not in page
-    assert "Provider availability is tracked separately" in page
+    assert "Provider availability tracked separately" in page
+    assert "retained all 30 original true positives" in page
+    assert "returned 37 of 38 cases" in page
+    assert "Case 005 timed out" in page
     assert f"https://pypi.org/project/factoryline-code-factory/{__version__}/" in page
     assert f"https://github.com/zrk222/code-factory/releases/tag/v{__version__}" in page
     assert "Code Factory 0.48.1 candidate" not in page

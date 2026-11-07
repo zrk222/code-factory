@@ -5,7 +5,7 @@
     <description><![CDATA[
 <h3>Review AI changes with evidence in view</h3>
 <p>FactoryLine connects code changes, audit findings, tests, and repair candidates to local, source-bound receipts.</p>
-<h4>What's improved in 1.3.3</h4>
+<h4>What's improved in 1.3.4</h4>
 <ul>
 <li>Wait for pending saved-file VFS writes before local commands read disk.</li>
 <li>Start Studio in the background and block launch when preparation fails.</li>
@@ -18,7 +18,7 @@
 <p><a href="https://github.com/zrk222/code-factory">Documentation</a> | <a href="https://github.com/zrk222/code-factory/issues">Report an issue</a></p>
     ]]></description>
     <change-notes><![CDATA[
-<p><strong>1.3.3:</strong> Keep saved workspace files consistent before local commands read disk.</p>
+<p><strong>1.3.4:</strong> Keep saved workspace files consistent before local commands read disk.</p>
 <ul>
 <li>Flush pending VFS writes on supporting IDEs; block launch when preparation fails.</li>
 <li>Start Studio in the background, keep callbacks on EDT, and clean up failed startup.</li>

@@ -8,6 +8,7 @@ import json
 from collections import Counter
 from copy import deepcopy
 from hashlib import sha256
+from types import SimpleNamespace
 from typing import Any
 from pathlib import Path
 
@@ -1304,6 +1305,8 @@ def security_scan_report(
     defect_policy: str = "legacy-v1",
     tenant_read_configuration: dict | None = None,
     producer_source_model=None,
+    collection_observation: dict | None = None,
+    defer_collection_binding: bool = False,
 ) -> dict[str, Any]:
     """Assemble and seal the bounded Python security scan report with coverage, source bindings, findings, and its non-runtime, non-approval limits."""
     audit_coverage = audit._security_scan_coverage(
@@ -1345,6 +1348,51 @@ def security_scan_report(
         },
         "claim_boundary": "Bounded Python AST pattern scan only. Declared tenant argument bindings verify syntactic pass-through, not tenant identity, authorization, or access isolation; this is not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
     }
+    _apply_security_scan_report_metadata(
+        core,
+        security_only,
+        defect_policy,
+        tenant_read_configuration,
+        collection_identity,
+    )
+    core["source_manifest_sha256"] = audit.sha256(
+        json.dumps(
+            {
+                "sources": bindings,
+                "oracle_context": core["oracle_context"],
+                "database_context": core["database_context"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    core["action_summary"] = audit._security_scan_action_summary(state)
+    if collection_observation is not None and not defer_collection_binding:
+        from .mission_control_status import (
+            _bind_security_scan_collection_observation,
+        )
+
+        core = _bind_security_scan_collection_observation(
+            core,
+            collection_observation.get("before"),
+            collection_observation.get("after"),
+            scan_identity=collection_identity,
+            strict_transaction=True,
+        )
+    return audit._seal_security_scan(
+        core,
+        **(
+            {"producer_source_model": producer_source_model}
+            if producer_source_model is not None
+            else {}
+        ),
+    )
+
+
+def _apply_security_scan_report_metadata(
+    core, security_only, defect_policy, tenant_read_configuration, collection_identity
+):
     if security_only is True:
         core["oracle_context"]["test_oracle_assessment"] = "NOT_ASSESSED_SECURITY_ONLY"
     if defect_policy != "legacy-v1":
@@ -1360,27 +1408,6 @@ def security_scan_report(
         if collection_identity.get("collection_state") == "UNKNOWN":
             core["oracle_context"]["pytest_collection"] = deepcopy(collection_identity)
             core["state"] = "INCOMPLETE"
-    core["source_manifest_sha256"] = audit.sha256(
-        json.dumps(
-            {
-                "sources": bindings,
-                "oracle_context": core["oracle_context"],
-                "database_context": core["database_context"],
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
-    ).hexdigest()
-    core["action_summary"] = audit._security_scan_action_summary(state)
-    return audit._seal_security_scan(
-        core,
-        **(
-            {"producer_source_model": producer_source_model}
-            if producer_source_model is not None
-            else {}
-        ),
-    )
 
 
 def _security_scan_context(audit, security_only, evidence, configuration=None):
@@ -1407,6 +1434,108 @@ def _security_scan_context(audit, security_only, evidence, configuration=None):
     return audit._security_only_scan_context(enabled)
 
 
+def _prepare_security_scan_transaction(
+    audit,
+    root,
+    evidence,
+    tenant_read_calls,
+    tenant_read_bindings,
+    tenant_read_scopes,
+    tenant_policy_applies,
+    cache_enabled,
+    analysis_profile,
+    provider_contracts,
+    defect_policy,
+    max_files,
+    tenant_read_configuration,
+    bind_collection_receipt,
+):
+    from .finite_capture import provider_analysis_profile
+    from .primitive_observation_binding import validate_security_defect_policy
+
+    selected_policy = validate_security_defect_policy(defect_policy)
+    if type(bind_collection_receipt) is not bool:
+        raise audit.ReviewAuditError("bind_collection_receipt must be a boolean.")
+    source_limit = audit._validate_source_file_limit(max_files)
+    profile = provider_analysis_profile(analysis_profile, provider_contracts)
+    workspace = Path(root).resolve()
+    effective_security_only = audit._SECURITY_ONLY_SCAN.get() is True
+    receipt_before = None
+    if bind_collection_receipt:
+        from .mission_control_status import _capture_security_scan_collection
+
+        receipt_before = _capture_security_scan_collection(
+            workspace, effective_security_only
+        )
+    if not isinstance(tenant_policy_applies, bool):
+        raise audit.ReviewAuditError("tenant_policy_applies must be a boolean.")
+    tenant_read_calls = audit._tenant_contract_calls(tenant_read_calls)
+    tenant_read_bindings = audit._tenant_contract_bindings(
+        tenant_read_bindings, tenant_read_calls
+    )
+    tenant_read_scopes = audit._validate_tenant_scopes(workspace, tenant_read_scopes)
+    cache_enabled = audit._validate_cache_enabled(cache_enabled)
+    files = audit._security_source_files(workspace)
+    if tenant_policy_applies:
+        tenant_read_scopes[""] = {
+            "calls": (),
+            "bindings": {},
+            "_policy_applies": True,
+        }
+    transaction = SimpleNamespace(
+        selected_policy=selected_policy,
+        source_limit=source_limit,
+        profile=profile,
+        workspace=workspace,
+        receipt_before=receipt_before,
+        effective_security_only=effective_security_only,
+        tenant_read_calls=tenant_read_calls,
+        tenant_read_bindings=tenant_read_bindings,
+        tenant_read_scopes=tenant_read_scopes,
+        cache_enabled=cache_enabled,
+        files=files,
+        blocked=None,
+    )
+    if len(files) > source_limit:
+        blocked = audit._security_source_limit_report(
+            workspace,
+            files,
+            tenant_read_calls,
+            tenant_read_bindings,
+            tenant_policy_applies,
+            evidence,
+            profile,
+            selected_policy,
+            source_limit,
+            tenant_read_configuration,
+        )
+        if bind_collection_receipt:
+            from .mission_control_status import (
+                _bind_security_scan_collection_observation,
+                _capture_security_scan_collection,
+            )
+
+            after = _capture_security_scan_collection(
+                workspace, effective_security_only
+            )
+            blocked = _bind_security_scan_collection_observation(
+                blocked, receipt_before, after
+            )
+            blocked = audit._seal_security_scan(blocked)
+            blocked = _finish_security_scan_collection_receipt(
+                audit,
+                workspace,
+                blocked,
+                receipt_before,
+                after,
+                None,
+                effective_security_only,
+                strict_transaction=False,
+            )
+        transaction.blocked = blocked
+    return transaction
+
+
 def security_scan(
     audit,
     root: Path,
@@ -1426,6 +1555,7 @@ def security_scan(
     max_files: int | None = None,
     security_only: bool = False,
     tenant_read_configuration: dict | None = None,
+    bind_collection_receipt: bool = False,
 ) -> dict[str, Any]:
     """Run a bounded AST scan with content-bound process-local context reuse."""
     evidence = (
@@ -1438,43 +1568,35 @@ def security_scan(
     with _security_scan_context(
         audit, security_only, evidence, tenant_read_configuration
     ):
-        from .finite_capture import provider_analysis_profile
-        from .primitive_observation_binding import validate_security_defect_policy
-
-        selected_policy = validate_security_defect_policy(defect_policy)
-        source_limit = audit._validate_source_file_limit(max_files)
-        profile = provider_analysis_profile(analysis_profile, provider_contracts)
-        workspace = Path(root).resolve()
-        if not isinstance(tenant_policy_applies, bool):
-            raise audit.ReviewAuditError("tenant_policy_applies must be a boolean.")
-        tenant_read_calls = audit._tenant_contract_calls(tenant_read_calls)
-        tenant_read_bindings = audit._tenant_contract_bindings(
-            tenant_read_bindings, tenant_read_calls
+        transaction = _prepare_security_scan_transaction(
+            audit,
+            root,
+            evidence,
+            tenant_read_calls,
+            tenant_read_bindings,
+            tenant_read_scopes,
+            tenant_policy_applies,
+            cache_enabled,
+            analysis_profile,
+            provider_contracts,
+            defect_policy,
+            max_files,
+            tenant_read_configuration,
+            bind_collection_receipt,
         )
-        tenant_read_scopes = audit._validate_tenant_scopes(
-            workspace, tenant_read_scopes
-        )
-        cache_enabled = audit._validate_cache_enabled(cache_enabled)
-        files = audit._security_source_files(workspace)
-        if tenant_policy_applies:
-            tenant_read_scopes[""] = {
-                "calls": (),
-                "bindings": {},
-                "_policy_applies": True,
-            }
-        if len(files) > source_limit:
-            return audit._security_source_limit_report(
-                workspace,
-                files,
-                tenant_read_calls,
-                tenant_read_bindings,
-                tenant_policy_applies,
-                evidence,
-                profile,
-                selected_policy,
-                source_limit,
-                tenant_read_configuration,
-            )
+        if transaction.blocked is not None:
+            return transaction.blocked
+        selected_policy = transaction.selected_policy
+        source_limit = transaction.source_limit
+        profile = transaction.profile
+        workspace = transaction.workspace
+        receipt_before = transaction.receipt_before
+        effective_security_only = transaction.effective_security_only
+        tenant_read_calls = transaction.tenant_read_calls
+        tenant_read_bindings = transaction.tenant_read_bindings
+        tenant_read_scopes = transaction.tenant_read_scopes
+        cache_enabled = transaction.cache_enabled
+        files = transaction.files
         database_context = {}
         primitive_source_bytes = {}
         producer_source_model = {}
@@ -1495,6 +1617,14 @@ def security_scan(
                 collection_identity_out=collection_identity,
             )
         )
+        receipt_observation = None
+        if bind_collection_receipt:
+            from .mission_control_status import _capture_security_scan_collection
+
+            receipt_after = _capture_security_scan_collection(
+                workspace, effective_security_only
+            )
+            receipt_observation = {"before": receipt_before, "after": receipt_after}
         result = audit._security_scan_report(
             files,
             findings,
@@ -1520,8 +1650,10 @@ def security_scan(
                 else tenant_read_configuration
             ),
             producer_source_model=producer_source_model.get("source"),
+            collection_observation=receipt_observation,
+            defer_collection_binding=runtime_requested,
         )
-        return _finish_native_security_scan(
+        result = _finish_native_security_scan(
             audit,
             workspace,
             result,
@@ -1532,6 +1664,59 @@ def security_scan(
             producer_source_model.get("source"),
             tenant_read_configuration,
         )
+        return _finish_security_scan_collection_receipt(
+            audit,
+            workspace,
+            result,
+            receipt_before,
+            receipt_observation.get("after") if receipt_observation else None,
+            collection_identity,
+            effective_security_only,
+            producer_source_model.get("source"),
+            enabled=bind_collection_receipt,
+        )
+
+
+def _finish_security_scan_collection_receipt(
+    audit,
+    workspace,
+    report,
+    before,
+    after,
+    scan_identity,
+    security_only,
+    producer_source_model=None,
+    strict_transaction=True,
+    enabled=True,
+):
+    if not enabled:
+        return report
+    from .mission_control_status import (
+        _bind_security_scan_collection_observation,
+        _capture_security_scan_collection,
+    )
+
+    final = _capture_security_scan_collection(workspace, security_only)
+    current = report.get("oracle_context", {}).get("pytest_collection", {})
+    if (
+        isinstance(final, dict)
+        and final == after
+        and isinstance(current, dict)
+        and isinstance(current.get("capture_observations"), dict)
+    ):
+        return report
+    prepared = _bind_security_scan_collection_observation(
+        report,
+        before,
+        after,
+        scan_identity=scan_identity,
+        final=final,
+        final_checked=True,
+        strict_transaction=strict_transaction,
+    )
+    return audit._seal_security_scan(
+        prepared, producer_source_model=producer_source_model
+    )
 
 
 def _finish_native_security_scan(

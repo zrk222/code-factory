@@ -10481,7 +10481,9 @@ def test_signed_completion_only_cli_receipt_does_not_clear_unknown(
             "--json",
         ]
     )
-    result = json.loads(capsys.readouterr().out)
+    captured_output = capsys.readouterr()
+    assert captured_output.out, captured_output.err
+    result = json.loads(captured_output.out)
     # Real exception failure proves invocation, not a matching output assertion.
     assert code == (1 if command_prefix[0] == "audit" else 0)
     if command_prefix[0] == "scan":
@@ -15662,7 +15664,7 @@ def test_security_cli_assembles_policy_and_metadata_before_sealing(
     finally:
         sys.setprofile(prior)
     report = json.loads(capsys.readouterr().out)
-    assert len(seals) == 2
+    assert len(seals) == 1
     expected_state = (
         "REVIEW_REQUIRED"
         if policy == "source-role-v3"
