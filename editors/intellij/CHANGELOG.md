@@ -1,6 +1,13 @@
 # FactoryLine for IntelliJ Changelog
 
-## 1.3.3 - 2026-11-01 (candidate; upload pending)
+## 1.3.4 - 2026-11-06 (candidate; publication gated)
+
+- Prepare a fresh Marketplace archive with the saved-file VFS and background
+  Studio behavior from 1.3.3; this version bump does not claim a code change.
+- Require full ZIP integrity and manifest checks before a candidate can pass
+  release preflight. Publication remains pending provider read-back.
+
+## 1.3.3 - 2026-11-01 (listed; archive extraction problem reported)
 
 - Flush pending saved-file VFS writes before local commands; block launch when
   preparation fails on modern IDEs.

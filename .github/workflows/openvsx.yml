@@ -22,7 +22,7 @@ on:
         default: ""
         type: string
       cadence_exception_version:
-        description: "Type 1.2.0 or 1.2.1 to opt in to the one-time exception for that exact candidate"
+        description: "Type 1.2.0, 1.2.1, or 1.3.3 to opt in to the one-time exception for that exact candidate"
         required: false
         default: ""
         type: string
@@ -151,11 +151,14 @@ jobs:
             elif [[ "$EXCEPTION_VERSION" == "1.2.1" ]]; then
               test "$RELEASE_REF" = vscode-v1.2.1
               test "$(node -p "require('./package.json').version")" = 1.2.1
+            elif [[ "$EXCEPTION_VERSION" == "1.3.3" ]]; then
+              test "$RELEASE_REF" = vscode-v1.3.3
+              test "$(node -p "require('./package.json').version")" = 1.3.3
             elif [[ -z "$EXCEPTION_VERSION" ]]; then
               test "$RELEASE_REF" = vscode-v1.1.4+build.1 || { echo "The one-time exception is restricted to vscode-v1.1.4+build.1." >&2; exit 1; }
               test "$(node -p "require('./package.json').version")" = 1.1.4
             else
-              echo "Only versions 1.2.0 and 1.2.1 may be explicitly opted in." >&2
+              echo "Only versions 1.2.0, 1.2.1, and 1.3.3 may be explicitly opted in." >&2
               exit 1
             fi
             test "${#EXCEPTION_REASON}" -ge 12 && test "${#EXCEPTION_REASON}" -le 500 || { echo "The exception reason must contain 12 to 500 characters." >&2; exit 1; }
@@ -239,7 +242,7 @@ jobs:
           from pathlib import Path
           now = datetime.now(timezone.utc)
           version_opt_in = os.environ.get("EXCEPTION_VERSION", "")
-          current = version_opt_in in {"1.2.0", "1.2.1"}
+          current = version_opt_in in {"1.2.0", "1.2.1", "1.3.3"}
           version = version_opt_in if current else "1.1.4"
           payload = {
               "schema": "factory.release-cadence-exception.v1",
@@ -260,6 +263,13 @@ jobs:
           }
           if current:
               payload["one_time_version_opt_in"] = version
+          if version == "1.3.3":
+              payload["owner_request_record"] = {
+                  "request": "published now",
+                  "recorded_at": now.isoformat().replace("+00:00", "Z"),
+                  "scope": ["core 0.49.6", "VS Code/Open VSX 1.3.3", "JetBrains 1.3.4"],
+                  "candidate_sha": payload["source_commit"],
+              }
           Path(".factory/release-cadence-exception.json").write_text(
               json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
           )

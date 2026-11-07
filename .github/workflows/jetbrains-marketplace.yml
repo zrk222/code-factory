@@ -21,7 +21,7 @@ on:
         default: ""
         type: string
       cadence_exception_version:
-        description: "Type 1.2.0 to opt in to the one-time exception for this exact candidate"
+        description: "Type 1.2.0 or 1.3.4 to opt in to the one-time exception for this exact candidate"
         required: false
         default: ""
         type: string
@@ -195,10 +195,13 @@ jobs:
             if [[ "$EXCEPTION_VERSION" == "1.2.0" ]]; then
               test "$RELEASE_REF" = jetbrains-v1.2.0
               grep -Fx 'version = "1.2.0"' editors/intellij/build.gradle.kts
+            elif [[ "$EXCEPTION_VERSION" == "1.3.4" ]]; then
+              test "$RELEASE_REF" = jetbrains-v1.3.4
+              grep -Fx 'version = "1.3.4"' editors/intellij/build.gradle.kts
             elif [[ -z "$EXCEPTION_VERSION" ]]; then
               test "$RELEASE_REF" = jetbrains-v1.1.4
             else
-              echo "Only version 1.2.0 may be explicitly opted in." >&2
+              echo "Only versions 1.2.0 and 1.3.4 may be explicitly opted in." >&2
               exit 1
             fi
             python - <<'PY'
@@ -210,9 +213,9 @@ jobs:
           contract = json.loads(Path(os.environ["RELEASE_CONTRACT_PATH"]).read_text())
           assert contract["approved_by"] == os.environ["GITHUB_ACTOR"]
           now = datetime.now(timezone.utc)
-          current = os.environ.get("EXCEPTION_VERSION", "") == "1.2.0"
-          version = "1.2.0" if current else "1.1.4"
-          tag = "jetbrains-v1.2.0" if current else "jetbrains-v1.1.4"
+          current = os.environ.get("EXCEPTION_VERSION", "") in {"1.2.0", "1.3.4"}
+          version = os.environ.get("EXCEPTION_VERSION", "") if current else "1.1.4"
+          tag = f"jetbrains-v{version}" if current else "jetbrains-v1.1.4"
           value = {
               "schema": "factory.release-cadence-exception.v1", "channel": "jetbrains", "version": version,
               "candidate_tag": tag, "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -223,6 +226,13 @@ jobs:
           if current:
               value["monthly_cap_exception"] = True
               value["one_time_version_opt_in"] = version
+          if version == "1.3.4":
+              value["owner_request_record"] = {
+                  "request": "published now",
+                  "recorded_at": now.isoformat(),
+                  "scope": ["core 0.49.6", "VS Code/Open VSX 1.3.3", "JetBrains 1.3.4"],
+                  "candidate_sha": value["source_commit"],
+              }
           Path(".factory/release-cadence-exception.json").write_text(json.dumps(value))
           PY
             exception_args=(--cadence-exception .factory/release-cadence-exception.json)

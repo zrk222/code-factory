@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.49.6 — 2026-11-06 (candidate; publication gated)
+
+- Add guarded pre-PR evaluation, source-bound incident-to-regression packets,
+  and bounded repair continuation integrity checks. These paths expose
+  reviewable evidence and do not execute, approve or publish fixes.
+- Bind collection receipts before the native scan seal; detected collection
+  drift keeps the result incomplete and requires a fresh seal.
+- Prepare the core, VS Code 1.3.3 and JetBrains 1.3.4 release metadata. All
+  artifacts remain candidates until the final commit, protected checks and
+  publisher read-backs.
+- Keep the one-time cadence request limited to these exact version candidates;
+  normal CI, signed evidence, security review and per-channel publication gates
+  remain required.
+
 ## 0.49.5 — 2026-10-31
 
 - Guard namespace resolution against non-import bindings and trace credential

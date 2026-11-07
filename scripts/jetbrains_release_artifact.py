@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sys
 import xml.etree.ElementTree as ET
+import zlib
 from zipfile import BadZipFile, ZipFile
 
 
@@ -32,20 +33,45 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _verified_archive_entries(archive: ZipFile, label: str) -> list[str]:
+    """Require unique paths and verify every member's CRC before inspection."""
+    names = [entry.filename for entry in archive.infolist()]
+    if len(names) != len(set(names)):
+        raise ArtifactError(f"{label} contains duplicate archive paths.")
+    try:
+        corrupted = archive.testzip()
+    except (BadZipFile, OSError, RuntimeError, zlib.error) as exc:
+        raise ArtifactError(f"{label} failed its full ZIP integrity read: {exc}") from exc
+    if corrupted is not None:
+        raise ArtifactError(f"{label} has a CRC failure in {corrupted!r}.")
+    return names
+
+
 def _plugin_metadata(archive: Path) -> dict[str, str]:
     if not archive.is_file():
         raise ArtifactError(f"Marketplace archive does not exist: {archive}")
     try:
         with ZipFile(archive) as distribution:
+            distribution_names = _verified_archive_entries(
+                distribution, "Marketplace archive"
+            )
             jars = sorted(
                 name
-                for name in distribution.namelist()
+                for name in distribution_names
                 if "/lib/" in name and name.endswith(".jar")
             )
+            plugin = None
             for jar_name in jars:
                 with ZipFile(io.BytesIO(distribution.read(jar_name))) as plugin_jar:
-                    if "META-INF/plugin.xml" not in plugin_jar.namelist():
+                    nested_names = _verified_archive_entries(
+                        plugin_jar, f"plugin JAR {jar_name!r}"
+                    )
+                    if "META-INF/plugin.xml" not in nested_names:
                         continue
+                    if plugin is not None:
+                        raise ArtifactError(
+                            "Marketplace archive contains more than one plugin.xml manifest."
+                        )
                     root = ET.fromstring(plugin_jar.read("META-INF/plugin.xml"))
                     plugin_id = (root.findtext("id") or "").strip()
                     version = (root.findtext("version") or "").strip()
@@ -56,8 +82,10 @@ def _plugin_metadata(archive: Path) -> dict[str, str]:
                         )
                     if not version or not name:
                         raise ArtifactError("plugin.xml must contain non-empty name and version values.")
-                    return {"id": plugin_id, "name": name, "version": version}
-    except (BadZipFile, ET.ParseError, KeyError) as exc:
+                    plugin = {"id": plugin_id, "name": name, "version": version}
+            if plugin is not None:
+                return plugin
+    except (BadZipFile, ET.ParseError, KeyError, OSError, RuntimeError, zlib.error) as exc:
         raise ArtifactError(f"Invalid JetBrains plugin archive: {exc}") from exc
     raise ArtifactError("No plugin JAR containing META-INF/plugin.xml was found.")
 

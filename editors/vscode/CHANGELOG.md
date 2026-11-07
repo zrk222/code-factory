@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.3 - 2026-11-06 (candidate; publication gated)
+
+- Align release metadata with Code Factory core 0.49.6 while preserving local
+  evidence, source navigation and human-owned execution and release decisions.
+- Track provider availability separately from package version metadata.
+
 ## 1.3.2 - 2026-10-31
 
 - Align release metadata with Code Factory core 0.49.5 while preserving local
