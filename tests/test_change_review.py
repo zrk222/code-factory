@@ -44,6 +44,188 @@ from factoryline.studio import (
 )
 
 
+def _pre_pr_fixture(root, monkeypatch):
+    import sys
+    import factoryline.incremental_scheduler as review
+    import factoryline.verification as verification
+
+    _scope_git(root, "init")
+    _scope_git(root, "config", "user.email", "factoryline@example.test")
+    _scope_git(root, "config", "user.name", "FactoryLine Test")
+    (root / ".gitignore").write_text(".factory/\n")
+    (root / "app.py").write_text("VALUE = 1\n")
+    (root / "check.py").write_text("from app import VALUE\nassert VALUE == 2\n")
+    _scope_commit(root, "base")
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=root, text=True
+    ).strip()
+    (root / "app.py").write_text("VALUE = 2\n")
+    check = {
+        "id": "unit",
+        "paths": ["app.py", "check.py"],
+        "argv": [sys.executable, "-B", "check.py"],
+        "expected_exit": 0,
+        "timeout_seconds": 10,
+        "max_output_bytes": 4096,
+    }
+    manifest = {
+        "schema": "factory.pre-pr.v1",
+        "feature": "demo",
+        "base": head,
+        "head_sha": head,
+        "schedule": {
+            "schema": "factory.incremental-plan.v1",
+            "plan_id": "demo",
+            "assurance_level": "supervised_local",
+            "changed_paths": ["app.py"],
+            "dependency_closure": {"unit": ["app.py", "check.py"]},
+            "gates": [
+                {"id": "unit", "depends_on": [], "side_effects": False, "proof": None}
+            ],
+        },
+        "live": {
+            "schema": "factory.live-feedback.v1",
+            "live_id": "demo",
+            "contract_sha256": "a" * 64,
+            "changed_paths": ["app.py"],
+            "checks": [check],
+        },
+        "oracle": {
+            "contract": ".factory/contract.json",
+            "challenge": ".factory/challenge.json",
+            "result": ".factory/result.json",
+        },
+    }
+    monkeypatch.setattr(review, "_pre_pr_oracle", lambda *args: {"ok": True})
+
+    def verified(root, feature, *, strict_release):
+        assert strict_release is True
+        return {
+            "shippable": True,
+            "release_contract": {"oracle_contract_sha256": "a" * 64},
+        }
+
+    monkeypatch.setattr(verification, "verify_feature", verified)
+    return manifest
+
+
+@pytest.mark.parametrize("execute,expected", [(False, "BLOCKED"), (True, "PASS")])
+def test_pre_pr_runs_real_replay_only_when_requested(
+    tmp_path, monkeypatch, execute, expected
+):
+    from factoryline.incremental_scheduler import run_pre_pr
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    result = run_pre_pr(tmp_path, manifest, execute=execute)
+    assert result["state"] == expected
+    row = result["checks"][0]
+    assert row["state"] == ("PASS" if execute else "READY")
+    assert row["live_receipt"]["mode"] == ("execute" if execute else "plan")
+    assert result["source_stable"] is True
+    assert result["release_approval"] is False
+    assert result["authority"] == "none"
+    assert (tmp_path / "app.py").read_text() == "VALUE = 2\n"
+
+
+@pytest.mark.parametrize("mutation", ["scope", "head", "missing", "duplicate"])
+def test_pre_pr_rejects_mismatched_contract_before_execution(
+    tmp_path, monkeypatch, mutation
+):
+    from factoryline.incremental_scheduler import run_pre_pr
+    import factoryline.live_feedback as live
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    if mutation == "scope":
+        manifest["schedule"]["changed_paths"] = ["check.py"]
+    elif mutation == "head":
+        manifest["head_sha"] = "0" * 40
+    elif mutation == "missing":
+        manifest["live"]["checks"][0]["id"] = "other"
+    else:
+        manifest["live"]["checks"].append(dict(manifest["live"]["checks"][0]))
+    monkeypatch.setattr(
+        live, "run_live_feedback", lambda *a, **k: pytest.fail("unexpected execution")
+    )
+    with pytest.raises(ValueError):
+        run_pre_pr(tmp_path, manifest, execute=True)
+
+
+def test_pre_pr_failed_dependency_blocks_successor(tmp_path, monkeypatch):
+    from factoryline.incremental_scheduler import run_pre_pr
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    manifest["live"]["checks"][0]["expected_exit"] = 1
+    second = {**manifest["live"]["checks"][0], "id": "dependent", "expected_exit": 0}
+    manifest["live"]["checks"].append(second)
+    manifest["schedule"]["gates"].append(
+        {
+            "id": "dependent",
+            "depends_on": ["unit"],
+            "side_effects": False,
+            "proof": None,
+        }
+    )
+    manifest["schedule"]["dependency_closure"]["dependent"] = ["app.py"]
+    result = run_pre_pr(tmp_path, manifest, execute=True)
+    assert result["state"] == "BLOCKED"
+    assert [row["state"] for row in result["checks"]] == ["FAIL", "BLOCKED"]
+    assert result["checks"][1]["reason"] == "DEPENDENCY_FAILED"
+
+
+def test_pre_pr_detects_source_drift_after_live_check(tmp_path, monkeypatch):
+    from factoryline.incremental_scheduler import run_pre_pr
+    import factoryline.live_feedback as live
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    original = live.run_live_feedback
+
+    def drift(*args, **kwargs):
+        receipt = original(*args, **kwargs)
+        (tmp_path / "app.py").write_text("VALUE = 3\n")
+        return receipt
+
+    monkeypatch.setattr(live, "run_live_feedback", drift)
+    result = run_pre_pr(tmp_path, manifest, execute=True)
+    assert result["checks"][0]["state"] == "PASS"
+    assert result["state"] == "BLOCKED"
+    assert result["source_stable"] is False
+
+
+def test_pre_pr_rejects_unrelated_feature_contract(tmp_path, monkeypatch):
+    from factoryline.incremental_scheduler import run_pre_pr
+    import factoryline.verification as verification
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        verification,
+        "verify_feature",
+        lambda *a, **k: {
+            "shippable": True,
+            "release_contract": {"oracle_contract_sha256": "b" * 64},
+        },
+    )
+    assert run_pre_pr(tmp_path, manifest, execute=True)["state"] == "BLOCKED"
+
+
+def test_pre_pr_cli_missing_oracle_does_not_execute(tmp_path, monkeypatch, capsys):
+    import factoryline.incremental_scheduler as review
+
+    verifier = review._pre_pr_oracle
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(review, "_pre_pr_oracle", verifier)
+    directory = tmp_path / ".factory"
+    directory.mkdir()
+    path = directory / "pre-pr.json"
+    path.write_text(json.dumps(manifest))
+    code = main(
+        ["change", "pre-pr", str(path), "--root", str(tmp_path), "--execute", "--json"]
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert result["state"] == "BLOCKED"
+    assert result["release_approval"] is False
+
+
 @pytest.mark.parametrize(
     "path",
     [
@@ -1401,3 +1583,208 @@ def test_generated_output_guard_reads_exact_candidate_objects(
     assert commands == [
         ["git", "ls-tree", "-r", "--name-only", "a" * 40, "--", ".factory"]
     ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "none",
+        "command",
+        "environment",
+        "expected_exit",
+        "timeout",
+        "output_limit",
+        "contract",
+        "assurance",
+        "closure",
+        "receipt_removed",
+        "receipt_modified",
+        "source_modified",
+        "output_modified",
+    ],
+)
+def test_pre_pr_reuse_binds_live_obligation_and_rechecks_real_proof(tmp_path, mutation):
+    from factoryline.incremental_scheduler import (
+        _pre_pr_bind_reuse,
+        _pre_pr_reuse_current,
+    )
+    from factoryline.change_review import _sha
+    from factoryline.proof_reuse import evaluate_proofs
+
+    source = tmp_path / "source.py"
+    source.write_text("VALUE = 1\n")
+    output = tmp_path / "result.json"
+    output.write_text('{"passed": true}\n')
+    live = {"contract_sha256": "a" * 64, "checks": []}
+    schedule = {"assurance_level": "supervised_local", "changed_paths": [], "gates": []}
+    plan = {"items": []}
+    saved = []
+    # Three real receipts exercise transitive invalidation, not only direct deps.
+    for index in range(3):
+        identifier = f"check-{index}"
+        check = {
+            "id": identifier,
+            "paths": ["source.py"],
+            "argv": ["python", "-m", "pytest", "-q"],
+            "env": {},
+            "expected_exit": 0,
+            "timeout_seconds": 10,
+            "max_output_bytes": 4096,
+        }
+        proof = {
+            "name": identifier,
+            "command": check["argv"].copy(),
+            "environment": {},
+            "inputs": ["source.py"],
+            "outputs": ["result.json"],
+            "read_only": True,
+            "safe_to_skip": False,
+            "toolchain": {
+                "pre_pr_check_sha256": _sha(
+                    {
+                        "check": check,
+                        "contract_sha256": live["contract_sha256"],
+                        "assurance_level": schedule["assurance_level"],
+                    }
+                )
+            },
+        }
+        saved.append(record_proof(tmp_path, proof, elapsed_ms=1))
+        actual = evaluate_proofs(
+            tmp_path, {"schema": "factory.proof-request.v1", "gates": [proof]}
+        )["items"][0]
+        assert actual["disposition"] == "REUSE"
+        live["checks"].append(check)
+        schedule["gates"].append({"id": identifier, "proof": proof})
+        plan["items"].append(
+            {
+                "id": identifier,
+                "disposition": "REUSE",
+                "reason": actual["reason"],
+                "depends_on": [f"check-{index - 1}"] if index else [],
+                "dependency_paths": ["source.py"],
+                "proof": {key: actual[key] for key in ("proof_key", "receipt_sha256")},
+            }
+        )
+    first = live["checks"][0]
+    replacements = {
+        "command": ("argv", ["python", "security.py"]),
+        "environment": ("env", {"MODE": "strict"}),
+        "expected_exit": ("expected_exit", 1),
+        "timeout": ("timeout_seconds", 20),
+        "output_limit": ("max_output_bytes", 8192),
+    }
+    if mutation in replacements:
+        key, value = replacements[mutation]
+        first[key] = value
+    elif mutation == "contract":
+        live["contract_sha256"] = "b" * 64
+    elif mutation == "assurance":
+        schedule["assurance_level"] = "isolated_worker"
+    elif mutation == "closure":
+        plan["items"][0]["dependency_paths"].append("uncovered.py")
+    _pre_pr_bind_reuse(plan, schedule, live)
+    mismatch = mutation in {*replacements, "contract", "assurance", "closure"}
+    if mismatch:
+        assert [item["disposition"] for item in plan["items"]] == ["RUN"] * 3
+        assert plan["counts"]["RUN"] == 3
+        assert plan["items"][0]["reason"] == "CHECK_PROOF_MISMATCH"
+    else:
+        assert plan["counts"]["REUSE"] == 3
+        assert _pre_pr_reuse_current(tmp_path, plan["items"][0], schedule)
+        receipt_path = Path(saved[0]["receipt"])
+        if mutation == "receipt_removed":
+            receipt_path.unlink()
+        elif mutation == "receipt_modified":
+            payload = json.loads(receipt_path.read_text())
+            payload["status"] = "red"
+            receipt_path.write_text(json.dumps(payload))
+        elif mutation == "source_modified":
+            source.write_text("VALUE = 2\n")
+        elif mutation == "output_modified":
+            output.write_text('{"passed": false}\n')
+        assert _pre_pr_reuse_current(tmp_path, plan["items"][0], schedule) is (
+            mutation == "none"
+        )
+    assert plan["plan_sha256"] == _sha(
+        {key: value for key, value in plan.items() if key != "plan_sha256"}
+    )
+
+
+@pytest.mark.parametrize("failure", ["git_exit", "git_timeout"])
+def test_pre_pr_final_git_failure_is_structured(tmp_path, monkeypatch, capsys, failure):
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    path = tmp_path / ".factory" / "pre-pr.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(manifest))
+
+    def unavailable(*args, **kwargs):
+        if failure == "git_exit":
+            raise RepositoryHistoryError("Git query failed")
+        raise subprocess.TimeoutExpired(args[0], 15)
+
+    monkeypatch.setattr("factoryline.migration.git_lines", unavailable)
+    code = main(["change", "pre-pr", str(path), "--root", str(tmp_path), "--json"])
+    result = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert result["state"] == "BLOCKED"
+    assert result["authority"] == "none"
+
+
+def test_pre_pr_final_empty_repository_is_structured(tmp_path, monkeypatch, capsys):
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    path = tmp_path / ".factory" / "pre-pr.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(manifest))
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    _scope_git(empty, "init")
+    code = main(["change", "pre-pr", str(path), "--root", str(empty), "--json"])
+    result = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert result["state"] == "BLOCKED"
+    assert result["release_approval"] is False
+
+
+@pytest.mark.parametrize("mutation", ["none", "removed", "policy_changed"])
+def test_pre_pr_final_revalidates_release_contract(tmp_path, monkeypatch, mutation):
+    import factoryline.change_review as review
+    import factoryline.verification as verification
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    path = tmp_path / ".factory" / "release-contracts" / "demo.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("original policy")
+    observed = []
+
+    def verified(root, feature, *, strict_release):
+        assert strict_release is True
+        policy = path.read_text() if path.exists() else None
+        observed.append(policy)
+        return {
+            "shippable": policy is not None,
+            "release_contract": {
+                "oracle_contract_sha256": "a" * 64,
+                "policy_digest": policy,
+            },
+        }
+
+    original_review = review.review_change
+
+    def reviewed(*args, **kwargs):
+        result = original_review(*args, **kwargs)
+        if mutation == "removed":
+            path.unlink()
+        elif mutation == "policy_changed":
+            path.write_text("replacement policy")
+        return result
+
+    monkeypatch.setattr(verification, "verify_feature", verified)
+    monkeypatch.setattr(review, "review_change", reviewed)
+    from factoryline.incremental_scheduler import run_pre_pr
+
+    result = run_pre_pr(tmp_path, manifest, execute=True)
+    assert result["checks"][0]["state"] == "PASS"
+    assert result["state"] == ("PASS" if mutation == "none" else "BLOCKED")
+    assert len(observed) == 2
+    assert observed[0] == "original policy"

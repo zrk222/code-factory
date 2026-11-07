@@ -188,6 +188,15 @@ def add_parser(sub: Any) -> None:
     )
     fix.add_argument("--out")
     fix.add_argument("--json", action="store_true")
+    fix.add_argument("--prior-attempt", action="append", default=[])
+    fix.add_argument("--max-rounds", type=int, default=3)
+    incident = senior_sub.add_parser(
+        "incident", help="prepare an exposed incident regression packet"
+    )
+    incident.add_argument("manifest")
+    incident.add_argument("--root", default=".")
+    incident.add_argument("--out")
+    incident.add_argument("--json", action="store_true")
 
 
 def _add_execution_parsers(sub: Any) -> None:
@@ -648,13 +657,33 @@ def _senior_live(args: Any) -> tuple[dict[str, Any], int]:
     return _senior_action(result, summary, 1 if failed else 0)
 
 
+def _prior_fix_refs(root: Path, paths: list[str]) -> list[dict[str, str]]:
+    from .fix_workflow import _repair_history_path, FixWorkflowError
+    import hashlib
+
+    refs = []
+    for name in paths:
+        path = _repair_history_path(root, {"path": name, "sha256": ""})
+        with path.open("rb") as stream:
+            raw = stream.read(1_048_577)
+        if len(raw) > 1_048_576:
+            raise FixWorkflowError("E_REPAIR_HISTORY", "history receipt is oversized")
+        refs.append({"path": name, "sha256": hashlib.sha256(raw).hexdigest()})
+    return refs
+
+
 def _senior_fix(args: Any) -> tuple[dict[str, Any], int]:
     from .fix_workflow import load_fix_json, run_fix_workflow
+
+    root = Path(args.root).resolve()
+    prior = _prior_fix_refs(root, args.prior_attempt)
 
     result = run_fix_workflow(
         Path(args.root).resolve(),
         load_fix_json(Path(args.manifest)),
         execute=args.execute,
+        prior_attempts=prior,
+        max_rounds=args.max_rounds,
         out=_optional_output(args),
     )
     summary = (
@@ -662,6 +691,8 @@ def _senior_fix(args: Any) -> tuple[dict[str, Any], int]:
         if args.execute
         else "Validated the reproduce-and-repair workflow; no candidate command ran."
     )
+    if result["state"] in {"STEP_BACK", "NO_PROGRESS"}:
+        summary = f"Repair stopped: {result['state']}; no candidate command ran."
     complete_branch_comparison = (
         result.get("state") == "COMPARED"
         and bool(result.get("branches"))
@@ -713,6 +744,23 @@ def _senior_brief(args: Any) -> tuple[dict[str, Any], int]:
     )
 
 
+def _senior_incident(args: Any) -> tuple[dict[str, Any], int]:
+    from .senior_assurance import build_incident_regression_packet, load_assurance_json
+
+    result = build_incident_regression_packet(
+        Path(args.root).resolve(), load_assurance_json(Path(args.manifest))
+    )
+    if args.out:
+        destination = Path(args.out)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            json.dumps(result, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    return _senior_action(
+        result, "Prepared an exposed regression; nothing executed.", 0
+    )
+
+
 def _senior_command(args: Any) -> tuple[dict[str, Any], int]:
     handlers = {
         "attest": _senior_attest,
@@ -724,6 +772,7 @@ def _senior_command(args: Any) -> tuple[dict[str, Any], int]:
         "repair": _senior_repair,
         "live": _senior_live,
         "fix": _senior_fix,
+        "incident": _senior_incident,
         "reuse": _senior_reuse,
         "brief": _senior_brief,
     }

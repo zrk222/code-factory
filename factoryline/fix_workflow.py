@@ -16,12 +16,13 @@ from typing import Any
 from .runtime_audit_common import canonical_bytes
 from .senior_assurance import SeniorAssuranceError, compare_repair, failure_brief
 
-
 SCHEMA = "factory.fix-workflow.v1"
 INTERVENTION_SCHEMA = "factory.behavioral-intervention-summary.v1"
 BRANCH_COMPARISON_SCHEMA = "factory.repair-branch-comparison.v1"
 BRANCH_COMPARISON_RECEIPT_SCHEMA = "factory.repair-branch-comparison-receipt.v1"
 MAX_REPAIR_BRANCHES = 8
+CONTINUITY_SCHEMA = "factory.repair-continuity.v1"
+MAX_REPAIR_ROUNDS = 32
 
 
 class FixWorkflowError(ValueError):
@@ -35,6 +36,199 @@ class FixWorkflowError(ValueError):
 
 def _sha(value: object) -> str:
     return sha256(canonical_bytes(value)).hexdigest()
+
+
+def _repair_binding(manifest):
+    return _sha(
+        {
+            key: manifest[key]
+            for key in ("contract_sha256", "buggy", "negative_controls")
+        }
+    )
+
+
+def _repair_candidate(manifest):
+    return _sha(
+        {
+            key: value
+            for key, value in manifest["fixed"].items()
+            if key not in {"replay_id", "source_root"}
+        }
+    )
+
+
+def _repair_history_path(root, reference):
+    if not isinstance(reference, dict) or set(reference) != {"path", "sha256"}:
+        raise FixWorkflowError(
+            "E_REPAIR_HISTORY", "history requires exact path/hash references"
+        )
+    name = reference["path"]
+    if not isinstance(name, str) or Path(name).is_absolute():
+        raise FixWorkflowError(
+            "E_REPAIR_HISTORY", "history paths must be workspace relative"
+        )
+    path = root / name
+    if path.is_symlink() or not path.resolve().is_relative_to(root):
+        raise FixWorkflowError("E_REPAIR_HISTORY", "history path escapes workspace")
+    return path
+
+
+def _read_prior_attempt(root, reference):
+    path = _repair_history_path(root, reference)
+    try:
+        max_bytes = 1_048_576
+        with path.open("rb") as stream:
+            raw = stream.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise ValueError("history receipt is oversized")
+        receipt = json.loads(raw)
+        if sha256(raw).hexdigest() != reference["sha256"]:
+            raise ValueError("history file hash mismatch")
+        core = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+        if receipt.get("schema") != SCHEMA or receipt.get("receipt_sha256") != _sha(
+            core
+        ):
+            raise ValueError("history receipt digest mismatch")
+        return receipt
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        raise FixWorkflowError("E_REPAIR_HISTORY", str(exc)) from exc
+
+
+def _verify_prior_continuity(receipt, binding, prefix, rounds, max_rounds):
+    try:
+        history = receipt.get("continuity", {})
+        manifest = history.get("repair_manifest", {})
+        expected = {
+            "schema": CONTINUITY_SCHEMA,
+            "binding_sha256": binding,
+            "prior_attempts": prefix,
+            "prior_attempts_sha256": _sha(prefix),
+            "candidate_sha256": _repair_candidate(manifest),
+            "executed_rounds_before": rounds,
+            "max_rounds": max_rounds,
+            "executed_this_round": receipt.get("mode") == "execute",
+        }
+        valid = (
+            {key: history.get(key) for key in expected} == expected
+            and binding == _repair_binding(manifest)
+            and receipt["contract_sha256"] == manifest["contract_sha256"]
+        )
+        if receipt.get("mode") in {"plan", "execute"}:
+            valid = valid and receipt["behavioral_intervention"][
+                "input_manifest_sha256"
+            ] == _sha(manifest)
+        valid = valid and receipt.get("state") in {
+            "plan": {"PLAN_ONLY"},
+            "execute": {"PASS", "FAIL"},
+            "stopped": {"STEP_BACK", "NO_PROGRESS"},
+        }.get(receipt.get("mode"), set())
+        if not valid:
+            raise ValueError("history binding or ordering mismatch")
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise FixWorkflowError("E_REPAIR_HISTORY", str(exc)) from exc
+
+
+def _repair_history(root, manifest, prior_attempts, max_rounds):
+    if type(max_rounds) is not int or not 1 <= max_rounds <= MAX_REPAIR_ROUNDS:
+        raise FixWorkflowError(
+            "E_REPAIR_BUDGET", "max_rounds must be an integer from 1 to 32"
+        )
+    references = [] if prior_attempts is None else prior_attempts
+    if not isinstance(references, list) or len(references) > MAX_REPAIR_ROUNDS:
+        raise FixWorkflowError(
+            "E_REPAIR_HISTORY", "history must be a bounded ordered list"
+        )
+    binding, rounds, seen, receipts = _repair_binding(manifest), 0, set(), []
+    for index, reference in enumerate(references):
+        receipt = _read_prior_attempt(root, reference)
+        digest = receipt["receipt_sha256"]
+        if digest in seen:
+            raise FixWorkflowError("E_REPAIR_HISTORY", "duplicate prior attempt")
+        seen.add(digest)
+        _verify_prior_continuity(
+            receipt, binding, references[:index], rounds, max_rounds
+        )
+        rounds += receipt.get("mode") == "execute"
+        receipts.append(receipt)
+    return {
+        "schema": CONTINUITY_SCHEMA,
+        "repair_manifest": manifest,
+        "binding_sha256": binding,
+        "candidate_sha256": _repair_candidate(manifest),
+        "prior_attempts": references,
+        "prior_attempts_sha256": _sha(references),
+        "executed_rounds_before": rounds,
+        "max_rounds": max_rounds,
+    }, receipts
+
+
+def _continuity_stop(history, receipts):
+    if history["executed_rounds_before"] >= history["max_rounds"]:
+        return "STEP_BACK"
+    for receipt in receipts:
+        if (
+            receipt.get("mode") == "execute"
+            and receipt.get("state") == "FAIL"
+            and receipt["continuity"]["candidate_sha256"] == history["candidate_sha256"]
+        ):
+            return "NO_PROGRESS"
+    return None
+
+
+def _continuity_findings(comparison, manifest, history, receipts):
+    identities = set()
+    controls = comparison.get("negative_controls", [])
+    for finding in comparison.get("findings", []):
+        scope = next(
+            (
+                manifest["negative_controls"][i]
+                for i, row in enumerate(controls)
+                if row.get("receipt_sha256") == finding.get("evidence")
+            ),
+            None,
+        )
+        identities.add(_sha([history["binding_sha256"], finding["id"], scope]))
+    prior = {
+        item
+        for receipt in receipts
+        if receipt.get("mode") == "execute"
+        for item in receipt["continuity"].get("finding_ids", [])
+    }
+    return {
+        **history,
+        "finding_ids": sorted(identities),
+        "recurring_finding_ids": sorted(identities & prior),
+        "executed_this_round": comparison.get("executed") is True,
+        "claim_boundary": "Local receipt continuity, not signer authenticity, semantic correctness, or execution approval.",
+    }
+
+
+def _write_fix_receipt(core, out):
+    result = {**core, "receipt_sha256": _sha(core)}
+    if out is not None:
+        destination = Path(out)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(canonical_bytes(result) + b"\n")
+    return result
+
+
+def _stopped_repair_result(manifest, history, receipts, stop, out):
+    return _write_fix_receipt(
+        {
+            "schema": SCHEMA,
+            "marker": "FIX_WORKFLOW_RECEIPT",
+            "fix_id": manifest["comparison_id"],
+            "contract_sha256": manifest["contract_sha256"],
+            "mode": "stopped",
+            "state": stop,
+            "continuity": {**history, "finding_ids": [], "executed_this_round": False},
+            "findings": receipts[-1].get("findings", []) if receipts else [],
+            "next_action": "Step back and review the failed evidence; no repair replay was executed.",
+            "authority": "none",
+            "release_approval": False,
+        },
+        out,
+    )
 
 
 def _original_result(comparison: dict[str, Any]) -> dict[str, Any] | None:
@@ -83,9 +277,9 @@ def _negative_controls(comparison: dict[str, Any], execute: bool) -> dict[str, A
     regression_checks = comparison.get("regression_checks") or {}
     return {
         "required": comparison.get("negative_controls_required", len(controls)),
-        "preserved": regression_checks.get("negative_controls_fail")
-        if execute
-        else None,
+        "preserved": (
+            regression_checks.get("negative_controls_fail") if execute else None
+        ),
     }
 
 
@@ -507,19 +701,32 @@ def run_fix_workflow(
     *,
     execute: bool = False,
     out: Path | None = None,
+    prior_attempts: list[dict[str, str]] | None = None,
+    max_rounds: int = 3,
 ) -> dict[str, Any]:
     """Run or plan the complete fix handoff around a repair comparison manifest."""
     if (
         isinstance(repair_manifest, dict)
         and repair_manifest.get("schema") == BRANCH_COMPARISON_SCHEMA
     ):
+        if prior_attempts or max_rounds != 3:
+            raise FixWorkflowError(
+                "E_REPAIR_HISTORY", "parallel branches are not ordered repair rounds"
+            )
         return run_repair_branch_comparison(
             root, repair_manifest, execute=execute, out=out
         )
     try:
-        comparison = compare_repair(
-            Path(root).resolve(), repair_manifest, execute=execute
+        workspace = Path(root).resolve()
+        comparison = compare_repair(workspace, repair_manifest, execute=False)
+        history, receipts = _repair_history(
+            workspace, repair_manifest, prior_attempts, max_rounds
         )
+        stop = _continuity_stop(history, receipts) if execute else None
+        if stop:
+            return _stopped_repair_result(repair_manifest, history, receipts, stop, out)
+        if execute:
+            comparison = compare_repair(workspace, repair_manifest, execute=True)
     except SeniorAssuranceError as exc:
         raise FixWorkflowError(exc.code, exc.message) from exc
     original = _original_result(comparison)
@@ -538,17 +745,15 @@ def run_fix_workflow(
         ),
         "failure_brief": _failure_brief(comparison, original),
         "findings": comparison.get("findings", []),
+        "continuity": _continuity_findings(
+            comparison, repair_manifest, history, receipts
+        ),
         "next_action": _next_action(comparison, execute),
         "authority": "none",
         "release_approval": False,
         "claim_boundary": "Coordinates bounded reproduction and repair evidence; it never applies patches, approves, merges, publishes, deploys, signs, or uses credentials.",
     }
-    result = {**core, "receipt_sha256": _sha(core)}
-    if out is not None:
-        destination = Path(out)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(canonical_bytes(result) + b"\n")
-    return result
+    return _write_fix_receipt(core, out)
 
 
 def load_fix_json(path: Path) -> dict[str, Any]:

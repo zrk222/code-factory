@@ -941,3 +941,14 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-25 03:33] GATE plan pickle-context-role-v1 approver=human tasks=3 sha=8f560efcad15e02e
 - [2026-10-25 04:02] GATE spec pickle-context-role-v1 approver=human strict=True sha=787be4f172380cac
 - [2026-10-25 04:02] GATE plan pickle-context-role-v1 approver=human tasks=3 sha=787be4f172380cac
+
+## Ops evidence integration
+
+- [2026-11-07 02:01] GATE spec ops-evidence-integration approver=human strict=True sha=69728d938afb237d
+- [2026-11-07 02:01] GATE plan ops-evidence-integration approver=human tasks=4 sha=69728d938afb237d
+
+- [2026-11-07 02:21] GATE plan ops-evidence-integration approver=human tasks=4 sha=69728d938afb237d
+- [2026-11-07 02:37] GATE plan ops-evidence-integration approver=human tasks=4 sha=69728d938afb237d
+- [2026-11-07 02:40] GATE plan ops-evidence-integration approver=human tasks=4 sha=8575206ef3e77120
+- [2026-11-07 02:40] GATE spec ops-evidence-integration approver=human strict=True sha=8575206ef3e77120
+- [2026-11-07 02:40] GATE plan ops-evidence-integration approver=human tasks=4 sha=8575206ef3e77120

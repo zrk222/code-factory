@@ -4,11 +4,13 @@ import sys
 import pytest
 from factoryline.senior_assurance import (
     ActivationHookRegistry,
+    INCIDENT_REGRESSION_INTAKE_SCHEMA,
     INCIDENT_TRIAGE_SCHEMA,
     ACTIVATION_EXPERIMENT_SCHEMA,
     REPAIR_SCHEMA,
     REUSE_REQUEST_SCHEMA,
     SeniorAssuranceError,
+    build_incident_regression_packet,
     compare_repair,
     explain_evidence_reuse,
     failure_brief,
@@ -605,6 +607,170 @@ def test_incident_triage_rejects_a_fingerprint_that_does_not_bind_its_event():
                 }
             ]
         )
+
+
+def _incident_regression_intake(root, contract, suffix=""):
+    name = f"incident{suffix}"
+    event = {
+        "event_id": "incident-1",
+        "severity": "critical",
+        "source": "api",
+        "message": "request failed",
+    }
+    fingerprint = triage_incident_events([event])["groups"][0]["fingerprint"]
+    return {
+        "schema": INCIDENT_REGRESSION_INTAKE_SCHEMA,
+        "packet_id": "incident-packet-1",
+        "events": [event],
+        "group_fingerprint": fingerprint,
+        "replay": _replay(
+            root,
+            f"{name}-original",
+            1,
+            contract,
+            script="import sys; sys.exit(1)",
+        ),
+        "controls": [
+            _replay(
+                root,
+                f"{name}-control",
+                0,
+                contract,
+                script="import sys; sys.exit(0)",
+            )
+        ],
+        "review": {"review_id": "review-1", "reviewer": "maintainer"},
+    }
+
+
+def test_incident_regression_packet_is_deterministic_and_not_execution_proof(tmp_path):
+    manifest = _incident_regression_intake(tmp_path, _sha_bytes(b"contract"))
+    manifest["controls"].append(manifest["controls"][0])
+
+    packet = build_incident_regression_packet(tmp_path, manifest)
+
+    assert packet == build_incident_regression_packet(tmp_path, manifest)
+    assert packet["state"] == "EXPOSED_NOT_EXECUTED"
+    assert packet["execution_authority"] == "none"
+    assert packet["execution_allowed"] is False
+    assert packet["release_approval"] is False
+    assert "executed" not in packet
+    assert len(packet["controls"]) == 1
+    assert "review_assertion" in packet["incident"]
+    assert (
+        packet["incident"]["batch_sha256"]
+        == triage_incident_events(manifest["events"])["raw_batch_sha256"]
+    )
+    assert (
+        packet["replay"]["manifest"]["source_sha256"]
+        == manifest["replay"]["source_sha256"]
+    )
+
+
+def test_incident_regression_packet_rejects_stale_sources_and_missing_controls(
+    tmp_path,
+):
+    manifest = _incident_regression_intake(
+        tmp_path, _sha_bytes(b"contract"), "-missing"
+    )
+    manifest["controls"] = []
+    with pytest.raises(SeniorAssuranceError, match="control manifest is required"):
+        build_incident_regression_packet(tmp_path, manifest)
+
+    manifest = _incident_regression_intake(tmp_path, _sha_bytes(b"contract"), "-stale")
+    source = tmp_path / manifest["replay"]["source_root"]
+    (source / "run.py").write_text("import sys; sys.exit(0)", encoding="utf-8")
+    with pytest.raises(SeniorAssuranceError, match="source_sha256 does not match"):
+        build_incident_regression_packet(tmp_path, manifest)
+
+
+def test_incident_regression_packet_recomputes_triage_and_rejects_conflicting_ids(
+    tmp_path,
+):
+    contract = _sha_bytes(b"contract")
+    manifest = _incident_regression_intake(tmp_path, contract, "-group")
+    manifest["group_fingerprint"] = "f" * 64
+    with pytest.raises(SeniorAssuranceError, match="group is missing"):
+        build_incident_regression_packet(tmp_path, manifest)
+
+    manifest = _incident_regression_intake(tmp_path, contract, "-conflict")
+    conflicting = _replay(
+        tmp_path,
+        "incident-control-conflict",
+        0,
+        contract,
+        script="import sys; sys.exit(2)",
+    )
+    conflicting["replay_id"] = manifest["controls"][0]["replay_id"]
+    manifest["controls"].append(conflicting)
+    with pytest.raises(SeniorAssuranceError, match="conflicting manifest content"):
+        build_incident_regression_packet(tmp_path, manifest)
+
+
+def test_incident_regression_packet_rejects_unassessed_triage(tmp_path):
+    manifest = _incident_regression_intake(tmp_path, _sha_bytes(b"contract"))
+    manifest["events"].append(
+        {"severity": "urgent-ish", "source": "api", "message": "unknown severity"}
+    )
+    with pytest.raises(SeniorAssuranceError, match="not fully assessed"):
+        build_incident_regression_packet(tmp_path, manifest)
+
+
+def test_senior_incident_cli_writes_exposed_packet(tmp_path, capsys):
+    manifest = _incident_regression_intake(tmp_path, _sha_bytes(b"contract"))
+    manifest_path = tmp_path / "incident.json"
+    output_path = tmp_path / "packet.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    code = main(
+        [
+            "senior",
+            "incident",
+            str(manifest_path),
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(output_path),
+            "--json",
+        ]
+    )
+
+    stdout = json.loads(capsys.readouterr().out)
+    file_packet = json.loads(output_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert stdout["packet_sha256"] == file_packet["packet_sha256"]
+    assert stdout["state"] == "EXPOSED_NOT_EXECUTED"
+    assert stdout["execution_allowed"] is False
+    assert (
+        stdout["action_summary"] == "Prepared an exposed regression; nothing executed."
+    )
+
+
+def test_senior_incident_cli_rejects_stale_source_without_packet_file(tmp_path, capsys):
+    manifest = _incident_regression_intake(tmp_path, _sha_bytes(b"contract"))
+    manifest_path = tmp_path / "incident.json"
+    output_path = tmp_path / "packet.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    source = tmp_path / manifest["replay"]["source_root"]
+    (source / "run.py").write_text("import sys; sys.exit(0)", encoding="utf-8")
+
+    code = main(
+        [
+            "senior",
+            "incident",
+            str(manifest_path),
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(output_path),
+            "--json",
+        ]
+    )
+
+    error = json.loads(capsys.readouterr().err)
+    assert code == 2
+    assert error["code"] == "E_REPLAY_SOURCE_CHANGED"
+    assert not output_path.exists()
 
 
 def _activation_request():

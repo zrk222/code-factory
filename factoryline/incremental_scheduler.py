@@ -490,3 +490,239 @@ def load_schedule_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise SchedulerError("E_SCHEDULE_JSON", "JSON must be an object")
     return value
+
+
+def _pre_pr_inputs(root: Path, manifest: dict) -> tuple[dict, dict, str]:
+    from .change_review import ChangeReviewError, _resolve_changed_paths
+    from .migration import git_lines
+    from .live_feedback import validate_live_manifest
+    from .runtime_audit_common import exact_keys, require_str
+
+    exact_keys(
+        manifest,
+        {"schema", "feature", "base", "head_sha", "schedule", "live", "oracle"},
+    )
+    if manifest["schema"] != "factory.pre-pr.v1":
+        raise ChangeReviewError("PRE_PR_SCHEMA", "unsupported pre-PR manifest")
+    require_str(manifest["feature"], "feature", maximum=128)
+    base = require_str(manifest["base"], "base", maximum=160)
+    head = "".join(git_lines(root, "rev-parse", "HEAD"))
+    if manifest["head_sha"] != head:
+        raise ChangeReviewError("PRE_PR_HEAD", "candidate HEAD does not match")
+    schedule = validate_schedule_manifest(manifest["schedule"])
+    live = validate_live_manifest(root, manifest["live"])
+    _, changed = _resolve_changed_paths(root, base, None)
+    if schedule["changed_paths"] != changed or live["changed_paths"] != changed:
+        raise ChangeReviewError(
+            "PRE_PR_SCOPE", "both plans must cover the current Git diff"
+        )
+    gate_ids = {row["id"] for row in schedule["gates"]}
+    if gate_ids != {row["id"] for row in live["checks"]}:
+        raise ChangeReviewError("PRE_PR_OBLIGATIONS", "check IDs must match every gate")
+    return schedule, live, head
+
+
+def _pre_pr_oracle(root: Path, oracle: dict, contract_sha: str) -> dict:
+    from .oracle_firewall import verify_oracle_contract, verify_oracle_challenge_result
+    from .runtime_audit_common import exact_keys
+    from .senior_assurance import _inside, _file_digest, load_assurance_json
+
+    exact_keys(oracle, {"contract", "challenge", "result"})
+    paths = {key: _inside(root, value, key)[0] for key, value in oracle.items()}
+    hashes = {key: _file_digest(path, key) for key, path in paths.items()}
+    contract = verify_oracle_contract(root, paths["contract"])
+    challenge = verify_oracle_challenge_result(
+        root, paths["challenge"], paths["result"]
+    )
+    plan = load_assurance_json(paths["challenge"])
+    binding = contract.get("contract", {}).get("contract_sha256")
+    matched = (
+        binding == contract_sha
+        and plan.get("contract", {}).get("contract_sha256") == binding
+    )
+    return {
+        "ok": contract["ok"] and challenge["ok"] and matched,
+        "contract": contract,
+        "challenge": challenge,
+        "input_hashes": hashes,
+        "contract_matched": matched,
+    }
+
+
+def _pre_pr_gate_rows(
+    root: Path, plan: dict, live: dict, execute: bool, source: str, schedule: dict
+) -> list[dict]:
+    from .senior_assurance import _source_digest
+
+    checks = {row["id"]: row for row in live["checks"]}
+    rows: dict[str, dict] = {}
+    for item in plan["items"]:
+        row = {"id": item["id"], "routing": item, "state": "BLOCKED"}
+        dependencies_pass = all(
+            rows[dep]["state"] == "PASS" for dep in item["depends_on"]
+        )
+        stable = _source_digest(root)[0] == source
+        if dependencies_pass and stable:
+            if item["disposition"] == "REUSE" and not _pre_pr_reuse_current(
+                root, item, schedule
+            ):
+                item = {**item, "disposition": "BLOCK", "reason": "REUSE_CHANGED"}
+            row.update(
+                _pre_pr_gate(root, item, checks[item["id"]], live, execute, source)
+            )
+        else:
+            row["reason"] = (
+                "DEPENDENCY_FAILED" if not dependencies_pass else "SOURCE_CHANGED"
+            )
+        rows[item["id"]] = row
+    return list(rows.values())
+
+
+def _pre_pr_gate(
+    root: Path, item: dict, check: dict, live: dict, execute: bool, source: str
+) -> dict:
+    from .live_feedback import run_live_feedback
+
+    if item["disposition"] == "REUSE":
+        return {"state": "PASS", "reason": "VERIFIED_REUSE", "proof": item["proof"]}
+    if item["disposition"] != "RUN":
+        return {"state": "BLOCKED", "reason": item["reason"]}
+    # A dependency can require execution even when this check's own paths did not
+    # change. Force only this scheduled obligation through the existing runner.
+    forced = {**live, "checks": [check], "changed_paths": check["paths"]}
+    receipt = run_live_feedback(root, forced, execute=execute)
+    state = receipt["checks"][0]["state"]
+    if receipt["source_sha256"] != source:
+        state = "BLOCKED"
+    return {"state": state, "reason": "SCHEDULED_EXECUTION", "live_receipt": receipt}
+
+
+def run_pre_pr(root: Path, manifest: dict, *, execute: bool = False) -> dict:
+    """Reconcile local evidence once; PASS never authorizes a merge or release."""
+    from .github_proof_review import render_github_proof_review
+    from .change_review import _sha, review_change
+    from .senior_assurance import _source_digest
+    from .verification import verify_feature
+
+    root = Path(root).resolve()
+    schedule, live, head = _pre_pr_inputs(root, manifest)
+    source = _source_digest(root)[0]
+    oracle = _pre_pr_oracle(root, manifest["oracle"], live["contract_sha256"])
+    plan = plan_incremental(root, schedule)
+    _pre_pr_bind_reuse(plan, schedule, live)
+    rows = _pre_pr_gate_rows(
+        root, plan, live, execute and oracle["ok"], source, schedule
+    )
+    verification = verify_feature(root, manifest["feature"], strict_release=True)
+    review = review_change(
+        root, base=manifest["base"], changed=schedule["changed_paths"]
+    )
+    final_oracle = _pre_pr_oracle(root, manifest["oracle"], live["contract_sha256"])
+    _, _, final_head = _pre_pr_inputs(root, manifest)
+    reuse_stable = all(
+        _pre_pr_reuse_current(root, row["routing"], schedule)
+        for row in rows
+        if row["routing"]["disposition"] == "REUSE"
+    )
+    final_verification = verify_feature(root, manifest["feature"], strict_release=True)
+    stable = (
+        source == _source_digest(root)[0]
+        and head == final_head
+        and oracle == final_oracle
+        and reuse_stable
+        and verification["release_contract"] == final_verification["release_contract"]
+    )
+    conditions = {
+        "stable": stable,
+        "oracle_verified": oracle["ok"],
+        "feature_verified": verification["shippable"],
+        "final_feature_verified": final_verification["shippable"],
+        "same_contract": verification["release_contract"].get("oracle_contract_sha256")
+        == live["contract_sha256"],
+        "obligations_satisfied": all(row["state"] == "PASS" for row in rows),
+    }
+    core = {
+        "schema": "factory.pre-pr-receipt.v1",
+        "state": "PASS" if all(conditions.values()) else "BLOCKED",
+        "conditions": conditions,
+        "manifest_sha256": _sha(manifest),
+        "head_sha": head,
+        "source_sha256": source,
+        "source_stable": stable,
+        "mode": "execute" if execute else "plan",
+        "plan": plan,
+        "checks": rows,
+        "oracle": oracle,
+        "feature_verification": verification,
+        "final_feature_verification": final_verification,
+        "review": review,
+        "github_payload": render_github_proof_review(review, head),
+        "authority": "none",
+        "release_approval": False,
+        "claim_boundary": "Local declared-obligation reconciliation only; oracle declared independence is not authenticated execution, and no merge or release is authorized.",
+    }
+    return {**core, "receipt_sha256": _sha(core)}
+
+
+def _pre_pr_bind_reuse(plan: dict, schedule: dict, live: dict) -> None:
+    from .change_review import _sha
+
+    checks = {row["id"]: row for row in live["checks"]}
+    gates = {row["id"]: row for row in schedule["gates"]}
+    for item in plan["items"]:
+        if item["disposition"] != "REUSE":
+            continue
+        check = checks[item["id"]]
+        proof = gates[item["id"]]["proof"]
+        matches = (
+            proof.get("command") == check["argv"]
+            and proof.get("environment") == check["env"]
+            and check["expected_exit"] == 0
+            and set(item["dependency_paths"]).issubset(proof.get("inputs", []))
+            and proof.get("toolchain", {}).get("pre_pr_check_sha256")
+            == _sha(
+                {
+                    "check": check,
+                    "contract_sha256": live["contract_sha256"],
+                    "assurance_level": schedule["assurance_level"],
+                }
+            )
+        )
+        if not matches:
+            item.update(disposition="RUN", reason="CHECK_PROOF_MISMATCH", proof=None)
+    by_id = {row["id"]: row for row in plan["items"]}
+    for item in plan["items"]:
+        if item["disposition"] == "REUSE" and any(
+            by_id[dep]["disposition"] == "RUN" for dep in item["depends_on"]
+        ):
+            item.update(disposition="RUN", reason="DEPENDENCY_RECHECK", proof=None)
+    # Rebuild the plan hash after this conservative execution refinement.
+    plan["counts"] = {
+        name: sum(row["disposition"] == name for row in plan["items"])
+        for name in ("RUN", "REUSE", "SKIP", "BLOCK")
+    }
+    plan["findings"] = {
+        row["id"]: {"disposition": row["disposition"], "reason": row["reason"]}
+        for row in plan["items"]
+    }
+    plan["plan_sha256"] = _sha(
+        {key: value for key, value in plan.items() if key != "plan_sha256"}
+    )
+
+
+def _pre_pr_reuse_current(root: Path, item: dict, schedule: dict) -> bool:
+    from .proof_reuse import evaluate_proofs
+
+    gate = next(row for row in schedule["gates"] if row["id"] == item["id"])
+    checked = evaluate_proofs(
+        root,
+        {
+            "schema": "factory.proof-request.v1",
+            "gates": [gate["proof"]],
+        },
+        changed_paths=schedule["changed_paths"],
+    )["items"][0]
+    return checked["disposition"] == "REUSE" and all(
+        checked.get(key) == item["proof"].get(key)
+        for key in ("proof_key", "receipt_sha256")
+    )
