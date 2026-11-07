@@ -17,6 +17,422 @@ def _captured_hmac_operands(call):
     return bound["key"], bound["msg"], bound["digestmod"]
 
 
+def _captured_credential_handler_authority(context, finding, handler, declaration):
+    from .credential_endpoint_admission import _OperativeCredentialOrigin
+    from .review_audits import _resolved_ast_name
+
+    framework = handler["application"]["framework"]
+    if framework == "fastapi":
+        return _OperativeCredentialOrigin(
+            context, finding, handler, declaration
+        ).handler_authority()
+    function, path = handler["function"], handler["path"]
+    if framework != "flask" or not any(
+        isinstance(node, ast.Call)
+        and _resolved_ast_name(node.func, context["aliases"][path])
+        == "hmac.compare_digest"
+        for node in ast.walk(function)
+    ):
+        return None
+    origin = _OperativeCredentialOrigin(context, finding, handler, declaration)
+    return _CapturedHTTPSignatureFlow(origin).authority()
+
+
+class _CapturedHTTPSignatureFlow:
+    """Join a typed signature calculation to an HTTP rejection boundary."""
+
+    def __init__(self, origin):
+        self.origin = origin
+        handler = origin.handler
+        self.path, self.function = handler["path"], handler["function"]
+        self.providers, self.transfers, self.readonly = set(), [], set()
+        self.request_reads = set()
+
+    def canonical(self, node):
+        return self.origin.canonical(self.path, node, self.function)
+
+    def expression(self, node, values):
+        match node:
+            case ast.Name(id=name) if name in values:
+                return values[name]
+            case ast.Attribute() if self.canonical(node) == "flask.request.data":
+                self.request_reads.add(node)
+                return "payload", frozenset()
+            case ast.Name() | ast.Attribute() if self.key_origin(node):
+                return "key_text", frozenset()
+            case ast.Constant(value=bytes()):
+                return "bytes", frozenset()
+            case ast.Subscript(value=receiver, slice=ast.Constant(value=str() as name)):
+                if self.canonical(receiver) == "flask.request.headers":
+                    self.request_reads.add(node)
+                    return "header", frozenset({name.casefold()})
+            case ast.BinOp(left=left, op=ast.Add(), right=right):
+                operands = [self.expression(item, values) for item in (left, right)]
+                kinds = {kind for kind, _ in operands}
+                if kinds <= {"bytes", "payload"}:
+                    return (
+                        "payload" if "payload" in kinds else "bytes",
+                        frozenset().union(*(headers for _, headers in operands)),
+                    )
+            case ast.Call():
+                return self.call(node, values)
+        return "", frozenset()
+
+    def key_origin(self, node):
+        from .credential_role_constructor_provider import binding_occurrences
+
+        origin = self.origin
+        if origin.literal_reference(self.path, node, self.function, origin.projection):
+            return True
+        name = origin.finding["facts"]["name"]
+        tree = origin.index.snapshots[self.path]
+        return (
+            self.path == origin.path
+            and isinstance(node, ast.Name)
+            and node.id == name
+            and origin.declaration in tree.body
+            and origin.declaration.lineno < self.function.lineno
+            and len(bindings := binding_occurrences(tree.body, name)) == 1
+            and origin.index.parents[self.path].get(id(bindings[0]))
+            is origin.declaration
+            and not binding_occurrences(self.function.body, name)
+        )
+
+    def call(self, node, values):
+        canonical = self.canonical(node.func)
+        if canonical == "hmac.new":
+            return self.constructor(node, values)
+        if (
+            canonical == "hmac.compare_digest"
+            and len(node.args) == 2
+            and not node.keywords
+        ):
+            operands = dict(self.expression(arg, values) for arg in node.args)
+            if (
+                operands.keys() == {"digest", "header"}
+                and not operands["digest"] & operands["header"]
+            ):
+                self.providers.add(canonical)
+                self.transfers.append(node)
+                return "verified", frozenset()
+        if (encoded := self.encoded_header(node, values)) is not None:
+            return encoded
+        return self.member_call(node, values)
+
+    def constructor(self, node, values):
+        operands = _captured_hmac_operands(node)
+        if operands is None:
+            return "", frozenset()
+        key, message, digest = operands
+        payload_kind, headers = self.expression(message, values)
+        if (
+            self.expression(key, values)[0] != "key_bytes"
+            or payload_kind != "payload"
+            or self.canonical(digest) != "hashlib.sha256"
+        ):
+            return "", frozenset()
+        self.providers.update({"hmac.new", "hmac.HMAC", "hashlib.sha256"})
+        self.readonly.add(id(digest))
+        self.transfers.extend((key, message, digest, node))
+        return "hmac", headers
+
+    def encoded_header(self, node, values):
+        from .credential_role_constructor_provider import binding_occurrences
+
+        match node:
+            case ast.Call(
+                func=ast.Name(id="bytes"),
+                args=[value, ast.Constant(value="utf8" | "utf-8")],
+                keywords=[],
+            ):
+                source = self.origin.index.snapshots[self.path]
+                if not any(
+                    binding_occurrences(scope.body, "bytes")
+                    for scope in (source, self.function)
+                ):
+                    kind, headers = self.expression(value, values)
+                    if kind == "header":
+                        self.providers.add("builtins.bytes")
+                        return "bytes", headers
+        return None
+
+    def member_call(self, node, values):
+        if node.keywords:
+            return "", frozenset()
+        match node.func, node.args:
+            case ast.Attribute(value=receiver, attr="get"), [
+                ast.Constant(value=str() as name),
+                ast.Constant(value=str()),
+            ]:
+                if self.canonical(receiver) == "flask.request.headers":
+                    self.request_reads.add(node)
+                    return "header", frozenset({name.casefold()})
+            case ast.Attribute(value=receiver, attr="split"), [
+                ast.Constant(value=str() as sep)
+            ] if sep:
+                kind, headers = self.expression(receiver, values)
+                if kind == "header":
+                    return "headers", headers
+            case ast.Attribute(value=receiver, attr=method), []:
+                kind, headers = self.expression(receiver, values)
+                projected = {
+                    ("key_text", "encode"): "key_bytes",
+                    ("header", "encode"): "bytes",
+                    ("hmac", "hexdigest"): "digest",
+                }.get((kind, method), "")
+                return projected, headers
+        return "", frozenset()
+
+    def response(self, statement, success):
+        match statement:
+            case ast.Return(
+                value=ast.Call(
+                    func=func,
+                    args=[ast.Constant(value=str())],
+                    keywords=[
+                        ast.keyword(
+                            arg="status", value=ast.Constant(value=int() as status)
+                        )
+                    ],
+                )
+            ):
+                if self.canonical(func) == "flask.Response" and status // 100 == (
+                    2 if success else 4
+                ):
+                    self.providers.add("flask.Response")
+                    return True
+        return False
+
+    def logging(self, statement):
+        receiver = self.origin.handler["application"]["name"]
+        match statement:
+            case ast.Expr(
+                value=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Attribute(value=ast.Name(id=owner), attr="logger"),
+                        attr="warning" | "info",
+                    ),
+                    args=[value],
+                    keywords=[],
+                )
+            ) if owner == receiver:
+                if isinstance(value, ast.Constant):
+                    self.providers.add("logging.Logger")
+                    return True
+                if self.canonical(value) == "flask.request.json":
+                    self.request_reads.add(value)
+                    self.providers.add("logging.Logger")
+                    return True
+        return False
+
+    def rejects(self, statement, values):
+        match statement:
+            case ast.If(
+                test=ast.UnaryOp(op=ast.Not(), operand=condition),
+                body=[*prefix, response],
+                orelse=[],
+            ):
+                if (
+                    self.expression(condition, values)[0] == "verified"
+                    and all(self.logging(item) for item in prefix)
+                    and self.response(response, False)
+                ):
+                    self.transfers.extend((statement, response))
+                    return True
+        return False
+
+    def assignments(self, statements, values):
+        for statement in statements:
+            match statement:
+                case ast.Assign(targets=[ast.Name(id=name)], value=node):
+                    kind = self.expression(node, values)
+                    if not kind[0]:
+                        return False
+                    values[name] = kind
+                case _:
+                    return False
+        return True
+
+    def guarded(self, statements, values):
+        if not statements:
+            return False
+        *prefix, guard = statements
+        if not self.assignments(prefix, values):
+            return False
+        match guard:
+            case ast.For(
+                target=ast.Name(id=name),
+                iter=sequence,
+                body=[*inner, rejection],
+                orelse=[],
+            ):
+                # A fixed nonempty separator leaves at least one input-derived item.
+                kind, headers = self.expression(sequence, values)
+                if kind != "headers":
+                    return False
+                values[name] = "header", headers
+                return self.assignments(inner, values) and self.rejects(
+                    rejection, values
+                )
+        return self.rejects(guard, values)
+
+    def authority(self):
+        from .semantic_credential_sensor import _flask_constructor_arguments
+
+        handler, function = self.origin.handler, self.function
+        tree = self.origin.index.snapshots[self.path]
+        creation = handler["application"]["creation"]
+        if not (
+            function in tree.body
+            and function.decorator_list == [handler["decorator"]]
+            and handler["application"]["path"] == self.path
+            and handler["receiver"] is handler["application"]
+            and len(creation.args) + len(creation.keywords) == 1
+            and _flask_constructor_arguments(creation)
+            and self.route_path(handler["decorator"])
+            and not any(
+                getattr(function.args, field) for field in function.args._fields
+            )
+            and len(function.body) >= 2
+        ):
+            return None
+        *prefix, accepted = function.body
+        while prefix and self.logging(prefix[-1]):
+            prefix.pop()
+        if not self.response(accepted, True) or not self.guarded(prefix, {}):
+            return None
+        if not self.providers_closed(tree):
+            return None
+        self.origin.consumer = ("hmac", "verified_http_signature_rejection")
+        from .semantic_credential_sensor import _signing_source_span
+
+        self.origin.consumer_transfers = [
+            _signing_source_span(self.origin.index, self.path, node)
+            for node in sorted(
+                {*self.transfers, *self.request_reads},
+                key=lambda item: (
+                    item.lineno,
+                    item.col_offset,
+                    item.end_lineno,
+                    item.end_col_offset,
+                ),
+            )
+        ]
+        return self.origin.witness(accepted, self.origin.key)
+
+    @staticmethod
+    def route_path(decorator):
+        match decorator:
+            case ast.Call(
+                func=ast.Attribute(attr=method),
+                args=[ast.Constant(value=str() as path)],
+                keywords=keywords,
+            ) if path.startswith("/") and "<" not in path:
+                if not keywords:
+                    return True
+                match keywords:
+                    case [
+                        ast.keyword(
+                            arg="methods",
+                            value=ast.List(elts=methods) | ast.Tuple(elts=methods),
+                        )
+                    ] if method == "route":
+                        return bool(methods) and all(
+                            isinstance(item, ast.Constant)
+                            and item.value
+                            in (
+                                "GET",
+                                "POST",
+                                "PUT",
+                                "PATCH",
+                                "DELETE",
+                                "OPTIONS",
+                                "HEAD",
+                            )
+                            for item in methods
+                        )
+        return False
+
+    def providers_closed(self, tree):
+        from . import review_audits as audit
+        from .credential_role_constructor_provider import (
+            _captured_terminal_provider_mutation,
+        )
+        from .credential_identity_audit import _app_digest_algorithm_argument
+        from .runtime_audit_integrity import _conditional_module_name
+        from .semantic_credential_sensor import _signing_framework_external
+
+        origin, handler = self.origin, self.origin.handler
+        index, app = origin.index, handler["application"]["name"]
+        allowed_calls = {
+            handler["decorator"].func,
+            *(
+                node.func
+                for node in ast.walk(self.function)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "logger"
+                and isinstance(node.func.value.value, ast.Name)
+                and node.func.value.value.id == app
+            ),
+        }
+        parents = index.parents[self.path]
+        for node in ast.walk(tree):
+            if (
+                not isinstance(node, ast.Name)
+                or node.id != app
+                or not isinstance(node.ctx, ast.Load)
+            ):
+                continue
+            owner = parents.get(id(node))
+            if (
+                owner not in allowed_calls
+                and parents.get(id(owner)) not in allowed_calls
+            ):
+                return False
+        providers = sorted(
+            self.providers
+            | {
+                "flask.Flask",
+                "flask.request",
+                "flask.Request",
+                "flask.wrappers.Request",
+                "flask.wrappers.Response",
+                "werkzeug.wrappers.Request",
+                "werkzeug.wrappers.Response",
+            }
+        )
+        if not all(
+            _signing_framework_external(
+                origin.context, name.split(".")[0], origin.execution_root
+            )
+            for name in providers
+        ):
+            return False
+        module = _conditional_module_name(index.relative(self.path))
+        bindings = [(name, None) for name in providers]
+        bindings.extend(
+            (qualified + "." + name, (self.path, name))
+            for qualified in sorted({module, self.path.stem})
+            for name in (app, self.function.name, origin.finding["facts"]["name"])
+        )
+        return not _captured_terminal_provider_mutation(
+            index,
+            audit,
+            providers[0],
+            additional_bindings=tuple(bindings[1:]),
+            readonly_nodes=self.request_reads
+            | {
+                node
+                for node in ast.walk(self.function)
+                if isinstance(node, ast.Assign) and node.value in self.request_reads
+            },
+            readonly_argument=lambda node, aliases, parents: id(node) in self.readonly
+            or _app_digest_algorithm_argument(node, aliases, parents),
+        )
+
+
 def _native_span(node):
     span = [
         getattr(node, key, None)

@@ -2151,16 +2151,18 @@ def operative_signing_default_evidence(finding, context):
         and observation.get("consumer_role") == "django.SECRET_KEY"
     ):
         return _django_default_authority(finding, context, declaration, observation)
+    from .captured_security_audit import _captured_credential_handler_authority
+
     return next(
         (
             witness
             for handler in _CredentialHandlerIndex(context).boundaries()
-            if handler["application"]["framework"] == "fastapi"
-            for origin in (
-                _OperativeCredentialOrigin(context, finding, handler, declaration),
+            if (
+                witness := _captured_credential_handler_authority(
+                    context, finding, handler, declaration
+                )
             )
-            for witness in (origin.handler_authority(),)
-            if witness is not None
+            is not None
         ),
         None,
     )

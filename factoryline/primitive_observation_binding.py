@@ -848,23 +848,22 @@ def _decide_finding_tier(
         facts = finding.get("facts", {})
         key_matches = evidence.get("credential_key") == facts.get("name")
         contract = evidence.get("framework"), evidence.get("consumer_role")
-        signing = contract == ("pyjwt", "verified_bearer_rejection")
-        authority = "signing" if signing else "credential"
-        role = (
-            "conditional_published_default" if signing else "published_literal_default"
-        )
+        authority = "signing" if contract[0] == "pyjwt" else "credential"
         schema = f"factory.security.{authority}-default-authority.v1"
         scope = f"source_bound_operative_{authority}_default"
+        roles = ("published_literal_default", "conditional_published_default")
         if (
             contract
             in {
                 ("pyjwt", "verified_bearer_rejection"),
                 ("fastapi", "direct_token_rejection"),
+                ("hmac", "verified_http_signature_rejection"),
                 ("sqlalchemy", "database_authentication"),
             }
             and evidence.get("schema") == schema
             and evidence.get("proof_scope") == scope
-            and evidence.get("source_role") == role
+            and evidence.get("source_role") == roles[authority == "signing"]
+            and (contract[0] != "hmac" or generated is not None)
             and key_matches
         ):
             return "SUPPORTED_DEFECT", scope, details

@@ -1230,6 +1230,111 @@ def _recovery_row(files, name="SECRET_KEY", path="service/settings.py"):
 
 
 @pytest.mark.parametrize(
+    "change",
+    [
+        "direct",
+        "loop",
+        "ignored_compare",
+        "wrong_key",
+        "wrong_payload",
+        "header_in_payload",
+        "bad_digest",
+        "wrong_status",
+        "loop_bypass",
+        "provider_write",
+        "digest_method_write",
+        "request_class_write",
+        "request_write",
+        "route_override",
+        "key_override",
+        "dynamic_route",
+        "decorator_wrapper",
+        "builtin_override",
+    ],
+)
+def test_http_signature_authority_requires_rejection_and_current_providers(change):
+    route = """
+import hmac
+from hashlib import sha256
+from flask import Flask, Response, request
+app = Flask(__name__)
+WEBHOOK_SECRET = "sample-signing-material-bound-to-endpoint"
+
+@app.route("/signed", methods=["POST"])
+def signed():
+    supplied = request.headers.get("Signature", "")
+    timestamp = request.headers["Timestamp"]
+    payload = bytes(timestamp, "utf8") + b":" + request.data
+    computed = hmac.new(key=WEBHOOK_SECRET.encode(), msg=payload, digestmod=sha256)
+    valid = hmac.compare_digest(computed.hexdigest(), supplied)
+    if not valid:
+        app.logger.warning("Invalid signature")
+        return Response("Invalid signature", status=400)
+    app.logger.info(request.json)
+    return Response("accepted", status=200)
+"""
+    changes = {
+        "ignored_compare": ("if not valid:", "if not supplied:"),
+        "wrong_key": ("WEBHOOK_SECRET.encode()", "b'other-material'"),
+        "wrong_payload": ("msg=payload", "msg=b'fixed-message'"),
+        "header_in_payload": ('headers["Timestamp"]', 'headers["signature"]'),
+        "bad_digest": ("digestmod=sha256", "digestmod=opaque"),
+        "wrong_status": ("status=400", "status=200"),
+        "provider_write": ("app = Flask", "hmac.compare_digest = opaque\napp = Flask"),
+        "digest_method_write": (
+            "app = Flask",
+            "hmac.HMAC.hexdigest = opaque\napp = Flask",
+        ),
+        "request_class_write": (
+            "app = Flask",
+            "from flask import Request\nRequest.headers = opaque\napp = Flask",
+        ),
+        "request_write": (
+            "app = Flask",
+            "request.headers['Signature'] = 'x'\napp = Flask",
+        ),
+        "route_override": ("def signed():", "@wrapper\ndef signed():"),
+        "key_override": (
+            "    supplied =",
+            "    WEBHOOK_SECRET = other\n    supplied =",
+        ),
+        "dynamic_route": ('route("/signed"', "route(dynamic_path"),
+        "decorator_wrapper": ("app = Flask", "Flask = opaque\napp = Flask"),
+        "builtin_override": ("    supplied =", "    bytes = opaque\n    supplied ="),
+    }
+    if change in ("loop", "loop_bypass"):
+        start, end = route.index("    timestamp ="), route.index("    app.logger.info")
+        body = route[start:end]
+        route = (
+            route[:start]
+            + '    for signature in supplied.split(","):\n'
+            + "".join(
+                "    " + line
+                for line in body.replace(", supplied)", ", signature)").splitlines(
+                    keepends=True
+                )
+            )
+            + route[end:]
+        )
+    if change == "loop_bypass":
+        route = route.replace(
+            "        if not valid:", "        break\n        if not valid:"
+        )
+    if change in changes:
+        before, after = changes[change]
+        assert before in route
+        route = route.replace(before, after)
+    row = _recovery_row({"service.py": route.lstrip()}, "WEBHOOK_SECRET", "service.py")
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    assert (row["tier"] == "SUPPORTED_DEFECT") is (change in ("direct", "loop")), row
+    if row["tier"] == "SUPPORTED_DEFECT":
+        proof = row["credential_authority_observation"]
+        assert proof["consumer_role"] == "verified_http_signature_rejection"
+        assert proof["runtime_execution"] == "not_performed"
+        assert {r["path"] for r in proof["transfers"]} == {"service.py"}
+
+
+@pytest.mark.parametrize(
     "metadata",
     [
         {},
