@@ -2825,6 +2825,42 @@ def test_independent_native_replay_reuses_fresh_provider_mutation_cache(
     assert first_cache is not second_cache
 
 
+@pytest.mark.parametrize("mutate_after_scan", [False, True])
+def test_independent_native_replay_shares_one_validated_batch(
+    monkeypatch, mutate_after_scan
+):
+    from factoryline import primitive_observation_binding, review_audits
+
+    captured = {
+        "app.py": b"from flask import request\ndef endpoint():\n    return eval(request.args['q'])\n",
+        "second.py": b"def other():\n    return 1\n",
+    }
+    scan = review_audits._security_scan_tree
+    batches = []
+
+    def record(root, path, tree, calls, bindings, context, **options):
+        source = context["_security_source_model"]
+        assert source.validate(path)
+        batch = source.class_chain_memo._analysis_batch
+        assert batch is not None and batch.started and not batch.accepted
+        batches.append(batch)
+        rows = scan(root, path, tree, calls, bindings, context, **options)
+        if mutate_after_scan and path.name == "second.py":
+            tree.body[0].name = "changed_after_analysis"
+        return rows
+
+    monkeypatch.setattr(review_audits, "_security_scan_tree", record)
+    rows = primitive_observation_binding._trusted_core_native_security_rows(
+        captured, ((), {}, False), review_audits
+    )
+    assert len(batches) == 2 and batches[0] is batches[1]
+    if mutate_after_scan:
+        assert rows is None and not batches[0].accepted
+    else:
+        assert batches[0].accepted
+        assert rows and any(row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in rows)
+
+
 def test_foreign_provider_input_cache_invalidates_source_and_helper_epoch(
     monkeypatch,
 ):

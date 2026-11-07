@@ -575,6 +575,30 @@ def test_source_model_cache_cannot_admit_late_mutation(tmp_path):
     assert not batch.accepted
 
 
+def test_rejected_helper_epoch_cannot_seed_the_next_batch(tmp_path):
+    _, memo = _memo(tmp_path)
+    original = object()
+    dependency = [original]
+
+    def epoch():
+        return tuple(dependency)
+
+    def drift_during_derivation():
+        dependency[0] = object()
+        return False
+
+    with memo.analysis_batch() as rejected:
+        assert not memo.source_model(
+            "fixture", drift_during_derivation, helper_epoch=epoch
+        )
+        dependency[0] = original
+    assert not rejected.accepted
+
+    with memo.analysis_batch() as accepted:
+        assert memo.source_model("fixture", lambda: True, helper_epoch=epoch)
+    assert accepted.accepted
+
+
 def test_receiver_identity_summary_reused_only_inside_batch(tmp_path, monkeypatch):
     from factoryline import credential_role_identity_effects as lifetime
 

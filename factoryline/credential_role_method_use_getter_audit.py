@@ -44,8 +44,6 @@ from .semantic_credential_sensor import (
     _provider_identity_uncertain,
 )
 
-"""Bounded getter and reflective-use closure over validated source snapshots."""
-
 
 _HOOKS = {"__getattr__", "__getattribute__", "__setattr__", "__delattr__"}
 
@@ -56,7 +54,8 @@ def selected_receiver_field_value(field, index, path):
         return None
     if not index.validate(path):
         return None
-    if not isinstance(source_scope(field, index.parents[path])[1], ast.ClassDef):
+    method, owner = source_scope(field, index.parents[path])
+    if not _SelectedReceiverState._owner_supported(owner, index.snapshots[path]):
         return None
     from . import review_audits as audit
     from .credential_role_constructor_provider import ClassChainMemo
@@ -64,7 +63,6 @@ def selected_receiver_field_value(field, index, path):
     memo = getattr(index, "class_chain_memo", None)
     if memo is None:
         index.class_chain_memo = memo = ClassChainMemo(index, {}, {}, audit)
-    method, owner = source_scope(field, index.parents[path])
     key = (
         "selected-receiver-value",
         path,
@@ -150,15 +148,16 @@ class _SelectedReceiverState:
 
         return security_structural_join(values)
 
+    @staticmethod
+    def _owner_supported(owner, tree):
+        if not isinstance(owner, ast.ClassDef) or owner not in tree.body:
+            return False
+        return not (owner.bases or owner.keywords or owner.decorator_list)
+
     def owner_closed(self):
         """Reject inheritance, descriptors and namespace effects outside the model."""
         owner = self.owner
-        if (
-            owner not in self.tree.body
-            or owner.bases
-            or owner.keywords
-            or owner.decorator_list
-        ):
+        if not self._owner_supported(owner, self.tree):
             return False
         forbidden = (*_HOOKS, "__new__", "__slots__", self.field.attr)
         if any(binding_occurrences(owner.body, name) for name in forbidden):

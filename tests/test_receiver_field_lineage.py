@@ -197,6 +197,74 @@ def test_receiver_argument_callback_is_not_ignored(tmp_path):
     assert rows[0]["tier"] != "SUPPORTED_DEFECT"
 
 
+@pytest.mark.parametrize(
+    "owner",
+    ("inherited", "decorated", "metaclass", "nested"),
+)
+def test_unsupported_receiver_owner_skips_helper_epoch(monkeypatch, owner):
+    from textwrap import indent
+
+    from factoryline import credential_role_method_use_getter_audit as receiver
+
+    declarations = {
+        "inherited": "class Worker(Base):",
+        "decorated": "@decorate\nclass Worker:",
+        "metaclass": "class Worker(metaclass=Meta):",
+    }
+    source = (
+        "def wrapper():\n" + indent(SOURCE, "    ")
+        if owner == "nested"
+        else SOURCE.replace("class Worker:", declarations[owner])
+    )
+    path, tree, index = context(source)
+    field = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and node.attr == "command"
+        and isinstance(node.ctx, ast.Load)
+    )
+    assert receiver._SelectedReceiverState.eligible(field)
+
+    def unexpected_epoch():
+        pytest.fail("unsupported owner must not start the expensive proof")
+
+    monkeypatch.setattr(receiver, "_selected_receiver_helpers", unexpected_epoch)
+    assert receiver.selected_receiver_field_value(field, index, path) is None
+    assert not hasattr(index, "class_chain_memo")
+
+
+def test_unsupported_receiver_does_not_hide_helper_drift_in_active_batch(monkeypatch):
+    from factoryline import credential_role_method_use_getter_audit as receiver
+    from factoryline.credential_role_constructor_provider import ClassChainMemo
+
+    source = (
+        SOURCE
+        + "class Unsupported(Base):\n    def go(self):\n        return self.ignored\n"
+    )
+    path, tree, index = context(source)
+    fields = {
+        node.attr: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
+    }
+    index.class_chain_memo = memo = ClassChainMemo(index, {}, {}, audit)
+    with memo.analysis_batch() as batch:
+        assert receiver.selected_receiver_field_value(fields["command"], index, path)
+        monkeypatch.setattr(
+            receiver._SelectedReceiverState, "input_origin", lambda *args: None
+        )
+        assert (
+            receiver.selected_receiver_field_value(fields["ignored"], index, path)
+            is None
+        )
+        assert (
+            receiver.selected_receiver_field_value(fields["command"], index, path)
+            is None
+        )
+    assert not batch.accepted
+
+
 def test_receiver_query_reuses_only_current_source_and_helper_epoch(monkeypatch):
     from factoryline.credential_role_method_use_getter_audit import (
         selected_receiver_field_value,
