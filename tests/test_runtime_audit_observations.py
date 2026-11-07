@@ -1433,7 +1433,7 @@ def test_collection_transaction_cli_final_guard_fails_closed(
         "changed_during_scan" if failure == "during_seal" else "collection_unresolved"
     )
     if failure == "final_capture":
-        assert len(captures) == 3
+        assert len(captures) == 4
         assert collection["capture_observations"]["final"] is None
     assert code != 0 and report["state"] in {"INCOMPLETE", "BLOCKED"}
     assert report["defect_policy_decision"]["clean"] is False

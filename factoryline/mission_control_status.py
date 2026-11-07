@@ -481,18 +481,61 @@ def _capture_security_scan_collection(root, security_only):
 def prepare_security_scan_receipt_report(
     root: Path,
     report: dict[str, Any],
-    before_collection: dict[str, Any],
+    before_collection: dict[str, Any] | None = None,
     *,
     security_only: bool = False,
 ) -> dict[str, Any]:
     """Bind pre/post scan pytest config observations before writing a local receipt."""
-    from .review_audits import _seal_security_scan
+    from . import review_audits
+
+    if before_collection is None:
+        oracle = report.get("oracle_context")
+        current = oracle.get("pytest_collection") if isinstance(oracle, dict) else None
+        observations = (
+            current.get("capture_observations") if isinstance(current, dict) else None
+        )
+        if not isinstance(observations, dict):
+            observations = {}
+        before = observations.get("before")
+        after = observations.get("post_scan")
+        scan = (
+            oracle.get("static_pytest_collection") if isinstance(oracle, dict) else None
+        )
+        strict = "scan" in observations
+        if (
+            not isinstance(before, dict)
+            or not isinstance(after, dict)
+            or (strict and not isinstance(scan, dict))
+        ):
+            final = _capture_security_scan_collection(root, security_only)
+            prepared = _bind_security_scan_collection_observation(
+                report,
+                before,
+                after,
+                scan_identity=scan,
+                final=final,
+                final_checked=True,
+                strict_transaction=strict,
+            )
+            return review_audits._seal_security_scan(prepared)
+        from .audit_action_refs import _finish_security_scan_collection_receipt
+
+        return _finish_security_scan_collection_receipt(
+            review_audits,
+            Path(root).resolve(),
+            report,
+            before,
+            after,
+            scan,
+            security_only,
+            strict_transaction=strict,
+        )
 
     after = security_scan_pytest_collection_snapshot(root, security_only=security_only)
     prepared = _bind_security_scan_collection_observation(
         report, before_collection, after
     )
-    return _seal_security_scan(prepared)
+    return review_audits._seal_security_scan(prepared)
 
 
 def _bind_security_scan_collection_observation(
@@ -512,21 +555,12 @@ def _bind_security_scan_collection_observation(
         raise ValueError("security scan oracle context is malformed")
     if scan_identity is None:
         scan_identity = oracle.get("static_pytest_collection")
-    scan_known = (
-        isinstance(scan_identity, dict)
-        and scan_identity.get("collection_state") != "UNKNOWN"
-    )
     scan_matches = not strict_transaction or (
-        scan_known
+        isinstance(scan_identity, dict)
         and isinstance(before, dict)
         and {key: value for key, value in before.items() if key != "patterns"}
         == scan_identity
     )
-    before_known = (
-        isinstance(before, dict) and before.get("collection_state") != "UNKNOWN"
-    )
-    after_known = isinstance(after, dict) and after.get("collection_state") != "UNKNOWN"
-    final_known = isinstance(final, dict) and final.get("collection_state") != "UNKNOWN"
     previous = oracle.get("pytest_collection")
     prior_state = previous.get("capture_state") if isinstance(previous, dict) else None
     prior_drift = prior_state == "changed_during_scan"
@@ -536,8 +570,8 @@ def _bind_security_scan_collection_observation(
         and isinstance(after, dict)
         and before != after
         or strict_transaction
-        and before_known
-        and scan_known
+        and isinstance(before, dict)
+        and isinstance(scan_identity, dict)
         and not scan_matches
         or final_checked
         and isinstance(final, dict)
@@ -549,8 +583,8 @@ def _bind_security_scan_collection_observation(
         and isinstance(after, dict)
         and before == after
         and scan_matches
-        and (not strict_transaction or before_known and after_known and scan_known)
-        and (not final_checked or final_known and final == after)
+        and (not strict_transaction or isinstance(scan_identity, dict))
+        and (not final_checked or isinstance(final, dict) and final == after)
         and not prior_drift
     )
     capture_state = (
@@ -598,7 +632,13 @@ def _bind_security_scan_collection_observation(
                 configs[existing_index] = row
             configs.sort(key=lambda item: item.get("path", ""))
     if not stable:
-        if prepared.get("state") != "BLOCKED":
+        coverage = prepared.get("audit_coverage")
+        source_limit_blocked = (
+            oracle.get("mode") == "not_assessed_source_limit"
+            or isinstance(coverage, dict)
+            and coverage.get("measurement_state") == "blocked"
+        )
+        if prepared.get("state") != "BLOCKED" or not source_limit_blocked:
             prepared["state"] = "INCOMPLETE"
         reason = (
             "Pytest collection configuration changed during the scan; rerun before relying on coverage."
@@ -867,7 +907,7 @@ def _security_scan_pytest_collection(
     sealed = {
         key: value
         for key, value in identity.items()
-        if key not in {"patterns", "capture_state"}
+        if key not in {"patterns", "capture_state", "capture_observations"}
     }
     if sealed != current_identity or patterns != sorted(current_patterns):
         return "PYTEST_COLLECTION_CONFIG_CHANGED"

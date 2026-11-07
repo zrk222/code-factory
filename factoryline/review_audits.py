@@ -5840,6 +5840,7 @@ def _security_scan_report(
     tenant_read_configuration: dict | None = None,
     producer_source_model=None,
     collection_observation: dict | None = None,
+    defer_collection_binding: bool = False,
 ) -> dict[str, Any]:
     from .audit_action_refs import security_scan_report
 
@@ -5867,6 +5868,7 @@ def _security_scan_report(
             tenant_read_configuration=tenant_read_configuration,
             producer_source_model=producer_source_model,
             collection_observation=collection_observation,
+            defer_collection_binding=defer_collection_binding,
         )
 
 

@@ -1306,6 +1306,7 @@ def security_scan_report(
     tenant_read_configuration: dict | None = None,
     producer_source_model=None,
     collection_observation: dict | None = None,
+    defer_collection_binding: bool = False,
 ) -> dict[str, Any]:
     """Assemble and seal the bounded Python security scan report with coverage, source bindings, findings, and its non-runtime, non-approval limits."""
     audit_coverage = audit._security_scan_coverage(
@@ -1367,7 +1368,7 @@ def security_scan_report(
         ).encode("utf-8")
     ).hexdigest()
     core["action_summary"] = audit._security_scan_action_summary(state)
-    if collection_observation is not None:
+    if collection_observation is not None and not defer_collection_binding:
         from .mission_control_status import (
             _bind_security_scan_collection_observation,
         )
@@ -1650,6 +1651,7 @@ def security_scan(
             ),
             producer_source_model=producer_source_model.get("source"),
             collection_observation=receipt_observation,
+            defer_collection_binding=runtime_requested,
         )
         result = _finish_native_security_scan(
             audit,
@@ -1696,7 +1698,12 @@ def _finish_security_scan_collection_receipt(
 
     final = _capture_security_scan_collection(workspace, security_only)
     current = report.get("oracle_context", {}).get("pytest_collection", {})
-    if isinstance(final, dict) and final == after and isinstance(current, dict):
+    if (
+        isinstance(final, dict)
+        and final == after
+        and isinstance(current, dict)
+        and isinstance(current.get("capture_observations"), dict)
+    ):
         return report
     prepared = _bind_security_scan_collection_observation(
         report,

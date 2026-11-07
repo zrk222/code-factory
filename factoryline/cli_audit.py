@@ -659,9 +659,13 @@ def _run_bounded_security(args: Any) -> int:
             bind_collection_receipt=True,
         )
         from .mission_control_status import (
+            prepare_security_scan_receipt_report,
             write_security_scan_receipt,
         )
 
+        result = prepare_security_scan_receipt_report(
+            Path(args.root), result, security_only=security_only
+        )
         write_security_scan_receipt(Path(args.root), result)
     except (ReviewAuditError, OSError, ValueError) as error:
         message = _security_receipt_error_message(error)
