@@ -5,6 +5,18 @@ import hashlib
 from pathlib import Path
 
 
+def _captured_hmac_operands(call):
+    """Bind a one-shot HMAC constructor with explicit message and digest operands."""
+    from . import _bind_source_call
+
+    signature = ast.parse("def new(key, msg, digestmod): pass").body[0]
+    try:
+        bound = _bind_source_call(call, signature, apply_defaults=False)
+    except ValueError:
+        return None
+    return bound["key"], bound["msg"], bound["digestmod"]
+
+
 def _native_span(node):
     span = [
         getattr(node, key, None)

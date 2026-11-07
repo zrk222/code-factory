@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 
 from . import credential_role_identity_effects as _legacy
+from .captured_security_audit import _captured_hmac_operands
 
 
 def application_value_role_evidence(index, path, literal, assignment, secret):
@@ -675,18 +676,14 @@ def _app_digest_call(index, path, owner, call, actual, secret):
     ):
         return None
     constructor = result.func.value
-    if (
-        not isinstance(constructor, ast.Call)
-        or constructor.keywords
-        or len(constructor.args) != 3
-    ):
+    if (operands := _captured_hmac_operands(constructor)) is None:
         return None
     if (
         fixture._app_expression_name(index, target, constructor.func, helper)
         != "hmac.new"
     ):
         return None
-    key, message, algorithm = constructor.args
+    key, message, algorithm = operands
     if fixture._app_expression_name(
         index, target, algorithm, helper
     ) != "hashlib.sha256" or not _app_digest_bytes(key, values, {secret}):
@@ -817,16 +814,17 @@ def _app_digest_algorithm_argument(node, aliases, parents):
     from . import review_audits as audit
 
     call = parents.get(id(node))
-    if not _app_digest_lexical_read(call, node, parents):
-        return False
-    return (
+    if isinstance(call, ast.keyword):
+        call = parents.get(id(call))
+    if not (
         isinstance(call, ast.Call)
-        and not call.keywords
-        and len(call.args) == 3
-        and call.args[2] is node
         and audit._resolved_ast_name(call.func, aliases) == "hmac.new"
         and audit._resolved_ast_name(node, aliases) == "hashlib.sha256"
-    )
+        and _app_digest_lexical_read(call, node, parents)
+    ):
+        return False
+    operands = _captured_hmac_operands(call)
+    return operands is not None and operands[2] is node
 
 
 def _app_digest_lexical_read(call, node, parents):
@@ -5792,12 +5790,17 @@ def _app_incomplete_plaintext_evidence(
 
 def application_identity_helper_epoch():
     """Bind every moved application audit predicate and its core callees."""
+    from .review_integrity import source_binding_helpers
+
     return (
+        *source_binding_helpers(),
+        ast.parse,
         _legacy._APP_RECEIVER_HOOKS_CACHE_TOKEN,
         _TEST_SCOPE_CONTRACT_EPOCH,
         application_test_scope_role_evidence,
         application_value_role_evidence,
         _app_digest_call,
+        _captured_hmac_operands,
         _app_digest_bytes,
         _app_digest_algorithm_argument,
         _app_digest_bound_values,

@@ -3814,6 +3814,9 @@ def test_signing_authority_role_requires_exact_key_flow_and_closed_result(
     "variant",
     [
         "direct",
+        "keywords",
+        "mixed",
+        "keyword_expansion",
         "inline",
         "key_escape",
         "digest_escape",
@@ -3827,7 +3830,9 @@ def test_signing_authority_role_requires_exact_key_flow_and_closed_result(
         "wrong_slot",
     ],
 )
-def test_shared_digest372_closed_key_and_computed_result(tmp_path, variant):
+def test_shared_digest372_closed_key_and_computed_result(
+    tmp_path, variant, monkeypatch
+):
     from factoryline import mock_fixture_provenance as fixture
 
     helper = "import hmac\nimport hashlib\ndef calculate(key, timestamp, body):\n    message = '{}.{}'.format(timestamp, body).encode()\n    return hmac.new(key.encode(), message, hashlib.sha256).hexdigest()\n"
@@ -3883,6 +3888,15 @@ def test_shared_digest372_closed_key_and_computed_result(tmp_path, variant):
             ),
         ),
     }
+    signatures = {
+        "keywords": "digestmod=hashlib.sha256, msg=message, key=key.encode()",
+        "mixed": "key.encode(), digestmod=hashlib.sha256, msg=message",
+        "keyword_expansion": "key.encode(), message, **dict(digestmod=hashlib.sha256)",
+    }
+    if variant in signatures:
+        helper = helper.replace(
+            "key.encode(), message, hashlib.sha256", signatures[variant]
+        )
     if variant in mutations:
         helper, caller = mutations[variant](helper, caller)
     modules, captured, inventory = {}, {}, {}
@@ -3900,11 +3914,23 @@ def test_shared_digest372_closed_key_and_computed_result(tmp_path, variant):
     evidence = fixture.application_test_secret_evidence(
         index, tmp_path / "test_flow.py", 5, "owned-digest-input"
     )
-    assert (evidence.get("eligible") is True) is (variant in {"direct", "inline"}), (
-        evidence
-    )
+    assert (evidence.get("eligible") is True) is (
+        variant in {"direct", "inline", "keywords", "mixed"}
+    ), evidence
     if evidence.get("eligible"):
         assert evidence["profile"] == "SOURCE_BOUND_DIGEST_TEST_AUTHORITY"
+
+    if variant == "keywords":
+        import factoryline
+
+        def reject(*args, **kwargs):
+            raise ValueError("source binding unavailable")
+
+        monkeypatch.setattr(factoryline, "_bind_source_call", reject)
+        after = fixture.application_test_secret_evidence(
+            index, tmp_path / "test_flow.py", 5, "owned-digest-input"
+        )
+        assert after.get("eligible") is not True
 
 
 def test_shared_digest372_all_role_profiles_capture_complete_verifier_inputs(tmp_path):
