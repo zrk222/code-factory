@@ -57,25 +57,33 @@ For an existing repository, start with the scan above.
 
 For a new builder, start with an idea and make the expected behavior concrete.
 For an experienced developer, start with the repository or proposed diff.
-SpecLine helps structure requirements; ForgeLine adds architecture and test-intent
-checks; Code Factory connects the findings, evidence and next action. The basic
-scan does not require those optional workflows.
+### The complete factory
 
-![Actual CF Studio product-mission form with a clearly labelled fictional sample](docs/assets/marketplace/cf-product-mission-20261016.jpg)
+- **FactoryLine** coordinates local audits, evidence, and review decisions.
+- **ForgeLine** builds scoped changes and challenges their checks.
+- **SpecLine** defines the intent, requirements, and acceptance criteria those checks must prove.
 
-Then inspect the findings, repair the code, and rerun the affected checks. Keep
-your coding agent and review services, including CodeRabbit, Devin or Blitzy.
-CF adds its combination of test-intent checks, optional runtime mutation
-evidence and local receipts bound to source. Review services also offer testing
-and analysis; CF's evidence helps you inspect the work alongside them.
+Run a basic scan when you want a quick local review.
 
-![Actual CF Studio showing two planted security findings and current source hashes](docs/assets/marketplace/cf-audit-findings-20261016.jpg)
+### Precision and product walkthrough
 
-**Demonstration, October 16, 2026:** the installed local CF runtime scanned one
-fictional Python file and reported two planted security findings. Studio shows
-1/1 source files assessed and incomplete evidence. These are real sample-run
-observations, not an accuracy benchmark, a JetBrains IDE capture or a release
-approval. Unrun runtime lanes remain visible as not run.
+The exposed N443-38 replay measured **88.24% decided actionable precision**
+(30/34) versus 85.71% on the same observed cases. It returned 37 of 38 cases and
+retained all 30 original true positives. The original sealed first-pass reference
+was 83.33% on decided labels (30/36) and 78.95% counting all 38 selected cases.
+Two blind AI reviewers supplied the labels.
+[Case ledger](https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json)
+
+The captures use a fictional workspace. Its one-file scan reports a planted
+security finding with complete source coverage and incomplete overall evidence.
+
+![Factory Studio Product Mission draft with intent and review callouts](https://github.com/zrk222/code-factory/releases/download/v0.49.6/studio-product-mission-0496.png)
+
+![Graph Ops guide for choosing the next proof](https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-proof-guide-0496.png)
+
+![Graph Ops local scan with source coverage and incomplete evidence](https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-findings-0496.png)
+
+![Expanded Graph Ops finding with its source line and rationale](https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-finding-detail-0496.png)
 
 Try the free local core on your own repository. If it helps, a GitHub star makes
 it easier to discover; fork it to improve a rule or contribute a reproducible

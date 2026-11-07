@@ -25,51 +25,49 @@ short_description: Audit code, review evidence, and resolve defects.
 
 # Code Factory
 
-## 0.49.6 release workflow overview — VS Code 1.3.3, JetBrains 1.3.4
+## Code Factory 0.49.6
 
-Collection evidence is bound before native scan sealing and carried into audit
-handoffs. Collection drift produces incomplete evidence and requires a fresh seal.
+Governance infrastructure for high-stakes agentic workloads.
 
-[PyPI package](https://pypi.org/project/factoryline-code-factory/0.49.6/) and
-[GitHub release](https://github.com/zrk222/code-factory/releases/tag/v0.49.6).
+[Verified wheel](https://huggingface.co/spaces/zrk222/code-factory/blob/24d51e618d685618725a850ba34be6a7df88a6d9/factoryline_code_factory-0.49.6-py3-none-any.whl) ·
+[PyPI](https://pypi.org/project/factoryline-code-factory/0.49.6/) ·
+[GitHub release](https://github.com/zrk222/code-factory/releases/tag/v0.49.6) ·
+[Zenodo](https://doi.org/10.5281/zenodo.24029905)
 
-The exposed N443-38 regression replay retained **all 30 original true positives**.
-It returned 37 of 38 cases. One false positive was withheld from the action list,
-four remained admitted, and two unclear cases remained admitted. Case 005 timed
-out. [Case ledger](https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json).
+The exposed N443-38 replay measured **88.24% decided actionable precision**
+(30/34), up from 85.71% on the same observed cases. All 30 original true
+positives were retained. The replay covered 37 of 38 cases, with two unclear
+labels and a timeout on case 005.
+[Case ledger](https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json)
 
-An agent has finished a change, and you want to understand what comes next.
-Explore the local workflow here: find the source behind a finding, inspect the
-recorded checks, choose a repair, and return to the evidence before accepting it.
-To try it on your own repository, run `factory scan --root .` locally. Missing or
-unavailable evidence stays incomplete. **First Proof is a local setup
-demonstration, not a repository assessment.** This Hugging Face Space is a
-static product overview; it does not scan a visitor's workspace. This source
-preview does not establish publication or exhaustive detection.
+The original sealed reference measured 83.33% among 36 decided alerts and
+78.95% across all 38 cases. Two AI reviewers supplied the labels.
 
-![CF Studio product mission form with fictional sample text](https://raw.githubusercontent.com/zrk222/code-factory/d1f2a21cde1f00856c0329e913a1071aca256300/docs/assets/marketplace/cf-product-mission-20261016.jpg)
+### The complete factory
 
-Actual Product Mission form with sample text entered through the interface. No
-interview, build, or deployment is claimed by this image.
+- **FactoryLine** Coordinates local audits, evidence, and review decisions.
+- **ForgeLine** Builds scoped changes and challenges their checks.
+- **SpecLine** Defines the intent, requirements, and acceptance criteria those checks must prove.
 
-![Graph Ops security findings from a fictional Python file](https://raw.githubusercontent.com/zrk222/code-factory/d1f2a21cde1f00856c0329e913a1071aca256300/docs/assets/marketplace/cf-audit-findings-20261016.jpg)
+### Current editor views
 
-Actual Graph Ops projection of a local scan of one fictional Python file. It
-shows two planted findings, complete source coverage for that file, and
-`INCOMPLETE` evidence; runtime lanes were not run. This is demonstration
-evidence, not a benchmark.
+- VS Code and Open VSX 1.3.3 show local evidence and source locations in Explorer.
+- JetBrains 1.3.4 carries forward saved-file synchronization before local
+  commands and starts Factory Studio in the background.
 
-## Graph Ops telemetry sample — October 8, 2026
+The four annotated captures use the released interface and a fictional local
+workspace. Graph Ops reports one planted finding from one scanned file.
+Runtime evidence remains incomplete in the example.
 
-**Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
-**Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
-**Added:** Graph Ops agent repair telemetry, evidence requirements, stop conditions and searchable individual test outcomes. Repair packets are consumed by the host agent; this view does not execute or approve repairs.
+![Factory Studio Product Mission draft with intent and review callouts](https://github.com/zrk222/code-factory/releases/download/v0.49.6/studio-product-mission-0496.png)
 
-![Current audit telemetry](assets/graph-ops-audit-telemetry-current.png)
+![Graph Ops guide for choosing the next proof](https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-proof-guide-0496.png)
 
-Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
+![Graph Ops local scan with source coverage and incomplete evidence](https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-findings-0496.png)
 
-## 0.48.0 audit workflow preview
+![Expanded Graph Ops finding with its source line and rationale](https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-finding-detail-0496.png)
+
+## Audit workflow reference
 
 - **Fixed:** local editor evidence now distinguishes missing, incomplete,
   unavailable, failed, and stale lanes instead of presenting inventory as a
@@ -308,9 +306,7 @@ reviewer's own baseline and escalates: surface, second approver, fail closed.
 Blocking is refused until blind-spot re-review outcomes correct the proxy.
 Public exports carry distributions only, never per-reviewer rows.
 
-## Native agent-harness preview — current source candidate
-
-Core release [0.49.0 is published on PyPI](https://pypi.org/project/factoryline-code-factory/0.49.0/) and [GitHub](https://github.com/zrk222/code-factory/releases/tag/v0.49.0). This native-harness section remains a source preview; inclusion in the published wheel is not claimed.
+## Native agent-harness workflows
 
 The native harness keeps incident checkpoints for recovery, binds review
 context shards to source, and compares candidate repairs without applying them.
@@ -322,7 +318,7 @@ explicitly registered by the caller. Their observations are experimental, not
 model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
 Junie while keeping execution and identity limits visible.
 
-## Native scanner expansion — core 0.48.1 / editor 1.1.4 source preview
+## Native scanner adapters
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.
@@ -334,10 +330,6 @@ them, and receipt discovery skips explicit file checks for unrelated logs.
 security-extended analysis, and eight Python/JavaScript/TypeScript Semgrep
 rules including local taint tracking. CodeQL controls require native flow
 evidence; Semgrep community output does not establish cross-file coverage.
-
-Code Factory is a robust code audit factory with Production/Stable package
-metadata. This source preview does not establish new marketplace publication,
-runtime verification of every repository, or measured detection accuracy.
 
 ## Smaller models, stronger quality workflows
 
