@@ -18,6 +18,14 @@ def add_parser(sub) -> None:
         "change", help="prepare a deterministic, analysis-only diff-to-proof review"
     )
     change_sub = change.add_subparsers(required=True, dest="change_cmd")
+    pre_pr = change_sub.add_parser(
+        "pre-pr", help="reconcile current local pre-PR evidence"
+    )
+    pre_pr.add_argument("manifest")
+    pre_pr.add_argument("--root", default=".")
+    pre_pr.add_argument("--execute", action="store_true")
+    pre_pr.add_argument("--out")
+    pre_pr.add_argument("--json", action="store_true")
     change_review = change_sub.add_parser(
         "review", help="join diff impact, coverage gaps, and plan-only reruns"
     )
@@ -221,6 +229,8 @@ def add_parser(sub) -> None:
 
 def _run_change(a) -> int:
     """Handle one evidence-chain command family with lazy imports."""
+    if a.change_cmd == "pre-pr":
+        return _run_pre_pr(a)
     if a.change_cmd == "scope-check":
         return _run_scope_check(a)
 
@@ -269,6 +279,42 @@ def _run_change(a) -> int:
             "authority   : no execution, merge, publication, deployment, or credential access"
         )
     return 0
+
+
+def _run_pre_pr(a) -> int:
+    import subprocess
+    from .change_review import _atomic_text
+    from .incremental_scheduler import run_pre_pr
+    from .live_feedback import load_live_json
+    from .migration import RepositoryHistoryError
+
+    try:
+        result = run_pre_pr(
+            Path(a.root), load_live_json(Path(a.manifest)), execute=a.execute
+        )
+        if a.out:
+            _atomic_text(Path(a.out), json.dumps(result, sort_keys=True) + "\n")
+    except (
+        ValueError,
+        OSError,
+        KeyError,
+        TypeError,
+        subprocess.SubprocessError,
+        RepositoryHistoryError,
+    ) as exc:
+        result = {
+            "state": "BLOCKED",
+            "code": getattr(exc, "code", "PRE_PR_INPUT"),
+            "message": str(exc),
+            "authority": "none",
+            "release_approval": False,
+        }
+    print(
+        json.dumps(result, indent=2)
+        if a.json
+        else f"Pre-PR: {result['state']}; no merge authority."
+    )
+    return 0 if result["state"] == "PASS" else 2
 
 
 def _run_scope_check(a) -> int:

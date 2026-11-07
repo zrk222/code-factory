@@ -692,6 +692,181 @@ def test_fix_workflow_provides_one_repair_handoff(tmp_path):
     )
 
 
+def _continuity_case(root, number=1):
+    contract = _digest("continuity-contract")
+    if number == 1:
+        _replay(root, "original", 1, contract)
+        _replay(root, "negative", 1, contract)
+    fixed = _replay(root, f"candidate-{number}", 1, contract)
+    source = root / fixed["source_root"] / "run.py"
+    source.write_text(source.read_text() + f"# candidate {number}\n")
+    fixed["source_sha256"] = _source_digest(source.parent)[0]
+    fixed["expected_exit"] = 0
+
+    # Reuse the identical original and negative-control manifests across rounds.
+    def existing(name):
+        value = dict(fixed, replay_id=name, source_root=name, expected_exit=1)
+        value["source_sha256"] = _source_digest(root / name)[0]
+        return value
+
+    return {
+        "schema": "factory.repair-comparison.v1",
+        "comparison_id": f"round-{number}",
+        "contract_sha256": contract,
+        "buggy": existing("original"),
+        "fixed": fixed,
+        "negative_controls": [existing("negative")],
+    }
+
+
+def _continuity_attempt(root, manifest, prior, *, execute=True, max_rounds=3):
+    path = root / f"attempt-{len(prior)}.json"
+    receipt = run_fix_workflow(
+        root,
+        manifest,
+        execute=execute,
+        prior_attempts=prior,
+        max_rounds=max_rounds,
+        out=path,
+    )
+    reference = {
+        "path": path.name,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+    return receipt, [*prior, reference]
+
+
+def test_fix_continuity_tracks_recurrence_and_stops_round_four(tmp_path, monkeypatch):
+    history = []
+    identities = None
+    for number in range(1, 4):
+        result, history = _continuity_attempt(
+            tmp_path, _continuity_case(tmp_path, number), history
+        )
+        assert result["state"] == "FAIL"
+        current = result["continuity"]
+        assert current["executed_rounds_before"] == number - 1
+        assert current["finding_ids"]
+        if identities is not None:
+            assert (
+                current["finding_ids"] == current["recurring_finding_ids"] == identities
+            )
+        identities = current["finding_ids"]
+    monkeypatch.setattr(
+        "factoryline.senior_assurance.run_replay",
+        lambda *a, **kw: pytest.fail("budget executed a replay"),
+    )
+    stopped = run_fix_workflow(
+        tmp_path, _continuity_case(tmp_path, 4), execute=True, prior_attempts=history
+    )
+    assert stopped["state"] == "STEP_BACK"
+    assert stopped["continuity"]["executed_this_round"] is False
+    assert stopped["authority"] == "none" and stopped["release_approval"] is False
+
+
+def test_fix_continuity_repeated_failed_candidate_does_not_execute(
+    tmp_path, monkeypatch
+):
+    manifest = _continuity_case(tmp_path)
+    previous, history = _continuity_attempt(tmp_path, manifest, [])
+    monkeypatch.setattr(
+        "factoryline.senior_assurance.run_replay",
+        lambda *a, **kw: pytest.fail("unchanged candidate executed"),
+    )
+    stopped = run_fix_workflow(tmp_path, manifest, execute=True, prior_attempts=history)
+    assert stopped["state"] == "NO_PROGRESS"
+    assert stopped["findings"] == previous["findings"]
+    assert (
+        stopped["continuity"]["candidate_sha256"]
+        == previous["continuity"]["candidate_sha256"]
+    )
+
+
+def test_fix_continuity_plan_does_not_consume_configurable_budget(tmp_path):
+    manifest = _continuity_case(tmp_path)
+    planned, history = _continuity_attempt(
+        tmp_path, manifest, [], execute=False, max_rounds=1
+    )
+    assert planned["continuity"]["executed_this_round"] is False
+    executed, _ = _continuity_attempt(tmp_path, manifest, history, max_rounds=1)
+    assert executed["state"] == "FAIL"
+    assert executed["continuity"]["executed_rounds_before"] == 0
+
+
+@pytest.mark.parametrize(
+    "corruption", ["hash", "duplicate", "reordered", "contract", "candidate", "escape"]
+)
+def test_fix_continuity_rejects_invalid_history_before_execution(
+    tmp_path, monkeypatch, corruption
+):
+    manifest = _continuity_case(tmp_path)
+    _, history = _continuity_attempt(tmp_path, manifest, [], execute=False)
+    manifest2 = _continuity_case(tmp_path, 2)
+    _, history = _continuity_attempt(tmp_path, manifest2, history, execute=False)
+    if corruption == "hash":
+        history[0]["sha256"] = "0" * 64
+    elif corruption == "duplicate":
+        history = [history[0], history[0]]
+    elif corruption == "reordered":
+        history.reverse()
+    elif corruption == "escape":
+        history[0]["path"] = "../outside.json"
+    else:
+        path = tmp_path / history[0]["path"]
+        payload = json.loads(path.read_text())
+        field = "binding_sha256" if corruption == "contract" else "candidate_sha256"
+        payload["continuity"][field] = "0" * 64
+        payload["receipt_sha256"] = _digest(
+            {k: v for k, v in payload.items() if k != "receipt_sha256"}
+        )
+        path.write_text(json.dumps(payload))
+        history[0]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        "factoryline.senior_assurance.run_replay",
+        lambda *a, **kw: pytest.fail("invalid history executed"),
+    )
+    with pytest.raises(FixWorkflowError, match="E_REPAIR_HISTORY"):
+        run_fix_workflow(tmp_path, manifest2, execute=True, prior_attempts=history)
+
+
+def test_fix_continuity_reads_at_most_one_byte_over_history_limit(
+    tmp_path, monkeypatch
+):
+    from factoryline import fix_workflow
+
+    path = tmp_path / "oversized-history.json"
+    path.write_bytes(b"x" * (1_048_576 + 1))
+    reference = {
+        "path": path.name,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+    original_open = Path.open
+    requested_sizes = []
+
+    class ReadProbe:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def read(self, size=-1):
+            requested_sizes.append(size)
+            return self.stream.read(size)
+
+    def observed_open(candidate, *args, **kwargs):
+        stream = original_open(candidate, *args, **kwargs)
+        return ReadProbe(stream) if candidate == path else stream
+
+    monkeypatch.setattr(Path, "open", observed_open)
+    with pytest.raises(FixWorkflowError, match="history receipt is oversized"):
+        fix_workflow._read_prior_attempt(tmp_path, reference)
+    assert requested_sizes == [1_048_577]
+
+
 def test_fix_workflow_summarizes_hash_bound_executed_intervention(tmp_path):
     contract = _digest("contract")
     manifest = {
@@ -1006,7 +1181,7 @@ def test_fix_workflow_marks_missing_replay_facts_unsupported(monkeypatch, tmp_pa
         "compare_repair",
         lambda *_args, **_kwargs: {
             "comparison_id": "incomplete-receipt",
-            "contract_sha256": _digest("contract"),
+            "contract_sha256": _digest("continuity-contract"),
             "receipt_sha256": _digest("comparison"),
             "executed": True,
             "state": "FAIL",
@@ -1018,7 +1193,7 @@ def test_fix_workflow_marks_missing_replay_facts_unsupported(monkeypatch, tmp_pa
     )
     result = fix_workflow.run_fix_workflow(
         tmp_path,
-        {"manifest": "bound"},
+        _continuity_case(tmp_path),
         execute=True,
     )
 
@@ -1059,7 +1234,7 @@ def test_fix_workflow_does_not_count_runner_stops_as_reproduced_failures(
         "compare_repair",
         lambda *_args, **_kwargs: {
             "comparison_id": "runner-stopped",
-            "contract_sha256": _digest("contract"),
+            "contract_sha256": _digest("continuity-contract"),
             "receipt_sha256": _digest("comparison"),
             "executed": True,
             "state": "FAIL",
@@ -1072,7 +1247,7 @@ def test_fix_workflow_does_not_count_runner_stops_as_reproduced_failures(
 
     result = fix_workflow.run_fix_workflow(
         tmp_path,
-        {"manifest": "bound"},
+        _continuity_case(tmp_path),
         execute=True,
     )
 
@@ -1180,3 +1355,76 @@ def test_checkpoint_atomic_retry_and_legacy_history(tmp_path, monkeypatch):
             tmp_path, "feature", "retry", path, snapshot, digest, report, dry_run=False
         )
     assert assembly._release_checkpoint_records(tmp_path, "feature") == records
+
+
+@pytest.mark.parametrize("state", ["STEP_BACK", "NO_PROGRESS"])
+def test_fix_cli_stopped_summary_does_not_claim_execution(tmp_path, monkeypatch, state):
+    from types import SimpleNamespace
+    from factoryline import cli_deep_audit, fix_workflow
+
+    monkeypatch.setattr(fix_workflow, "load_fix_json", lambda path: {})
+    monkeypatch.setattr(
+        fix_workflow,
+        "run_fix_workflow",
+        lambda *a, **k: {
+            "state": state,
+            "mode": "stopped",
+            "next_action": "Step back; no repair replay was executed.",
+        },
+    )
+    args = SimpleNamespace(
+        root=str(tmp_path),
+        manifest="unused.json",
+        execute=True,
+        prior_attempt=[],
+        max_rounds=3,
+        out=None,
+    )
+    result, code = cli_deep_audit._senior_fix(args)
+    assert code == 1
+    assert "Reproduced the failure" not in result["action_summary"]
+    assert "no" in result["action_summary"].lower()
+
+
+@pytest.mark.parametrize("invalid", ["escape", "oversized"])
+def test_fix_cli_stopped_rejects_history_before_unbounded_read(
+    tmp_path, monkeypatch, capsys, invalid
+):
+    from factoryline.cli import main
+    from factoryline import fix_workflow
+
+    path = tmp_path / "history.json"
+    reference = path.name
+    if invalid == "escape":
+        path = tmp_path.parent / (tmp_path.name + "-outside.json")
+        reference = "../" + path.name
+    path.write_bytes(b"x" * (1_048_577 if invalid == "oversized" else 2))
+    original_read = Path.read_bytes
+
+    def bounded_only(candidate):
+        if candidate.resolve() == path.resolve():
+            pytest.fail("history must not use unbounded read_bytes before validation")
+        return original_read(candidate)
+
+    monkeypatch.setattr(Path, "read_bytes", bounded_only)
+    monkeypatch.setattr(
+        fix_workflow,
+        "run_fix_workflow",
+        lambda *a, **k: pytest.fail("invalid history reached replay workflow"),
+    )
+    code = main(
+        [
+            "senior",
+            "fix",
+            "unused.json",
+            "--root",
+            str(tmp_path),
+            "--prior-attempt",
+            reference,
+            "--execute",
+            "--json",
+        ]
+    )
+    result = json.loads(capsys.readouterr().err)
+    assert code == 2
+    assert result["authority"] == "none"

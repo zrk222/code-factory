@@ -43,6 +43,8 @@ REUSE_REQUEST_SCHEMA = "factory.evidence-reuse-request.v1"
 REUSE_RECEIPT_SCHEMA = "factory.evidence-reuse.v1"
 BRIEF_SCHEMA = "factory.failure-brief.v1"
 INCIDENT_TRIAGE_SCHEMA = "factory.incident-triage.v1"
+INCIDENT_REGRESSION_INTAKE_SCHEMA = "factory.incident-regression-intake.v1"
+INCIDENT_REGRESSION_PACKET_SCHEMA = "factory.exposed-regression-packet.v1"
 ACTIVATION_EXPERIMENT_SCHEMA = "factory.activation-experiment-observation.v1"
 
 _INCIDENT_LEVELS = {"debug": 0, "info": 1, "warning": 2, "error": 3, "critical": 4}
@@ -1516,6 +1518,159 @@ def triage_incident_events(
         raw_batch_sha256=raw_batch_sha256,
         pending_event_ids=pending_event_ids,
     )
+
+
+def _incident_replay_manifest(root: Path, value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_MANIFEST", "replay and control manifests must be objects"
+        )
+    return validate_replay_manifest(root, value)
+
+
+def _ready_incident_group(
+    events: object, fingerprint: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    triage = triage_incident_events(events)
+    selected = next(
+        (row for row in triage["groups"] if row["fingerprint"] == fingerprint), None
+    )
+    if (
+        triage["status"] != "READY"
+        or not triage["batch_digest_verified"]
+        or triage["abstain"]
+        or triage["backpressure"]
+        or not selected
+    ):
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_TRIAGE",
+            "incident group is missing or not fully assessed",
+        )
+    return triage, selected
+
+
+def _incident_packet_identity(
+    manifest: object,
+) -> tuple[str, str, dict[str, Any]]:
+    required = {
+        "schema",
+        "packet_id",
+        "events",
+        "group_fingerprint",
+        "replay",
+        "controls",
+        "review",
+    }
+    if not isinstance(manifest, dict) or set(manifest) != required:
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_INPUT", "incident intake fields are invalid"
+        )
+    if manifest.get("schema") != INCIDENT_REGRESSION_INTAKE_SCHEMA:
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_SCHEMA", "incident intake schema is invalid"
+        )
+    packet_id = manifest.get("packet_id")
+    fingerprint = manifest.get("group_fingerprint")
+    review = manifest.get("review")
+    if not isinstance(packet_id, str) or not packet_id.strip() or len(packet_id) > 128:
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_REVIEW", "packet identity or review reference is invalid"
+        )
+    if not isinstance(fingerprint, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", fingerprint
+    ):
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_REVIEW", "packet identity or review reference is invalid"
+        )
+    if not isinstance(review, dict) or set(review) != {"review_id", "reviewer"}:
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_REVIEW", "packet identity or review reference is invalid"
+        )
+    if any(
+        not isinstance(value, str) or not value.strip() or len(value) > 128
+        for value in review.values()
+    ):
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_REVIEW", "packet identity or review reference is invalid"
+        )
+    return packet_id, fingerprint, review
+
+
+def _incident_packet_controls(
+    root: Path, primary_value: object, controls: object
+) -> tuple[dict[str, Any], list[tuple[str, str, dict[str, Any]]]]:
+    if not isinstance(controls, list) or not 1 <= len(controls) <= 32:
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_CONTROLS",
+            "at least one bounded control manifest is required",
+        )
+    primary = _incident_replay_manifest(root, primary_value)
+    primary_id = primary["replay_id"]
+    normalized_rows: list[tuple[str, str, dict[str, Any]]] = []
+    seen_ids: dict[str, str] = {primary_id: _sha(primary)}
+    for raw in controls:
+        normalized = _incident_replay_manifest(root, raw)
+        digest = _sha(normalized)
+        replay_id = normalized["replay_id"]
+        prior = seen_ids.get(replay_id)
+        if replay_id == primary_id:
+            raise SeniorAssuranceError(
+                "E_INCIDENT_PACKET_CONFLICT",
+                "primary replay id cannot identify a control",
+            )
+        if prior is not None and prior != digest:
+            raise SeniorAssuranceError(
+                "E_INCIDENT_PACKET_CONFLICT",
+                f"replay id has conflicting manifest content: {replay_id}",
+            )
+        if prior is None:
+            seen_ids[replay_id] = digest
+            normalized_rows.append((replay_id, digest, normalized))
+    if not normalized_rows:
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_CONFLICT", "primary and control contract hashes differ"
+        )
+    if any(
+        row[2]["contract_sha256"] != primary["contract_sha256"]
+        for row in normalized_rows
+    ):
+        raise SeniorAssuranceError(
+            "E_INCIDENT_PACKET_CONFLICT", "primary and control contract hashes differ"
+        )
+    return primary, sorted(normalized_rows, key=lambda row: row[:2])
+
+
+def build_incident_regression_packet(
+    root: Path, manifest: dict[str, Any]
+) -> dict[str, Any]:
+    """Expose a reviewed incident as current, source-bound replay inputs only."""
+    packet_id, fingerprint, review = _incident_packet_identity(manifest)
+    triage, selected = _ready_incident_group(manifest.get("events"), fingerprint)
+    workspace = Path(root).resolve()
+    primary, control_rows = _incident_packet_controls(
+        workspace, manifest.get("replay"), manifest.get("controls")
+    )
+    packet = {
+        "schema": INCIDENT_REGRESSION_PACKET_SCHEMA,
+        "packet_id": packet_id,
+        "incident": {
+            "batch_sha256": triage["raw_batch_sha256"],
+            "group_fingerprint": fingerprint,
+            "group": selected,
+            "review_assertion": dict(review),
+        },
+        "replay": {"manifest_sha256": _sha(primary), "manifest": primary},
+        "controls": [
+            {"manifest_sha256": digest, "manifest": normalized}
+            for _, digest, normalized in control_rows
+        ],
+        "state": "EXPOSED_NOT_EXECUTED",
+        "execution_authority": "none",
+        "execution_allowed": False,
+        "release_approval": False,
+    }
+    packet["packet_sha256"] = _sha(packet)
+    return packet
 
 
 class ActivationHookRegistry:

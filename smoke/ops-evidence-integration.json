@@ -1,0 +1,31 @@
+{
+  "checks": [
+    {
+      "name": "pre-pr-rejects-missing-contract-fields",
+      "kind": "python",
+      "run": "from pathlib import Path; import sys, types; package_init=Path.cwd()/'factoryline'/'__init__.py';\nif package_init.is_file(): import factoryline\nelse:\n package=types.ModuleType('factoryline'); package.__path__=[str(Path.cwd()/'factoryline')]; sys.modules['factoryline']=package\nfrom factoryline.incremental_scheduler import run_pre_pr;\ntry:\n run_pre_pr(Path.cwd(), {})\nexcept ValueError as exc:\n assert getattr(exc, 'code', None) == 'E_ARTIFACT_FIELDS', (type(exc).__name__, str(exc))\nelse:\n raise AssertionError('missing pre-PR contract fields were accepted')\nprint('PRE_PR_MISSING_FIELDS_REJECTED')",
+      "expect_exit": 0,
+      "expect_stdout": "PRE_PR_MISSING_FIELDS_REJECTED",
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "fix-workflow-rejects-missing-repair-fields",
+      "kind": "python",
+      "run": "from pathlib import Path; import sys, types; package_init=Path.cwd()/'factoryline'/'__init__.py';\nif package_init.is_file(): import factoryline\nelse:\n package=types.ModuleType('factoryline'); package.__path__=[str(Path.cwd()/'factoryline')]; sys.modules['factoryline']=package\nfrom factoryline.fix_workflow import run_fix_workflow;\ntry:\n run_fix_workflow(Path.cwd(), {})\nexcept ValueError as exc:\n assert getattr(exc, 'code', None) == 'E_ARTIFACT_FIELDS', (type(exc).__name__, str(exc))\nelse:\n raise AssertionError('missing repair fields were accepted')\nprint('FIX_MISSING_FIELDS_REJECTED')",
+      "expect_exit": 0,
+      "expect_stdout": "FIX_MISSING_FIELDS_REJECTED",
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "incident-intake-exposes-current-replay-and-control",
+      "kind": "python",
+      "run": "import hashlib, json, sys, tempfile, types; from pathlib import Path; package_init=Path.cwd()/'factoryline'/'__init__.py';\nif package_init.is_file(): import factoryline\nelse:\n package=types.ModuleType('factoryline'); package.__path__=[str(Path.cwd()/'factoryline')]; sys.modules['factoryline']=package\nfrom factoryline.senior_assurance import build_incident_regression_packet; canonical=lambda value: json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode(); digest=lambda raw: hashlib.sha256(raw).hexdigest(); contract=digest(b'contract'); event={'event_id':'incident-1','severity':'critical','source':'api','message':'request failed'}; fingerprint=digest(canonical({'source':'api','message':'request failed'}));\ndef replay(root, name, expected):\n source=root/name; source.mkdir(); raw=(f'import sys; sys.exit({expected})\\n').encode(); (source/'run.py').write_bytes(raw); (root/f'{name}-policy.json').write_bytes(b'policy'); (root/f'{name}-deps.lock').write_bytes(b'deps'); rows=[{'path':'run.py','sha256':digest(raw),'size':len(raw)}]; return {'schema':'factory.replay-manifest.v1','replay_id':name+'-replay','source_root':name,'source_sha256':digest(canonical(rows)),'dependencies_sha256':{'path':f'{name}-deps.lock','sha256':digest(b'deps')},'policy_sha256':{'path':f'{name}-policy.json','sha256':digest(b'policy')},'input_files':[],'argv':[sys.executable,'-c','pass'],'env':{},'expected_exit':expected,'timeout_seconds':5,'max_output_bytes':1024,'contract_sha256':contract}\nwith tempfile.TemporaryDirectory() as directory:\n root=Path(directory); manifest={'schema':'factory.incident-regression-intake.v1','packet_id':'smoke-packet','events':[event],'group_fingerprint':fingerprint,'replay':replay(root,'original',1),'controls':[replay(root,'control',0)],'review':{'review_id':'smoke-review','reviewer':'maintainer'}}; packet=build_incident_regression_packet(root,manifest); assert packet['state']=='EXPOSED_NOT_EXECUTED'; assert packet['execution_authority']=='none' and packet['execution_allowed'] is False and packet['release_approval'] is False; assert packet['incident']['group_fingerprint']==fingerprint; assert packet['replay']['manifest']['source_sha256']==manifest['replay']['source_sha256']; assert len(packet['controls'])==1; assert packet['packet_sha256']==digest(canonical({key:value for key,value in packet.items() if key!='packet_sha256'}))\nprint('EXPOSED_NOT_EXECUTED')",
+      "expect_exit": 0,
+      "expect_stdout": "EXPOSED_NOT_EXECUTED",
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}

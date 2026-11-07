@@ -1,0 +1,49 @@
+name: ops-evidence-integration
+language: python
+modules:
+  - name: incremental_scheduler
+    path: factoryline/incremental_scheduler.py
+    imports:
+      - pathlib.Path
+    functions:
+      - name: run_pre_pr
+        args: ["root: Path", "manifest: dict"]
+        returns: dict
+        doc: "Reconcile source-bound schedule, live evidence, and oracle facts without granting merge or release authority."
+  - name: fix_workflow
+    path: factoryline/fix_workflow.py
+    imports:
+      - pathlib.Path
+    functions:
+      - name: run_fix_workflow
+        args: ["root: Path", "repair_manifest: dict"]
+        returns: dict
+        doc: "Validate repair inputs and ordered receipt history before any optional bounded replay."
+  - name: senior_assurance
+    path: factoryline/senior_assurance.py
+    imports:
+      - pathlib.Path
+      - typing.Any
+    functions:
+      - name: build_incident_regression_packet
+        args: ["root: Path", "manifest: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Recompute reviewed incident triage and expose current source-bound replay controls without executing them."
+dependencies:
+  - from: incremental_scheduler
+    to: senior_assurance
+  - from: fix_workflow
+    to: senior_assurance
+invariants:
+  - name: no-execution-or-release-authority
+    forbid_pattern: '"(?:execution_allowed|release_approval)"\s*:\s*True|"authority"\s*:\s*"(?:merge|release|admin)"'
+    scopes:
+      - module: incremental_scheduler
+        symbol: run_pre_pr
+        max_lines: 180
+      - module: fix_workflow
+        symbol: run_fix_workflow
+        max_lines: 120
+      - module: senior_assurance
+        symbol: build_incident_regression_packet
+        max_lines: 220
