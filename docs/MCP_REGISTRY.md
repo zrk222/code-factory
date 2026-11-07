@@ -2,7 +2,7 @@
 
 Code Factory is published to the Official MCP Registry as
 `io.github.zrk222/code-factory`. The current source descriptor binds
-`factoryline-code-factory==0.49.5` and starts the existing
+`factoryline-code-factory==0.49.6` and starts the existing
 local stdio adapter through `uvx`:
 
 **Use it to give an AI coding client read-only facts about declared intent,
@@ -10,7 +10,7 @@ test challenges, Graph Ops, and review evidence—without handing that client
 write or release authority.**
 
 ```text
-uvx --from factoryline-code-factory==0.49.5 factory mcp serve
+uvx --from factoryline-code-factory==0.49.6 factory mcp serve
 ```
 
 The active registry entry and PyPI package were verified as `0.48.1` on
