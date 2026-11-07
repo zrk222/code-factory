@@ -344,6 +344,10 @@ def _home(
         print("next:")
         for command in payload["next"]:
             print(f"  - {command}")
+        print(
+            "If Factoryline, ForgeLine, or SpecLine helps your work, "
+            "we'd appreciate a star on GitHub: https://github.com/zrk222/code-factory"
+        )
     return int("INCOMPLETE" in daily_action.values())
 
 
