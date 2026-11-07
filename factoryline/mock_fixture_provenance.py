@@ -3954,16 +3954,15 @@ def _app_expression_name(index, path, node, function=None):
     package = _django_package(index, path)
     if tree is None or package is None:
         return None
-    scope = (
-        function
-        if function is not None and binding_occurrences(function.body, node.id)
-        else tree
+    body = getattr(function, "body", ())
+    body = (body,) if isinstance(body, ast.AST) else body
+    bindings = binding_occurrences(body, node.id) or binding_occurrences(
+        tree.body, node.id
     )
-    bindings = binding_occurrences(scope.body, node.id)
     if len(bindings) != 1 or not isinstance(bindings[0], (ast.Import, ast.ImportFrom)):
         return None
     if isinstance(
-        function, (ast.FunctionDef, ast.AsyncFunctionDef)
+        function, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
     ) and node.id in _argument_names(function):
         return None
     rows = _django_import_rows(bindings[0], package)
@@ -4901,7 +4900,10 @@ def _app_source_symbol(
 
         if function is not None and (
             expression.id in _argument_names(function)
-            or binding_occurrences(function.body, expression.id)
+            or binding_occurrences(
+                [function.body] if isinstance(function, ast.Lambda) else function.body,
+                expression.id,
+            )
         ):
             return None
         canonical = _django_name(index, path) + "." + expression.id
@@ -5775,30 +5777,26 @@ def _app_unittest_enrollment(index, path, function, owner, secret):
         node
         for node in ast.walk(function)
         if isinstance(node, ast.Call)
-        and _app_request_credential(index, path, function, node, secret)
+        and _app_request_wrapper(index, profile, node) is not None
     ]
-    for call in calls:
-        if _app_request_wrapper(index, profile, call) is None:
-            continue
-        witness = _app_user_credential_witness(
-            index, path, function, profile, call, secret
-        ) or _app_invitation_credential_witness(
-            index, path, function, profile, call, secret
-        )
-        if witness is not None:
-            return _app_unittest_witness(witness)
-    # An old-password input is paired with the same owned user's new password.
-    for call in ast.walk(function):
-        if (
-            not isinstance(call, ast.Call)
-            or _app_request_wrapper(index, profile, call) is None
-        ):
-            continue
-        witness = _app_user_credential_witness(
-            index, path, function, profile, call, secret
-        )
-        if witness is not None:
-            return _app_unittest_witness(witness)
+    for credential in (True, False):
+        for call in calls:
+            if (
+                _app_request_credential(index, path, function, call, secret)
+                is not credential
+            ):
+                continue
+            witness = _app_user_credential_witness(
+                index, path, function, profile, call, secret
+            ) or (
+                _app_invitation_credential_witness(
+                    index, path, function, profile, call, secret
+                )
+                if credential
+                else None
+            )
+            if witness is not None:
+                return _app_unittest_witness(witness)
     return None
 
 
@@ -5836,11 +5834,18 @@ def _application_test_secret_from_local_binding(
         or function.decorator_list
     ):
         return _django_unknown("literal is not a direct test-function declaration")
+    if not _app_test_function_external_uses_clear(index, path, function):
+        return _django_unknown("test-account creator has a captured non-test caller")
     if _app_local_assignment(function, secret) is not assignment:
         return _django_unknown("credential is rebound or not a unique local binding")
     owner = parents.get(id(function))
+    from .pytest_collection_audit import captured_pytest_django_user_fixture
+
     witness = (
-        _app_drf_enrollment(index, path, function, owner, secret)
+        captured_pytest_django_user_fixture(
+            index, path, function, secret, _app_has_dynamic_scope
+        )
+        or _app_drf_enrollment(index, path, function, owner, secret)
         or _app_pytest_store_enrollment(index, path, function, secret)
         or _app_unittest_enrollment(index, path, function, owner, secret)
     )
@@ -5851,6 +5856,41 @@ def _application_test_secret_from_local_binding(
     return _application_test_secret_witness(
         index, path, literal, assignment, function, secret, witness
     )
+
+
+def _app_test_function_external_uses_clear(index, selected_path, selected_function):
+    from .credential_role_constructor_provider import _scope_scope_bindings
+
+    source = index["source"]
+    target = _django_name(index, selected_path)
+    if not all(source.validate(path) for path in index["modules"]):
+        return False
+    for path, tree in index["modules"].items():
+        for node in ast.walk(tree):
+            if (
+                path != selected_path
+                and isinstance(node, (ast.Import, ast.ImportFrom))
+                and any(
+                    name in {target, target + "." + selected_function.name, "*"}
+                    or target.startswith(name + ".")
+                    for _, name in _django_import_rows(
+                        node, _django_package(index, path)
+                    )
+                    or [("", "*")]
+                )
+            ):
+                return False
+            if not isinstance(getattr(node, "ctx", None), ast.Load):
+                continue
+            owner = _scope_scope_bindings(node, source.parents[path], None)
+            if path == selected_path and owner is selected_function:
+                continue
+            selected = _app_source_symbol(index, path, node, owner)
+            if selected == (selected_path, selected_function) or _app_expression_name(
+                index, path, node, owner
+            ) == _django_name(index, selected_path):
+                return False
+    return True
 
 
 def _application_test_secret_witness(
@@ -5871,9 +5911,12 @@ def _application_test_secret_witness(
         return _django_unknown(
             "selected enrollment or exercise is not on a supported active statement path"
         )
-    if not _app_capability_interval(
-        index, path, function, witness["request"].lineno
-    ) or not _app_provider_scopes_clear(index, path, function):
+    anchor = witness.get("request", witness.get("enrollment"))
+    if (
+        not isinstance(anchor, ast.Call)
+        or not _app_capability_interval(index, path, function, anchor.lineno)
+        or not _app_provider_scopes_clear(index, path, function)
+    ):
         return _django_unknown(
             "selected client, authority or encoder capability was replaced or escaped"
         )
@@ -5895,6 +5938,7 @@ def _application_test_secret_witness(
         "isolation_assurance": "UNASSESSED",
         "witness_sources": _app_witness_sources(index, witness),
         "consumer_use_closure": use_closure,
+        "test_fixture_provider": witness.get("fixture_provider"),
     }
 
 
@@ -5903,14 +5947,14 @@ def _app_witness_sources(index, witness):
     for key, node in witness.items():
         if not isinstance(node, ast.AST):
             continue
-        paths = [
+        paths = iter(
             path
             for path, parents in index["source"].parents.items()
             if id(node) in parents
-        ]
-        if len(paths) != 1:
+        )
+        path = next(paths, None)
+        if path is None or next(paths, None) is not None:
             return {}
-        path = paths[0]
         result[key] = {
             "path": index["source"].relative(path),
             "sha256": index["source"].inventory[path],
@@ -5922,8 +5966,9 @@ def _app_witness_sources(index, witness):
 def _app_known_credential_cache_dependencies():
     from .intent_quality import _looks_like_known_credential as looks
     from .credential_role_identity_effects import module_fixture_helper_epoch as epoch
+    from .pytest_collection_audit import captured_pytest_helpers as helpers
 
-    return looks, _APP_SECRET_INVENTORY_CACHE_TOKEN, *epoch()
+    return looks, _APP_SECRET_INVENTORY_CACHE_TOKEN, *epoch(), *helpers()
 
 
 class _AppSecretInventoryCacheToken:

@@ -478,7 +478,7 @@ def _toml_pytest_pattern_value(text, section):
     return _pytest_pattern_value(text, section)
 
 
-def captured_pytest_configuration(captured):
+def captured_pytest_configuration(captured, *, source_role_only=False):
     """Select captured root configuration with collection's exact precedence."""
     from .review_audits import _TEST_FILE_PATTERNS
 
@@ -511,7 +511,9 @@ def captured_pytest_configuration(captured):
             return None
         if options is _ABSENT_PYTEST_SECTION:
             options = {}
-        effective = _pytest_captured_invocation_options(captured, options)
+        effective = _pytest_captured_invocation_options(
+            captured, options, source_role_only=source_role_only
+        )
         if effective is None:
             return None
         return {"identity": identity, "options": effective}
@@ -1628,7 +1630,9 @@ def _pytest_settings_selection_overridden(options):
     return _pytest_effective_settings_options(options) is None
 
 
-def _pytest_effective_settings_options(options, *, coverage_provider=False):
+def _pytest_effective_settings_options(
+    options, *, coverage_provider=False, source_role_only=False
+):
     """Apply exact captured --ds selection; other source overrides stay unknown."""
     if not isinstance(options, dict):
         return None
@@ -1640,7 +1644,7 @@ def _pytest_effective_settings_options(options, *, coverage_provider=False):
     if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
         return None
     projection = _pytest_argument_projection(
-        tokens, coverage_provider=coverage_provider
+        tokens, coverage_provider=coverage_provider, source_role_only=source_role_only
     )
     if projection is None:
         return None
@@ -1649,11 +1653,11 @@ def _pytest_effective_settings_options(options, *, coverage_provider=False):
     return effective
 
 
-def _pytest_captured_invocation_options(captured, options):
+def _pytest_captured_invocation_options(captured, options, *, source_role_only=False):
     """Reconcile captured tox argv/environment with the selected config defaults."""
     coverage_provider = _pytest_cov_provider(captured)
     effective = _pytest_effective_settings_options(
-        options, coverage_provider=coverage_provider
+        options, coverage_provider=coverage_provider, source_role_only=source_role_only
     )
     if effective is None or "tox.ini" not in captured:
         return effective
@@ -1803,10 +1807,14 @@ _PYTEST_ARGUMENT_EFFECTS = (
     ("--junitxml", (1, "report-output")),
     ("--cov", ("optional", "coverage")),
     ("--cov-report", (1, "coverage")),
+    ("--reuse-db", (0, "database-reuse")),
+    ("--pdbcls", (1, "debugger-class")),
 )
 
 
-def _pytest_argument_projection(tokens, *, coverage_provider=False):
+def _pytest_argument_projection(
+    tokens, *, coverage_provider=False, source_role_only=False
+):
     """Project one allowlisted argument grammar onto settings selection."""
     if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):
         return None
@@ -1814,7 +1822,10 @@ def _pytest_argument_projection(tokens, *, coverage_provider=False):
     arguments = iter(tokens)
     for token in arguments:
         effect = _pytest_argument_effect(
-            token, arguments, coverage_provider=coverage_provider
+            token,
+            arguments,
+            coverage_provider=coverage_provider,
+            source_role_only=source_role_only,
         )
         if effect is None:
             return None
@@ -1822,7 +1833,9 @@ def _pytest_argument_projection(tokens, *, coverage_provider=False):
     return projection
 
 
-def _pytest_argument_effect(token, arguments, *, coverage_provider):
+def _pytest_argument_effect(
+    token, arguments, *, coverage_provider, source_role_only=False
+):
     """Project one recognized argument or refuse its missing/unknown effect."""
     if token == "--":
         return None
@@ -1839,6 +1852,8 @@ def _pytest_argument_effect(token, arguments, *, coverage_provider):
     effect = dict(_PYTEST_ARGUMENT_EFFECTS).get(flag)
     if effect is None or effect[1] == "coverage" and not coverage_provider:
         return None
+    if effect[1] in {"database-reuse", "debugger-class"} and not source_role_only:
+        return None
     arity = effect[0]
     if arity == 0:
         return {} if not separator else None
@@ -1848,6 +1863,15 @@ def _pytest_argument_effect(token, arguments, *, coverage_provider):
         )
     value = inline_value if separator else next(arguments, None)
     if not separator and isinstance(value, str) and value.startswith("-"):
+        return None
+    if (
+        flag == "--pdbcls"
+        and re.fullmatch(
+            r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*",
+            value or "",
+        )
+        is None
+    ):
         return None
     return {} if _pytest_argument_value_valid(value) else None
 
@@ -2044,6 +2068,433 @@ def captured_pytest_django_provider(captured):
             else {}
         ),
     }
+
+
+def captured_pytest_django_user_fixture(index, path, function, secret, scope_dynamic):
+    """Bind a unique local password to the builtin database-backed user fixture."""
+    if not _pytest_django_user_owner(index, path, function):
+        return None
+    call = _pytest_django_user_enrollment(index, path, function, secret)
+    binding = _pytest_django_user_configuration(index, path, function)
+    if call is None or binding is None:
+        return None
+    provider, selected, settings = binding
+    settings_path = (
+        index["source"].root.joinpath(*settings.split(".")).with_suffix(".py")
+    )
+    if not _pytest_django_user_settings(index, settings_path, scope_dynamic):
+        return None
+    if not _pytest_django_fixture_namespace_closed(index, path, scope_dynamic):
+        return None
+    fixture_provider = _pytest_django_user_receipt(
+        index, path, settings_path, provider, selected, settings
+    )
+    return {
+        **fixture_provider,
+        "fixture_provider": fixture_provider,
+        "profile": "SOURCE_BOUND_TEST_ACCOUNT_ENROLLMENT",
+        "enrollment": call,
+    }
+
+
+def _pytest_django_user_owner(index, path, function):
+    """Require an ordinary collected function with a required fixture argument."""
+    if not isinstance(index["configuration_bytes"], dict):
+        return False
+    match function:
+        case ast.FunctionDef(
+            decorator_list=[],
+            args=ast.arguments(posonlyargs=[], vararg=None, kwarg=None),
+        ):
+            pass
+        case _:
+            return False
+    required = function.args.args[
+        : len(function.args.args) - len(function.args.defaults)
+    ]
+    required += [
+        arg
+        for arg, default in zip(function.args.kwonlyargs, function.args.kw_defaults)
+        if default is None
+    ]
+    source = index["source"]
+    return (
+        source.validate(path)
+        and source.parents[path].get(id(function)) is index["modules"].get(path)
+        and any(item.arg == "django_user_model" for item in required)
+    )
+
+
+def _pytest_django_user_enrollment(index, path, function, secret):
+    """Locate one unpatched, direct enrollment using only the fixture provider."""
+    calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "create_user"
+    ]
+    if len(calls) != 1:
+        return None
+    call = calls[0]
+    if not _pytest_django_user_enrollment_arguments(call, secret):
+        return None
+    model = call.func.value.value
+    provider_names = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name) and node.id == "django_user_model"
+    ]
+    parent = index["source"].parents[path].get(id(call))
+    if (
+        provider_names != [model]
+        or parent not in function.body
+        or _pytest_django_user_provider_patched(function)
+    ):
+        return None
+    return call
+
+
+def _pytest_django_user_enrollment_arguments(call, secret):
+    match call:
+        case ast.Call(
+            func=ast.Attribute(
+                value=ast.Attribute(
+                    value=ast.Name(id="django_user_model"), attr="objects"
+                ),
+                attr="create_user",
+            ),
+            args=[],
+        ):
+            pass
+        case _:
+            return False
+    passwords = [item.value for item in call.keywords if item.arg == "password"]
+    return (
+        len(passwords) == 1
+        and isinstance(passwords[0], ast.Name)
+        and passwords[0].id == secret
+    )
+
+
+def _pytest_django_user_configuration(index, path, function):
+    """Co-select the declared fixture provider, pytest configuration and settings."""
+    captured = index["configuration_bytes"]
+    provider = captured_pytest_django_provider(captured)
+    active_groups = {
+        "project.dependencies",
+        "tool.poetry.dependencies",
+        "tool.poetry.group.dev.dependencies",
+        "dependency-groups.dev",
+    }
+    if not provider or not any(
+        item.get("group") in active_groups
+        for item in provider.get("declarations", ())
+        if isinstance(item, dict)
+    ):
+        return None
+    config_names = {
+        "pytest.toml",
+        ".pytest.toml",
+        "pytest.ini",
+        ".pytest.ini",
+        "pyproject.toml",
+        "setup.cfg",
+    }
+    selected = captured_pytest_configuration(
+        {name: raw for name, raw in captured.items() if name in config_names},
+        source_role_only=True,
+    )
+    if selected is None:
+        return None
+    settings = selected["options"].get("DJANGO_SETTINGS_MODULE")
+    if not isinstance(settings, str):
+        return None
+    if not all(part.isidentifier() for part in settings.split(".")):
+        return None
+    if not _pytest_django_user_collection_selected(index, path, function, selected):
+        return None
+    return provider, selected, settings
+
+
+def _pytest_django_user_collection_selected(index, path, function, selected):
+    source = index["source"]
+    relative = source.relative(path)
+    options = selected["options"] if selected is not None else {}
+    if (
+        not isinstance(relative, str)
+        or not _pytest_name_matches(
+            relative.rsplit("/", 1)[-1],
+            _pytest_patterns_from_options(options)["python_files"],
+        )
+        or not _pytest_name_matches(
+            function.name, _pytest_patterns_from_options(options)["python_functions"]
+        )
+        or any(
+            name == "pytest_django.py" or name.startswith("pytest_django/")
+            for name in (source.relative(item) for item in index["modules"])
+        )
+    ):
+        return False
+    return True
+
+
+def _pytest_django_user_settings(index, settings_path, scope_dynamic):
+    """Close the captured settings namespace around Django's default user model."""
+    settings_tree = index["modules"].get(settings_path)
+    if settings_tree is None or not index["source"].validate(settings_path):
+        return False
+    installed_apps = _pytest_django_installed_apps(settings_tree)
+    return (
+        installed_apps is not None
+        and "django.contrib.auth" in installed_apps
+        and _pytest_django_default_user_closed(settings_tree)
+        and not scope_dynamic(
+            index, settings_path, settings_tree, tuple(ast.walk(settings_tree))
+        )
+    )
+
+
+def _pytest_django_installed_apps(settings_tree):
+    installed_rows = (
+        [
+            node
+            for node in settings_tree.body
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(target, ast.Name) and target.id == "INSTALLED_APPS"
+                for target in (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+            )
+        ]
+        if settings_tree is not None
+        else []
+    )
+    return (
+        _pytest_literal_setting_values(
+            settings_tree,
+            installed_rows[0].value,
+        )
+        if len(installed_rows) == 1 and isinstance(installed_rows[0], ast.Assign)
+        else None
+    )
+
+
+def _pytest_django_user_receipt(
+    index, path, settings_path, provider, selected, settings
+):
+    source = index["source"]
+    return {
+        "schema": "factory.pytest-django-user-fixture.v1",
+        "fixture": "django_user_model",
+        "provider": "pytest-django",
+        "provider_declaration": {
+            key: provider[key] for key in ("path", "sha256", "provider")
+        },
+        "configuration": {
+            key: selected["identity"][key] for key in ("path", "sha256", "bytes")
+        },
+        "test": {"path": source.relative(path), "sha256": source.inventory[path]},
+        "settings_module": settings,
+        "settings": {
+            "path": source.relative(settings_path),
+            "sha256": source.inventory[settings_path],
+        },
+        "database_semantics": "pytest-django-django_user_model-requires-db",
+        "runtime_effects_unassessed": [
+            option
+            for option in ("--reuse-db", "--pdbcls")
+            if option in str(selected["options"].get("addopts", ""))
+        ],
+        "execution_status": "NOT_EXECUTED",
+        "runtime_assurance": "UNASSESSED",
+    }
+
+
+def _pytest_literal_setting_values(tree, expression, seen=()):
+    """Resolve only stable module-local string collections and concatenations."""
+    if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+        return (expression.value,)
+    if isinstance(expression, (ast.List, ast.Tuple, ast.Set)):
+        values = [
+            _pytest_literal_setting_values(tree, item, seen) for item in expression.elts
+        ]
+        return (
+            tuple(value for group in values for value in group)
+            if all(group is not None for group in values)
+            else None
+        )
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
+        left = _pytest_literal_setting_values(tree, expression.left, seen)
+        right = _pytest_literal_setting_values(tree, expression.right, seen)
+        return left + right if left is not None and right is not None else None
+    if not isinstance(expression, ast.Name) or expression.id in seen:
+        return None
+    name = expression.id
+    rows = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == name
+    ]
+    stores = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    if len(rows) != 1 or stores != [rows[0].targets[0]]:
+        return None
+    return _pytest_literal_setting_values(tree, rows[0].value, (*seen, name))
+
+
+def _pytest_django_user_provider_patched(function):
+    for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
+        if getattr(call.func, "attr", None) not in {"patch", "setattr"}:
+            continue
+        values = [
+            node.value
+            for node in ast.walk(call)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ]
+        if not values or any(
+            "django.contrib.auth" in value or "create_user" in value for value in values
+        ):
+            return True
+    return False
+
+
+def _pytest_django_fixture_namespace_closed(index, path, scope_dynamic):
+    """Reject applicable fixture replacement, autouse effects and plugin injection."""
+    source, modules = index["source"], index["modules"]
+    parts = source.relative(path).split("/")
+    for offset in range(len(parts) + 1):
+        selected = (
+            path
+            if offset == len(parts)
+            else source.root.joinpath(*parts[:offset], "conftest.py")
+        )
+        if selected in modules and (
+            any(
+                scope_dynamic(index, selected, owner, tuple(ast.walk(owner)))
+                for owner in ast.walk(modules[selected])
+                if isinstance(
+                    owner, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)
+                )
+            )
+            or not _pytest_django_fixture_scope_closed(source, modules, selected, path)
+        ):
+            return False
+    return True
+
+
+def _pytest_django_fixture_scope_closed(source, modules, selected, path):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    tree = modules[selected]
+    protected = {
+        "django_user_model",
+        "db",
+        "django_db",
+        "django_db_setup",
+        "django_db_modify_db_settings",
+        "django_db_blocker",
+    }
+    if any(
+        binding_occurrences(tree.body, name) for name in protected | {"pytest_plugins"}
+    ):
+        return False
+    aliases = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.ImportFrom):
+            if any(item.name in {"*", "pytest_plugins"} for item in statement.names):
+                return False
+            if statement.module == "pytest":
+                aliases.update(
+                    (item.asname or item.name, "pytest." + item.name)
+                    for item in statement.names
+                    if item.name == "fixture"
+                )
+        elif isinstance(statement, ast.Import):
+            aliases.update(
+                (item.asname or item.name.split(".")[0], "pytest")
+                for item in statement.names
+                if item.name == "pytest"
+            )
+    return _pytest_django_fixture_definitions_closed(
+        tree, selected, path, protected, aliases
+    )
+
+
+def _pytest_django_fixture_definitions_closed(tree, selected, path, protected, aliases):
+    for statement in tree.body:
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)) and any(
+            isinstance(node, ast.Name) and node.id == "pytest_plugins"
+            for node in ast.walk(statement)
+        ):
+            return False
+        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if statement.name in protected and selected != path:
+            return False
+        for decorator in statement.decorator_list:
+            if not _pytest_protected_fixture(statement, decorator, aliases, protected):
+                continue
+            return False
+    return True
+
+
+def _pytest_protected_fixture(statement, decorator, aliases, protected):
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    canonical = (
+        aliases.get(target.id)
+        if isinstance(target, ast.Name)
+        else aliases.get(target.value.id) + "." + target.attr
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id in aliases
+        else None
+    )
+    if canonical != "pytest.fixture":
+        return False
+    name = statement.name
+    if isinstance(decorator, ast.Call):
+        for keyword in decorator.keywords:
+            if keyword.arg == "name":
+                if not isinstance(keyword.value, ast.Constant) or not isinstance(
+                    keyword.value.value, str
+                ):
+                    return True
+                name = keyword.value.value
+            if keyword.arg == "autouse" and keyword.value is not None:
+                if (
+                    not isinstance(keyword.value, ast.Constant)
+                    or type(keyword.value.value) is not bool
+                    or keyword.value.value
+                ):
+                    return True
+    return name in protected
+
+
+def _pytest_django_default_user_closed(tree):
+    protected = {"AUTH_USER_MODEL", "DATABASE_ROUTERS"}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Name)
+            and node.id in protected
+            or isinstance(node, ast.Attribute)
+            and node.attr in protected
+            or isinstance(node, ast.Constant)
+            and node.value in protected
+            or isinstance(node, ast.ImportFrom)
+            and any(item.name == "*" or item.name in protected for item in node.names)
+        ):
+            return False
+    return True
 
 
 def _distribution_project_declarations(

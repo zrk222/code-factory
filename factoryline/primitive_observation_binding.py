@@ -3609,15 +3609,6 @@ def _application_fixture_use_proof(evidence, bindings, facts, source_bytes):
                 evidence, bindings, facts, source_bytes
             )
         return _presentation_witness_bindings(evidence, bindings, facts)
-    if evidence.get("profile") == "SOURCE_BOUND_TEST_SCOPE_ONLY":
-        return _application_fixture_role_recomputes(
-            evidence,
-            bindings,
-            facts.get("name"),
-            source_bytes,
-            "factory.test-scope-consumer-closure.v1",
-            "SOURCE_BOUND_TEST_SCOPE_ONLY",
-        )
     if evidence.get("profile") == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT":
         return _application_class_role_recomputes(
             evidence, bindings, facts.get("name"), source_bytes
@@ -3626,17 +3617,20 @@ def _application_fixture_use_proof(evidence, bindings, facts, source_bytes):
         return _application_credential_role_recomputes(
             evidence, bindings, facts.get("name"), source_bytes
         )
-    if evidence.get("profile") in {
-        "SOURCE_BOUND_FACTORY_TEST_AUTHORITY",
-        "SOURCE_BOUND_DIGEST_TEST_AUTHORITY",
-        "LOCAL_SOURCE_SIGNING_AUTHORITY",
-    }:
+    closure_schemas = {
+        "SOURCE_BOUND_TEST_SCOPE_ONLY": "factory.test-scope-consumer-closure.v1",
+        "SOURCE_BOUND_TEST_ACCOUNT_ENROLLMENT": "factory.application-consumer-use-closure.v1",
+        "SOURCE_BOUND_FACTORY_TEST_AUTHORITY": "factory.test-authority-consumer-closure.v1",
+        "SOURCE_BOUND_DIGEST_TEST_AUTHORITY": "factory.test-authority-consumer-closure.v1",
+        "LOCAL_SOURCE_SIGNING_AUTHORITY": "factory.test-authority-consumer-closure.v1",
+    }
+    if evidence.get("profile") in closure_schemas:
         return _application_fixture_role_recomputes(
             evidence,
             bindings,
             facts.get("name"),
             source_bytes,
-            "factory.test-authority-consumer-closure.v1",
+            closure_schemas[evidence["profile"]],
             evidence["profile"],
         )
     return _application_witness_bindings(

@@ -1,0 +1,167 @@
+{
+  "schema": "factory.exposed-repair-record.v1",
+  "repair": "Shared captured pytest-django account enrollment and independent proof reconstruction",
+  "baseline_commit": "dd4395cf1c5192437d8f3493308eb836a5664596",
+  "candidate_sources": [
+    {
+      "path": "factoryline/mock_fixture_provenance.py",
+      "sha256": "ecf3e8b6e2ec4abdc463e3934f3eacb2ef0c8798cbf07bc95624041527eb61de",
+      "kind": "source"
+    },
+    {
+      "path": "factoryline/pytest_collection_audit.py",
+      "sha256": "d5aa38066604bfa8d7362ef3ea0bff103c02cc16f127ce3160c2d0e967cdd3cd",
+      "kind": "source"
+    },
+    {
+      "path": "factoryline/primitive_observation_binding.py",
+      "sha256": "4664c066e39d52543650b69bf38b2b484ed34ab1bfc4423a0d990a4733717be0",
+      "kind": "source"
+    },
+    {
+      "path": "tests/test_credential_authority_recovery.py",
+      "sha256": "6334bf10ed916489a9cb4f29ed60371a222a1dad690599bcdb6fec6630caacc0",
+      "kind": "test"
+    }
+  ],
+  "engine_source_sha256": "84e6d9837303319e63872c8f85b6df6a45e3d864492ac615fc1babbac9e9e2fc",
+  "measurement": "Exposed N447 raw-alert classification replay; not fresh held-out or native actionable-tier precision",
+  "immutable_reference": {
+    "path": ".factory/precision447-fresh/official-score.json",
+    "sha256": "e49e264ac38eec056699973d568ed088045736ac57ddff38706decec24e94e29"
+  },
+  "reviewer_references": {
+    "A": {
+      "path": ".factory/precision447-fresh/reviews/A/review.json",
+      "sha256": "e8a84f575804a92e354a85dfb45e99861baaecafb0a3a4909d97145953c41725"
+    },
+    "B": {
+      "path": ".factory/precision447-fresh/reviews/B/review.json",
+      "sha256": "3f478b825846d16e8eae1b5fac20555850cc714d901af83b06109404a6b85dab"
+    }
+  },
+  "paired_delta": {
+    "before": {
+      "TP": 6,
+      "FP": 26,
+      "UNCLEAR": 5,
+      "selected_active": 37,
+      "decided": 32,
+      "decided_precision": 0.1875
+    },
+    "after": {
+      "TP": 6,
+      "FP": 24,
+      "UNCLEAR": 5,
+      "selected_active": 35,
+      "decided": 30,
+      "decided_precision": 0.2
+    },
+    "new_fp_exclusions": [
+      "N447-028",
+      "N447-029"
+    ],
+    "known_tp_losses": 0,
+    "unclear_losses": 0
+  },
+  "concentration": "Both newly corrected alerts are from one captured repository and file",
+  "original30": {
+    "role_checks": 30,
+    "tp_exclusions": 0,
+    "scope": "Role exclusion checks, not full endpoint recall"
+  },
+  "endpoint": {
+    "files_audited": 36,
+    "active_before": 3,
+    "active_after": 1,
+    "raw_rows_retained": 3,
+    "seconds": 25.287,
+    "exit_code": 2,
+    "remaining": "Settings SECRET_KEY remains NEEDS_CONTEXT"
+  },
+  "validation": {
+    "current_affected_python_310_passed": 71,
+    "current_affected_python_311_passed": 71,
+    "baseline_python_310_passed": 240,
+    "baseline_python_311_passed": 240,
+    "scope": "Prior 240/profile retained; final delta is one debugger-option grammar constant plus its tests. Current 71/profile affected selector/account controls, engine-bound endpoint and panels rerun. Current lint/format/C901 and hosted-equivalent quality pass.",
+    "quality": "A",
+    "maximum_complexity": 10,
+    "repo_wide_attribution": 0.9989229940764675,
+    "architecture": "HEALTHY",
+    "review": "Independent AI source review; no external human adjudication"
+  },
+  "receipts": [
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-310.json",
+      "sha256": "18601bbabce3cb4f1f1c6fbf8ed2de6ac597d63d4993493bba5fec43d462d58a",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-parser-311.json",
+      "sha256": "bc9aa246c4d36f14ec9831eeeffcd5101498fc409dbd81becd023ace266891bc",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-quality.json",
+      "sha256": "2e74aaaf257296c9e4c2d7d5523f130b35185dc0d5b8e32bf565faf278fa581c",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-architecture.json",
+      "sha256": "ebac203ea88a409f7ba2afe0a7b8ad66a662d1ce360c87f92eabf615525335e9",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-lint.json",
+      "sha256": "5d7f03adafa28a364f8ea061e1cce843182630ff1ec1162eb74c6673943986c2",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-format.json",
+      "sha256": "909ee95250e6a01c80da00a930eea6b258b77be8b027707cc3baf8ad890e4a38",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-endpoint.json",
+      "sha256": "74c9f3b9c49884320e33b6c6e45d1f96d1ea1eae47829ec5af7c2e0c509fb9ad",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-paired40.json",
+      "sha256": "fc3ff3a5f866f6e61241c4a934e9c91f36a9dbf2fffca3db5e05527e3f415bc9",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-original30.json",
+      "sha256": "092f381b6327f9c65337acc4059e8ce8bd6cdc2ef2f7915ec35ef22f393cc0e1",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-grammar-c901.json",
+      "sha256": "acbc5b6b229feb244ce5b481e7eb546279c51bdff627fb4da276ca7b004cd068",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-final-310.json",
+      "sha256": "4e246f23a21883115ea6fd3d060ca2fc37765be2cb04e90f00e7ff3b4cdb8673",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/data-request-account-final-311.json",
+      "sha256": "44923e8762a6e4567b27d4e8733a6e160084be045b0b364291efd3c5935e6314",
+      "kind": "terminal"
+    },
+    {
+      "path": ".factory/shared-validation-performance/pdb-grammar-delta.json",
+      "sha256": "6d2025be607912a8741adf8811f9045af4f98703bcd9a5adcda21cffab251151",
+      "kind": "terminal"
+    }
+  ],
+  "limits": [
+    "No fresh held-out claim",
+    "No whole-scanner recall claim",
+    "Runtime database isolation unassessed",
+    "No release claim"
+  ]
+}
