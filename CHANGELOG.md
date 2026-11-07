@@ -1472,3 +1472,50 @@
   identity mismatches, and environment/setup failures remain blocked.
 - Expose the same bounded, local, authority-free workflow in the CLI, VS Code,
   JetBrains, Graph Ops, and agent handoff documentation.
+
+## Consolidated historical release notes
+
+# Code Factory 0.23.2
+
+Code Factory 0.23.2 adds governed agent contracts and release-grade execution
+rails across the factory. The release binds the Core-5 agent configuration to a
+canonical digest, keeps creator and verifier context isolated, reconciles
+telemetry without leaking public-sensitive details, and enforces provider
+capability, privacy, cost, latency, context, and output contracts before route
+selection. Mission completion now requires an independent verifier attestation,
+and UI-scoped assemblies receive a strict Prestige gate.
+
+Validation for this release includes the full Python test suite, strict doctor
+and SpecLine gates, package build, and Twine distribution checks.
+
+# Code Factory 0.28.2
+
+This patch release corrects the FactoryLine VS Code adapter's Marketplace
+classification. The extension is now published under the supported `Testing`
+category instead of the rejected `Developer Tools` category.
+
+There is no change to FactoryLine runtime behavior, permissions, local-first
+data boundary, or the v0.28 Proof Review, Verified Repair Sandbox, and
+Workspace Load Advisor controls.
+
+## Install
+
+```powershell
+pip install factoryline-code-factory==0.28.2
+```
+
+The companion VS Code extension artifact is
+`factoryline-vscode-v0.28.2.vsix` with extension version `0.8.4`.
+
+# Code Factory 0.40.2
+
+## Official MCP Registry metadata hotfix
+
+The Official MCP Registry enforces a maximum 100-character server description.
+Version 0.40.2 shortens the public descriptor to 87 characters and republishes
+the same local, read-only MCP entry through the verified release workflow.
+
+This does not change the MCP tool set, runtime authority, or the 0.40.1 IDE
+Health Flight Recorder and Index Continuity Guard behavior. The server remains
+local stdio only and does not edit code, invoke agents, use credentials, upload
+source, or perform external actions.
