@@ -23,12 +23,12 @@ not turn a source merge into release approval.
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
 | GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.49.6` — CANDIDATE / PENDING | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| PyPI | `factoryline-code-factory==0.49.6` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | `factoryline-vscode-1.3.3.vsix` — CANDIDATE / PENDING | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
-| JetBrains | `factoryline-intellij-1.3.4.zip` — CANDIDATE / PENDING upload | Owner-authorized direct upload after required checks and live Marketplace validation; the protected publisher workflow remains available | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
+| VS Code / Open VSX | `factoryline-vscode-1.3.3.vsix` | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
+| JetBrains | `factoryline-intellij-1.3.4.zip` | Owner-authorized direct upload after required checks and live Marketplace validation; the protected publisher workflow remains available | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
