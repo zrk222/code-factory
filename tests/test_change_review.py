@@ -1668,23 +1668,21 @@ def test_pre_pr_reuse_binds_live_obligation_and_rechecks_real_proof(tmp_path, mu
         )
     first = live["checks"][0]
     replacements = {
-        "command": ("argv", ["python", "security.py"]),
-        "environment": ("env", {"MODE": "strict"}),
-        "expected_exit": ("expected_exit", 1),
-        "timeout": ("timeout_seconds", 20),
-        "output_limit": ("max_output_bytes", 8192),
+        "command": (first, "argv", ["python", "security.py"]),
+        "environment": (first, "env", {"MODE": "strict"}),
+        "expected_exit": (first, "expected_exit", 1),
+        "timeout": (first, "timeout_seconds", 20),
+        "output_limit": (first, "max_output_bytes", 8192),
+        "contract": (live, "contract_sha256", "b" * 64),
+        "assurance": (schedule, "assurance_level", "isolated_worker"),
     }
     if mutation in replacements:
-        key, value = replacements[mutation]
-        first[key] = value
-    elif mutation == "contract":
-        live["contract_sha256"] = "b" * 64
-    elif mutation == "assurance":
-        schedule["assurance_level"] = "isolated_worker"
+        target, key, value = replacements[mutation]
+        target[key] = value
     elif mutation == "closure":
         plan["items"][0]["dependency_paths"].append("uncovered.py")
     _pre_pr_bind_reuse(plan, schedule, live)
-    mismatch = mutation in {*replacements, "contract", "assurance", "closure"}
+    mismatch = mutation in {*replacements, "closure"}
     if mismatch:
         assert [item["disposition"] for item in plan["items"]] == ["RUN"] * 3
         assert plan["counts"]["RUN"] == 3
