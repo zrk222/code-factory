@@ -1232,17 +1232,33 @@ def test_pytest_effect_projection_rejects_swallowed_and_unknown_effects(
     )
 
 
+@pytest.mark.parametrize(
+    "step,tier",
+    [
+        ("", "PROVEN_PRIMITIVE"),
+        ("- run: pytest -ra", "PROVEN_PRIMITIVE"),
+        ("- run: python -m pytest -ra", "PROVEN_PRIMITIVE"),
+        ("- run: pytest --ds=other.settings", "NEEDS_CONTEXT"),
+        ("- run: python -m pytest --ds=other.settings", "NEEDS_CONTEXT"),
+        ("- run: python -m pytest --ds=support.configuration", "PROVEN_PRIMITIVE"),
+        ("- run: pytest\n        working-directory: checks", "NEEDS_CONTEXT"),
+    ],
+)
 def test_configured_settings_public_cli_keeps_incomplete_source_conservation(
-    tmp_path, capsys
+    tmp_path, capsys, step, tier
 ):
     import json
 
     from factoryline.cli import main
 
-    configured_authority_scope(
-        tmp_path,
-        {"pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n"},
-    )
+    configuration = {
+        "pytest.ini": b"[pytest]\nDJANGO_SETTINGS_MODULE=support.configuration\n"
+    }
+    if step:
+        configuration[".github/workflows/ci.yml"] = (
+            f"jobs:\n  test:\n    steps:\n      {step}\n"
+        ).encode()
+    configured_authority_scope(tmp_path, configuration)
     code = main(
         [
             "audit",
@@ -1260,11 +1276,11 @@ def test_configured_settings_public_cli_keeps_incomplete_source_conservation(
     assert result["finding_conservation"]["state"] == "PASS"
     assert result["finding_conservation"]["native_rows"] == "VERIFIED"
     assert result["audit_coverage"]["complete"] is True
-    assert not [
-        r for r in result["findings"] if r["code"] == "SECURITY_HARDCODED_SECRET"
-    ]
+    alerts = [r for r in result["findings"] if r["code"] == "SECURITY_HARDCODED_SECRET"]
+    assert len(alerts) == (tier == "NEEDS_CONTEXT")
     rows = result["finding_tier_report"]["ledger"]
-    assert len(rows) == 1 and rows[0]["tier"] == "PROVEN_PRIMITIVE"
+    assert len(rows) == 1 and rows[0]["tier"] == tier
+    assert rows[0]["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
     assert result["defect_policy_decision"]["release_approved"] is False
 
 
