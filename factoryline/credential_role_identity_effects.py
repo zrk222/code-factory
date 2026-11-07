@@ -16,7 +16,7 @@ from .credential_role_constructor_provider import (
 from . import credential_role_constructor_provider as _class_binding
 from . import credential_role_identity_effects as _identity_effects
 from . import credential_role_constructor_provider as _scope_bindings
-from .import_context import bind_fingerprint_epoch
+from .import_context import bind_fingerprint_epoch, source_ast_trace_digest
 
 
 @dataclass(frozen=True)
@@ -845,9 +845,7 @@ def _unknown_expression(node, aliases, *, strict_calls=False, material_values=Fa
 
 def _value_trace(node, operation):
     try:
-        digest = hashlib.sha256(
-            ast.dump(node, include_attributes=False).encode("utf-8")
-        ).hexdigest()
+        digest = source_ast_trace_digest(node)
     except (TypeError, ValueError):
         digest = ""
     return (
@@ -5924,6 +5922,7 @@ def security_value_helper_epoch():
 
     return (
         security_value_helper_epoch,
+        source_ast_trace_digest,
         _Value,
         _Value.__init__,
         IdentityEffectSummary,

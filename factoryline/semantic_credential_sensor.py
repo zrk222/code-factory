@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 import re
 from urllib.parse import urlsplit
+from .import_context import source_ast_trace_digest
 from .credential_endpoint_admission import (
     HTTP_CLIENT_METHODS as _HTTP_CALLS,
     _flask_session_authority_witness as _flask_session_authority_witness,
@@ -3936,30 +3937,27 @@ def _flask_request_body_kind(node, aliases, scope, statement, alias_reader):
 
 
 def request_payload_value_kind(
-    node, requests, aliases, alias_reader, scope=None, flow_statement=None
+    node, requests, aliases, alias_reader, scope=None, flow_statement=None, value=...
 ):
     """Carry modeled request text/bytes through explicit codec operations only."""
     from .review_integrity import _security_structural_expression
 
-    value = _security_structural_expression(node, requests, aliases)
+    if value is ...:
+        value = _security_structural_expression(node, requests, aliases)
     if value is not None and not value.unknown and value.roots:
         return value.scalar_kind
-    kind = _request_payload_name_kind(node, requests)
-    if kind is not None:
-        return kind
-    kind = _request_payload_codec_kind(
-        node, requests, aliases, alias_reader, scope, flow_statement
-    )
-    if kind is not None:
-        return kind
-    kind = _request_payload_source_kind(
-        node, aliases, alias_reader, scope, flow_statement
-    )
-    if kind is not None:
-        return kind
     from .finite_capture import security_helper_return_kind
 
-    return security_helper_return_kind(node, requests, aliases)
+    return (
+        _request_payload_name_kind(node, requests)
+        or _request_payload_codec_kind(
+            node, requests, aliases, alias_reader, scope, flow_statement
+        )
+        or _request_payload_source_kind(
+            node, aliases, alias_reader, scope, flow_statement
+        )
+        or security_helper_return_kind(node, requests, aliases)
+    )
 
 
 def _request_payload_name_kind(node, requests):
@@ -5271,9 +5269,7 @@ def _security_flow_step(expression, operation):
     return (
         operation,
         tuple(_finite_source_span(expression) or ()),
-        hashlib.sha256(
-            ast.dump(expression, include_attributes=False).encode()
-        ).hexdigest(),
+        source_ast_trace_digest(expression),
     )
 
 

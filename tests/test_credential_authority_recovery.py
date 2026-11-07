@@ -185,6 +185,25 @@ def test_deep_expression_does_not_erase_other_files(tmp_path, capsys, expression
     assert source["sha256"] == sha256(sibling).hexdigest()
 
 
+def test_deep_expression_trace_preserves_syntax_identity():
+    from factoryline.credential_role_identity_effects import _value_trace
+    from factoryline.semantic_credential_sensor import _security_flow_step
+
+    shallow = ast.parse("left + right", mode="eval").body
+    expected = sha256(ast.dump(shallow, include_attributes=False).encode()).hexdigest()
+    assert _value_trace(shallow, "INPUT")[2] == expected
+    assert _security_flow_step(shallow, "INPUT")[2] == expected
+
+    deep = ast.parse("+".join(["1"] * 1200), mode="eval").body
+    digest = _value_trace(deep, "INPUT")[2]
+    assert len(digest) == 64 and _security_flow_step(deep, "INPUT")[2] == digest
+    literal = next(node for node in ast.walk(deep) if isinstance(node, ast.Constant))
+    literal.col_offset += 1
+    assert _value_trace(deep, "INPUT")[2] == digest
+    literal.value = 2
+    assert _value_trace(deep, "INPUT")[2] != digest
+
+
 @pytest.mark.parametrize(
     "first,second,supported",
     [

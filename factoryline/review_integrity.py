@@ -4460,7 +4460,13 @@ def _security_flow_source_assignment(
         value_kind = structural.scalar_kind
     else:
         value_kind = request_payload_value_kind(
-            value, requests, aliases, _security_scope_request_aliases, scope, statement
+            value,
+            requests,
+            aliases,
+            _security_scope_request_aliases,
+            scope,
+            statement,
+            value=structural,
         )
     binary_decode = _security_request_binary_decode_kind(
         value, requests, aliases, scope, statement, audit=sys.modules[__name__]

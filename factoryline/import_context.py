@@ -237,6 +237,7 @@ def _fingerprint_epoch_helpers():
         bind_fingerprint_epoch,
         _fingerprint_epoch_helpers,
         structural_ast_fingerprint,
+        source_ast_trace_digest,
         _uncached_structural_ast_fingerprint,
         _structural_ast_leaf_digest,
         _structural_ast_fields,
@@ -378,12 +379,25 @@ def epoch_binding_occurrences(statements, name, per_pass_facts):
     return roots, names[name]
 
 
-def _uncached_structural_ast_fingerprint(tree):
+def source_ast_trace_digest(node):
+    """Keep legacy syntax digests and hash deep expressions without recursion."""
+    try:
+        return hashlib.sha256(
+            ast.dump(node, include_attributes=False).encode()
+        ).hexdigest()
+    except RecursionError:
+        return _uncached_structural_ast_fingerprint(node, include_attributes=False)
+
+
+def _uncached_structural_ast_fingerprint(tree, *, include_attributes=True):
     """Hash declared syntax with bounded per-call reuse, excluding sidecars."""
     memo, active = OrderedDict(), set()
-    frames = [
-        (iter((tree,)), hashlib.sha256(b"factory.structural-ast-digest.v3\0"), None)
-    ]
+    domain = (
+        b"factory.structural-ast-digest.v3\0"
+        if include_attributes
+        else b"factory.syntax-ast-digest.v1\0"
+    )
+    frames = [(iter((tree,)), hashlib.sha256(domain), None)]
     while frames:
         children, digest, identity = frames[-1]
         value = next(children, StopIteration)
@@ -404,13 +418,13 @@ def _uncached_structural_ast_fingerprint(tree):
                 continue
             if identity in active:
                 raise ValueError("cyclic AST structural fields")
-            leaf = _structural_ast_leaf_digest(value)
+            leaf = _structural_ast_leaf_digest(value, include_attributes)
             if leaf is not None:
                 digest.update(leaf)
                 continue
             active.add(identity)
             children = (
-                _structural_ast_fields(value)
+                _structural_ast_fields(value, include_attributes)
                 if isinstance(value, ast.AST)
                 else iter(value)
             )
@@ -433,7 +447,7 @@ def _uncached_structural_ast_fingerprint(tree):
     return result.hex()
 
 
-def _structural_ast_leaf_digest(value):
+def _structural_ast_leaf_digest(value, include_attributes):
     """Use the compact stdlib encoding only for a bounded syntax subtree."""
     from itertools import islice
 
@@ -444,13 +458,16 @@ def _structural_ast_leaf_digest(value):
         return None
     return hashlib.sha256(
         b"BOUNDED_DUMP\0"
-        + ast.dump(value, include_attributes=True).encode("utf-8", "surrogatepass")
+        + ast.dump(value, include_attributes=include_attributes).encode(
+            "utf-8", "surrogatepass"
+        )
     ).digest()
 
 
-def _structural_ast_fields(node):
+def _structural_ast_fields(node, include_attributes):
     """Enumerate canonical syntax fields, excluding mutable scanner sidecars."""
-    for name in (*node._fields, *node._attributes):
+    names = (*node._fields, *node._attributes) if include_attributes else node._fields
+    for name in names:
         if hasattr(node, name):
             yield name
             yield getattr(node, name)
