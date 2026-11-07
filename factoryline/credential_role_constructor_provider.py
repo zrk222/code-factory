@@ -1281,17 +1281,17 @@ def _presentation_provider_facts(tree, nodes, parents, audit):
 
 def _presentation_provider_shadow(expression, name, source, path, audit):
     """An enclosing lexical binder prevents credit for a module import."""
-    current, parents = expression, source.parents[path]
-    while (current := parents.get(id(current))) is not None:
-        if (
-            isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and function_bindings(current, name, audit) != []
-        ):
-            return True
-        if isinstance(current, ast.ClassDef) and binding_occurrences(
-            current.body, name
-        ):
-            return True
+    child, parents, nested_body = expression, source.parents[path], False
+    while (current := parents.get(id(child))) is not None:
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if function_bindings(current, name, audit) != []:
+                return True
+            nested_body |= child in current.body
+        elif isinstance(current, ast.ClassDef) and child in current.body:
+            # Methods and nested class bodies skip the enclosing class namespace.
+            if not nested_body and binding_occurrences(current.body, name):
+                return True
+            nested_body = True
         if isinstance(
             current,
             (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
@@ -1304,6 +1304,7 @@ def _presentation_provider_shadow(expression, name, source, path, audit):
             for item in ast.walk(current)
         ):
             return True
+        child = current
     return False
 
 
@@ -1549,7 +1550,7 @@ class PresentationRoleIndex:
                 )
             ):
                 continue
-            role = classify(path, node)
+            role = classify(path, node) if isinstance(node.ctx, ast.Load) else None
             if role is None:
                 return None
             uses.append(self._witness(path, node, role))
@@ -1645,10 +1646,9 @@ class PresentationRoleIndex:
         return True
 
     def _mask_reference(self, fact, path, node):
-        if not isinstance(node.ctx, ast.Load):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
             if (
                 path == self.source.root / fact.path
-                and isinstance(node, ast.Name)
                 and node.id == fact.member
                 and node.lineno != fact.line
             ):
@@ -1996,13 +1996,12 @@ def _presentation_global_match(fact, path, node, source, audit, imports=None):
         and isinstance(node.value, ast.Name)
     ):
         alias = node.value.id
-        function, _ = _scope(node, source, path)
         return (
             (binding := (imports or {}).get(path, {}).get(alias)) is not None
             and binding[0] == source.root / fact.path
             and _presentation_namespace_binding(source, path, alias, binding)
             and import_is_stable(path, alias, source, audit)
-            and (function is None or function_bindings(function, alias, audit) == [])
+            and not _presentation_provider_shadow(node, alias, source, path, audit)
         )
     if not isinstance(node, ast.Name):
         return False

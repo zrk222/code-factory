@@ -2682,6 +2682,63 @@ def test_local_data_role_does_not_reject_provider_metadata(
     assert {row["role"] for row in evidence["uses"]} == {"MOCK_RESPONSE_URL"}
 
 
+@pytest.mark.parametrize(
+    ("consumer", "proven"),
+    [
+        ("os.getenv(config.PASSWORD_ENV)", True),
+        (
+            "class Caller:\n"
+            "    config = other\n"
+            "    def read(self):\n"
+            "        return os.getenv(config.PASSWORD_ENV)\n",
+            True,
+        ),
+        (
+            "class Caller:\n"
+            "    config = other\n"
+            "    result = os.getenv(config.PASSWORD_ENV)\n",
+            False,
+        ),
+        ("config.PASSWORD_ENV = other\nos.getenv(config.PASSWORD_ENV)", False),
+        ("os.getenv(config.PASSWORD_ENV)\ndel config.PASSWORD_ENV", False),
+        (
+            "setattr(config, 'PASSWORD_ENV', other)\nos.getenv(config.PASSWORD_ENV)",
+            False,
+        ),
+        (
+            "def outer(config):\n"
+            "    def inner():\n"
+            "        return os.getenv(config.PASSWORD_ENV)\n",
+            False,
+        ),
+    ],
+)
+def test_public_data_role_closes_module_member_binding(tmp_path, consumer, proven):
+    from factoryline.review_audits import security_scan
+
+    _write(tmp_path, "settings_values.py", "PASSWORD_ENV = 'SERVICE_PASSWORD'\n")
+    _write(
+        tmp_path,
+        "consumer.py",
+        "import os\nimport settings_values as config\n" + consumer,
+    )
+    report = security_scan(
+        tmp_path, cache_enabled=False, defect_policy="source-role-v3"
+    )
+
+    def matching(key):
+        return [
+            row
+            for row in report.get(key, ())
+            if row["path"] == "settings_values.py"
+            and row["code"] == "SECURITY_HARDCODED_SECRET"
+        ]
+
+    assert report["files_scanned"] == 2
+    assert bool(matching("primitive_observations")) == proven
+    assert bool(matching("findings")) == (not proven)
+
+
 def test_data_role263_native_partition_preserves_real_credential(tmp_path):
     from factoryline.deep_audit_io import full_repository_scan
 
