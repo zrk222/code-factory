@@ -25,19 +25,18 @@ short_description: Audit code, review evidence, and resolve defects.
 
 # Code Factory
 
-## 0.49.5 release workflow overview — VS Code 1.3.2, JetBrains 1.3.2
+## 0.49.6 release workflow overview — VS Code 1.3.3, JetBrains 1.3.4
 
-Review a credential finding from its declaration through its framework consumer.
-Namespace resolution rejects non-import bindings; original raw diagnostics,
-source hashes and unknown context remain visible. Find the version-specific
-[PyPI package](https://pypi.org/project/factoryline-code-factory/0.49.5/) and
-[GitHub release](https://github.com/zrk222/code-factory/releases/tag/v0.49.5).
-Provider availability is tracked separately in
-[Release Channels](https://github.com/zrk222/code-factory/blob/main/docs/RELEASE_CHANNELS.md).
+Collection evidence is bound before native scan sealing and carried into audit
+handoffs. Collection drift produces incomplete evidence and requires a fresh seal.
 
-The exposed Study432 baseline retained **12/18 known TPs (66.67%)**. This is
-baseline known-TP retention on an exposed panel, not held-out precision or a
-final result for the repair. No new fresh-score result is claimed.
+[PyPI package](https://pypi.org/project/factoryline-code-factory/0.49.6/) and
+[GitHub release](https://github.com/zrk222/code-factory/releases/tag/v0.49.6).
+
+The exposed N443-38 regression replay retained **all 30 original true positives**.
+It returned 37 of 38 cases. One false positive was withheld from the action list,
+four remained admitted, and two unclear cases remained admitted. Case 005 timed
+out. [Case ledger](https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json).
 
 An agent has finished a change, and you want to understand what comes next.
 Explore the local workflow here: find the source behind a finding, inspect the
