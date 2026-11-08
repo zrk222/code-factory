@@ -643,6 +643,11 @@ class _CapturedSecuritySources(dict):
     def source_role_sources(self, value):
         self.source_role_capture["sources"] = dict(value or {})
 
+    def update(self, other=(), /, **kwargs):
+        if isinstance(other, _CapturedSecuritySources):
+            self.source_role_capture = deepcopy(other.source_role_capture)
+        super().update(other, **kwargs)
+
     def __deepcopy__(self, memo):
         result = type(self)(
             deepcopy(dict(self), memo),

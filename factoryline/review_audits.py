@@ -5783,10 +5783,6 @@ def _scan_security_sources(
             capture_all_sources=capture_all_sources,
         )
         primitive_source_bytes_out.update(captured_application)
-        if hasattr(primitive_source_bytes_out, "source_role_capture"):
-            primitive_source_bytes_out.source_role_capture = getattr(
-                captured_application, "source_role_capture", {}
-            )
         primitive_source_bytes_out.update(
             (producer_source_model_out or {}).get("configuration_bytes", {})
         )
