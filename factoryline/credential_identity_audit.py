@@ -5,6 +5,9 @@ import hashlib
 from pathlib import Path
 
 from . import credential_role_identity_effects as _legacy
+from .security_configuration import (
+    source_role_distribution_domain as source_role_distribution_domain,
+)
 
 
 def application_value_role_evidence(index, path, literal, assignment, secret):

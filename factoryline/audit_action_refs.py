@@ -572,18 +572,96 @@ def _captured_application_source_bytes(
             and sha256(data).hexdigest() == hashes.get(relative)
         ):
             captured[relative] = data
-    return captured
+    role_sources = {}
+    if any(
+        finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and isinstance(finding.get("path"), str)
+        and finding["path"].replace("\\", "/").startswith("archive/")
+        and finding.get("path") in captured
+        for finding in findings
+    ):
+        from . import review_audits as audit
+
+        for relative in ("archive/README.md", "archive/manifest.json"):
+            try:
+                data = audit._security_source_bytes(workspace, relative)
+            except (OSError, audit.ReviewAuditError):
+                role_sources = {}
+                break
+            if len(data) > 1_000_000:
+                role_sources = {}
+                break
+            role_sources[relative] = data
+        if role_sources:
+            bindings = [
+                {
+                    "path": relative,
+                    "sha256": sha256(data).hexdigest(),
+                    "bytes": len(data),
+                }
+                for relative, data in role_sources.items()
+            ]
+            try:
+                audit._verify_security_bindings(workspace, bindings)
+            except audit.ReviewAuditError:
+                role_sources = {}
+    return _CapturedSecuritySources(
+        captured,
+        source_role_sources=role_sources,
+        source_role_bindings=bindings if role_sources else (),
+        source_role_workspace=workspace if role_sources else None,
+    )
+
+
+class _CapturedSecuritySources(dict):
+    """Keep auxiliary source-role bytes outside the scanner's Python inventory."""
+
+    def __init__(
+        self,
+        *args,
+        source_role_sources=None,
+        source_role_bindings=(),
+        source_role_workspace=None,
+        source_role_capture=None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.source_role_capture = deepcopy(
+            source_role_capture
+            or {
+                "sources": dict(source_role_sources or {}),
+                "bindings": list(source_role_bindings),
+                "workspace": source_role_workspace,
+            }
+        )
+
+    @property
+    def source_role_sources(self):
+        return self.source_role_capture.get("sources", {})
+
+    @source_role_sources.setter
+    def source_role_sources(self, value):
+        self.source_role_capture["sources"] = dict(value or {})
+
+    def __deepcopy__(self, memo):
+        result = type(self)(
+            deepcopy(dict(self), memo),
+            source_role_capture=deepcopy(self.source_role_capture, memo),
+        )
+        memo[id(self)] = result
+        return result
 
 
 class _SourceBoundSecurityReport(dict):
     """Keep captured bytes outside the serializable report for local revalidation."""
 
-    __slots__ = ("_captured_sources",)
+    __slots__ = ("_captured_sources", "_source_role_capture")
 
     def copy(self):
         """Copy public fields while retaining the immutable source capture."""
         result = _SourceBoundSecurityReport(self)
         result._captured_sources = self._captured_sources
+        result._source_role_capture = deepcopy(self._source_role_capture)
         return result
 
 
@@ -595,7 +673,10 @@ def _prepare_security_scan_sources(core, prior_tier_report):
         row.pop("source_role_review", None)
     captured = core.pop("_primitive_source_bytes", None)
     if captured is None and type(core) is _SourceBoundSecurityReport:
-        captured = dict(core._captured_sources)
+        captured = _CapturedSecuritySources(
+            dict(core._captured_sources),
+            source_role_capture=core._source_role_capture,
+        )
     if captured is not None:
         core["_primitive_source_bytes"] = captured
     return captured
@@ -608,6 +689,25 @@ def _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_sum
         core["action_summary"] = prior_summary or audit._security_scan_action_summary(
             "INCOMPLETE"
         )
+
+
+def _tier_report_has_archive_role_support(tier_report):
+    expected = {"archive/README.md", "archive/manifest.json"}
+    for row in (tier_report or {}).get("ledger", []):
+        if not isinstance(row, dict):
+            continue
+        observation = row.get("credential_authority_observation")
+        supporting = (
+            observation.get("supporting_sources", [])
+            if isinstance(observation, dict)
+            else []
+        )
+        if any(
+            isinstance(source, dict) and source.get("path") in expected
+            for source in supporting
+        ):
+            return True
+    return False
 
 
 def _apply_security_scan_policy(
@@ -808,6 +908,9 @@ def _finish_security_scan_seal(audit, core, captured, baseline, input_physical):
     if captured:
         result = _SourceBoundSecurityReport(core)
         result._captured_sources = tuple(captured.items())
+        result._source_role_capture = deepcopy(
+            getattr(captured, "source_role_capture", {})
+        )
         return result
     return core
 
@@ -878,6 +981,7 @@ def _security_scan_transaction_copy(core):
     working = deepcopy(core)
     if type(working) is _SourceBoundSecurityReport and captured is not None:
         working._captured_sources = captured
+        working._source_role_capture = deepcopy(core._source_role_capture)
     return working
 
 
@@ -1222,6 +1326,69 @@ def seal_security_scan(
         native_surface_mismatch,
         native_verification_invalidated,
     ) = _security_scan_partition_native_rows(audit, core, captured, primitive)
+    role_capture = getattr(captured, "source_role_capture", None)
+    has_role_support = isinstance(role_capture, dict) and bool(
+        role_capture.get("sources")
+    )
+    invalidate_role_support = (
+        not has_role_support
+        and _tier_report_has_archive_role_support(core.get("finding_tier_report"))
+    )
+    if has_role_support:
+        support = role_capture.get("sources")
+        bindings = role_capture.get("bindings")
+        workspace = role_capture.get("workspace")
+        expected = {"archive/README.md", "archive/manifest.json"}
+        valid = (
+            isinstance(support, dict)
+            and set(support) == expected
+            and isinstance(bindings, list)
+            and len(bindings) == len(expected)
+            and isinstance(workspace, Path)
+        )
+        by_path = (
+            {
+                row.get("path"): row
+                for row in bindings
+                if isinstance(row, dict) and isinstance(row.get("path"), str)
+            }
+            if isinstance(bindings, list)
+            else {}
+        )
+        valid = valid and set(by_path) == expected
+        if valid:
+            valid = all(
+                isinstance(support.get(path), bytes)
+                and len(support[path]) == by_path[path].get("bytes")
+                and sha256(support[path]).hexdigest() == by_path[path].get("sha256")
+                for path in expected
+            )
+        if valid:
+            try:
+                audit._verify_security_bindings(workspace, bindings)
+            except (OSError, audit.ReviewAuditError, audit.RuntimeAuditError):
+                valid = False
+        if not valid:
+            invalidate_role_support = True
+    if invalidate_role_support:
+        if isinstance(role_capture, dict):
+            role_capture.update(sources={}, bindings=[], workspace=None)
+        ledger = core.get("finding_tier_report", {}).get("ledger", [])
+        raw_findings = [
+            deepcopy(row["raw_finding"])
+            for row in ledger
+            if isinstance(row, dict) and isinstance(row.get("raw_finding"), dict)
+        ]
+        coverage_complete = core.get("audit_coverage", {}).get("complete") is True
+        core["finding_tier_report"] = primitive.build_finding_tier_report(
+            raw_findings,
+            core.get("primitive_observations", []),
+            core.get("sources", []),
+            captured,
+            coverage_state=coverage_complete,
+            partition_state="VALIDATED" if coverage_complete else "INCOMPLETE",
+            _verifier_native_rows=native_rows,
+        )
     _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_summary)
     _apply_security_scan_policy(
         audit,
@@ -1252,6 +1419,9 @@ def seal_security_scan(
     if type(caller_core) is _SourceBoundSecurityReport:
         caller_core._captured_sources = getattr(
             result, "_captured_sources", getattr(caller_core, "_captured_sources", None)
+        )
+        caller_core._source_role_capture = deepcopy(
+            getattr(result, "_source_role_capture", {})
         )
     return result
 
@@ -1598,7 +1768,7 @@ def security_scan(
         cache_enabled = transaction.cache_enabled
         files = transaction.files
         database_context = {}
-        primitive_source_bytes = {}
+        primitive_source_bytes = _CapturedSecuritySources()
         producer_source_model = {}
         collection_identity = {}
         bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (

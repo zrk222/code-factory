@@ -2268,18 +2268,21 @@ def _django_default_authority(finding, context, declaration, observation):
     source_hashes.update(
         {index.relative(source): index.inventory[source] for source in selected_sources}
     )
-    from .credential_identity_audit import django_test_domain_evidence
+    from . import credential_identity_audit as identity
+    from .security_configuration import selected_django_credential_domain
 
-    domain = django_test_domain_evidence(context, path, observation, selected)
-    if domain is not None:
+    domain = selected_django_credential_domain(
+        identity, context, path, observation, selected, finding, index
+    )
+    if domain:
         source_hashes.update(domain.pop("supporting_sources"))
     return {
         "schema": "factory.security.selected-framework-consumer-authority.v1",
-        "proof_scope": (
-            "source_bound_configured_test_feedback"
-            if domain is not None
-            else "source_bound_selected_framework_feedback_default"
-        ),
+        "proof_scope": domain.get(
+            "proof_scope", "source_bound_configured_test_feedback"
+        )
+        if domain
+        else "source_bound_selected_framework_feedback_default",
         "framework": "django",
         "credential_key": "SECRET_KEY",
         "source_role": "published_literal_default",
