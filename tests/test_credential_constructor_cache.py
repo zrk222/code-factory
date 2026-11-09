@@ -2709,6 +2709,40 @@ def fingerprint_memo(tmp_path):
     return memo, paths
 
 
+def test_owned_binding_names_reuse_without_escaping_validated_batch(
+    fingerprint_memo, monkeypatch
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    statement = memo.index.snapshots[paths["caller.py"]].body[0]
+    original = context._bound_names_uncached
+    calls = []
+
+    def count(node):
+        calls.append(node)
+        return original(node)
+
+    monkeypatch.setattr(context, "_bound_names_uncached", count)
+    with memo.analysis_batch() as batch:
+        assert context._bound_names(statement) == {"helper"}
+        returned = context._bound_names(statement)
+        returned.add("foreign")
+        assert context._bound_names(statement) == {"helper"}
+        assert calls == [statement]
+        foreign = ast.parse("value = 1").body[0]
+        assert context._bound_names(foreign) == {"value"}
+        foreign.targets[0].id = "changed"
+        assert context._bound_names(foreign) == {"changed"}
+    assert batch.accepted
+    assert context._bound_names(statement) == {"helper"}
+    assert calls.count(statement) == 2
+    with memo.analysis_batch() as second:
+        assert context._bound_names(statement) == {"helper"}
+        statement.names[0].asname = "changed"
+    assert not second.accepted
+
+
 def _fingerprint_guard(memo, paths):
     from factoryline import credential_role_identity_effects as identity
 

@@ -241,6 +241,10 @@ def _fingerprint_epoch_helpers():
         _structural_ast_leaf_digest,
         _structural_ast_fields,
         _iter_ast_nodes,
+        _bound_names,
+        _bound_names_uncached,
+        _binding_name,
+        _FUNCTION_NODES,
         _FINGERPRINT_EPOCH,
         SimpleNamespace,
         ast.Module,
@@ -321,7 +325,7 @@ def _owned_ast_query_facts(epoch, roots, *, source=None):
         return None
     if epoch.query_facts is None:
         epoch.query_facts = SimpleNamespace(
-            nodes=_owned_ast_query_nodes(epoch), bindings={}, imports={}
+            nodes=_owned_ast_query_nodes(epoch), bindings={}, imports={}, bound_names={}
         )
     nodes = epoch.query_facts.nodes
     if not roots or any(nodes.get(id(node), (None,))[0] is not node for node in roots):
@@ -2625,6 +2629,15 @@ def _binding_name(node: ast.AST) -> str | None:
 
 
 def _bound_names(statement: ast.AST) -> set[str]:
+    facts = _owned_ast_query_facts(_FINGERPRINT_EPOCH.get(), (statement,))
+    if facts is None:
+        return _bound_names_uncached(statement)
+    if statement not in facts.bound_names:
+        facts.bound_names[statement] = frozenset(_bound_names_uncached(statement))
+    return set(facts.bound_names[statement])
+
+
+def _bound_names_uncached(statement: ast.AST) -> set[str]:
     if isinstance(statement, (*_FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
         return {statement.name} if hasattr(statement, "name") else set()
     if (cached := getattr(statement, "_scan_bound_names", None)) is not None:
