@@ -2640,7 +2640,11 @@ def _bound_names(statement: ast.AST) -> set[str]:
 def _bound_names_uncached(statement: ast.AST) -> set[str]:
     if isinstance(statement, (*_FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
         return {statement.name} if hasattr(statement, "name") else set()
-    if (cached := getattr(statement, "_scan_bound_names", None)) is not None:
+    sidecars = _FINGERPRINT_EPOCH.get() is None
+    if (
+        sidecars
+        and (cached := getattr(statement, "_scan_bound_names", None)) is not None
+    ):
         return set(cached)
     comprehension_targets = {
         id(target)
@@ -2678,7 +2682,7 @@ def _bound_names_uncached(statement: ast.AST) -> set[str]:
         name = _binding_name(child)
         if name:
             names.add(name)
-    if hasattr(statement, "_scan_bound_names"):
+    if sidecars and hasattr(statement, "_scan_bound_names"):
         statement._scan_bound_names = frozenset(names)
     return names
 
