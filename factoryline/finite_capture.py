@@ -5098,6 +5098,8 @@ def _fixed_eval_dynamic_import_risk(node, importlib_aliases, importer_aliases):
 
 
 def _fixed_eval_module_alias_escape(tree, aliases):
+    if not aliases:
+        return False
     parents = {
         id(child): node
         for node in ast.walk(tree)
@@ -5346,13 +5348,10 @@ def _fixed_eval_builtin_provider_risk(tree, depth=0):
     builtins_aliases, importlib_aliases, sys_aliases, importer_aliases = (
         _fixed_eval_builtin_aliases(tree)
     )
-    if (
-        _fixed_eval_module_alias_escape(tree, builtins_aliases)
-        or _fixed_eval_module_alias_escape(tree, importlib_aliases)
-        or _fixed_eval_module_alias_escape(tree, sys_aliases)
-        or _fixed_eval_provider_alias_escape(
-            tree, builtins_aliases, importer_aliases, sys_aliases
-        )
+    if _fixed_eval_module_alias_escape(
+        tree, builtins_aliases | importlib_aliases | sys_aliases
+    ) or _fixed_eval_provider_alias_escape(
+        tree, builtins_aliases, importer_aliases, sys_aliases
     ):
         return True
     for node in ast.walk(tree):

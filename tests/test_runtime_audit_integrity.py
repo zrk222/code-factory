@@ -8638,3 +8638,16 @@ def test_compiler_invalid_transported_tree_cannot_reach_sensor(tmp_path, transpo
         verified_security_tree(
             review_audits, tmp_path, path, source, binding, tree, fingerprint
         )
+
+
+def test_empty_provider_aliases_do_not_walk_ast(monkeypatch):
+    import ast
+    from factoryline import finite_capture as capture
+
+    tree = ast.parse("value = 1")
+
+    def forbidden(_tree):
+        pytest.fail("empty alias set traversed source")
+
+    monkeypatch.setattr(capture.ast, "walk", forbidden)
+    assert capture._fixed_eval_module_alias_escape(tree, set()) is False
