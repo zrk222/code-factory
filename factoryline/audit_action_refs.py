@@ -473,143 +473,22 @@ def _security_scan_action_summary(state: str) -> str:
 
 
 def _application_configuration_hashes(class_profiles):
-    """Select only bounded configuration digests from explicit class profiles."""
-    from .import_context import application_configuration_names
+    from .captured_security_audit import _application_configuration_hashes as capture
 
-    config_hashes = {}
-    for evidence in class_profiles:
-        configured = evidence.get("configuration_sha256", {})
-        if not isinstance(configured, dict):
-            continue
-        for name, digest in configured.items():
-            if (
-                name in application_configuration_names((name,))
-                and isinstance(digest, str)
-                and len(digest) == 64
-            ):
-                config_hashes[name] = digest
-    return config_hashes
+    return capture(class_profiles)
 
 
 def _captured_application_source_bytes(
     workspace, findings, bindings, source_bytes, *, capture_all_sources=False
 ):
-    from .primitive_observation_binding import fixed_program_proof_dispositions
+    from .captured_security_audit import _captured_application_source_bytes as capture
 
-    program_proofs = fixed_program_proof_dispositions()
-    # Byte binding is evidence substrate for every finding, never defect credit.
-    paths = {finding.get("path") for finding in findings}
-    for finding in findings:
-        evidence = finding.get("facts", {}).get("fixture_evidence", {})
-        closure = evidence.get("consumer_use_closure", {})
-        if evidence.get("classification") == "APPLICATION_TEST_CREDENTIAL_ROLE":
-            paths.update(
-                row.get("path")
-                for row in closure.get("operations", [])
-                if isinstance(row, dict)
-            )
-    hashes = {row["path"]: row["sha256"] for row in bindings}
-    whole_inventory = capture_all_sources or any(
-        finding.get("facts", {}).get("disposition") in program_proofs
-        or isinstance(finding.get("facts", {}).get("security_precondition"), dict)
-        for finding in findings
-    )
-    paths.update(hashes if whole_inventory else ())
-    needs_signing_sources = any(
-        finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        and finding.get("facts", {}).get("name") == "SECRET_KEY"
-        for finding in findings
-    )
-    paths.update(name for name in hashes if needs_signing_sources)
-    class_profiles = [
-        finding.get("facts", {}).get("fixture_evidence", {})
-        for finding in findings
-        if finding.get("facts", {}).get("fixture_evidence", {}).get("classification")
-        in {
-            "APPLICATION_TEST_CREDENTIAL_ROLE",
-            "PRESENTATION_METADATA_ROLE",
-        }
-    ]
-    config_hashes = _application_configuration_hashes(class_profiles)
-    if class_profiles:
-        # These profiles independently recompute over the whole inventory.
-        paths.update(name for name in hashes if name.endswith(".py"))
-    paths.update(config_hashes)
-    hashes.update(config_hashes)
-    jwt_findings = [
-        finding
-        for finding in findings
-        if finding.get("facts", {}).get("disposition")
-        in {
-            "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
-            "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
-            "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
-            "ENDPOINT_DECLARATION_ROLE_PROVEN",
-        }
-    ]
-    if jwt_findings:
-        # Revalidation uses the complete current source inventory, including
-        # imported initializers and shadows; selective capture would omit risks.
-        paths.update(hashes)
-    captured = {}
-    for relative in paths:
-        if (
-            not isinstance(relative, str)
-            or relative.startswith(("/", "\\"))
-            or ":" in relative
-            or ".." in relative.replace("\\", "/").split("/")
-        ):
-            continue
-        data = source_bytes.get(workspace / relative)
-        if relative in config_hashes and not isinstance(data, bytes):
-            try:
-                data = (workspace / relative).read_bytes()
-            except OSError:
-                continue
-        if (
-            isinstance(data, bytes)
-            and len(data) <= 1_000_000
-            and sha256(data).hexdigest() == hashes.get(relative)
-        ):
-            captured[relative] = data
-    role_sources = {}
-    if any(
-        finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        and isinstance(finding.get("path"), str)
-        and finding["path"].replace("\\", "/").startswith("archive/")
-        and finding.get("path") in captured
-        for finding in findings
-    ):
-        from . import review_audits as audit
-
-        for relative in ("archive/README.md", "archive/manifest.json"):
-            try:
-                data = audit._security_source_bytes(workspace, relative)
-            except (OSError, audit.ReviewAuditError):
-                role_sources = {}
-                break
-            if len(data) > 1_000_000:
-                role_sources = {}
-                break
-            role_sources[relative] = data
-        if role_sources:
-            bindings = [
-                {
-                    "path": relative,
-                    "sha256": sha256(data).hexdigest(),
-                    "bytes": len(data),
-                }
-                for relative, data in role_sources.items()
-            ]
-            try:
-                audit._verify_security_bindings(workspace, bindings)
-            except audit.ReviewAuditError:
-                role_sources = {}
-    return _CapturedSecuritySources(
-        captured,
-        source_role_sources=role_sources,
-        source_role_bindings=bindings if role_sources else (),
-        source_role_workspace=workspace if role_sources else None,
+    return capture(
+        workspace,
+        findings,
+        bindings,
+        source_bytes,
+        capture_all_sources=capture_all_sources,
     )
 
 
@@ -637,13 +516,16 @@ class _CapturedSecuritySources(dict):
 
     @property
     def source_role_sources(self):
+        """Return auxiliary bytes without adding them to the source inventory."""
         return self.source_role_capture.get("sources", {})
 
     @source_role_sources.setter
     def source_role_sources(self, value):
+        """Replace the auxiliary source map used for local verification."""
         self.source_role_capture["sources"] = dict(value or {})
 
     def update(self, other=(), /, **kwargs):
+        """Preserve private capture metadata when merging scan source maps."""
         if isinstance(other, _CapturedSecuritySources):
             self.source_role_capture = deepcopy(other.source_role_capture)
         super().update(other, **kwargs)
@@ -661,6 +543,11 @@ class _SourceBoundSecurityReport(dict):
     """Keep captured bytes outside the serializable report for local revalidation."""
 
     __slots__ = ("_captured_sources", "_source_role_capture")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._captured_sources = ()
+        self._source_role_capture = {}
 
     def copy(self):
         """Copy public fields while retaining the immutable source capture."""
@@ -694,25 +581,6 @@ def _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_sum
         core["action_summary"] = prior_summary or audit._security_scan_action_summary(
             "INCOMPLETE"
         )
-
-
-def _tier_report_has_archive_role_support(tier_report):
-    expected = {"archive/README.md", "archive/manifest.json"}
-    for row in (tier_report or {}).get("ledger", []):
-        if not isinstance(row, dict):
-            continue
-        observation = row.get("credential_authority_observation")
-        supporting = (
-            observation.get("supporting_sources", [])
-            if isinstance(observation, dict)
-            else []
-        )
-        if any(
-            isinstance(source, dict) and source.get("path") in expected
-            for source in supporting
-        ):
-            return True
-    return False
 
 
 def _apply_security_scan_policy(
@@ -1331,69 +1199,9 @@ def seal_security_scan(
         native_surface_mismatch,
         native_verification_invalidated,
     ) = _security_scan_partition_native_rows(audit, core, captured, primitive)
-    role_capture = getattr(captured, "source_role_capture", None)
-    has_role_support = isinstance(role_capture, dict) and bool(
-        role_capture.get("sources")
-    )
-    invalidate_role_support = (
-        not has_role_support
-        and _tier_report_has_archive_role_support(core.get("finding_tier_report"))
-    )
-    if has_role_support:
-        support = role_capture.get("sources")
-        bindings = role_capture.get("bindings")
-        workspace = role_capture.get("workspace")
-        expected = {"archive/README.md", "archive/manifest.json"}
-        valid = (
-            isinstance(support, dict)
-            and set(support) == expected
-            and isinstance(bindings, list)
-            and len(bindings) == len(expected)
-            and isinstance(workspace, Path)
-        )
-        by_path = (
-            {
-                row.get("path"): row
-                for row in bindings
-                if isinstance(row, dict) and isinstance(row.get("path"), str)
-            }
-            if isinstance(bindings, list)
-            else {}
-        )
-        valid = valid and set(by_path) == expected
-        if valid:
-            valid = all(
-                isinstance(support.get(path), bytes)
-                and len(support[path]) == by_path[path].get("bytes")
-                and sha256(support[path]).hexdigest() == by_path[path].get("sha256")
-                for path in expected
-            )
-        if valid:
-            try:
-                audit._verify_security_bindings(workspace, bindings)
-            except (OSError, audit.ReviewAuditError, audit.RuntimeAuditError):
-                valid = False
-        if not valid:
-            invalidate_role_support = True
-    if invalidate_role_support:
-        if isinstance(role_capture, dict):
-            role_capture.update(sources={}, bindings=[], workspace=None)
-        ledger = core.get("finding_tier_report", {}).get("ledger", [])
-        raw_findings = [
-            deepcopy(row["raw_finding"])
-            for row in ledger
-            if isinstance(row, dict) and isinstance(row.get("raw_finding"), dict)
-        ]
-        coverage_complete = core.get("audit_coverage", {}).get("complete") is True
-        core["finding_tier_report"] = primitive.build_finding_tier_report(
-            raw_findings,
-            core.get("primitive_observations", []),
-            core.get("sources", []),
-            captured,
-            coverage_state=coverage_complete,
-            partition_state="VALIDATED" if coverage_complete else "INCOMPLETE",
-            _verifier_native_rows=native_rows,
-        )
+    from .captured_security_audit import _revalidate_scan_role_support
+
+    _revalidate_scan_role_support(audit, core, captured, primitive, native_rows)
     _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_summary)
     _apply_security_scan_policy(
         audit,

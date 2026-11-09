@@ -332,6 +332,8 @@ def endpoint_admission_helpers():
         "finite_capture",
         "credential_role_identity_effects",
         "credential_identity_audit",
+        "captured_security_audit",
+        "pytest_collection_audit",
         "security_configuration",
         "semantic_credential_sensor",
     )
@@ -2268,11 +2270,10 @@ def _django_default_authority(finding, context, declaration, observation):
     source_hashes.update(
         {index.relative(source): index.inventory[source] for source in selected_sources}
     )
-    from . import credential_identity_audit as identity
-    from .security_configuration import selected_django_credential_domain
+    from .captured_security_audit import selected_django_credential_domain
 
     domain = selected_django_credential_domain(
-        identity, context, path, observation, selected, finding, index
+        context, path, observation, selected, finding, index
     )
     if domain:
         source_hashes.update(domain.pop("supporting_sources"))

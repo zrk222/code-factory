@@ -5,7 +5,7 @@ import hashlib
 from pathlib import Path
 
 from . import credential_role_identity_effects as _legacy
-from .security_configuration import (
+from .captured_security_audit import (
     source_role_distribution_domain as source_role_distribution_domain,
 )
 

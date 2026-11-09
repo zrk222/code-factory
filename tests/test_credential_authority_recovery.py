@@ -1183,9 +1183,10 @@ def test_source_role_distribution_exclusion_moves_action_to_context(packaging):
 
 
 def test_source_role_reuses_parsed_distribution_metadata():
-    from factoryline import security_configuration as module
+    from factoryline import captured_security_audit as module
+    from factoryline.pytest_collection_audit import _distribution_toml_document
 
-    module._distribution_toml_document.cache_clear()
+    _distribution_toml_document.cache_clear()
     captured = {
         "pyproject.toml": (
             '[build-system]\nrequires=["setuptools"]\n'
@@ -1201,8 +1202,8 @@ def test_source_role_reuses_parsed_distribution_metadata():
     )
     assert first is not None and second is not None
     assert first["manifest_sha256"] == second["manifest_sha256"]
-    assert module._distribution_toml_document.cache_info().misses == 1
-    assert module._distribution_toml_document.cache_info().hits == 1
+    assert _distribution_toml_document.cache_info().misses == 1
+    assert _distribution_toml_document.cache_info().hits == 1
 
 
 def test_source_role_static_setup_packages_excludes_example_application():
@@ -1274,7 +1275,7 @@ def test_source_role_hatch_selected_package_keeps_actionable_default():
         ("service/urls.py", "example_service/example/urls.py"),
     ):
         files[new] = files.pop(old)
-    from factoryline.security_configuration import source_role_distribution_domain
+    from factoryline.captured_security_audit import source_role_distribution_domain
 
     captured = {path: source.encode() for path, source in files.items()}
     assert (
@@ -1284,7 +1285,7 @@ def test_source_role_hatch_selected_package_keeps_actionable_default():
 
 
 def test_source_role_hatch_namespace_selected_package_keeps_actionable_default():
-    from factoryline.security_configuration import source_role_distribution_domain
+    from factoryline.captured_security_audit import source_role_distribution_domain
 
     captured = {
         "pyproject.toml": (
@@ -1314,7 +1315,7 @@ def test_source_role_setuptools_find_uses_candidate_package_name(
     where, include, exclude, excluded
 ):
     import json
-    from factoryline.security_configuration import source_role_distribution_domain
+    from factoryline.captured_security_audit import source_role_distribution_domain
 
     pyproject = (
         '[build-system]\nrequires=["setuptools"]\n'
@@ -1333,7 +1334,7 @@ def test_source_role_setuptools_find_uses_candidate_package_name(
 
 
 def test_source_role_setuptools_exact_parent_exclude_does_not_drop_subpackage():
-    from factoryline.security_configuration import source_role_distribution_domain
+    from factoryline.captured_security_audit import source_role_distribution_domain
 
     captured = {
         "pyproject.toml": (
@@ -1350,7 +1351,7 @@ def test_source_role_setuptools_exact_parent_exclude_does_not_drop_subpackage():
 
 
 def test_source_role_setuptools_package_data_keeps_static_package_boundary():
-    from factoryline.security_configuration import source_role_distribution_domain
+    from factoryline.captured_security_audit import source_role_distribution_domain
 
     captured = {
         "pyproject.toml": (
@@ -1377,7 +1378,7 @@ def test_source_role_setuptools_package_data_keeps_static_package_boundary():
 def test_source_role_setuptools_rejects_malformed_or_escaping_package_data(
     package_data,
 ):
-    from factoryline.security_configuration import source_role_distribution_domain
+    from factoryline.captured_security_audit import source_role_distribution_domain
 
     captured = {
         "pyproject.toml": (
@@ -1409,7 +1410,7 @@ def test_source_role_archive_redaction_requires_exact_bound_evidence(
     import hashlib
     import json
 
-    from factoryline.security_configuration import source_role_distribution_domain
+    from factoryline.captured_security_audit import source_role_distribution_domain
 
     path = "archive/quiz/settings.py"
     source = f"SECRET_KEY = {literal!r}\n".encode()
@@ -1500,6 +1501,63 @@ def test_archive_redaction_evidence_reaches_shared_tier_without_consumer_flow():
     }
 
 
+def test_archive_role_handoff_requires_current_auxiliary_bindings():
+    from factoryline.audit_action_refs import _CapturedSecuritySources
+    from factoryline.captured_security_audit import (
+        selected_django_credential_domain,
+        source_role_capture_context,
+        source_role_context_fallback,
+        source_role_tier_override,
+    )
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+
+    path = "archive/quiz/settings.py"
+    readme = "archive/README.md"
+    source = b"SECRET_KEY = '[removed-secret-placeholder]'\n"
+    bindings = {path: sha256(source).hexdigest()}
+    auxiliary = {
+        readme: b"Historical source archive; sanitized secret settings.",
+        "archive/manifest.json": json.dumps(
+            [
+                {
+                    "published": path,
+                    "published_sha256": bindings[path],
+                    "transformations": ["Secret settings removed."],
+                }
+            ]
+        ).encode(),
+    }
+    sources = _CapturedSecuritySources({path: source}, source_role_sources=auxiliary)
+    context = signing_configuration_inventory(sources, bindings)
+    assert context is not None
+    role_context, role_bindings = source_role_capture_context(
+        sources, bindings, context
+    )
+    assert set(sources) == set(bindings) == {path}
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": path,
+        "line": 1,
+        "facts": {"name": "SECRET_KEY"},
+    }
+    index = context["index"]
+    domain = selected_django_credential_domain(
+        role_context, Path(path), {}, {}, finding, index
+    )
+    assert domain["supporting_sources"][readme] == role_bindings[readme]
+    generated, fallback = source_role_tier_override(
+        finding, True, None, role_context, role_bindings
+    )
+    assert fallback[0] == "NEEDS_CONTEXT"
+    stale = {**role_bindings, readme: "0" * 64}
+    assert (
+        source_role_context_fallback(
+            finding, True, None, generated, role_context, stale
+        )
+        is None
+    )
+
+
 def test_archive_support_capture_stays_outside_python_inventory(tmp_path):
     import hashlib
     import json
@@ -1547,7 +1605,7 @@ def test_archive_support_capture_stays_outside_python_inventory(tmp_path):
 
 
 def test_source_role_package_scope_rejects_windows_distribution_root():
-    from factoryline.security_configuration import source_role_distribution_domain
+    from factoryline.captured_security_audit import source_role_distribution_domain
 
     captured = {
         "pyproject.toml": (
@@ -1632,7 +1690,7 @@ def test_source_role_dynamic_or_ambiguous_packaging_does_not_downgrade(extra):
     ],
 )
 def test_source_role_package_scope_rejects_nonrelative_paths(relative):
-    from factoryline.security_configuration import source_role_distribution_domain
+    from factoryline.captured_security_audit import source_role_distribution_domain
 
     assert (
         source_role_distribution_domain(

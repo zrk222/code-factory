@@ -819,7 +819,7 @@ def _decide_finding_tier(
     source_bindings=None,
     credential_context=None,
 ):
-    from .security_configuration import source_role_tier_override
+    from .captured_security_audit import source_role_tier_override
     from .credential_endpoint_admission import operative_signing_default_evidence
 
     generated, fallback = source_role_tier_override(
@@ -5076,7 +5076,7 @@ def _finding_tier_ledger_row(
         partition_state,
         signing_cache,
     )
-    from .security_configuration import source_role_capture_context
+    from .captured_security_audit import source_role_capture_context
 
     role_context, role_bindings = source_role_capture_context(
         source_bytes, bindings, context
