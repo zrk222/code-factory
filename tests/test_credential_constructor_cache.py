@@ -2709,6 +2709,95 @@ def fingerprint_memo(tmp_path):
     return memo, paths
 
 
+def test_owned_binding_names_reuse_without_escaping_validated_batch(
+    fingerprint_memo, monkeypatch
+):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    statement = memo.index.snapshots[paths["caller.py"]].body[0]
+    original = context._bound_names_uncached
+    calls = []
+
+    def count(node):
+        calls.append(node)
+        return original(node)
+
+    monkeypatch.setattr(context, "_bound_names_uncached", count)
+    with memo.analysis_batch() as batch:
+        assert context._bound_names(statement) == {"helper"}
+        returned = context._bound_names(statement)
+        returned.add("foreign")
+        assert context._bound_names(statement) == {"helper"}
+        assert calls == [statement]
+        foreign = ast.parse("value = 1").body[0]
+        assert context._bound_names(foreign) == {"value"}
+        foreign.targets[0].id = "changed"
+        assert context._bound_names(foreign) == {"changed"}
+    assert batch.accepted
+    assert context._bound_names(statement) == {"helper"}
+    assert calls.count(statement) == 2
+    with memo.analysis_batch() as second:
+        assert context._bound_names(statement) == {"helper"}
+        statement.names[0].asname = "changed"
+    assert not second.accepted
+
+
+@pytest.mark.parametrize("before", [None, frozenset(), frozenset({"poison"})])
+def test_owned_binding_names_ignore_untrusted_sidecars(fingerprint_memo, before):
+    from factoryline import import_context as context
+
+    memo, paths = fingerprint_memo
+    statement = memo.index.snapshots[paths["caller.py"]].body[0]
+    statement._scan_bound_names = before
+    with memo.analysis_batch() as batch:
+        assert context._bound_names(statement) == {"helper"}
+        statement._scan_bound_names = {"changed"}
+        assert context._bound_names(statement) == {"helper"}
+        assert context._bound_names_uncached(statement) == {"helper"}
+        statement._scan_bound_names.clear()
+        assert context._bound_names_uncached(statement) == {"helper"}
+        foreign = ast.parse("actual = 1").body[0]
+        foreign._scan_bound_names = frozenset()
+        assert context._bound_names(foreign) == {"actual"}
+    assert batch.accepted
+
+
+def test_owned_empty_binding_cache_retires_after_exception(tmp_path, monkeypatch):
+    from factoryline import import_context as context
+
+    index, paths = _snapshot(tmp_path, {"empty.py": "consume(value)\n"})
+    memo = ClassChainMemo(index, {}, {}, audit)
+    statement = index.snapshots[paths["empty.py"]].body[0]
+    statement._scan_bound_names = frozenset({"poison"})
+    original = context._bound_names_uncached
+    calls = []
+
+    def counted(node):
+        calls.append(node)
+        return original(node)
+
+    monkeypatch.setattr(context, "_bound_names_uncached", counted)
+    with pytest.raises(RuntimeError, match="abort"):
+        with memo.analysis_batch() as aborted:
+            assert context._bound_names(statement) == set()
+            returned = context._bound_names(statement)
+            returned.add("foreign")
+            assert context._bound_names(statement) == set()
+            assert calls == [statement]
+            raise RuntimeError("abort")
+    assert not aborted.accepted
+    assert context._FINGERPRINT_EPOCH.get() is None
+    with memo.analysis_batch() as accepted:
+        with pytest.raises(ValueError, match="nested analysis batch"):
+            with memo.analysis_batch():
+                pytest.fail("nested batch was admitted")
+        assert context._bound_names(statement) == set()
+    assert accepted.accepted
+    assert calls == [statement, statement]
+    assert context._FINGERPRINT_EPOCH.get() is None
+
+
 def _fingerprint_guard(memo, paths):
     from factoryline import credential_role_identity_effects as identity
 
