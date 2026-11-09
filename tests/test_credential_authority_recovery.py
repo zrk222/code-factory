@@ -1081,8 +1081,16 @@ def test_native_selected_setting_import_requires_closed_finite_source(change, ex
         ]
 
 
-def _recovery_row(files, name="SECRET_KEY", path="service/settings.py"):
+def _recovery_row(
+    files, name="SECRET_KEY", path="service/settings.py", source_role_sources=None
+):
     sources = {path: source.encode() for path, source in files.items()}
+    if source_role_sources is not None:
+        from factoryline.audit_action_refs import _CapturedSecuritySources
+
+        sources = _CapturedSecuritySources(
+            sources, source_role_sources=source_role_sources
+        )
     findings = audit._security_scan_tree(Path("."), Path(path), ast.parse(files[path]))
     finding = next(item for item in findings if item["facts"].get("name") == name)
     report = build_finding_tier_report(
@@ -1132,6 +1140,614 @@ def test_authority_domain_unshipped_runnable_signer_preserves_authority(metadata
         "start.py",
         "service/urls.py",
     }
+
+
+@pytest.mark.parametrize(
+    "packaging",
+    [
+        '[tool.setuptools.packages.find]\nwhere=["src"]\ninclude=["*"]\n',
+        '[tool.setuptools.packages.find]\nwhere=["."]\ninclude=["*"]\nexclude=["example*"]\n',
+        '[tool.setuptools]\npackages=["service"]\n',
+    ],
+)
+def test_source_role_distribution_exclusion_moves_action_to_context(packaging):
+    files = _recovery_sources(
+        startup=START.replace("service.settings", "examples.service.settings"),
+        extra={
+            "pyproject.toml": (
+                '[build-system]\nrequires=["setuptools"]\n'
+                'build-backend="setuptools.build_meta"\n' + packaging
+            ),
+        },
+    )
+    for old, new in (
+        ("service/__init__.py", "examples/service/__init__.py"),
+        ("service/settings.py", "examples/service/settings.py"),
+        ("service/urls.py", "examples/service/urls.py"),
+    ):
+        files[new] = files.pop(old)
+    row = _recovery_row(files, path="examples/service/settings.py")
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    proof = row["credential_authority_observation"]
+    domain = proof["authority_domain"]
+    assert domain["schema"] == "factory.security.source-role-package-scope.v1"
+    assert domain["application_authority"] == "UNKNOWN"
+    assert domain["proof_scope"] == "source_bound_distribution_package_selection"
+    assert domain["package_scope"] == "EXCLUDED_FROM_CAPTURED_STATIC_PACKAGE_SELECTION"
+    assert domain["manifest_sha256"] == next(
+        ref["sha256"]
+        for ref in proof["supporting_sources"]
+        if ref["path"] == "pyproject.toml"
+    )
+
+
+def test_source_role_reuses_parsed_distribution_metadata():
+    from factoryline import captured_security_audit as module
+    from factoryline.pytest_collection_audit import _distribution_toml_document
+
+    _distribution_toml_document.cache_clear()
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nrequires=["setuptools"]\n'
+            'build-backend="setuptools.build_meta"\n'
+            '[tool.setuptools.packages.find]\ninclude=["service*"]\n'
+        ).encode()
+    }
+    first = module.source_role_distribution_domain(
+        captured, "examples/service/settings.py"
+    )
+    second = module.source_role_distribution_domain(
+        captured, "examples/service/urls.py"
+    )
+    assert first is not None and second is not None
+    assert first["manifest_sha256"] == second["manifest_sha256"]
+    assert _distribution_toml_document.cache_info().misses == 1
+    assert _distribution_toml_document.cache_info().hits == 1
+
+
+def test_source_role_static_setup_packages_excludes_example_application():
+    files = _recovery_sources(
+        startup=START.replace("service.settings", "example.service.settings"),
+        extra={
+            "setup.py": (
+                "from setuptools import setup\n"
+                "setup(name='library', packages=['service'])\n"
+            )
+        },
+    )
+    for old, new in (
+        ("service/__init__.py", "example/service/__init__.py"),
+        ("service/settings.py", "example/service/settings.py"),
+        ("service/urls.py", "example/service/urls.py"),
+    ):
+        files[new] = files.pop(old)
+    row = _recovery_row(files, path="example/service/settings.py")
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    assert (
+        row["credential_authority_observation"]["authority_domain"]["manifest_path"]
+        == "setup.py"
+    )
+
+
+def test_source_role_hatch_default_wheel_selection_excludes_example_application():
+    files = _recovery_sources(
+        startup=START.replace("service.settings", "examples.service.settings"),
+        extra={
+            "pyproject.toml": (
+                '[build-system]\nrequires=["hatchling"]\n'
+                'build-backend="hatchling.build"\n'
+                '[project]\nname="example-service"\n'
+                '[tool.hatch.build.targets.sdist]\ninclude=["/service"]\n'
+            ),
+            "example_service/__init__.py": "",
+        },
+    )
+    for old, new in (
+        ("service/__init__.py", "examples/service/__init__.py"),
+        ("service/settings.py", "examples/service/settings.py"),
+        ("service/urls.py", "examples/service/urls.py"),
+    ):
+        files[new] = files.pop(old)
+    row = _recovery_row(files, path="examples/service/settings.py")
+    domain = row["credential_authority_observation"]["authority_domain"]
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    assert domain["selection_basis"] == "hatch_default_project_name_wheel_heuristic"
+
+
+def test_source_role_hatch_selected_package_keeps_actionable_default():
+    files = _recovery_sources(
+        startup=START.replace("service.settings", "example_service.example.settings"),
+        extra={
+            "pyproject.toml": (
+                '[build-system]\nrequires=["hatchling"]\n'
+                'build-backend="hatchling.build"\n'
+                '[project]\nname="example-service"\n'
+            ),
+            "example_service/__init__.py": "",
+        },
+    )
+    for old, new in (
+        ("service/__init__.py", "example_service/example/__init__.py"),
+        ("service/settings.py", "example_service/example/settings.py"),
+        ("service/urls.py", "example_service/example/urls.py"),
+    ):
+        files[new] = files.pop(old)
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {path: source.encode() for path, source in files.items()}
+    assert (
+        source_role_distribution_domain(captured, "example_service/example/settings.py")
+        is None
+    )
+
+
+def test_source_role_hatch_namespace_selected_package_keeps_actionable_default():
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nrequires=["hatchling"]\n'
+            'build-backend="hatchling.build"\n'
+            '[project]\nname="example-service"\n'
+        ).encode(),
+        "vendor/example_service/__init__.py": b"",
+    }
+    assert (
+        source_role_distribution_domain(
+            captured, "vendor/example_service/examples/settings.py"
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("where", "include", "exclude", "excluded"),
+    [
+        (["examples"], ["service*"], [], False),
+        (["."], ["*"], ["examples*"], True),
+        (["."], ["service*"], [], True),
+    ],
+)
+def test_source_role_setuptools_find_uses_candidate_package_name(
+    where, include, exclude, excluded
+):
+    import json
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    pyproject = (
+        '[build-system]\nrequires=["setuptools"]\n'
+        'build-backend="setuptools.build_meta"\n'
+        "[tool.setuptools.packages.find]\n"
+        f"where={json.dumps(where)}\n"
+        f"include={json.dumps(include)}\n"
+        f"exclude={json.dumps(exclude)}\n"
+    ).encode()
+    captured = {"pyproject.toml": pyproject}
+    domain = source_role_distribution_domain(captured, "examples/service/settings.py")
+    if excluded:
+        assert domain["selection_basis"] == "setuptools_package_name_filter"
+    else:
+        assert domain is None
+
+
+def test_source_role_setuptools_exact_parent_exclude_does_not_drop_subpackage():
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nrequires=["setuptools"]\n'
+            'build-backend="setuptools.build_meta"\n'
+            '[tool.setuptools.packages.find]\nwhere=["."]\n'
+            'include=["*"]\nexclude=["examples"]\n'
+        ).encode(),
+    }
+    assert (
+        source_role_distribution_domain(captured, "examples/service/settings.py")
+        is None
+    )
+
+
+def test_source_role_setuptools_package_data_keeps_static_package_boundary():
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nrequires=["setuptools"]\n'
+            'build-backend="setuptools.build_meta"\n'
+            "[tool.setuptools]\n"
+            'packages=["library", "library.templatetags"]\n'
+            "[tool.setuptools.package-data]\n"
+            'library=["py.typed"]\n'
+        ).encode(),
+    }
+    domain = source_role_distribution_domain(captured, "example/example/settings.py")
+    assert domain["selection_basis"] == "setuptools_static_packages"
+    assert domain["manifest_path"] == "pyproject.toml"
+
+
+@pytest.mark.parametrize(
+    "package_data",
+    [
+        'library="py.typed"',
+        'library=["../example/**/*.py"]',
+    ],
+)
+def test_source_role_setuptools_rejects_malformed_or_escaping_package_data(
+    package_data,
+):
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nrequires=["setuptools"]\n'
+            'build-backend="setuptools.build_meta"\n'
+            '[tool.setuptools]\npackages=["library"]\n'
+            "[tool.setuptools.package-data]\n"
+            f"{package_data}\n"
+        ).encode(),
+    }
+    assert (
+        source_role_distribution_domain(captured, "example/example/settings.py") is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("line", "literal", "valid_manifest_hash", "documented_redaction", "expected"),
+    [
+        (1, "[removed-secret-placeholder]", True, True, True),
+        (2, "[removed-secret-placeholder]", True, True, False),
+        (1, "local-development-secret", True, True, False),
+        (1, "[removed-secret-placeholder]", False, True, False),
+        (1, "[removed-secret-placeholder]", True, False, False),
+    ],
+)
+def test_source_role_archive_redaction_requires_exact_bound_evidence(
+    line, literal, valid_manifest_hash, documented_redaction, expected
+):
+    import hashlib
+    import json
+
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    path = "archive/quiz/settings.py"
+    source = f"SECRET_KEY = {literal!r}\n".encode()
+    digest = hashlib.sha256(source).hexdigest()
+    captured = {
+        path: source,
+        "archive/README.md": (
+            b"# Historical source archive\\n"
+            b"Sanitized historical references; embedded secret settings were removed.\\n"
+        ),
+        "archive/manifest.json": json.dumps(
+            [
+                {
+                    "published": path,
+                    "published_sha256": digest if valid_manifest_hash else "0" * 64,
+                    "transformations": [
+                        "Embedded secret settings removed."
+                        if documented_redaction
+                        else "Whitespace normalized."
+                    ],
+                }
+            ]
+        ).encode(),
+    }
+
+    domain = source_role_distribution_domain(
+        captured, path, line=line, credential_name="SECRET_KEY"
+    )
+
+    assert (domain is not None) is expected
+    if domain is not None:
+        assert domain["schema"] == "factory.security.source-role-archive-redaction.v1"
+        assert domain["candidate_sha256"] == digest
+        assert domain["assignment_line"] == 1
+        assert set(domain["supporting_sources"]) == {
+            path,
+            "archive/README.md",
+            "archive/manifest.json",
+        }
+
+
+def test_archive_redaction_evidence_reaches_shared_tier_without_consumer_flow():
+    import hashlib
+    import json
+
+    path = "archive/quiz/settings.py"
+    settings = SETTINGS.replace(
+        '"published-signing-material"', '"[removed-secret-placeholder]"'
+    )
+    files = _recovery_sources(settings=settings)
+    files.pop("service/settings.py")
+    files[path] = settings
+    source = settings.encode()
+    files["archive/README.md"] = (
+        "# Historical source archive\n"
+        "Sanitized historical references; embedded secret settings were removed.\n"
+    )
+    files["archive/manifest.json"] = json.dumps(
+        [
+            {
+                "published": path,
+                "published_sha256": hashlib.sha256(source).hexdigest(),
+                "transformations": ["Embedded secret settings removed."],
+            }
+        ]
+    )
+
+    row = _recovery_row(
+        files,
+        path=path,
+        source_role_sources={
+            "archive/README.md": files["archive/README.md"].encode(),
+            "archive/manifest.json": files["archive/manifest.json"].encode(),
+        },
+    )
+
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    proof = row["credential_authority_observation"]
+    assert proof["schema"] == "factory.security.source-role-context-observation.v1"
+    assert proof["authority_domain"]["schema"] == (
+        "factory.security.source-role-archive-redaction.v1"
+    )
+    assert {ref["path"] for ref in proof["supporting_sources"]} == {
+        path,
+        "archive/README.md",
+        "archive/manifest.json",
+    }
+
+
+def test_archive_role_handoff_requires_current_auxiliary_bindings():
+    from factoryline.audit_action_refs import _CapturedSecuritySources
+    from factoryline.captured_security_audit import (
+        selected_django_credential_domain,
+        source_role_capture_context,
+        source_role_context_fallback,
+        source_role_tier_override,
+    )
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+
+    path = "archive/quiz/settings.py"
+    readme = "archive/README.md"
+    source = b"SECRET_KEY = '[removed-secret-placeholder]'\n"
+    bindings = {path: sha256(source).hexdigest()}
+    auxiliary = {
+        readme: b"Historical source archive; sanitized secret settings.",
+        "archive/manifest.json": json.dumps(
+            [
+                {
+                    "published": path,
+                    "published_sha256": bindings[path],
+                    "transformations": ["Secret settings removed."],
+                }
+            ]
+        ).encode(),
+    }
+    sources = _CapturedSecuritySources({path: source}, source_role_sources=auxiliary)
+    context = signing_configuration_inventory(sources, bindings)
+    assert context is not None
+    role_context, role_bindings = source_role_capture_context(
+        sources, bindings, context
+    )
+    assert set(sources) == set(bindings) == {path}
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": path,
+        "line": 1,
+        "facts": {"name": "SECRET_KEY"},
+    }
+    index = context["index"]
+    domain = selected_django_credential_domain(
+        role_context, Path(path), {}, {}, finding, index
+    )
+    assert domain["supporting_sources"][readme] == role_bindings[readme]
+    generated, fallback = source_role_tier_override(
+        finding, True, None, role_context, role_bindings
+    )
+    assert fallback[0] == "NEEDS_CONTEXT"
+    stale = {**role_bindings, readme: "0" * 64}
+    assert (
+        source_role_context_fallback(
+            finding, True, None, generated, role_context, stale
+        )
+        is None
+    )
+
+
+def test_archive_support_capture_stays_outside_python_inventory(tmp_path):
+    import hashlib
+    import json
+
+    from factoryline.audit_action_refs import _captured_application_source_bytes
+
+    path = "archive/quiz/settings.py"
+    source = b'SECRET_KEY = "[removed-secret-placeholder]"\n'
+    readme = b"# Historical source archive\nSanitized secrets were removed.\n"
+    manifest = json.dumps(
+        [
+            {
+                "published": path,
+                "published_sha256": hashlib.sha256(source).hexdigest(),
+                "transformations": ["Embedded secret settings removed."],
+            }
+        ]
+    ).encode()
+    (tmp_path / path).parent.mkdir(parents=True)
+    (tmp_path / "archive/README.md").write_bytes(readme)
+    (tmp_path / "archive/manifest.json").write_bytes(manifest)
+    (tmp_path / path).write_bytes(source)
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": path,
+        "facts": {"name": "SECRET_KEY"},
+    }
+    bindings = [
+        {
+            "path": path,
+            "sha256": hashlib.sha256(source).hexdigest(),
+            "bytes": len(source),
+        }
+    ]
+
+    captured = _captured_application_source_bytes(
+        tmp_path, [finding], bindings, {tmp_path / path: source}
+    )
+
+    assert set(captured) == {path}
+    assert captured.source_role_sources == {
+        "archive/README.md": readme,
+        "archive/manifest.json": manifest,
+    }
+
+
+def test_source_role_package_scope_rejects_windows_distribution_root():
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nrequires=["setuptools"]\n'
+            'build-backend="setuptools.build_meta"\n'
+            '[tool.setuptools.packages.find]\nwhere=["C:/external"]\n'
+        ).encode(),
+    }
+    assert (
+        source_role_distribution_domain(captured, "examples/service/settings.py")
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {
+            "setup.py": (
+                "from setuptools import setup\n"
+                "setup(packages=['service'], package_dir={'service': 'examples/service'})\n"
+            )
+        },
+        {
+            "setup.py": (
+                "from setuptools import setup\n"
+                "setup(packages=['service'], "
+                "package_data={'service': ['../examples/**/*.py']})\n"
+            )
+        },
+        {
+            "setup.py": (
+                "from setuptools import setup\n"
+                "setup = lambda **kwargs: None\n"
+                "setup(packages=['service'])\n"
+            )
+        },
+        {"setup.cfg": "not an ini file"},
+        {
+            "pyproject.toml": (
+                '[build-system]\nrequires=["setuptools"]\n'
+                'build-backend="setuptools.build_meta"\n'
+                '[tool.setuptools]\npackages=["service"]\n'
+                '[tool.setuptools.package-data]\nservice=["../examples/**/*.py"]\n'
+            )
+        },
+        {
+            "pyproject.toml": (
+                '[build-system]\nrequires=["hatchling"]\n'
+                'build-backend="hatchling.build"\n'
+                '[project]\nname="service"\n'
+                '[tool.hatch.build.targets.sdist]\ninclude=["/service"]\n'
+            ),
+            "hatch.toml": (
+                '[build.targets.wheel]\nonly-include=["examples/service"]\n'
+            ),
+        },
+    ],
+)
+def test_source_role_dynamic_or_ambiguous_packaging_does_not_downgrade(extra):
+    files = _recovery_sources(
+        startup=START.replace("service.settings", "examples.service.settings"),
+        extra=extra,
+    )
+    for old, new in (
+        ("service/__init__.py", "examples/service/__init__.py"),
+        ("service/settings.py", "examples/service/settings.py"),
+        ("service/urls.py", "examples/service/urls.py"),
+    ):
+        files[new] = files.pop(old)
+    row = _recovery_row(files, path="examples/service/settings.py")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["credential_authority_observation"]["authority_domain"] is None
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "../examples/service/settings.py",
+        "C:/examples/service/settings.py",
+        "//server/share/examples/service/settings.py",
+    ],
+)
+def test_source_role_package_scope_rejects_nonrelative_paths(relative):
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    assert (
+        source_role_distribution_domain(
+            {
+                "pyproject.toml": b"[tool.setuptools]\npackages=[]\n",
+            },
+            relative,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"pyproject.toml": "[tool.other]\nflag=true\n"},
+        {
+            "pyproject.toml": (
+                '[build-system]\nrequires=["setuptools"]\n'
+                'build-backend="setuptools.build_meta"\n'
+                '[tool.setuptools.packages.find]\nwhere=["."]\ninclude=["*"]\n'
+            )
+        },
+        {
+            "pyproject.toml": (
+                '[build-system]\nrequires=["setuptools"]\n'
+                'build-backend="setuptools.build_meta"\n'
+                '[tool.setuptools.packages.find]\nwhere=["src"]\ninclude=["*"]\n'
+            ),
+            "setup.py": "from setuptools import setup\nsetup()\n",
+        },
+        {
+            "pyproject.toml": (
+                '[build-system]\nrequires=["hatchling"]\n'
+                'build-backend="hatchling.build"\n'
+                '[project]\nname="example-service"\n'
+                '[tool.hatch.build.targets.wheel]\npackages=["examples/service"]\n'
+            ),
+            "example_service/__init__.py": "",
+        },
+    ],
+)
+def test_source_role_distribution_scope_fails_closed_without_static_exclusion(extra):
+    files = _recovery_sources(
+        startup=START.replace("service.settings", "examples.service.settings"),
+        extra=extra,
+    )
+    for old, new in (
+        ("service/__init__.py", "examples/service/__init__.py"),
+        ("service/settings.py", "examples/service/settings.py"),
+        ("service/urls.py", "examples/service/urls.py"),
+    ):
+        files[new] = files.pop(old)
+    row = _recovery_row(files, path="examples/service/settings.py")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    assert row["credential_authority_observation"]["authority_domain"] is None
 
 
 @pytest.mark.parametrize(
