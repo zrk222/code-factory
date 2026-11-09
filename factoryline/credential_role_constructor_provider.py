@@ -5280,20 +5280,17 @@ def verified_security_tree(
     ):
         tree = audit._measure_parse(ast.parse, data, workspace, path)
     else:
+        audit._measure_parse(lambda *args, **kwargs: tree, data, workspace, path)
         audit.contracts._clear_analysis_sidecars(tree)
     tree._oracle_source_sha256 = binding["sha256"]
     if (source_context or {}).get("_security_source_model") is None:
-        tree._security_source_model = (
-            SourceSnapshotIndex(
-                workspace, {path: tree}, {path: data}, {path: binding["sha256"]}
-            )
-            if fingerprint is None
-            else security_snapshot_model(
-                workspace,
-                {path: tree},
-                {path: data},
-                {path: audit._oracle_tree_fingerprint(tree)},
-            )
+        model = SourceSnapshotIndex
+        digest = binding["sha256"]
+        if fingerprint is not None:
+            model = security_snapshot_model
+            digest = audit._oracle_tree_fingerprint(tree)
+        tree._security_source_model = model(
+            workspace, {path: tree}, {path: data}, {path: digest}
         )
     return tree
 

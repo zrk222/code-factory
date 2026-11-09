@@ -8586,3 +8586,55 @@ def test_continuation_flow_unresolved_edges_do_not_invent_support(
     ]
     assert len(rows) == 1
     assert (rows[0]["tier"] == "SUPPORTED_DEFECT") is supported
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "return\n",
+        "def f(value):\n    global value\n",
+        "def f():\n    nonlocal missing\n",
+        "break\n",
+        "await missing()\n",
+    ],
+)
+def test_security_scan_rejects_compiler_invalid_source(tmp_path, source):
+    (tmp_path / "invalid.py").write_text(source, encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert report["parse_errors"] == 1
+    assert report["audit_coverage"]["complete"] is False
+    assert report["audit_coverage"]["files_audited"] == 0
+    assert all(
+        row["finding_context"]["code"] == "QUALITY_SYNTAX_ERROR"
+        for row in report["agent_actions"]
+    )
+    assert any(row["code"] == "QUALITY_SYNTAX_ERROR" for row in report["findings"])
+
+
+def test_security_scan_compilation_never_executes_source(tmp_path):
+    (tmp_path / "valid.py").write_text(
+        "raise RuntimeError('source must never execute')\n", encoding="utf-8"
+    )
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert report["parse_errors"] == 0
+    assert report["audit_coverage"]["complete"] is True
+
+
+@pytest.mark.parametrize("transported", [False, True])
+def test_compiler_invalid_transported_tree_cannot_reach_sensor(tmp_path, transported):
+    import ast
+    import hashlib
+    from factoryline.credential_role_constructor_provider import verified_security_tree
+
+    source = b"return\n"
+    path = tmp_path / "invalid.py"
+    binding = {"path": "invalid.py", "sha256": hashlib.sha256(source).hexdigest()}
+    tree = ast.parse(source) if transported else None
+    fingerprint = None
+    if transported:
+        tree._oracle_source_sha256 = binding["sha256"]
+        fingerprint = review_audits._oracle_tree_fingerprint(tree)
+    with pytest.raises(SyntaxError, match="outside function"):
+        verified_security_tree(
+            review_audits, tmp_path, path, source, binding, tree, fingerprint
+        )

@@ -158,7 +158,10 @@ def _measure_hash(name: str, hasher, data: bytes) -> str:
 def _measure_parse(parser, data: bytes, root: Path, path: Path):
     filename = path.relative_to(root).as_posix()
     try:
-        return _measure_call("source_parse", parser, data, filename=filename)
+        with _measure_phase("source_parse"):
+            tree = parser(data, filename=filename)
+            compile(tree, filename, "exec", dont_inherit=True)
+            return tree
     except ValueError as exc:
         if type(exc) is not ValueError or b"\x00" not in data:
             raise
