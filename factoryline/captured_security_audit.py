@@ -1204,17 +1204,44 @@ def _mapped_scope_contains_loaders(context, path, index, domain):
         i + 1 for i, part in enumerate(parts) if part.lower() == domain["role"]
     )
     scope = tuple(part.casefold() for part in parts[:depth])
-    loaders = (
-        tuple(part.casefold() for part in PurePosixPath(index.relative(other)).parts)
-        for other, tree in index.snapshots.items()
-        if _django_signing_consumer(path, other, tree, context) is not None
-    )
     contained = False
-    for loader in loaders:
-        if loader[:depth] != scope:
+    prefix = ".".join(scope)
+    for other, tree in index.snapshots.items():
+        relative = PurePosixPath(index.relative(other))
+        inside = tuple(part.casefold() for part in relative.parts[:depth]) == scope
+        loader = _django_signing_consumer(path, other, tree, context) is not None
+        if not inside and (loader or _mapped_scope_referenced(tree, relative, prefix)):
             return False
-        contained = True
+        contained |= inside and loader
     return contained
+
+
+def _mapped_scope_referenced(tree, relative, prefix):
+    from importlib.util import resolve_name
+
+    package = ".".join(relative.parts[:-1])
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                try:
+                    module = resolve_name("." * node.level + module, package)
+                except ImportError:
+                    continue
+            names = [module, *(f"{module}.{a.name}" for a in node.names)]
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # Includes literal module arguments and module:object entrypoints.
+            names = [node.value.partition(":")[0]]
+        else:
+            continue
+        if any(
+            name.casefold().startswith(prefix + ".") or name.casefold() == prefix
+            for name in names
+        ):
+            return True
+    return False
 
 
 def _source_role_candidate(finding, bound, credential_evidence, generated):

@@ -1176,6 +1176,17 @@ def test_source_role_distribution_exclusion_moves_action_to_context(packaging):
             == "SUPPORTED_DEFECT"
         )
         files.pop("start.py")
+        for launch in (
+            "from examples.start import application\n",
+            "from examples import start\napplication = start.application\n",
+            'entrypoint = "examples.start:application"\n',
+        ):
+            files["production_wsgi.py"] = launch
+            assert (
+                _recovery_row(files, path="examples/service/settings.py")["tier"]
+                == "SUPPORTED_DEFECT"
+            )
+        files.pop("production_wsgi.py")
     row = _recovery_row(files, path="examples/service/settings.py")
     assert row["tier"] == "NEEDS_CONTEXT"
     assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
