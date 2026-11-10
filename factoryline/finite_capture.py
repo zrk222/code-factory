@@ -5124,12 +5124,17 @@ def _fixed_eval_module_alias_escape(tree, aliases):
     return False
 
 
-def _fixed_eval_module_scope(tree, target):
-    parents = {
-        id(child): node
-        for node in ast.walk(tree)
-        for child in ast.iter_child_nodes(node)
-    }
+def _fixed_eval_module_scope(tree, target, parents=None):
+    if parents is None:
+        parents = {}
+    if not parents:
+        parents.update(
+            {
+                id(child): node
+                for node in ast.walk(tree)
+                for child in ast.iter_child_nodes(node)
+            }
+        )
     current = target
     while id(current) in parents:
         parent = parents[id(current)]
@@ -5247,22 +5252,22 @@ def _fixed_eval_local_class_risks(classes, aliases, risky, constructors):
     return added
 
 
-def _fixed_eval_module_init_constructor_call(tree, constructor_names):
+def _fixed_eval_module_init_constructor_call(tree, constructor_names, parents):
     return any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id in constructor_names
-        and _fixed_eval_module_scope(tree, node)
+        and _fixed_eval_module_scope(tree, node, parents)
         for node in ast.walk(tree)
     )
 
 
-def _fixed_eval_module_init_risky_reference(tree, risky):
+def _fixed_eval_module_init_risky_reference(tree, risky, parents):
     return any(
         isinstance(node, ast.Name)
         and node.id in risky
         and isinstance(node.ctx, ast.Load)
-        and _fixed_eval_module_scope(tree, node)
+        and _fixed_eval_module_scope(tree, node, parents)
         for node in ast.walk(tree)
     )
 
@@ -5284,7 +5289,7 @@ def _fixed_eval_interpreter_payload(node, name):
         return None
 
 
-def _fixed_eval_nested_interpreter_risk(tree, depth):
+def _fixed_eval_nested_interpreter_risk(tree, depth, parents):
     aliases = _fixed_eval_interpreter_aliases(tree)
     for node in ast.walk(tree):
         name = _fixed_eval_interpreter_call(node, aliases)
@@ -5292,7 +5297,7 @@ def _fixed_eval_nested_interpreter_risk(tree, depth):
             continue
         nested = _fixed_eval_interpreter_payload(node, name)
         if nested is None:
-            if _fixed_eval_module_scope(tree, node):
+            if _fixed_eval_module_scope(tree, node, parents):
                 return True
             continue
         if isinstance(nested, ast.Expression):
@@ -5303,7 +5308,7 @@ def _fixed_eval_nested_interpreter_risk(tree, depth):
     return False
 
 
-def _fixed_eval_local_init_call_risk(tree):
+def _fixed_eval_local_init_call_risk(tree, parents):
     functions = {
         node.name: node
         for node in tree.body
@@ -5333,8 +5338,8 @@ def _fixed_eval_local_init_call_risk(tree):
         if not added:
             break
     return _fixed_eval_module_init_constructor_call(
-        tree, constructor_names
-    ) or _fixed_eval_module_init_risky_reference(tree, risky)
+        tree, constructor_names, parents
+    ) or _fixed_eval_module_init_risky_reference(tree, risky, parents)
 
 
 def _fixed_eval_builtin_provider_risk(tree, depth=0):
@@ -5365,9 +5370,10 @@ def _fixed_eval_builtin_provider_risk(tree, depth=0):
             return True
         if _fixed_eval_dynamic_import_risk(node, importlib_aliases, importer_aliases):
             return True
-    if _fixed_eval_local_init_call_risk(tree):
+    parents = {}
+    if _fixed_eval_local_init_call_risk(tree, parents):
         return True
-    return _fixed_eval_nested_interpreter_risk(tree, depth)
+    return _fixed_eval_nested_interpreter_risk(tree, depth, parents)
 
 
 def _fixed_eval_workspace_python_rows(source_rows):
