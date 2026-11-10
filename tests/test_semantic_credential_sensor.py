@@ -337,6 +337,34 @@ def test_native_flow_provider_capability_mutation_abstains(mutation):
     assert "security_precondition" not in dynamic[0]["facts"]
 
 
+def test_provider_stability_is_shared_only_for_relevant_native_findings(monkeypatch):
+    from factoryline import semantic_credential_sensor as sensors
+
+    checked = []
+    original = sensors.security_precondition_providers_stable
+
+    def count_check(tree, aliases, nodes):
+        checked.append(tree)
+        return original(tree, aliases, nodes)
+
+    monkeypatch.setattr(sensors, "security_precondition_providers_stable", count_check)
+    _premise_scan("def transform(value):\n    return str(value)\n")
+    assert checked == []
+
+    findings = _premise_scan(
+        "from flask import request\n"
+        "eval(request.get_data(as_text=True))\n"
+        "exec(request.get_data(as_text=True))\n"
+    )
+    dynamic = [row for row in findings if row["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(dynamic) == 2
+    assert all(
+        row["facts"]["security_precondition"]["status"] == "SUPPORTED"
+        for row in dynamic
+    )
+    assert len(checked) == 1
+
+
 def test_native_flow_precondition_is_independently_recomputed():
     """Independent binding recomputation preserves a source-bound helper alias and rejects changed code."""
     source = (

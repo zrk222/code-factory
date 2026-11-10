@@ -3430,12 +3430,12 @@ def _native_input_precondition_eligible(call, canonical, primitive, scope, flow)
     }
     module = flow._security_module_scope(scope)
     return (
-        getattr(module, "_security_precondition_providers_stable", False)
-        and primitive is not None
+        primitive is not None
         and primitive["code"] in supported
         and call.args
         and security_precondition_call_shape(call, canonical)
         and security_precondition_path_possible(call)
+        and flow.security_precondition_providers_confirmed(module)
     )
 
 

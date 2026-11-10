@@ -3517,14 +3517,26 @@ def security_source_sink_findings(relative, tree, nodes, aliases):
         intent_quality._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
 
 
+def security_precondition_providers_confirmed(module):
+    """Resolve provider stability once, only for a bound proof candidate."""
+    state = getattr(module, "_security_precondition_providers_stable", False)
+    if state is None:
+        from .review_audits import _security_aliases
+        from .semantic_credential_sensor import security_precondition_providers_stable
+
+        nodes = list(ast.walk(module))
+        state = security_precondition_providers_stable(
+            module, _security_aliases(nodes), nodes
+        )
+        module._security_precondition_providers_stable = state
+    return state is True
+
+
 def _security_source_sink_findings_bound(relative, tree, nodes, aliases):
     """Analyze one bound tree while its private alias memo is active."""
     from .audit_log_flow import audit_log_source_findings
-    from .semantic_credential_sensor import security_precondition_providers_stable
 
-    tree._security_precondition_providers_stable = (
-        security_precondition_providers_stable(tree, aliases, nodes)
-    )
+    tree._security_precondition_providers_stable = None
 
     helpers = _security_connector_cursor_helpers(tree, aliases)
     findings = []

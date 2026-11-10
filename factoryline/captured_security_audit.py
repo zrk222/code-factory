@@ -965,6 +965,7 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
         _security_store_request_alias_bindings
         supported_security_precondition tls_finding log_security_precondition
         bind_request_sink_precondition _security_request_sink_slot
+        security_precondition_providers_stable _native_input_precondition_eligible
         """,
         "factoryline.captured_security_audit": """
         _security_request_binary_decode_kind _security_bind_local_native_input_precondition _security_local_request_provider_identity_uncertain _security_shell_call_shape_for_flow _security_local_provider_identity_uncertain _native_input_inventory_epoch
@@ -990,6 +991,7 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
         _bind_security_class _function_annotations _security_scope_local_names
         _security_scope_nonlocal_names _security_scope_declared_names
         _security_module_scope _security_apply_import_bindings
+        security_precondition_providers_confirmed _security_source_sink_findings_bound
         _security_scope_request_aliases
         _security_unsafe_flask_file_save _security_upload_path_expression
         tls_verification_disabled
