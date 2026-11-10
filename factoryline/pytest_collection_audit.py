@@ -2976,6 +2976,63 @@ def _distribution_setup_cfg_sections(raw):
     return frozenset(parser.sections())
 
 
+def captured_hatch_wheel_roots(raw):
+    """Read explicit Hatch wheel package roots, with no file or hook overrides."""
+    document = _distribution_toml_document(raw) or {}
+    system = document.get("build-system")
+    if not isinstance(system, dict) or system.get("build-backend") != "hatchling.build":
+        return ()
+    if set(system) != {"requires", "build-backend"} or system.get("requires") != [
+        "hatchling"
+    ]:
+        return ()
+    settings = document
+    for key in ("tool", "hatch", "build", "targets", "wheel"):
+        settings = settings.get(key)
+        if not isinstance(settings, dict):
+            return ()
+        next_key = {
+            "hatch": "build",
+            "build": "targets",
+            "targets": "wheel",
+            "wheel": "packages",
+        }.get(key)
+        if next_key and set(settings) != {next_key}:
+            return ()
+    packages = settings["packages"]
+    if (
+        not isinstance(packages, list)
+        or not packages
+        or not all(
+            isinstance(p, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", p)
+            for p in packages
+        )
+    ):
+        return ()
+    return tuple(PurePosixPath(package) for package in packages)
+
+
+def captured_unpacked_consumer(root_raw, consumer_raw):
+    root = _distribution_toml_document(root_raw) or {}
+    consumer = _distribution_toml_document(consumer_raw) or {}
+    project, local = root.get("project"), consumer.get("project")
+    tools = consumer.get("tool")
+    uv = tools.get("uv") if isinstance(tools, dict) else None
+    if not all(isinstance(row, dict) for row in (project, local, uv)):
+        return False
+    name = _distribution_name(project.get("name"))
+    if (
+        not name
+        or not _distribution_name(local.get("name"))
+        or name == _distribution_name(local.get("name"))
+    ):
+        return False
+    return uv.get("package") is False and bool(
+        captured_distribution_provider({"pyproject.toml": consumer_raw}, name)
+    )
+
+
 def _hatch_default_wheel_scope(captured, document, raw, path):
     project = document.get("project")
     name = project.get("name") if isinstance(project, dict) else None

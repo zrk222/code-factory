@@ -1305,6 +1305,73 @@ def test_source_role_hatch_selected_package_keeps_actionable_default():
     )
 
 
+@pytest.mark.parametrize(
+    "mutation", ["consumer", "alternate", "alternate_dir", "capture"]
+)
+def test_hatch_unpacked_consumer_revokes_stale_scope(tmp_path, mutation):
+    files = _recovery_sources(
+        startup=START.replace("service.settings", "workbench.service.settings"),
+        extra={
+            "pyproject.toml": (
+                '[build-system]\nrequires=["hatchling"]\n'
+                'build-backend="hatchling.build"\n'
+                '[project]\nname="published-lib"\n'
+                '[tool.hatch.build.targets.wheel]\npackages=["src/published_lib"]\n'
+            ),
+            "workbench/pyproject.toml": (
+                '[project]\nname="independent-workbench"\n'
+                'dependencies=["published-lib>=1"]\n[tool.uv]\npackage=false\n'
+            ),
+            "src/published_lib/__init__.py": "",
+        },
+    )
+    for name in (
+        "service/__init__.py",
+        "service/settings.py",
+        "service/urls.py",
+        "start.py",
+    ):
+        files[f"workbench/{name}"] = files.pop(name)
+    for name, source in files.items():
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+    report = audit.security_scan(
+        tmp_path,
+        security_only=True,
+        defect_policy="source-role-v3",
+        cache_enabled=False,
+    )
+    original = report["finding_tier_report"]["ledger"][0]
+    assert original["tier"] == "NEEDS_CONTEXT"
+    evidence = original["credential_authority_observation"]
+    assert (
+        evidence["authority_domain"]["selection_basis"]
+        == "hatch_explicit_consumer_root"
+    )
+    assert report["defect_policy_decision"]["admission"]["state"] != "BLOCKED"
+    assert not report["agent_actions"]
+    assert "workbench/pyproject.toml" not in {row["path"] for row in report["sources"]}
+    copied = copy.deepcopy(report)
+    if mutation == "consumer":
+        (tmp_path / "workbench/pyproject.toml").write_text(
+            "[project]", encoding="utf-8"
+        )
+    elif mutation == "alternate":
+        (tmp_path / "hatch.toml").write_text("[build]", encoding="utf-8")
+    elif mutation == "alternate_dir":
+        (tmp_path / "hatch.toml").mkdir()
+    else:
+        copied._source_role_capture = {}
+    resealed = audit._seal_security_scan(copied)
+    final = resealed["finding_tier_report"]["ledger"][0]
+    assert final["raw_finding"] == original["raw_finding"]
+    assert final["tier"] == "SUPPORTED_DEFECT"
+    # Resealing stale inputs cannot authorize a repair; a fresh scan can.
+    assert resealed["defect_policy_decision"]["admission"]["state"] == "BLOCKED"
+    assert "workbench/pyproject.toml" not in json.dumps(resealed["finding_tier_report"])
+
+
 def test_source_role_hatch_namespace_selected_package_keeps_actionable_default():
     from factoryline.captured_security_audit import source_role_distribution_domain
 
