@@ -6,7 +6,9 @@ import subprocess
 from time import monotonic
 
 
-def ordered_native_results(prepared, invoke, *, first_rank=1, last_rank=None):
+def ordered_native_results(
+    prepared, invoke, *, first_rank=1, last_rank=None, before_dispatch=None
+):
     """Prepare on the owner thread; launch at most two calls with one lookahead.
 
     The input must include every rank, including exclusions or earlier receipts.
@@ -27,7 +29,7 @@ def ordered_native_results(prepared, invoke, *, first_rank=1, last_rank=None):
                 next_output += 1
             elif staged is not None and len(active) < 2:
                 rank, job = staged
-                active[pool.submit(invoke, job)] = rank
+                active[_dispatch(pool, invoke, before_dispatch, rank, job)] = rank
                 staged = None
             elif staged is None and not exhausted and len(active) + len(ready) < 4:
                 staged = _read_rank(source, next_input, last_rank)
@@ -56,6 +58,11 @@ def _read_rank(source, expected, last_rank):
     return item
 
 
+def _dispatch(pool, invoke, before_dispatch, rank, job):
+    work = job if before_dispatch is None else before_dispatch(rank, job)
+    return pool.submit(invoke, work)
+
+
 def run_native_command(
     command, *, cwd, deadline, timeout, kill_grace, stdout=subprocess.DEVNULL
 ):
@@ -80,7 +87,10 @@ def run_native_command(
             raise subprocess.TimeoutExpired(command, timeout)
         return child.wait(timeout=remaining)
     except BaseException:
-        if child.poll() is None:
-            child.kill()
-        child.wait(timeout=kill_grace)
+        try:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=kill_grace)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError("NATIVE_REAP_FAILED") from error
         raise

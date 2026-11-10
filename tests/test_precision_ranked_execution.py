@@ -130,7 +130,7 @@ def test_kill_grace_exhaustion_never_waits_without_a_deadline():
             subprocess.TimeoutExpired(command, 1),
             subprocess.TimeoutExpired(command, 2),
         ]
-        with pytest.raises(subprocess.TimeoutExpired):
+        with pytest.raises(RuntimeError, match="NATIVE_REAP_FAILED"):
             run_native_command(
                 command, cwd=Path.cwd(), deadline=100, timeout=1, kill_grace=2
             )
