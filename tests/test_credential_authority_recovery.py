@@ -1146,6 +1146,8 @@ def test_authority_domain_unshipped_runnable_signer_preserves_authority(metadata
     "packaging",
     [
         '[tool.setuptools.packages.find]\nwhere=["src"]\ninclude=["*"]\n',
+        '[tool.setuptools]\npackage-dir={""="src"}\n'
+        '[tool.setuptools.packages.find]\nwhere=["src"]\n',
         '[tool.setuptools.packages.find]\nwhere=["."]\ninclude=["*"]\nexclude=["example*"]\n',
         '[tool.setuptools]\npackages=["service"]\n',
     ],
@@ -1166,6 +1168,14 @@ def test_source_role_distribution_exclusion_moves_action_to_context(packaging):
         ("service/urls.py", "examples/service/urls.py"),
     ):
         files[new] = files.pop(old)
+    if "package-dir" in packaging:
+        # Even when a local loader exists, an independent outside loader wins.
+        files["examples/start.py"] = files["start.py"]
+        assert (
+            _recovery_row(files, path="examples/service/settings.py")["tier"]
+            == "SUPPORTED_DEFECT"
+        )
+        files.pop("start.py")
     row = _recovery_row(files, path="examples/service/settings.py")
     assert row["tier"] == "NEEDS_CONTEXT"
     assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
@@ -1748,6 +1758,52 @@ def test_source_role_distribution_scope_fails_closed_without_static_exclusion(ex
     assert row["tier"] == "SUPPORTED_DEFECT"
     assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
     assert row["credential_authority_observation"]["authority_domain"] is None
+
+
+@pytest.mark.parametrize(
+    "layout,where",
+    [
+        ('{""="examples"}', '["examples"]'),
+        ('{""="EXAMPLES"}', '["EXAMPLES"]'),
+        ('{""="src"}', '["examples"]'),
+        ('{""="src",service="examples/service"}', '["src"]'),
+        ('{""="../src"}', '["../src"]'),
+    ],
+)
+def test_setuptools_source_root_does_not_exclude_selected_or_ambiguous_settings(
+    layout, where
+):
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nrequires=["setuptools"]\n'
+            'build-backend="setuptools.build_meta"\n'
+            f"[tool.setuptools]\npackage-dir={layout}\n"
+            f"[tool.setuptools.packages.find]\nwhere={where}\n"
+        ).encode()
+    }
+    assert (
+        source_role_distribution_domain(captured, "examples/service/settings.py")
+        is None
+    )
+
+
+def test_setuptools_mapped_root_keeps_nested_package_data_candidate():
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nbuild-backend="setuptools.build_meta"\n'
+            '[tool.setuptools]\npackage-dir={""="src"}\n'
+            '[tool.setuptools.packages.find]\nwhere=["src"]\ninclude=["pkg"]\n'
+            '[tool.setuptools.package-data]\npkg=["examples/*.py"]\n'
+        ).encode()
+    }
+    assert (
+        source_role_distribution_domain(captured, "src/pkg/examples/settings.py")
+        is None
+    )
 
 
 @pytest.mark.parametrize(

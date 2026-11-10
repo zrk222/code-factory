@@ -1174,12 +1174,47 @@ def selected_django_credential_domain(
     from .credential_identity_audit import django_test_domain_evidence
 
     domain = django_test_domain_evidence(context, path, observation, selected)
-    return domain or source_role_distribution_domain(
+    if domain is not None:
+        return domain
+    distribution = source_role_distribution_domain(
         context.get("captured", {}),
         index.relative(path),
         line=finding.get("line"),
         credential_name=(finding.get("facts") or {}).get("name"),
     )
+    if _mapped_distribution_scope(distribution) and not _mapped_scope_contains_loaders(
+        context, path, index, distribution
+    ):
+        return None
+    return distribution
+
+
+def _mapped_distribution_scope(domain):
+    return (
+        isinstance(domain, dict)
+        and domain.get("selection_basis") == "setuptools_mapped_source_root"
+    )
+
+
+def _mapped_scope_contains_loaders(context, path, index, domain):
+    from .semantic_credential_sensor import _django_signing_consumer
+
+    parts = PurePosixPath(index.relative(path)).parts
+    depth = next(
+        i + 1 for i, part in enumerate(parts) if part.lower() == domain["role"]
+    )
+    scope = tuple(part.casefold() for part in parts[:depth])
+    loaders = (
+        tuple(part.casefold() for part in PurePosixPath(index.relative(other)).parts)
+        for other, tree in index.snapshots.items()
+        if _django_signing_consumer(path, other, tree, context) is not None
+    )
+    contained = False
+    for loader in loaders:
+        if loader[:depth] != scope:
+            return False
+        contained = True
+    return contained
 
 
 def _source_role_candidate(finding, bound, credential_evidence, generated):
@@ -1214,6 +1249,9 @@ def source_role_context_fallback(
         line=finding.get("line"),
         credential_name=finding["facts"]["name"],
     )
+    if _mapped_distribution_scope(domain):
+        # A package root is not an independent witness of runtime ownership.
+        return None
     supporting = _bound_role_support(domain, source_bindings)
     if not supporting:
         return None

@@ -2864,7 +2864,9 @@ def _setuptools_distribution_exclusion(document, raw, path):
         return None
     if "packages" in setuptools and isinstance(setuptools["packages"], list):
         packages = setuptools["packages"]
-        if not all(isinstance(item, str) and item for item in packages):
+        if "package-dir" in setuptools or not all(
+            isinstance(item, str) and item for item in packages
+        ):
             return None
         return _package_scope_proof(
             "pyproject.toml", raw, packages, path.parts, "setuptools_static_packages"
@@ -2875,11 +2877,33 @@ def _setuptools_distribution_exclusion(document, raw, path):
     find = packages.get("find") if isinstance(packages, dict) else None
     if not isinstance(find, dict):
         return None
-    if set(find) - {"include", "exclude", "where", "namespaces"}:
+    if (
+        set(find) - {"include", "exclude", "where", "namespaces"}
+        or type(find.get("namespaces", True)) is not bool
+    ):
         return None
-    if "namespaces" in find and type(find["namespaces"]) is not bool:
-        return None
+    if "package-dir" in setuptools:
+        return _setuptools_mapped_root_exclusion(
+            setuptools["package-dir"], find, path, raw
+        )
     return _setuptools_find_exclusion(find, path, raw)
+
+
+def _setuptools_mapped_root_exclusion(mapping, find, path, raw):
+    if not isinstance(mapping, dict) or set(mapping) != {""}:
+        return None
+    root = mapping[""]
+    if not (
+        isinstance(root, str)
+        and re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", root) is not None
+        and find.get("where") == [root]
+        and _setuptools_find_inputs(find) is not None
+    ):
+        return None
+    # Inside the source root, an omitted package can still ship as package data.
+    if PurePosixPath(path.as_posix().casefold()).is_relative_to(root.casefold()):
+        return None
+    return _manifest_scope_proof("pyproject.toml", raw, "setuptools_mapped_source_root")
 
 
 def _setuptools_find_inputs(find):
@@ -3083,6 +3107,7 @@ def _setuptools_package_data_is_bounded(setuptools):
     """Validate data options without treating them as package-selection inputs."""
     allowed = {
         "packages",
+        "package-dir",
         "include-package-data",
         "package-data",
         "exclude-package-data",
