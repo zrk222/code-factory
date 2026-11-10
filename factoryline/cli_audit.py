@@ -618,54 +618,53 @@ def _run_security(args: Any) -> int:
     return _run_bounded_security(args)
 
 
-def _run_bounded_security(args: Any) -> int:
-    """Run the existing bounded scan after shared option/profile dispatch."""
-    from .review_audits import (
-        ReviewAuditError,
-        load_tenant_read_contract,
-        security_scan,
+def prepare_bounded_security_report(args: Any) -> dict:
+    """Scan and bind bounded security evidence before any receipt is written."""
+    from .mission_control_status import prepare_security_scan_receipt_report
+    from .review_audits import load_tenant_read_contract, security_scan
+
+    root = Path(args.root)
+    contract_calls, contract_bindings, contract_evidence = load_tenant_read_contract(
+        root, args.tenant_contract
+    )
+    calls = tuple(
+        dict.fromkeys([*contract_calls, *getattr(args, "tenant_read_call", [])])
+    )
+    bindings = tuple(
+        dict.fromkeys([*contract_bindings, *getattr(args, "tenant_read_binding", [])])
+    )
+    security_only = getattr(args, "security_only", False)
+    result = security_scan(
+        root,
+        tenant_read_calls=calls,
+        tenant_read_bindings=bindings,
+        tenant_read_scopes=contract_evidence.get("scoped_reads"),
+        tenant_policy_applies=contract_evidence.get("policy_applies", False),
+        oracle_evidence=getattr(args, "oracle_evidence", None),
+        oracle_trust_root=getattr(args, "oracle_trust_root", None),
+        oracle_trust_sha256=getattr(args, "oracle_trust_sha256", None),
+        oracle_environment_sha256=getattr(args, "oracle_environment_sha256", None),
+        tenant_read_configuration=contract_evidence,
+        **({"security_only": True} if security_only else {}),
+        **(
+            {"defect_policy": args.defect_policy}
+            if getattr(args, "defect_policy", "legacy-v1") != "legacy-v1"
+            else {}
+        ),
+        bind_collection_receipt=True,
+    )
+    return prepare_security_scan_receipt_report(
+        root, result, security_only=security_only
     )
 
-    try:
-        contract_calls, contract_bindings, contract_evidence = (
-            load_tenant_read_contract(Path(args.root), args.tenant_contract)
-        )
-        calls = tuple(
-            dict.fromkeys([*contract_calls, *getattr(args, "tenant_read_call", [])])
-        )
-        bindings = tuple(
-            dict.fromkeys(
-                [*contract_bindings, *getattr(args, "tenant_read_binding", [])]
-            )
-        )
-        security_only = getattr(args, "security_only", False)
-        result = security_scan(
-            Path(args.root),
-            tenant_read_calls=calls,
-            tenant_read_bindings=bindings,
-            tenant_read_scopes=contract_evidence.get("scoped_reads"),
-            tenant_policy_applies=contract_evidence.get("policy_applies", False),
-            oracle_evidence=getattr(args, "oracle_evidence", None),
-            oracle_trust_root=getattr(args, "oracle_trust_root", None),
-            oracle_trust_sha256=getattr(args, "oracle_trust_sha256", None),
-            oracle_environment_sha256=getattr(args, "oracle_environment_sha256", None),
-            tenant_read_configuration=contract_evidence,
-            **({"security_only": True} if security_only else {}),
-            **(
-                {"defect_policy": args.defect_policy}
-                if getattr(args, "defect_policy", "legacy-v1") != "legacy-v1"
-                else {}
-            ),
-            bind_collection_receipt=True,
-        )
-        from .mission_control_status import (
-            prepare_security_scan_receipt_report,
-            write_security_scan_receipt,
-        )
 
-        result = prepare_security_scan_receipt_report(
-            Path(args.root), result, security_only=security_only
-        )
+def _run_bounded_security(args: Any) -> int:
+    """Run the bounded scan and persist its receipt for public CLI callers."""
+    from .mission_control_status import write_security_scan_receipt
+    from .review_audits import ReviewAuditError
+
+    try:
+        result = prepare_bounded_security_report(args)
         write_security_scan_receipt(Path(args.root), result)
     except (ReviewAuditError, OSError, ValueError) as error:
         message = _security_receipt_error_message(error)
@@ -701,6 +700,10 @@ def _finish_bounded_security(args, result):
             )
         print(result["action_summary"])
         _print_finding_tier_report(result.get("finding_tier_report"))
+    return bounded_security_exit_code(args, result)
+
+
+def bounded_security_exit_code(args, result):
     if (
         result.get("oracle_context", {})
         .get("pytest_collection", {})

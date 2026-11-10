@@ -35,6 +35,44 @@ def test_native_workspace_retains_complete_endpoint_role_across_resume(tmp_path)
         assert workspace["primitive_partition"]["state"] == "VALIDATED"
 
 
+def test_precision_worker_keeps_capture_read_only_and_matches_cli(tmp_path, capsys):
+    from factoryline.cli import main as public_cli
+    from scripts.precision_native_capture import main as precision_worker
+
+    _write(tmp_path)
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    worker_exit = precision_worker(["--root", str(tmp_path)])
+    worker_output = capsys.readouterr()
+    assert not worker_output.err
+    assert before == {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert not (tmp_path / ".factory").exists()
+    public_exit = public_cli(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    public_output = capsys.readouterr()
+    assert not public_output.err
+    assert worker_exit == public_exit
+    assert json.loads(worker_output.out) == json.loads(public_output.out)
+    assert (tmp_path / ".factory/security-scan/latest.json").is_file()
+
+
 def test_source_bound_endpoint_copy_reseals_from_captured_bytes(tmp_path):
     from factoryline import review_audits as audit
 
