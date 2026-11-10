@@ -12,14 +12,20 @@ owner's target maintenance rate are known.
 
 ## Sponsor profile draft
 
-I build open-source tools that help developers review and maintain AI-assisted
-software with clearer evidence. Code Factory brings findings, source context,
-and checks into a review workflow. Related projects explore specification,
-review, deterministic workflows, design, and task coordination.
+I'm Rick Katz, founder of WizeMe and a builder of AI tools for people who
+want to make better decisions and get meaningful work done.
 
-Sponsorship helps fund maintenance, regression testing, documentation, and
-releases. I plan to publish regular updates on work completed and what comes
-next. Sponsorship does not guarantee a feature, support response, or security
+After more than two decades building and scaling businesses, I've learned
+that good ideas need evidence. That belief led me to build Code Factory, a
+free, local-first tool that helps developers inspect AI-generated code,
+challenge tests, and see what was actually checked.
+
+I also share open-source projects exploring AI memory, development workflows,
+and practical tools for founders. Your support helps maintain these projects,
+improve documentation, run tests, and support new releases. I'll share public
+updates on what I'm building. Thank you for being part of it.
+
+Sponsorship does not guarantee a feature, support response, or security
 certification.
 
 ## Proposed recurring sponsorship tiers (USD per month)
