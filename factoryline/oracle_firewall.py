@@ -8,6 +8,7 @@ or grants an external permission.
 
 from __future__ import annotations
 
+from .contract import write_atomic_json as _atomic_json
 from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime, timezone
@@ -146,21 +147,6 @@ def _read_json(
             f"expected {schema}" if schema else "input must be an object",
         )
     return value, source
-
-
-def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
 
 
 def _hash_receipt(core: dict[str, Any], field: str) -> dict[str, Any]:

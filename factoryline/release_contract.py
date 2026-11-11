@@ -17,27 +17,12 @@ from pathlib import Path
 from typing import Any
 
 from .oracle_firewall import verify_oracle_contract
+from .protocol import ASSEMBLY_STAGE_KEYS
 
 
 SCHEMA = "factory.release-contract.v1"
 MAX_BYTES = 1_048_576
-CORE_STAGE_IDS = frozenset(
-    {
-        "specline:strict",
-        "specline:verify-validators",
-        "specline:gate-spec",
-        "specline:tasks",
-        "specline:gate-plan",
-        "forgeline:architect",
-        "forgeline:review",
-        "forgeline:arch-gate",
-        "forgeline:verify-tests",
-        "forgeline:smoke",
-        "forgeline:ship",
-        "prestige:score",
-        "hsf:compile",
-    }
-)
+CORE_STAGE_IDS = frozenset(f"{module}:{stage}" for module, stage in ASSEMBLY_STAGE_KEYS)
 EXTERNAL_STAGE_IDS = frozenset({"appforge:mobile-evidence"})
 
 
