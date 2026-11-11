@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .assembly import rollup_receipts
+from .protocol import ASSEMBLY_STAGE_KEYS, BASE_REQUIRED_MODULES
 
 
 LABELS = {
@@ -21,12 +22,8 @@ LABELS = {
     "prestige": "DESIGN",
 }
 BASE_REQUIRED = {
-    "specline": frozenset(
-        {"strict", "verify-validators", "gate-spec", "tasks", "gate-plan"}
-    ),
-    "forgeline": frozenset(
-        {"architect", "review", "arch-gate", "verify-tests", "smoke", "ship"}
-    ),
+    owner: frozenset(stage for module, stage in ASSEMBLY_STAGE_KEYS if module == owner)
+    for owner in BASE_REQUIRED_MODULES
 }
 
 

@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .contract import MODULES, Meter, ensure_layout, Receipt
-from .protocol import ASSEMBLY_STAGES
+from .protocol import ASSEMBLY_STAGES, ASSEMBLY_STAGE_KEYS
+from .protocol import receipt_stage as _receipt_stage
 from .meter import MeterLog, StageTiming, stopwatch
 from .attribution import Attribution
 from .agent_contract import AgentContractError, validate_agent_contract
@@ -268,22 +269,7 @@ def _validated_forge_acceptance(root, feature, envelope, intent_hash) -> bool:
 DEFAULT_CHAIN = [(module, list(args)) for module, args in ASSEMBLY_STAGES]
 
 
-def _receipt_stage(module: str, args: list[str] | tuple[str, ...]) -> str:
-    """Name stages without collapsing distinct commands into one receipt.
-
-    SpecLine's two ``gate`` calls protect different obligations.  Storing both
-    as ``gate`` let a later plan gate replace the spec gate during rollup.
-    """
-    stage = args[0].replace("_", "-")
-    if module == "specline" and stage == "gate" and len(args) > 1:
-        return f"gate-{args[1].replace('_', '-')}"
-    return stage
-
-
-_STAGE_ORDER = {
-    (module, _receipt_stage(module, args)): index
-    for index, (module, args) in enumerate(ASSEMBLY_STAGES)
-}
+_STAGE_ORDER = {key: index for index, key in enumerate(ASSEMBLY_STAGE_KEYS)}
 
 
 def _stage_order(module: str, stage: str) -> tuple[int, str, str]:

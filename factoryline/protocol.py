@@ -36,6 +36,24 @@ ASSEMBLY_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+def receipt_stage(module: str, args: list[str] | tuple[str, ...]) -> str:
+    """Name stages without collapsing distinct commands into one receipt.
+
+    SpecLine's two ``gate`` calls protect different obligations.  Storing both
+    as ``gate`` let a later plan gate replace the spec gate during rollup.
+    """
+    stage = args[0].replace("_", "-")
+    if module == "specline" and stage == "gate" and len(args) > 1:
+        return f"gate-{args[1].replace('_', '-')}"
+    return stage
+
+
+ASSEMBLY_STAGE_KEYS = tuple(
+    (module, receipt_stage(module, args)) for module, args in ASSEMBLY_STAGES
+)
+BASE_REQUIRED_MODULES = ("specline", "forgeline")
+
+
 REQUIRED_COMMANDS = {
     "specline": {"challenge"},
     "forgeline": {"gate", "fill", "challenge"},

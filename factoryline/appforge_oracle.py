@@ -7,13 +7,12 @@ that define that evaluation.  It is local and cannot contact Apple.
 
 from __future__ import annotations
 
+from .contract import write_atomic_json
 from . import canonical_json_bytes as _canonical
 
 import hashlib
 import json
-import os
 from pathlib import Path
-import tempfile
 from typing import Any
 
 from .oracle_firewall import (
@@ -92,20 +91,7 @@ def _read(root: Path, path: Path) -> tuple[dict[str, Any], Path]:
 
 
 def _atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    write_atomic_json(path, payload, durable=True)
 
 
 def _policy_sources(

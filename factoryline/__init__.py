@@ -377,9 +377,6 @@ def _db_python_server_field_contexts(unique, import_module):
     from functools import partial
 
     resolve = partial(_db_python_server_resolve, classes, import_module)
-    initializer = _db_python_server_initializer
-    forward = _db_python_server_forward
-    plain = _db_python_server_plain
 
     for (store_module, _), (store_cls, store_path, store_hash, _) in classes.items():
         contexts = [
@@ -396,9 +393,6 @@ def _db_python_server_field_contexts(unique, import_module):
                 unique,
                 import_module,
                 resolve,
-                initializer,
-                forward,
-                plain,
                 store_cls,
                 store_path,
                 store_hash,
@@ -414,9 +408,6 @@ def _db_python_server_seed(
     unique,
     import_module,
     resolve,
-    initializer,
-    forward,
-    plain,
     store_cls,
     store_path,
     store_hash,
@@ -437,8 +428,8 @@ def _db_python_server_seed(
         if isinstance(n, ast.Call)
         and n.lineno == seed["callsite_line"]
         and isinstance(n.func, ast.Name)
-        and resolve(server_module, n.func.id, n, tree)
-        and resolve(server_module, n.func.id, n, tree)[0] is store_cls
+        and (resolved := resolve(server_module, n.func.id, n, tree))
+        and resolved[0] is store_cls
     ]
     if len(stores) != 1:
         return
@@ -450,7 +441,7 @@ def _db_python_server_seed(
     if not server:
         return
     server_cls, server_path, server_hash, _ = server
-    server_init = initializer(server_cls)
+    server_init = _db_python_server_initializer(server_cls)
     if not server_init or server_cls.decorator_list or server_cls.keywords:
         return
     try:
@@ -468,9 +459,6 @@ def _db_python_server_seed(
         import_module,
         classes,
         resolve,
-        initializer,
-        forward,
-        plain,
         server_module,
         tree,
         server_cls,
@@ -571,9 +559,6 @@ def _db_python_server_context_from_init(
     import_module,
     classes,
     resolve,
-    initializer,
-    forward,
-    plain,
     module,
     tree,
     server_cls,
@@ -584,9 +569,7 @@ def _db_python_server_context_from_init(
     seed,
     stdlib,
 ):
-    handler = _db_python_server_handler(
-        module, tree, server_cls, server_init, resolve, plain
-    )
+    handler = _db_python_server_handler(module, tree, server_cls, server_init, resolve)
     if handler is None:
         return
     handler_cls, handler_path, handler_hash = handler
@@ -597,9 +580,6 @@ def _db_python_server_context_from_init(
         server_init,
         server_store,
         resolve,
-        initializer,
-        forward,
-        plain,
         _bind_source_call,
     )
     if not service_rows:
@@ -612,7 +592,6 @@ def _db_python_server_context_from_init(
         server_store,
         unique,
         resolve,
-        initializer,
         import_module,
     )
     if chain_sources is None:
@@ -633,15 +612,12 @@ def _db_python_server_context_from_init(
             stdlib,
             chain_sources,
             resolve,
-            initializer,
-            forward,
-            plain,
             unique,
             import_module,
         )
 
 
-def _db_python_server_handler(module, tree, server_cls, server_init, resolve, plain):
+def _db_python_server_handler(module, tree, server_cls, server_init, resolve):
     stdlib_imports = {
         a.name: a.asname or a.name
         for n in tree.body
@@ -683,7 +659,7 @@ def _db_python_server_handler(module, tree, server_cls, server_init, resolve, pl
     if len(handler_classes) != 1:
         return
     handler_cls, handler_path, handler_hash, _ = handler_classes[0]
-    if not plain(handler_cls, "server") or any(
+    if not _db_python_server_plain(handler_cls, "server") or any(
         isinstance(n, ast.FunctionDef) and n.name in {"__init__", "setup", "handle"}
         for n in handler_cls.body
     ):
@@ -698,9 +674,6 @@ def _db_python_server_services(
     server_init,
     server_store,
     resolve,
-    initializer,
-    forward,
-    plain,
     _bind_source_call,
 ):
     service_rows = []
@@ -716,9 +689,9 @@ def _db_python_server_services(
         ):
             continue
         service = resolve(module, n.value.func.id, n.value, tree)
-        if not service or not plain(server_cls, n.targets[0].attr):
+        if not service or not _db_python_server_plain(server_cls, n.targets[0].attr):
             continue
-        service_init = initializer(service[0])
+        service_init = _db_python_server_initializer(service[0])
         if not service_init:
             continue
         try:
@@ -737,14 +710,14 @@ def _db_python_server_services(
         ]
         if len(formals) != 1:
             continue
-        field = forward(service_init, formals[0])
-        if field and plain(service[0], field):
+        field = _db_python_server_forward(service_init, formals[0])
+        if field and _db_python_server_plain(service[0], field):
             service_rows.append((n.targets[0].attr, service, field))
     return service_rows
 
 
 def _db_python_constructor_resource_closure(
-    module, tree, cls, init, parameter, unique, resolve, initializer, import_module
+    module, tree, cls, init, parameter, unique, resolve, import_module
 ):
     pending = [(module, tree, cls, init, parameter)]
     visited, sources = set(), []
@@ -769,7 +742,6 @@ def _db_python_constructor_resource_closure(
             resource,
             unique,
             resolve,
-            initializer,
             _bind_source_call,
             pending,
         ):
@@ -785,7 +757,6 @@ def _db_python_resource_visit(
     resource,
     unique,
     resolve,
-    initializer,
     _bind_source_call,
     pending,
 ):
@@ -826,7 +797,6 @@ def _db_python_resource_visit(
             current_tree,
             unique,
             resolve,
-            initializer,
             _bind_source_call,
         )
         if next_item is None:
@@ -899,7 +869,7 @@ def _db_python_resource_load_safe(n, parents, owner):
 
 
 def _db_python_resource_call(
-    n, resource, mod, current_tree, unique, resolve, initializer, _bind_source_call
+    n, resource, mod, current_tree, unique, resolve, _bind_source_call
 ):
     if not isinstance(n.func, ast.Name):
         return None
@@ -915,7 +885,7 @@ def _db_python_resource_call(
         for m in next_cls.body
     ):
         return None
-    next_init = initializer(next_cls)
+    next_init = _db_python_server_initializer(next_cls)
     if not next_init:
         return None
     try:
@@ -973,9 +943,6 @@ def _db_python_handler_work_contexts(
     stdlib,
     chain_sources,
     resolve,
-    initializer,
-    forward,
-    plain,
     unique,
     import_module,
 ):
@@ -1034,11 +1001,8 @@ def _db_python_handler_work_contexts(
                 store_source,
                 unique,
                 resolve,
-                initializer,
                 import_module,
                 store_fields,
-                forward,
-                plain,
                 handler_path,
                 handler_hash,
                 chain_sources,
@@ -1126,11 +1090,8 @@ def _db_python_handler_work_call(
     store_source,
     unique,
     resolve,
-    initializer,
     import_module,
     store_fields,
-    forward,
-    plain,
     handler_path,
     handler_hash,
     chain_sources,
@@ -1149,7 +1110,6 @@ def _db_python_handler_work_call(
         store_source,
         unique,
         resolve,
-        initializer,
         import_module,
         store_fields,
     )
@@ -1161,7 +1121,7 @@ def _db_python_handler_work_call(
     work_cls, work_path, work_hash, _ = work
     if work_cls.bases or work_cls.decorator_list or work_cls.keywords:
         return
-    work_init = initializer(work_cls)
+    work_init = _db_python_server_initializer(work_cls)
     if not work_init:
         return
     try:
@@ -1173,8 +1133,8 @@ def _db_python_handler_work_call(
     formals = [k for k, v in bound.items() if isinstance(v, ast.Name) and v.id == alias]
     if len(formals) != 1:
         return
-    work_field = forward(work_init, formals[0])
-    if not work_field or not plain(work_cls, work_field):
+    work_field = _db_python_server_forward(work_init, formals[0])
+    if not work_field or not _db_python_server_plain(work_cls, work_field):
         return
     targets = [
         n
@@ -1239,7 +1199,6 @@ def _db_python_handler_prefix_closure(
     tree,
     unique,
     resolve,
-    initializer,
     import_module,
     _bind_source_call,
 ):
@@ -1249,7 +1208,7 @@ def _db_python_handler_prefix_closure(
     if not selected:
         return None
     cls, _, _, selected_tree = selected
-    init = initializer(cls)
+    init = _db_python_server_initializer(cls)
     if not init or cls.bases or cls.decorator_list or cls.keywords:
         return None
     try:
@@ -1272,7 +1231,6 @@ def _db_python_handler_prefix_closure(
         formals[0],
         unique,
         resolve,
-        initializer,
         import_module,
     )
     if closure is None:
@@ -1289,7 +1247,6 @@ def _db_python_handler_prefix_safe(
     store_source,
     unique,
     resolve,
-    initializer,
     import_module,
     store_fields,
 ):
@@ -1320,7 +1277,6 @@ def _db_python_handler_prefix_safe(
             tree,
             unique,
             resolve,
-            initializer,
             import_module,
             _bind_source_call,
         )
