@@ -8,15 +8,14 @@ code, contact a provider, or decide that a release is approved.
 
 from __future__ import annotations
 
+from .contract import write_atomic_json as _atomic
 from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime, timezone
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
-import tempfile
 from typing import Any
 
 from .oracle_firewall import AUTHORITY, verify_oracle_contract
@@ -146,21 +145,6 @@ def _valid(value: object, schema: str, digest_field: str) -> bool:
         and _sha({key: item for key, item in value.items() if key != digest_field})
         == supplied
     )
-
-
-def _atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
 
 
 def _write_new(root: Path, out: Path, payload: dict[str, Any]) -> Path:
