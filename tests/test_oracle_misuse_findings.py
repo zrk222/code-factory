@@ -637,7 +637,6 @@ def test_closed_async_helper_paths_and_negative_controls(tmp_path, source, expec
         "def test_case(): noop('stable')\n",
         "def noop(value): pass\ndef test_case(value): noop(value)\n",
         "def noop(value): pass\ndef test_case(): noop()\n",
-        "def noop(value, value): pass\ndef test_case(): noop(1, 2)\n",
         "def noop(value): do_work(value)\ndef test_case(): noop('stable')\n",
         "def noop(value): raise RuntimeError()\ndef test_case(): noop('stable')\n",
         "def decorate(function): return function\n@decorate\ndef noop(value): pass\n"

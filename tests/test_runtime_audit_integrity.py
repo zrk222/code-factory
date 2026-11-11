@@ -8596,6 +8596,8 @@ def test_continuation_flow_unresolved_edges_do_not_invent_support(
         "def f():\n    nonlocal missing\n",
         "break\n",
         "await missing()\n",
+        "def noop(value, value): pass\ndef test_case(): noop(1, 2)\n",
+        "def test_import_interface():\n    from product import *\n",
     ],
 )
 def test_security_scan_rejects_compiler_invalid_source(tmp_path, source):

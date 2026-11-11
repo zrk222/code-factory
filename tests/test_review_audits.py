@@ -1632,10 +1632,6 @@ def test_shell_flow_cache_preserves_boolean_changes_without_cross_call_leakage()
             {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         ('"""import product.interface"""', {"QUALITY_HOLLOW_TEST": 1}),
-        (
-            "from product import *",
-            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
-        ),
     ],
 )
 def test_import_behavior_oracle_requires_direct_complete_body(
