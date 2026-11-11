@@ -321,6 +321,9 @@ def _trusted_core_complete_sources(core, captured_sources, audit):
         database_rows[0], captured
     ):
         return None
+    from .captured_security_audit import source_role_verifier_sources
+
+    captured = source_role_verifier_sources(audit, captured, captured_sources)
     return captured, _tier_sha256(sources)
 
 

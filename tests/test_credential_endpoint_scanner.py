@@ -18,6 +18,38 @@ from factoryline.credential_endpoint_admission import (
 ENDPOINT = "https://appleid.apple.com/auth/token"
 
 
+def test_source_role_verifier_sources_rejects_workspace_drift(tmp_path):
+    from factoryline import review_audits as audit
+    from factoryline.audit_action_refs import _CapturedSecuritySources
+    from factoryline.captured_security_audit import source_role_verifier_sources
+
+    manifest = tmp_path / "pyproject.toml"
+    raw = b'[project]\nname = "example"\n'
+    manifest.write_bytes(raw)
+    verified = {"pyproject.toml": raw}
+    captured = _CapturedSecuritySources(
+        verified,
+        source_role_capture={
+            "sources": verified,
+            "bindings": [
+                {
+                    "path": "pyproject.toml",
+                    "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                }
+            ],
+            "workspace": tmp_path,
+            "hatch_alternate_absent": True,
+        },
+    )
+    retained = source_role_verifier_sources(audit, verified, captured)
+    assert retained == verified
+    assert retained.source_role_sources == verified
+
+    manifest.write_bytes(raw.replace(b"example", b"changed"))
+    assert source_role_verifier_sources(audit, verified, captured) is verified
+
+
 def test_native_workspace_retains_complete_endpoint_role_across_resume(tmp_path):
     from factoryline.deep_audit_io import full_repository_scan
 
@@ -33,6 +65,59 @@ def test_native_workspace_retains_complete_endpoint_role_across_resume(tmp_path)
         assert len(_secrets(workspace, primitive=True)) == 1
         assert _secrets(workspace, primitive=True)[0]["severity"] == "CRITICAL"
         assert workspace["primitive_partition"]["state"] == "VALIDATED"
+
+
+def test_precision_worker_keeps_capture_read_only_and_matches_cli(tmp_path, capsys):
+    from factoryline.cli import main as public_cli
+    from scripts.precision_native_capture import main as precision_worker
+
+    output = tmp_path / "report.json"
+    tmp_path = tmp_path / "capture"
+    tmp_path.mkdir()
+    _write(tmp_path)
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    args = ["--root", str(tmp_path), "--out", str(output)]
+    worker_exit = precision_worker(args)
+    worker_output = capsys.readouterr()
+    assert not worker_output.err
+    assert not worker_output.out
+    assert output.is_file()
+    assert before == {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert not (tmp_path / ".factory").exists()
+    public_exit = public_cli(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    public_output = capsys.readouterr()
+    assert not public_output.err
+    assert worker_exit == public_exit
+    assert json.loads(output.read_bytes()) == json.loads(public_output.out)
+    original_report = output.read_bytes()
+    assert precision_worker(args) == 2
+    assert output.read_bytes() == original_report
+    inside = tmp_path / "report.json"
+    assert precision_worker(["--root", str(tmp_path), "--out", str(inside)]) == 2
+    assert not inside.exists()
+    errors = capsys.readouterr()
+    assert not errors.out
+    assert errors.err.count('"state": "INVALID"') == 2
+    assert (tmp_path / ".factory/security-scan/latest.json").is_file()
 
 
 def test_source_bound_endpoint_copy_reseals_from_captured_bytes(tmp_path):

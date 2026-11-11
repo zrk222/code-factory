@@ -4,7 +4,7 @@ import ast
 import copy
 from hashlib import sha256
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -1146,6 +1146,8 @@ def test_authority_domain_unshipped_runnable_signer_preserves_authority(metadata
     "packaging",
     [
         '[tool.setuptools.packages.find]\nwhere=["src"]\ninclude=["*"]\n',
+        '[tool.setuptools]\npackage-dir={""="src"}\n'
+        '[tool.setuptools.packages.find]\nwhere=["src"]\n',
         '[tool.setuptools.packages.find]\nwhere=["."]\ninclude=["*"]\nexclude=["example*"]\n',
         '[tool.setuptools]\npackages=["service"]\n',
     ],
@@ -1166,6 +1168,25 @@ def test_source_role_distribution_exclusion_moves_action_to_context(packaging):
         ("service/urls.py", "examples/service/urls.py"),
     ):
         files[new] = files.pop(old)
+    if "package-dir" in packaging:
+        # Even when a local loader exists, an independent outside loader wins.
+        files["examples/start.py"] = files["start.py"]
+        assert (
+            _recovery_row(files, path="examples/service/settings.py")["tier"]
+            == "SUPPORTED_DEFECT"
+        )
+        files.pop("start.py")
+        for launch in (
+            "from examples.start import application\n",
+            "from examples import start\napplication = start.application\n",
+            'entrypoint = "examples.start:application"\n',
+        ):
+            files["production_wsgi.py"] = launch
+            assert (
+                _recovery_row(files, path="examples/service/settings.py")["tier"]
+                == "SUPPORTED_DEFECT"
+            )
+        files.pop("production_wsgi.py")
     row = _recovery_row(files, path="examples/service/settings.py")
     assert row["tier"] == "NEEDS_CONTEXT"
     assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
@@ -1282,6 +1303,86 @@ def test_source_role_hatch_selected_package_keeps_actionable_default():
         source_role_distribution_domain(captured, "example_service/example/settings.py")
         is None
     )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["consumer", "alternate", "alternate_dir", "capture"]
+)
+def test_hatch_unpacked_consumer_revokes_stale_scope(tmp_path, mutation):
+    from factoryline.pytest_collection_audit import (
+        captured_hatch_wheel_roots,
+        captured_unpacked_consumer,
+    )
+
+    files = _recovery_sources(
+        startup=START.replace("service.settings", "workbench.service.settings"),
+        extra={
+            "pyproject.toml": (
+                '[build-system]\nrequires=["hatchling"]\n'
+                'build-backend="hatchling.build"\n'
+                '[project]\nname="published-lib"\n'
+                '[tool.hatch.build.targets.wheel]\npackages=["src/published_lib"]\n'
+            ),
+            "workbench/pyproject.toml": (
+                '[project]\nname="independent-workbench"\n'
+                'dependencies=["published-lib>=1"]\n[tool.uv]\npackage=false\n'
+            ),
+            "src/published_lib/__init__.py": "",
+        },
+    )
+    root = files["pyproject.toml"].encode()
+    consumer = files["workbench/pyproject.toml"].encode()
+    assert captured_hatch_wheel_roots(root) == (PurePosixPath("src/published_lib"),)
+    assert captured_hatch_wheel_roots(root + b'force-include={"src"="lib"}\n') == ()
+    assert captured_unpacked_consumer(root, consumer)
+    assert not captured_unpacked_consumer(
+        root, consumer.replace(b"package=false", b"package=true")
+    )
+    for name in (
+        "service/__init__.py",
+        "service/settings.py",
+        "service/urls.py",
+        "start.py",
+    ):
+        files[f"workbench/{name}"] = files.pop(name)
+    for name, source in files.items():
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+    report = audit.security_scan(
+        tmp_path,
+        security_only=True,
+        defect_policy="source-role-v3",
+        cache_enabled=False,
+    )
+    original = report["finding_tier_report"]["ledger"][0]
+    assert original["tier"] == "NEEDS_CONTEXT"
+    evidence = original["credential_authority_observation"]
+    assert (
+        evidence["authority_domain"]["selection_basis"]
+        == "hatch_explicit_consumer_root"
+    )
+    assert report["defect_policy_decision"]["admission"]["state"] != "BLOCKED"
+    assert not report["agent_actions"]
+    assert "workbench/pyproject.toml" not in {row["path"] for row in report["sources"]}
+    copied = copy.deepcopy(report)
+    if mutation == "consumer":
+        (tmp_path / "workbench/pyproject.toml").write_text(
+            "[project]", encoding="utf-8"
+        )
+    elif mutation == "alternate":
+        (tmp_path / "hatch.toml").write_text("[build]", encoding="utf-8")
+    elif mutation == "alternate_dir":
+        (tmp_path / "hatch.toml").mkdir()
+    else:
+        copied._source_role_capture = {}
+    resealed = audit._seal_security_scan(copied)
+    final = resealed["finding_tier_report"]["ledger"][0]
+    assert final["raw_finding"] == original["raw_finding"]
+    assert final["tier"] == "SUPPORTED_DEFECT"
+    # Resealing stale inputs cannot authorize a repair; a fresh scan can.
+    assert resealed["defect_policy_decision"]["admission"]["state"] == "BLOCKED"
+    assert "workbench/pyproject.toml" not in json.dumps(resealed["finding_tier_report"])
 
 
 def test_source_role_hatch_namespace_selected_package_keeps_actionable_default():
@@ -1748,6 +1849,52 @@ def test_source_role_distribution_scope_fails_closed_without_static_exclusion(ex
     assert row["tier"] == "SUPPORTED_DEFECT"
     assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
     assert row["credential_authority_observation"]["authority_domain"] is None
+
+
+@pytest.mark.parametrize(
+    "layout,where",
+    [
+        ('{""="examples"}', '["examples"]'),
+        ('{""="EXAMPLES"}', '["EXAMPLES"]'),
+        ('{""="src"}', '["examples"]'),
+        ('{""="src",service="examples/service"}', '["src"]'),
+        ('{""="../src"}', '["../src"]'),
+    ],
+)
+def test_setuptools_source_root_does_not_exclude_selected_or_ambiguous_settings(
+    layout, where
+):
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nrequires=["setuptools"]\n'
+            'build-backend="setuptools.build_meta"\n'
+            f"[tool.setuptools]\npackage-dir={layout}\n"
+            f"[tool.setuptools.packages.find]\nwhere={where}\n"
+        ).encode()
+    }
+    assert (
+        source_role_distribution_domain(captured, "examples/service/settings.py")
+        is None
+    )
+
+
+def test_setuptools_mapped_root_keeps_nested_package_data_candidate():
+    from factoryline.captured_security_audit import source_role_distribution_domain
+
+    captured = {
+        "pyproject.toml": (
+            '[build-system]\nbuild-backend="setuptools.build_meta"\n'
+            '[tool.setuptools]\npackage-dir={""="src"}\n'
+            '[tool.setuptools.packages.find]\nwhere=["src"]\ninclude=["pkg"]\n'
+            '[tool.setuptools.package-data]\npkg=["examples/*.py"]\n'
+        ).encode()
+    }
+    assert (
+        source_role_distribution_domain(captured, "src/pkg/examples/settings.py")
+        is None
+    )
 
 
 @pytest.mark.parametrize(

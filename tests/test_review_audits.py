@@ -15838,3 +15838,36 @@ def test_security_seal_rejects_verification_builder_mutation(
     assert checked["finding_conservation"]["native_rows"] == "INVALIDATED"
     assert checked["agent_actions"] == []
     assert checked["finding_counts"]["SECURITY_DYNAMIC_EXECUTION"] == 1
+
+
+def test_bounded_security_report_keeps_unknown_collection_read_only(tmp_path):
+    from factoryline.cli import _build_parser
+
+    from factoryline.cli_audit import (
+        bounded_security_exit_code,
+        prepare_bounded_security_report,
+    )
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "conftest.py").write_text(
+        "pytest_plugins = ['external_plugin']\n", encoding="utf-8"
+    )
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+
+    assert (
+        report["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert bounded_security_exit_code(args, report) == 2
+    assert not (tmp_path / ".factory").exists()

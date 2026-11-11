@@ -18,6 +18,60 @@ from factoryline.runtime_audit_integrity import finite_literal_eval_input_witnes
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
+def test_staged_command_binding_requires_command_finding_and_bound_source(monkeypatch):
+    from factoryline import finite_capture
+    from factoryline.credential_role_paths import (
+        bind_staged_command_activation_precondition,
+    )
+
+    call = ast.parse('os.system("fixture-command")', mode="eval").body
+    source_context = finite_capture._security_helper_source_context
+    resolved = []
+
+    def observe(node, function):
+        resolved.append(node)
+        return source_context(node, function)
+
+    monkeypatch.setattr(finite_capture, "_security_helper_source_context", observe)
+    unrelated = {"code": "SECURITY_TLS_VERIFY_DISABLED", "facts": {}}
+    bind_staged_command_activation_precondition(unrelated, call, {})
+    assert resolved == []
+    assert unrelated == {"code": "SECURITY_TLS_VERIFY_DISABLED", "facts": {}}
+
+    command = {"code": "SECURITY_OS_COMMAND", "facts": {}}
+    bind_staged_command_activation_precondition(command, call, {})
+    assert resolved == [call]
+    assert command == {"code": "SECURITY_OS_COMMAND", "facts": {}}
+
+
+def test_provider_confirmation_is_lazy_and_specific_to_bound_tree(monkeypatch):
+    from factoryline import semantic_credential_sensor
+
+    check = semantic_credential_sensor.security_precondition_providers_stable
+    checked = []
+
+    def observe(tree, aliases, nodes):
+        checked.append(tree)
+        return check(tree, aliases, nodes)
+
+    monkeypatch.setattr(
+        semantic_credential_sensor, "security_precondition_providers_stable", observe
+    )
+    clean = ast.parse("pass")
+    assert not review_integrity.security_precondition_providers_confirmed(clean)
+    assert checked == []
+
+    clean._security_precondition_providers_stable = None
+    assert review_integrity.security_precondition_providers_confirmed(clean)
+    assert review_integrity.security_precondition_providers_confirmed(clean)
+
+    uncertain = ast.parse("import sys\nregistry = sys.modules\n")
+    uncertain._security_precondition_providers_stable = None
+    assert not review_integrity.security_precondition_providers_confirmed(uncertain)
+    assert not review_integrity.security_precondition_providers_confirmed(uncertain)
+    assert checked == [clean, uncertain]
+
+
 @pytest.mark.parametrize(
     "mutation", [None, "rebind", "replace_attribute", "duplicate", "shadow_parameter"]
 )

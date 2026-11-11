@@ -2278,6 +2278,7 @@ def tls_security_finding(call, relative, node, aliases=None):
     from .review_integrity import (
         _security_flow_bindings,
         _security_module_scope,
+        security_precondition_providers_confirmed,
         tls_verification_disabled,
     )
     from .security_configuration import legacy_tls_verification_risk
@@ -2348,8 +2349,8 @@ def tls_security_finding(call, relative, node, aliases=None):
             case _:
                 return finding
         if (
-            getattr(module, "_security_precondition_providers_stable", False)
-            and security_precondition_path_possible(node)
+            security_precondition_path_possible(node)
+            and security_precondition_providers_confirmed(module)
             and not _provider_identity_uncertain(
                 module, aliases, roots=("requests", "httpx")
             )
