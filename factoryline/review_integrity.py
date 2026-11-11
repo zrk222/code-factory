@@ -3509,7 +3509,8 @@ def security_source_sink_findings(relative, tree, nodes, aliases):
 
     bind_security_call_scopes(tree, nodes)
     memo = intent_quality._new_security_request_alias_memo(tree)
-    memo["provider_nodes"] = nodes
+    if memo is not None:
+        memo["provider_nodes"] = nodes
     token = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.set(memo)
     try:
         return _security_source_sink_findings_bound(relative, tree, nodes, aliases)
