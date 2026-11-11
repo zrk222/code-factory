@@ -72,7 +72,8 @@ def _spec_findings(spec: dict[str, Any]) -> list[str]:
         isinstance(item, dict)
         and item.get("id")
         and item.get("forbidden_behavior")
-        and item.get("gate")
+        and isinstance(item.get("gate"), str)
+        and item["gate"] in spec["required_gates"]
         for item in obligations
     ):
         findings.append("E_SPECLINE_OBLIGATION_LOOSE")
@@ -111,7 +112,7 @@ def _repair_plan(findings: list[str]) -> list[str]:
             )
         else:
             plan.append(
-                "Obtain human-confirmed intent approval and complete explicit forbidden behavior and gate fields."
+                "Confirm intent approval and map every obligation to an explicitly required gate."
             )
     return plan
 

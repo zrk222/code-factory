@@ -121,12 +121,31 @@ def test_compatibility_uses_cli_reported_version_when_distribution_is_external(
     check = compatibility(
         "specline",
         MODULES["specline"],
-        "strict verify-validators challenge",
+        "strict verify-validators challenge gate tasks",
         reported_version=MINIMUM_VERSIONS["specline"],
     )
 
     assert check.ok is True
     assert check.version == MINIMUM_VERSIONS["specline"]
+
+
+@pytest.mark.parametrize(
+    ("module", "help_text", "missing"),
+    [
+        ("specline", "{strict,verify-validators,challenge,gate}", ("tasks",)),
+        (
+            "forgeline",
+            "{architect,review,arch-gate,verify-tests-ts,smoke,ship,gate,fill,challenge}",
+            ("verify-tests",),
+        ),
+    ],
+)
+def test_compatibility_rejects_missing_assembly_command(module, help_text, missing):
+    result = compatibility(
+        module, MODULES[module], help_text, reported_version=MINIMUM_VERSIONS[module]
+    )
+    assert result.commands_ok is False
+    assert result.missing_commands == missing
 
 
 def test_factory_verify_refuses_to_call_missing_receipts_shippable(tmp_path):

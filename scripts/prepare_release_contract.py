@@ -19,22 +19,15 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
+from factoryline.protocol import ASSEMBLY_STAGE_KEYS, BASE_REQUIRED_MODULES
 from factoryline.release_candidate import source_snapshot
 from factoryline.release_contract import _sha
 
 
 CORE_STAGES = [
-    "specline:strict",
-    "specline:verify-validators",
-    "specline:gate-spec",
-    "specline:tasks",
-    "specline:gate-plan",
-    "forgeline:architect",
-    "forgeline:review",
-    "forgeline:arch-gate",
-    "forgeline:verify-tests",
-    "forgeline:smoke",
-    "forgeline:ship",
+    f"{module}:{stage}"
+    for module, stage in ASSEMBLY_STAGE_KEYS
+    if module in BASE_REQUIRED_MODULES
 ]
 
 
