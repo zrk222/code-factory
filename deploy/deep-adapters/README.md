@@ -33,7 +33,12 @@ The vendored Gitleaks rules come from the official [v8.28.0 configuration](https
 CodeQL's immutable official 2.27.1 bundle digest pins the CLI and its Python
 and JavaScript query packs. These targets do not claim compiled-language coverage. OSV uses
 offline mode because the signed host run uses `--network=none`. This
-image bundles the verified PyPI snapshot at GCS generation 1793594892933509;
+image bundles the verified PyPI snapshot from GCS generation 1794393188720263.
+The release asset retains those bytes after the upstream object rolls over.
+The archive is an unchanged [OSV.dev PyPI export](https://google.github.io/osv.dev/data/#per-ecosystem-downloads).
+See [OSV's source and license list](https://google.github.io/osv.dev/data/#current-data-sources)
+for the GitHub Advisory Database, PyPI Advisory Database, OSS-Fuzz, and OpenSSF Malicious Packages.
+Docker verifies its SHA-256 before the worker can use it;
 it does not include other ecosystems. Trivy config scanning does not
 update the vulnerability database. The source-bound runtime and fuzz harnesses
 are candidate inputs, never copied into these images. No image should set deep
