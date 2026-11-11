@@ -104,13 +104,25 @@ def _configs():
     }
 
 
-def signed_plan(tmp_path: Path, *, execution_policy: dict | None = None):
+def signed_plan(
+    tmp_path: Path, *, execution_policy: dict | None = None, worker: str | None = None
+):
     source = tmp_path / "candidate.txt"
     source.write_text("candidate", encoding="utf-8")
     raw = source.read_bytes()
     sources = [
         {"path": "candidate.txt", "sha256": sha256_bytes(raw), "bytes": len(raw)}
     ]
+    if worker is not None:
+        worker_bytes = worker.encode("utf-8")
+        (tmp_path / "runner.py").write_bytes(worker_bytes)
+        sources.append(
+            {
+                "path": "runner.py",
+                "sha256": sha256_bytes(worker_bytes),
+                "bytes": len(worker_bytes),
+            }
+        )
     engines = {
         "stateful_invariant": "hypothesis",
         "tenant_isolation": "runtime_http_matrix",
@@ -189,6 +201,43 @@ def test_signed_plan_binds_six_lanes_sources_environment_and_authority(tmp_path)
     result = verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
     assert result["plan"] == plan and result["authority"] == "none"
     assert result["execution_policy"]["max_parallelism"] == 1
+
+
+def test_signed_six_lane_run_rejects_wrong_scenario_and_persists_receipt(tmp_path):
+    from factoryline.runtime_audit import execute_runtime_audit, runtime_audit_status
+
+    worker = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "case = {'scenario_sha256': '0' * 64, 'passed': True, "
+        "'lane': sys.argv[1], 'known_bad': len(sys.argv) == 4}\n"
+        "Path(sys.argv[-1]).write_text(json.dumps(case), encoding='utf-8')\n"
+        "sys.exit(int(case['known_bad']))\n"
+    )
+    plan, trust, pin, _ = signed_plan(tmp_path, worker=worker)
+    output = tmp_path / ".factory" / "runtime-audits"
+    result = execute_runtime_audit(plan, trust, pin, tmp_path, D, output)
+    executions = result["execution"]["executions"]
+    assert len(executions) == 6
+    for execution in executions:
+        target, bad = execution["target"], execution["known_bad"]
+        assert (
+            target["artifact"]["lane"] == bad["artifact"]["lane"] == execution["kind"]
+        )
+        assert target["artifact"]["known_bad"] is False
+        assert bad["artifact"]["known_bad"] is True
+        assert target["artifact_sha256"] != bad["artifact_sha256"]
+
+    receipt = result["receipt"]
+    assert receipt["decision"] == "BLOCKED"
+    assert receipt["release_approval"] is False
+    assert len(receipt["repair_queue"]) == 6
+    assert {lane["finding"] for lane in receipt["lanes"]} == {
+        "CROSS_LANE_SCENARIO_MISMATCH"
+    }
+    status = runtime_audit_status(tmp_path)
+    assert status["state"] == "BLOCKED"
+    assert status["receipt_sha256"] == receipt["receipt_sha256"]
 
 
 def test_signed_execution_policy_requires_safe_bounded_parallelism(tmp_path):
