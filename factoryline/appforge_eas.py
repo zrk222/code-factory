@@ -8,13 +8,12 @@ Apple approval remain separate user-authorized actions.
 
 from __future__ import annotations
 
+from .contract import write_atomic_json as _atomic_json
 from . import canonical_json_compat_bytes as _canonical
 
 import hashlib
 import json
-import os
 from pathlib import Path
-import tempfile
 from typing import Any
 
 from .appforge_evidence_kit import _read_candidate
@@ -103,21 +102,6 @@ def _secret_findings(value: object, prefix: str = "") -> list[str]:
         for index, item in enumerate(value):
             findings.extend(_secret_findings(item, f"{prefix}[{index}]"))
     return findings
-
-
-def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
 
 
 def _eas_profile_findings(

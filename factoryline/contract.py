@@ -62,6 +62,30 @@ import uuid
 
 from .protocol import RECEIPT_SCHEMA, package_version
 
+
+def write_atomic_json(
+    path: Path, payload: dict, *, ensure_ascii: bool = False, durable: bool = False
+) -> None:
+    """Write sorted, indented JSON with LF termination using an atomic replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(
+                payload, handle, ensure_ascii=ensure_ascii, indent=2, sort_keys=True
+            )
+            handle.write("\n")
+            if durable:
+                handle.flush()
+                os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 # Canonical subdirectories of a factory root.
 LAYOUT = {
     "specs": "specs",

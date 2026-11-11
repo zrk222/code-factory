@@ -490,7 +490,7 @@ def __getattr__(name: str):
     raise AttributeError(name)
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser(*, common_only: bool = False) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="factory",
         description="Snap SpecLine, ForgeLine, HSF and Prestige into one assembly line.",
@@ -529,6 +529,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="explicit local directory for JSON, Markdown, and Mermaid review artifacts",
     )
     plan_verify.add_argument("--json", action="store_true")
+    if common_only:
+        return p
 
     from .cli_foundations import add_parser as add_foundation_parsers
 
@@ -4772,8 +4774,15 @@ def _dispatch(argv=None) -> int:
             capture_command = capture_command[1:]
         argv = argv[:capture_index]
     with _measure_phase("cli_parse"):
-        p = _build_parser()
-        a = p.parse_args(argv)
+        if argv and argv[0] in {"home", "doctor", "plan"}:
+            p = _build_parser(common_only=True)
+            a, unknown = p.parse_known_args(argv)
+            if unknown:
+                p = _build_parser()
+                a = p.parse_args(argv)
+        else:
+            p = _build_parser()
+            a = p.parse_args(argv)
 
     with _measure_phase("cli_dispatch"):
         result = _dispatch_routes(a, capture_command, p)

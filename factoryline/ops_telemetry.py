@@ -10,9 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
-import os
 from pathlib import Path
-import tempfile
 import time
 import uuid
 from collections import OrderedDict
@@ -24,8 +22,6 @@ from threading import RLock
 from typing import Any, Iterable
 
 from . import __version__
-from .provenance import provenance
-from .receipt_index import indexed_receipt_paths
 
 
 LIFECYCLE_SCHEMA = "factory.ops-lifecycle.v1"
@@ -220,23 +216,9 @@ def _measure_phase(name: str):
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, indent=2, sort_keys=True)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
+    from .run_metrics import _atomic_json as write
+
+    write(path, payload)
 
 
 def _command_family(argv: Iterable[str]) -> str:
@@ -300,6 +282,8 @@ def is_read_only_command(argv: Iterable[str]) -> bool:
 
 @lru_cache(maxsize=1)
 def _cached_provenance() -> dict[str, Any]:
+    from .provenance import provenance
+
     return provenance()
 
 
@@ -422,6 +406,8 @@ def _read_lifecycle_receipt(path: Path) -> tuple[dict[str, Any] | None, str | No
 def _read_lifecycle_inventory(
     workspace: Path,
 ) -> tuple[list[dict[str, Any]], int, dict[str, int], bool]:
+    from .receipt_index import indexed_receipt_paths
+
     rows: list[dict[str, Any]] = []
     invalid = 0
     invalid_reasons: dict[str, int] = {}
