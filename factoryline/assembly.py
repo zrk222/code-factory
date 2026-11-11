@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .contract import MODULES, Meter, ensure_layout, Receipt
+from .protocol import ASSEMBLY_STAGES
 from .meter import MeterLog, StageTiming, stopwatch
 from .attribution import Attribution
 from .agent_contract import AgentContractError, validate_agent_contract
@@ -269,41 +270,10 @@ def _validated_forge_acceptance(root, feature, envelope, intent_hash) -> bool:
         return False
 
 
-# The default pipeline: (module, cli-args-template). {f} = feature.
-# Only stages whose module is installed run; UI stage runs only if smoke/<f>.ui exists.
-DEFAULT_CHAIN = [
-    ("specline", ["strict", "{f}", "--json"]),
-    ("specline", ["verify-validators", "{f}", "--json"]),
-    ("specline", ["gate", "spec", "{f}"]),
-    ("specline", ["tasks", "{f}"]),
-    ("specline", ["gate", "plan", "{f}"]),
-    ("forgeline", ["architect", "{f}", "{f}.ssat.yaml"]),
-    ("forgeline", ["review", "{f}", "{f}.ssat.yaml"]),
-    ("forgeline", ["arch-gate", "{f}", "{f}.ssat.yaml"]),
-    ("forgeline", ["verify-tests", "{f}", "{f}.ssat.yaml"]),
-    ("forgeline", ["smoke", "{f}"]),
-    ("prestige", ["score", "smoke/{f}.ui", "--json", "--strict"]),
-    ("hsf", ["compile", "specs/{f}.yaml"]),
-    ("forgeline", ["ship", "{f}"]),
-]
+DEFAULT_CHAIN = [(module, list(args)) for module, args in ASSEMBLY_STAGES]
 
 
-def _stage_order(module: str, stage: str) -> tuple[int, str, str]:
-    """Return canonical pipeline order for a module stage.
-
-    Receipt rollups can arrive in display order, filesystem timestamp order, or
-    mixed legacy spellings. Failure diagnosis still follows pipeline order:
-    instrument verification precedes trusting runtime smoke output.
-    """
-    normalized = stage.replace("_", "-")
-    order = {
-        (mod, _receipt_stage(mod, args)): index
-        for index, (mod, args) in enumerate(DEFAULT_CHAIN)
-    }
-    return (order.get((module, normalized), len(DEFAULT_CHAIN)), module, normalized)
-
-
-def _receipt_stage(module: str, args: list[str]) -> str:
+def _receipt_stage(module: str, args: list[str] | tuple[str, ...]) -> str:
     """Name stages without collapsing distinct commands into one receipt.
 
     SpecLine's two ``gate`` calls protect different obligations.  Storing both
@@ -313,6 +283,22 @@ def _receipt_stage(module: str, args: list[str]) -> str:
     if module == "specline" and stage == "gate" and len(args) > 1:
         return f"gate-{args[1].replace('_', '-')}"
     return stage
+
+
+_STAGE_ORDER = {
+    (module, _receipt_stage(module, args)): index
+    for index, (module, args) in enumerate(ASSEMBLY_STAGES)
+}
+
+
+def _stage_order(module: str, stage: str) -> tuple[int, str, str]:
+    """Sort receipts by canonical execution order, including legacy spellings."""
+    normalized = stage.replace("_", "-")
+    return (
+        _STAGE_ORDER.get((module, normalized), len(ASSEMBLY_STAGES)),
+        module,
+        normalized,
+    )
 
 
 def _ssat_contract(root: Path, feature: str) -> Path:
