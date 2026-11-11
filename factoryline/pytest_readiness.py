@@ -13,6 +13,7 @@ import io
 import json
 import math
 import re
+import stat
 import sys
 import tempfile
 import threading
@@ -2691,7 +2692,11 @@ def _typecheck_path_chain_linked(path):
         except OSError as error:
             raise ValueError("Path ancestry could not be validated") from error
         else:
-            if current.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+            if (
+                stat.S_ISLNK(info.st_mode)
+                or getattr(info, "st_file_attributes", 0)
+                & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            ):
                 return True
         parent = current.parent
         if parent == current:
