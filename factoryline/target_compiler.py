@@ -6,15 +6,13 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 import json
-import os
-import shutil
-import tempfile
-import time
 
 from .app_builder import (
-    app_from_prd,
-    app_from_prompt,
+    _app_input,
+    ScaffoldOutputExists,
     _extract_name,
+    _render_app,
+    _staged_scaffold,
     _purpose_from_text,
 )
 from .capability_packs import target_inventory
@@ -82,45 +80,6 @@ def _validate_request(
             f"trigger must be one of {', '.join(SUPPORTED_TRIGGERS)}",
         )
     _deployment_profile(target, deployment_profile)
-
-
-def _prepare_destination(out_dir: Path) -> Path:
-    target = Path(out_dir).resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        if not target.is_dir() or any(target.iterdir()):
-            raise TargetCompileError(
-                "OUTPUT_EXISTS", f"refusing non-empty output: {target}"
-            )
-    return target
-
-
-def _promote_staging(staging: Path, destination: Path) -> None:
-    """Promote a completed staging tree without Windows directory replacement errors.
-
-    ``os.replace`` is atomic for files, but Windows rejects replacing a directory
-    even when the destination is empty (``WinError 5``).  The destination is
-    removed by ``_compile`` immediately before this helper, so ``os.rename`` is
-    the equivalent atomic directory move on Windows.  POSIX keeps the stronger
-    replace primitive.
-    """
-    try:
-        os.replace(staging, destination)
-    except PermissionError:
-        if os.name != "nt":
-            raise
-        # Windows rejects directory replacement with WinError 5; the
-        # destination was removed immediately before this call. Antivirus and
-        # indexer scans can briefly hold a generated file open, so retry only
-        # Windows access-denied and sharing-violation errors.
-        for attempt in range(6):
-            try:
-                os.rename(staging, destination)
-                return
-            except PermissionError as error:
-                if getattr(error, "winerror", None) not in (5, 32) or attempt == 5:
-                    raise
-                time.sleep(min(0.025 * (2**attempt), 0.2))
 
 
 def _manifest(
@@ -1074,17 +1033,12 @@ def _scaffold_app_target(
     source_ref: Path | None,
     target: str,
 ) -> list[str]:
-    kwargs = {
-        "out_dir": root,
-        "name": name,
-        "purpose": purpose,
-        "stack": "nextjs-fastapi-postgres",
-    }
     if source_kind == "prd":
         assert source_ref is not None
-        app_from_prd(source_ref, **kwargs)
-    else:
-        app_from_prompt(text, **kwargs)
+    blueprint, prd_text = _app_input(
+        text, source_ref, name, "nextjs-fastapi-postgres", purpose
+    )
+    _render_app(blueprint, out_dir=root, prd_text=prd_text, published_dir=root)
     if target == "agent-ui":
         _write(root / "frontend" / "app" / "page.tsx", _agent_page(name))
         _write(root / "frontend" / "app" / "globals.css", _agent_css())
@@ -1294,14 +1248,9 @@ def _compile(
     deployment_profile: str | None,
 ) -> dict[str, Any]:
     _validate_request(text, target, trigger, deployment_profile)
-    destination = _prepare_destination(out_dir)
+    destination = Path(out_dir).absolute()
     resolved_name = _extract_name(text, name)
     resolved_purpose = _purpose_from_text(text, purpose)
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{resolved_name}.factory-", dir=str(destination.parent)
-        )
-    )
     markers = [
         "TARGET_KIND_SET",
         "SOURCE_EXACTLY_ONE",
@@ -1309,37 +1258,36 @@ def _compile(
         "TARGET_DEPLOYMENT_PROFILE_BOUND",
     ]
     try:
-        markers.extend(
-            _generate_from_pack(
-                staging,
-                resolved_name,
-                resolved_purpose,
-                text,
-                source_kind,
-                source_ref,
-                target,
+        with _staged_scaffold(destination, resolved_name) as staging:
+            markers.extend(
+                _generate_from_pack(
+                    staging,
+                    resolved_name,
+                    resolved_purpose,
+                    text,
+                    source_kind,
+                    source_ref,
+                    target,
+                )
             )
-        )
-        markers.append("TARGET_PACK_GENERATOR_DISPATCHED")
-        manifest = _manifest(
-            resolved_name,
-            target,
-            resolved_purpose,
-            trigger,
-            source_kind,
-            source_sha256,
-            deployment_profile,
-        )
-        receipt, proof_markers = _write_proof_contract(
-            staging, resolved_name, target, manifest, source_sha256
-        )
-        markers.extend(proof_markers)
-        if destination.exists():
-            destination.rmdir()
-        _promote_staging(staging, destination)
-    except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
+            markers.append("TARGET_PACK_GENERATOR_DISPATCHED")
+            manifest = _manifest(
+                resolved_name,
+                target,
+                resolved_purpose,
+                trigger,
+                source_kind,
+                source_sha256,
+                deployment_profile,
+            )
+            receipt, proof_markers = _write_proof_contract(
+                staging, resolved_name, target, manifest, source_sha256
+            )
+            markers.extend(proof_markers)
+    except ScaffoldOutputExists as error:
+        raise TargetCompileError(
+            "OUTPUT_EXISTS", str(error).partition(": ")[2]
+        ) from error
     files = sorted(
         str(path.relative_to(destination)).replace("\\", "/")
         for path in destination.rglob("*")

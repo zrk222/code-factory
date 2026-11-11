@@ -12,9 +12,11 @@ import json
 import os
 import re
 import secrets
+import shutil
 import stat
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -932,7 +934,74 @@ def _forge_state(blueprint: AppBlueprint) -> str:
     )
 
 
+class ScaffoldOutputExists(ValueError):
+    """The requested output would replace an existing workspace."""
+
+
+def _promote_staging(staging: Path, destination: Path) -> None:
+    """Promote a completed staging tree without Windows directory replacement errors.
+
+    ``os.replace`` is atomic for files, but Windows rejects replacing a directory
+    even when the destination is empty (``WinError 5``).  The destination is
+    removed by the transaction immediately before this helper, so ``os.rename`` is
+    the equivalent atomic directory move on Windows.  POSIX keeps the stronger
+    replace primitive.
+    """
+    try:
+        os.replace(staging, destination)
+    except PermissionError:
+        if os.name != "nt":
+            raise
+        # Windows rejects directory replacement with WinError 5; the
+        # destination was removed immediately before this call. Antivirus and
+        # indexer scans can briefly hold a generated file open, so retry only
+        # Windows access-denied and sharing-violation errors.
+        for attempt in range(6):
+            try:
+                os.rename(staging, destination)
+                return
+            except PermissionError as error:
+                if getattr(error, "winerror", None) not in (5, 32) or attempt == 5:
+                    raise
+                time.sleep(min(0.025 * (2**attempt), 0.2))
+
+
+@contextmanager
+def _staged_scaffold(out_dir: Path, name: str):
+    destination = Path(out_dir).absolute()
+    if destination.is_symlink() or (
+        destination.exists()
+        and (not destination.is_dir() or any(destination.iterdir()))
+    ):
+        raise ScaffoldOutputExists(
+            f"OUTPUT_EXISTS: refusing non-empty output: {destination}"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{name}.factory-", dir=destination.parent))
+    try:
+        yield staging
+        if destination.is_symlink():
+            raise ScaffoldOutputExists(
+                f"OUTPUT_EXISTS: refusing linked output: {destination}"
+            )
+        if destination.exists():
+            destination.rmdir()
+        _promote_staging(staging, destination)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def scaffold_app(blueprint: AppBlueprint, *, out_dir: Path, prd_text: str) -> dict:
+    """Publish a complete app starter without overwriting existing files."""
+    with _staged_scaffold(out_dir, blueprint.name) as staging:
+        return _render_app(
+            blueprint, out_dir=staging, prd_text=prd_text, published_dir=out_dir
+        )
+
+
+def _render_app(
+    blueprint: AppBlueprint, *, out_dir: Path, prd_text: str, published_dir: Path
+) -> dict:
     """Write an app-shaped starter into the requested output directory."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1133,19 +1202,34 @@ export default defineConfig({ plugins: [react()] });
     return {
         "schema": "factory.app_scaffold.v1",
         "app": blueprint.name,
-        "out_dir": str(out_dir),
+        "out_dir": str(published_dir),
         "files": paths,
-        "output_map": str(out_dir / str(output_map["path"])),
+        "output_map": str(published_dir / str(output_map["path"])),
         "output_map_sha256": output_map["sha256"],
         "markers": ["APP_OUTPUT_MAP_WRITTEN"],
         "next_commands": [
-            f"specline optimize-prd {out_dir / 'PRD.md'}",
-            f"prestige brief {out_dir / 'PRD.md'} --purpose {blueprint.purpose}",
-            f"forge verify-tests {blueprint.name} {out_dir / (blueprint.name + '.ssat.yaml')} --root {out_dir}",
-            f"factory coverage --root {out_dir}",
-            f"factory optimize-pr --root {out_dir} --changed app_blueprint.json --feature {blueprint.name}",
+            f"specline optimize-prd {published_dir / 'PRD.md'}",
+            f"prestige brief {published_dir / 'PRD.md'} --purpose {blueprint.purpose}",
+            f"forge verify-tests {blueprint.name} {published_dir / (blueprint.name + '.ssat.yaml')} --root {published_dir}",
+            f"factory coverage --root {published_dir}",
+            f"factory optimize-pr --root {published_dir} --changed app_blueprint.json --feature {blueprint.name}",
         ],
     }
+
+
+def _app_input(text, source, name, stack, purpose):
+    if source is None:
+        title = _extract_name(text, name).replace("-", " ").title()
+        text = f"# {title}\n\n{text}\n"
+    else:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return build_blueprint(
+        text,
+        source="prompt" if source is None else str(source),
+        name=name,
+        stack=stack,
+        purpose=purpose,
+    ), text
 
 
 def app_from_prd(
@@ -1159,9 +1243,7 @@ def app_from_prd(
     """Build and scaffold an application from a readable PRD file."""
     prd_path = Path(prd_path)
     text = prd_path.read_text(encoding="utf-8")
-    blueprint = build_blueprint(
-        text, source=str(prd_path), name=name, stack=stack, purpose=purpose
-    )
+    blueprint, text = _app_input(text, prd_path, name, stack, purpose)
     target = Path(out_dir) if out_dir else Path.cwd() / blueprint.name
     return scaffold_app(blueprint, out_dir=target, prd_text=text)
 
@@ -1175,12 +1257,7 @@ def app_from_prompt(
     purpose: str = "auto",
 ) -> dict:
     """Build and scaffold an application from a product prompt."""
-    prd_text = (
-        f"# {_extract_name(prompt, name).replace('-', ' ').title()}\n\n{prompt}\n"
-    )
-    blueprint = build_blueprint(
-        prd_text, source="prompt", name=name, stack=stack, purpose=purpose
-    )
+    blueprint, prd_text = _app_input(prompt, None, name, stack, purpose)
     target = Path(out_dir) if out_dir else Path.cwd() / blueprint.name
     return scaffold_app(blueprint, out_dir=target, prd_text=prd_text)
 
