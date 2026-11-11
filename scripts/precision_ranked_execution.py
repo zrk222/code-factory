@@ -20,27 +20,54 @@ def ordered_native_results(
     active, ready = {}, {}
     staged, exhausted = None, False
     with ThreadPoolExecutor(max_workers=2) as pool:
-        while active or ready or staged is not None or not exhausted:
+        while any((active, ready, staged is not None, not exhausted)):
             for future in tuple(active):
                 if future.done():
                     ready[active.pop(future)] = future
             if next_output in ready:
                 yield next_output, ready.pop(next_output).result()
                 next_output += 1
-            elif staged is not None and len(active) < 2:
-                rank, job = staged
-                active[_dispatch(pool, invoke, before_dispatch, rank, job)] = rank
-                staged = None
-            elif staged is None and not exhausted and len(active) + len(ready) < 4:
-                staged = _read_rank(source, next_input, last_rank)
-                exhausted = staged is None
-                next_input += not exhausted
-            elif active:
-                wait(active, return_when=FIRST_COMPLETED)
-            else:
-                raise ValueError("NATIVE_RANK_FRONTIER_INCOMPLETE")
+                continue
+            staged, next_input, exhausted = _advance_frontier(
+                pool,
+                invoke,
+                before_dispatch,
+                active,
+                ready,
+                staged,
+                exhausted,
+                source,
+                next_input,
+                last_rank,
+            )
     if last_rank is not None and next_output != last_rank + 1:
         raise ValueError("NATIVE_RANK_FRONTIER_INCOMPLETE")
+
+
+def _advance_frontier(
+    pool,
+    invoke,
+    before_dispatch,
+    active,
+    ready,
+    staged,
+    exhausted,
+    source,
+    next_input,
+    last_rank,
+):
+    """Dispatch or refill once when the ordered result is not ready."""
+    if staged is not None and len(active) < 2:
+        rank, job = staged
+        active[_dispatch(pool, invoke, before_dispatch, rank, job)] = rank
+        return None, next_input, exhausted
+    if staged is None and not exhausted and len(active) + len(ready) < 4:
+        staged = _read_rank(source, next_input, last_rank)
+        return staged, next_input + (staged is not None), staged is None
+    if active:
+        wait(active, return_when=FIRST_COMPLETED)
+        return staged, next_input, exhausted
+    raise ValueError("NATIVE_RANK_FRONTIER_INCOMPLETE")
 
 
 def _read_rank(source, expected, last_rank):

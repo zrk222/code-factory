@@ -227,3 +227,14 @@ def test_wrong_transport_hash_never_charges_a_launch(tmp_path, mutation):
     with pytest.raises(ValueError, match="NATIVE_.*TRANSPORT_.*CHANGED"):
         list(_collect(study, controller, work[:1]))
     assert study.attempted == 0
+
+
+def test_verify_registered_transport_rejects_stale_worker_hash():
+    root = Path(ranked.__file__).resolve().parents[1]
+    files = {path: _sha(root / path) for path in ranked.TRANSPORT_FILES}
+    profile = {"schema": ranked.PROFILE, "files": files}
+    ranked.verify_registered_transport(root, profile, _sha)
+
+    files["scripts/precision_native_capture.py"] = "0" * 64
+    with pytest.raises(ValueError, match="NATIVE_TRANSPORT_SOURCE_CHANGED"):
+        ranked.verify_registered_transport(root, profile, _sha)

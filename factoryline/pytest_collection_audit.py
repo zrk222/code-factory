@@ -2979,12 +2979,10 @@ def _distribution_setup_cfg_sections(raw):
 def captured_hatch_wheel_roots(raw):
     """Read explicit Hatch wheel package roots, with no file or hook overrides."""
     document = _distribution_toml_document(raw) or {}
-    system = document.get("build-system")
-    if not isinstance(system, dict) or system.get("build-backend") != "hatchling.build":
-        return ()
-    if set(system) != {"requires", "build-backend"} or system.get("requires") != [
-        "hatchling"
-    ]:
+    if document.get("build-system") != {
+        "build-backend": "hatchling.build",
+        "requires": ["hatchling"],
+    }:
         return ()
     settings = document
     for key in ("tool", "hatch", "build", "targets", "wheel"):
@@ -2999,7 +2997,10 @@ def captured_hatch_wheel_roots(raw):
         }.get(key)
         if next_key and set(settings) != {next_key}:
             return ()
-    packages = settings["packages"]
+    return _hatch_package_roots(settings["packages"])
+
+
+def _hatch_package_roots(packages):
     if (
         not isinstance(packages, list)
         or not packages
@@ -3014,6 +3015,7 @@ def captured_hatch_wheel_roots(raw):
 
 
 def captured_unpacked_consumer(root_raw, consumer_raw):
+    """Check that a distinct unpacked consumer explicitly depends on the root project."""
     root = _distribution_toml_document(root_raw) or {}
     consumer = _distribution_toml_document(consumer_raw) or {}
     project, local = root.get("project"), consumer.get("project")

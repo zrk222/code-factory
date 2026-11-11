@@ -3508,9 +3508,9 @@ def security_source_sink_findings(relative, tree, nodes, aliases):
     from . import intent_quality
 
     bind_security_call_scopes(tree, nodes)
-    token = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.set(
-        intent_quality._new_security_request_alias_memo(tree)
-    )
+    memo = intent_quality._new_security_request_alias_memo(tree)
+    memo["provider_nodes"] = nodes
+    token = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.set(memo)
     try:
         return _security_source_sink_findings_bound(relative, tree, nodes, aliases)
     finally:
@@ -3521,10 +3521,14 @@ def security_precondition_providers_confirmed(module):
     """Resolve provider stability once, only for a bound proof candidate."""
     state = getattr(module, "_security_precondition_providers_stable", False)
     if state is None:
+        from . import intent_quality
         from .review_audits import _security_aliases
         from .semantic_credential_sensor import security_precondition_providers_stable
 
-        nodes = list(ast.walk(module))
+        memo = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.get()
+        nodes = memo.get("provider_nodes") if memo and memo["tree"] is module else None
+        if nodes is None:
+            nodes = list(ast.walk(module))
         state = security_precondition_providers_stable(
             module, _security_aliases(nodes), nodes
         )

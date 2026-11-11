@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 
 
 def scan_capture(root):
@@ -34,9 +35,20 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True)
+    parser.add_argument(
+        "--out", required=True, help="New report file outside the capture"
+    )
     args = parser.parse_args(argv)
     try:
+        destination = Path(args.out)
+        if destination.resolve().is_relative_to(Path(args.root).resolve()):
+            raise ValueError("The report must be outside the capture root.")
+        if destination.exists() or destination.is_symlink():
+            raise FileExistsError("The report destination already exists.")
         code, report = scan_capture(args.root)
+        with destination.open("x", encoding="utf-8", newline="\n") as stream:
+            json.dump(report, stream, indent=2, sort_keys=True)
+            stream.write("\n")
     except (OSError, ValueError, ReviewAuditError) as error:
         print(
             json.dumps(
@@ -45,7 +57,6 @@ def main(argv=None):
             file=sys.stderr,
         )
         return 2
-    print(json.dumps(report, indent=2, sort_keys=True))
     return code
 
 

@@ -704,6 +704,7 @@ def _finish_bounded_security(args, result):
 
 
 def bounded_security_exit_code(args, result):
+    """Return the CLI status for a bounded report, blocking unknown collection."""
     if (
         result.get("oracle_context", {})
         .get("pytest_collection", {})

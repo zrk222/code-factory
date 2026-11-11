@@ -4,7 +4,7 @@ import ast
 import copy
 from hashlib import sha256
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -1309,6 +1309,11 @@ def test_source_role_hatch_selected_package_keeps_actionable_default():
     "mutation", ["consumer", "alternate", "alternate_dir", "capture"]
 )
 def test_hatch_unpacked_consumer_revokes_stale_scope(tmp_path, mutation):
+    from factoryline.pytest_collection_audit import (
+        captured_hatch_wheel_roots,
+        captured_unpacked_consumer,
+    )
+
     files = _recovery_sources(
         startup=START.replace("service.settings", "workbench.service.settings"),
         extra={
@@ -1324,6 +1329,14 @@ def test_hatch_unpacked_consumer_revokes_stale_scope(tmp_path, mutation):
             ),
             "src/published_lib/__init__.py": "",
         },
+    )
+    root = files["pyproject.toml"].encode()
+    consumer = files["workbench/pyproject.toml"].encode()
+    assert captured_hatch_wheel_roots(root) == (PurePosixPath("src/published_lib"),)
+    assert captured_hatch_wheel_roots(root + b'force-include={"src"="lib"}\n') == ()
+    assert captured_unpacked_consumer(root, consumer)
+    assert not captured_unpacked_consumer(
+        root, consumer.replace(b"package=false", b"package=true")
     )
     for name in (
         "service/__init__.py",

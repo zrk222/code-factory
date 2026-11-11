@@ -1390,27 +1390,33 @@ def source_role_tier_override(
     return generated, fallback
 
 
-def source_role_capture_context(source_bytes, bindings, context):
-    """Bind auxiliary role bytes without modifying the Python inventory."""
-    support = getattr(source_bytes, "source_role_sources", {})
+def _source_role_support_hashes(support, bindings):
+    """Return hashes only when every auxiliary source is valid and bound."""
     if not (
         isinstance(support, dict)
         and all(
-            isinstance(path, str)
-            and isinstance(raw, bytes)
-            and len(raw) <= 1_000_000
-            and (
-                path not in bindings
-                or hashlib.sha256(raw).hexdigest() == bindings[path]
-            )
+            isinstance(path, str) and isinstance(raw, bytes) and len(raw) <= 1_000_000
             for path, raw in support.items()
         )
     ):
+        return {}
+    hashes = {}
+    for path, raw in support.items():
+        digest = hashlib.sha256(raw).hexdigest()
+        if path in bindings and digest != bindings[path]:
+            return {}
+        hashes[path] = digest
+    return hashes
+
+
+def source_role_capture_context(source_bytes, bindings, context):
+    """Bind auxiliary role bytes without modifying the Python inventory."""
+    support = getattr(source_bytes, "source_role_sources", {})
+    support_hashes = _source_role_support_hashes(support, bindings)
+    if not support_hashes:
         support = {}
     role_bindings = dict(bindings)
-    role_bindings.update(
-        {path: hashlib.sha256(raw).hexdigest() for path, raw in support.items()}
-    )
+    role_bindings.update(support_hashes)
     role_context = context
     if (
         support

@@ -515,6 +515,29 @@ def _configuration_files277(runner):
     }
 
 
+def test_django_test_domain_evidence_rejects_unconfigured_test_path():
+    from hashlib import sha256
+    from factoryline.credential_identity_audit import django_test_domain_evidence
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+
+    files = _configuration_files277(_DJANGO_SESSION_START)
+    path = "tests/settings.py"
+    files["tests/__init__.py"] = ""
+    files[path] = files["service/settings.py"]
+    sources = {name: value.encode() for name, value in files.items()}
+    context = signing_configuration_inventory(
+        sources, {name: sha256(raw).hexdigest() for name, raw in sources.items()}
+    )
+
+    assert context is not None
+    assert (
+        django_test_domain_evidence(
+            context, path, {}, {"model": "django.admin.feedback.v1"}
+        )
+        is None
+    )
+
+
 _DJANGO_SESSION_SETTINGS = (
     'SECRET_KEY = "published-session-signing-material"\n'
     'INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions", "django.contrib.messages"]\n'
