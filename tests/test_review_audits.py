@@ -11940,9 +11940,14 @@ def clean_readback_control(tmp_path_factory):
         / "scripts"
         / "record_hook.py"
     ).read_bytes()
-    baseline = tmp_path_factory.mktemp("readback-control") / "baseline"
-    _write_reported_command_canary(baseline, original, recorder)
-    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    control_root = tmp_path_factory.mktemp("readback-control")
+    normalized = _canary_lf_text(recorder.decode("utf-8")).encode("utf-8")
+    for index, control in enumerate(dict.fromkeys((recorder, normalized))):
+        baseline = control_root / str(index) / "baseline"
+        _write_reported_command_canary(baseline, original, control)
+        assert not _reported_canary_findings(
+            security_scan(baseline, cache_enabled=False)
+        )
     return original, recorder
 
 
@@ -12104,23 +12109,13 @@ def test_missing_or_malicious_local_recorder_keeps_original_finding(tmp_path):
     ],
 )
 def test_reported_canary_consumer_mutations_keep_finding_after_admission(
-    tmp_path, old, new
+    tmp_path, clean_readback_control, old, new
 ):
     """Prove each recorder mutation starts from the exact admitted positive."""
     import ast
 
-    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
-    recorder_path = (
-        Path(__file__).parents[1]
-        / "plugins"
-        / "code-factory-session-recorder"
-        / "scripts"
-        / "record_hook.py"
-    )
-    recorder = recorder_path.read_text(encoding="utf-8")
-    baseline = tmp_path / "baseline"
-    _write_reported_command_canary(baseline, original, recorder.encode("utf-8"))
-    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    original, recorder_bytes = clean_readback_control
+    recorder = _canary_lf_text(recorder_bytes.decode("utf-8"))
     assert old in recorder
     changed = recorder.replace(old, new, 1)
     assert changed != recorder
@@ -12190,22 +12185,12 @@ def test_reported_canary_consumer_mutations_keep_finding_after_admission(
     ],
 )
 def test_reported_canary_test_mutations_keep_finding_after_admission(
-    tmp_path, old, new, consumer
+    tmp_path, clean_readback_control, old, new, consumer
 ):
     """Derive test-side changes from the byte-identical admitted fixture."""
     import ast
 
-    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
-    recorder = (
-        Path(__file__).parents[1]
-        / "plugins"
-        / "code-factory-session-recorder"
-        / "scripts"
-        / "record_hook.py"
-    ).read_bytes()
-    baseline = tmp_path / "baseline"
-    _write_reported_command_canary(baseline, original, recorder)
-    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    original, recorder = clean_readback_control
     source = original.decode("utf-8")
     source = _canary_lf_text(source)
     old, new = _canary_lf_text(old), _canary_lf_text(new)
