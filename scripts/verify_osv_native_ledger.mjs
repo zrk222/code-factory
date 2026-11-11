@@ -24,7 +24,7 @@ const outputRoot = resolve('osv-native-operator');
 const timeoutMs = 120_000;
 const outputLimit = 2_000_000;
 const expectedSource = 'a14aa98ab8408547083d4411091c5fbaf5b47d8e';
-const expectedDatabase = '185c442aaa1441952582615f5543fad026b6ec13df4b03ed0d18ac3389001abc';
+const expectedDatabase = 'a9d670370380fde52d5395debb2e2412639920be5ce9d6aac5349df50d45e9a5';
 const sourcePaths = [
   'deploy/deep-adapters/Dockerfile',
   'deploy/deep-adapters/bin/osv-offline',
