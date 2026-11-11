@@ -55,81 +55,67 @@ def _run_cli(
     return run_cli(cli, args, cwd, heartbeat=heartbeat)
 
 
-def _attribution_from_output(output: str) -> dict | None:
-    """Find a structured attribution block in a CLI's JSON output."""
-    decoder = __import__("json").JSONDecoder()
-    for offset, char in enumerate(output):
-        if char != "{":
-            continue
+def _output_objects(output: str):
+    """Decode objects at legacy offsets, including nested objects in noisy logs."""
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", output):
         try:
-            payload, _ = decoder.raw_decode(output[offset:])
+            payload, _ = decoder.raw_decode(output, match.start())
         except ValueError:
             continue
         if isinstance(payload, dict):
-            raw = payload.get("attribution")
-            if isinstance(raw, dict):
-                Attribution.from_dict(raw)
-                return raw
+            yield payload
+
+
+def _attribution_block(payload: dict) -> dict | None:
+    raw = payload.get("attribution")
+    if isinstance(raw, dict):
+        Attribution.from_dict(raw)
+        return raw
     return None
 
 
-def _meter_from_output(output: str) -> tuple[Meter, bool]:
-    """Read a module's standard meter block when its structured output supplies one.
-
-    The wall-clock value remains FactoryLine's own local observation.  Model and
-    token values are accepted only from a top-level ``meter`` block or a nested
-    receipt envelope; otherwise they remain explicitly unreported.
-    """
-    decoder = json.JSONDecoder()
-    for offset, char in enumerate(output):
-        if char != "{":
-            continue
-        try:
-            payload, _ = decoder.raw_decode(output[offset:])
-        except ValueError:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        raw = payload.get("meter")
-        if raw is None and isinstance(payload.get("receipt"), dict):
-            raw = payload["receipt"].get("meter")
-        if not isinstance(raw, dict):
-            continue
-        try:
-            values = {
-                key: int(raw.get(key, 0))
-                for key in ("model_calls", "tokens_in", "tokens_out")
-            }
-        except (TypeError, ValueError):
-            continue
-        if any(value < 0 for value in values.values()):
-            continue
-        return Meter(0, **values), True
-    return Meter(), False
+def _attribution_from_output(output: str) -> dict | None:
+    for payload in _output_objects(output):
+        if (raw := _attribution_block(payload)) is not None:
+            return raw
+    return None
 
 
-def _forge_ship_result(output: str) -> dict | None:
-    """Extract only an explicit Forge ship JSON result with two boolean claims."""
-    payloads: list[dict] = []
-    decoder = json.JSONDecoder()
-    for offset, char in enumerate(output):
-        if char != "{":
-            continue
-        try:
-            payload, _ = decoder.raw_decode(output[offset:])
-        except ValueError:
-            continue
-        if isinstance(payload, dict):
-            payloads.append(payload)
-    return next(
-        (
-            payload
-            for payload in reversed(payloads)
-            if isinstance(payload.get("shipped"), bool)
+def _meter_block(payload: dict) -> Meter | None:
+    raw = payload.get("meter")
+    if raw is None and isinstance(payload.get("receipt"), dict):
+        raw = payload["receipt"].get("meter")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        values = {
+            key: int(raw.get(key, 0))
+            for key in ("model_calls", "tokens_in", "tokens_out")
+        }
+    except (TypeError, ValueError):
+        return None
+    if any(value < 0 for value in values.values()):
+        return None
+    return Meter(0, **values)
+
+
+def _stage_output_evidence(output: str, *, ship: bool):
+    attribution = meter = ship_result = None
+    for payload in _output_objects(output):
+        if attribution is None:
+            attribution = _attribution_block(payload)
+        if meter is None:
+            meter = _meter_block(payload)
+        if (
+            ship
+            and isinstance(payload.get("shipped"), bool)
             and isinstance(payload.get("intent_traceable"), bool)
-        ),
-        None,
-    )
+        ):
+            ship_result = payload
+        if not ship and attribution is not None and meter is not None:
+            break
+    return attribution, meter, ship_result
 
 
 def _forge_receipt_lines(root: Path, feature: str) -> list[str] | None:
@@ -191,7 +177,9 @@ def _forge_trace_fields(
     return intent_hash, obligations, timestamp
 
 
-def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
+def _forge_intent_trace(
+    root: Path, feature: str, forge_result: dict | None
+) -> dict | None:
     """Adapt one explicit Forge ship result into a Code Factory receipt.
 
     REQ_INTENT_ADAPTER_CAPTURE · REQ_INTENT_ADAPTER_READ_ONLY ·
@@ -206,7 +194,6 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
     A true traceability claim also requires current shared SpecLine acceptance
     validation; CLI words, matching receipt text or a checksum alone cannot pass.
     """
-    forge_result = _forge_ship_result(output)
     if forge_result is None:  # REQ_INTENT_ADAPTER_FAIL_CLOSED
         return None
     lines = _forge_receipt_lines(root, feature)
@@ -1100,12 +1087,12 @@ def _assembly_dry_run(
 
 
 def _assembly_stage_outputs(
-    root: Path, feature: str, stage: _AssemblyStage, output: str
+    root: Path, feature: str, output: str, ship_result: dict | None
 ) -> dict[str, Any]:
     """Attach an intent trace only when Forge ship supplied explicit proof."""
     outputs: dict[str, Any] = {"log_tail": output[-2000:]}
-    if stage.module == "forgeline" and stage.name == "ship":
-        intent_trace = _forge_intent_trace(root, feature, output)
+    if ship_result is not None:
+        intent_trace = _forge_intent_trace(root, feature, ship_result)
         if intent_trace is not None:
             outputs["intent_trace"] = intent_trace
     return outputs
@@ -1232,11 +1219,14 @@ def _execute_assembly_stage(
     if not isinstance(out, str):
         out = ""
     receipt.ok = ok
-    receipt.outputs.update(_assembly_stage_outputs(root, feature, stage, out))
+    attribution_block, reported_meter, ship_result = _stage_output_evidence(
+        out, ship=stage.module == "forgeline" and stage.name == "ship"
+    )
+    receipt.outputs.update(_assembly_stage_outputs(root, feature, out, ship_result))
     receipt.outputs["cli_action"].update(action_result)
-    receipt.attribution = _attribution_from_output(out)
-    attribution_block = receipt.attribution
-    module_meter, usage_reported = _meter_from_output(out)
+    receipt.attribution = attribution_block
+    module_meter = reported_meter if reported_meter is not None else Meter()
+    usage_reported = reported_meter is not None
     stage_meter = Meter(
         wall_ms=sw.wall_ms,
         model_calls=module_meter.model_calls,

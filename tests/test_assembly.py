@@ -2,6 +2,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from factoryline.assembly import DEFAULT_CHAIN, assemble
+
+
 import sys
 import pytest
 from factoryline.assurance import (
@@ -53,6 +55,23 @@ from factoryline.capability_packs import (
 )
 from factoryline.assembly import _cdte_gate
 from factoryline.continuation import _next_action
+
+
+def test_stage_output_evidence_uses_first_valid_meter_and_last_ship():
+    from factoryline.assembly import _stage_output_evidence
+
+    output = (
+        'log {broken\n{"meter":{"tokens_in":-1}}\n'
+        '{"receipt":{"meter":{"tokens_in":7}}}\n'
+        '{"shipped":false,"intent_traceable":false}\n'
+        '{"meter":{"tokens_in":99}}\n'
+        '{"shipped":true,"intent_traceable":false}\n'
+        '{"shipped":true,"intent_traceable":"unverified"}'
+    )
+    attribution, meter, ship = _stage_output_evidence(output, ship=True)
+    assert attribution is None
+    assert meter.tokens_in == 7
+    assert ship == {"shipped": True, "intent_traceable": False}
 
 
 def _detailed_result(output, *, ok=True, exit_code=0, cleanup=True, streams=True):
