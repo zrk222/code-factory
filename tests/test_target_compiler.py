@@ -461,3 +461,18 @@ def test_direct_app_scaffold_cleans_partial_generation(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="generation failed"):
         app_builder.app_from_prompt("Demo app", out_dir=dest)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_direct_app_scaffold_restores_empty_output_on_publish_failure(
+    tmp_path, monkeypatch
+):
+    def fail(*_args):
+        raise PermissionError("publish failed")
+
+    monkeypatch.setattr(app_builder, "_promote_staging", fail)
+    dest = tmp_path / "app"
+    dest.mkdir()
+    with pytest.raises(PermissionError, match="publish failed"):
+        app_builder.app_from_prompt("Demo app", out_dir=dest)
+    assert dest.is_dir() and not list(dest.iterdir())
+    assert list(tmp_path.iterdir()) == [dest]

@@ -984,9 +984,18 @@ def _staged_scaffold(out_dir: Path, name: str):
             raise ScaffoldOutputExists(
                 f"OUTPUT_EXISTS: refusing linked output: {destination}"
             )
-        if destination.exists():
+        had_empty_destination = destination.exists()
+        if had_empty_destination:
             destination.rmdir()
-        _promote_staging(staging, destination)
+        try:
+            _promote_staging(staging, destination)
+        except OSError:
+            if had_empty_destination:
+                try:
+                    destination.mkdir()
+                except FileExistsError:
+                    pass  # Preserve anything created by another writer.
+            raise
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
