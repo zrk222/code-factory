@@ -3,17 +3,17 @@
 import concurrent.futures
 import gc
 import hashlib
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.client import HTTPConnection
+from http.server import BaseHTTPRequestHandler
 import json
 import os
 from pathlib import Path
+from socketserver import TCPServer
 import sqlite3
 import sys
 import threading
 import time
 import tracemalloc
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
 
 def digest(value):
@@ -75,13 +75,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def http_cases(bad):
-    server = HTTPServer(("127.0.0.1", 0), Handler)
+    # HTTPServer resolves a hostname at bind time; this fixture only uses loopback.
+    server = TCPServer(("127.0.0.1", 0), Handler)
     server.sessions = {"owner": True, "revoked_session": True}
     server.cache = {}
     server.owner_cache_hits = []
     server.bad = bad
-    thread = threading.Thread(target=server.serve_forever)
+    thread = threading.Thread(target=server.serve_forever, args=(0.01,))
     thread.start()
+    client = HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
     cases = []
     try:
         for phase in ("cold", "warm", "post_revocation"):
@@ -90,24 +92,13 @@ def http_cases(bad):
                 # Prime a real initially valid session, then revoke before its matrix probe.
                 if relation == "revoked_session" and phase != "post_revocation":
                     server.sessions[relation] = True
-                    with urlopen(
-                        Request(
-                            f"http://127.0.0.1:{server.server_port}/x",
-                            headers={"Authorization": relation},
-                        ),
-                        timeout=2,
-                    ) as prime:
+                    client.request("GET", "/x", headers={"Authorization": relation})
+                    with client.getresponse() as prime:
+                        assert prime.status == 200
                         prime.read()
                     server.sessions.pop(relation)
-                request = Request(
-                    f"http://127.0.0.1:{server.server_port}/x",
-                    headers={"Authorization": relation},
-                )
-                try:
-                    response = urlopen(request, timeout=2)
-                except HTTPError as error:
-                    response = error
-                with response:
+                client.request("GET", "/x", headers={"Authorization": relation})
+                with client.getresponse() as response:
                     body = json.loads(response.read())
                     cases.append(
                         dict(
@@ -115,13 +106,14 @@ def http_cases(bad):
                             surface_id="api",
                             phase=phase,
                             relation=relation,
-                            status=response.code,
+                            status=response.status,
                             tenant_data_sha256=digest(body) if body else None,
                             fields=list(body),
                             mutation_effect=False,
                         )
                     )
     finally:
+        client.close()
         server.shutdown()
         thread.join()
         server.server_close()
@@ -275,21 +267,21 @@ def measured_run(delay):
     samples, latencies, cpus = [], [], []
     failures = 0
     db = database()
-    start = time.monotonic()
+    start = time.perf_counter()
     for _ in range(10):
-        tick = time.monotonic()
+        tick = time.perf_counter()
         cpu = time.process_time()
         failures += db.execute("SELECT SUM(amount) FROM orders").fetchone() != (1,)
         time.sleep(delay)
-        latencies.append(time.monotonic() - tick)
+        latencies.append(time.perf_counter() - tick)
         # Pace outside request latency; sample CPU across the full paced interval.
         time.sleep(0.1)
-        cpus.append(100 * (time.process_time() - cpu) / (time.monotonic() - tick))
+        cpus.append(100 * (time.process_time() - cpu) / (time.perf_counter() - tick))
         samples.append(tracemalloc.get_traced_memory()[0])
-    elapsed = time.monotonic() - start
+    elapsed = time.perf_counter() - start
     db.close()
     gc.collect()
-    cooldown = time.monotonic()
+    cooldown = time.perf_counter()
     time.sleep(1)
     retained = [tracemalloc.get_traced_memory()[0] for _ in range(3)]
     return dict(
@@ -298,7 +290,7 @@ def measured_run(delay):
         workload_sha256=D,
         environment_sha256=D,
         soak_seconds=elapsed,
-        cooldown_seconds=time.monotonic() - cooldown,
+        cooldown_seconds=time.perf_counter() - cooldown,
         correctness_failures=failures,
     ), {"samples": samples, "retained": retained, "cpu": max(cpus)}
 

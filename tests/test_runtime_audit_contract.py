@@ -303,7 +303,12 @@ def test_signed_six_lane_real_workloads_persist_human_review_receipt(tmp_path):
     output = tmp_path / ".factory" / "runtime-audits"
     result = execute_runtime_audit(plan_path, trust, pin, tmp_path, D, output)
     receipt = result["receipt"]
-    assert receipt["decision"] == "READY_FOR_HUMAN_REVIEW", receipt["lanes"]
+    failures = {
+        lane["lane"]: (lane["state"], lane["finding"], lane["details"])
+        for lane in receipt["lanes"]
+        if lane["state"] != "PASS"
+    }
+    assert receipt["decision"] == "READY_FOR_HUMAN_REVIEW", failures
     assert receipt["release_approval"] is False
     assert receipt["repair_queue"] == []
     assert {lane["state"] for lane in receipt["lanes"]} == {"PASS"}
@@ -337,6 +342,7 @@ def test_workload_helpers_measure_http_revocation_resources_and_bind_observation
     monkeypatch,
     capsys,
 ):
+    import socket
     import tracemalloc
     from fixtures import runtime_six_lane_worker
     from fixtures.runtime_six_lane_worker import (
@@ -367,6 +373,11 @@ def test_workload_helpers_measure_http_revocation_resources_and_bind_observation
             Handler.log_message(self, *args)
 
     monkeypatch.setattr(runtime_six_lane_worker, "Handler", ObservedHandler)
+
+    def unexpected_lookup(*_):
+        raise AssertionError("loopback fixture must not perform a hostname lookup")
+
+    monkeypatch.setattr(socket, "getfqdn", unexpected_lookup)
     cases = http_cases(False)
     assert calls == {"get": 14, "log": 14}
     captured = capsys.readouterr()
