@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 import json
 
 from .app_builder import (
@@ -1071,7 +1071,7 @@ def _scaffold_app_target(
 
 def _write_proof_contract(
     root: Path, name: str, target: str, manifest: dict[str, Any], source_sha256: str
-) -> tuple[dict[str, Any], list[str]]:
+) -> tuple[dict[str, Any], list[str], list[str]]:
     if not (root / "pyproject.toml").exists():
         _write(
             root / "pyproject.toml",
@@ -1096,14 +1096,11 @@ testpaths = ["tests"]
         "MERMAID_PROOF_WRITTEN",
         "OUTPUT_MERMAID_MAP_WRITTEN",
     ]
-    files = sorted(
-        path
-        for path in root.rglob("*")
-        if path.is_file() and path.name != "target-compile-receipt.json"
-    )
+    files = cast(list[str], output_map["files"])
     relative_hashes = {
-        str(path.relative_to(root)).replace("\\", "/"): _file_sha(path)
+        path: _file_sha(root / path)
         for path in files
+        if path.rsplit("/", 1)[-1] != "target-compile-receipt.json"
     }
     receipt = {
         "schema": COMPILE_RECEIPT_SCHEMA,
@@ -1122,7 +1119,7 @@ testpaths = ["tests"]
     }
     _write_json(root / ".factory" / "target-compile-receipt.json", receipt)
     markers.append("COMPILE_RECEIPT_BOUND")
-    return receipt, markers
+    return receipt, markers, files
 
 
 def _generate_worker(
@@ -1280,7 +1277,7 @@ def _compile(
                 source_sha256,
                 deployment_profile,
             )
-            receipt, proof_markers = _write_proof_contract(
+            receipt, proof_markers, files = _write_proof_contract(
                 staging, resolved_name, target, manifest, source_sha256
             )
             markers.extend(proof_markers)
@@ -1288,11 +1285,6 @@ def _compile(
         raise TargetCompileError(
             "OUTPUT_EXISTS", str(error).partition(": ")[2]
         ) from error
-    files = sorted(
-        str(path.relative_to(destination)).replace("\\", "/")
-        for path in destination.rglob("*")
-        if path.is_file()
-    )
     return {
         "schema": "factory.target_compile_result.v1",
         "status": "compiled_blocked",
