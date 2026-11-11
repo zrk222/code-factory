@@ -11930,6 +11930,22 @@ def _canary_lf_text(value):
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
+@pytest.fixture(scope="module")
+def clean_readback_control(tmp_path_factory):
+    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
+    recorder = (
+        Path(__file__).parents[1]
+        / "plugins"
+        / "code-factory-session-recorder"
+        / "scripts"
+        / "record_hook.py"
+    ).read_bytes()
+    baseline = tmp_path_factory.mktemp("readback-control") / "baseline"
+    _write_reported_command_canary(baseline, original, recorder)
+    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    return original, recorder
+
+
 @pytest.mark.parametrize(
     "test_old,test_new,recorder_old,recorder_new",
     [
@@ -11959,19 +11975,11 @@ def _canary_lf_text(value):
     ],
 )
 def test_changed_readback_environment_or_escaping_source_path_keeps_finding(
-    tmp_path, test_old, test_new, recorder_old, recorder_new
+    tmp_path, clean_readback_control, test_old, test_new, recorder_old, recorder_new
 ):
-    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
-    recorder = (
-        Path(__file__).parents[1]
-        / "plugins"
-        / "code-factory-session-recorder"
-        / "scripts"
-        / "record_hook.py"
-    ).read_bytes()
-    baseline = tmp_path / "baseline"
-    _write_reported_command_canary(baseline, original, recorder)
-    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    original, recorder = clean_readback_control
+    # Preserve the same file layout for each independently scanned case.
+    _write_reported_command_canary(tmp_path / "baseline", original, recorder)
     test_text = original.decode("utf-8")
     recorder_text = recorder.decode("utf-8")
     if test_old:
