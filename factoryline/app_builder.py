@@ -1203,16 +1203,11 @@ export default defineConfig({ plugins: [react()] });
         source_sha256=sha256(prd_text.encode("utf-8")).hexdigest(),
         status="compiled_blocked",
     )
-    paths = sorted(
-        str(path.relative_to(out_dir)).replace("\\", "/")
-        for path in out_dir.rglob("*")
-        if path.is_file()
-    )
     return {
         "schema": "factory.app_scaffold.v1",
         "app": blueprint.name,
         "out_dir": str(published_dir),
-        "files": paths,
+        "files": sorted(path.replace("\\", "/") for path in output_map["files"]),
         "output_map": str(published_dir / str(output_map["path"])),
         "output_map_sha256": output_map["sha256"],
         "markers": ["APP_OUTPUT_MAP_WRITTEN"],
