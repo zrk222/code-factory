@@ -178,7 +178,7 @@ def _forge_trace_fields(
 
 
 def _forge_intent_trace(
-    root: Path, feature: str, forge_result: dict | None
+    root: Path, feature: str, output: str | dict | None
 ) -> dict | None:
     """Adapt one explicit Forge ship result into a Code Factory receipt.
 
@@ -194,6 +194,14 @@ def _forge_intent_trace(
     A true traceability claim also requires current shared SpecLine acceptance
     validation; CLI words, matching receipt text or a checksum alone cannot pass.
     """
+    forge_result = output
+    if isinstance(output, str):
+        forge_result = None
+        for payload in _output_objects(output):
+            if isinstance(payload.get("shipped"), bool) and isinstance(
+                payload.get("intent_traceable"), bool
+            ):
+                forge_result = payload
     if forge_result is None:  # REQ_INTENT_ADAPTER_FAIL_CLOSED
         return None
     lines = _forge_receipt_lines(root, feature)
