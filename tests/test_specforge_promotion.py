@@ -5,6 +5,50 @@ from factoryline.specforge_promotion import verify_specforge_promotion
 from factoryline.revenueforge import RevenueForgeError
 
 
+@pytest.mark.parametrize("required_gates", [[], ["unrelated_gate"]])
+def test_specforge_promotion_requires_each_obligation_gate(tmp_path, required_gates):
+    from factoryline.specforge_promotion import _sha
+
+    intent = {"mission": "review code"}
+    spec = tmp_path / "spec.json"
+    forge = tmp_path / "forge.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "schema": "factory.specline.delivery-packet.v1",
+                "intent": intent,
+                "approval": {"origin": "human_confirmed"},
+                "obligations": [
+                    {
+                        "id": "proof",
+                        "forbidden_behavior": "hollow test",
+                        "gate": "first_proof",
+                    }
+                ],
+                "required_gates": required_gates,
+            }
+        ),
+        encoding="utf-8",
+    )
+    forge.write_text(
+        json.dumps(
+            {
+                "schema": "factory.forgeline.delivery-state.v1",
+                "intent_sha256": _sha(intent),
+                "state": "verified",
+                "gates": dict.fromkeys(required_gates, True),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "promotion.json"
+    receipt = verify_specforge_promotion(tmp_path, spec, forge, output)
+    assert receipt["marker"] == "SPECFORGE_PROMOTION_BLOCKED"
+    assert receipt["findings"] == ["E_SPECLINE_OBLIGATION_LOOSE"]
+    assert json.loads(output.read_text(encoding="utf-8"))["ok"] is False
+
+
 def test_specforge_promotion_fails_closed_on_intent_drift_and_missing_selected_gates(
     tmp_path: Path,
 ):
