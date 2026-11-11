@@ -252,13 +252,9 @@ def node_trial_session():
         session.close()
 
 
-@pytest.fixture(autouse=True)
-def isolated_ty_host_configuration(request, monkeypatch, tmp_path_factory):
+@pytest.fixture
+def isolated_ty_host_configuration(monkeypatch, tmp_path_factory):
     """Type-intent fixtures declare their own checker and Git configuration."""
-    if request.path.name != "test_review_audits.py" or not (
-        request.node.originalname or ""
-    ).startswith("test_ty_"):
-        return
     host = tmp_path_factory.mktemp("ty-host")
     for name in ("HOME", "USERPROFILE", "APPDATA", "XDG_CONFIG_HOME", "ProgramFiles"):
         directory = host / name.lower()
