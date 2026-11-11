@@ -344,6 +344,7 @@ def test_workload_helpers_measure_http_revocation_resources_and_bind_observation
 ):
     import socket
     import tracemalloc
+    from types import SimpleNamespace
     from fixtures import runtime_six_lane_worker
     from fixtures.runtime_six_lane_worker import (
         Handler,
@@ -352,6 +353,7 @@ def test_workload_helpers_measure_http_revocation_resources_and_bind_observation
         http_cases,
         measured_run,
         process_memory_percent,
+        wait_for_window,
     )
 
     observation = hashed_observation(mode="timeout", observed=True)
@@ -398,6 +400,15 @@ def test_workload_helpers_measure_http_revocation_resources_and_bind_observation
     assert run["soak_seconds"] >= 1 and run["cooldown_seconds"] >= 1
     assert len(resource["samples"]) == 10 and min(resource["samples"]) > 0
     assert len(resource["retained"]) == 3 and min(resource["retained"]) > 0
+    clock = iter((0.0, 0.99, 1.001))
+    sleeps = []
+    monkeypatch.setattr(
+        runtime_six_lane_worker,
+        "time",
+        SimpleNamespace(perf_counter=lambda: next(clock), sleep=sleeps.append),
+    )
+    assert wait_for_window(0) >= 1
+    assert sleeps == pytest.approx([1, 0.01])
 
 
 def test_signed_execution_policy_requires_safe_bounded_parallelism(tmp_path):

@@ -263,6 +263,15 @@ def migration(bad):
     )
 
 
+def wait_for_window(start):
+    """Return an observed one-second window even when a sleep wakes early."""
+    elapsed = time.perf_counter() - start
+    while elapsed < 1:
+        time.sleep(1 - elapsed)
+        elapsed = time.perf_counter() - start
+    return elapsed
+
+
 def measured_run(delay):
     samples, latencies, cpus = [], [], []
     failures = 0
@@ -278,11 +287,10 @@ def measured_run(delay):
         time.sleep(0.1)
         cpus.append(100 * (time.process_time() - cpu) / (time.perf_counter() - tick))
         samples.append(tracemalloc.get_traced_memory()[0])
-    elapsed = time.perf_counter() - start
+    elapsed = wait_for_window(start)
     db.close()
     gc.collect()
-    cooldown = time.perf_counter()
-    time.sleep(1)
+    cooldown = wait_for_window(time.perf_counter())
     retained = [tracemalloc.get_traced_memory()[0] for _ in range(3)]
     return dict(
         observations=len(latencies),
@@ -290,7 +298,7 @@ def measured_run(delay):
         workload_sha256=D,
         environment_sha256=D,
         soak_seconds=elapsed,
-        cooldown_seconds=time.perf_counter() - cooldown,
+        cooldown_seconds=cooldown,
         correctness_failures=failures,
     ), {"samples": samples, "retained": retained, "cpu": max(cpus)}
 
