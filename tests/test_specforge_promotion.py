@@ -5,6 +5,25 @@ from factoryline.specforge_promotion import verify_specforge_promotion
 from factoryline.revenueforge import RevenueForgeError
 
 
+def test_native_promotion_rejects_unverified_ship_claim(tmp_path):
+    spec = {"schema": "specline.intent-envelope.v1", "feature": "refunds"}
+    spec_path = tmp_path / "spec.json"
+    forge_path = tmp_path / "forge.json"
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    forge_path.write_text(
+        json.dumps(
+            {"shipped": True, "intent_traceable": True, "intent_evidence": spec}
+        ),
+        encoding="utf-8",
+    )
+    receipt = verify_specforge_promotion(
+        tmp_path, spec_path, forge_path, Path("promotion.json")
+    )
+    assert receipt["ok"] is False
+    assert receipt["findings"] == ["E_SPECFORGE_NATIVE_HANDOFF_UNVERIFIED"]
+    assert receipt["authority"]["release"] is False
+
+
 @pytest.mark.parametrize("required_gates", [[], ["unrelated_gate"]])
 def test_specforge_promotion_requires_each_obligation_gate(tmp_path, required_gates):
     from factoryline.specforge_promotion import _sha
