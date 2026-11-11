@@ -10,14 +10,13 @@ provider.
 
 from __future__ import annotations
 
+from .contract import write_atomic_json as _atomic_json
 from . import canonical_json_compat_bytes as _canonical
 
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
-import tempfile
 from typing import Any
 
 from .appforge_evidence_kit import _read_candidate
@@ -520,21 +519,6 @@ def _handoff(provider: dict[str, Any]) -> list[str]:
         f"In the authenticated App Store Connect CLI environment, review strict validation and a dry-run staging plan for app id `{provider['app_store_connect_app_id']}` before any submit action.",
         "After any manual provider action, read back the distinct upload, processing, tester delivery, and review states from App Store Connect.",
     ]
-
-
-def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
 
 
 def create_release_rehearsal(
