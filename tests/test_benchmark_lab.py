@@ -84,6 +84,10 @@ def test_precision_gate_recomputes_and_rejects_unchanged_aggregate_claim():
     assert result["state"] == "NO_PRECISION_GAIN"
     assert result["metrics"]["candidate"]["active"]["precision"] == 0.5
     assert result["metrics"]["candidate"]["active"]["unclear_inclusive_rate"] == 1 / 3
+    assert result["metrics"]["candidate"]["active"]["precision_label_bounds"] == [
+        1 / 3,
+        2 / 3,
+    ]
 
 
 def test_precision_gate_requires_registered_delta_and_keeps_abstentions_visible():
@@ -101,10 +105,10 @@ def test_precision_gate_requires_registered_delta_and_keeps_abstentions_visible(
     assert result["metrics"]["candidate"]["raw"]["FP"] == 1
     assert result["publication_eligible"] is False
     after["unlabelled_outputs"] = 75
-    assert (
-        _gain["evaluate"](contract, before, after)["unlabelled_outputs"]["candidate"]
-        == 75
-    )
+    blocked = _gain["evaluate"](contract, before, after)
+    assert blocked["state"] == "BLOCKED"
+    assert blocked["unlabelled_outputs"]["candidate"] == 75
+    assert blocked["reasons"] == ["candidate: reconcile 75 unlabelled outputs"]
 
 
 @pytest.mark.parametrize(
@@ -189,8 +193,14 @@ def test_precision_gate_rejects_invalid_document_shape(payload):
 
 
 @pytest.mark.parametrize("valid", [True, False])
-def test_precision_cli_writes_receipt_for_no_gain_and_invalid_json(tmp_path, valid):
+def test_precision_cli_writes_receipt_and_operator_summary(tmp_path, valid):
     contract, before, after = _precision_pair()
+    before["elapsed_seconds"] = 4
+    after["elapsed_seconds"] = 3.5
+    after["cases"][0].update(active=False, review=True)
+    contract["expected_changes"] = {
+        "a": {"before": ["raw", "active"], "after": ["raw", "review"]}
+    }
     for name, value in (("baseline", before), ("candidate", after)):
         path = tmp_path / f"{name}.json"
         path.write_text(json.dumps(value))
@@ -203,15 +213,44 @@ def test_precision_cli_writes_receipt_for_no_gain_and_invalid_json(tmp_path, val
     output = tmp_path / "result.json"
     script = Path(__file__).resolve().parents[1] / "scripts/verify_precision_gain.py"
     result = subprocess.run(
-        [sys.executable, str(script), str(path), "--out", str(output)],
+        [sys.executable, str(script), str(path), "--out", str(output), "--summary"],
         capture_output=True,
         text=True,
         timeout=20,
     )
     assert result.returncode == 2
-    assert json.loads(output.read_text())["state"] == (
-        "NO_PRECISION_GAIN" if valid else "INVALID"
-    )
+    receipt = json.loads(output.read_text())
+    assert receipt["state"] == ("BLOCKED" if valid else "INVALID")
+    if valid:
+        assert "Known TP losses: a" in result.stdout
+        assert "1 known TPs outside active, 1 for review" in result.stdout
+        assert "Recorded runtime: 4.00s -> 3.50s" in result.stdout
+        assert receipt["elapsed_seconds"]["delta"] == -0.5
+        assert receipt["contract_sha256"] == _gain["digest"](path.read_bytes())
+        assert receipt["evidence"] == {
+            name: contract[name] for name in ("baseline", "candidate")
+        }
+    else:
+        assert result.stdout.startswith("INVALID")
+
+
+def test_precision_cli_cannot_overwrite_bound_observation(tmp_path, capsys):
+    contract, before, _after = _precision_pair()
+    observation = tmp_path / "baseline.json"
+    payload = json.dumps(before).encode()
+    observation.write_bytes(payload)
+    contract["baseline"] = {
+        "path": observation.name,
+        "sha256": _gain["digest"](payload),
+    }
+    path = tmp_path / "contract.json"
+    path.write_text(json.dumps(contract))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sys, "argv", ["verify", str(path), "--out", str(observation)])
+        with pytest.raises(SystemExit, match="2"):
+            _gain["main"]()
+    assert "must not replace an observation" in capsys.readouterr().err
+    assert observation.read_bytes() == payload
 
 
 @pytest.mark.parametrize("label", ["TP", "UNCLEAR"])
