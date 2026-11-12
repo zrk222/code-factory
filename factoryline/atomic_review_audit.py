@@ -1072,6 +1072,12 @@ def _round_delta(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     current_ids = {item["finding_id"] for item in findings}
     if previous is None:
+        if not complete:
+            return {
+                "state": "indeterminate",
+                "candidate_sha256": candidate,
+                "observed_ids": sorted(current_ids),
+            }, {"seen_ids": [], "no_longer_reported_ids": []}
         return {
             "state": "no_baseline",
             "added": sorted(current_ids),
@@ -1090,8 +1096,12 @@ def _round_delta(
             "candidate_sha256": candidate,
             "observed_ids": sorted(current_ids),
         }, previous["history"]
-    old_ids = {item["finding_id"] for item in previous["findings"]}
     history = previous["history"]
+    old_ids = (
+        set(history["seen_ids"]) - set(history["no_longer_reported_ids"])
+        if previous["state"] == "INDETERMINATE"
+        else {item["finding_id"] for item in previous["findings"]}
+    )
     ever_seen = set(history.get("seen_ids", [])) | old_ids
     old_missing = set(history.get("no_longer_reported_ids", []))
     delta = {
@@ -1204,6 +1214,44 @@ def evaluate_review_round(
             else "All declared review cells were supplied with no reported findings; this is advisory only, not proof of code correctness."
         ),
     }
+    core["a2a_message"] = _review_handoff(core)
+    result = {**core, "receipt_sha256": _digest(core)}
+    _write_review_receipt(target, result)
+    result["path"] = target.relative_to(root).as_posix()
+    return result
+
+
+def _write_review_receipt(target, result):
+    """Persist the canonical receipt atomically."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(_canonical(result) + b"\n")
+        temporary.replace(target)
+    except OSError as exc:
+        raise ReviewConvergenceError(
+            "E_REVIEW_WRITE", "could not atomically write receipt"
+        ) from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _review_handoff(core):
+    """Build the reply-correlated message from the same sealed review facts."""
+    round_id, round_transport = core["round_id"], core["round_transport"]
+    contract_digest, candidate = core["contract_sha256"], core["candidate_sha256"]
+    reviewers, coverage = core["required_reviewers"], core["coverage"]
+    findings, delta = core["findings"], core["review_delta"]
+    incomplete = core["incomplete_cells"]
     handoff_payload = {
         "schema": A2A_HANDOFF_SCHEMA,
         "a2a_version": A2A_VERSION,
@@ -1221,7 +1269,7 @@ def evaluate_review_round(
             else "review_submitted_advisory"
         ),
         "bindings": {
-            "intent_sha256": contract["intent_sha256"],
+            "intent_sha256": core["intent_sha256"],
             "contract_sha256": contract_digest,
             "candidate_sha256": candidate,
             "receipt_core_sha256": _digest(core),
@@ -1245,7 +1293,7 @@ def evaluate_review_round(
                         "outcome": "supported | finding | unknown",
                         "findings": [],
                     }
-                    for criterion_id in sorted(criteria)
+                    for criterion_id in core["criterion_ids"]
                 ],
             },
         },
@@ -1272,27 +1320,4 @@ def evaluate_review_round(
         a2a_message["contextId"] = round_transport["context_id"]
     if round_transport["task_id"] is not None:
         a2a_message["taskId"] = round_transport["task_id"]
-    core["a2a_message"] = a2a_message
-    result = {**core, "receipt_sha256": _digest(core)}
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            prefix=f".{target.name}.",
-            suffix=".tmp",
-            dir=target.parent,
-            delete=False,
-        ) as stream:
-            temporary = Path(stream.name)
-            stream.write(_canonical(result) + b"\n")
-        temporary.replace(target)
-    except OSError as exc:
-        raise ReviewConvergenceError(
-            "E_REVIEW_WRITE", "could not atomically write receipt"
-        ) from exc
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-    result["path"] = target.relative_to(root).as_posix()
-    return result
+    return a2a_message

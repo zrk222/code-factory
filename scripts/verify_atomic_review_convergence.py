@@ -203,6 +203,111 @@ def main():
     html = (root / "factoryline/graph_ops.html").read_text(encoding="utf-8")
     script = html.split("<script>", 1)[1].split("</script>", 1)[0]
     run("browser-script-syntax", ["node", "--check"], script)
+    _verify_python_profiles(output, run, write, artifact, results)
+
+    review = output / "applicability-review.json"
+    write(
+        review,
+        {
+            "scope": "Local review reconciliation, CLI/MCP/WebMCP projections and optional CI artifacts",
+            "accessibility": "No layout, focus, ARIA, navigation or new interactive control changes. Only existing status text and agent tool registration change. Rendered accessibility of the existing Graph Ops page is outside this scoped claim.",
+            "limits": "Local fixtures exercise parsing, receipt integrity, CLI/MCP round trips and script syntax; they do not authenticate external agents or prove remote task execution. Spec mutation checks validate requirement traceability. Supported Python tests run on 3.10, 3.11 and 3.12; Python 3.13 support is not declared.",
+        },
+    )
+    categories = [
+        "happy_path",
+        "validation",
+        "failure_recovery",
+        "state_consistency",
+        "security_privacy",
+        "performance",
+        "external_effects",
+    ]
+    requirements = {
+        "happy_path": "Complete local round and CLI/MCP handoff return correlated advisory receipts.",
+        "validation": "Malformed, duplicate and missing inputs are rejected or indeterminate.",
+        "failure_recovery": "Tampering, contract drift and missing A2A context are rejected with stable errors.",
+        "state_consistency": "Repeated messages preserve stable receipts and prior-round lineage.",
+        "security_privacy": "Path escapes, input overwrites and authority escalation are rejected.",
+        "performance": "Unrelated CLI imports leave the convergence engine unloaded; no latency improvement claimed.",
+        "external_effects": "MCP reads preserve local files and CI convergence remains advisory; no remote sends.",
+    }
+    applicability = [
+        {"category": c, "applicable": True, "reason": requirements[c]}
+        for c in categories
+    ]
+    applicability.append(
+        {
+            "category": "accessibility",
+            "applicable": False,
+            "reason": "No interaction/layout/ARIA changes; existing status text only.",
+            "review_evidence": artifact(review, "review"),
+        }
+    )
+    profiles = [r["name"] for r in results if r["name"].startswith("tests-")]
+    checks = [
+        {"id": c, "requirement": requirements[c], "category": c, "profiles": profiles}
+        for c in categories
+    ]
+    checks += [
+        {
+            "id": r["name"],
+            "requirement": "The exact recorded governance or static verification command exits zero.",
+            "category": "validation",
+            "profiles": ["local-windows"],
+        }
+        for r in results
+        if r["name"] not in profiles
+    ]
+    contract = {
+        "schema": "factory.workflow-audit.contract.v1",
+        "project_id": "atomic-review-convergence",
+        "candidate": candidate,
+        "applicability": applicability,
+        "checks": checks,
+    }
+    contract_path = output / "contract.json"
+    write(contract_path, contract)
+    observations = _workflow_observations(output, checks, profiles, results, artifact)
+    observations_path = output / "observations.json"
+    write(
+        observations_path,
+        {
+            "schema": "factory.workflow-audit.observations.v1",
+            "contract_sha256": sha256(contract_path.read_bytes()).hexdigest(),
+            "candidate_sha256": sha256(canonical(candidate)).hexdigest(),
+            "observations": observations,
+        },
+    )
+    code = run(
+        "workflow-evidence-gate",
+        [
+            "factory",
+            "audit",
+            "workflows",
+            "--root",
+            str(root),
+            "--contract",
+            contract_path.relative_to(root).as_posix(),
+            "--observations",
+            observations_path.relative_to(root).as_posix(),
+            "--json",
+        ],
+    )
+    write(
+        output / "summary.json",
+        {
+            "candidate": candidate,
+            "results": results,
+            "evidence_directory": output.relative_to(root).as_posix(),
+        },
+    )
+    print(f"Evidence: {output}")
+    return 1 if code or any(not r["passed"] for r in results) else 0
+
+
+def _verify_python_profiles(output, run, write, artifact, results):
+    """Run supported Python profiles and compare their canonical receipt bytes."""
     fixture_digests = []
     for version in ("3.10", "3.11", "3.12"):
         argv = (
@@ -287,69 +392,9 @@ def main():
         }
     )
 
-    review = output / "applicability-review.json"
-    write(
-        review,
-        {
-            "scope": "Local review reconciliation, CLI/MCP/WebMCP projections and optional CI artifacts",
-            "accessibility": "No layout, focus, ARIA, navigation or new interactive control changes. Only existing status text and agent tool registration change. Rendered accessibility of the existing Graph Ops page is outside this scoped claim.",
-            "limits": "Local fixtures exercise parsing, receipt integrity, CLI/MCP round trips and script syntax; they do not authenticate external agents or prove remote task execution. Spec mutation checks validate requirement traceability. Supported Python tests run on 3.10, 3.11 and 3.12; Python 3.13 support is not declared.",
-        },
-    )
-    categories = [
-        "happy_path",
-        "validation",
-        "failure_recovery",
-        "state_consistency",
-        "security_privacy",
-        "performance",
-        "external_effects",
-    ]
-    requirements = {
-        "happy_path": "Complete local round and CLI/MCP handoff return correlated advisory receipts.",
-        "validation": "Malformed, duplicate and missing inputs are rejected or indeterminate.",
-        "failure_recovery": "Tampering, contract drift and missing A2A context are rejected with stable errors.",
-        "state_consistency": "Repeated messages preserve stable receipts and prior-round lineage.",
-        "security_privacy": "Path escapes, input overwrites and authority escalation are rejected.",
-        "performance": "Unrelated CLI imports leave the convergence engine unloaded; no latency improvement claimed.",
-        "external_effects": "MCP reads preserve local files and CI convergence remains advisory; no remote sends.",
-    }
-    applicability = [
-        {"category": c, "applicable": True, "reason": requirements[c]}
-        for c in categories
-    ]
-    applicability.append(
-        {
-            "category": "accessibility",
-            "applicable": False,
-            "reason": "No interaction/layout/ARIA changes; existing status text only.",
-            "review_evidence": artifact(review, "review"),
-        }
-    )
-    profiles = [r["name"] for r in results if r["name"].startswith("tests-")]
-    checks = [
-        {"id": c, "requirement": requirements[c], "category": c, "profiles": profiles}
-        for c in categories
-    ]
-    checks += [
-        {
-            "id": r["name"],
-            "requirement": "The exact recorded governance or static verification command exits zero.",
-            "category": "validation",
-            "profiles": ["local-windows"],
-        }
-        for r in results
-        if r["name"] not in profiles
-    ]
-    contract = {
-        "schema": "factory.workflow-audit.contract.v1",
-        "project_id": "atomic-review-convergence",
-        "candidate": candidate,
-        "applicability": applicability,
-        "checks": checks,
-    }
-    contract_path = output / "contract.json"
-    write(contract_path, contract)
+
+def _workflow_observations(output, checks, profiles, results, artifact):
+    """Join executed checks to each declared workflow evidence profile."""
     observations = []
     for check in checks:
         for profile in check["profiles"]:
@@ -381,41 +426,7 @@ def main():
                     "artifacts": artifacts,
                 }
             )
-    observations_path = output / "observations.json"
-    write(
-        observations_path,
-        {
-            "schema": "factory.workflow-audit.observations.v1",
-            "contract_sha256": sha256(contract_path.read_bytes()).hexdigest(),
-            "candidate_sha256": sha256(canonical(candidate)).hexdigest(),
-            "observations": observations,
-        },
-    )
-    code = run(
-        "workflow-evidence-gate",
-        [
-            "factory",
-            "audit",
-            "workflows",
-            "--root",
-            str(root),
-            "--contract",
-            contract_path.relative_to(root).as_posix(),
-            "--observations",
-            observations_path.relative_to(root).as_posix(),
-            "--json",
-        ],
-    )
-    write(
-        output / "summary.json",
-        {
-            "candidate": candidate,
-            "results": results,
-            "evidence_directory": output.relative_to(root).as_posix(),
-        },
-    )
-    print(f"Evidence: {output}")
-    return 1 if code or any(not r["passed"] for r in results) else 0
+    return observations
 
 
 if __name__ == "__main__":

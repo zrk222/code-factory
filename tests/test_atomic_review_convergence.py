@@ -290,6 +290,39 @@ def test_tracks_new_no_longer_reported_and_reopened_findings(tmp_path: Path) -> 
     assert third["review_delta"]["reopened"] == [finding_id]
 
 
+def test_incomplete_round_preserves_last_complete_finding_baseline(tmp_path):
+    contract = _contract(reviewers=("reviewer-a",))
+    first = _evaluate(
+        tmp_path, contract, _round(contract, finding=_finding()), "first.json"
+    )
+    finding_id = first["findings"][0]["finding_id"]
+    partial = _round(contract, round_id="round-2")
+    partial["reviews"] = []
+    prior = "first.json"
+    for index, payload in enumerate(
+        (
+            partial,
+            _round(contract, round_id="round-3"),
+            _round(contract, round_id="round-4", finding=_finding()),
+        ),
+        2,
+    ):
+        _write_json(tmp_path, "round.json", payload)
+        output = f"result-{index}.json"
+        receipt = evaluate_review_round(
+            tmp_path, "contract.json", "round.json", output, previous_path=prior
+        )
+        delta = receipt["review_delta"]
+        if index == 2:
+            assert delta["state"] == "indeterminate"
+            assert receipt["history"] == first["history"]
+        elif index == 3:
+            assert delta["no_longer_reported"] == [finding_id]
+        else:
+            assert delta["reopened"] == [finding_id]
+        prior = output
+
+
 def test_rejects_prior_contract_drift_and_tampering(tmp_path: Path) -> None:
     contract = _contract(reviewers=("reviewer-a",))
     _evaluate(tmp_path, contract, _round(contract), "prior.json")
@@ -565,6 +598,10 @@ def test_mcp_reads_convergence_and_exports_a2a_without_writing(tmp_path: Path) -
 
 
 def test_graph_ops_reads_conventional_latest_receipt(tmp_path: Path) -> None:
+    from factoryline.atomic_review_audit import (
+        append_review_convergence,
+        review_convergence_projection,
+    )
     from factoryline.graph_ops import graph_ops_snapshot
 
     contract = _contract(reviewers=("reviewer-a",))
@@ -578,6 +615,16 @@ def test_graph_ops_reads_conventional_latest_receipt(tmp_path: Path) -> None:
     )
 
     snapshot = graph_ops_snapshot(tmp_path)
+    nodes = []
+    projection = append_review_convergence(
+        {}, tmp_path, lambda _, **node: nodes.append(node)
+    )
+    assert (
+        projection
+        == review_convergence_projection(tmp_path)
+        == snapshot["review_convergence"]
+    )
+    assert len(nodes) == 1 and nodes[0]["facts"]["authority"] == projection["authority"]
     assert snapshot["review_convergence"]["state"] == "REVIEW_COMPLETE_ADVISORY"
     assert snapshot["review_convergence"]["latest"]["receipt_sha256"]
     assert snapshot["review_convergence"]["latest"]["a2a_handoff"]["available"] is True
