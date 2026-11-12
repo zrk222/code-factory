@@ -6346,6 +6346,10 @@ def test_streaming_ast_fingerprint_keeps_structure_locations_and_ignores_sidecar
 ):
     tree = ast.parse("value = [1, 2]\n")
     original = _audit_refactor._oracle_tree_fingerprint(tree)
+    # All supported interpreter jobs use the same independent fixture digest.
+    assert (
+        original == "46ddab3b8ba6ea9683653bd2037bde5a5cff1305bb9657e8c25b7bddaeb0099a"
+    )
     tree.body[0]._security_parent_scope = tree
     assert _audit_refactor._oracle_tree_fingerprint(tree) == original
     original_dump = ast.dump

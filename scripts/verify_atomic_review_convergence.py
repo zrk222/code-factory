@@ -28,6 +28,9 @@ SOURCES = [
     "tests/test_junie_taxonomy.py",
     "tests/test_deep_audit_surfaces.py",
     "tests/test_atomic_proof_adapter.py",
+    "tests/test_context_efficiency.py",
+    "tests/test_review_audits.py",
+    "factoryline/review_audits.py",
     "tests/test_atomic_review_convergence.py",
     "specs/atomic-review-convergence-v1.ssat.yaml",
     ".github/workflows/factory-pr-proof-review.yml",
@@ -199,6 +202,8 @@ def main():
                 "reportlab",
                 "--with",
                 "cryptography",
+                "--with",
+                "mypy==2.1.0",
                 "python",
             ]
         )
@@ -215,6 +220,19 @@ def main():
                 "--junitxml",
                 str(junit),
                 *TESTS,
+            ],
+        )
+        run(
+            f"ast-mypy-{version}",
+            [
+                *argv,
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "pytest_asyncio.plugin",
+                "tests/test_context_efficiency.py::test_streaming_ast_fingerprint_keeps_structure_locations_and_ignores_sidecars",
+                "tests/test_review_audits.py::test_security_scan_recognizes_individual_declared_static_type_oracle",
             ],
         )
         fixture_code = (
