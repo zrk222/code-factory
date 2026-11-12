@@ -201,12 +201,17 @@ def test_real_readonly_recorder_binds_already_applied_candidate(tmp_path, delete
     _admission(tmp_path)
     request = tmp_path / "request.json"
     payload = json.loads(request.read_text())
+    payload["id"] = "candidate-observation"
     payload["paths"] = ["service.py"]
     request.write_text(json.dumps(payload))
     passport = next((tmp_path / ".factory" / "loop-passports").rglob("*.json"))
     admission = Path(prepare_admission(tmp_path, passport, request)["path"])
     run = run_observed_session(
-        tmp_path, admission, manifest, [sys.executable, "-c", "pass"], "observed-run"
+        tmp_path,
+        admission,
+        manifest,
+        [sys.executable, "-c", "pass"],
+        "candidate-observation",
     )
     session = _session_evidence(tmp_path, Path(run["path"]))
     assert session["state"] == "verified_passed"
