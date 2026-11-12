@@ -3962,6 +3962,12 @@ def _session(root: Path, *, passed: bool) -> Path:
         _canonical(
             {
                 "schema": "factory.session-recorder.result.v1",
+                "candidate_inputs": {
+                    "schema": "factory.session-recorder.inputs.v1",
+                    "scopes": ["src/service.py"],
+                    "before": {"src/service.py": _sha(root / "src" / "service.py")},
+                    "after": {"src/service.py": _sha(root / "src" / "service.py")},
+                },
                 "workspace_delta": [
                     {
                         "path": "src/service.py",

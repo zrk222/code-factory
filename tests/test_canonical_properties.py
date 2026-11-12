@@ -10,6 +10,32 @@ import pytest
 from factoryline.enterprise_receipts import EnterpriseReceiptError, canonical_json
 
 
+def test_write_atomic_json_preserves_target_on_replace_failure(tmp_path, monkeypatch):
+    from factoryline.contract import write_atomic_json
+    import factoryline.contract as contract
+
+    target = tmp_path / "receipt.json"
+    write_atomic_json(target, {"value": "original"}, durable=True)
+    original = target.read_bytes()
+
+    def fail_replace(*args):
+        raise OSError("replacement unavailable")
+
+    monkeypatch.setattr(contract.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="replacement unavailable"):
+        write_atomic_json(target, {"value": "new"})
+    assert target.read_bytes() == original
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_receipt_stage_keeps_spec_and_plan_proof_keys_distinct():
+    from factoryline.protocol import receipt_stage
+
+    assert receipt_stage("specline", ["gate", "spec", "feature"]) == "gate-spec"
+    assert receipt_stage("specline", ["gate", "plan", "feature"]) == "gate-plan"
+    assert receipt_stage("forgeline", ["arch_gate", "feature"]) == "arch-gate"
+
+
 UNICODE_TEXT = st.text(
     alphabet=string.ascii_letters + string.digits + " -_./", max_size=24
 )

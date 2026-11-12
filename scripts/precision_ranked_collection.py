@@ -134,10 +134,9 @@ class _RegisteredDispatch:
         result = path.with_name("native.json")
         report = study.out / "reports" / "v2" / (case + ".json.gz")
         study.save(path, job, immutable=True)
-        if result.is_file():
-            prior = _validate_receipt(controller, job, controller.read(result), report)
-            if prior.get("reason") != DEFERRED:
-                return prior
+        prior = self._prior_receipt(job, result, report)
+        if prior is not None:
+            return prior
         if (
             monotonic() + study.execution["case_timeout_seconds"] > study.deadline
             or study.attempted >= study.execution["max_cases_per_invocation"]
@@ -161,6 +160,55 @@ class _RegisteredDispatch:
         )
         study.admit_case()
         return Launch(rank, job, result, report, command)
+
+    def _prior_receipt(self, job, result, report):
+        """Reuse valid observations unless registered recovery authorizes a retry."""
+        if not result.is_file():
+            return None
+        prior = _validate_receipt(
+            self.controller, job, self.controller.read(result), report
+        )
+        if prior.get("reason") == DEFERRED or self._retry_technical(job, prior, result):
+            return None
+        return prior
+
+    def _retry_technical(self, job, prior, result):
+        """Only a sealed opt-in policy may retry a transport failure once."""
+        policy = self.study.reg.get("technical_retry")
+        expected = {
+            "schema": "factory.precision.technical-retry.v1",
+            "max_retries": 1,
+            "reasons": [WORKER_ERROR],
+        }
+        if policy is None:
+            return False
+        if policy != expected:
+            raise ValueError("NATIVE_RETRY_POLICY_INVALID")
+        if (
+            self.controller.sha(self.study.registration_path)
+            != self.study.registration_sha
+        ):
+            raise ValueError("NATIVE_RETRY_REGISTRATION_CHANGED")
+        registered = self.controller.read(self.study.registration_path)
+        if registered.get("technical_retry") != policy:
+            raise ValueError("NATIVE_RETRY_REGISTRATION_CHANGED")
+        if prior.get("reason") != WORKER_ERROR or prior.get("state") != "INCOMPLETE":
+            return False
+        if (
+            monotonic() + self.study.execution["case_timeout_seconds"]
+            > self.study.deadline
+        ):
+            return False
+        if self.study.attempted >= self.study.execution["max_cases_per_invocation"]:
+            return False
+        attempt = result.with_name("native.attempt-1.json")
+        if attempt.exists():
+            _validate_receipt(
+                self.controller, job, self.controller.read(attempt), result
+            )
+            return False
+        self.study.save(attempt, prior, immutable=True)
+        return True
 
     def invoke(self, work):
         if not isinstance(work, Launch):

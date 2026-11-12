@@ -82,6 +82,12 @@ def _session(root: Path, *, passed: bool, changed_path: str = "src/service.py") 
     current = root / changed_path
     result = {
         "schema": "factory.session-recorder.result.v1",
+        "candidate_inputs": {
+            "schema": "factory.session-recorder.inputs.v1",
+            "scopes": [changed_path],
+            "before": {changed_path: _file_sha(current) if current.exists() else None},
+            "after": {changed_path: _file_sha(current) if current.exists() else None},
+        },
         "workspace_delta": [
             {
                 "path": changed_path,
@@ -125,6 +131,112 @@ def _session(root: Path, *, passed: bool, changed_path: str = "src/service.py") 
     session_path = directory / "session.json"
     session_path.write_bytes(_canonical(receipt) + b"\n")
     return session_path
+
+
+def test_core_unrelated_passing_session_does_not_cover_candidate(tmp_path):
+    changed, intent = _ready_workspace(tmp_path)
+    (tmp_path / "other.py").write_text("other = 1\n")
+    session = _session(tmp_path, passed=True, changed_path="other.py")
+    receipt = assess_continuous_proof(
+        tmp_path, "unrelated", intent, ["src/service.py"], session_path=session
+    )
+    assert receipt["route"] == "human_required"
+    assert receipt["final_approval"] is False
+
+
+def test_core_legacy_unbound_session_remains_nonready(tmp_path):
+    _, intent = _ready_workspace(tmp_path)
+    session = _session(tmp_path, passed=True)
+    result_path = session.parent / "result.json"
+    result = json.loads(result_path.read_bytes())
+    del result["candidate_inputs"]
+    result_path.write_bytes(_canonical(result) + b"\n")
+    value = json.loads(session.read_bytes())
+    value["result"]["sha256"] = _file_sha(result_path)
+    core = {key: item for key, item in value.items() if key != "session_sha256"}
+    value["session_sha256"] = sha256(_canonical(core)).hexdigest()
+    session.write_bytes(_canonical(value) + b"\n")
+    receipt = assess_continuous_proof(
+        tmp_path, "legacy", intent, ["src/service.py"], session_path=session
+    )
+    assert receipt["route"] == "human_required"
+    assert receipt["final_approval"] is False
+
+
+@pytest.mark.parametrize("child", ["result.json", "verification.json"])
+def test_core_nested_session_drift_invalidates_outer_proof(tmp_path, child):
+    changed, intent = _ready_workspace(tmp_path)
+    session = _session(tmp_path, passed=True)
+    receipt = assess_continuous_proof(
+        tmp_path, "nested", intent, ["src/service.py"], session_path=session
+    )
+    assert receipt["route"] == "review_ready"
+    (session.parent / child).unlink()
+    checked = verify_continuous_proof(tmp_path, Path(receipt["artifacts"]["json"]))
+    assert checked["ok"] is False
+    assert checked["marker"] == "CONTINUOUS_PROOF_STALE"
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_real_readonly_recorder_binds_already_applied_candidate(tmp_path, deleted):
+    import sys
+    from test_evidence_supply_line import _admission
+    from factoryline.run_admission import prepare_admission
+    from factoryline.session_recorder import run_observed_session
+    from factoryline.continuous_proof import (
+        _session_evidence,
+        _session_matches_candidate,
+    )
+
+    changed = tmp_path / "service.py"
+    changed.write_text("answer = 43\n")
+    if deleted:
+        changed.unlink()
+    manifest = tmp_path / "validators.json"
+    condition = (
+        "not Path('service.py').exists()"
+        if deleted
+        else "Path('service.py').read_text() == 'answer = 43\\n'"
+    )
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "factory.session-recorder.validators.v1",
+                "verifier_subject": "independent-verifier",
+                "validators": [
+                    {
+                        "id": "candidate-check",
+                        "argv": [
+                            sys.executable,
+                            "-c",
+                            "from pathlib import Path; assert " + condition,
+                        ],
+                        "timeout_seconds": 10,
+                    }
+                ],
+            }
+        )
+    )
+    _admission(tmp_path)
+    request = tmp_path / "request.json"
+    payload = json.loads(request.read_text())
+    payload["id"] = "candidate-observation"
+    payload["paths"] = ["service.py"]
+    request.write_text(json.dumps(payload))
+    passport = next((tmp_path / ".factory" / "loop-passports").rglob("*.json"))
+    admission = Path(prepare_admission(tmp_path, passport, request)["path"])
+    run = run_observed_session(
+        tmp_path,
+        admission,
+        manifest,
+        [sys.executable, "-c", "pass"],
+        "candidate-observation",
+    )
+    session = _session_evidence(tmp_path, Path(run["path"]))
+    assert session["state"] == "verified_passed"
+    assert _session_matches_candidate(tmp_path, session, ["service.py"]) is True
+    changed.write_text("unexpected = True\n")
+    assert _session_matches_candidate(tmp_path, session, ["service.py"]) is False
 
 
 def _assess(root: Path, **kwargs):
@@ -679,3 +791,89 @@ def test_proofsearch_cli_plan_evaluate_and_verify(tmp_path: Path, capsys):
         json.loads(capsys.readouterr().out)["marker"]
         == "PROOFSEARCH_EVALUATION_VERIFIED"
     )
+
+
+def test_recorder_detects_validator_source_mutation(tmp_path, monkeypatch):
+    from factoryline import session_recorder as recorder
+
+    source = tmp_path / "source.py"
+    source.write_text("value = 1\n")
+    manifest = tmp_path / "validators.json"
+    manifest.write_text("{}")
+
+    def run(argv, workspace, timeout):
+        if argv == ["validator"]:
+            source.write_text("value = 2\n")
+        return {"status": "completed", "exit_code": 0}
+
+    monkeypatch.setattr(recorder, "_run", run)
+    result = recorder._execute_observed(
+        tmp_path,
+        ["agent"],
+        {
+            "timeout": 1,
+            "scopes": ["source.py"],
+            "validators": [{"id": "v", "argv": ["validator"], "timeout_seconds": 1}],
+            "manifest": "validators.json",
+            "manifest_sha256": recorder._file_sha(manifest),
+        },
+    )
+    assert "hollow_validator" in result["failures"]
+    assert result["changes"][0]["path"] == "source.py"
+    assert result["candidate_inputs"]["before"] != result["candidate_inputs"]["after"]
+
+
+def test_recorder_snapshot_prunes_dependency_trees(tmp_path, monkeypatch):
+    from factoryline import session_recorder as recorder
+
+    dependency = tmp_path / "node_modules" / "nested"
+    dependency.mkdir(parents=True)
+    (dependency / "ignored.py").write_text("ignored")
+    (tmp_path / "source.py").write_text("value = 1\n")
+    visited = []
+    original = recorder.os.walk
+
+    def walk(root):
+        for row in original(root):
+            visited.append(Path(row[0]))
+            yield row
+
+    monkeypatch.setattr(recorder.os, "walk", walk)
+    assert set(recorder._snapshot(tmp_path)) == {"source.py"}
+    assert all("node_modules" not in path.parts for path in visited)
+
+
+def test_validator_restore_does_not_erase_observed_scope_escape(tmp_path, monkeypatch):
+    from factoryline import session_recorder as recorder
+
+    source = tmp_path / "outside.py"
+    source.write_text("original")
+    manifest = tmp_path / "validators.json"
+    manifest.write_text("{}")
+
+    def run(argv, workspace, timeout):
+        if argv == ["mutate"]:
+            source.write_text("modified")
+        if argv == ["restore"]:
+            source.write_text("original")
+        return {"status": "completed", "exit_code": 0}
+
+    monkeypatch.setattr(recorder, "_run", run)
+    result = recorder._execute_observed(
+        tmp_path,
+        ["agent"],
+        {
+            "timeout": 1,
+            "scopes": ["allowed.py"],
+            "validators": [
+                {"id": name, "argv": [name], "timeout_seconds": 1}
+                for name in ["mutate", "restore"]
+            ],
+            "manifest": "validators.json",
+            "manifest_sha256": recorder._file_sha(manifest),
+        },
+    )
+    assert result["changes"] == []
+    assert result["scope_escapes"] == ["outside.py"]
+    assert result["candidate_drifted"] is True
+    assert result["failures"]
