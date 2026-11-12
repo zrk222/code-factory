@@ -446,32 +446,21 @@ def lifecycle_projection(root: Path) -> dict[str, Any]:
     runs: dict[str, list[dict[str, Any]]] = {}
     invalid: list[str] = []
     directory = workspace / RECEIPT_DIR
-    candidates = sorted(directory.glob("*.json"))[:501] if directory.is_dir() else []
+    candidates = sorted(directory.glob("*.json"))[:501]
     truncated = len(candidates) > 500
-    if directory.is_dir():
-        for path in candidates[:500]:
-            try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-                core = {
-                    key: value[key]
-                    for key in value
-                    if key not in {"receipt_sha256", "path"}
-                }
-                if value.get("schema") != RECEIPT_SCHEMA or value.get(
-                    "receipt_sha256"
-                ) != _sha(core):
-                    raise ValueError("invalid receipt")
-                _projection_time(value["created_at"])
-                runs.setdefault(value["run_id"], []).append(value)
-            except (
-                OSError,
-                UnicodeDecodeError,
-                json.JSONDecodeError,
-                KeyError,
-                TypeError,
-                ValueError,
-            ):
-                invalid.append(path.relative_to(workspace).as_posix())
+    for path in candidates[:500]:
+        try:
+            value = _projection_receipt(path)
+            runs.setdefault(value["run_id"], []).append(value)
+        except (
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
+            invalid.append(path.relative_to(workspace).as_posix())
     summaries = []
     for run_id, events in sorted(runs.items()):
         ordered = sorted(events, key=lambda item: item["sequence"])
@@ -519,6 +508,7 @@ def lifecycle_projection(root: Path) -> dict[str, Any]:
 
 
 def _projection_time(value):
+    """Require a timezone and reject observations over five minutes in the future."""
     if not isinstance(value, str):
         raise ValueError("lifecycle timestamp must be a string")
     instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -559,3 +549,19 @@ def lifecycle_template() -> dict[str, Any]:
             "previous_receipt_sha256": None,
         },
     }
+
+
+def _projection_receipt(path):
+    """Read a digest-valid lifecycle receipt with a usable recorded timestamp."""
+    value = json.loads(path.read_text(encoding="utf-8"))
+    core = {
+        key: item
+        for key, item in value.items()
+        if key not in {"receipt_sha256", "path"}
+    }
+    if value.get("schema") != RECEIPT_SCHEMA or value.get("receipt_sha256") != _sha(
+        core
+    ):
+        raise ValueError("invalid receipt")
+    _projection_time(value["created_at"])
+    return value

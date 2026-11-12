@@ -381,6 +381,7 @@ def _repair_paths_match(
 
 
 def _session_matches_candidate(workspace, session, paths):
+    """Require stable observed inputs for every assessed current candidate path."""
     if session["state"] != "verified_passed":
         return False
     result = _session_result(workspace, session)
@@ -786,23 +787,9 @@ def verify_continuous_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
         failure = _verify_proof_binding(workspace, relative, name, binding)
         if failure:
             return failure
-    session_binding = value["session"].get("binding")
-    if session_binding:
-        from .session_recorder import verify_session_receipt
-
-        checked = verify_session_receipt(workspace, workspace / session_binding["path"])
-        if not checked.get("ok"):
-            return _proof_check_failure(
-                relative, "session_evidence", "CONTINUOUS_PROOF_STALE"
-            )
-        if value["route"] == "review_ready" and not _session_matches_candidate(
-            workspace,
-            _session_evidence(workspace, workspace / session_binding["path"]),
-            [item["path"] for item in value["changed_bindings"]],
-        ):
-            return _proof_check_failure(
-                relative, "candidate_inputs", "CONTINUOUS_PROOF_STALE"
-            )
+    session_failure = _verify_session_current(workspace, relative, value)
+    if session_failure:
+        return session_failure
     current = _changed_bindings_current(workspace, value)
     if current != value.get("changed_bindings"):
         return _proof_check_failure(relative, "changed_bytes", "CONTINUOUS_PROOF_STALE")
@@ -884,3 +871,22 @@ def continuous_proof_projection(root: Path) -> dict[str, Any]:
         "truncated": history["truncated"],
         "authority": dict(_AUTHORITY),
     }
+
+
+def _verify_session_current(workspace, relative, value):
+    """Revalidate nested session evidence and candidate readiness without writes."""
+    binding = value["session"].get("binding")
+    if not binding:
+        return None
+    session = _session_evidence(workspace, workspace / binding["path"])
+    if session["state"] == "invalid_or_stale":
+        return _proof_check_failure(
+            relative, "session_evidence", "CONTINUOUS_PROOF_STALE"
+        )
+    if value["route"] == "review_ready" and not _session_matches_candidate(
+        workspace, session, [item["path"] for item in value["changed_bindings"]]
+    ):
+        return _proof_check_failure(
+            relative, "candidate_inputs", "CONTINUOUS_PROOF_STALE"
+        )
+    return None

@@ -134,12 +134,9 @@ class _RegisteredDispatch:
         result = path.with_name("native.json")
         report = study.out / "reports" / "v2" / (case + ".json.gz")
         study.save(path, job, immutable=True)
-        if result.is_file():
-            prior = _validate_receipt(controller, job, controller.read(result), report)
-            if prior.get("reason") != DEFERRED and not self._retry_technical(
-                job, prior, result
-            ):
-                return prior
+        prior = self._prior_receipt(job, result, report)
+        if prior is not None:
+            return prior
         if (
             monotonic() + study.execution["case_timeout_seconds"] > study.deadline
             or study.attempted >= study.execution["max_cases_per_invocation"]
@@ -163,6 +160,17 @@ class _RegisteredDispatch:
         )
         study.admit_case()
         return Launch(rank, job, result, report, command)
+
+    def _prior_receipt(self, job, result, report):
+        """Reuse valid observations unless registered recovery authorizes a retry."""
+        if not result.is_file():
+            return None
+        prior = _validate_receipt(
+            self.controller, job, self.controller.read(result), report
+        )
+        if prior.get("reason") == DEFERRED or self._retry_technical(job, prior, result):
+            return None
+        return prior
 
     def _retry_technical(self, job, prior, result):
         """Only a sealed opt-in policy may retry a transport failure once."""
