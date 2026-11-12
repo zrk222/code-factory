@@ -1563,6 +1563,28 @@ def test_lane_result_only_emits_closed_states_and_keeps_advisory_details():
 # Consolidated tests from tests/test_runtime_coverage.py
 
 
+def test_runtime_coverage_inventory_does_not_hash_sources_twice(tmp_path, monkeypatch):
+    from factoryline import runtime_coverage as coverage
+
+    source = tmp_path / "factoryline" / "sample.py"
+    source.parent.mkdir()
+    source.write_text("value = 1\n")
+    original = Path.read_bytes
+    reads = []
+
+    def read(path):
+        reads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    assert set(coverage._python_source_paths(tmp_path, "factoryline")) == {
+        "factoryline/sample.py"
+    }
+    assert reads == []
+    assert coverage.source_code_digest(tmp_path)
+    assert reads == [source]
+
+
 def _summary(
     *, covered: int, total: int, branches_covered: int = 0, branches_total: int = 0
 ) -> dict:

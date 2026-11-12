@@ -82,6 +82,12 @@ def _session(root: Path, *, passed: bool, changed_path: str = "src/service.py") 
     current = root / changed_path
     result = {
         "schema": "factory.session-recorder.result.v1",
+        "candidate_inputs": {
+            "schema": "factory.session-recorder.inputs.v1",
+            "scopes": [changed_path],
+            "before": {changed_path: _file_sha(current) if current.exists() else None},
+            "after": {changed_path: _file_sha(current) if current.exists() else None},
+        },
         "workspace_delta": [
             {
                 "path": changed_path,
@@ -125,6 +131,81 @@ def _session(root: Path, *, passed: bool, changed_path: str = "src/service.py") 
     session_path = directory / "session.json"
     session_path.write_bytes(_canonical(receipt) + b"\n")
     return session_path
+
+
+def test_core_unrelated_passing_session_does_not_cover_candidate(tmp_path):
+    changed, intent = _ready_workspace(tmp_path)
+    (tmp_path / "other.py").write_text("other = 1\n")
+    session = _session(tmp_path, passed=True, changed_path="other.py")
+    receipt = assess_continuous_proof(
+        tmp_path, "unrelated", intent, ["src/service.py"], session_path=session
+    )
+    assert receipt["route"] == "human_required"
+    assert receipt["final_approval"] is False
+
+
+@pytest.mark.parametrize("child", ["result.json", "verification.json"])
+def test_core_nested_session_drift_invalidates_outer_proof(tmp_path, child):
+    changed, intent = _ready_workspace(tmp_path)
+    session = _session(tmp_path, passed=True)
+    receipt = assess_continuous_proof(
+        tmp_path, "nested", intent, ["src/service.py"], session_path=session
+    )
+    assert receipt["route"] == "review_ready"
+    (session.parent / child).unlink()
+    checked = verify_continuous_proof(tmp_path, Path(receipt["artifacts"]["json"]))
+    assert checked["ok"] is False
+    assert checked["marker"] == "CONTINUOUS_PROOF_STALE"
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_real_readonly_recorder_binds_already_applied_candidate(tmp_path, deleted):
+    import sys
+    from test_evidence_supply_line import _admission
+    from factoryline.session_recorder import run_observed_session
+    from factoryline.continuous_proof import (
+        _session_evidence,
+        _session_matches_candidate,
+    )
+
+    changed = tmp_path / "service.py"
+    changed.write_text("answer = 43\n")
+    if deleted:
+        changed.unlink()
+    manifest = tmp_path / "validators.json"
+    condition = (
+        "not Path('service.py').exists()"
+        if deleted
+        else "Path('service.py').read_text() == 'answer = 43\\n'"
+    )
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "factory.session-recorder.validators.v1",
+                "verifier_subject": "independent-verifier",
+                "validators": [
+                    {
+                        "id": "candidate-check",
+                        "argv": [
+                            sys.executable,
+                            "-c",
+                            "from pathlib import Path; assert " + condition,
+                        ],
+                        "timeout_seconds": 10,
+                    }
+                ],
+            }
+        )
+    )
+    admission = _admission(tmp_path, scopes=["service.py"])
+    run = run_observed_session(
+        tmp_path, admission, manifest, [sys.executable, "-c", "pass"], "observed-run"
+    )
+    session = _session_evidence(tmp_path, Path(run["path"]))
+    assert session["state"] == "verified_passed"
+    assert _session_matches_candidate(tmp_path, session, ["service.py"]) is True
+    changed.write_text("unexpected = True\n")
+    assert _session_matches_candidate(tmp_path, session, ["service.py"]) is False
 
 
 def _assess(root: Path, **kwargs):

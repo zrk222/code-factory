@@ -64,7 +64,11 @@ def _sha(value: object) -> str:
 
 
 def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(131072), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _relative(root: Path, path: Path, field: str) -> tuple[Path, str]:
@@ -95,8 +99,17 @@ def _load_json(root: Path, path: Path, field: str) -> tuple[dict[str, Any], Path
 
 def _snapshot(root: Path) -> dict[str, str]:
     records: dict[str, str] = {}
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or _SKIP.intersection(path.relative_to(root).parts):
+    for directory, directories, files in os.walk(root):
+        directories[:] = sorted(name for name in directories if name not in _SKIP)
+        _snapshot_files(root, Path(directory), files, records)
+    return records
+
+
+def _snapshot_files(root, directory, files, records):
+    for name in sorted(files):
+        path = directory / name
+        _relative(root, path, "observed input")
+        if not path.is_file():
             continue
         records[path.relative_to(root).as_posix()] = _file_sha(path)
         if len(records) > 10_000:
@@ -104,7 +117,19 @@ def _snapshot(root: Path) -> dict[str, str]:
                 "SESSION_WORKSPACE_TOO_LARGE",
                 "workspace observation exceeds 10000 files",
             )
-    return records
+
+
+def _candidate_inputs(workspace, scopes, before, after):
+    paths = {
+        path for path in before.keys() | after.keys() if _inside_scope(path, scopes)
+    }
+    paths.update(scope for scope in scopes if not (workspace / scope).is_dir())
+    return {
+        "schema": "factory.session-recorder.inputs.v1",
+        "scopes": list(scopes),
+        "before": {path: before.get(path) for path in sorted(paths)},
+        "after": {path: after.get(path) for path in sorted(paths)},
+    }
 
 
 def _changed(before: dict[str, str], after: dict[str, str]) -> list[dict[str, str]]:
@@ -377,16 +402,22 @@ def _execute_observed(
 ) -> dict[str, Any]:
     before = _snapshot(workspace)
     agent_result = _run(argv, workspace, context["timeout"])
-    changes = _changed(before, _snapshot(workspace))
-    scope_escapes = [
-        item["path"]
-        for item in changes
-        if not _inside_scope(item["path"], context["scopes"])
+    candidate = _snapshot(workspace)
+    validator_results, after, candidate_drifted = _observe_validators(
+        workspace, context["validators"], candidate
+    )
+    changes = _changed(before, after)
+    observations = changes + [
+        change for row in validator_results for change in row["workspace_delta"]
     ]
-    validator_results = [
-        {"id": item["id"], **_run(item["argv"], workspace, item["timeout_seconds"])}
-        for item in context["validators"]
-    ]
+    scope_escapes = sorted(
+        {
+            item["path"]
+            for item in observations
+            if not _inside_scope(item["path"], context["scopes"])
+        }
+    )
+    inputs = _candidate_inputs(workspace, context["scopes"], candidate, after)
     manifest_drifted = (
         _file_sha((workspace / context["manifest"]).resolve())
         != context["manifest_sha256"]
@@ -397,10 +428,26 @@ def _execute_observed(
         "scope_escapes": scope_escapes,
         "validator_results": validator_results,
         "manifest_drifted": manifest_drifted,
+        "candidate_inputs": inputs,
+        "candidate_drifted": candidate_drifted,
         "failures": _failure_classes(
-            agent_result, validator_results, scope_escapes, manifest_drifted
+            agent_result,
+            validator_results,
+            scope_escapes,
+            manifest_drifted or candidate_drifted,
         ),
     }
+
+
+def _observe_validators(workspace, validators, candidate):
+    results, after, drifted = [], candidate, False
+    for item in validators:
+        result = _run(item["argv"], workspace, item["timeout_seconds"])
+        after = _snapshot(workspace)
+        delta = _changed(candidate, after)
+        drifted = drifted or bool(delta)
+        results.append({"id": item["id"], **result, "workspace_delta": delta})
+    return results, after, drifted
 
 
 def _write_evidence_receipts(
@@ -418,6 +465,7 @@ def _write_evidence_receipts(
         },
         "agent_command": observed["agent_result"],
         "workspace_delta": observed["changes"],
+        "candidate_inputs": observed["candidate_inputs"],
         "scope_escapes": observed["scope_escapes"],
         "authority": dict(_AUTHORITY),
         "scope_limits": [
@@ -437,6 +485,7 @@ def _write_evidence_receipts(
             "sha256": context["manifest_sha256"],
             "drifted": observed["manifest_drifted"],
         },
+        "candidate_drifted": observed["candidate_drifted"],
         "validators": observed["validator_results"],
         "passed": not observed["failures"],
         "failure_classes": observed["failures"],
