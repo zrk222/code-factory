@@ -108,6 +108,7 @@ _STAGES: tuple[dict[str, object], ...] = (
             "factory.proof_reuse",
             "factory.context_efficiency_status",
             "factory.proof_continuity_status",
+            "factory.audit_convergence_status",
             "factory.judgment_status",
             "factory.judgment_safety_case",
             "factory.workspace_advisor",

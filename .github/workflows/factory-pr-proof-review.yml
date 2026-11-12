@@ -97,6 +97,24 @@ jobs:
               --out-dir .factory/github-proof-review \
               --json > github-proof-review.json
           fi
+      - name: Compile optional advisory review-convergence and A2A handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .factory/github-proof-review
+          report='.factory/github-proof-review/review-convergence.json'
+          receipt='.factory/github-proof-review/review-convergence-receipt.json'
+          contract='.factory/review-convergence/contract.json'
+          review_round='.factory/review-convergence/round.json'
+          if [[ ! -s "$contract" || ! -s "$review_round" ]]; then
+            printf '%s\n' '{"state":"NOT_CONFIGURED","scope":"optional advisory only","authority":{"execution":false,"approval":false,"merge":false,"publication":false,"deployment":false,"signing":false,"policy_change":false}}' > "$report"
+          elif factory audit convergence --root . --contract "$contract" --round "$review_round" --out "$receipt" --json > "$report" 2> "$report.stderr"; then
+            echo "Optional advisory convergence receipt compiled. It does not change the main FactoryLine Check."
+          else
+            code=$?
+            printf '{"state":"UNAVAILABLE_ADVISORY","exit_code":%s,"scope":"optional advisory only; main proof review remains authoritative","authority":{"execution":false,"approval":false,"merge":false,"publication":false,"deployment":false,"signing":false,"policy_change":false}}\n' "$code" > "$report"
+            echo "Optional review convergence did not produce a receipt (exit $code); preserving the failure detail in its artifact without changing the main proof check." >&2
+          fi
       - name: Publish advisory Check and stable walkthrough comment
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:

@@ -1,8 +1,7 @@
 """Read-only, deterministic unification of local Factory graph artifacts.
 
-Graph Ops is deliberately an overlay.  It never becomes an authority source and
-never runs a gate: it links the existing Product Mission, proof reuse, and
-proof-trace receipts so a user can inspect the smallest fact-derived next step.
+Links Product Mission and proof receipts to the next evidenced action.
+This overlay reads local facts and never runs gates or grants authority.
 """
 
 from __future__ import annotations
@@ -5017,7 +5016,8 @@ def _append_continuous_controls(
 
 
 def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
-    """Collect every bounded local projection without deciding presentation."""
+    """Collect bounded local projections."""
+    from .atomic_review_audit import append_review_convergence
     from .jetbrains_handshake import jetbrains_handshake_projection
 
     requirements, slices = _append_product_graphs(state, workspace)
@@ -5133,6 +5133,7 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
                 state, workspace, shared["repair_loops"]
             ),
             "deep_audit": _append_deep_audit(state, workspace, shared["deep_audit"]),
+            "review_convergence": append_review_convergence(state, workspace, _node),
             "deep_scan": _append_deep_scan(state, workspace),
             "guardrails": _append_guardrail_evaluations(state, workspace),
             "resilience": _append_resilience_plans(state, workspace),
@@ -5676,6 +5677,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "lifecycle": p["lifecycle"],
         "repair_loops": p["repair_loops"],
         "deep_audit": p["deep_audit"],
+        "review_convergence": p["review_convergence"],
         "deep_scan": p["deep_scan"],
         "mission_control": p["mission_control"],
         "release_decision": p["release_decision"],

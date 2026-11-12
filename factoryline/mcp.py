@@ -193,6 +193,7 @@ _RECEIPT_ROOTS = (
     Path(".factory/lifecycle"),
     Path(".factory/repair-loops"),
     Path(".factory/first-lap"),
+    Path(".factory/review-convergence"),
 )
 
 _HTTP_MAX_BODY_BYTES = 65_536
@@ -899,6 +900,25 @@ def _tool_definitions() -> list[dict[str, object]]:
                     },
                 },
                 "required": ["query"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
+            "name": "factory.audit_convergence_status",
+            "description": "Read the conventional latest local advisory review receipt by default, or a selected receipt; optionally export its bounded A2A v1.0 reply-correlated handoff Message. It never evaluates code, sends a message, or grants authority.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "receipt": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "default": ".factory/review-convergence/latest.json",
+                    },
+                    "includeA2aMessage": {"type": "boolean", "default": False},
+                },
+                "required": [],
                 "additionalProperties": False,
             },
             "annotations": _READ_ONLY_ANNOTATIONS,
@@ -2676,6 +2696,49 @@ def _runtime_audit_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
+def _audit_convergence_status(root: Path, arguments: object) -> dict[str, object]:
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) - {"receipt", "includeA2aMessage"}
+        or (
+            "receipt" in arguments
+            and (
+                not isinstance(arguments["receipt"], str)
+                or not arguments["receipt"].strip()
+                or len(arguments["receipt"]) > 512
+            )
+        )
+        or (
+            "includeA2aMessage" in arguments
+            and not isinstance(arguments["includeA2aMessage"], bool)
+        )
+    ):
+        raise McpError(
+            "factory.audit_convergence_status accepts an optional receipt path and includeA2aMessage boolean"
+        )
+    receipt_path = arguments.get("receipt", ".factory/review-convergence/latest.json")
+    relative, _path = _receipt_path(root, receipt_path, must_exist=True)
+    try:
+        from .atomic_review_audit import (
+            ReviewConvergenceError,
+            read_convergence_receipt,
+        )
+
+        summary = read_convergence_receipt(
+            root,
+            relative,
+            include_a2a_message=arguments.get("includeA2aMessage", False),
+        )
+    except ReviewConvergenceError as exc:
+        raise McpError(str(exc), exc.code) from exc
+    return {
+        "marker": "REVIEW_CONVERGENCE_MCP_READ_ONLY",
+        "action_summary": "Read one self-hash-verified advisory review receipt; no code, tests, agents, network, or release actions ran.",
+        "status": summary,
+        "scope": "Local receipt only. Declared reviewers, evidence, alignment, and A2A role are not authenticated; a returned A2A Message is an export for the caller, not a sent message.",
+    }
+
+
 def _agent_bridge_status(root: Path, arguments: object) -> dict[str, object]:
     if arguments != {}:
         raise McpError("factory.agent_bridge_status accepts no arguments")
@@ -3524,6 +3587,8 @@ def _tool_call_dispatch_7(
             return _content(search_audit_rules(arguments))
         except AuditRuleSearchError as exc:
             raise McpError(str(exc), exc.marker) from exc
+    if name == "factory.audit_convergence_status":
+        return _content(_audit_convergence_status(root, arguments))
     if name == "factory.agent_bridge_status":
         return _content(_agent_bridge_status(root, arguments))
     return None

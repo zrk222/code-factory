@@ -104,6 +104,7 @@ def test_mcp_status_declares_default_stdio_and_zero_authority_boundary(tmp_path:
         "factory.deep_audit_status",
         "factory.runtime_audit_status",
         "factory.search_audit_rules",
+        "factory.audit_convergence_status",
         "factory.agent_bridge_status",
         "factory.agent_handoff_brief",
         "factory.proof_worklog_status",
