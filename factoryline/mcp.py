@@ -3587,8 +3587,6 @@ def _tool_call_dispatch_7(
             return _content(search_audit_rules(arguments))
         except AuditRuleSearchError as exc:
             raise McpError(str(exc), exc.marker) from exc
-    if name == "factory.audit_convergence_status":
-        return _content(_audit_convergence_status(root, arguments))
     if name == "factory.agent_bridge_status":
         return _content(_agent_bridge_status(root, arguments))
     return None
@@ -3685,6 +3683,8 @@ def _tool_call_dispatch_9b(
 def _tool_call_dispatch_10(
     root: Path, name: str, arguments: object
 ) -> dict[str, object] | None:
+    if name == "factory.audit_convergence_status":
+        return _content(_audit_convergence_status(root, arguments))
     if name == "factory.agent_proof_mission":
         return _content(_agent_proof_mission(root, arguments))
     if name == "factory.jetbrains_handshake":

@@ -309,6 +309,28 @@ def test_duplicate_json_fields_are_rejected(tmp_path: Path) -> None:
         evaluate_review_round(tmp_path, "contract.json", "round.json", "receipt.json")
 
 
+def test_unrecognized_cell_shape_cannot_be_hidden_by_complete_cells(
+    tmp_path: Path,
+) -> None:
+    contract = _contract(reviewers=("reviewer-a",))
+    payload = _round(contract)
+    payload["reviews"][0]["criteria"].append({"criterion_id": "authz", "extra": True})
+    receipt = _evaluate(tmp_path, contract, payload)
+    assert receipt["state"] == "INDETERMINATE"
+    assert all(
+        cell["reason"] == "criterion_record_invalid" for cell in receipt["coverage"]
+    )
+
+
+def test_unknown_criterion_rejects_entire_envelope(tmp_path: Path) -> None:
+    contract = _contract(reviewers=("reviewer-a",))
+    payload = _round(contract)
+    payload["reviews"][0]["criteria"][0]["criterion_id"] = "unknown"
+    with pytest.raises(ReviewConvergenceError, match="unknown criterion"):
+        _evaluate(tmp_path, contract, payload)
+    assert not (tmp_path / "receipt.json").exists()
+
+
 def test_cli_writes_explicit_receipt_and_does_not_fail_ci_on_findings(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

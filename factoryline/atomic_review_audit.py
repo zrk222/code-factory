@@ -201,16 +201,7 @@ def _contract(
     return contract, _digest(contract), criteria, reviewers
 
 
-def _normalize_round(value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Accept local JSON or one A2A v1.0 DataPart carrying a CF review round."""
-    if value.get("schema") == ROUND_SCHEMA:
-        return value, {
-            "kind": "local_json",
-            "a2a_message_id": None,
-            "context_id": None,
-            "task_id": None,
-        }
-
+def _a2a_message_identity(value: dict[str, Any]) -> tuple[str, str, str | None]:
     allowed_message_fields = {
         "messageId",
         "contextId",
@@ -271,7 +262,10 @@ def _normalize_round(value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
         raise ReviewConvergenceError(
             "E_REVIEW_A2A_MESSAGE", "A2A reply role must be the declared ROLE_AGENT"
         )
-    parts = value["parts"]
+    return message_id, context_id, task_id
+
+
+def _a2a_review_part(parts: object) -> dict[str, Any]:
     if not isinstance(parts, list) or len(parts) != 1 or not isinstance(parts[0], dict):
         raise ReviewConvergenceError(
             "E_REVIEW_A2A_MESSAGE", "A2A review reply must contain exactly one DataPart"
@@ -302,6 +296,10 @@ def _normalize_round(value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
         raise ReviewConvergenceError(
             "E_REVIEW_A2A_MESSAGE", "A2A review DataPart data must be an object"
         )
+    return data
+
+
+def _a2a_round_value(data: dict[str, Any]) -> dict[str, Any]:
     if data.get("schema") == ROUND_SCHEMA:
         round_value = data
     elif data.get("schema") == A2A_SUBMISSION_SCHEMA:
@@ -322,6 +320,21 @@ def _normalize_round(value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
             "E_REVIEW_A2A_MESSAGE",
             "A2A DataPart schema must be a CF review round or submission",
         )
+    return round_value
+
+
+def _normalize_round(value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Accept local JSON or one A2A v1.0 DataPart carrying a CF review round."""
+    if value.get("schema") == ROUND_SCHEMA:
+        return value, {
+            "kind": "local_json",
+            "a2a_message_id": None,
+            "context_id": None,
+            "task_id": None,
+        }
+
+    message_id, context_id, task_id = _a2a_message_identity(value)
+    round_value = _a2a_round_value(_a2a_review_part(value["parts"]))
     return round_value, {
         "kind": "a2a_message",
         "protocol_version": A2A_VERSION,
@@ -403,6 +416,68 @@ def _finding(
     }
 
 
+def _parse_cell(response, criterion_id, reviewer_id, evidence):
+    outcome, raw_findings = response["outcome"], response["findings"]
+    if (
+        not isinstance(outcome, str)
+        or outcome not in {"supported", "finding", "unknown"}
+        or not isinstance(raw_findings, list)
+    ):
+        return outcome, [], "criterion_outcome_invalid"
+    if len(raw_findings) > MAX_FINDINGS:
+        return outcome, [], "finding_limit_exceeded"
+    try:
+        parsed = [
+            _finding(raw, criterion_id, reviewer_id, evidence) for raw in raw_findings
+        ]
+    except ReviewConvergenceError:
+        return outcome, [], "finding_malformed"
+    if (outcome == "finding") != bool(parsed) or (outcome != "finding" and parsed):
+        return outcome, [], "outcome_finding_mismatch"
+    if outcome == "unknown":
+        return outcome, [], "reviewer_uncertain"
+    return outcome, parsed, None
+
+
+def _review_cells(review, reviewer_id, evidence, criteria, cells, invalid, findings):
+    responses = review["criteria"]
+    if not isinstance(responses, list) or len(responses) > MAX_CRITERIA:
+        invalid[(reviewer_id, "*")] = "criteria_container_invalid"
+        return
+    local_seen: set[str] = set()
+    for response in responses:
+        if not isinstance(response, dict) or set(response) != {
+            "criterion_id",
+            "outcome",
+            "findings",
+        }:
+            invalid[(reviewer_id, "*")] = "criterion_record_invalid"
+            continue
+        criterion_id = _identifier(response["criterion_id"], "criterion_id")
+        if criterion_id not in criteria:
+            raise ReviewConvergenceError(
+                "E_REVIEW_SCHEMA", "review references unknown criterion"
+            )
+        cell = (reviewer_id, criterion_id)
+        if criterion_id in local_seen:
+            invalid[cell] = "duplicate_criterion_cell"
+            cells.pop(cell, None)
+            continue
+        local_seen.add(criterion_id)
+        outcome, parsed, reason = _parse_cell(
+            response, criterion_id, reviewer_id, evidence
+        )
+        if reason is not None:
+            invalid[cell] = reason
+            continue
+        cells[cell] = {"outcome": outcome, "state": "complete"}
+        findings.extend(parsed)
+        if len(findings) > MAX_FINDINGS:
+            raise ReviewConvergenceError(
+                "E_REVIEW_LIMIT", f"round exceeds {MAX_FINDINGS} findings"
+            )
+
+
 def _round(
     value: object,
     contract_digest: str,
@@ -433,7 +508,6 @@ def _round(
     cells: dict[tuple[str, str], dict[str, Any]] = {}
     invalid: dict[tuple[str, str], str] = {}
     findings: list[dict[str, Any]] = []
-    total_findings = 0
     for review in reviews:
         if not isinstance(review, dict) or set(review) != {
             "reviewer_id",
@@ -450,65 +524,16 @@ def _round(
                 "E_REVIEW_SCHEMA", "reviewer is unknown or duplicated"
             )
         seen_reviewers.add(reviewer_id)
-        responses = review["criteria"]
-        if not isinstance(responses, list) or len(responses) > MAX_CRITERIA:
-            invalid[(reviewer_id, "*")] = "criteria_container_invalid"
-            continue
-        local_seen: set[str] = set()
-        for response in responses:
-            if not isinstance(response, dict) or set(response) != {
-                "criterion_id",
-                "outcome",
-                "findings",
-            }:
-                invalid[(reviewer_id, "*")] = "criterion_record_invalid"
-                continue
-            criterion_id = _identifier(response["criterion_id"], "criterion_id")
-            if criterion_id not in criteria:
-                raise ReviewConvergenceError(
-                    "E_REVIEW_SCHEMA", "review references unknown criterion"
-                )
-            cell = (reviewer_id, criterion_id)
-            if criterion_id in local_seen:
-                invalid[cell] = "duplicate_criterion_cell"
-                cells.pop(cell, None)
-                continue
-            local_seen.add(criterion_id)
-            outcome, raw_findings = response["outcome"], response["findings"]
-            if (
-                not isinstance(outcome, str)
-                or outcome not in {"supported", "finding", "unknown"}
-                or not isinstance(raw_findings, list)
-            ):
-                invalid[cell] = "criterion_outcome_invalid"
-                continue
-            if len(raw_findings) > MAX_FINDINGS:
-                invalid[cell] = "finding_limit_exceeded"
-                continue
-            try:
-                parsed = [
-                    _finding(raw, criterion_id, reviewer_id, evidence)
-                    for raw in raw_findings
-                ]
-            except ReviewConvergenceError:
-                invalid[cell] = "finding_malformed"
-                continue
-            if (outcome == "finding") != bool(parsed) or (
-                outcome != "finding" and parsed
-            ):
-                invalid[cell] = "outcome_finding_mismatch"
-                continue
-            if outcome == "unknown":
-                invalid[cell] = "reviewer_uncertain"
-                cells[cell] = {"outcome": outcome, "state": "indeterminate"}
-                continue
-            cells[cell] = {"outcome": outcome, "state": "complete"}
-            findings.extend(parsed)
-            total_findings += len(parsed)
-            if total_findings > MAX_FINDINGS:
-                raise ReviewConvergenceError(
-                    "E_REVIEW_LIMIT", f"round exceeds {MAX_FINDINGS} findings"
-                )
+        _review_cells(review, reviewer_id, evidence, criteria, cells, invalid, findings)
+    return (
+        item["round_id"],
+        candidate,
+        _round_coverage(criteria, reviewers, seen_reviewers, cells, invalid),
+        findings,
+    )
+
+
+def _round_coverage(criteria, reviewers, seen_reviewers, cells, invalid):
     expected = {
         (reviewer, criterion) for reviewer in reviewers for criterion in criteria
     }
@@ -519,7 +544,10 @@ def _round(
         if reviewer_id not in seen_reviewers:
             for criterion_id in criteria:
                 invalid[(reviewer_id, criterion_id)] = "missing_reviewer"
-    coverage = [
+    for reviewer, criterion in expected:
+        if (reviewer, "*") in invalid:
+            invalid[(reviewer, criterion)] = invalid[(reviewer, "*")]
+    return [
         {
             "reviewer_id": reviewer,
             "criterion_id": criterion,
@@ -531,7 +559,6 @@ def _round(
         for reviewer in reviewers
         for criterion in criteria
     ]
-    return item["round_id"], candidate, coverage, findings
 
 
 def _consolidate(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -590,45 +617,7 @@ def _consolidate(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def _verify_previous(value: object) -> dict[str, Any]:
-    receipt_fields = {
-        "schema",
-        "round_id",
-        "round_transport",
-        "state",
-        "contract_sha256",
-        "intent_sha256",
-        "contract_origin_declared",
-        "candidate_sha256",
-        "inputs",
-        "required_reviewers",
-        "criterion_ids",
-        "coverage",
-        "incomplete_cells",
-        "findings",
-        "review_delta",
-        "history",
-        "a2a_message",
-        "provenance_unverified",
-        "authority",
-        "claim_boundary",
-        "action_summary",
-        "receipt_sha256",
-    }
-    if (
-        not isinstance(value, dict)
-        or value.get("schema") != RECEIPT_SCHEMA
-        or set(value) != receipt_fields
-    ):
-        raise ReviewConvergenceError(
-            "E_REVIEW_PRIOR_INVALID", "prior receipt schema is invalid"
-        )
-    copied = dict(value)
-    claimed = copied.pop("receipt_sha256", None)
-    if not isinstance(claimed, str) or claimed != _digest(copied):
-        raise ReviewConvergenceError(
-            "E_REVIEW_PRIOR_INVALID", "prior receipt self-hash does not verify"
-        )
+def _verify_prior_collections(value: dict[str, Any]) -> None:
     if (
         not isinstance(value.get("findings"), list)
         or not isinstance(value.get("history"), dict)
@@ -669,6 +658,9 @@ def _verify_previous(value: object) -> dict[str, Any]:
         raise ReviewConvergenceError(
             "E_REVIEW_PRIOR_INVALID", "prior receipt findings are malformed"
         )
+
+
+def _verify_prior_transport(value: dict[str, Any]) -> dict[str, Any]:
     transport = value["round_transport"]
     if (
         not isinstance(transport, dict)
@@ -725,20 +717,10 @@ def _verify_previous(value: object) -> dict[str, Any]:
         raise ReviewConvergenceError(
             "E_REVIEW_PRIOR_INVALID", "local review receipt contains A2A correlation"
         )
-    authority = {
-        "execution": False,
-        "approval": False,
-        "merge": False,
-        "publication": False,
-        "deployment": False,
-        "signing": False,
-        "policy_change": False,
-    }
-    if value.get("authority") != authority:
-        raise ReviewConvergenceError(
-            "E_REVIEW_PRIOR_INVALID", "prior receipt authority boundary is invalid"
-        )
+    return transport
 
+
+def _verify_prior_message(value: dict[str, Any], transport: dict[str, Any]):
     message = value["a2a_message"]
     allowed_message_fields = {"messageId", "role", "parts", "contextId", "taskId"}
     if (
@@ -809,6 +791,10 @@ def _verify_previous(value: object) -> dict[str, Any]:
             "E_REVIEW_PRIOR_INVALID",
             "prior receipt A2A reply correlation does not verify",
         )
+    return message, handoff, handoff_digest
+
+
+def _verify_prior_bindings(value, handoff, authority):
     receipt_core = dict(value)
     receipt_core.pop("receipt_sha256")
     receipt_core.pop("a2a_message")
@@ -845,6 +831,9 @@ def _verify_previous(value: object) -> dict[str, Any]:
         raise ReviewConvergenceError(
             "E_REVIEW_PRIOR_INVALID", "prior receipt A2A handoff facts do not match"
         )
+
+
+def _verify_prior_message_id(message, transport, handoff_digest):
     message_identity = {
         "payload_sha256": handoff_digest,
         "context_id": transport["context_id"],
@@ -860,6 +849,66 @@ def _verify_previous(value: object) -> dict[str, Any]:
         raise ReviewConvergenceError(
             "E_REVIEW_PRIOR_INVALID", "prior receipt A2A messageId does not verify"
         )
+
+
+def _verify_previous(value: object) -> dict[str, Any]:
+    receipt_fields = {
+        "schema",
+        "round_id",
+        "round_transport",
+        "state",
+        "contract_sha256",
+        "intent_sha256",
+        "contract_origin_declared",
+        "candidate_sha256",
+        "inputs",
+        "required_reviewers",
+        "criterion_ids",
+        "coverage",
+        "incomplete_cells",
+        "findings",
+        "review_delta",
+        "history",
+        "a2a_message",
+        "provenance_unverified",
+        "authority",
+        "claim_boundary",
+        "action_summary",
+        "receipt_sha256",
+    }
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") != RECEIPT_SCHEMA
+        or set(value) != receipt_fields
+    ):
+        raise ReviewConvergenceError(
+            "E_REVIEW_PRIOR_INVALID", "prior receipt schema is invalid"
+        )
+    copied = dict(value)
+    claimed = copied.pop("receipt_sha256", None)
+    if not isinstance(claimed, str) or claimed != _digest(copied):
+        raise ReviewConvergenceError(
+            "E_REVIEW_PRIOR_INVALID", "prior receipt self-hash does not verify"
+        )
+    _verify_prior_collections(value)
+    transport = _verify_prior_transport(value)
+    authority = {
+        "execution": False,
+        "approval": False,
+        "merge": False,
+        "publication": False,
+        "deployment": False,
+        "signing": False,
+        "policy_change": False,
+    }
+    if value.get("authority") != authority:
+        raise ReviewConvergenceError(
+            "E_REVIEW_PRIOR_INVALID", "prior receipt authority boundary is invalid"
+        )
+
+    message, handoff, handoff_digest = _verify_prior_message(value, transport)
+    _verify_prior_bindings(value, handoff, authority)
+    _verify_prior_message_id(message, transport, handoff_digest)
     return value
 
 
