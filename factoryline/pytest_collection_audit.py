@@ -20,6 +20,14 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 _ADVISORY_COLLECTION = ContextVar("advisory_pytest_collection", default=False)
+_UNAVAILABLE_COLLECTION_INPUTS = frozenset({"invalid", "oversized", "unreadable"})
+_UNRESOLVED_CONFIG_REASONS = {
+    "invalid": "malformed_collection_configuration",
+    "oversized": "oversized_collection_configuration",
+    "unreadable": "unreadable_collection_configuration",
+    "unsupported": "unsupported_collection_configuration",
+    "unmodeled-builtin-collection": "unmodeled_builtin_collection_options",
+}
 
 
 @contextmanager
@@ -153,7 +161,7 @@ def _pytest_function_test_disabled(statement, function_name):
 
 
 def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
-    """Read pytest selected root config; malformed config is incomplete."""
+    """Read the selected root config, with explicit uncertainty for static scans."""
     from .review_audits import (
         ReviewAuditError,
         _TEST_CLASS_PATTERNS,
@@ -175,18 +183,11 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
     for relative, section in candidates:
         result = _pytest_config_file(root, relative, section, defaults)
         if result is not None and result[1].get("state") != "absent-section":
-            unmodeled = result[1].get("state") == "unmodeled-builtin-collection"
-            if result[1].get("state") in {
-                "invalid",
-                "oversized",
-                "unreadable",
-            } or (
-                (unmodeled or result[1].get("state") == "unsupported")
-                and not allow_unknown
-            ):
+            state = result[1].get("state")
+            if state in _UNRESOLVED_CONFIG_REASONS and not allow_unknown:
                 raise ReviewAuditError(
                     f"Cannot determine pytest test collection from {relative}: "
-                    f"{'unsupported' if unmodeled else result[1]['state']} configuration."
+                    f"{'unsupported' if state == 'unmodeled-builtin-collection' else state} configuration."
                 )
             patterns, identity = result
             identity = _pytest_collection_source_identity(
@@ -237,6 +238,7 @@ def _pytest_collection_source_identity(
         is_test_module = _pytest_file_matches(relative, settings["python_files"])
         if not is_conftest and not is_test_module:
             continue
+        data = None
         try:
             data = _security_source_bytes(root, relative)
             if len(data) > MAX_BYTES:
@@ -248,21 +250,11 @@ def _pytest_collection_source_identity(
             UnicodeError,
             RuntimeAuditError,
             RecursionError,
-        ) as exc:
-            syntax_error = isinstance(exc, SyntaxError)
-            if syntax_error and allow_unknown:
-                hooks.append(
-                    {
-                        "path": relative,
-                        "sha256": sha256(data).hexdigest(),
-                        "bytes": len(data),
-                        "names": [],
-                        "pytest_plugins": False,
-                        "state": "unparseable_source",
-                    }
-                )
+        ):
+            if allow_unknown:
+                hooks.append(_pytest_collection_source_gap(relative, data, MAX_BYTES))
                 continue
-            if is_conftest or (allow_unknown and not syntax_error):
+            if is_conftest:
                 raise ReviewAuditError(
                     f"Cannot determine pytest test collection from {relative}: "
                     "unreadable or invalid hook source."
@@ -301,22 +293,20 @@ def _pytest_collection_source_identity(
             "Cannot determine pytest test collection: custom collection hooks "
             "or pytest plugins are unsupported."
         )
-    unmodeled = identity.get("state") in {"unmodeled-builtin-collection", "unsupported"}
-    unknown = bool(hooks or unmodeled)
-    reason = {
-        "unmodeled-builtin-collection": "unmodeled_builtin_collection_options",
-        "unsupported": "unsupported_collection_configuration",
-    }.get(
-        identity.get("state"),
-        "unparseable_collection_source"
-        if any(hook.get("state") == "unparseable_source" for hook in hooks)
-        else "custom_collection_hooks_or_pytest_plugins",
-    )
+    input_state = identity.get("state")
+    reason = _UNRESOLVED_CONFIG_REASONS.get(input_state)
+    unknown = bool(hooks or reason)
+    if unknown:
+        reason = reason or _pytest_collection_hook_gap_reason(hooks)
+    if reason == "unavailable_collection_source":
+        input_state = "unreadable"
     return {
         **identity,
         **(
             {
-                "state": "unsupported",
+                "state": input_state
+                if input_state in _UNAVAILABLE_COLLECTION_INPUTS
+                else "unsupported",
                 "collection_state": "UNKNOWN",
                 "mode": {
                     True: "static_without_collection",
@@ -333,6 +323,29 @@ def _pytest_collection_source_identity(
         ),
         "conftest_sources": sources,
     }
+
+
+def _pytest_collection_source_gap(relative, data, limit):
+    row = {"path": relative, "names": [], "pytest_plugins": False}
+    if data is None:
+        return {**row, "state": "unavailable_source"}
+    if len(data) > limit:
+        return {**row, "state": "oversized_source", "bytes": len(data)}
+    return {
+        **row,
+        "state": "unparseable_source",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+    }
+
+
+def _pytest_collection_hook_gap_reason(hooks):
+    states = {hook.get("state") for hook in hooks}
+    if states & {"unavailable_source", "oversized_source"}:
+        return "unavailable_collection_source"
+    if "unparseable_source" in states:
+        return "unparseable_collection_source"
+    return "custom_collection_hooks_or_pytest_plugins"
 
 
 def _pytest_collection_hook_names(tree, is_conftest, is_test_module):
@@ -410,7 +423,7 @@ def _pytest_config_data(data, relative, section, defaults):
     try:
         text = data.decode("utf-8")
         configured = _pytest_pattern_value(text, section)
-    except (UnicodeError, ValueError, configparser.Error):
+    except (UnicodeError, ValueError, configparser.Error, RecursionError):
         return set(), {**identity, "state": "invalid"}
     if configured is _INVALID_PYTEST_CONFIG:
         return set(), {**identity, "state": "invalid"}

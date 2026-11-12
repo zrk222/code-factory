@@ -1855,6 +1855,13 @@ def _repo_scan_state(
     deep: bool,
     inventory: dict[str, Any],
 ) -> tuple[str, str]:
+    from .pytest_collection_audit import _UNAVAILABLE_COLLECTION_INPUTS
+
+    collection = static_security.get("oracle_context", {}).get(
+        "static_pytest_collection", {}
+    )
+    if collection.get("state") in _UNAVAILABLE_COLLECTION_INPUTS:
+        return "BLOCKED", "BLOCKED"
     if any(
         finding.get("severity") in {"CRITICAL", "HIGH"}
         for finding in static_security.get("findings", [])

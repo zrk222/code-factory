@@ -173,15 +173,14 @@ def test_builtin_collection_modes_do_not_admit_invalid_or_plugin_options(
     (tmp_path / "pytest.ini").write_text(
         "[pytest]\naddopts = " + addopts + "\n", encoding="utf-8"
     )
-    if addopts == "--doctest-modules -p plugin":
-        patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
-        assert patterns == set()
-        assert identity["collection_state"] == "UNKNOWN"
-        with pytest.raises(review_audits.ReviewAuditError):
-            _pytest_collection_config(tmp_path)
-        return
+    patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+    assert patterns == set()
+    assert identity["collection_state"] == "UNKNOWN"
+    assert identity["state"] == (
+        "unsupported" if addopts == "--doctest-modules -p plugin" else "invalid"
+    )
     with pytest.raises(review_audits.ReviewAuditError):
-        _pytest_collection_config(tmp_path, allow_unknown=True)
+        _pytest_collection_config(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -272,7 +271,7 @@ def test_collection_unknown_profile_binds_hooks_and_config_without_execution(tmp
         "oversized_test_module",
     ],
 )
-def test_collection_unknown_profile_does_not_relax_invalid_inputs(
+def test_collection_unknown_profile_recovers_without_granting_authority(
     tmp_path, monkeypatch, kind
 ):
     from factoryline.pytest_collection_audit import _pytest_collection_config
@@ -282,9 +281,24 @@ def test_collection_unknown_profile_does_not_relax_invalid_inputs(
         "def pytest_collection_modifyitems(items): pass\n", encoding="utf-8"
     )
     cases = {
-        "invalid_config": ("pytest.ini", "text", "[pytest\n", None),
-        "oversized_config": ("pytest.ini", "oversized", None, None),
-        "unreadable_config": ("pytest.ini", "unreadable", "local_file", None),
+        "invalid_config": (
+            "pytest.ini",
+            "text",
+            "[pytest\n",
+            "malformed_collection_configuration",
+        ),
+        "oversized_config": (
+            "pytest.ini",
+            "oversized",
+            None,
+            "oversized_collection_configuration",
+        ),
+        "unreadable_config": (
+            "pytest.ini",
+            "unreadable",
+            "local_file",
+            "unreadable_collection_configuration",
+        ),
         "unsupported_config": (
             "pytest.ini",
             "text",
@@ -297,12 +311,17 @@ def test_collection_unknown_profile_does_not_relax_invalid_inputs(
             "def broken(:\n",
             "unparseable_collection_source",
         ),
-        "oversized_hook": ("conftest.py", "oversized", None, None),
+        "oversized_hook": (
+            "conftest.py",
+            "oversized",
+            None,
+            "unavailable_collection_source",
+        ),
         "unreadable_hook": (
             "conftest.py",
             "unreadable",
             "_security_source_bytes",
-            None,
+            "unavailable_collection_source",
         ),
         "invalid_test_module": (
             "test_example.py",
@@ -310,7 +329,12 @@ def test_collection_unknown_profile_does_not_relax_invalid_inputs(
             "def broken(:\n",
             "unparseable_collection_source",
         ),
-        "oversized_test_module": ("test_example.py", "oversized", None, None),
+        "oversized_test_module": (
+            "test_example.py",
+            "oversized",
+            None,
+            "unavailable_collection_source",
+        ),
     }
     path, operation, value, unknown_reason = cases[kind]
     target = tmp_path / path
@@ -324,18 +348,18 @@ def test_collection_unknown_profile_does_not_relax_invalid_inputs(
             raise RuntimeAuditError("E_SOURCE_UNREADABLE", "unreadable")
 
         monkeypatch.setattr(review_audits, value, unreadable)
-    if unknown_reason:
-        patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
-        assert patterns == set()
-        assert identity["collection_state"] == "UNKNOWN"
-        assert identity["reason"] == unknown_reason
-        if unknown_reason == "unparseable_collection_source":
-            assert any(
-                row.get("state") == "unparseable_source"
-                for row in identity["collection_hook_sources"]
-            )
-    with pytest.raises(review_audits.ReviewAuditError):
-        _pytest_collection_config(tmp_path, allow_unknown=not unknown_reason)
+    patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+    assert patterns == set()
+    assert identity["collection_state"] == "UNKNOWN"
+    assert identity["reason"] == unknown_reason
+    if unknown_reason == "unparseable_collection_source":
+        assert any(
+            row.get("state") == "unparseable_source"
+            for row in identity["collection_hook_sources"]
+        )
+    if kind != "oversized_test_module":
+        with pytest.raises(review_audits.ReviewAuditError):
+            _pytest_collection_config(tmp_path)
 
 
 @pytest.mark.parametrize(

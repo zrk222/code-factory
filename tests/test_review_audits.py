@@ -15546,8 +15546,23 @@ def test_security_only_unsupported_collection_preserves_security(
     assert not any(row["code"].startswith("QUALITY_") for row in report["findings"])
     assert not report["context_reviews"]
     (tmp_path / filename).write_text("[unterminated", encoding="utf-8")
-    with pytest.raises(audit.ReviewAuditError, match="collection"):
-        audit.security_scan(tmp_path, cache_enabled=False, security_only=True)
+    recovered = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+        bind_collection_receipt=True,
+    )
+    recovery = recovered["oracle_context"]["pytest_collection"]
+    assert recovery["reason"] == "malformed_collection_configuration"
+    assert recovery["capture_state"] == "stable_pre_post"
+    assert recovered["audit_coverage"]["complete"] is True
+    assert recovered["state"] == "INCOMPLETE"
+    assert recovered["finding_conservation"]["state"] == "PASS"
+    assert recovered["agent_actions"] == []
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in recovered["findings"]
+    )
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])

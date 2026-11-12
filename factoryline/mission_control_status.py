@@ -611,7 +611,12 @@ def _bind_security_scan_collection_observation(
         raise ValueError("security scan configuration manifest is malformed")
     observed = (after, final) if final_checked else (after,)
     for item in observed:
-        if isinstance(item, dict) and isinstance(item.get("path"), str):
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("path"), str)
+            and isinstance(item.get("sha256"), str)
+            and type(item.get("bytes")) is int
+        ):
             row = {
                 "path": item["path"],
                 "sha256": item.get("sha256"),
