@@ -144,6 +144,25 @@ def test_core_unrelated_passing_session_does_not_cover_candidate(tmp_path):
     assert receipt["final_approval"] is False
 
 
+def test_core_legacy_unbound_session_remains_nonready(tmp_path):
+    _, intent = _ready_workspace(tmp_path)
+    session = _session(tmp_path, passed=True)
+    result_path = session.parent / "result.json"
+    result = json.loads(result_path.read_bytes())
+    del result["candidate_inputs"]
+    result_path.write_bytes(_canonical(result) + b"\n")
+    value = json.loads(session.read_bytes())
+    value["result"]["sha256"] = _file_sha(result_path)
+    core = {key: item for key, item in value.items() if key != "session_sha256"}
+    value["session_sha256"] = sha256(_canonical(core)).hexdigest()
+    session.write_bytes(_canonical(value) + b"\n")
+    receipt = assess_continuous_proof(
+        tmp_path, "legacy", intent, ["src/service.py"], session_path=session
+    )
+    assert receipt["route"] == "human_required"
+    assert receipt["final_approval"] is False
+
+
 @pytest.mark.parametrize("child", ["result.json", "verification.json"])
 def test_core_nested_session_drift_invalidates_outer_proof(tmp_path, child):
     changed, intent = _ready_workspace(tmp_path)
