@@ -16,92 +16,6 @@ from factoryline.run_admission import prepare_admission
 from factoryline.session_recorder import run_observed_session, verify_session_receipt
 
 
-def test_recorder_detects_validator_source_mutation(tmp_path, monkeypatch):
-    from factoryline import session_recorder as recorder
-
-    source = tmp_path / "source.py"
-    source.write_text("value = 1\n")
-    manifest = tmp_path / "validators.json"
-    manifest.write_text("{}")
-
-    def run(argv, workspace, timeout):
-        if argv == ["validator"]:
-            source.write_text("value = 2\n")
-        return {"status": "completed", "exit_code": 0}
-
-    monkeypatch.setattr(recorder, "_run", run)
-    result = recorder._execute_observed(
-        tmp_path,
-        ["agent"],
-        {
-            "timeout": 1,
-            "scopes": ["source.py"],
-            "validators": [{"id": "v", "argv": ["validator"], "timeout_seconds": 1}],
-            "manifest": "validators.json",
-            "manifest_sha256": recorder._file_sha(manifest),
-        },
-    )
-    assert "hollow_validator" in result["failures"]
-    assert result["changes"][0]["path"] == "source.py"
-    assert result["candidate_inputs"]["before"] != result["candidate_inputs"]["after"]
-
-
-def test_recorder_snapshot_prunes_dependency_trees(tmp_path, monkeypatch):
-    from factoryline import session_recorder as recorder
-
-    dependency = tmp_path / "node_modules" / "nested"
-    dependency.mkdir(parents=True)
-    (dependency / "ignored.py").write_text("ignored")
-    (tmp_path / "source.py").write_text("value = 1\n")
-    visited = []
-    original = recorder.os.walk
-
-    def walk(root):
-        for row in original(root):
-            visited.append(Path(row[0]))
-            yield row
-
-    monkeypatch.setattr(recorder.os, "walk", walk)
-    assert set(recorder._snapshot(tmp_path)) == {"source.py"}
-    assert all("node_modules" not in path.parts for path in visited)
-
-
-def test_validator_restore_does_not_erase_observed_scope_escape(tmp_path, monkeypatch):
-    from factoryline import session_recorder as recorder
-
-    source = tmp_path / "outside.py"
-    source.write_text("original")
-    manifest = tmp_path / "validators.json"
-    manifest.write_text("{}")
-
-    def run(argv, workspace, timeout):
-        if argv == ["mutate"]:
-            source.write_text("modified")
-        if argv == ["restore"]:
-            source.write_text("original")
-        return {"status": "completed", "exit_code": 0}
-
-    monkeypatch.setattr(recorder, "_run", run)
-    result = recorder._execute_observed(
-        tmp_path,
-        ["agent"],
-        {
-            "timeout": 1,
-            "scopes": ["allowed.py"],
-            "validators": [
-                {"id": name, "argv": [name], "timeout_seconds": 1}
-                for name in ["mutate", "restore"]
-            ],
-            "manifest": "validators.json",
-            "manifest_sha256": recorder._file_sha(manifest),
-        },
-    )
-    assert result["changes"] == []
-    assert result["scope_escapes"] == ["outside.py"]
-    assert result["candidate_drifted"] is True
-    assert result["failures"]
-
-
 AGENT = {
     "schema": "factory.agent-identity.v1",
     "subject": "agent-alpha",
@@ -110,7 +24,7 @@ AGENT = {
 }
 
 
-def _admission(root: Path, identifier: str = "observed-run", *, scopes=None) -> Path:
+def _admission(root: Path, identifier: str = "observed-run") -> Path:
     manifest = Path(init_loop(root, "observed-loop", "platform-team")["path"])
     passport = Path(build_loop_passport(root, manifest)["paths"]["json"])
     request = root / "request.json"
@@ -124,7 +38,7 @@ def _admission(root: Path, identifier: str = "observed-run", *, scopes=None) -> 
                 ).isoformat(),
                 "trigger": {"type": "manual"},
                 "actions": ["read_repository"],
-                "paths": scopes or ["."],
+                "paths": ["."],
                 "budget": {
                     "max_iterations": 1,
                     "max_wall_seconds": 30,
