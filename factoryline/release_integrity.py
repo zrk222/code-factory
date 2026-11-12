@@ -87,7 +87,7 @@ def _checkout_uses_requested_tag(job: Any) -> bool:
     return any(
         isinstance(step, dict)
         and step.get("uses")
-        == "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
+        == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
         and isinstance(step.get("with"), dict)
         and step["with"].get("ref") == "${{ needs.guard.outputs.candidate_commit }}"
         for step in steps
@@ -150,7 +150,7 @@ def _fan_in_context(workflow: str) -> dict[str, Any]:
         for step in publish_steps
         if isinstance(step, dict)
         and step.get("uses")
-        == "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+        == "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
         and isinstance(step.get("with"), dict)
     ]
     pypi_position = next(

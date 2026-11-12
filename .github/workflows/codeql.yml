@@ -36,7 +36,7 @@ jobs:
           - language: java-kotlin
             build: manual
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
@@ -47,7 +47,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
         if: matrix.language == 'java-kotlin'
       - name: Initialize pinned semantic analyzer
-        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build }}
@@ -59,7 +59,7 @@ jobs:
           GRADLE_OPTS: '-Dorg.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvm.options=-Xmx4g'
         run: bash gradlew --no-daemon --no-configuration-cache --no-build-cache --rerun-tasks --max-workers=2 -Pkotlin.incremental=false -Pkotlin.compiler.execution.strategy=in-process assemble
       - name: Analyze source and upload native SARIF
-        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: '/language:${{ matrix.language }}'
           output: '${{ runner.temp }}/codeql-results'

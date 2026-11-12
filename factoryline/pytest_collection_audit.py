@@ -634,6 +634,7 @@ def _captured_test_invocation_profile(
         selection = captured_pytest_configuration(configuration_bytes)
         if selection is None:
             return None
+        settings_module = selection["options"].get("DJANGO_SETTINGS_MODULE")
         for row in workflows:
             args = (
                 row["argv"][3:]
@@ -641,7 +642,12 @@ def _captured_test_invocation_profile(
                 else row["argv"][1:]
             )
             projection = _pytest_argument_projection(args)
-            if projection is None:
+            if (
+                projection is None
+                or row["cwd"] != "."
+                or projection.get("DJANGO_SETTINGS_MODULE", settings_module)
+                != settings_module
+            ):
                 return None
             row["selector_effects"] = projection
         identity = selection["identity"]
@@ -651,7 +657,7 @@ def _captured_test_invocation_profile(
                 for key in ("path", "sha256", "bytes", "state")
                 if key in identity
             },
-            "settings_module": selection["options"].get("DJANGO_SETTINGS_MODULE"),
+            "settings_module": settings_module,
             "python_files": _pytest_collection_settings(identity)["python_files"],
             "python_functions": _pytest_collection_settings(identity)[
                 "python_functions"
@@ -1045,9 +1051,7 @@ def _captured_step_command(
     )
     if row is None:
         return None
-    if not row:
-        return row, row_effects, row_env
-    if argv[0].rsplit("/", 1)[-1] not in {"python", "python3", "python.exe"}:
+    if not row or row.get("runner") == "pytest":
         return row, row_effects, row_env
     runner_path = (posix_path(cwd) / argv[1]).as_posix()
     if (

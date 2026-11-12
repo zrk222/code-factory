@@ -10,12 +10,14 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from factoryline.benchmark_lab import _wilson
+from factoryline.run_metrics import _atomic_json
 
 SCHEMA = "factory.precision-gain.v1"
 FIELDS = ("raw", "active", "review", "supported")
@@ -49,15 +51,22 @@ def _metrics(rows: dict, labels: dict, population: str) -> dict:
     )
     tp, fp, unclear = (counts[name] for name in ("TP", "FP", "UNCLEAR"))
     decided = tp + fp
+    emitted = decided + unclear
     return {
         "TP": tp,
         "FP": fp,
         "UNCLEAR": unclear,
         "decided": decided,
+        "emitted": emitted,
         "precision": tp / decided if decided else None,
-        "unclear_inclusive_rate": tp / (decided + unclear)
-        if decided + unclear
+        "unclear_inclusive_rate": tp / emitted if emitted else None,
+        "precision_label_bounds": [tp / emitted, (tp + unclear) / emitted]
+        if emitted
         else None,
+        "known_positive_cases_outside_population": sum(
+            row["label"] == "TP" for row in labels.values()
+        )
+        - tp,
         "wilson_95": _wilson(tp, decided),
     }
 
@@ -87,6 +96,8 @@ def _version_rows(
     extra = version.get("unlabelled_outputs")
     if type(extra) is not int or extra < 0:
         raise ValueError(f"{name}: missing unlabelled output count")
+    if extra:
+        incomplete.append(f"{name}: reconcile {extra} unlabelled outputs")
     return rows, incomplete
 
 
@@ -152,6 +163,19 @@ def _measurement_state(reasons, gain):
     return "NO_PRECISION_GAIN"
 
 
+def _runtime_comparison(baseline, candidate):
+    values = [arm.get("elapsed_seconds") for arm in (baseline, candidate)]
+    for value in values:
+        if value is not None and (
+            type(value) not in (float, int) or not 0 < value < math.inf
+        ):
+            raise ValueError("invalid elapsed_seconds observation")
+    if None in values:
+        return None
+    before, after = values
+    return {"baseline": before, "candidate": after, "delta": after - before}
+
+
 def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
     """Reject omitted coverage, changed premises, lost TPs and unsupported gains."""
     labels = _contract_labels(contract)
@@ -203,6 +227,7 @@ def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
         "metrics": metrics,
         "active_precision_delta": gain,
         "changed_claims": changed,
+        "changed_claim_labels": {key: labels[key]["label"] for key in changed},
         "lost_TPs": lost,
         "lost_unclear": lost_unclear,
         "change_kind": "SELECTION_WITH_ABSTENTION"
@@ -210,6 +235,12 @@ def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
         else "ACTIVE_OUTPUT_CHANGE",
         "scope": "fixed_panel",
         "registered_claims": len(labels),
+        "scanner_sha256": {
+            "baseline": baseline["scanner_sha256"],
+            "candidate": candidate["scanner_sha256"],
+        },
+        "labels_sha256": contract["labels_sha256"],
+        "elapsed_seconds": _runtime_comparison(baseline, candidate),
         "unlabelled_outputs": {
             name: value["unlabelled_outputs"]
             for name, value in (("baseline", baseline), ("candidate", candidate))
@@ -231,16 +262,70 @@ def _read_bound(root: Path, reference: dict) -> dict:
     return json.loads(payload)
 
 
+def _operator_summary(result, output):
+    lines = [result["state"]]
+    for arm, metrics in result.get("metrics", {}).items():
+        active = metrics["active"]
+        precision = active["precision"]
+        score = "undefined" if precision is None else f"{precision:.2%}"
+        lines.append(
+            f"{arm}: {active['TP']} TP, {active['FP']} FP, "
+            f"{active['UNCLEAR']} unclear, {active['emitted']} active alerts; "
+            f"precision {score}, "
+            f"{active['known_positive_cases_outside_population']} known TPs outside active, "
+            f"{metrics['review']['emitted']} for review"
+        )
+    if elapsed := result.get("elapsed_seconds"):
+        lines.append(
+            f"Recorded runtime: {elapsed['baseline']:.2f}s -> "
+            f"{elapsed['candidate']:.2f}s"
+        )
+    if "metrics" in result:
+        lost = sorted({key for keys in result["lost_TPs"].values() for key in keys})
+        lines.append(f"Known TP losses: {', '.join(lost) or 'none'}")
+    lines.extend(result.get("reasons", []))
+    if "reason" in result:
+        lines.append(result["reason"])
+    action = {
+        "BLOCKED": "Resolve the listed gaps before accepting the comparison.",
+        "INVALID": "Repair the evidence inputs and verify the pair again.",
+        "NO_PRECISION_GAIN": "Keep the baseline for precision work.",
+        "ACTIVE_PRECISION_GAIN_FIXED_PANEL": "Review the case transitions before accepting the candidate.",
+    }
+    lines.append(action[result["state"]])
+    lines.append(f"Case changes and evidence: {output}")
+    return "\n".join(lines)
+
+
+def _check_output_path(args, contract):
+    output = args.out.resolve()
+    for arm in ("baseline", "candidate"):
+        reference = contract.get(arm)
+        if isinstance(reference, dict) and isinstance(reference.get("path"), str):
+            if output == (args.contract.parent / reference["path"]).resolve():
+                raise ValueError("--out must not replace an observation")
+
+
 def main() -> int:
+    """Verify the sealed pair and write a receipt for the operator."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("contract", type=Path)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--summary", action="store_true", help="Print an operator summary"
+    )
     args = parser.parse_args()
+    if args.out.resolve() == args.contract.resolve():
+        parser.error("--out must not replace the contract")
     try:
         payload = args.contract.read_bytes()
         contract = json.loads(payload)
         if not isinstance(contract, dict):
             raise ValueError("contract must be an object")
+        try:
+            _check_output_path(args, contract)
+        except ValueError as exc:
+            parser.error(str(exc))
         result = evaluate(
             contract,
             _read_bound(args.contract.parent, contract["baseline"]),
@@ -250,10 +335,12 @@ def main() -> int:
         result["evidence"] = {key: contract[key] for key in ("baseline", "candidate")}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         result = {"schema": SCHEMA, "state": "INVALID", "reason": str(exc)}
-    args.out.write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    _atomic_json(args.out, result)
+    print(
+        _operator_summary(result, args.out)
+        if args.summary
+        else json.dumps({"state": result["state"], "out": str(args.out)})
     )
-    print(json.dumps({"state": result["state"], "out": str(args.out)}))
     return 0 if result["state"] == "ACTIVE_PRECISION_GAIN_FIXED_PANEL" else 2
 
 

@@ -1,0 +1,295 @@
+schema: factory.ssat.v1
+spec_markdown: |
+  # Spec: atomic-audit-convergence
+  Status: draft
+  SpecFactor-target: 0.75-2.5
+
+  ## MUST - Functional core
+  ### Description
+  Normalize independently produced, structured code-review rounds into a bounded local receipt so developers can see incomplete criteria, duplicated findings, unresolved issues, regressions, and next human actions. This adapts Atomic's review-convergence and per-criterion verification patterns to CF's evidence and authority model.
+
+  ### User roles
+  - Engineer or agent importing review artifacts for one candidate.
+  - Human reviewer who owns interpretation and any release decision.
+
+  ### Requirements (EARS)
+  - The system shall enforce `bounded_inputs` and reject contracts or rounds larger than 1,000,000 bytes, containing unknown fields, more than 8 reviewers, more than 64 criteria, or more than 256 findings.
+  - The system shall enforce `declared_digest_bindings` and store `contract_sha256` and `candidate_sha256` in every receipt as caller-declared digests. The system shall reject any assertion that either digest authenticates reviewer identity or unread source content.
+  - The system shall enforce `incomplete_review_cells` and emit INDETERMINATE when a declared criterion cell for a recognized reviewer is missing, duplicated, malformed, or has an unknown outcome; duplicate reviewer records instead reject the envelope before cell evaluation. The system shall never label either case clean.
+  - The system shall enforce `objective_review_queue` and emit unresolved human-review work for required_by_objective, contradicts_objective, or unknown alignment, independent of a reported priority value.
+  - The system shall enforce `reporter_preserving_dedupe` and merge records with equal canonical finding keys and store all reporter IDs and evidence digests in the merged record; the merge shall preserve unresolved status when any report is unresolved.
+  - When a compatible prior self-hash-valid receipt is supplied, the evaluator shall enforce `prior_round_lineage` and emit added, persistent, no_longer_reported, and reopened finding identities. The evaluator shall reject comparison against any prior receipt under a different contract digest. A finding missing from a review round is not proof of resolution.
+  - The system shall enforce `contained_atomic_output` and write a machine-readable self-hashed receipt only to an explicitly requested workspace-contained output path.
+  - The system shall enforce `declared_review_provenance` and emit provenance_unverified and mark reviewer identity, reviewer independence, source origin, severity, and alignment as caller-declared; the evaluator shall make no authenticity or semantic-correctness claim.
+  - The system shall enforce `authority_exclusions` and emit authority=false for execution, approval, merge, publication, deployment, signing, and policy changes.
+  - The system shall enforce `correlated_a2a_messages` and accept A2A v1.0 Message envelopes with exactly one supported structured review DataPart, preserve declared contextId/taskId for reply correlation, and produce a deterministic A2A v1.0 Message export bound to the local receipt.
+  - The system shall enforce `a2a_export_boundary` and label A2A identity as unverified, expose the message as export-ready data only, and never discover endpoints, acquire credentials, send a message, or treat remote task state as approval.
+  - The system shall enforce `lazy_cli_dispatch` and emit convergence results only after the CLI selects the convergence command and shall leave the engine unimported for every other command.
+  - The system shall enforce `bounded_status_reads` and expose convergence facts through bounded read-only MCP and WebMCP status tools.
+  - The system shall enforce `graph_handoff_summary` and display the self-hash-validated receipt and A2A correlation summary in Graph Ops.
+  - The system shall enforce `optional_ci_artifacts` and emit optional review-convergence artifacts in CI when the conventional contract and round inputs exist. The optional convergence lane shall not change the main proof-review result when its inputs are absent or invalid.
+
+  ### Acceptance criteria (Gherkin)
+  ```gherkin
+  Scenario: Requirement 1 has an acceptance obligation
+    Given the criterion `bounded_inputs`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 2 has an acceptance obligation
+    Given the criterion `declared_digest_bindings`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 3 has an acceptance obligation
+    Given the criterion `incomplete_review_cells`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 4 has an acceptance obligation
+    Given the criterion `objective_review_queue`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 5 has an acceptance obligation
+    Given the criterion `reporter_preserving_dedupe`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 6 has an acceptance obligation
+    Given the criterion `prior_round_lineage`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 7 has an acceptance obligation
+    Given the criterion `contained_atomic_output`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 8 has an acceptance obligation
+    Given the criterion `declared_review_provenance`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 9 has an acceptance obligation
+    Given the criterion `authority_exclusions`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 10 has an acceptance obligation
+    Given the criterion `correlated_a2a_messages`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 11 has an acceptance obligation
+    Given the criterion `a2a_export_boundary`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 12 has an acceptance obligation
+    Given the criterion `lazy_cli_dispatch`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 13 has an acceptance obligation
+    Given the criterion `bounded_status_reads`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 14 has an acceptance obligation
+    Given the criterion `graph_handoff_summary`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Requirement 15 has an acceptance obligation
+    Given the criterion `optional_ci_artifacts`
+    When its corresponding workflow observation is evaluated
+    Then the observation must demonstrate the requirement's stated outcome
+
+  Scenario: Complete structured reviewer round remains advisory
+    Given a contract with approved criterion definitions and a fixed contract digest
+    And every declared reviewer reports every criterion with valid typed outcomes
+    When the round is reconciled against the candidate digest
+    Then the receipt reports exact coverage and deduplicated findings
+    And the receipt has no release, approval, merge, or publication authority
+
+  Scenario: Missing or malformed review is indeterminate
+    Given a contract requiring multiple reviewers and criteria
+    When a reviewer is missing or a recognized criterion cell is missing, duplicated, or invalid
+    Then the result is INDETERMINATE
+    And it is not represented as a pass or as resolved proof
+
+  Scenario: Required issue is not dismissed by a low severity label
+    Given an unresolved finding aligned as required_by_objective
+    When reviewers assign different severity values or only one reviewer reports it
+    Then the normalized finding remains in the human review queue
+    And its reviewer provenance and alignment declaration are preserved
+
+  Scenario: Review rounds expose regressions and reopened issues
+    Given a prior valid receipt bound to the same contract digest
+    When finding A is reported in round 1, absent in complete round 2, and reported again in complete round 3
+    Then round 2 lists A only as no_longer_reported
+    And round 3 lists A as reopened rather than added or persistent
+    And neither absence nor reappearance asserts a verified resolution
+
+  Scenario: Changed contract cannot reuse prior convergence state
+    Given a prior receipt under a different review-contract digest
+    When a new round attempts to compare against it
+    Then comparison is blocked as incompatible and the receipt does not claim progress
+  ```
+
+  ## SHOULD - Technical/structural
+  - ADR references: Atomic `packages/workflows/builtin/review-convergence.ts` and `verification-criteria.ts`; CF authority boundary and provenance rules.
+  - Data model: `factory.atomic-review-contract.v1`, `factory.atomic-review-round.v1`, and `factory.atomic-review-convergence.v1`. Decision facts are `contract_valid`, `round_valid`, `coverage_complete`, `alignment_unknown`, `required_alignment`, `duplicate_finding_identity`, `prior_contract_digest_match`, `complete_review_findings`, and `complete_review_no_findings`. `INDETERMINATE` means evidence coverage is incomplete; `REVIEW_COMPLETE_ADVISORY` means all declared report cells were supplied with no findings, not that code is correct. Complete coverage with findings is `REVIEW_FINDINGS`.
+  - API contract: local pure Python evaluator plus explicit CLI `factory audit convergence`; no network or model adapter.
+  - A2A contract: input A2A v1.0 `Message` with one `Part.data`; output a reply-correlated `ROLE_USER` Message with a single structured Part. The caller/client owns Agent Card discovery, authorization, transport, task polling, and any human interaction.
+  - Limit: a valid self-hash proves receipt integrity against accidental edits only; it is not a signature, reviewer identity proof, or semantic verification.
+
+  ## Local operation
+  - Import either `factory.atomic-review-round.v1` JSON or an A2A v1.0 `Message` with `role: ROLE_AGENT` and one JSON `Part.data` containing a review round or `factory.atomic-review-submission.v1`.
+  - The receipt's `a2a_message` is an A2A v1.0 `ROLE_USER` Message with `application/vnd.code-factory.review-handoff+json`, deterministic message ID, `reply_to` provenance, and any supplied context/task IDs. `factory audit convergence ... --a2a` prints this Message after writing the receipt.
+  - Resume by saving an agent's A2A `ROLE_AGENT` Message as the next `--round` input and supplying the prior receipt. A one-reviewer submission does not imply that any other declared review cell has passed.
+  - MCP `factory.audit_convergence_status` defaults to `.factory/review-convergence/latest.json` and can return the bounded A2A Message on request. WebMCP and Graph Ops expose a compact read-only handoff summary. CI compiles an optional receipt/report artifact only when both conventional input files exist; malformed optional input does not change the main proof-review result.
+  - This is protocol-shaped local import/export, not an A2A network client. CF does not fetch Agent Cards, acquire credentials, transmit a Message, poll a Task, or authenticate a remote identity.
+
+  ## SHOULD NOT - Implementation details
+  - Do not import or vendor Atomic source code.
+  - Do not add numeric model scores, agent-selected thresholds, or mean/quorum as a merge or release gate.
+  - Do not let reviewer agreement erase a required finding.
+  - Do not infer objective alignment, identity, or evidence authenticity from free-text claims.
+
+  ## Decision logic (factory candidates)
+  | # | if | then |
+  |---|----|------|
+  | 1 | `contract_valid` or `round_valid` is false | Reject the input and write no convergence receipt |
+  | 2 | `coverage_complete` is false | Emit INDETERMINATE with exact missing cells; do not report a clean review |
+  | 3 | required, contradicting, or unknown objective alignment is true | Put the finding in the human review queue |
+  | 4 | `duplicate_finding_identity` is true | Emit a merged finding with every reviewer/evidence reference |
+  | 5 | Prior receipt is valid and `prior_contract_digest_match` is true | Emit added/persistent/no_longer_reported/reopened identity sets; otherwise reject comparison |
+  | 6 | `complete_review_no_findings` is true | Emit `REVIEW_COMPLETE_ADVISORY` |
+  | 7 | `complete_review_findings` is true | Emit `REVIEW_FINDINGS`; retain findings and human-review queues |
+
+  Fatal envelope validation precedes every row. Unknown or duplicate reviewer records and unknown criterion IDs are fatal, even when some records contain valid cells. For recognized reviewer/criterion pairs only, repeated or invalid cells produce INDETERMINATE. Rows 3–5 enrich results and do not override an incomplete state; rows 6–7 are mutually exclusive.
+
+  ## Normative v1 interchange reference
+  The field-level reference is `factoryline/atomic_review_audit.py` at Git commit `42e5181670cf8d1ac2700e46dbfe97ace90d0237`. This immutable reference, not an unpinned future source revision, defines the v1 formats below. No new wire format or validation behavior is introduced by this specification repair.
+
+  | Format or rule | Normative symbols and scope |
+  |---|---|
+  | Contract fields, requiredness, types and limits | `_contract`, `_exact`, `_identifier`, `_hash`, `MAX_BYTES`, `MAX_REVIEWERS`, `MAX_CRITERIA`, `_ORIGINS` |
+  | Round, reviewer, criterion and finding fields/enums | `_round`, `_round_coverage`, `_review_cells`, `_parse_cell`, `_finding`, `_ALIGNMENTS`, `MAX_FINDINGS` |
+  | A2A Message and submission formats | `_a2a_message_identity`, `_a2a_review_part`, `_a2a_round_value`, `_normalize_round`, `A2A_SUBMISSION_SCHEMA` |
+  | Receipt and outbound handoff fields | `evaluate_review_round`: `core`, `handoff_payload`, `message_identity`, `a2a_message`, `result` construction |
+  | Receipt read-validation, including nested binding checks | `_verify_previous`, `_verify_prior_collections`, `_verify_prior_transport`, `_verify_prior_message`, `_verify_prior_bindings`, `_verify_prior_message_id` |
+  | Complete executable JSON import/export fixtures | `tests/test_atomic_review_convergence.py` at the same commit: `_contract`, `_round`, `_finding`, `_evaluate`, and `test_a2a_message_round_trip_preserves_declared_identity_and_handoff` |
+
+  Canonical JSON is UTF-8 with `ensure_ascii=False`, sorted keys, and compact separators `(',', ':')`; `_digest` is its lowercase SHA-256 hex. Canonical finding identity hashes the object with keys `criterion_id`, `code`, `path`, `symbol`, `title`: code and path are casefolded, null path/symbol become empty strings, and symbol/title use `_normalized` (NFKC, casefold, leading P0–P3 marker removal, whitespace collapse). Reporter, priority and alignment do not change identity; consolidation retains those declarations separately.
+
+  The receipt core is exactly the initial `core` dictionary in `evaluate_review_round`, before adding `a2a_message` or `receipt_sha256`. Its digest becomes `handoff_payload.bindings.receipt_core_sha256`. The payload digest excludes its own `payload_sha256`. Message identity hashes exactly `{payload_sha256, context_id, task_id}` and feeds UUIDv5 with `uuid.NAMESPACE_URL` and the string concatenation of `urn:code-factory:a2a-review:` and the identity digest. Finally, `receipt_sha256` hashes the core plus `a2a_message`, excluding `receipt_sha256` itself. Input paths and declared digests remain part of the core; these are not signatures.
+
+  ## Prior/current finding transition matrix
+  A valid prior receipt must have the same contract digest. A different candidate digest is allowed and recorded: comparison measures reviewer-report changes, not proof of a repair. A changed contract or malformed/self-hash-invalid prior receipt rejects comparison. For a complete round define C=current finding IDs, P=prior complete finding IDs (for an indeterminate prior receipt, seen_ids minus no_longer_reported_ids), E=prior history.seen_ids union P, M=prior history.no_longer_reported_ids.
+
+  | Result field | Exact membership |
+  |---|---|
+  | added | C minus E |
+  | persistent | C intersect P |
+  | no_longer_reported | P minus C |
+  | reopened | C intersect M |
+  | next history.seen_ids | E union C |
+  | next history.no_longer_reported_ids | (M union (P minus C)) minus C |
+
+  Each list is sorted. An incomplete round preserves the last complete history; its partial findings are visible but cannot become the next comparison baseline. An incomplete first round starts with empty history. With no prior receipt and complete coverage, state is `no_baseline`, added=C, other delta lists are empty, and history starts with C. When coverage is incomplete, state is `indeterminate`, only candidate_sha256 and observed_ids are emitted, and history is preserved; no disappearance or resolution is inferred. Example: P={A}, C={} in a complete round records A missing; next P={}, M={A}, C={A} records A reopened, not added.
+
+  ## Interface checkpoints and observable assertions
+  Each phase leaves the tree buildable; run its named pytest checkpoint from the repository root before proceeding. These are focused regression assertions, not a claim of exhaustive detector accuracy.
+
+  | Phase | Interface and checkpoint |
+  |---|---|
+  | T1–T2 engine | `evaluate_review_round(root, contract_path, round_path, out_path, *, previous_path=None)`; checkpoint `pytest tests/test_atomic_review_convergence.py` |
+  | T3 contract | Canonical YAML materialized by `py -3.11 scripts/verify_atomic_review_convergence.py`; its SpecLine strict, validate, verify-validators and task checks are the checkpoint, not a nonexistent root Markdown file |
+  | T4 CLI | `factory audit convergence --contract contract.json --round round.json --out receipt.json --root .`; optional flags `--previous previous.json`, `--a2a`, `--json`; checkpoint the CLI and lazy-dispatch tests below |
+  | T5 MCP/WebMCP/Junie | MCP `factory.audit_convergence_status` accepts optional `receipt` and boolean `includeA2aMessage`; WebMCP uses the same name with an empty object schema, returning loaded-snapshot state/latest/a2a_handoff/invalid_count and false authority; checkpoint `pytest tests/test_mcp.py tests/test_webmcp.py tests/test_junie_taxonomy.py` |
+  | T6 Graph Ops | `review_convergence_projection` reads only `.factory/review-convergence/latest.json`; MISSING has zero receipts, INVALID has invalid_count=1, valid latest includes coverage/findings/review_delta/a2a_handoff; `append_review_convergence` adds a digest-addressed advisory node; checkpoint `test_graph_ops_reads_conventional_latest_receipt` |
+  | T7 CI | Inputs `.factory/review-convergence/contract.json` and `round.json`; outputs `.factory/github-proof-review/review-convergence.json` and `review-convergence-receipt.json`. Missing/empty inputs yield NOT_CONFIGURED, invalid inputs yield UNAVAILABLE_ADVISORY, valid inputs retain evaluator state; checkpoint `test_ci_convergence_executes_without_changing_main_proof` checks all three and unchanged `github-proof-review.json` bytes |
+
+  Unless qualified, tests below are in `tests/test_atomic_review_convergence.py`; run the whole file with `pytest tests/test_atomic_review_convergence.py` or append `::` followed by a listed test name. Parameterized cases must all pass; missing or skipped cases do not count as evidence.
+
+  | Obligation | Named assertion and expected observation |
+  |---|---|
+  | bounded_inputs | `test_duplicate_json_fields_are_rejected`: duplicate keys reject; byte/count ceilings are normative validator limits, not established by this one assertion |
+  | declared_digest_bindings | `test_complete_review_is_advisory_and_binds_exact_coverage`: stored receipt recomputes to its declared digest |
+  | incomplete_review_cells | `test_missing_duplicated_unknown_or_malformed_cells_are_indeterminate`: all four mutations remain INDETERMINATE |
+  | objective_review_queue | `test_disagreeing_objective_alignment_escalates_to_human_queue`: objective disagreement stays in human review |
+  | reporter_preserving_dedupe | `test_deduplicates_reviewers_without_weakening_required_finding`: one finding retains both reporter/evidence references and unresolved disposition |
+  | prior_round_lineage | `test_tracks_new_no_longer_reported_and_reopened_findings`, `test_rejects_prior_contract_drift_and_tampering`: exact deltas and incompatible baseline rejection |
+  | contained_atomic_output | `test_rejects_path_escape_and_source_overwrite`: reject escaped output and input overwrite |
+  | declared_review_provenance | `test_complete_review_is_advisory_and_binds_exact_coverage`: provenance_unverified remains true |
+  | authority_exclusions | `test_complete_review_is_advisory_and_binds_exact_coverage`: every authority value remains false |
+  | correlated_a2a_messages | `test_a2a_message_round_trip_preserves_declared_identity_and_handoff`: imported/exported context and task correlation survive follow-up |
+  | a2a_export_boundary | `test_mcp_reads_convergence_and_exports_a2a_without_writing`: exported message is data and local reads do not write |
+  | lazy_cli_dispatch | `test_audit_convergence_engine_is_lazy_in_cli_process`: other CLI routing does not import the convergence engine |
+  | bounded_status_reads | `test_mcp_reads_convergence_and_exports_a2a_without_writing`, `tests/test_webmcp.py::test_review_convergence_webmcp_is_registered_as_read_only_snapshot_tool`: read-only tool registration and bounded status projection |
+  | graph_handoff_summary | `test_graph_ops_reads_conventional_latest_receipt`: conventional receipt projects advisory digest and handoff |
+  | optional_ci_artifacts | `test_ci_convergence_executes_without_changing_main_proof`: valid, missing and invalid fixtures preserve main proof bytes |
+
+  Integration regression checkpoints also include `tests/test_graph_ops.py::test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only` for ordered asynchronous WebMCP registration, and `tests/test_github_proof_review.py::test_opt_in_workflow_is_advisory_scoped_and_never_uses_a_privileged_pr_trigger`. The latter retains denial of privileged triggers, write access to repository contents, merges and approvals while permitting the explicit JSON authority declaration `"merge": false`. Its guard has six negative controls in `test_advisory_workflow_guard_rejects_release_operations`: a true grant, CLI merge, git merge, API merge, CLI approval and API approval must all be rejected. These are static workflow regression controls, not a runtime sandbox or universal script analyzer.
+
+  ## Verification
+  - Run `py -3.11 scripts/verify_atomic_review_convergence.py` from the repository root. The verifier extracts these canonical spec and plan fields to a temporary SpecLine root inside its local evidence directory, validates both, and records the exact commands.
+  - The verifier runs the convergence, MCP, WebMCP, Junie taxonomy, deep-audit surfaces, Atomic adapter, GitHub proof-review and Graph Ops tests on Python 3.10, 3.11, and 3.12. Each evidence category names required passing JUnit cases.
+  - The optional CI step is executed locally with valid, missing, and invalid review fixtures. The test checks the artifact states and confirms the main proof result bytes stay unchanged.
+  - Fatal validation takes precedence: invalid JSON or envelope fields, unknown or duplicate reviewer records, and unknown criterion IDs reject the request without writing a receipt. For a recognized reviewer and criterion, an omitted, repeated, malformed or explicitly unknown outcome leaves the affected cell incomplete.
+  - The CLI writes a receipt only when given `--contract`, `--round`, and `--out`. Exit 0 means reconciliation completed; inspect the advisory state. Input errors exit 2. `--previous` compares prior receipt findings, and `--a2a` emits only the outbound message.
+  - Hashes use SHA-256 over sorted, compact UTF-8 JSON. The input contract digest binds the round; the outbound message binds the receipt core; the outer digest binds the message. Source bytes and authenticated identities are independent evidence.
+plan_markdown: |
+  # Plan: atomic-audit-convergence
+  Spec: specs/atomic-audit-convergence.md
+  Architect verdict: PASS
+
+  ## Logical decomposition
+  1. Normalize bounded local JSON or A2A v1.0 structured messages into criterion-level review cells; retain task/context correlation while explicitly marking reviewer identity unverified.
+  2. Consolidate objective-aware findings deterministically, compare self-hashed prior receipts, and export a correlated A2A reply Message bound to the same receipt core.
+  3. Route the local receipt summary through lazy CLI dispatch, read-only MCP/WebMCP, Graph Ops, and optional non-blocking CI artifact generation.
+  4. Keep every surface advisory; no remote endpoint discovery, message send, model inference, source execution, or release authority is introduced.
+
+  ## Tasks
+  - [x] T1 | slice=factoryline | files=factoryline/atomic_review_audit.py | verify=`pytest tests/test_atomic_review_convergence.py` | Implement bounded review schema, deterministic reconciliation, correlation-preserving A2A envelopes, and receipt self-hash validation.
+  - [x] T2 | slice=tests | files=tests/test_atomic_review_convergence.py | verify=`pytest tests/test_atomic_review_convergence.py` | Cover positive, adversarial, drift, CLI, A2A follow-up correlation, MCP export, and Graph Ops projection.
+  - [x] T3 | slice=specs | files=specs/atomic-review-convergence-v1.ssat.yaml | verify=`specline validate atomic-audit-convergence --root .` | Define module boundaries, inputs, outputs, and authority exclusions.
+  - [x] T4 | slice=factoryline | files=factoryline/cli_audit.py | verify=`pytest tests/test_atomic_review_convergence.py` | Add lazy explicit-output CLI command, A2A Message export, and stable error mapping.
+  - [x] T5 | slice=factoryline | files=factoryline/mcp.py,factoryline/webmcp.py,factoryline/junie_taxonomy.py | verify=`pytest tests/test_mcp.py tests/test_webmcp.py tests/test_junie_taxonomy.py` | Add bounded receipt export, WebMCP discovery, and Junie taxonomy.
+  - [x] T6 | slice=factoryline | files=factoryline/graph_ops.py,factoryline/graph_ops.html | verify=`pytest tests/test_atomic_review_convergence.py tests/test_webmcp.py` | Project the advisory receipt and correlated handoff into Graph Ops.
+  - [x] T7 | slice=.github | files=.github/workflows/factory-pr-proof-review.yml | verify=`pytest tests/test_atomic_review_convergence.py` | Emit optional receipt artifacts without changing the main CI gate.
+system: atomic-review-convergence-v1
+version: 1
+governance: human_controlled
+components:
+  - name: atomic_review_audit
+    path: factoryline/atomic_review_audit.py
+    provides:
+      - name: evaluate_review_round
+        inputs: [workspace_root, review_contract_json, review_round_json, optional_prior_receipt, explicit_output_path]
+        outputs: [self_hashed_advisory_review_receipt]
+  - name: audit_cli
+    path: factoryline/cli_audit.py
+    provides:
+      - name: audit_convergence
+        inputs: [contract_path, round_path, optional_previous_path, output_path]
+        outputs: [json_or_text_receipt_summary]
+edges:
+  - from: audit_cli
+    to: atomic_review_audit
+    relation: lazily_invokes_explicit_local_reconciliation
+invariants:
+  - Contracts and rounds are strict-schema UTF-8 JSON, bounded to 1,000,000 bytes, and workspace-contained.
+  - Every declared reviewer and criterion cell must be present exactly once; incomplete, malformed, duplicated, or unknown cells produce INDETERMINATE, while duplicate reviewer records reject the envelope.
+  - Candidate and contract digests are caller-supplied bindings, not proof that content was independently read or authenticated.
+  - Finding identity is deterministic; merged findings preserve reporter identities and evidence digests as declarations.
+  - Required, contradicting, or unknown objective alignment routes to human review regardless of severity labels.
+  - Prior-round comparison is rejected if its self-hash is invalid or its contract digest differs.
+  - A missing finding is recorded only as no_longer_reported; absence is not proof of resolution.
+  - Receipt output is explicit, workspace-contained, atomic, and cannot overwrite its input contract, round, or previous receipt.
+  - Reviewer identity, independence, evidence origin, priority, and objective alignment remain unverified caller claims.
+  - The adapter performs no source execution, network access, model inference, approval, merge, publication, deployment, or signing.
+  - Every receipt has authority=false for execution, approval, merge, publication, deployment, signing, and policy changes.

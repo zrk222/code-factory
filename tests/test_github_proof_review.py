@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import re
 from pathlib import Path
 import pytest
 from factoryline.change_review import review_change
@@ -393,6 +394,34 @@ def test_github_proof_review_cli_rejects_noncanonical_head_sha(
     assert error["code"] == "GITHUB_PROOF_REVIEW_HEAD_SHA_INVALID"
 
 
+def _assert_no_merge_or_approval(workflow: str) -> None:
+    normalized = re.sub(r"\s+", "", workflow.lower())
+    assert "approve" not in normalized
+    # Only an explicit denial is exempt from the existing merge-word guard.
+    # True grants, executable merge calls and commands must still fail.
+    assert "merge" not in normalized.replace('"merge":false', "")
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        '"merge":true',
+        "gh pr merge 315",
+        "git merge candidate",
+        "github.rest.pulls.merge({})",
+        "gh pr review --approve",
+        "github.rest.pulls.createReview({event: 'APPROVE'})",
+    ],
+)
+def test_advisory_workflow_guard_rejects_release_operations(operation: str) -> None:
+    with pytest.raises(AssertionError):
+        _assert_no_merge_or_approval('{"merge": false}\n' + operation)
+
+
+def test_advisory_workflow_guard_accepts_only_explicit_merge_denial() -> None:
+    _assert_no_merge_or_approval('{"authority": {"merge": false}}')
+
+
 def test_opt_in_workflow_is_advisory_scoped_and_never_uses_a_privileged_pr_trigger() -> (
     None
 ):
@@ -413,8 +442,7 @@ def test_opt_in_workflow_is_advisory_scoped_and_never_uses_a_privileged_pr_trigg
     assert "github.rest.issues.createComment" in workflow
     assert "github.rest.checks.create" in workflow
     assert "<!-- factoryline-proof-review -->" in workflow
-    assert "approve" not in workflow.lower()
-    assert "merge" not in workflow.lower()
+    _assert_no_merge_or_approval(workflow)
 
 
 def test_coderabbit_positioning_is_complementary_and_never_claims_vendor_access() -> (

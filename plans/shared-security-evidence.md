@@ -2,6 +2,14 @@
 Spec: specs/shared-security-evidence.md
 Architect verdict: PASS for bounded implementation; accuracy completion remains unproved.
 
+## Paired precision review
+
+1. Freeze the scanner versions, cases, labels, policy, and execution profile before a comparison. Use `scripts/precision_cohort_preflight.py` to validate a registered study's captured sources and start its controller. Preserve its failed and completed jobs.
+2. Join emitted decisions to the same case IDs and source hashes in both arms. Bind the observations in the fixed-panel contract, register the expected transitions, and run `python scripts/verify_precision_gain.py <contract.json> --out <receipt.json> --summary`. Reconcile missing, duplicate and unlabelled outputs before accepting a gain. Keep active, review and raw counts separate.
+3. Report elapsed seconds only when both arms measured the same workload under the registered execution profile, including cache state. Reuse completed gate evidence through `factory proofs plan` and `factory proofs verify` only when inputs, artifacts, command, toolchain and environment still match. Retain the before/after receipt and stop on a lost TP, unexplained transition or absent gain.
+
+The comparison receipt describes the supplied panel. It cannot certify scanner execution, label independence, or a new held-out score.
+
 ## Current owner-authorized measurement adjustment (2026-10-29)
 
 - [ ] T142 | slice=literal-pytest-ini-semantics | files=factoryline/pytest_collection_audit.py,tests/test_review_audits.py | verify=`python -m pytest tests/test_review_audits.py -k pytest_ini_literal_percent` | Parse all supported pytest INI settings as literal strings, matching pytest rather than ConfigParser interpolation. Percent logging and filename patterns must not abort source capture, classification or packets. Preserve syntax/duplicate-key rejection, unsupported hook UNKNOWN boundaries, source hashes and every raw diagnostic. One shared parser change only; no source- or repository-specific exemption. Retain the original failed fresh-study attempt and all passing receipts. Before labels, bind any operational continuation to current source hashes, unchanged selected repositories, a disclosed amendment and independent replay of reused receipts. No pristine-unamended or precision-gain claim from this compatibility repair.

@@ -28,6 +28,7 @@ def add_parser(sub: Any) -> None:
             "fingerprint",
             "security",
             "evals",
+            "convergence",
             "governance",
             "workflows",
             "taxonomy",
@@ -37,6 +38,11 @@ def add_parser(sub: Any) -> None:
     )
     code_audit.add_argument("--policy", default=".factory/review-audits.json")
     code_audit.add_argument("--root", default=".")
+    code_audit.add_argument("--round", dest="review_round", help="review round JSON")
+    code_audit.add_argument("--previous", help="previous convergence receipt")
+    code_audit.add_argument(
+        "--a2a", action="store_true", help="export correlated A2A Message"
+    )
     code_audit.add_argument("--cases", help="bound JEV actionability case JSON")
     code_audit.add_argument(
         "--live", action="store_true", help="opt in to Vercel Gateway JEV review"
@@ -842,6 +848,51 @@ def _audit_option_scope_error(args):
 
 def run(args: Any) -> int:
     """Run one audit command, importing the engine only after selection."""
+    if args.tool == "convergence":
+        from .atomic_review_audit import (
+            ReviewConvergenceError,
+            evaluate_review_round,
+        )
+
+        if not args.contract or not args.review_round or not args.out:
+            print(
+                json.dumps(
+                    {
+                        "state": "invalid",
+                        "code": "E_REVIEW_ARGUMENT",
+                        "message": "convergence requires --contract, --round, and --out",
+                    }
+                ),
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            result = evaluate_review_round(
+                Path(args.root),
+                args.contract,
+                args.review_round,
+                args.out,
+                previous_path=args.previous,
+            )
+        except ReviewConvergenceError as exc:
+            print(
+                json.dumps({"state": "invalid", "code": exc.code, "message": str(exc)}),
+                file=sys.stderr,
+            )
+            return 2
+        if args.a2a:
+            print(json.dumps(result["a2a_message"], indent=2, sort_keys=True))
+        elif args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(
+                f"Review convergence: {result['state']} "
+                f"({len(result['findings'])} consolidated findings; "
+                f"receipt {result['receipt_sha256']})"
+            )
+            print(result["action_summary"])
+        # This receipt is advisory evidence, not a CI/release gate.
+        return 0
     from .review_audits import ReviewAuditError
 
     scope_error = _audit_option_scope_error(args)

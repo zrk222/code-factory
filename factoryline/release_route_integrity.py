@@ -180,7 +180,7 @@ def _huggingface_space_authorization_check(root: Path) -> dict[str, Any]:
     workflow = _workflow(root, "huggingface-space.yml")
     token_check = 'test -n "$HF_TOKEN"'
     candidate_markers = (
-        "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
         "Validate static Space metadata before remote upload",
         "Install Hugging Face CLI",

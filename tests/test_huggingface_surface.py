@@ -168,7 +168,7 @@ def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:
     assert 'folder_path="deploy/huggingface"' in workflow
     token = workflow.index('test -n "$HF_TOKEN"')
     checkout = workflow.index(
-        "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
     )
     validate = workflow.index("Validate static Space metadata before remote upload")
     install = workflow.index("Install Hugging Face CLI")

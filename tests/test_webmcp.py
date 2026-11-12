@@ -191,8 +191,19 @@ const checks = {json.dumps(names)} + '\\n' + {json.dumps(source)} + '\\n' + `(as
         script_path.unlink(missing_ok=True)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
-        "registered": 16,
+        "registered": 17,
         "projections": 2,
         "unavailable": 8,
         "all_authority_false": True,
     }
+
+
+def test_review_convergence_webmcp_is_registered_as_read_only_snapshot_tool() -> None:
+    html = (Path(__file__).parents[1] / "factoryline" / "graph_ops.html").read_text(
+        encoding="utf-8"
+    )
+    assert "boundedReviewConvergenceStatus" in html
+    assert '"factory.audit_convergence_status"]' in html
+    assert '"factory.audit_convergence_status":boundedReviewConvergenceStatus' in html
+    assert "WEBMCP_TOOL_NAMES.length+1" in html
+    assert "no message was sent" in html
