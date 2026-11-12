@@ -1,0 +1,92 @@
+{
+  "schema": "factory.study446.result.v1",
+  "study_id": "N446",
+  "status": "MEASURED_AI_ONLY_PREREGISTERED_PASS",
+  "engine": {
+    "core_commit": "ef6292493d5161c6ba3faf601e05173639c0e1d9",
+    "engine_sha256": "6b574ebd31d899faa511e27ec6a21e337ad16f87fa5617f287190f2e9f0a223f"
+  },
+  "scope": "40 fixed-frame native-admitted SECURITY findings; minimum 30 reference-decided; primary actionable precision only.",
+  "selected": 40,
+  "tp": 36,
+  "fp": 1,
+  "unclear": 3,
+  "decided": 37,
+  "decided_precision": 0.972972972972973,
+  "conservative_precision": 0.9,
+  "decision_coverage": 0.925,
+  "acceptance_state": "PASS",
+  "precision_target": 0.8,
+  "minimum_decided": 30,
+  "label_source": "AI-only; no outside human adjudication",
+  "review_process": {
+    "model": "gpt-6.1-sol",
+    "effort": "high",
+    "fresh_contexts": true,
+    "reviewers": 2,
+    "independent": true,
+    "label_source": "AI-only; no outside human adjudication",
+    "reconciliation": "Identical first-pass labels only; disagreements remain UNCLEAR; no semantic retries."
+  },
+  "nominal_unclustered_wilson95": [
+    0.861759301362695,
+    0.9952130255480596
+  ],
+  "inference_limit": "Nominal unclustered interval; no cluster-adjusted inference. AI-only reference.",
+  "repositories": 35,
+  "max_per_repository": 2,
+  "rule_counts": {
+    "SECURITY_HARDCODED_SECRET": 38,
+    "SECURITY_TLS_VERIFY_DISABLED": 2
+  },
+  "sampling": {
+    "registration_sealed_at": "2026-11-10T18:03:05.172329+00:00",
+    "original_registration_sha256": "22ad26a39f93cf56fa416f9bf9ae713943f6e07e0a702930c5b68317385d9ddb",
+    "final_transport_registration_sha256": "7bbfb5a276c8eeec1e9ed548f3ea3b5d26e8bc512d255e0d30ca13c894495881",
+    "frame_sha256": "4516582c8a44ce5b3e9acdef0e764bfb2bb4d55a5245f37a87dd743ffa97e742",
+    "order": "Fixed repository rank; deterministic native finding order within each repository. Stop at exactly40 admitted eligible alerts before any reference labels are opened.",
+    "collection_counts": {
+      "admitted_findings": 40,
+      "attempted_repositories": 514,
+      "native_complete": 489,
+      "native_executions_reused": 124,
+      "raw_findings_known": 609,
+      "raw_findings_unknown_repositories": 25,
+      "selected_native_admitted": 40,
+      "technical_or_unknown": 25
+    },
+    "post_source_changes": "Bundled registrations bind identical engine, frame and selection. Local continuity/preflight receipts record preservation before reference review; these are local protocol observations, not independent temporal attestation.",
+    "exposure_declaration": "The original registration records target_source_access=false and labels_seen=false before the final engine freeze. Prior-exposure exclusion is a registered local control, not an outside-human attestation."
+  },
+  "false_positive_ids": [
+    "N446-030"
+  ],
+  "unresolved_ids": [
+    "N446-010",
+    "N446-033",
+    "N446-037"
+  ],
+  "packet_seal_sha256": "3c642589c9edbd50271ab7d948e28f13541e5397dc13cfa2bf15b49b1a467a73",
+  "raw_score_sha256": "035c417a0d553b1f14733eb5dc4a7120260e1e6345ec80ced6aa93373dd90f7f",
+  "review_sha256": [
+    "ad18b542f9e2ca81ffeabcff7cb6b47ef6992200b0e5204216c789e68998ead4",
+    "fd10c3d672ecc19936007572e745a4bd563e2fcd75986abba6a42eefff7e7b6f"
+  ],
+  "record": {
+    "path": "docs/evidence/study446-record.json.gz",
+    "sha256": "99667b125e3834143ab179532a32490e806a26c204a52742d71201ecadfd2b46",
+    "bytes": 231714
+  },
+  "known_tp_regression": {
+    "receipt_sha256": "bd7968c51e48b90194820997ba9967fa735937c35d3a23665136141b94c4cb1f",
+    "complete": 51,
+    "known_tp_retained": 41,
+    "exposed_fp_repairs": 2,
+    "scope": "Exposed development replay, separate from the fresh held-out score."
+  },
+  "recall_claim": false,
+  "whole_scanner_precision_claim": false,
+  "native_gate_readiness_claim": false,
+  "package_publication_claim": false,
+  "after_reference": "This cohort is now exposed; preserve these original labels and score. Any subsequent repairs require separate regression reporting and a fresh cohort for a new held-out claim."
+}

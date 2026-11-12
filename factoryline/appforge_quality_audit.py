@@ -8,6 +8,7 @@ and runtime lane. Unknown or not-applicable-without-review blocks the receipt.
 
 from __future__ import annotations
 
+from .contract import write_atomic_json
 from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime
@@ -15,8 +16,6 @@ from pathlib import Path
 from typing import Any
 import hashlib
 import json
-import os
-import tempfile
 
 from .revenueforge import AUTHORITY, RevenueForgeError
 
@@ -138,18 +137,7 @@ def _read_json(root: Path, path: Path, schema: str) -> tuple[dict[str, Any], Pat
 
 
 def _atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    write_atomic_json(path, payload, ensure_ascii=True)
 
 
 def _requirements(

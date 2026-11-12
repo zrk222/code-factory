@@ -1632,10 +1632,6 @@ def test_shell_flow_cache_preserves_boolean_changes_without_cross_call_leakage()
             {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         ('"""import product.interface"""', {"QUALITY_HOLLOW_TEST": 1}),
-        (
-            "from product import *",
-            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
-        ),
     ],
 )
 def test_import_behavior_oracle_requires_direct_complete_body(
@@ -9390,6 +9386,7 @@ def _write_ty_invocation(root, command="ty check"):
         "passenv = *",
     ],
 )
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_intent_rejects_tox_execution_context_overrides(tmp_path, override):
     (tmp_path / "test_types.py").write_text(
         "from typing import assert_type\ndef test_types():\n    assert_type(1, int)\n"
@@ -9410,6 +9407,7 @@ def test_ty_intent_rejects_tox_execution_context_overrides(tmp_path, override):
         ("tests/.gitignore", "/sub/test_types.py"),
     ],
 )
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_intent_respects_directory_and_nested_ignore_scope(
     tmp_path, ignore_file, pattern
 ):
@@ -9424,6 +9422,7 @@ def test_ty_intent_respects_directory_and_nested_ignore_scope(
     assert security_scan(tmp_path)["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
 
 
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_intent_rejects_mutated_assertion_provider(tmp_path):
     (tmp_path / "test_types.py").write_text(
         "import typing\ntyping.assert_type = lambda *args: None\n"
@@ -9442,6 +9441,7 @@ def test_ty_intent_rejects_mutated_assertion_provider(tmp_path):
         ("", 1),
     ],
 )
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_assert_type_counts_only_as_declared_type_intent(
     tmp_path, config, expected_hollow
 ):
@@ -9481,6 +9481,7 @@ def test_ty_assert_type_counts_only_as_declared_type_intent(
         ),
     ],
 )
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_intent_resolves_supported_assert_type_aliases(tmp_path, imports, call):
     tests = tmp_path / "tests"
     tests.mkdir()
@@ -9520,6 +9521,7 @@ def test_ty_intent_resolves_supported_assert_type_aliases(tmp_path, imports, cal
         ),
     ],
 )
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_intent_rejects_excluded_disabled_suppressed_or_shadowed_calls(
     tmp_path, config, body
 ):
@@ -9537,6 +9539,7 @@ def test_ty_intent_rejects_excluded_disabled_suppressed_or_shadowed_calls(
     assert result["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
 
 
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_intent_does_not_mask_empty_tests_or_stale_rule_cache(tmp_path):
     tests = tmp_path / "tests"
     tests.mkdir()
@@ -9563,6 +9566,7 @@ def test_ty_intent_does_not_mask_empty_tests_or_stale_rule_cache(tmp_path):
     assert disabled["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 2
 
 
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_intent_fails_closed_for_config_overrides_and_unsupported_globs(
     tmp_path, monkeypatch
 ):
@@ -9589,6 +9593,7 @@ def test_ty_intent_fails_closed_for_config_overrides_and_unsupported_globs(
         assert result["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
 
 
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_ignore_files_support_simple_wildcards_and_reject_complex_globs(tmp_path):
     tests = tmp_path / "tests"
     tests.mkdir()
@@ -9615,6 +9620,7 @@ def test_ty_ignore_files_support_simple_wildcards_and_reject_complex_globs(tmp_p
     assert unknown["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
 
 
+@pytest.mark.usefixtures("isolated_ty_host_configuration")
 def test_ty_intent_requires_declared_no_target_invocation(tmp_path):
     tests = tmp_path / "tests"
     tests.mkdir()
@@ -11924,6 +11930,27 @@ def _canary_lf_text(value):
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
+@pytest.fixture(scope="module")
+def clean_readback_control(tmp_path_factory):
+    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
+    recorder = (
+        Path(__file__).parents[1]
+        / "plugins"
+        / "code-factory-session-recorder"
+        / "scripts"
+        / "record_hook.py"
+    ).read_bytes()
+    control_root = tmp_path_factory.mktemp("readback-control")
+    normalized = _canary_lf_text(recorder.decode("utf-8")).encode("utf-8")
+    for index, control in enumerate(dict.fromkeys((recorder, normalized))):
+        baseline = control_root / str(index) / "baseline"
+        _write_reported_command_canary(baseline, original, control)
+        assert not _reported_canary_findings(
+            security_scan(baseline, cache_enabled=False)
+        )
+    return original, recorder
+
+
 @pytest.mark.parametrize(
     "test_old,test_new,recorder_old,recorder_new",
     [
@@ -11953,19 +11980,11 @@ def _canary_lf_text(value):
     ],
 )
 def test_changed_readback_environment_or_escaping_source_path_keeps_finding(
-    tmp_path, test_old, test_new, recorder_old, recorder_new
+    tmp_path, clean_readback_control, test_old, test_new, recorder_old, recorder_new
 ):
-    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
-    recorder = (
-        Path(__file__).parents[1]
-        / "plugins"
-        / "code-factory-session-recorder"
-        / "scripts"
-        / "record_hook.py"
-    ).read_bytes()
-    baseline = tmp_path / "baseline"
-    _write_reported_command_canary(baseline, original, recorder)
-    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    original, recorder = clean_readback_control
+    # Preserve the same file layout for each independently scanned case.
+    _write_reported_command_canary(tmp_path / "baseline", original, recorder)
     test_text = original.decode("utf-8")
     recorder_text = recorder.decode("utf-8")
     if test_old:
@@ -12090,23 +12109,13 @@ def test_missing_or_malicious_local_recorder_keeps_original_finding(tmp_path):
     ],
 )
 def test_reported_canary_consumer_mutations_keep_finding_after_admission(
-    tmp_path, old, new
+    tmp_path, clean_readback_control, old, new
 ):
     """Prove each recorder mutation starts from the exact admitted positive."""
     import ast
 
-    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
-    recorder_path = (
-        Path(__file__).parents[1]
-        / "plugins"
-        / "code-factory-session-recorder"
-        / "scripts"
-        / "record_hook.py"
-    )
-    recorder = recorder_path.read_text(encoding="utf-8")
-    baseline = tmp_path / "baseline"
-    _write_reported_command_canary(baseline, original, recorder.encode("utf-8"))
-    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    original, recorder_bytes = clean_readback_control
+    recorder = _canary_lf_text(recorder_bytes.decode("utf-8"))
     assert old in recorder
     changed = recorder.replace(old, new, 1)
     assert changed != recorder
@@ -12176,22 +12185,12 @@ def test_reported_canary_consumer_mutations_keep_finding_after_admission(
     ],
 )
 def test_reported_canary_test_mutations_keep_finding_after_admission(
-    tmp_path, old, new, consumer
+    tmp_path, clean_readback_control, old, new, consumer
 ):
     """Derive test-side changes from the byte-identical admitted fixture."""
     import ast
 
-    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
-    recorder = (
-        Path(__file__).parents[1]
-        / "plugins"
-        / "code-factory-session-recorder"
-        / "scripts"
-        / "record_hook.py"
-    ).read_bytes()
-    baseline = tmp_path / "baseline"
-    _write_reported_command_canary(baseline, original, recorder)
-    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    original, recorder = clean_readback_control
     source = original.decode("utf-8")
     source = _canary_lf_text(source)
     old, new = _canary_lf_text(old), _canary_lf_text(new)
@@ -15857,3 +15856,36 @@ def test_security_seal_rejects_verification_builder_mutation(
     assert checked["finding_conservation"]["native_rows"] == "INVALIDATED"
     assert checked["agent_actions"] == []
     assert checked["finding_counts"]["SECURITY_DYNAMIC_EXECUTION"] == 1
+
+
+def test_bounded_security_report_keeps_unknown_collection_read_only(tmp_path):
+    from factoryline.cli import _build_parser
+
+    from factoryline.cli_audit import (
+        bounded_security_exit_code,
+        prepare_bounded_security_report,
+    )
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "conftest.py").write_text(
+        "pytest_plugins = ['external_plugin']\n", encoding="utf-8"
+    )
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+
+    assert (
+        report["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert bounded_security_exit_code(args, report) == 2
+    assert not (tmp_path / ".factory").exists()

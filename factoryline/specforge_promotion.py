@@ -3,6 +3,7 @@
 from __future__ import annotations
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 from .revenueforge import AUTHORITY, RevenueForgeError
@@ -72,7 +73,8 @@ def _spec_findings(spec: dict[str, Any]) -> list[str]:
         isinstance(item, dict)
         and item.get("id")
         and item.get("forbidden_behavior")
-        and item.get("gate")
+        and isinstance(item.get("gate"), str)
+        and item["gate"] in spec["required_gates"]
         for item in obligations
     ):
         findings.append("E_SPECLINE_OBLIGATION_LOOSE")
@@ -111,7 +113,7 @@ def _repair_plan(findings: list[str]) -> list[str]:
             )
         else:
             plan.append(
-                "Obtain human-confirmed intent approval and complete explicit forbidden behavior and gate fields."
+                "Confirm intent approval and map every obligation to an explicitly required gate."
             )
     return plan
 
@@ -146,6 +148,32 @@ def _promotion_core(
     }
 
 
+def _native_promotion(root: Path, spec: dict, forge: dict) -> dict:
+    """Use the same live acceptance and Forge receipt checks as assembly."""
+    from .assembly import _forge_intent_trace
+
+    feature = spec.get("feature")
+    trace = None
+    if (
+        isinstance(feature, str)
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", feature)
+        and forge.get("intent_evidence") == spec
+        and forge.get("shipped") is True
+        and forge.get("intent_traceable") is True
+    ):
+        trace = _forge_intent_trace(root, feature, forge)
+    return {
+        "schema": "factory.specforge.native-promotion-receipt.v1",
+        "marker": "SPECFORGE_PROMOTION_READY"
+        if trace
+        else "SPECFORGE_PROMOTION_BLOCKED",
+        "ok": trace is not None,
+        "intent_trace": trace,
+        "findings": [] if trace else ["E_SPECFORGE_NATIVE_HANDOFF_UNVERIFIED"],
+        "authority": {**AUTHORITY, "execution": False, "release": False},
+    }
+
+
 def verify_specforge_promotion(
     root: Path, spec_path: Path, forge_path: Path, out_path: Path
 ) -> dict[str, Any]:
@@ -153,10 +181,17 @@ def verify_specforge_promotion(
     root = Path(root).resolve()
     spec, spec_source = _read(root, spec_path)
     forge, forge_source = _read(root, forge_path)
-    _validate_spec(spec)
-    digest = _sha(spec["intent"])
-    findings = _spec_findings(spec) + _forge_findings(spec, forge, digest)
-    core = _promotion_core(spec, spec_source, forge_source, root, digest, findings)
+    if spec.get("schema") == "specline.intent-envelope.v1":
+        core = _native_promotion(root, spec, forge)
+        core["sources"] = {
+            "specline": spec_source.relative_to(root).as_posix(),
+            "forgeline": forge_source.relative_to(root).as_posix(),
+        }
+    else:
+        _validate_spec(spec)
+        digest = _sha(spec["intent"])
+        findings = _spec_findings(spec) + _forge_findings(spec, forge, digest)
+        core = _promotion_core(spec, spec_source, forge_source, root, digest, findings)
     receipt = {**core, "receipt_sha256": _sha(core)}
     target = _output(root, out_path)
     target.parent.mkdir(parents=True, exist_ok=True)

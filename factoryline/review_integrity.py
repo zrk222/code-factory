@@ -3508,23 +3508,40 @@ def security_source_sink_findings(relative, tree, nodes, aliases):
     from . import intent_quality
 
     bind_security_call_scopes(tree, nodes)
-    token = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.set(
-        intent_quality._new_security_request_alias_memo(tree)
-    )
+    memo = intent_quality._new_security_request_alias_memo(tree)
+    if memo is not None:
+        memo["provider_nodes"] = nodes
+    token = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.set(memo)
     try:
         return _security_source_sink_findings_bound(relative, tree, nodes, aliases)
     finally:
         intent_quality._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
 
 
+def security_precondition_providers_confirmed(module):
+    """Resolve provider stability once, only for a bound proof candidate."""
+    state = getattr(module, "_security_precondition_providers_stable", False)
+    if state is None:
+        from . import intent_quality
+        from .review_audits import _security_aliases
+        from .semantic_credential_sensor import security_precondition_providers_stable
+
+        memo = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.get()
+        nodes = memo.get("provider_nodes") if memo and memo["tree"] is module else None
+        if nodes is None:
+            nodes = list(ast.walk(module))
+        state = security_precondition_providers_stable(
+            module, _security_aliases(nodes), nodes
+        )
+        module._security_precondition_providers_stable = state
+    return state is True
+
+
 def _security_source_sink_findings_bound(relative, tree, nodes, aliases):
     """Analyze one bound tree while its private alias memo is active."""
     from .audit_log_flow import audit_log_source_findings
-    from .semantic_credential_sensor import security_precondition_providers_stable
 
-    tree._security_precondition_providers_stable = (
-        security_precondition_providers_stable(tree, aliases, nodes)
-    )
+    tree._security_precondition_providers_stable = None
 
     helpers = _security_connector_cursor_helpers(tree, aliases)
     findings = []

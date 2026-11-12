@@ -10,6 +10,8 @@ import shlex
 from contextlib import contextmanager
 from contextvars import ContextVar
 from fnmatch import fnmatchcase
+from functools import lru_cache
+from pathlib import PurePosixPath
 import yaml
 
 try:
@@ -2812,3 +2814,426 @@ def captured_pytest_helpers():
         shlex.split,
         shlex.shlex,
     )
+
+
+def _setup_cfg_allows_static_selection(captured):
+    setup_cfg = captured.get("setup.cfg")
+    if setup_cfg is not None:
+        if not isinstance(setup_cfg, bytes):
+            return False
+        sections = _distribution_setup_cfg_sections(setup_cfg)
+        if sections is None:
+            return False
+        if any(
+            section in sections
+            for section in ("options", "options.packages", "options.packages.find")
+        ):
+            return False
+    return True
+
+
+def _distribution_selection_excludes_source(captured, path):
+    """Resolve an exclusion only from a supported captured build configuration."""
+    if not _setup_cfg_allows_static_selection(captured):
+        return None
+    raw = captured.get("pyproject.toml")
+    if raw is not None and not isinstance(raw, bytes):
+        return None
+    document = _distribution_toml_document(raw) if raw is not None else {}
+    if document is None:
+        return None
+    build_system = document.get("build-system", {})
+    if not isinstance(build_system, dict):
+        return None
+    backend = build_system.get("build-backend")
+    if backend == "hatchling.build":
+        if "hatch.toml" in captured:
+            return None
+        return _hatch_default_wheel_scope(captured, document, raw, path)
+    if backend not in {
+        "setuptools.build_meta",
+        "setuptools.build_meta:__legacy__",
+        None,
+    }:
+        return None
+    if raw is None:
+        setup_py = captured.get("setup.py")
+        return _package_scope_proof(
+            "setup.py", setup_py, _literal_setup_packages(setup_py), path.parts
+        )
+    if backend is None or "setup.py" in captured:
+        return None
+    return _setuptools_distribution_exclusion(document, raw, path)
+
+
+def _setuptools_distribution_exclusion(document, raw, path):
+    tool = document.get("tool")
+    if not isinstance(tool, dict):
+        return None
+    setuptools = tool.get("setuptools")
+    if not isinstance(setuptools, dict):
+        return None
+    if not _setuptools_package_data_is_bounded(setuptools):
+        return None
+    if "packages" in setuptools and isinstance(setuptools["packages"], list):
+        packages = setuptools["packages"]
+        if "package-dir" in setuptools or not all(
+            isinstance(item, str) and item for item in packages
+        ):
+            return None
+        return _package_scope_proof(
+            "pyproject.toml", raw, packages, path.parts, "setuptools_static_packages"
+        )
+    packages = setuptools.get("packages")
+    if isinstance(packages, dict) and set(packages) - {"find"}:
+        return None
+    find = packages.get("find") if isinstance(packages, dict) else None
+    if not isinstance(find, dict):
+        return None
+    if (
+        set(find) - {"include", "exclude", "where", "namespaces"}
+        or type(find.get("namespaces", True)) is not bool
+    ):
+        return None
+    if "package-dir" in setuptools:
+        return _setuptools_mapped_root_exclusion(
+            setuptools["package-dir"], find, path, raw
+        )
+    return _setuptools_find_exclusion(find, path, raw)
+
+
+def _setuptools_mapped_root_exclusion(mapping, find, path, raw):
+    if not isinstance(mapping, dict) or set(mapping) != {""}:
+        return None
+    root = mapping[""]
+    if not (
+        isinstance(root, str)
+        and re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", root) is not None
+        and find.get("where") == [root]
+        and _setuptools_find_inputs(find) is not None
+    ):
+        return None
+    # Inside the source root, an omitted package can still ship as package data.
+    if PurePosixPath(path.as_posix().casefold()).is_relative_to(root.casefold()):
+        return None
+    return _manifest_scope_proof("pyproject.toml", raw, "setuptools_mapped_source_root")
+
+
+def _setuptools_find_inputs(find):
+    include = find.get("include", ["*"])
+    exclude = find.get("exclude", [])
+    where = find.get("where", ["."])
+    if not all(
+        isinstance(items, list) and all(isinstance(x, str) for x in items)
+        for items in (include, exclude, where)
+    ):
+        return None
+    roots = [PurePosixPath(root.replace("\\", "/")) for root in where]
+    if any(
+        root.is_absolute()
+        or ".." in root.parts
+        or root.as_posix().startswith("/")
+        or re.match(r"^[A-Za-z]:", root.as_posix())
+        for root in roots
+    ):
+        return None
+    return roots, include, exclude
+
+
+def _setuptools_find_exclusion(find, path, raw):
+    inputs = _setuptools_find_inputs(find)
+    if inputs is None:
+        return None
+    roots, include, exclude = inputs
+    matched_root = False
+    for root in roots:
+        try:
+            relative = path if root == PurePosixPath(".") else path.relative_to(root)
+        except ValueError:
+            continue
+        package_parts = relative.parts[:-1]
+        if not package_parts:
+            return None
+        matched_root = True
+        package = ".".join(package_parts)
+        if any(fnmatchcase(package, pattern) for pattern in exclude):
+            continue
+        if include and not any(fnmatchcase(package, pattern) for pattern in include):
+            continue
+        return None
+    basis = (
+        "setuptools_package_name_filter" if matched_root else "setuptools_find_roots"
+    )
+    return _manifest_scope_proof("pyproject.toml", raw, basis)
+
+
+@lru_cache(maxsize=32)
+def _distribution_toml_document(raw):
+    if not isinstance(raw, bytes):
+        return None
+    try:
+        return tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError, TypeError):
+        return None
+
+
+@lru_cache(maxsize=32)
+def _distribution_setup_cfg_sections(raw):
+    if not isinstance(raw, bytes):
+        return None
+    parser = configparser.ConfigParser()
+    try:
+        parser.read_string(raw.decode("utf-8"))
+    except (UnicodeError, configparser.Error):
+        return None
+    return frozenset(parser.sections())
+
+
+def captured_hatch_wheel_roots(raw):
+    """Read explicit Hatch wheel package roots, with no file or hook overrides."""
+    document = _distribution_toml_document(raw) or {}
+    if document.get("build-system") != {
+        "build-backend": "hatchling.build",
+        "requires": ["hatchling"],
+    }:
+        return ()
+    settings = document
+    for key in ("tool", "hatch", "build", "targets", "wheel"):
+        settings = settings.get(key)
+        if not isinstance(settings, dict):
+            return ()
+        next_key = {
+            "hatch": "build",
+            "build": "targets",
+            "targets": "wheel",
+            "wheel": "packages",
+        }.get(key)
+        if next_key and set(settings) != {next_key}:
+            return ()
+    return _hatch_package_roots(settings["packages"])
+
+
+def _hatch_package_roots(packages):
+    if (
+        not isinstance(packages, list)
+        or not packages
+        or not all(
+            isinstance(p, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", p)
+            for p in packages
+        )
+    ):
+        return ()
+    return tuple(PurePosixPath(package) for package in packages)
+
+
+def captured_unpacked_consumer(root_raw, consumer_raw):
+    """Check that a distinct unpacked consumer explicitly depends on the root project."""
+    root = _distribution_toml_document(root_raw) or {}
+    consumer = _distribution_toml_document(consumer_raw) or {}
+    project, local = root.get("project"), consumer.get("project")
+    tools = consumer.get("tool")
+    uv = tools.get("uv") if isinstance(tools, dict) else None
+    if not all(isinstance(row, dict) for row in (project, local, uv)):
+        return False
+    name = _distribution_name(project.get("name"))
+    if (
+        not name
+        or not _distribution_name(local.get("name"))
+        or name == _distribution_name(local.get("name"))
+    ):
+        return False
+    return uv.get("package") is False and bool(
+        captured_distribution_provider({"pyproject.toml": consumer_raw}, name)
+    )
+
+
+def _hatch_default_wheel_scope(captured, document, raw, path):
+    project = document.get("project")
+    name = project.get("name") if isinstance(project, dict) else None
+    if not isinstance(name, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*", name
+    ):
+        return None
+    tool = document.get("tool")
+    hatch = tool.get("hatch") if isinstance(tool, dict) else None
+    build = hatch.get("build", {}) if isinstance(hatch, dict) else None
+    targets = build.get("targets", {}) if isinstance(build, dict) else None
+    sdist = targets.get("sdist", {}) if isinstance(targets, dict) else None
+    if (
+        not isinstance(build, dict)
+        or set(build) - {"targets"}
+        or not isinstance(targets, dict)
+        or set(targets) - {"sdist"}
+        or not isinstance(sdist, dict)
+    ):
+        return None
+    package = re.sub(r"[-_.]+", "_", name).lower()
+    selected = next(
+        (
+            candidate
+            for candidate in (
+                PurePosixPath(package, "__init__.py"),
+                PurePosixPath("src", package, "__init__.py"),
+                PurePosixPath(package + ".py"),
+            )
+            if isinstance(captured.get(candidate.as_posix()), bytes)
+        ),
+        None,
+    )
+    if selected is not None:
+        selected_roots = [selected.parent] if selected.name == "__init__.py" else []
+        selected_files = {selected}
+    else:
+        selected_roots = sorted(
+            {
+                candidate.parent
+                for candidate in (
+                    PurePosixPath(relative.replace("\\", "/"))
+                    for relative in captured
+                    if isinstance(relative, str)
+                )
+                if candidate.name == "__init__.py"
+                and candidate.parent.name == package
+                and len(candidate.parent.parts) > 1
+                and isinstance(captured.get(candidate.as_posix()), bytes)
+            }
+        )
+        selected_files = set()
+    if not selected_roots and not selected_files:
+        return None
+    if any(path == root or root in path.parents for root in selected_roots):
+        return None
+    if path in selected_files:
+        return None
+    return _manifest_scope_proof(
+        "pyproject.toml", raw, "hatch_default_project_name_wheel_heuristic"
+    )
+
+
+def _literal_setup_packages(raw):
+    if not isinstance(raw, bytes):
+        return None
+    try:
+        tree = ast.parse(raw.decode("utf-8"))
+    except (UnicodeError, SyntaxError, ValueError):
+        return None
+    imported = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module in {"setuptools", "distutils.core"}
+        for alias in node.names
+        if alias.name == "setup"
+    }
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in imported
+    ]
+    if (
+        len(calls) != 1
+        or not any(
+            isinstance(statement, ast.Expr) and statement.value is calls[0]
+            for statement in tree.body
+        )
+        or any(
+            keyword.arg is None
+            or keyword.arg
+            in {
+                "package_dir",
+                "py_modules",
+                "data_files",
+                "scripts",
+                "script_files",
+                "package_data",
+                "include_package_data",
+            }
+            for keyword in calls[0].keywords
+        )
+        or any(
+            isinstance(node, ast.Name)
+            and node.id in imported
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            for node in ast.walk(tree)
+        )
+    ):
+        return None
+    values = [
+        keyword.value for keyword in calls[0].keywords if keyword.arg == "packages"
+    ]
+    if len(values) != 1 or not isinstance(values[0], ast.List):
+        return None
+    packages = [item.value for item in values[0].elts if isinstance(item, ast.Constant)]
+    return (
+        packages
+        if len(packages) == len(values[0].elts)
+        and all(isinstance(item, str) for item in packages)
+        else None
+    )
+
+
+def _setuptools_package_data_is_bounded(setuptools):
+    """Validate data options without treating them as package-selection inputs."""
+    allowed = {
+        "packages",
+        "package-dir",
+        "include-package-data",
+        "package-data",
+        "exclude-package-data",
+    }
+    if set(setuptools) - allowed:
+        return False
+    include_data = setuptools.get("include-package-data")
+    if include_data is not None and type(include_data) is not bool:
+        return False
+    for key in ("package-data", "exclude-package-data"):
+        mapping = setuptools.get(key, {})
+        if not isinstance(mapping, dict):
+            return False
+        for package, patterns in mapping.items():
+            if (
+                not isinstance(package, str)
+                or not isinstance(patterns, list)
+                or not all(isinstance(pattern, str) for pattern in patterns)
+            ):
+                return False
+            for pattern in patterns:
+                normalized = pattern.replace("\\", "/")
+                path = PurePosixPath(normalized)
+                if (
+                    path.is_absolute()
+                    or ".." in path.parts
+                    or re.match(r"^[A-Za-z]:", normalized)
+                ):
+                    return False
+    # These options affect files in selected packages; they do not add package
+    # names. Other distribution inputs remain unsupported.
+    return True
+
+
+def _package_scope_proof(
+    path, raw, packages, parts, basis="setuptools_static_packages"
+):
+    if packages is None or not all(
+        isinstance(package, str)
+        and package
+        and all(part.isidentifier() for part in package.split("."))
+        for package in packages
+    ):
+        return None
+    candidate = ".".join(parts[:-1])
+    if any(
+        candidate == package or candidate.startswith(package + ".")
+        for package in packages
+    ):
+        return None
+    return _manifest_scope_proof(path, raw, basis)
+
+
+def _manifest_scope_proof(path, raw, basis):
+    if not isinstance(raw, bytes):
+        return None
+    return {"path": path, "sha256": hashlib.sha256(raw).hexdigest(), "basis": basis}

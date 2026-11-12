@@ -321,6 +321,9 @@ def _trusted_core_complete_sources(core, captured_sources, audit):
         database_rows[0], captured
     ):
         return None
+    from .captured_security_audit import source_role_verifier_sources
+
+    captured = source_role_verifier_sources(audit, captured, captured_sources)
     return captured, _tier_sha256(sources)
 
 
@@ -819,13 +822,14 @@ def _decide_finding_tier(
     source_bindings=None,
     credential_context=None,
 ):
+    from .captured_security_audit import source_role_tier_override
     from .credential_endpoint_admission import operative_signing_default_evidence
 
-    generated = (
-        operative_signing_default_evidence(finding, credential_context)
-        if bound and credential_evidence is None and credential_context is not None
-        else None
+    generated, fallback = source_role_tier_override(
+        finding, bound, credential_evidence, credential_context, source_bindings
     )
+    if fallback is not None:
+        return fallback
     details = {"credential_authority_observation": generated} if generated else None
     evidence = generated or credential_evidence
     if (
@@ -5075,14 +5079,19 @@ def _finding_tier_ledger_row(
         partition_state,
         signing_cache,
     )
+    from .captured_security_audit import source_role_capture_context
+
+    role_context, role_bindings = source_role_capture_context(
+        source_bytes, bindings, context
+    )
     tier, evidence, evidence_details = _decide_finding_tier(
         finding,
         bound_source,
         native_rows,
         primitive_rows,
         credential_evidence,
-        source_bindings=bindings,
-        credential_context=context,
+        source_bindings=role_bindings,
+        credential_context=role_context,
     )
     identity = _tier_sha256(
         {
@@ -5229,12 +5238,7 @@ def _registered_fixture_helpers():
 
 
 def _registered_fixture_recipe_ast(tree, marker, directory):
-    """Canonicalize one finite runner recipe; preserve all executable statements.
-
-    Only module-owned function names and the registration marker/directory may
-    vary. Imported providers, local bindings, control flow, calls and literals
-    otherwise remain exact. This is an observed protocol, never a safety proof.
-    """
+    """Normalize identity names only; retain every executable statement."""
     tree = copy.deepcopy(tree)
     names = {
         node.name: f"_stage_{index}"
@@ -5260,12 +5264,7 @@ def _registered_fixture_recipe_ast(tree, marker, directory):
 
 
 def _registered_fixture_recipe(tree, marker):
-    """Match the complete reviewed fixture-discovery/invocation recipe.
-
-    The finite semantic profile includes argument filtering, error reporting
-    and every module statement, so adding a write/hook anywhere invalidates it.
-    Its digest is of canonical executable AST, not a repository or file hash.
-    """
+    """Match the full fixture protocol, including filters, errors, and statements."""
     anchors = [
         node
         for node in tree.body

@@ -5775,15 +5775,14 @@ def _scan_security_sources(
     for finding in findings:
         counts[finding["code"]] = counts.get(finding["code"], 0) + 1
     if primitive_source_bytes_out is not None:
-        primitive_source_bytes_out.update(
-            _app_source_bytes(
-                workspace,
-                findings,
-                bindings,
-                source_bytes,
-                capture_all_sources=capture_all_sources,
-            )
+        captured_application = _app_source_bytes(
+            workspace,
+            findings,
+            bindings,
+            source_bytes,
+            capture_all_sources=capture_all_sources,
         )
+        primitive_source_bytes_out.update(captured_application)
         primitive_source_bytes_out.update(
             (producer_source_model_out or {}).get("configuration_bytes", {})
         )

@@ -104,13 +104,25 @@ def _configs():
     }
 
 
-def signed_plan(tmp_path: Path, *, execution_policy: dict | None = None):
+def signed_plan(
+    tmp_path: Path, *, execution_policy: dict | None = None, worker: str | None = None
+):
     source = tmp_path / "candidate.txt"
     source.write_text("candidate", encoding="utf-8")
     raw = source.read_bytes()
     sources = [
         {"path": "candidate.txt", "sha256": sha256_bytes(raw), "bytes": len(raw)}
     ]
+    if worker is not None:
+        worker_bytes = worker.encode("utf-8")
+        (tmp_path / "runner.py").write_bytes(worker_bytes)
+        sources.append(
+            {
+                "path": "runner.py",
+                "sha256": sha256_bytes(worker_bytes),
+                "bytes": len(worker_bytes),
+            }
+        )
     engines = {
         "stateful_invariant": "hypothesis",
         "tenant_isolation": "runtime_http_matrix",
@@ -189,6 +201,214 @@ def test_signed_plan_binds_six_lanes_sources_environment_and_authority(tmp_path)
     result = verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
     assert result["plan"] == plan and result["authority"] == "none"
     assert result["execution_policy"]["max_parallelism"] == 1
+
+
+def test_signed_six_lane_run_rejects_wrong_scenario_and_persists_receipt(tmp_path):
+    from factoryline.runtime_audit import execute_runtime_audit, runtime_audit_status
+
+    worker = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "case = {'scenario_sha256': '0' * 64, 'passed': True, "
+        "'lane': sys.argv[1], 'known_bad': len(sys.argv) == 4}\n"
+        "Path(sys.argv[-1]).write_text(json.dumps(case), encoding='utf-8')\n"
+        "sys.exit(int(case['known_bad']))\n"
+    )
+    plan, trust, pin, _ = signed_plan(tmp_path, worker=worker)
+    output = tmp_path / ".factory" / "runtime-audits"
+    result = execute_runtime_audit(plan, trust, pin, tmp_path, D, output)
+    executions = result["execution"]["executions"]
+    assert len(executions) == 6
+    for execution in executions:
+        target, bad = execution["target"], execution["known_bad"]
+        assert (
+            target["artifact"]["lane"] == bad["artifact"]["lane"] == execution["kind"]
+        )
+        assert target["artifact"]["known_bad"] is False
+        assert bad["artifact"]["known_bad"] is True
+        assert target["artifact_sha256"] != bad["artifact_sha256"]
+
+    receipt = result["receipt"]
+    assert receipt["decision"] == "BLOCKED"
+    assert receipt["release_approval"] is False
+    assert len(receipt["repair_queue"]) == 6
+    assert {lane["finding"] for lane in receipt["lanes"]} == {
+        "CROSS_LANE_SCENARIO_MISMATCH"
+    }
+    status = runtime_audit_status(tmp_path)
+    assert status["state"] == "BLOCKED"
+    assert status["receipt_sha256"] == receipt["receipt_sha256"]
+
+
+def _runtime_rehearsal_plan(tmp_path):
+    import runpy
+
+    fixture = Path(__file__).parent / "fixtures" / "runtime_six_lane_worker.py"
+    helpers = runpy.run_path(str(fixture))
+    path, trust, pin, plan = signed_plan(tmp_path, worker=fixture.read_text())
+    lanes = {lane["kind"]: lane for lane in plan["lanes"]}
+    lanes["stateful_invariant"]["engine"] = "approved_state_machine"
+    lanes["tenant_isolation"]["config"]["surfaces"][0]["owner_data_sha256"] = helpers[
+        "digest"
+    ]({"id": 1})
+    lanes["consumer_compatibility"]["engine"] = "approved_schema_validator"
+    lanes["consumer_compatibility"]["config"]["interactions"][0]["expected_sha256"] = (
+        helpers["digest"]({"id": 1})
+    )
+    lanes["migration_integrity"]["config"].update(
+        before_schema_sha256=helpers["digest"](
+            [("CREATE TABLE orders(id INTEGER PRIMARY KEY, amount INTEGER)",)]
+        ),
+        expected_after_schema_sha256=helpers["digest"](
+            [
+                (
+                    "CREATE TABLE orders(id INTEGER PRIMARY KEY, amount INTEGER, note TEXT)",
+                )
+            ]
+        ),
+        invariants=[{"id": "i", "expected_sha256": helpers["digest"](1)}],
+        required_catalog_objects=["orders"],
+        tables=[{"id": "orders", "before": 1, "after": 1}],
+    )
+    lanes["performance_regression"]["timeout_seconds"] = 15
+    lanes["performance_regression"]["config"].update(
+        resource_metrics=["python_bytes"],
+        leak_engine="python_tracemalloc",
+        max_loadgen_cpu_pct=100,
+        max_loadgen_memory_pct=100,
+    )
+    lanes["performance_regression"]["config"]["thresholds"][0]["value"] = 0.2
+    lanes["performance_regression"]["config"]["thresholds"][0]["metric"] = "p95_seconds"
+    envelope = sign_payload(
+        plan,
+        payload_type=PLAN_TYPE,
+        private_key_path=tmp_path / "keys" / "operator.private.pem",
+        keyid="operator",
+        identity="operator@example.test",
+        issuer="https://issuer.example.test",
+    )
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+    return path, trust, pin, plan
+
+
+def test_signed_six_lane_real_workloads_persist_human_review_receipt(tmp_path):
+    """Local approved runners; retention and leak findings are snapshot-scoped.
+
+    This does not verify native lost bytes, host saturation, Pact, k6, or
+    production behavior. The schema's zero lost-byte field adds no such claim.
+    """
+    from factoryline.runtime_audit import execute_runtime_audit, runtime_audit_status
+
+    plan_path, trust, pin, plan = _runtime_rehearsal_plan(tmp_path)
+    output = tmp_path / ".factory" / "runtime-audits"
+    result = execute_runtime_audit(plan_path, trust, pin, tmp_path, D, output)
+    receipt = result["receipt"]
+    failures = {
+        lane["lane"]: (lane["state"], lane["finding"], lane["details"])
+        for lane in receipt["lanes"]
+        if lane["state"] != "PASS"
+    }
+    assert receipt["decision"] == "READY_FOR_HUMAN_REVIEW", failures
+    assert receipt["release_approval"] is False
+    assert receipt["repair_queue"] == []
+    assert {lane["state"] for lane in receipt["lanes"]} == {"PASS"}
+    performance = next(
+        lane for lane in receipt["lanes"] if lane["lane"] == "performance_regression"
+    )
+    assert performance["details"]["leak_engine"] == "python_tracemalloc"
+    assert (
+        performance["details"]["leak_claim"]
+        == "no finding within declared profiler coverage"
+    )
+    executions = result["execution"]["executions"]
+    assert len(executions) == 6
+    for execution in executions:
+        for role in ("target", "known_bad"):
+            observed = execution[role]
+            assert observed["artifact"]["scenario_sha256"] == D
+            assert observed["execution"]["exit_code"] == int(role == "known_bad")
+            assert observed["execution"]["cleanup_confirmed"] is True
+        assert (
+            execution["target"]["artifact_sha256"]
+            != execution["known_bad"]["artifact_sha256"]
+        )
+    status = runtime_audit_status(tmp_path)
+    assert status["state"] == "READY_FOR_HUMAN_REVIEW"
+    assert status["receipt_sha256"] == receipt["receipt_sha256"]
+    assert receipt["candidate_sha256"] == plan["candidate_sha256"]
+
+
+def test_workload_helpers_measure_http_revocation_resources_and_bind_observations(
+    monkeypatch,
+    capsys,
+):
+    import socket
+    import tracemalloc
+    from types import SimpleNamespace
+    from fixtures import runtime_six_lane_worker
+    from fixtures.runtime_six_lane_worker import (
+        Handler,
+        digest,
+        hashed_observation,
+        http_cases,
+        measured_run,
+        process_memory_percent,
+        wait_for_window,
+    )
+
+    observation = hashed_observation(mode="timeout", observed=True)
+    assert observation["evidence_sha256"] == digest(
+        {"mode": "timeout", "observed": True}
+    )
+    assert observation["evidence_sha256"] != digest(
+        {"mode": "timeout", "observed": False}
+    )
+    calls = {"get": 0, "log": 0}
+
+    class ObservedHandler(Handler):
+        def do_GET(self):
+            calls["get"] += 1
+            Handler.do_GET(self)
+
+        def log_message(self, *args):
+            calls["log"] += 1
+            Handler.log_message(self, *args)
+
+    monkeypatch.setattr(runtime_six_lane_worker, "Handler", ObservedHandler)
+
+    def unexpected_lookup(*_):
+        raise AssertionError("loopback fixture must not perform a hostname lookup")
+
+    monkeypatch.setattr(socket, "getfqdn", unexpected_lookup)
+    cases = http_cases(False)
+    assert calls == {"get": 14, "log": 14}
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+    assert len(cases) == 12
+    assert {case["status"] for case in cases if case["relation"] == "owner"} == {200}
+    assert {
+        case["status"] for case in cases if case["relation"] == "revoked_session"
+    } == {403}
+    assert 0 < process_memory_percent() <= 100
+    tracemalloc.start()
+    try:
+        run, resource = measured_run(0.001)
+    finally:
+        tracemalloc.stop()
+    assert run["observations"] == 10 and run["correctness_failures"] == 0
+    assert run["metrics"]["p95_seconds"] >= 0.001
+    assert run["soak_seconds"] >= 1 and run["cooldown_seconds"] >= 1
+    assert len(resource["samples"]) == 10 and min(resource["samples"]) > 0
+    assert len(resource["retained"]) == 3 and min(resource["retained"]) > 0
+    clock = iter((0.0, 0.99, 1.001))
+    sleeps = []
+    monkeypatch.setattr(
+        runtime_six_lane_worker,
+        "time",
+        SimpleNamespace(perf_counter=lambda: next(clock), sleep=sleeps.append),
+    )
+    assert wait_for_window(0) >= 1
+    assert sleeps == pytest.approx([1, 0.01])
 
 
 def test_signed_execution_policy_requires_safe_bounded_parallelism(tmp_path):

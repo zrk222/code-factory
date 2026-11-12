@@ -18,6 +18,60 @@ from factoryline.runtime_audit_integrity import finite_literal_eval_input_witnes
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
+def test_staged_command_binding_requires_command_finding_and_bound_source(monkeypatch):
+    from factoryline import finite_capture
+    from factoryline.credential_role_paths import (
+        bind_staged_command_activation_precondition,
+    )
+
+    call = ast.parse('os.system("fixture-command")', mode="eval").body
+    source_context = finite_capture._security_helper_source_context
+    resolved = []
+
+    def observe(node, function):
+        resolved.append(node)
+        return source_context(node, function)
+
+    monkeypatch.setattr(finite_capture, "_security_helper_source_context", observe)
+    unrelated = {"code": "SECURITY_TLS_VERIFY_DISABLED", "facts": {}}
+    bind_staged_command_activation_precondition(unrelated, call, {})
+    assert resolved == []
+    assert unrelated == {"code": "SECURITY_TLS_VERIFY_DISABLED", "facts": {}}
+
+    command = {"code": "SECURITY_OS_COMMAND", "facts": {}}
+    bind_staged_command_activation_precondition(command, call, {})
+    assert resolved == [call]
+    assert command == {"code": "SECURITY_OS_COMMAND", "facts": {}}
+
+
+def test_provider_confirmation_is_lazy_and_specific_to_bound_tree(monkeypatch):
+    from factoryline import semantic_credential_sensor
+
+    check = semantic_credential_sensor.security_precondition_providers_stable
+    checked = []
+
+    def observe(tree, aliases, nodes):
+        checked.append(tree)
+        return check(tree, aliases, nodes)
+
+    monkeypatch.setattr(
+        semantic_credential_sensor, "security_precondition_providers_stable", observe
+    )
+    clean = ast.parse("pass")
+    assert not review_integrity.security_precondition_providers_confirmed(clean)
+    assert checked == []
+
+    clean._security_precondition_providers_stable = None
+    assert review_integrity.security_precondition_providers_confirmed(clean)
+    assert review_integrity.security_precondition_providers_confirmed(clean)
+
+    uncertain = ast.parse("import sys\nregistry = sys.modules\n")
+    uncertain._security_precondition_providers_stable = None
+    assert not review_integrity.security_precondition_providers_confirmed(uncertain)
+    assert not review_integrity.security_precondition_providers_confirmed(uncertain)
+    assert checked == [clean, uncertain]
+
+
 @pytest.mark.parametrize(
     "mutation", [None, "rebind", "replace_attribute", "duplicate", "shadow_parameter"]
 )
@@ -8610,3 +8664,70 @@ def test_continuation_flow_unresolved_edges_do_not_invent_support(
     ]
     assert len(rows) == 1
     assert (rows[0]["tier"] == "SUPPORTED_DEFECT") is supported
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "return\n",
+        "def f(value):\n    global value\n",
+        "def f():\n    nonlocal missing\n",
+        "break\n",
+        "await missing()\n",
+        "def noop(value, value): pass\ndef test_case(): noop(1, 2)\n",
+        "def test_import_interface():\n    from product import *\n",
+    ],
+)
+def test_security_scan_rejects_compiler_invalid_source(tmp_path, source):
+    (tmp_path / "invalid.py").write_text(source, encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert report["parse_errors"] == 1
+    assert report["audit_coverage"]["complete"] is False
+    assert report["audit_coverage"]["files_audited"] == 0
+    assert all(
+        row["finding_context"]["code"] == "QUALITY_SYNTAX_ERROR"
+        for row in report["agent_actions"]
+    )
+    assert any(row["code"] == "QUALITY_SYNTAX_ERROR" for row in report["findings"])
+
+
+def test_security_scan_compilation_never_executes_source(tmp_path):
+    (tmp_path / "valid.py").write_text(
+        "raise RuntimeError('source must never execute')\n", encoding="utf-8"
+    )
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert report["parse_errors"] == 0
+    assert report["audit_coverage"]["complete"] is True
+
+
+@pytest.mark.parametrize("transported", [False, True])
+def test_compiler_invalid_transported_tree_cannot_reach_sensor(tmp_path, transported):
+    import ast
+    import hashlib
+    from factoryline.credential_role_constructor_provider import verified_security_tree
+
+    source = b"return\n"
+    path = tmp_path / "invalid.py"
+    binding = {"path": "invalid.py", "sha256": hashlib.sha256(source).hexdigest()}
+    tree = ast.parse(source) if transported else None
+    fingerprint = None
+    if transported:
+        tree._oracle_source_sha256 = binding["sha256"]
+        fingerprint = review_audits._oracle_tree_fingerprint(tree)
+    with pytest.raises(SyntaxError, match="outside function"):
+        verified_security_tree(
+            review_audits, tmp_path, path, source, binding, tree, fingerprint
+        )
+
+
+def test_empty_provider_aliases_do_not_walk_ast(monkeypatch):
+    import ast
+    from factoryline import finite_capture as capture
+
+    tree = ast.parse("value = 1")
+
+    def forbidden(_tree):
+        pytest.fail("empty alias set traversed source")
+
+    monkeypatch.setattr(capture.ast, "walk", forbidden)
+    assert capture._fixed_eval_module_alias_escape(tree, set()) is False

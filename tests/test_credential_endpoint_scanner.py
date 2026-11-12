@@ -18,6 +18,38 @@ from factoryline.credential_endpoint_admission import (
 ENDPOINT = "https://appleid.apple.com/auth/token"
 
 
+def test_source_role_verifier_sources_rejects_workspace_drift(tmp_path):
+    from factoryline import review_audits as audit
+    from factoryline.audit_action_refs import _CapturedSecuritySources
+    from factoryline.captured_security_audit import source_role_verifier_sources
+
+    manifest = tmp_path / "pyproject.toml"
+    raw = b'[project]\nname = "example"\n'
+    manifest.write_bytes(raw)
+    verified = {"pyproject.toml": raw}
+    captured = _CapturedSecuritySources(
+        verified,
+        source_role_capture={
+            "sources": verified,
+            "bindings": [
+                {
+                    "path": "pyproject.toml",
+                    "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                }
+            ],
+            "workspace": tmp_path,
+            "hatch_alternate_absent": True,
+        },
+    )
+    retained = source_role_verifier_sources(audit, verified, captured)
+    assert retained == verified
+    assert retained.source_role_sources == verified
+
+    manifest.write_bytes(raw.replace(b"example", b"changed"))
+    assert source_role_verifier_sources(audit, verified, captured) is verified
+
+
 def test_native_workspace_retains_complete_endpoint_role_across_resume(tmp_path):
     from factoryline.deep_audit_io import full_repository_scan
 
@@ -35,6 +67,59 @@ def test_native_workspace_retains_complete_endpoint_role_across_resume(tmp_path)
         assert workspace["primitive_partition"]["state"] == "VALIDATED"
 
 
+def test_precision_worker_keeps_capture_read_only_and_matches_cli(tmp_path, capsys):
+    from factoryline.cli import main as public_cli
+    from scripts.precision_native_capture import main as precision_worker
+
+    output = tmp_path / "report.json"
+    tmp_path = tmp_path / "capture"
+    tmp_path.mkdir()
+    _write(tmp_path)
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    args = ["--root", str(tmp_path), "--out", str(output)]
+    worker_exit = precision_worker(args)
+    worker_output = capsys.readouterr()
+    assert not worker_output.err
+    assert not worker_output.out
+    assert output.is_file()
+    assert before == {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert not (tmp_path / ".factory").exists()
+    public_exit = public_cli(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    public_output = capsys.readouterr()
+    assert not public_output.err
+    assert worker_exit == public_exit
+    assert json.loads(output.read_bytes()) == json.loads(public_output.out)
+    original_report = output.read_bytes()
+    assert precision_worker(args) == 2
+    assert output.read_bytes() == original_report
+    inside = tmp_path / "report.json"
+    assert precision_worker(["--root", str(tmp_path), "--out", str(inside)]) == 2
+    assert not inside.exists()
+    errors = capsys.readouterr()
+    assert not errors.out
+    assert errors.err.count('"state": "INVALID"') == 2
+    assert (tmp_path / ".factory/security-scan/latest.json").is_file()
+
+
 def test_source_bound_endpoint_copy_reseals_from_captured_bytes(tmp_path):
     from factoryline import review_audits as audit
 
@@ -46,6 +131,132 @@ def test_source_bound_endpoint_copy_reseals_from_captured_bytes(tmp_path):
     assert not _secrets(resealed)
     assert _secrets(resealed, primitive=True) == _secrets(original, primitive=True)
     assert "_primitive_source_bytes" not in json.dumps(resealed)
+
+
+@pytest.mark.parametrize("copy_mode", ["shallow", "deep"])
+@pytest.mark.parametrize("support_path", ["archive/README.md", "archive/manifest.json"])
+def test_archive_support_is_scanned_separately_and_revalidated_on_reseal(
+    tmp_path, copy_mode, support_path
+):
+    from factoryline import review_audits as audit
+
+    archive = tmp_path / "archive" / "quiz"
+    archive.mkdir(parents=True)
+    source = b'SECRET_KEY = "[removed-secret-placeholder]"\n'
+    (archive / "settings.py").write_bytes(source)
+    readme = tmp_path / "archive" / "README.md"
+    readme.write_text(
+        "# Historical source archive\n"
+        "Sanitized historical references; embedded secret settings were removed.\n",
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "archive" / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "published": "archive/quiz/settings.py",
+                    "published_sha256": hashlib.sha256(source).hexdigest(),
+                    "transformations": ["Embedded secret settings removed."],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    row = report["finding_tier_report"]["ledger"][0]
+    assert report["audit_coverage"]["complete"] is True
+    assert report["audit_coverage"]["files_discovered"] == 1
+    assert report["audit_coverage"]["files_attempted"] == 1
+    assert report["audit_coverage"]["files_audited"] == 1
+    assert {item["path"] for item in report["sources"]} == {"archive/quiz/settings.py"}
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    assert report["agent_actions"] == []
+    assert {
+        item["path"]
+        for item in row["credential_authority_observation"]["supporting_sources"]
+    } == {
+        "archive/quiz/settings.py",
+        "archive/README.md",
+        "archive/manifest.json",
+    }
+
+    copied = report.copy() if copy_mode == "shallow" else copy.deepcopy(report)
+    (tmp_path / support_path).write_bytes(b"stale support evidence")
+    resealed = audit._seal_security_scan(copied)
+    resealed_row = resealed["finding_tier_report"]["ledger"][0]
+    assert resealed._source_role_capture["sources"] == {}
+    assert resealed_row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    assert resealed["agent_actions"] == []
+    assert "archive/manifest.json" not in json.dumps(resealed["finding_tier_report"])
+    assert {item["path"] for item in resealed["sources"]} == {
+        "archive/quiz/settings.py"
+    }
+
+    repeated = audit._seal_security_scan(resealed)
+    assert repeated._source_role_capture["sources"] == {}
+    assert "archive/manifest.json" not in json.dumps(repeated["finding_tier_report"])
+
+
+@pytest.mark.parametrize("capture_loss", ["empty", "missing"])
+def test_archive_tier_evidence_is_rebuilt_when_private_capture_is_unavailable(
+    tmp_path, capture_loss
+):
+    from factoryline import review_audits as audit
+
+    archive = tmp_path / "archive" / "quiz"
+    archive.mkdir(parents=True)
+    source = b'SECRET_KEY = "[removed-secret-placeholder]"\n'
+    (archive / "settings.py").write_bytes(source)
+    (tmp_path / "archive" / "README.md").write_text(
+        "# Historical source archive\n"
+        "Sanitized historical references; embedded secret settings were removed.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "archive" / "manifest.json").write_text(
+        json.dumps(
+            [
+                {
+                    "published": "archive/quiz/settings.py",
+                    "published_sha256": hashlib.sha256(source).hexdigest(),
+                    "transformations": ["Embedded secret settings removed."],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert "archive/manifest.json" in json.dumps(report["finding_tier_report"])
+
+    if capture_loss == "empty":
+        report._source_role_capture = {"sources": {}, "bindings": [], "workspace": None}
+    else:
+        report = dict(report)
+    resealed = audit._seal_security_scan(report)
+    tier_json = json.dumps(resealed["finding_tier_report"])
+    assert "archive/README.md" not in tier_json
+    assert "archive/manifest.json" not in tier_json
+    assert resealed["finding_tier_report"]["ledger"][0]["raw_finding"]["code"] == (
+        "SECURITY_HARDCODED_SECRET"
+    )
+    assert resealed["agent_actions"] == []
+
+    repeated = audit._seal_security_scan(resealed)
+    repeated_json = json.dumps(repeated["finding_tier_report"])
+    assert "archive/README.md" not in repeated_json
+    assert "archive/manifest.json" not in repeated_json
 
 
 @pytest.mark.parametrize(
