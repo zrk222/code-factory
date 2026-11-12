@@ -1247,8 +1247,8 @@ def test_release_integrity_rejects_late_huggingface_authorization(
     assert authorizer in content
     workflow.write_text(
         content.replace(authorizer, "").replace(
-            "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n",
-            "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n"
+            "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n",
+            "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
             + authorizer,
             1,
         ),
