@@ -1124,7 +1124,7 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert "annotations:{readOnlyHint:true,untrustedContentHint:true}" in page
     assert 'typeof context.registerTool!=="function"' in page
     assert (
-        "registerFactoryWebMcp();registerMobileEvidenceWebMcp();load();loadDeveloperMemory();"
+        "await registerFactoryWebMcp();await registerMobileEvidenceWebMcp();})();load();loadDeveloperMemory();"
         in page
     )
     assert "Engineering Judgment · human-promoted contracts" in page

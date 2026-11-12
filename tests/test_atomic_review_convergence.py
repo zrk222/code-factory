@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import runpy
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+from xml.etree import ElementTree
 
 import pytest
 import yaml
@@ -21,6 +23,37 @@ from factoryline.atomic_review_audit import (
 )
 from factoryline.cli import main
 from factoryline.mcp import dispatch
+
+
+@pytest.mark.parametrize(
+    ("module", "child", "expected"),
+    [
+        ("tests.test_github_proof_review", "", True),
+        ("test_github_proof_review", "", True),
+        ("tests.test_atomic_review_convergence", "", False),
+        ("fake_test_github_proof_review", "", False),
+        ("tests.test_github_proof_review", "<skipped/>", False),
+        ("tests.test_github_proof_review", "<failure/>", False),
+    ],
+)
+def test_verification_assertions_require_exact_module_and_passing_case(
+    module: str, child: str, expected: bool
+) -> None:
+    runner = runpy.run_path(
+        str(Path(__file__).parents[1] / "scripts/verify_atomic_review_convergence.py")
+    )
+    name = "test_advisory_workflow_guard_rejects_release_operations"
+    row = ElementTree.fromstring(
+        f'<testcase classname="{module}" name="{name}[case]">{child}</testcase>'
+    )
+    passed = runner["assertion_passed"]
+    assert passed([row], name) is expected
+    assert passed([], name) is False
+    assert passed([row], "missing_test") is False
+    failed_case = ElementTree.fromstring(
+        f'<testcase classname="{module}" name="{name}[other]"><failure/></testcase>'
+    )
+    assert passed([row, failed_case], name) is False
 
 
 def _hash(text: str) -> str:

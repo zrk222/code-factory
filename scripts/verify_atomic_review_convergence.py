@@ -32,12 +32,16 @@ SOURCES = [
     "tests/test_review_audits.py",
     "factoryline/review_audits.py",
     "tests/test_atomic_review_convergence.py",
+    "tests/test_github_proof_review.py",
+    "tests/test_graph_ops.py",
     "specs/atomic-review-convergence-v1.ssat.yaml",
     ".github/workflows/factory-pr-proof-review.yml",
     "scripts/verify_atomic_review_convergence.py",
 ]
 TESTS = [
     "tests/test_atomic_review_convergence.py",
+    "tests/test_github_proof_review.py",
+    "tests/test_graph_ops.py",
     "tests/test_mcp.py",
     "tests/test_webmcp.py",
     "tests/test_junie_taxonomy.py",
@@ -52,6 +56,7 @@ ASSERTIONS = {
     "validation": (
         "test_missing_duplicated_unknown_or_malformed_cells_are_indeterminate",
         "test_duplicate_json_fields_are_rejected",
+        "test_verification_assertions_require_exact_module_and_passing_case",
     ),
     "failure_recovery": (
         "test_rejects_prior_contract_drift_and_tampering",
@@ -64,13 +69,30 @@ ASSERTIONS = {
     "security_privacy": (
         "test_rejects_path_escape_and_source_overwrite",
         "test_complete_review_is_advisory_and_binds_exact_coverage",
+        "test_advisory_workflow_guard_rejects_release_operations",
     ),
     "performance": ("test_audit_convergence_engine_is_lazy_in_cli_process",),
     "external_effects": (
         "test_mcp_reads_convergence_and_exports_a2a_without_writing",
         "test_ci_convergence_executes_without_changing_main_proof",
+        "test_opt_in_workflow_is_advisory_scoped_and_never_uses_a_privileged_pr_trigger",
     ),
 }
+ASSERTION_MODULES = {
+    "test_advisory_workflow_guard_rejects_release_operations": "test_github_proof_review",
+    "test_opt_in_workflow_is_advisory_scoped_and_never_uses_a_privileged_pr_trigger": "test_github_proof_review",
+}
+
+
+def assertion_passed(rows, assertion):
+    module = ASSERTION_MODULES.get(assertion, "test_atomic_review_convergence")
+    matches = [
+        row
+        for row in rows
+        if row.get("name", "").split("[")[0] == assertion
+        and row.get("classname", "").split(".")[-1] == module
+    ]
+    return bool(matches) and all(not list(row) for row in matches)
 
 
 def canonical(value):
@@ -344,15 +366,7 @@ def main():
                     artifacts.append(artifact(junit, "junit"))
                     rows = list(ElementTree.parse(junit).iter("testcase"))
                     for assertion in selected:
-                        matches = [
-                            row
-                            for row in rows
-                            if row.get("name", "").split("[")[0] == assertion
-                            and row.get("classname", "").endswith(
-                                "test_atomic_review_convergence"
-                            )
-                        ]
-                        if not matches or any(list(row) for row in matches):
+                        if not assertion_passed(rows, assertion):
                             status = "FAIL" if status == "FAIL" else "BLOCKED"
                 else:
                     status = "BLOCKED"
