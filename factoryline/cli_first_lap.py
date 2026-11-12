@@ -46,6 +46,11 @@ def add_parser(sub: Any) -> None:
         help="workspace-relative signed worker configuration; otherwise discover .factory/native-worker-config.json",
     )
     scan.add_argument("--json", action="store_true")
+    scan.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="CI policy: exit 2 unless state and verdict are both PASS; retain advisory default",
+    )
     for flag, help_text in (
         ("oracle-evidence", "workspace-relative DSSE per-test mutation attestation"),
         ("oracle-trust-root", "workspace-relative oracle-verifier public trust root"),
@@ -261,6 +266,10 @@ def _run_scan(args: Any) -> int:
             },
         )
         code = 2 if result["state"] == "BLOCKED" else 0
+        if getattr(args, "require_complete", False) and (
+            result.get("state") != "PASS" or result.get("verdict") != "PASS"
+        ):
+            code = 2
     except (OSError, UnicodeError, ValueError) as exc:
         result = {
             "schema": "factory.repo-scan.error.v1",

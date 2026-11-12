@@ -15,6 +15,8 @@ from factoryline.lifecycle_ledger import (
     lifecycle_projection,
     record_lifecycle_event,
 )
+
+
 from factoryline.mission_control_status import mission_control_status
 from factoryline.operations_control import (
     assess_operations_control,
@@ -1253,3 +1255,49 @@ def test_telemetry_marks_conflicting_run_identity(tmp_path: Path):
     inventory = telemetry_inventory(tmp_path)
     assert inventory["quality"] == "conflicted"
     assert inventory["conflicts"] == ["same-run"]
+
+
+def test_lifecycle_latest_uses_recorded_time_and_discloses_truncation(tmp_path):
+    from factoryline import lifecycle_ledger as ledger
+
+    directory = tmp_path / ledger.RECEIPT_DIR
+    directory.mkdir(parents=True)
+    for index in range(501):
+        value = {
+            "schema": ledger.RECEIPT_SCHEMA,
+            "run_id": f"run-{index:03}",
+            "created_at": "2026-01-02T00:00:00Z"
+            if index == 0
+            else "2026-01-01T00:00:00Z",
+            "sequence": 1,
+            "event": "completed",
+        }
+        value["receipt_sha256"] = ledger._sha(value)
+        (directory / f"{index:03}.json").write_text(json.dumps(value))
+        if index == 1:
+            assert (
+                ledger.lifecycle_projection(tmp_path)["latest"]["run_id"] == "run-000"
+            )
+    projection = ledger.lifecycle_projection(tmp_path)
+    assert projection["truncated"] is True
+    assert projection["source_complete"] is False
+    assert projection["latest"] is None
+    assert projection["latest_observed"]["run_id"] == "run-000"
+
+
+def test_lifecycle_projection_rejects_unzoned_and_future_timestamp(tmp_path):
+    from factoryline import lifecycle_ledger as ledger
+
+    directory = tmp_path / ledger.RECEIPT_DIR
+    directory.mkdir(parents=True)
+    for index, instant in enumerate(["2026-01-01T00:00:00", "9999-01-01T00:00:00Z"]):
+        value = {
+            "schema": ledger.RECEIPT_SCHEMA,
+            "run_id": "run-1",
+            "created_at": instant,
+        }
+        value["receipt_sha256"] = ledger._sha(value)
+        (directory / f"{index}.json").write_text(json.dumps(value))
+    projection = ledger.lifecycle_projection(tmp_path)
+    assert projection["invalid_count"] == 2
+    assert projection["source_complete"] is False

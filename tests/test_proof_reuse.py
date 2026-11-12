@@ -280,6 +280,8 @@ def test_auto_savings_records_exact_pair_and_preserves_unknown_tokens(tmp_path):
     assert item["disposition"] == "REUSE"
     assert item["savings"]["time_saved_ms"] == 600_000 - item["routing_elapsed_ms"]
     assert item["savings"]["tokens_saved"] is None
+    assert item["savings"]["measurement_basis"] == "historical_baseline_estimate"
+    assert item["savings"]["paired_benchmark"] is False
     assert "PROOF_AUTO_SAVINGS_EXACT" in item["markers"]
     assert "PROOF_TOKEN_SAVINGS_UNKNOWN" in item["markers"]
     pairs = list((tmp_path / ".factory" / "savings").glob("*.json"))

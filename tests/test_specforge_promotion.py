@@ -22,6 +22,7 @@ def test_native_promotion_rejects_unverified_ship_claim(tmp_path):
         tmp_path, spec_path, forge_path, Path("promotion.json")
     )
     assert receipt["ok"] is False
+    assert receipt["evidence_level"] == "native_trace_unverified"
     assert receipt["findings"] == ["E_SPECFORGE_NATIVE_HANDOFF_UNVERIFIED"]
     assert receipt["authority"]["release"] is False
 
@@ -66,6 +67,7 @@ def test_specforge_promotion_requires_each_obligation_gate(tmp_path, required_ga
     output = tmp_path / "promotion.json"
     receipt = verify_specforge_promotion(tmp_path, spec, forge, output)
     assert receipt["marker"] == "SPECFORGE_PROMOTION_BLOCKED"
+    assert receipt["evidence_level"] == "declared_topology"
     assert receipt["findings"] == ["E_SPECLINE_OBLIGATION_LOOSE"]
     assert json.loads(output.read_text(encoding="utf-8"))["ok"] is False
 

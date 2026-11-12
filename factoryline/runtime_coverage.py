@@ -73,21 +73,28 @@ def _contained_file(root: Path, relative: Path) -> Path:
     return target
 
 
-def _python_manifest(root: Path, relative_root: str) -> dict[str, str]:
+def _python_source_paths(root: Path, relative_root: str) -> dict[str, Path]:
     source_root = _contained_file(root, Path(relative_root))
     paths = sorted(source_root.rglob("*.py"))
     if len(paths) > MAX_SOURCE_FILES:
         raise ValueError("Python source inventory exceeds 5,000 files.")
-    manifest: dict[str, str] = {}
+    manifest: dict[str, Path] = {}
     for path in paths:
         resolved = path.resolve()
         resolved.relative_to(root.resolve())
         if path.is_file():
             relative = resolved.relative_to(root.resolve()).as_posix()
-            manifest[relative] = sha256(path.read_bytes()).hexdigest()
+            manifest[relative] = path
     if not manifest and relative_root == "factoryline":
         raise ValueError("No factoryline Python source files were found.")
     return manifest
+
+
+def _python_manifest(root: Path, relative_root: str) -> dict[str, str]:
+    return {
+        relative: sha256(path.read_bytes()).hexdigest()
+        for relative, path in _python_source_paths(root, relative_root).items()
+    }
 
 
 def _manifest_digest(root: Path, relative_root: str) -> str:
@@ -304,7 +311,7 @@ def _validated_report(
     total_branches = _count_set(totals, branches=True)
     files = [_module_row(root, path, data) for path, data in sorted(raw_files.items())]
     reported_paths = {item["path"] for item in files}
-    source_paths = set(_python_manifest(root, "factoryline"))
+    source_paths = set(_python_source_paths(root, "factoryline"))
     if len(reported_paths) != len(files) or reported_paths != source_paths:
         missing = sorted(source_paths - reported_paths)
         unexpected = sorted(reported_paths - source_paths)

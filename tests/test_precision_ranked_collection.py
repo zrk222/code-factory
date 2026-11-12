@@ -127,6 +127,39 @@ def _collect(study, controller, work, extras=None):
     )
 
 
+def test_registered_technical_retry_preserves_first_attempt_and_rank(
+    tmp_path, monkeypatch
+):
+    study, controller, work = _fixture(tmp_path)
+    calls = []
+
+    def fail(command, **kwargs):
+        calls.append(command)
+        return 1
+
+    monkeypatch.setattr(ranked, "run_native_command", fail)
+    study.reg["technical_retry"] = {
+        "schema": "factory.precision.technical-retry.v1",
+        "max_retries": 1,
+        "reasons": [ranked.WORKER_ERROR],
+    }
+    study.registration_path.write_text(json.dumps(study.reg))
+    study.registration_sha = _sha(study.registration_path)
+    first = list(_collect(study, controller, work[:1]))
+    assert first[0][1]["reason"] == ranked.WORKER_ERROR
+    assert len(calls) == 1
+    study.attempted = 0
+    second = list(_collect(study, controller, work[:1]))
+    assert second[0][0] == 1
+    assert len(calls) == 2
+    archive = study.metadata / "1" / "native.attempt-1.json"
+    assert _read(archive) == first[0][1]
+    study.attempted = 0
+    list(_collect(study, controller, work[:1]))
+    assert len(calls) == 2
+    assert _read(archive) == first[0][1]
+
+
 def test_registered_worker_resume_reuses_success_and_charges_only_new_launch(tmp_path):
     study, controller, work = _fixture(tmp_path, limit=1)
     first = list(_collect(study, controller, work[:2]))

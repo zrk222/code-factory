@@ -597,6 +597,10 @@ def _reuse_savings(
     )
     return {
         "marker": "PROOF_AUTO_SAVINGS_EXACT",
+        "measurement_basis": "historical_baseline_estimate",
+        "baseline_elapsed_ms": elapsed,
+        "routing_elapsed_ms": routing_elapsed_ms,
+        "paired_benchmark": False,
         "time_saved_ms": result["savings"]["time_saved_ms"],
         "tokens_saved": result["savings"]["tokens_saved"],
         "token_marker": "PROOF_TOKEN_SAVINGS_UNKNOWN"

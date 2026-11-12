@@ -363,18 +363,11 @@ def _session_result(workspace: Path, session: dict[str, Any]) -> dict[str, Any] 
         result_path.relative_to(workspace)
     except ValueError:
         return None
-    return _load_json(result_path, "CONTINUOUS_PROOF_SESSION_INVALID")
-
-
-def _repair_delta_map(result: dict[str, Any]) -> dict[str, Any] | None:
-    deltas = result.get("workspace_delta")
-    if not isinstance(deltas, list):
+    payload = result_path.read_bytes()
+    if sha256(payload).hexdigest() != result_binding.get("sha256"):
         return None
-    return {
-        item.get("path"): item.get("after_sha256")
-        for item in deltas
-        if isinstance(item, dict)
-    }
+    value = json.loads(payload.decode("utf-8-sig"))
+    return value if isinstance(value, dict) else None
 
 
 def _repair_paths_match(
@@ -382,9 +375,36 @@ def _repair_paths_match(
 ) -> bool:
     for relative in touched_paths:
         current = _changed_binding(workspace, relative)
-        if not current["exists"] or after.get(relative) != current["sha256"]:
+        if relative not in after or after[relative] != current["sha256"]:
             return False
     return True
+
+
+def _session_matches_candidate(workspace, session, paths):
+    """Require stable observed inputs for every assessed current candidate path."""
+    if session["state"] != "verified_passed":
+        return False
+    result = _session_result(workspace, session)
+    inputs = result.get("candidate_inputs") if result else None
+    if (
+        not isinstance(inputs, dict)
+        or inputs.get("schema") != "factory.session-recorder.inputs.v1"
+    ):
+        return False
+    before, after = inputs.get("before"), inputs.get("after")
+    if (
+        not isinstance(after, dict)
+        or before != after
+        or not isinstance(inputs.get("scopes"), list)
+    ):
+        return False
+    from .session_recorder import _inside_scope
+
+    if not all(isinstance(scope, str) for scope in inputs["scopes"]):
+        return False
+    return all(
+        _inside_scope(path, inputs["scopes"]) for path in paths
+    ) and _repair_paths_match(workspace, paths, after)
 
 
 def _post_repair_matches(
@@ -394,13 +414,7 @@ def _post_repair_matches(
         return False
     if repair["state"] != "candidate_scoped_prior":
         return False
-    result = _session_result(workspace, session)
-    if result is None:
-        return False
-    after = _repair_delta_map(result)
-    if after is None:
-        return False
-    return _repair_paths_match(workspace, repair["touched_paths"], after)
+    return _session_matches_candidate(workspace, session, repair["touched_paths"])
 
 
 def _validate_assessment_request(workflow_id: str, session_phase: str) -> None:
@@ -633,6 +647,11 @@ def assess_continuous_proof(
         _changed_binding(workspace, item) for item in review["changed_paths"]
     ]
     session = _session_evidence(workspace, session_path)
+    if session["state"] == "verified_passed" and not _session_matches_candidate(
+        workspace, session, review["changed_paths"]
+    ):
+        session["state"] = "invalid_or_stale"
+        session["verification_marker"] = "CONTINUOUS_PROOF_CANDIDATE_UNBOUND"
     session["phase"] = session_phase
     repair = _repair_evidence(workspace, repair_scope_path, repair_patch_path)
     prior = _prior_evidence(workspace, prior_receipt_path)
@@ -768,6 +787,9 @@ def verify_continuous_proof(root: Path, receipt_path: Path) -> dict[str, Any]:
         failure = _verify_proof_binding(workspace, relative, name, binding)
         if failure:
             return failure
+    session_failure = _verify_session_current(workspace, relative, value)
+    if session_failure:
+        return session_failure
     current = _changed_bindings_current(workspace, value)
     if current != value.get("changed_bindings"):
         return _proof_check_failure(relative, "changed_bytes", "CONTINUOUS_PROOF_STALE")
@@ -849,3 +871,22 @@ def continuous_proof_projection(root: Path) -> dict[str, Any]:
         "truncated": history["truncated"],
         "authority": dict(_AUTHORITY),
     }
+
+
+def _verify_session_current(workspace, relative, value):
+    """Revalidate nested session evidence and candidate readiness without writes."""
+    binding = value["session"].get("binding")
+    if not binding:
+        return None
+    session = _session_evidence(workspace, workspace / binding["path"])
+    if session["state"] == "invalid_or_stale":
+        return _proof_check_failure(
+            relative, "session_evidence", "CONTINUOUS_PROOF_STALE"
+        )
+    if value["route"] == "review_ready" and not _session_matches_candidate(
+        workspace, session, [item["path"] for item in value["changed_bindings"]]
+    ):
+        return _proof_check_failure(
+            relative, "candidate_inputs", "CONTINUOUS_PROOF_STALE"
+        )
+    return None

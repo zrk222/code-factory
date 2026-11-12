@@ -573,6 +573,25 @@ def test_repo_scan_is_zero_config_without_inventing_tenant_contract_advice(
     )
 
 
+@pytest.mark.parametrize(
+    "state,expected", [("INCOMPLETE", 2), ("NOT_RUN", 2), ("PASS", 0)]
+)
+def test_scan_explicit_complete_policy_preserves_advisory_default(
+    tmp_path, monkeypatch, capsys, state, expected
+):
+    from factoryline.cli import main
+    from factoryline import adoption
+
+    monkeypatch.setattr(
+        adoption, "run_repo_scan", lambda *a, **k: {"state": state, "verdict": state}
+    )
+    assert main(["scan", "--root", str(tmp_path), "--json"]) == 0
+    assert (
+        main(["scan", "--root", str(tmp_path), "--json", "--require-complete"])
+        == expected
+    )
+
+
 def test_repo_scan_identity_is_stable_and_run_receipt_binds_telemetry(tmp_path):
     (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
 

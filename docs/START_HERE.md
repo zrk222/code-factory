@@ -169,6 +169,11 @@ factory scan --root . --deep --json > factory-scan.json
 Retain `factory-scan.json` as a job artifact and make the pipeline's gate policy
 explicit; the command's exit code alone is insufficient.
 
+For a strict local CI predicate, add `--require-complete`: the command returns
+exit 2 unless both `state` and `verdict` are `PASS`. The default advisory exit
+behavior is unchanged. A strict predicate does not add missing runtime evidence
+or grant merge/release approval.
+
 GitHub Actions is the maintained first-party integration in this repository.
 `factory ci init --feature <feature>` writes a simple opt-in pull-request
 comment and JSON-artifact workflow; it is not a release gate. The documented

@@ -40,7 +40,9 @@ factory proof-ops assess \
   --prior-receipt .factory/continuous-proof/approval-api/continuous-proof-RECEIPT.json
 ```
 
-Code Factory requires every prior repair path in the follow-up change set and requires the session's recorded after-hashes to equal current repaired bytes. It still does not apply or approve the patch.
+Code Factory requires every prior repair path in the follow-up change set. The observed session must bind those inputs immediately before and after validators, including absent deleted files, with unchanged states equal to the current candidate. A session for another change cannot establish readiness. Older receipts without candidate-input bindings remain inspectable but need a fresh observation for readiness. Code Factory still does not apply or approve the patch.
+
+Verification rechecks the session's nested result and validation artifacts. Missing or changed child evidence makes the current proof stale while preserving its historical record.
 
 ## Verify and inspect history
 
