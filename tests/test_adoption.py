@@ -1164,9 +1164,13 @@ def test_normal_scan_collection_error_reports_cause(tmp_path, capsys, deep):
     if not deep:
         args.append("--static-only")
     assert main(args) == 2
-    error = capsys.readouterr().err
-    assert "pyproject.toml" in error
-    assert "invalid configuration" in error
+    result = capsys.readouterr()
+    assert "Python audited 1/1" in result.out
+    assert (
+        "collection: UNKNOWN (pyproject.toml; malformed_collection_configuration)"
+        in result.out
+    )
+    assert not result.err
 
 
 def test_normal_scan_collection_gap_is_visible_in_human_output(tmp_path, capsys):
