@@ -339,7 +339,7 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
         "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" in workflow
     )
     assert (
-        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflow
+        "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" in workflow
     )
     assert "actions/setup-node@v4" not in workflow
     assert (
@@ -495,7 +495,7 @@ def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
         "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" in workflow
     )
     assert (
-        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflow
+        "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" in workflow
     )
     assert "factorylineMarketplaceArchive" in workflow
     assert "Publish verified plugin update" in workflow
@@ -534,7 +534,7 @@ def test_intellij_compatibility_reuses_verified_package_with_cached_dependencies
     assert "Package verification attempt $attempt failed" in package_job
     assert package_job.count("for attempt in 1 2 3") == 1
     assert (
-        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflow
+        "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" in workflow
     )
     assert "name: factoryline-intellij-plugin" in workflow
     assert "Resolve verified plugin archive" in workflow
