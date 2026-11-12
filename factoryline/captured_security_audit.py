@@ -965,6 +965,7 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
         _security_store_request_alias_bindings
         supported_security_precondition tls_finding log_security_precondition
         bind_request_sink_precondition _security_request_sink_slot
+        security_precondition_providers_stable _native_input_precondition_eligible
         """,
         "factoryline.captured_security_audit": """
         _security_request_binary_decode_kind _security_bind_local_native_input_precondition _security_local_request_provider_identity_uncertain _security_shell_call_shape_for_flow _security_local_provider_identity_uncertain _native_input_inventory_epoch
@@ -990,6 +991,7 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
         _bind_security_class _function_annotations _security_scope_local_names
         _security_scope_nonlocal_names _security_scope_declared_names
         _security_module_scope _security_apply_import_bindings
+        security_precondition_providers_confirmed _security_source_sink_findings_bound
         _security_scope_request_aliases
         _security_unsafe_flask_file_save _security_upload_path_expression
         tls_verification_disabled
@@ -1152,6 +1154,10 @@ def source_role_distribution_domain(
     proof = _distribution_selection_excludes_source(captured, path)
     if proof is None:
         return None
+    return _distribution_domain(path, role, proof)
+
+
+def _distribution_domain(path, role, proof):
     return {
         "schema": "factory.security.source-role-package-scope.v1",
         "role": role,
@@ -1174,12 +1180,130 @@ def selected_django_credential_domain(
     from .credential_identity_audit import django_test_domain_evidence
 
     domain = django_test_domain_evidence(context, path, observation, selected)
-    return domain or source_role_distribution_domain(
+    if domain is not None:
+        return domain
+    relative = index.relative(path)
+    distribution = _hatch_consumer_domain(
+        context, relative
+    ) or source_role_distribution_domain(
         context.get("captured", {}),
-        index.relative(path),
+        relative,
         line=finding.get("line"),
         credential_name=(finding.get("facts") or {}).get("name"),
     )
+    if _mapped_distribution_scope(distribution) and not _mapped_scope_contains_loaders(
+        context, path, index, distribution
+    ):
+        return None
+    return distribution
+
+
+def _mapped_distribution_scope(domain):
+    return isinstance(domain, dict) and domain.get("selection_basis") in {
+        "setuptools_mapped_source_root",
+        "hatch_explicit_consumer_root",
+    }
+
+
+def _hatch_consumer_path(relative, roots):
+    if not isinstance(relative, str) or re.search(r"[:\\]", relative):
+        return None
+    path = PurePosixPath(relative)
+    if path.is_absolute() or ".." in path.parts or len(path.parts) < 2:
+        return None
+    component = path.parts[0]
+    if any(root.parts[0].casefold() == component.casefold() for root in roots):
+        return None
+    return path
+
+
+def _hatch_consumer_domain(context, relative):
+    from .pytest_collection_audit import (
+        captured_hatch_wheel_roots,
+        captured_unpacked_consumer,
+    )
+
+    if context.get("hatch_alternate_absent") is not True:
+        return None
+    captured = context["captured"]
+    raw = captured.get("pyproject.toml")
+    roots = captured_hatch_wheel_roots(raw)
+    path = _hatch_consumer_path(relative, roots)
+    if not roots or path is None or "hatch.toml" in captured:
+        return None
+    if not all(
+        isinstance(captured.get((root / "__init__.py").as_posix()), bytes)
+        for root in roots
+    ):
+        return None
+    child = f"{path.parts[0]}/pyproject.toml"
+    nested = captured.get(child)
+    if not captured_unpacked_consumer(raw, nested):
+        return None
+    domain = _distribution_domain(
+        path,
+        "unpacked_distribution_consumer",
+        {
+            "path": "pyproject.toml",
+            "sha256": sha256(raw).hexdigest(),
+            "basis": "hatch_explicit_consumer_root",
+        },
+    )
+    domain["supporting_sources"][child] = sha256(nested).hexdigest()
+    domain["scope_root"] = path.parts[0]
+    return domain
+
+
+def _mapped_scope_contains_loaders(context, path, index, domain):
+    from .semantic_credential_sensor import _django_signing_consumer
+
+    parts = PurePosixPath(index.relative(path)).parts
+    depth = (
+        1
+        if "scope_root" in domain
+        else next(
+            i + 1 for i, part in enumerate(parts) if part.lower() == domain["role"]
+        )
+    )
+    scope = tuple(part.casefold() for part in parts[:depth])
+    contained = False
+    prefix = ".".join(scope)
+    for other, tree in index.snapshots.items():
+        relative = PurePosixPath(index.relative(other))
+        inside = tuple(part.casefold() for part in relative.parts[:depth]) == scope
+        loader = _django_signing_consumer(path, other, tree, context) is not None
+        if not inside and (loader or _mapped_scope_referenced(tree, relative, prefix)):
+            return False
+        contained |= inside and loader
+    return contained
+
+
+def _mapped_scope_referenced(tree, relative, prefix):
+    from importlib.util import resolve_name
+
+    package = ".".join(relative.parts[:-1])
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                try:
+                    module = resolve_name("." * node.level + module, package)
+                except ImportError:
+                    continue
+            names = [module, *(f"{module}.{a.name}" for a in node.names)]
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # Includes literal module arguments and module:object entrypoints.
+            names = [node.value.partition(":")[0]]
+        else:
+            continue
+        if any(
+            name.casefold().startswith(prefix + ".") or name.casefold() == prefix
+            for name in names
+        ):
+            return True
+    return False
 
 
 def _source_role_candidate(finding, bound, credential_evidence, generated):
@@ -1214,6 +1338,9 @@ def source_role_context_fallback(
         line=finding.get("line"),
         credential_name=finding["facts"]["name"],
     )
+    if _mapped_distribution_scope(domain):
+        # A package root is not an independent witness of runtime ownership.
+        return None
     supporting = _bound_role_support(domain, source_bindings)
     if not supporting:
         return None
@@ -1263,36 +1390,45 @@ def source_role_tier_override(
     return generated, fallback
 
 
-def source_role_capture_context(source_bytes, bindings, context):
-    """Bind auxiliary role bytes without modifying the Python inventory."""
-    support = getattr(source_bytes, "source_role_sources", {})
+def _source_role_support_hashes(support, bindings):
+    """Return hashes only when every auxiliary source is valid and bound."""
     if not (
         isinstance(support, dict)
         and all(
-            isinstance(path, str)
-            and isinstance(raw, bytes)
-            and len(raw) <= 1_000_000
-            and (
-                path not in bindings
-                or hashlib.sha256(raw).hexdigest() == bindings[path]
-            )
+            isinstance(path, str) and isinstance(raw, bytes) and len(raw) <= 1_000_000
             for path, raw in support.items()
         )
     ):
+        return {}
+    hashes = {}
+    for path, raw in support.items():
+        digest = hashlib.sha256(raw).hexdigest()
+        if path in bindings and digest != bindings[path]:
+            return {}
+        hashes[path] = digest
+    return hashes
+
+
+def source_role_capture_context(source_bytes, bindings, context):
+    """Bind auxiliary role bytes without modifying the Python inventory."""
+    support = getattr(source_bytes, "source_role_sources", {})
+    support_hashes = _source_role_support_hashes(support, bindings)
+    if not support_hashes:
         support = {}
     role_bindings = dict(bindings)
-    role_bindings.update(
-        {path: hashlib.sha256(raw).hexdigest() for path, raw in support.items()}
-    )
+    role_bindings.update(support_hashes)
     role_context = context
     if (
         support
         and isinstance(context, dict)
         and isinstance(context.get("captured"), dict)
     ):
+        capture = getattr(source_bytes, "source_role_capture", None)
         role_context = {
             **context,
             "captured": {**context["captured"], **support},
+            "hatch_alternate_absent": isinstance(capture, dict)
+            and capture.get("hatch_alternate_absent") is True,
         }
     return role_context, role_bindings
 
@@ -1498,12 +1634,77 @@ def _captured_application_source_bytes(
     from .audit_action_refs import _CapturedSecuritySources
 
     sources, bindings = _capture_archive_support(workspace, findings, captured)
+    hatch = _capture_hatch_consumer_support(workspace, findings, captured)
+    sources.update(hatch)
+    bindings = [
+        *bindings,
+        *(
+            {"path": name, "sha256": sha256(raw).hexdigest(), "bytes": len(raw)}
+            for name, raw in hatch.items()
+        ),
+    ]
     return _CapturedSecuritySources(
         captured,
-        source_role_sources=sources,
-        source_role_bindings=bindings,
-        source_role_workspace=workspace if sources else None,
+        source_role_capture={
+            "sources": sources,
+            "bindings": bindings,
+            "workspace": workspace if sources else None,
+            "hatch_alternate_absent": bool(hatch),
+        },
     )
+
+
+def _hatch_alternate_absent(workspace):
+    try:
+        (workspace / "hatch.toml").lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        pass
+    return False
+
+
+def _read_role_manifest(workspace, name):
+    from . import review_audits as audit
+
+    try:
+        raw = audit._security_source_bytes(workspace, name)
+    except (OSError, audit.ReviewAuditError, audit.RuntimeAuditError):
+        return None
+    return raw if len(raw) <= 1_000_000 else None
+
+
+def _capture_hatch_consumer_support(workspace, findings, captured):
+    from .pytest_collection_audit import (
+        captured_hatch_wheel_roots,
+        captured_unpacked_consumer,
+    )
+
+    paths = {
+        finding["path"]
+        for finding in findings
+        if finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and finding.get("facts", {}).get("name") == "SECRET_KEY"
+        and finding.get("path") in captured
+    }
+    if not paths:
+        return {}
+    raw = _read_role_manifest(workspace, "pyproject.toml")
+    roots = captured_hatch_wheel_roots(raw)
+    if not roots or not _hatch_alternate_absent(workspace):
+        return {}
+    names = {
+        f"{path.parts[0]}/pyproject.toml"
+        for relative in paths
+        if (path := _hatch_consumer_path(relative, roots)) is not None
+    }
+    nested = {
+        name: local
+        for name in sorted(names)[:16]
+        if (local := _read_role_manifest(workspace, name)) is not None
+        and captured_unpacked_consumer(raw, local)
+    }
+    return {"pyproject.toml": raw, **nested} if nested else {}
 
 
 def _capture_archive_support(workspace, findings, captured):
@@ -1544,12 +1745,25 @@ def _capture_archive_support(workspace, findings, captured):
     return role_sources, bindings if role_sources else ()
 
 
-def _tier_report_has_archive_role_support(tier_report):
+def _tier_report_auxiliary_role_paths(tier_report):
     expected = {"archive/README.md", "archive/manifest.json"}
+    paths = set()
     for row in (tier_report or {}).get("ledger", []):
         if not isinstance(row, dict):
             continue
         observation = row.get("credential_authority_observation")
+        domain = (
+            observation.get("authority_domain")
+            if isinstance(observation, dict)
+            else None
+        )
+        if (
+            isinstance(domain, dict)
+            and domain.get("selection_basis") == "hatch_explicit_consumer_root"
+        ):
+            paths.update(
+                ("pyproject.toml", f"{domain.get('scope_root')}/pyproject.toml")
+            )
         supporting = (
             observation.get("supporting_sources", [])
             if isinstance(observation, dict)
@@ -1559,20 +1773,18 @@ def _tier_report_has_archive_role_support(tier_report):
             isinstance(source, dict) and source.get("path") in expected
             for source in supporting
         ):
-            return True
-    return False
+            paths.update(expected)
+    return paths
 
 
-def _archive_support_current(audit, capture):
+def _auxiliary_role_support_current(audit, capture):
     support = capture.get("sources")
     bindings = capture.get("bindings")
     workspace = capture.get("workspace")
-    expected = {"archive/README.md", "archive/manifest.json"}
     if not (
         isinstance(support, dict)
-        and set(support) == expected
         and isinstance(bindings, list)
-        and len(bindings) == len(expected)
+        and len(bindings) == len(support)
         and isinstance(workspace, Path)
     ):
         return False
@@ -1581,7 +1793,11 @@ def _archive_support_current(audit, capture):
         for row in bindings
         if isinstance(row, dict) and isinstance(row.get("path"), str)
     }
-    if set(by_path) != expected or not _archive_support_matches(support, by_path):
+    if set(by_path) != set(support) or not _archive_support_matches(support, by_path):
+        return False
+    if capture.get("hatch_alternate_absent") is True and not _hatch_alternate_absent(
+        workspace
+    ):
         return False
     try:
         audit._verify_security_bindings(workspace, bindings)
@@ -1599,17 +1815,44 @@ def _archive_support_matches(support, bindings):
     )
 
 
+def source_role_verifier_sources(audit, verified, captured):
+    """Keep the sidecar only after verifying it against the current workspace."""
+    from .audit_action_refs import _CapturedSecuritySources
+
+    capture = getattr(captured, "source_role_capture", None)
+    if (
+        isinstance(capture, dict)
+        and capture.get("hatch_alternate_absent") is True
+        and _auxiliary_role_support_current(audit, capture)
+        and capture["sources"].get("pyproject.toml") == verified.get("pyproject.toml")
+    ):
+        return _CapturedSecuritySources(verified, source_role_capture=capture)
+    return verified
+
+
 def _revalidate_scan_role_support(audit, core, captured, primitive, native_rows):
     role_capture = getattr(captured, "source_role_capture", None)
-    if isinstance(role_capture, dict) and role_capture.get("sources"):
-        invalidate_role_support = not _archive_support_current(audit, role_capture)
-    else:
-        invalidate_role_support = _tier_report_has_archive_role_support(
-            core.get("finding_tier_report")
+    required = _tier_report_auxiliary_role_paths(core.get("finding_tier_report"))
+    if (
+        isinstance(role_capture, dict)
+        and isinstance(role_capture.get("sources"), dict)
+        and role_capture["sources"]
+    ):
+        invalidate_role_support = (
+            not required.issubset(role_capture["sources"])
+            or (
+                "pyproject.toml" in required
+                and role_capture.get("hatch_alternate_absent") is not True
+            )
+            or not _auxiliary_role_support_current(audit, role_capture)
         )
+    else:
+        invalidate_role_support = bool(required)
     if invalidate_role_support:
         if isinstance(role_capture, dict):
-            role_capture.update(sources={}, bindings=[], workspace=None)
+            role_capture.update(
+                sources={}, bindings=[], workspace=None, hatch_alternate_absent=False
+            )
         ledger = core.get("finding_tier_report", {}).get("ledger", [])
         raw_findings = [
             deepcopy(row["raw_finding"])

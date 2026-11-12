@@ -10,7 +10,7 @@ from factoryline.target_compiler import (
     create_target_from_prd,
     create_target_from_prompt,
 )
-from factoryline import target_compiler
+from factoryline import app_builder
 from factoryline.cli import main
 from factoryline.team_pilot import (
     TeamPilotError,
@@ -37,12 +37,12 @@ def test_windows_staging_promotion_retries_transient_access_denied(
             error.winerror = 5
             raise error
 
-    monkeypatch.setattr(target_compiler.os, "name", "nt")
-    monkeypatch.setattr(target_compiler.os, "replace", deny_replace)
-    monkeypatch.setattr(target_compiler.os, "rename", transient_rename)
-    monkeypatch.setattr(target_compiler.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(app_builder.os, "name", "nt")
+    monkeypatch.setattr(app_builder.os, "replace", deny_replace)
+    monkeypatch.setattr(app_builder.os, "rename", transient_rename)
+    monkeypatch.setattr(app_builder.time, "sleep", lambda _seconds: None)
 
-    target_compiler._promote_staging(tmp_path / "staging", tmp_path / "target")
+    app_builder._promote_staging(tmp_path / "staging", tmp_path / "target")
 
     assert attempts == 2
 
@@ -439,3 +439,40 @@ def test_team_pilot_cli_is_json_safe_and_receipt_verifiable(
     verified = json.loads(capsys.readouterr().out)
     assert code == 0
     assert verified["receipt"]["verdict"] == "READY_FOR_OWNER_REVIEW"
+
+
+def test_direct_app_scaffold_preserves_existing_output(tmp_path):
+    dest = tmp_path / "app"
+    dest.mkdir()
+    marker = dest / "README.md"
+    marker.write_text("keep", encoding="utf-8")
+    with pytest.raises(app_builder.ScaffoldOutputExists, match="OUTPUT_EXISTS"):
+        app_builder.app_from_prompt("Demo app", out_dir=dest)
+    assert marker.read_text(encoding="utf-8") == "keep"
+    assert list(tmp_path.iterdir()) == [dest]
+
+
+def test_direct_app_scaffold_cleans_partial_generation(tmp_path, monkeypatch):
+    def fail(*_args):
+        raise RuntimeError("generation failed")
+
+    monkeypatch.setattr(app_builder, "_backend_main", fail)
+    dest = tmp_path / "app"
+    with pytest.raises(RuntimeError, match="generation failed"):
+        app_builder.app_from_prompt("Demo app", out_dir=dest)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_direct_app_scaffold_restores_empty_output_on_publish_failure(
+    tmp_path, monkeypatch
+):
+    def fail(*_args):
+        raise PermissionError("publish failed")
+
+    monkeypatch.setattr(app_builder, "_promote_staging", fail)
+    dest = tmp_path / "app"
+    dest.mkdir()
+    with pytest.raises(PermissionError, match="publish failed"):
+        app_builder.app_from_prompt("Demo app", out_dir=dest)
+    assert dest.is_dir() and not list(dest.iterdir())
+    assert list(tmp_path.iterdir()) == [dest]

@@ -337,6 +337,34 @@ def test_native_flow_provider_capability_mutation_abstains(mutation):
     assert "security_precondition" not in dynamic[0]["facts"]
 
 
+def test_provider_stability_is_shared_only_for_relevant_native_findings(monkeypatch):
+    from factoryline import semantic_credential_sensor as sensors
+
+    checked = []
+    original = sensors.security_precondition_providers_stable
+
+    def count_check(tree, aliases, nodes):
+        checked.append(tree)
+        return original(tree, aliases, nodes)
+
+    monkeypatch.setattr(sensors, "security_precondition_providers_stable", count_check)
+    _premise_scan("def transform(value):\n    return str(value)\n")
+    assert checked == []
+
+    findings = _premise_scan(
+        "from flask import request\n"
+        "eval(request.get_data(as_text=True))\n"
+        "exec(request.get_data(as_text=True))\n"
+    )
+    dynamic = [row for row in findings if row["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(dynamic) == 2
+    assert all(
+        row["facts"]["security_precondition"]["status"] == "SUPPORTED"
+        for row in dynamic
+    )
+    assert len(checked) == 1
+
+
 def test_native_flow_precondition_is_independently_recomputed():
     """Independent binding recomputation preserves a source-bound helper alias and rejects changed code."""
     source = (
@@ -485,6 +513,29 @@ def _configuration_files277(runner):
         "service/start.py": runner,
         "service/urls.py": 'from django.contrib import admin\nfrom django.urls import path\nurlpatterns = [path("admin/", admin.site.urls)]\n',
     }
+
+
+def test_django_test_domain_evidence_rejects_unconfigured_test_path():
+    from hashlib import sha256
+    from factoryline.credential_identity_audit import django_test_domain_evidence
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+
+    files = _configuration_files277(_DJANGO_SESSION_START)
+    path = "tests/settings.py"
+    files["tests/__init__.py"] = ""
+    files[path] = files["service/settings.py"]
+    sources = {name: value.encode() for name, value in files.items()}
+    context = signing_configuration_inventory(
+        sources, {name: sha256(raw).hexdigest() for name, raw in sources.items()}
+    )
+
+    assert context is not None
+    assert (
+        django_test_domain_evidence(
+            context, path, {}, {"model": "django.admin.feedback.v1"}
+        )
+        is None
+    )
 
 
 _DJANGO_SESSION_SETTINGS = (

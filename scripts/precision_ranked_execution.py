@@ -1,0 +1,123 @@
+"""Bounded native execution for precision studies; selection remains rank ordered."""
+
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from math import isfinite
+import subprocess
+from time import monotonic
+
+
+def ordered_native_results(
+    prepared, invoke, *, first_rank=1, last_rank=None, before_dispatch=None
+):
+    """Prepare on the owner thread; launch at most two calls with one lookahead.
+
+    The input must include every rank, including exclusions or earlier receipts.
+    A consumer may close the iterator once its terminal prefix is sufficient.
+    Closing drains already dispatched work without dispatching the staged item.
+    """
+    source = iter(prepared)
+    next_input = next_output = first_rank
+    active, ready = {}, {}
+    staged, exhausted = None, False
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        while any((active, ready, staged is not None, not exhausted)):
+            for future in tuple(active):
+                if future.done():
+                    ready[active.pop(future)] = future
+            if next_output in ready:
+                yield next_output, ready.pop(next_output).result()
+                next_output += 1
+                continue
+            staged, next_input, exhausted = _advance_frontier(
+                pool,
+                invoke,
+                before_dispatch,
+                active,
+                ready,
+                staged,
+                exhausted,
+                source,
+                next_input,
+                last_rank,
+            )
+    if last_rank is not None and next_output != last_rank + 1:
+        raise ValueError("NATIVE_RANK_FRONTIER_INCOMPLETE")
+
+
+def _advance_frontier(
+    pool,
+    invoke,
+    before_dispatch,
+    active,
+    ready,
+    staged,
+    exhausted,
+    source,
+    next_input,
+    last_rank,
+):
+    """Dispatch or refill once when the ordered result is not ready."""
+    if staged is not None and len(active) < 2:
+        rank, job = staged
+        active[_dispatch(pool, invoke, before_dispatch, rank, job)] = rank
+        return None, next_input, exhausted
+    if staged is None and not exhausted and len(active) + len(ready) < 4:
+        staged = _read_rank(source, next_input, last_rank)
+        return staged, next_input + (staged is not None), staged is None
+    if active:
+        wait(active, return_when=FIRST_COMPLETED)
+        return staged, next_input, exhausted
+    raise ValueError("NATIVE_RANK_FRONTIER_INCOMPLETE")
+
+
+def _read_rank(source, expected, last_rank):
+    try:
+        item = next(source)
+    except StopIteration:
+        return None
+    if (
+        not isinstance(item, tuple)
+        or len(item) != 2
+        or item[0] != expected
+        or (last_rank is not None and expected > last_rank)
+    ):
+        raise ValueError("NATIVE_RANK_GAP_OR_DUPLICATE")
+    return item
+
+
+def _dispatch(pool, invoke, before_dispatch, rank, job):
+    work = job if before_dispatch is None else before_dispatch(rank, job)
+    return pool.submit(invoke, work)
+
+
+def run_native_command(
+    command, *, cwd, deadline, timeout, kill_grace, stdout=subprocess.DEVNULL
+):
+    """Supervise a native child independently of capture, including spawn time."""
+    if not isfinite(deadline) or not all(
+        isfinite(value) and value > 0 for value in (timeout, kill_grace)
+    ):
+        raise ValueError("NATIVE_TIME_BUDGET_INVALID")
+    started = monotonic()
+    if deadline - started < timeout:
+        raise TimeoutError("INVOCATION_LIMIT_NO_NATIVE_LAUNCH")
+    child = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        remaining = started + timeout - monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout)
+        return child.wait(timeout=remaining)
+    except BaseException:
+        try:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=kill_grace)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError("NATIVE_REAP_FAILED") from error
+        raise

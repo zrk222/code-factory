@@ -19,9 +19,44 @@ MINIMUM_VERSIONS = {
     "prestige": "0.7.4",
 }
 
+ASSEMBLY_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("specline", ("strict", "{f}", "--json")),
+    ("specline", ("verify-validators", "{f}", "--json")),
+    ("specline", ("gate", "spec", "{f}")),
+    ("specline", ("tasks", "{f}")),
+    ("specline", ("gate", "plan", "{f}")),
+    ("forgeline", ("architect", "{f}", "{f}.ssat.yaml")),
+    ("forgeline", ("review", "{f}", "{f}.ssat.yaml")),
+    ("forgeline", ("arch-gate", "{f}", "{f}.ssat.yaml")),
+    ("forgeline", ("verify-tests", "{f}", "{f}.ssat.yaml")),
+    ("forgeline", ("smoke", "{f}")),
+    ("prestige", ("score", "smoke/{f}.ui", "--json", "--strict")),
+    ("hsf", ("compile", "specs/{f}.yaml")),
+    ("forgeline", ("ship", "{f}")),
+)
+
+
+def receipt_stage(module: str, args: list[str] | tuple[str, ...]) -> str:
+    """Name stages without collapsing distinct commands into one receipt.
+
+    SpecLine's two ``gate`` calls protect different obligations.  Storing both
+    as ``gate`` let a later plan gate replace the spec gate during rollup.
+    """
+    stage = args[0].replace("_", "-")
+    if module == "specline" and stage == "gate" and len(args) > 1:
+        return f"gate-{args[1].replace('_', '-')}"
+    return stage
+
+
+ASSEMBLY_STAGE_KEYS = tuple(
+    (module, receipt_stage(module, args)) for module, args in ASSEMBLY_STAGES
+)
+BASE_REQUIRED_MODULES = ("specline", "forgeline")
+
+
 REQUIRED_COMMANDS = {
-    "specline": {"strict", "verify-validators", "challenge"},
-    "forgeline": {"gate", "fill", "verify-tests", "challenge"},
+    "specline": {"challenge"},
+    "forgeline": {"gate", "fill", "challenge"},
     "hsf": {"compile", "goldens", "challenge"},
     "prestige": {
         "audit",
@@ -36,6 +71,11 @@ REQUIRED_COMMANDS = {
         "benchmark",
     },
 }
+
+
+for _module, _args in ASSEMBLY_STAGES:
+    if _module in {"specline", "forgeline"}:
+        REQUIRED_COMMANDS[_module].add(_args[0])
 
 
 def version_tuple(value: str) -> tuple[int, ...]:
@@ -82,11 +122,12 @@ def compatibility(
     version = package_version(meta["pip"]) or reported_version
     minimum = MINIMUM_VERSIONS[module]
     required = REQUIRED_COMMANDS[module]
+    advertised = set(re.findall(r"[\w-]+", help_text or ""))
     missing = tuple(
         sorted(
             command
             for command in required
-            if help_text is not None and command not in help_text
+            if help_text is not None and command not in advertised
         )
     )
     return Compatibility(

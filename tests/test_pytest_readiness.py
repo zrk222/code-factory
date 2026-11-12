@@ -1,3 +1,5 @@
+import os
+import stat
 from pathlib import Path
 
 import factoryline.runtime_audit_process as runtime_audit_process
@@ -1409,9 +1411,18 @@ def test_assertion_probe_input_and_binding_limits(tmp_path, monkeypatch):
             tmp_path, "test_case.py::test_case", 2, timeout=True
         )
     suite.write_text("def test_case():\n    assert True\n")
-    original = Path.is_symlink
+    original = Path.lstat
+
+    def linked_ancestor(path):
+        info = original(path)
+        if path == tmp_path:
+            return os.stat_result(
+                (stat.S_IFLNK | stat.S_IMODE(info.st_mode), *info[1:])
+            )
+        return info
+
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "is_symlink", lambda p: p == tmp_path or original(p))
+        patch.setattr(Path, "lstat", linked_ancestor)
         with pytest.raises(ValueError, match="linked path"):
             _challenge_inputs(tmp_path, "test_case.py::test_case", 2)
     with suite.open("wb") as stream:
