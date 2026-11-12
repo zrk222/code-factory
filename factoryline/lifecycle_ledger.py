@@ -446,8 +446,10 @@ def lifecycle_projection(root: Path) -> dict[str, Any]:
     runs: dict[str, list[dict[str, Any]]] = {}
     invalid: list[str] = []
     directory = workspace / RECEIPT_DIR
+    candidates = sorted(directory.glob("*.json"))[:501] if directory.is_dir() else []
+    truncated = len(candidates) > 500
     if directory.is_dir():
-        for path in sorted(directory.glob("*.json"))[:500]:
+        for path in candidates[:500]:
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
                 core = {
@@ -459,6 +461,7 @@ def lifecycle_projection(root: Path) -> dict[str, Any]:
                     "receipt_sha256"
                 ) != _sha(core):
                     raise ValueError("invalid receipt")
+                _projection_time(value["created_at"])
                 runs.setdefault(value["run_id"], []).append(value)
             except (
                 OSError,
@@ -481,6 +484,7 @@ def lifecycle_projection(root: Path) -> dict[str, Any]:
         summaries.append(
             {
                 "run_id": run_id,
+                "recorded_at": latest["created_at"],
                 "event_count": len(ordered),
                 "latest_event": latest["event"],
                 "latest_sequence": latest["sequence"],
@@ -494,18 +498,36 @@ def lifecycle_projection(root: Path) -> dict[str, Any]:
                 "requires_human": latest["event"] in {"review_required", "escalated"},
             }
         )
+    summaries.sort(
+        key=lambda item: (_projection_time(item["recorded_at"]), item["run_id"])
+    )
     return {
         "schema": PROJECTION_SCHEMA,
         "marker": "LIFECYCLE_READ_ONLY",
         "run_count": len(summaries),
         "review_required_count": sum(item["requires_human"] for item in summaries),
         "invalid_count": len(invalid),
-        "latest": summaries[-1] if summaries else None,
+        "latest": summaries[-1] if summaries and not truncated else None,
+        "latest_observed": summaries[-1] if summaries else None,
+        "truncated": truncated,
+        "source_complete": not truncated and not invalid,
         "runs": summaries[-50:],
         "invalid": invalid[:100],
         "authority": dict(AUTHORITY),
         "claim_boundary": "Read-only local lifecycle facts. The projection does not dispatch a task, broadcast to a provider, start or resume an agent, or grant execution or approval authority.",
     }
+
+
+def _projection_time(value):
+    if not isinstance(value, str):
+        raise ValueError("lifecycle timestamp must be a string")
+    instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if (
+        instant.tzinfo is None
+        or instant.timestamp() > datetime.now(timezone.utc).timestamp() + 300
+    ):
+        raise ValueError("invalid lifecycle timestamp")
+    return instant
 
 
 def lifecycle_template() -> dict[str, Any]:

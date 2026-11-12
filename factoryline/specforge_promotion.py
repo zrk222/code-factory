@@ -129,6 +129,7 @@ def _promotion_core(
     ready = not findings
     return {
         "schema": "factory.specforge.promotion-receipt.v1",
+        "evidence_level": "declared_topology",
         "marker": "SPECFORGE_PROMOTION_READY"
         if ready
         else "SPECFORGE_PROMOTION_BLOCKED",
@@ -164,6 +165,9 @@ def _native_promotion(root: Path, spec: dict, forge: dict) -> dict:
         trace = _forge_intent_trace(root, feature, forge)
     return {
         "schema": "factory.specforge.native-promotion-receipt.v1",
+        "evidence_level": "native_trace_verified"
+        if trace
+        else "native_trace_unverified",
         "marker": "SPECFORGE_PROMOTION_READY"
         if trace
         else "SPECFORGE_PROMOTION_BLOCKED",
