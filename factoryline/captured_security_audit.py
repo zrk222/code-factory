@@ -265,6 +265,19 @@ def _uses_module_binding(reference, module):
 
 
 def _captured_module_text_unchanged(index, owner, target, references, providers=()):
+    return _captured_named_provider_unchanged(
+        index,
+        owner,
+        target.id,
+        providers,
+        readonly_argument=lambda node, _aliases, _parents: node in references,
+        readonly_nodes=(target,),
+    )
+
+
+def _captured_named_provider_unchanged(
+    index, owner, name, providers=(), *, readonly_argument=None, readonly_nodes=()
+):
     from . import review_audits as audit
     from .credential_role_constructor_provider import (
         _captured_terminal_provider_mutation,
@@ -275,8 +288,8 @@ def _captured_module_text_unchanged(index, owner, target, references, providers=
     if paths is None:
         return False
     bindings = [
-        (_conditional_module_name(name) + "." + target.id, (owner, target.id))
-        for name, path in paths.items()
+        (_conditional_module_name(module) + "." + name, (owner, name))
+        for module, path in paths.items()
         if path == owner
     ]
     if not bindings:
@@ -291,8 +304,8 @@ def _captured_module_text_unchanged(index, owner, target, references, providers=
             *bindings[1:],
             *((provider, None) for provider in providers),
         ),
-        readonly_argument=lambda node, _aliases, _parents: node in references,
-        readonly_nodes=(target,),
+        readonly_argument=readonly_argument,
+        readonly_nodes=readonly_nodes,
     )
 
 
@@ -312,9 +325,14 @@ def captured_module_text(site, reference):
     )
 
 
-def _cli_metadata_receiver(call, aliases, depth=0):
+def _cli_metadata_receiver(call, aliases, source, path, depth=0):
     """Resolve a local, non-escaping argparse receiver before this call."""
-    from .credential_role_constructor_provider import binding_occurrences
+    from .credential_role_constructor_provider import (
+        _scope_scope_bindings,
+        binding_occurrences,
+        _presentation_provider_shadow,
+    )
+    from . import review_audits as audit
     from .security_configuration import _canonical
 
     func = call.func
@@ -324,7 +342,8 @@ def _cli_metadata_receiver(call, aliases, depth=0):
         or not isinstance(func.value, ast.Name)
     ):
         return None
-    scope = getattr(call, "_security_lexical_scope", None)
+    parents = source.parents[path]
+    scope = _scope_scope_bindings(call, parents, None)
     if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     name = func.value.id
@@ -333,7 +352,7 @@ def _cli_metadata_receiver(call, aliases, depth=0):
             pass
         case _:
             return None
-    declaration = getattr(target, "_security_parent", None)
+    declaration = parents.get(id(target))
     if not (
         isinstance(declaration, ast.Assign)
         and declaration in scope.body
@@ -342,13 +361,20 @@ def _cli_metadata_receiver(call, aliases, depth=0):
         and isinstance(declaration.value, ast.Call)
     ):
         return None
-    if not _cli_receiver_uses_closed(scope, name, call.lineno):
+    if not _cli_receiver_uses_closed(scope, name, call.lineno, parents):
         return None
     constructor = declaration.value
     factory = _canonical(constructor, aliases)
     if factory == "argparse.ArgumentParser":
+        head = constructor.func
+        while isinstance(head, ast.Attribute):
+            head = head.value
+        if not isinstance(head, ast.Name) or _presentation_provider_shadow(
+            head, head.id, source, path, audit
+        ):
+            return None
         return _cli_metadata_factory(factory, constructor)
-    parent = _cli_metadata_receiver(constructor, aliases, depth + 1)
+    parent = _cli_metadata_receiver(constructor, aliases, source, path, depth + 1)
     return (
         _cli_metadata_factory(f"{parent}.{constructor.func.attr}", constructor)
         if parent and isinstance(constructor.func, ast.Attribute)
@@ -356,7 +382,7 @@ def _cli_metadata_receiver(call, aliases, depth=0):
     )
 
 
-def _cli_receiver_uses_closed(scope, name, before):
+def _cli_receiver_uses_closed(scope, name, before, parents):
     methods = {"add_argument", "add_subparsers", "add_parser", "set_defaults"}
     for ref in ast.walk(scope):
         if not (
@@ -366,8 +392,8 @@ def _cli_receiver_uses_closed(scope, name, before):
             and ref.lineno <= before
         ):
             continue
-        member = getattr(ref, "_security_parent", None)
-        call = getattr(member, "_security_parent", None)
+        member = parents.get(id(ref))
+        call = parents.get(id(member))
         if not (
             isinstance(member, ast.Attribute)
             and member.attr in methods
@@ -405,10 +431,7 @@ def _environment_label_diagnostic(source, path, node):
         and isinstance(call.func, ast.Name)
     ):
         return None
-    from .credential_identity_audit import (
-        _app_builtin_annotation_inert,
-        _app_signing_captured_provider_stable,
-    )
+    from .credential_identity_audit import _app_builtin_annotation_inert
     from .credential_role_identity_effects import (
         source_symbol_index,
         _enclosing_function,
@@ -442,9 +465,125 @@ def _environment_label_diagnostic(source, path, node):
                 and isinstance(part.value.value, str)
                 for part in owner.body
             )
-            and _app_signing_captured_provider_stable(index, [found])
+            and _captured_exception_type_unchanged(index, owner_path, owner)
         )
     return "diagnostic" if stable else None
+
+
+def _captured_exception_type_unchanged(index, owner, cls):
+    """Close class identity without treating a verified pytest type operand as mutation."""
+    from .credential_role_identity_effects import (
+        _enclosing_function,
+        _source_call_head_shadowed,
+    )
+    from .mock_fixture_provenance import _app_expression_name
+    from .semantic_credential_sensor import _security_source_path
+
+    source = index["source"]
+    providers = ()
+    if not any(
+        name == "pytest.py" or name.startswith("pytest/")
+        for name in index["module_paths"]
+    ):
+        providers = ("pytest.raises",)
+
+    def readonly(ref, aliases, parents):
+        from . import review_audits as audit
+
+        if not providers:
+            return False
+        call = parents.get(id(ref))
+        context = parents.get(id(call))
+        if not (
+            isinstance(call, ast.Call)
+            and call.args == [ref]
+            and not call.keywords
+            and isinstance(context, ast.withitem)
+            and context.context_expr is call
+            and audit._resolved_ast_name(call.func, aliases) == "pytest.raises"
+        ):
+            return False
+        module = call
+        while id(module) in parents:
+            module = parents[id(module)]
+        path = _security_source_path(source, module)
+        return (
+            path is not None
+            and _app_expression_name(
+                index, path, call.func, _enclosing_function(call, parents)
+            )
+            == "pytest.raises"
+            and not _source_call_head_shadowed(call, source, path, audit)
+        )
+
+    return _captured_named_provider_unchanged(
+        source, owner, cls.name, providers, readonly_argument=readonly
+    )
+
+
+def _registry_stderr_message(call, message, aliases, source, path):
+    from . import review_audits as audit
+    from .credential_identity_audit import _app_builtin_annotation_inert
+    from .credential_role_constructor_provider import _presentation_provider_shadow
+    from .credential_role_identity_effects import source_symbol_index
+
+    match call:
+        case ast.Call(
+            func=ast.Name(id="print") as printer,
+            args=[arg],
+            keywords=[
+                ast.keyword(
+                    arg="file", value=ast.Attribute(value=ast.Name() as root) as sink
+                )
+            ],
+        ) if arg is message:
+            index = source_symbol_index(source)
+            return (
+                index is not None
+                and audit._resolved_ast_name(sink, aliases) == "sys.stderr"
+                and not _presentation_provider_shadow(
+                    sink, root.id, source, path, audit
+                )
+                and _app_builtin_annotation_inert(index, path, printer)
+            )
+    return False
+
+
+def _registry_stderr_operands(source):
+    """Return only captured stderr references consumed by the stable print builtin."""
+    from . import review_audits as audit
+
+    result = set()
+    for path, tree in source.snapshots.items():
+        aliases = audit._module_security_aliases(tree)
+        parents = source.parents[path]
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or len(node.args) != 1:
+                continue
+            if _registry_stderr_message(node, node.args[0], aliases, source, path):
+                value = node.keywords[0].value
+                if parents.get(id(value)) is node.keywords[0]:
+                    result.add(value)
+    return result
+
+
+def _registry_help_message(argument, aliases, source, path):
+    parents = source.parents[path]
+    keyword = parents.get(id(argument))
+    call = parents.get(id(keyword))
+    return (
+        isinstance(keyword, ast.keyword)
+        and keyword.arg == "help"
+        and isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "add_argument"
+        and all(
+            kw.arg in {"help", "default", "required", "dest", "metavar"}
+            for kw in call.keywords
+        )
+        and _cli_metadata_receiver(call, aliases, source, path)
+        == "argparse.ArgumentParser"
+    )
 
 
 def _public_registry_use(reference, aliases, source, path):
@@ -452,10 +591,14 @@ def _public_registry_use(reference, aliases, source, path):
     from .credential_role_constructor_provider import _presentation_provider_shadow
     from .security_configuration import _canonical
 
-    parent = getattr(reference, "_security_parent", None)
+    parents = source.parents[path]
+    parent = parents.get(id(reference))
     if (
         isinstance(parent, ast.Call)
-        and parent.args == [reference]
+        and parent.args
+        and parent.args[0] is reference
+        and len(parent.args) <= 2
+        and all(isinstance(default, ast.Constant) for default in parent.args[1:])
         and not parent.keywords
     ):
         root = parent.func
@@ -469,30 +612,86 @@ def _public_registry_use(reference, aliases, source, path):
             )
         )
     if isinstance(parent, ast.FormattedValue):
+        message = parents.get(id(parent))
+        if not _registry_formatted_label(parent, message):
+            return False
+        if _registry_help_message(message, aliases, source, path):
+            return "help"
+        if _registry_stderr_message(
+            parents.get(id(message)), message, aliases, source, path
+        ):
+            return "stderr"
         return _environment_label_diagnostic(source, path, reference)
     match parent:
         case ast.BinOp(left=ast.Constant(value=str()), op=ast.Mod(), right=right) if (
             right is reference
         ):
-            keyword = getattr(parent, "_security_parent", None)
-            call = getattr(keyword, "_security_parent", None)
-            if (
-                isinstance(keyword, ast.keyword)
-                and keyword.arg == "help"
-                and isinstance(call, ast.Call)
-            ):
-                if (
-                    isinstance(call.func, ast.Attribute)
-                    and call.func.attr == "add_argument"
-                    and all(
-                        kw.arg in {"help", "default", "required", "dest", "metavar"}
-                        for kw in call.keywords
-                    )
-                    and _cli_metadata_receiver(call, aliases)
-                    == "argparse.ArgumentParser"
-                ):
-                    return "help"
+            if _registry_help_message(parent, aliases, source, path):
+                return "help"
     return False
+
+
+def _registry_formatted_label(item, message):
+    return (
+        item.format_spec is None
+        and item.conversion == -1
+        and isinstance(message, ast.JoinedStr)
+        and all(
+            part is item or isinstance(part, ast.Constant) for part in message.values
+        )
+    )
+
+
+def _registry_external_references(source, owner, origin):
+    """Gather closed direct imports of the same bound label including local aliases."""
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _presentation_provider_shadow,
+        binding_occurrences,
+    )
+    from .credential_role_identity_effects import source_symbol_index
+
+    symbols = source_symbol_index(source)
+    if symbols is None:
+        return None
+    identity = owner, source.parents[owner].get(id(origin))
+    result = []
+    for path, tree in source.snapshots.items():
+        if path == owner:
+            continue
+        if not source.validate(path):
+            return None
+        imported = _registry_imported_names(symbols, path, tree, identity)
+        if not imported:
+            continue
+        aliases = audit._module_security_aliases(tree)
+        for name, statement in imported.items():
+            if binding_occurrences(tree.body, name) != [statement]:
+                return None
+            for ref in _settings_names(tree, name):
+                if _presentation_provider_shadow(ref, name, source, path, audit):
+                    return None
+                result.append((ref, path, aliases))
+    return result
+
+
+def _registry_imported_names(symbols, path, tree, identity):
+    from .mock_fixture_provenance import _app_source_symbol
+
+    matched = {}
+    for statement in tree.body:
+        if not isinstance(statement, ast.ImportFrom):
+            continue
+        for alias in statement.names:
+            name = alias.asname or alias.name
+            if name == "*":
+                continue
+            if (
+                _app_source_symbol(symbols, path, ast.Name(id=name, ctx=ast.Load()))
+                == identity
+            ):
+                matched[name] = statement
+    return matched
 
 
 def captured_public_registry_label(node, target, aliases):
@@ -515,20 +714,32 @@ def captured_public_registry_label(node, target, aliases):
     index, owner, origin, _value, references = source
     if origin is not target:
         return False
-    roles = [_public_registry_use(ref, aliases, index, owner) for ref in references]
+    foreign = _registry_external_references(index, owner, origin)
+    if foreign is None:
+        return False
+    uses = [(ref, owner, aliases) for ref in references] + foreign
+    roles = [
+        _public_registry_use(ref, occurrence, index, path)
+        for ref, path, occurrence in uses
+    ]
+    readonly = {ref for ref, _, _ in uses}
+    if "stderr" in roles:
+        readonly.update(_registry_stderr_operands(index))
     return (
-        ("help" in roles or "diagnostic" in roles)
+        bool({"help", "stderr", "diagnostic"}.intersection(roles))
         and True in roles
         and all(roles)
         and _captured_module_text_unchanged(
             index,
             owner,
             origin,
-            frozenset(references),
+            readonly,
             providers=(
                 "os.environ",
                 "os.getenv",
                 *(_CLI_METADATA_FACTORIES if "help" in roles else ()),
+                *(("argparse.ArgumentParser.add_argument",) if "help" in roles else ()),
+                *(("builtins.print", "sys.stderr") if "stderr" in roles else ()),
             ),
         )
     )

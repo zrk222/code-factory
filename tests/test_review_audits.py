@@ -14158,12 +14158,47 @@ def test_credential_label_requires_closed_registry_and_metadata_uses(
         ("lookup_rebound", True),
         ("exception_rebound", True),
         ("operational_use", True),
+        ("captured_exception", False),
+        ("mutated_test_assertion", True),
+        ("local_test_assertion", True),
+        ("external_class_consumer", True),
     ],
 )
 def test_registry_label_requires_closed_exception_message_and_lookup(
     tmp_path, variant, active
 ):
     source = "import os\nSECRET_ENV = 'SERVICE_SIGNING_KEY'\n"
+    error = "RuntimeError"
+    if variant in {
+        "captured_exception",
+        "mutated_test_assertion",
+        "local_test_assertion",
+        "external_class_consumer",
+    }:
+        error = "MissingConfiguration"
+        (tmp_path / "errors.py").write_text(
+            "class MissingConfiguration(ValueError):\n    pass\n", encoding="utf-8"
+        )
+        source += "from errors import MissingConfiguration\n"
+        facade = (
+            "    pytest.raises = replacement\n"
+            if variant == "mutated_test_assertion"
+            else "    pytest = replacement\n"
+            if variant == "local_test_assertion"
+            else ""
+        )
+        (tmp_path / "test_configuration.py").write_text(
+            "import pytest\nfrom errors import MissingConfiguration\n"
+            "from app import read\ndef test_requires_value():\n"
+            + facade
+            + "    with pytest.raises(MissingConfiguration):\n        read()\n"
+            + (
+                "publish(MissingConfiguration)\n"
+                if variant == "external_class_consumer"
+                else ""
+            ),
+            encoding="utf-8",
+        )
     if variant == "exception_rebound":
         source += "RuntimeError = replacement\n"
     if variant == "lookup_rebound":
@@ -14173,7 +14208,7 @@ def test_registry_label_requires_closed_exception_message_and_lookup(
     if variant == "operational_use":
         source += "    enroll(password=SECRET_ENV)\n"
     lookup = "None" if variant == "no_lookup" else "os.getenv(SECRET_ENV)"
-    source += f"    value = {lookup}\n    if value is None:\n        raise RuntimeError(f'Missing {{SECRET_ENV}}')\n    return value\n"
+    source += f"    value = {lookup}\n    if value is None:\n        raise {error}(f'Missing {{SECRET_ENV}}')\n    return value\n"
     (tmp_path / "app.py").write_text(source, encoding="utf-8")
     report = security_scan(
         tmp_path,
@@ -16301,5 +16336,46 @@ def test_bounded_scan_requires_closed_settings_uses(tmp_path, control, active):
             item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
             for item in result["finding_tier_report"]["ledger"]
         )
+        is active
+    )
+
+
+@pytest.mark.parametrize(
+    "effect, active",
+    [
+        ("", False),
+        ("publish(label)\n", True),
+        ("sys.stderr = replacement\n", True),
+    ],
+)
+def test_registry_label_requires_closed_imported_consumers(tmp_path, effect, active):
+    (tmp_path / "config.py").write_text(
+        "SECRET_ENV = 'SERVICE_SIGNING_KEY'\n", encoding="utf-8"
+    )
+    (tmp_path / "ui.py").write_text(
+        "import argparse\nimport os\nimport sys\n"
+        "from config import SECRET_ENV as label\n"
+        "def parse_args():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument('--key', help=f'Read {label}')\n"
+        "    return parser\n"
+        "def read():\n"
+        "    key = os.environ.get(label, '')\n"
+        "    if not key:\n"
+        "        print(f'Missing {label}', file=sys.stderr)\n"
+        "    return key\n" + effect,
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["defect_policy_decision"]["state"] != "BLOCKED"
+    ledger = report["finding_tier_report"]["ledger"]
+    assert (
+        any(row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET" for row in ledger)
         is active
     )
