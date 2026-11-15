@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts import precision_ranked_collection as ranked
+from scripts.precision_native_capture import main as capture_main
 
 
 def _read(path):
@@ -23,6 +24,36 @@ def _sha(path):
 
 def _digest(value):
     return sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def test_native_observation_keeps_blocked_raw_without_admission(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "app.py").write_text(
+        "def read():\n    return eval(input())\n", encoding="utf-8"
+    )
+    (source / "conftest.py").write_text(
+        "pytest_plugins = ['external_plugin']\n", encoding="utf-8"
+    )
+    inventory = [
+        dict(path=p.name, sha256=_sha(p), kind="python") for p in source.iterdir()
+    ]
+    manifest = tmp_path / "capture.json"
+    manifest.write_text(json.dumps({"sources": inventory}), encoding="utf-8")
+    out = tmp_path / "observation.json"
+    args = ["--root", str(source), "--observation-manifest", str(manifest), "--out"]
+    assert capture_main([*args, str(out)]) == 2
+    result = _read(out)
+    assert result["admission_available"] is False
+    (finding,) = result["raw"]
+    assert finding["identity"][:3] == ["SECURITY_DYNAMIC_EXECUTION", "app.py", 2]
+    assert finding["admitted"] is None
+    assert finding["source_sha256"] == _sha(source / "app.py")
+    assert not (source / ".factory").exists()
+    (source / "app.py").write_text("changed = 1\n", encoding="utf-8")
+    rejected = tmp_path / "rejected.json"
+    assert capture_main([*args, str(rejected)]) == 2
+    assert not rejected.exists()
 
 
 def _fixture(tmp_path, *, limit=2):

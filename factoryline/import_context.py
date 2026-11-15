@@ -2560,7 +2560,7 @@ def _security_scope_declared_names(scope, declaration):
     pending = list(statements)
     while pending:
         node = pending.pop()
-        if not isinstance(node, ast.AST):
+        if not isinstance(node, ast.AST) or isinstance(node, ast.expr):
             continue
         if node is not scope and isinstance(
             node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
