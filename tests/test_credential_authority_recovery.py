@@ -4134,6 +4134,112 @@ def test_selected_admin_route_allows_closed_unrelated_later_handler(container):
 
 
 @pytest.mark.parametrize(
+    ("constructor", "mutation", "tier"),
+    [
+        (
+            'provider.LoginView.as_view(template_name="signin.html", redirect_authenticated_user=True, success_url="/welcome/")',
+            "",
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=False)",
+            "",
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            'provider.LoginView.as_view(**{"redirect_authenticated_user": True})',
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'provider.LogoutView.as_view(next_page="/")',
+            "",
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=bool(1))",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=1)",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=True, redirect_authenticated_user=False)",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'provider.LoginView.as_view(redirect_authenticated_user=True, unsupported="literal")',
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LogoutView.as_view(redirect_authenticated_user=True)",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'provider.LogoutView.as_view(success_url="/")',
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'provider.LoginView.as_view(redirect_authenticated_user=True, login_url="/")',
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=True)",
+            "provider.LoginView.as_view = replacement",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=True)",
+            "provider = replacement",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.PasswordResetView.as_view(redirect_authenticated_user=True)",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+    ],
+    ids=[
+        "login",
+        "login-false",
+        "unpacked-keywords",
+        "logout",
+        "computed",
+        "integer",
+        "duplicate",
+        "unknown-keyword",
+        "wrong-class",
+        "logout-success-url",
+        "login-url",
+        "provider-mutation",
+        "provider-shadow",
+        "other-constructor",
+    ],
+)
+def test_selected_admin_route_binds_auth_view_constructor(constructor, mutation, tier):
+    files = _recovery_sources()
+    files["service/urls.py"] = (
+        "from django.contrib import admin\nfrom django.urls import include, path\n"
+        'urlpatterns = [path("admin/", admin.site.urls), path("", include("service.tail"))]\n'
+    )
+    files["service/tail.py"] = (
+        "from django.contrib.auth import views as provider\nfrom django.urls import path\n"
+        f'{mutation}\nurlpatterns = [path("callback/", {constructor})]\n'
+    )
+    row = _recovery_row(files)
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    assert row["tier"] == tier
+
+
+@pytest.mark.parametrize(
     "replacement",
     [
         "import django.core.wsgi as loader\nloader.get_wsgi_application = lambda: None",
