@@ -6376,6 +6376,12 @@ def test_source_metadata_unknown_collection_public_cli(
         if row["path"] == "selectors.py"
     ]
     assert len(metadata) == (1 if consumer == "environment-name" else 0)
+    active = [
+        row
+        for row in first["findings"]
+        if row["path"] == "selectors.py" and row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(active) == (0 if consumer == "environment-name" else 1)
     if metadata:
         assert metadata[0]["facts"]["disposition"] == "SOURCE_PRESENTATION_METADATA"
         assert (

@@ -414,7 +414,7 @@ def _public_registry_use(reference, aliases):
 
 
 def captured_public_registry_label(node, target, aliases):
-    """Distinguish an environment lookup key from its retrieved secret value."""
+    """Keep mixed CLI help uses separate from the verified lookup-only proof."""
     value = getattr(node.value, "value", None)
     if (
         not isinstance(value, str)
@@ -434,18 +434,17 @@ def captured_public_registry_label(node, target, aliases):
     if origin is not target:
         return False
     roles = [_public_registry_use(ref, aliases) for ref in references]
-    return bool(
-        roles and True in roles and all(roles)
-    ) and _captured_module_text_unchanged(
-        index,
-        owner,
-        origin,
-        frozenset(references),
-        providers=(
-            "os.environ",
-            "os.getenv",
-            *(_CLI_METADATA_FACTORIES if "help" in roles else ()),
-        ),
+    return (
+        "help" in roles
+        and True in roles
+        and all(roles)
+        and _captured_module_text_unchanged(
+            index,
+            owner,
+            origin,
+            frozenset(references),
+            providers=("os.environ", "os.getenv", *_CLI_METADATA_FACTORIES),
+        )
     )
 
 
