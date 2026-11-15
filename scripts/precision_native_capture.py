@@ -17,30 +17,35 @@ def project_paired_observation(report, inventory):
     coverage = report["audit_coverage"]
     tiers = report["finding_tier_report"]
     decision = report["defect_policy_decision"]["state"]
-    if (
-        len(sources) != len(inventory)
-        or len(observed) != len(report["sources"])
-        or observed != python
-        or coverage["complete"] is not True
-        or coverage["inventory_complete"] is not True
-        or tiers["validation"]["coverage_state"] is not True
-        or tiers["validation"]["partition_state"] != "VALIDATED"
-        or report["finding_conservation"]["state"] != "PASS"
-        or report["selected_defect_policy"] != "source-role-v3"
-        or decision
-        not in {"BLOCKED", "DEFECTS_PRESENT", "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"}
-        or any(
-            sources.get(row["path"]) != row["sha256"]
-            for row in report["oracle_context"]["configuration_sources"]
+    if not all(
+        (
+            len(sources) == len(inventory),
+            len(observed) == len(report["sources"]),
+            observed == python,
+            coverage["complete"] is True,
+            coverage["inventory_complete"] is True,
+            tiers["validation"]["coverage_state"] is True,
+            tiers["validation"]["partition_state"] == "VALIDATED",
+            report["finding_conservation"]["state"] == "PASS",
+            report["selected_defect_policy"] == "source-role-v3",
+            decision
+            in {"BLOCKED", "DEFECTS_PRESENT", "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"},
+            all(
+                sources.get(row["path"]) == row["sha256"]
+                for row in report["oracle_context"]["configuration_sources"]
+            ),
         )
     ):
         raise ValueError("Native observation is incomplete or source binding changed.")
     fields = ("code", "path", "line", "column", "end_line", "end_column")
     actions, findings = {}, {}
-    for action in report["agent_actions"]:
+    security_actions = (
+        row
+        for row in report["agent_actions"]
+        if row["finding_context"]["code"].startswith("SECURITY_")
+    )
+    for action in security_actions:
         raw = action["finding_context"]
-        if not raw["code"].startswith("SECURITY_"):
-            continue
         identity = tuple(raw[key] for key in fields)
         if (
             identity in actions
@@ -48,10 +53,13 @@ def project_paired_observation(report, inventory):
         ):
             raise ValueError("Native action binding changed.")
         actions[identity] = action
-    for entry in tiers["ledger"]:
+    security_entries = (
+        row
+        for row in tiers["ledger"]
+        if row["raw_finding"]["code"].startswith("SECURITY_")
+    )
+    for entry in security_entries:
         raw = entry["raw_finding"]
-        if not raw["code"].startswith("SECURITY_"):
-            continue
         identity = tuple(raw[key] for key in fields)
         source = entry["source_identity"]
         digest = hashlib.sha256(
@@ -67,17 +75,21 @@ def project_paired_observation(report, inventory):
         admitted = (
             entry["tier"] == "SUPPORTED_DEFECT" if decision != "BLOCKED" else None
         )
-        if (
-            identity in findings
-            or source["path"] != raw["path"]
-            or sources.get(raw["path"]) != source["source_sha256"]
-            or (admitted is True) != (action is not None)
-            or (
-                action is not None
-                and (
-                    action["finding_context"] != raw
-                    or action["finding_sha256"] != digest
-                )
+        action_matches = (
+            (
+                action["finding_context"] == raw,
+                action["finding_sha256"] == digest,
+            )
+            if action is not None
+            else ()
+        )
+        if not all(
+            (
+                identity not in findings,
+                source["path"] == raw["path"],
+                sources.get(raw["path"]) == source["source_sha256"],
+                (admitted is True) == (action is not None),
+                all(action_matches),
             )
         ):
             raise ValueError(
