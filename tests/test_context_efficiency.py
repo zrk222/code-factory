@@ -6074,7 +6074,14 @@ def test_precision257_context_profiles_and_fixture_binders_fail_closed():
     assert application_profile_configuration(
         "root", lambda *_: (_ for _ in ()).throw(FileNotFoundError()), 64
     ) == ([], {name: {"path": name, "state": "missing"} for name in names}, True)
-    assert application_profile_configuration("root", lambda *_: raw, 2) == (
+    names.add("compose.yaml")
+
+    def read_oversized(_root, name):
+        if name not in names:
+            raise FileNotFoundError(name)
+        return raw
+
+    assert application_profile_configuration("root", read_oversized, 2) == (
         [],
         {
             name: {"path": name, "state": "oversized", "bytes": len(raw)}

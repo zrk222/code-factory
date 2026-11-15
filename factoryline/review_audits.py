@@ -4025,21 +4025,27 @@ def _project_oracle_context(
             source_inventory=source_hashes,
         )
     resolved = contracts._project_import_views(import_views, snapshots)
-    bind_application_fixture_context(
-        root,
-        snapshots,
-        contexts,
-        config_bindings,
-        _security_source_bytes,
-        MAX_BYTES,
-        source_bytes=source_bytes,
-        source_inventory=source_hashes,
-        imports=resolved,
-        source_index=(producer_source_model_out or {}).get("source"),
-        configuration_valid=config_cacheable,
-        collection_known=(collection_identity or {}).get("collection_state")
-        != "UNKNOWN",
-    )
+    fixture_source = (producer_source_model_out or {}).get("source")
+    with (
+        _security_snapshot_analysis_batch(producer_source_model_out)
+        if getattr(fixture_source, "bounded", False)
+        else nullcontext()
+    ):
+        bind_application_fixture_context(
+            root,
+            snapshots,
+            contexts,
+            config_bindings,
+            _security_source_bytes,
+            MAX_BYTES,
+            source_bytes=source_bytes,
+            source_inventory=source_hashes,
+            imports=resolved,
+            source_index=fixture_source,
+            configuration_valid=config_cacheable,
+            collection_known=(collection_identity or {}).get("collection_state")
+            != "UNKNOWN",
+        )
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved
     )
