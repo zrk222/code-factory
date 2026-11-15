@@ -14151,6 +14151,67 @@ def test_credential_label_requires_closed_registry_and_metadata_uses(
 
 
 @pytest.mark.parametrize(
+    "carrier",
+    ["APIKeyHeader", "APIKeyQuery", "APIKeyCookie"],
+)
+@pytest.mark.parametrize(
+    "other_use",
+    [
+        "none",
+        "mixed",
+        "rebound",
+        "attribute",
+        "local_import",
+        "wildcard",
+        "local_provider",
+    ],
+)
+def test_credential_locators_are_not_credential_values(tmp_path, carrier, other_use):
+    source = (
+        f"from fastapi.security import {carrier}\n"
+        "API_KEY_NAME = 'X-Control-Key'\n"
+        "API_KEY_VALUE = 'synthetic-control-value-only'\n"
+        f"locator = {carrier}(name=API_KEY_NAME)\n"
+        "def matches(value):\n    return value == API_KEY_VALUE\n"
+    )
+    if other_use == "mixed":
+        source += "def alternate(value):\n    return value == API_KEY_NAME\n"
+    if other_use == "rebound":
+        source = source.replace("locator = ", f"{carrier} = unknown\nlocator = ", 1)
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    peers = {
+        "attribute": "import app\ndef accept(value):\n    return value == app.API_KEY_NAME\n",
+        "local_import": (
+            "def accept(value):\n    from app import API_KEY_NAME as key\n"
+            "    return value == key\n"
+        ),
+        "wildcard": "from app import *\ndef accept(value):\n    return value == API_KEY_NAME\n",
+    }
+    if other_use in peers:
+        (tmp_path / "peer.py").write_text(peers[other_use], encoding="utf-8")
+    if other_use == "local_provider":
+        package = tmp_path / "src" / "fastapi"
+        package.mkdir(parents=True)
+        (package / "security.py").write_text(
+            f"def {carrier}(name):\n    return name\n", encoding="utf-8"
+        )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    emitted = {
+        item["raw_finding"]["facts"]["name"]
+        for item in report["finding_tier_report"]["ledger"]
+        if item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    assert emitted == (
+        {"API_KEY_VALUE"} if other_use == "none" else {"API_KEY_NAME", "API_KEY_VALUE"}
+    )
+
+
+@pytest.mark.parametrize(
     "variant, active",
     [
         ("closed", False),

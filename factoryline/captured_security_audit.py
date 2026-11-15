@@ -586,6 +586,43 @@ def _registry_help_message(argument, aliases, source, path):
     )
 
 
+_CREDENTIAL_LOCATOR_PROVIDERS = frozenset(
+    f"{module}.{name}"
+    for module in ("fastapi.security", "fastapi.security.api_key")
+    for name in ("APIKeyHeader", "APIKeyQuery", "APIKeyCookie")
+)
+
+
+def _registry_locator_use(keyword, call, aliases, source, path, audit):
+    """Check a documented lookup-name slot on a stable captured provider."""
+    from .credential_role_constructor_provider import _presentation_provider_shadow
+    from .security_configuration import _canonical
+
+    if not (
+        keyword.arg == "name"
+        and isinstance(call, ast.Call)
+        and not call.args
+        and all(
+            item.arg in {"name", "scheme_name", "description", "auto_error"}
+            for item in call.keywords
+        )
+        and len({item.arg for item in call.keywords}) == len(call.keywords)
+    ):
+        return None
+    canonical = _canonical(call, aliases)
+    if canonical not in _CREDENTIAL_LOCATOR_PROVIDERS:
+        return None
+    root = call.func
+    while isinstance(root, ast.Attribute):
+        root = root.value
+    return (
+        canonical
+        if isinstance(root, ast.Name)
+        and not _presentation_provider_shadow(call.func, root.id, source, path, audit)
+        else None
+    )
+
+
 def _public_registry_use(reference, aliases, source, path):
     from . import review_audits as audit
     from .credential_role_constructor_provider import _presentation_provider_shadow
@@ -610,6 +647,10 @@ def _public_registry_use(reference, aliases, source, path):
             and not _presentation_provider_shadow(
                 parent.func, root.id, source, path, audit
             )
+        )
+    if isinstance(parent, ast.keyword):
+        return _registry_locator_use(
+            parent, parents.get(id(parent)), aliases, source, path, audit
         )
     if isinstance(parent, ast.FormattedValue):
         message = parents.get(id(parent))
@@ -694,14 +735,42 @@ def _registry_imported_names(symbols, path, tree, identity):
     return matched
 
 
+def _registry_locator_namespace_closed(source, name, value):
+    """Reject shadow providers and namespace reads that lack a tracked use edge."""
+    import re
+
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,127}", value) is None:
+        return False
+    paths = source.module_paths()
+    if paths is None or any(
+        {"fastapi", "fastapi.py"}.intersection(path.casefold().split("/"))
+        for path in paths
+    ):
+        return False
+    return not any(
+        isinstance(item, ast.Attribute)
+        and item.attr == name
+        or isinstance(item, ast.ImportFrom)
+        and any(alias.name in {name, "*"} for alias in item.names)
+        for tree in source.snapshots.values()
+        for item in ast.walk(tree)
+    )
+
+
 def captured_public_registry_label(node, target, aliases):
     """Recognize closed registry labels used only for lookup and public messages."""
     value = getattr(node.value, "value", None)
-    if (
-        not isinstance(value, str)
-        or not value.isascii()
-        or not value.isupper()
-        or not value.isidentifier()
+    if not isinstance(value, str) or not value.isascii() or not value:
+        return False
+    registry_label = value.isupper() and value.isidentifier()
+    if not registry_label and (
+        len(value) > 128
+        or not any(
+            candidate == binding or candidate.startswith(binding + ".")
+            for candidate in _CREDENTIAL_LOCATOR_PROVIDERS
+            for binding in aliases.values()
+            if isinstance(binding, str)
+        )
     ):
         return False
     from .context_efficiency import _SECRET_BYTES
@@ -714,19 +783,33 @@ def captured_public_registry_label(node, target, aliases):
     index, owner, origin, _value, references = source
     if origin is not target:
         return False
+    local_roles = [
+        _public_registry_use(ref, aliases, index, owner) for ref in references
+    ]
+    if not registry_label and not all(
+        role in _CREDENTIAL_LOCATOR_PROVIDERS for role in local_roles
+    ):
+        return False
     foreign = _registry_external_references(index, owner, origin)
     if foreign is None:
         return False
     uses = [(ref, owner, aliases) for ref in references] + foreign
-    roles = [
+    roles = local_roles + [
         _public_registry_use(ref, occurrence, index, path)
-        for ref, path, occurrence in uses
+        for ref, path, occurrence in foreign
     ]
     readonly = {ref for ref, _, _ in uses}
     if "stderr" in roles:
         readonly.update(_registry_stderr_operands(index))
+    if roles and all(role in _CREDENTIAL_LOCATOR_PROVIDERS for role in roles):
+        return _registry_locator_namespace_closed(
+            index, origin.id, value
+        ) and _captured_module_text_unchanged(
+            index, owner, origin, readonly, ("fastapi.security", "sys.modules")
+        )
     return (
-        bool({"help", "stderr", "diagnostic"}.intersection(roles))
+        registry_label
+        and bool({"help", "stderr", "diagnostic"}.intersection(roles))
         and True in roles
         and all(roles)
         and _captured_module_text_unchanged(
