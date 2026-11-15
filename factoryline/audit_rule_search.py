@@ -780,6 +780,108 @@ def _declaration_local_site(context, index, path, name, origin, binding, use, ca
     return _declaration_alias_state(index, path, statement, name, index.snapshots[path])
 
 
+def _declaration_class_member_path(index, path, declaration, scope):
+    targets = (
+        declaration.targets
+        if isinstance(declaration, ast.Assign)
+        else [declaration.target]
+    )
+    if declaration not in scope.body or len(targets) != 1:
+        return None
+    if not isinstance(targets[0], ast.Name):
+        return None
+    member = [targets[0].id]
+    owner = scope
+    while isinstance(parent := index.parents[path].get(id(owner)), ast.ClassDef):
+        member.insert(0, owner.name)
+        owner = parent
+    return owner, tuple(member)
+
+
+def _declaration_method_attribute(node, method, owner, member, allowed):
+    if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
+        return False
+    attributes = []
+    receiver = node
+    while isinstance(receiver, ast.Attribute):
+        attributes.append(receiver.attr)
+        receiver = receiver.value
+    if not isinstance(receiver, ast.Name):
+        return False
+    chain = tuple(reversed(attributes))
+    args = method.args.posonlyargs + method.args.args
+    if args and receiver.id == args[0].arg:
+        return allowed[0] and chain in {member, ("__class__", *member)}
+    return allowed[1] and receiver.id == owner.name and chain == member
+
+
+def _declaration_class_method_hints(method, owner, member):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    args = method.args.posonlyargs + method.args.args
+    allowed = (
+        bool(
+            args
+            and not method.decorator_list
+            and not binding_occurrences(method.body, args[0].arg)
+        ),
+        _declaration_function_bindings(method, owner.name) == [],
+    )
+    pending = list(reversed(method.body))
+    while pending:
+        node = pending.pop()
+        if isinstance(
+            node,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+                ast.Lambda,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+            ),
+        ):
+            continue
+        if _declaration_method_attribute(node, method, owner, member, allowed):
+            yield node
+        pending.extend(reversed(list(ast.iter_child_nodes(node))))
+
+
+def _declaration_charge_search(nodes, context, capture):
+    for _ in nodes:
+        capture["class_member_states"] = capture.get("class_member_states", 0) + 1
+        if capture["class_member_states"] > 512:
+            context["truncation"].append("declaration_reference_search_budget")
+            return False
+    return True
+
+
+def _declaration_class_member_frontier(
+    context, index, path, declaration, scope, capture
+):
+    """Supply possible same-owner class member uses as context, never flow edges."""
+    selected = _declaration_class_member_path(index, path, declaration, scope)
+    if selected is None:
+        return
+    owner, member = selected
+    for method in owner.body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not _declaration_charge_search((method,), context, capture):
+                return
+            continue
+        if not _declaration_charge_search(ast.walk(method), context, capture):
+            return
+        for node in _declaration_class_method_hints(method, owner, member):
+            statement = _declaration_use_span(index, path, node, method, capture)
+            if statement is not None:
+                before = len(context["excerpts"])
+                _declaration_excerpt(context, index, path, statement, capture)
+                if len(context["excerpts"]) > before:
+                    capture["class_member_receiver_identity"] = "UNVERIFIED"
+
+
 def _declaration_local_frontier(context, index, path, declaration, scope, capture):
     tree = index.snapshots[path]
     if scope is not tree and not isinstance(
@@ -902,11 +1004,19 @@ def _declaration_neighborhood(context, index, path, declaration):
     )
     scope = _declaration_scope(index, path, declaration)
     _declaration_excerpt(context, index, path, scope, capture)
-    _declaration_local_frontier(context, index, path, declaration, scope, capture)
+    class_declaration = isinstance(scope, ast.ClassDef)
+    if not class_declaration:
+        _declaration_local_frontier(context, index, path, declaration, scope, capture)
     for selected, node in _declaration_candidates(
         context, index, path, declaration, scope, capture
     ):
         _declaration_excerpt(context, index, selected, node, capture)
+    if class_declaration:
+        # Supplement the established frontier with an independent traversal cap;
+        # both frontiers still share the same excerpt and packet limits.
+        _declaration_class_member_frontier(
+            context, index, path, declaration, scope, capture
+        )
     if _informed_sink_dependency_sources(context, index, capture):
         raise JevClassificationError("SINK_SOURCE_STALE")
     context["structural_context"] = dict(
@@ -917,6 +1027,10 @@ def _declaration_neighborhood(context, index, path, declaration):
         delivered_excerpts=len(capture["seen"]),
         inspected_sources=capture["inspected"],
     )
+    if "class_member_receiver_identity" in capture:
+        context["structural_context"]["class_member_receiver_identity"] = capture[
+            "class_member_receiver_identity"
+        ]
     context["truncation"] = list(dict.fromkeys(context["truncation"]))
 
 
