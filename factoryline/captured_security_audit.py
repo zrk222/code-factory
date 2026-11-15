@@ -172,6 +172,283 @@ def _yaml_instance_read_call(reference):
     )
 
 
+_CLI_METADATA_FACTORIES = {
+    "argparse.ArgumentParser": (
+        "argparse.ArgumentParser",
+        {"prog", "description", "epilog"},
+        0,
+    ),
+    "argparse.ArgumentParser.add_subparsers": (
+        "argparse._SubParsersAction",
+        {"dest", "required", "help"},
+        0,
+    ),
+    "argparse._SubParsersAction.add_parser": (
+        "argparse.ArgumentParser",
+        {"help", "description"},
+        1,
+    ),
+}
+
+
+def _cli_metadata_factory(factory, call):
+    """Resolve metadata-only standard argparse allocations with literal arguments."""
+    profile = _CLI_METADATA_FACTORIES.get(factory)
+    if profile is None:
+        return None
+    result, keys, arity = profile
+    return (
+        result
+        if len(call.args) == arity
+        and all(isinstance(value, ast.Constant) for value in call.args)
+        and all(
+            kw.arg in keys and isinstance(kw.value, ast.Constant)
+            for kw in call.keywords
+        )
+        else None
+    )
+
+
+def _captured_immutable_module_text(site, name):
+    """Locate one unconditional module binding and gather every source-visible use."""
+    from .credential_role_constructor_provider import binding_occurrences
+    from .review_integrity import _security_module_scope
+    from .semantic_credential_sensor import _security_source_path
+
+    module = _security_module_scope(getattr(site, "_security_lexical_scope", None))
+    index = getattr(module, "_security_source_model", None)
+    owner = _security_source_path(index, module)
+    if owner is None or not index.validate(owner):
+        return None
+    match binding_occurrences(module.body, name):
+        case [ast.Name() as target]:
+            pass
+        case _:
+            return None
+    declaration = getattr(target, "_security_parent", None)
+    if declaration not in module.body or not isinstance(declaration, ast.Assign):
+        return None
+    if declaration.targets != [target] or not isinstance(
+        declaration.value, ast.Constant
+    ):
+        return None
+    value = declaration.value.value
+    if type(value) is not str or len(value) > 4096:
+        return None
+    uses = [
+        ref
+        for ref in ast.walk(module)
+        if isinstance(ref, ast.Name) and ref.id == name and ref is not target
+    ]
+    if any(
+        not isinstance(ref.ctx, ast.Load) or not _uses_module_binding(ref, module)
+        for ref in uses
+    ):
+        return None
+    return index, owner, target, value, uses
+
+
+def _uses_module_binding(reference, module):
+    scope = getattr(reference, "_security_lexical_scope", None)
+    while scope is not module:
+        if scope is None or any(
+            reference.id in getattr(scope, field, ())
+            for field in (
+                "_security_local_names",
+                "_security_parameter_names",
+                "_security_nonlocal_names",
+            )
+        ):
+            return False
+        scope = getattr(scope, "_security_parent_scope", None)
+    return True
+
+
+def _captured_module_text_unchanged(index, owner, target, references, providers=()):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+    from .runtime_audit_integrity import _conditional_module_name
+
+    paths = index.module_paths()
+    if paths is None:
+        return False
+    bindings = [
+        (_conditional_module_name(name) + "." + target.id, (owner, target.id))
+        for name, path in paths.items()
+        if path == owner
+    ]
+    if not bindings:
+        return False
+    canonical, local = bindings[0]
+    return not _captured_terminal_provider_mutation(
+        index,
+        audit,
+        canonical,
+        local_binding=local,
+        additional_bindings=(
+            *bindings[1:],
+            *((provider, None) for provider in providers),
+        ),
+        readonly_argument=lambda node, _aliases, _parents: node in references,
+        readonly_nodes=(target,),
+    )
+
+
+def captured_module_text(site, reference):
+    """Read a bound source constant without assuming that a mutable alias is current."""
+    source = _captured_immutable_module_text(site, reference.id)
+    if source is None:
+        return None
+    index, owner, origin, value, references = source
+    return (
+        value
+        if reference in references
+        and origin.lineno < site.lineno
+        and value.casefold().startswith("https://")
+        and _captured_module_text_unchanged(index, owner, origin, frozenset(references))
+        else None
+    )
+
+
+def _cli_metadata_receiver(call, aliases, depth=0):
+    """Resolve a local, non-escaping argparse receiver before this call."""
+    from .credential_role_constructor_provider import binding_occurrences
+    from .security_configuration import _canonical
+
+    func = call.func
+    if (
+        depth >= 3
+        or not isinstance(func, ast.Attribute)
+        or not isinstance(func.value, ast.Name)
+    ):
+        return None
+    scope = getattr(call, "_security_lexical_scope", None)
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    name = func.value.id
+    match binding_occurrences(scope.body, name):
+        case [ast.Name() as target]:
+            pass
+        case _:
+            return None
+    declaration = getattr(target, "_security_parent", None)
+    if not (
+        isinstance(declaration, ast.Assign)
+        and declaration in scope.body
+        and declaration.lineno < call.lineno
+        and declaration.targets == [target]
+        and isinstance(declaration.value, ast.Call)
+    ):
+        return None
+    if not _cli_receiver_uses_closed(scope, name, call.lineno):
+        return None
+    constructor = declaration.value
+    factory = _canonical(constructor, aliases)
+    if factory == "argparse.ArgumentParser":
+        return _cli_metadata_factory(factory, constructor)
+    parent = _cli_metadata_receiver(constructor, aliases, depth + 1)
+    return (
+        _cli_metadata_factory(f"{parent}.{constructor.func.attr}", constructor)
+        if parent and isinstance(constructor.func, ast.Attribute)
+        else None
+    )
+
+
+def _cli_receiver_uses_closed(scope, name, before):
+    methods = {"add_argument", "add_subparsers", "add_parser", "set_defaults"}
+    for ref in ast.walk(scope):
+        if not (
+            isinstance(ref, ast.Name)
+            and ref.id == name
+            and isinstance(ref.ctx, ast.Load)
+            and ref.lineno <= before
+        ):
+            continue
+        member = getattr(ref, "_security_parent", None)
+        call = getattr(member, "_security_parent", None)
+        if not (
+            isinstance(member, ast.Attribute)
+            and member.attr in methods
+            and isinstance(call, ast.Call)
+            and call.func is member
+        ):
+            return False
+    return True
+
+
+def _public_registry_use(reference, aliases):
+    from .security_configuration import _canonical
+
+    parent = getattr(reference, "_security_parent", None)
+    if (
+        isinstance(parent, ast.Call)
+        and parent.args == [reference]
+        and not parent.keywords
+    ):
+        return _canonical(parent, aliases) in {"os.environ.get", "os.getenv"}
+    match parent:
+        case ast.BinOp(left=ast.Constant(value=str()), op=ast.Mod(), right=right) if (
+            right is reference
+        ):
+            keyword = getattr(parent, "_security_parent", None)
+            call = getattr(keyword, "_security_parent", None)
+            if (
+                isinstance(keyword, ast.keyword)
+                and keyword.arg == "help"
+                and isinstance(call, ast.Call)
+            ):
+                if (
+                    isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "add_argument"
+                    and all(
+                        kw.arg in {"help", "default", "required", "dest", "metavar"}
+                        for kw in call.keywords
+                    )
+                    and _cli_metadata_receiver(call, aliases)
+                    == "argparse.ArgumentParser"
+                ):
+                    return "help"
+    return False
+
+
+def captured_public_registry_label(node, target, aliases):
+    """Distinguish an environment lookup key from its retrieved secret value."""
+    value = getattr(node.value, "value", None)
+    if (
+        not isinstance(value, str)
+        or not value.isascii()
+        or not value.isupper()
+        or not value.isidentifier()
+    ):
+        return False
+    from .context_efficiency import _SECRET_BYTES
+
+    if any(pattern.search(value.encode()) for pattern in _SECRET_BYTES):
+        return False
+    source = _captured_immutable_module_text(node, target.id)
+    if source is None:
+        return False
+    index, owner, origin, _value, references = source
+    if origin is not target:
+        return False
+    roles = [_public_registry_use(ref, aliases) for ref in references]
+    return bool(
+        roles and True in roles and all(roles)
+    ) and _captured_module_text_unchanged(
+        index,
+        owner,
+        origin,
+        frozenset(references),
+        providers=(
+            "os.environ",
+            "os.getenv",
+            *(_CLI_METADATA_FACTORIES if "help" in roles else ()),
+        ),
+    )
+
+
 def _captured_credential_handler_authority(context, finding, handler, declaration):
     from .credential_endpoint_admission import _OperativeCredentialOrigin
     from .review_audits import _resolved_ast_name

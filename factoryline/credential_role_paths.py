@@ -2274,11 +2274,11 @@ def tls_security_finding(call, relative, node, aliases=None):
     )
     from .review_audits import _security_finding
     from .review_integrity import (
-        _security_flow_bindings,
         _security_module_scope,
         security_precondition_providers_confirmed,
         tls_verification_disabled,
     )
+    from .captured_security_audit import captured_module_text
     from .security_configuration import legacy_tls_verification_risk
 
     if tls_verification_disabled(call, node):
@@ -2310,9 +2310,8 @@ def tls_security_finding(call, relative, node, aliases=None):
         match url:
             case ast.Constant(value=value):
                 url_value = value
-            case ast.Name(id=name):
-                _bindings, constants = _security_flow_bindings(node, aliases)
-                url_value = constants.get(name)
+            case ast.Name():
+                url_value = captured_module_text(node, url)
         match url_value:
             case str():
                 try:

@@ -14113,6 +14113,72 @@ def test_captured_yaml_receiver_requires_readonly_loader(
 
 
 @pytest.mark.parametrize(
+    "extra, expected",
+    [
+        ("", False),
+        ("publish(SECRET_ENV)\n", True),
+        ("parser.add_argument = replacement\n", True),
+    ],
+)
+def test_credential_label_requires_closed_registry_and_metadata_uses(
+    tmp_path, extra, expected
+):
+    (tmp_path / "app.py").write_text(
+        "import argparse\nimport os\n"
+        "SECRET_ENV = 'SERVICE_SIGNING_KEY'\n"
+        "def read():\n    return os.getenv(SECRET_ENV)\n"
+        "def build():\n    parser = argparse.ArgumentParser()\n"
+        + (
+            "    parser.add_argument = replacement\n"
+            if extra.startswith("parser.")
+            else ""
+        )
+        + "    parser.add_argument('--key', help='Read %s' % SECRET_ENV)\n"
+        "    return parser\n" + (extra if extra.startswith("publish(") else ""),
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    rows = report["finding_tier_report"]["ledger"]
+    assert (
+        any(r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET" for r in rows)
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    "url, argument, tier",
+    [
+        ("https://example.invalid/data", "", "SUPPORTED_DEFECT"),
+        ("http://example.invalid/data", "", "NEEDS_CONTEXT"),
+        ("https://example.invalid/data", "DESTINATION", "NEEDS_CONTEXT"),
+    ],
+)
+def test_tls_transport_requires_actual_module_value(tmp_path, url, argument, tier):
+    (tmp_path / "app.py").write_text(
+        f"import requests\nDESTINATION = {url!r}\n"
+        f"def read({argument}):\n    return requests.get(DESTINATION, verify=False)\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    rows = report["finding_tier_report"]["ledger"]
+    assert [
+        r["tier"]
+        for r in rows
+        if r["raw_finding"]["code"] == "SECURITY_TLS_VERIFY_DISABLED"
+    ] == [tier]
+
+
+@pytest.mark.parametrize(
     "fixture,type_path",
     [
         ("jwt", "jwt.api_jwt.PyJWT"),
