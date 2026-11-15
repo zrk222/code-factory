@@ -1482,6 +1482,40 @@ def test_mission_graph_history_returns_bound_ordered_events(tmp_path: Path):
     assert history["marker"] == "MISSION_GRAPH_HASH_CHAIN_BOUND"
 
 
+@pytest.mark.parametrize("boundary", ["_thread", "_verify_chain"])
+def test_mission_history_is_consistent_during_transition(
+    tmp_path, monkeypatch, boundary
+):
+    from factoryline import mission_graph
+
+    mission = _pipeline(tmp_path)
+    path = Path(mission["path"])
+    initial = init_mission_graph(path, tmp_path)
+    approval = _approve(tmp_path, mission)
+    original = getattr(mission_graph, boundary)
+
+    def commit_after_read(*args):
+        read = original(*args)
+        monkeypatch.setattr(mission_graph, boundary, original)
+        apply_mission_event(
+            path, tmp_path, "approve", "mission-owner", "owner", "concurrent", approval
+        )
+        return read
+
+    monkeypatch.setattr(mission_graph, boundary, commit_after_read)
+    history = mission_graph_history(path, tmp_path)
+    assert (history["version"], history["state"], history["chain_head"]) == (
+        0,
+        "planned",
+        initial["event_tip"],
+    )
+    assert history["events"] == []
+    after = mission_graph_history(path, tmp_path)
+    assert after["version"] == 1 and after["state"] == "creator_running"
+    (event,) = after["events"]
+    assert event["event_sha256"] == after["chain_head"]
+
+
 def _approve(tmp_path: Path, mission: dict) -> Path:
     return Path(
         decide_mission(
