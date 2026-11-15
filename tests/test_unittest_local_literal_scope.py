@@ -65,6 +65,29 @@ def test_closed_unittest_local_literal_has_source_scope_only(tmp_path, literal):
     )
 
 
+@pytest.mark.parametrize(
+    ("body", "supported"),
+    [
+        ("observed = [SECRET] or external(SECRET)\nassert observed[0] == SECRET", True),
+        ("observed = [] or [SECRET]\nassert observed[0] == SECRET", True),
+        ("observed = [] and external(SECRET)\nassert SECRET == SECRET", True),
+        ("observed = [] or external(SECRET)", False),
+        ("observed = [unknown] or [SECRET]", False),
+        (
+            "if [SECRET]:\n    assert SECRET == SECRET\nelse:\n    external(SECRET)",
+            True,
+        ),
+    ],
+)
+def test_fixture_identity_scope_short_circuits_exact_builtin_containers(
+    tmp_path, body, supported
+):
+    result = evidence(
+        tmp_path, unittest_source("SECRET = 'ordinary-value-9417'\n" + body)
+    )
+    assert (result is not None) is supported
+
+
 @pytest.mark.parametrize("custom", ["run", "__getattribute__", "setUpClass"])
 def test_custom_unittest_owner_cannot_obtain_local_scope_proof(tmp_path, custom):
     source = unittest_source(

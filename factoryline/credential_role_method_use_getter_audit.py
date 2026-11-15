@@ -3417,7 +3417,7 @@ class _CredentialRoleFlow:
             return self.call(path, node, env)
         if isinstance(node, ast.IfExp):
             test = self.expression(path, node.test, env)
-            exact = _validated_exact_scalar(test)
+            exact = _validated_exact_scalar(test, as_truth=True)
             if exact:
                 return self.expression(
                     path, node.body if exact[0] else node.orelse, env
@@ -3471,7 +3471,7 @@ class _CredentialRoleFlow:
             return self.scalar_boolean(path, node, env)
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
             value = self.expression(path, node.operand, env)
-            exact = _validated_exact_scalar(value)
+            exact = _validated_exact_scalar(value, as_truth=True)
             if exact:
                 return _constant_identity_value(ast.Constant(value=not exact[0]))
             if value.inert_kind == "scalar" and not _has_unknown_content(value):
@@ -3549,17 +3549,15 @@ class _CredentialRoleFlow:
 
     def scalar_boolean(self, path, node, env):
         """Follow boolean short circuits only when preceding operands are exact."""
-        for position, expression in enumerate(node.values):
+        for expression in node.values[:-1]:
             value = self.expression(path, expression, env)
-            if position == len(node.values) - 1:
-                return value
-            exact = _validated_exact_scalar(value)
+            exact = _validated_exact_scalar(value, as_truth=True)
             if not exact:
                 self.fail("unresolved short-circuit operand", path, expression)
                 return _Value(unknown=True)
             if bool(exact[0]) == isinstance(node.op, ast.Or):
                 return value
-        return _Value(unknown=True)
+        return self.expression(path, node.values[-1], env)
 
     def attribute(self, path, node, env):
         """Read a modeled field or delegate unresolved attributes to the resolver."""
@@ -3907,7 +3905,7 @@ class _CredentialRoleFlow:
     def branch(self, path, node, env):
         """Select exact scalar branches or merge compatible modeled alternatives."""
         value = self.expression(path, node.test, env)
-        exact = _validated_exact_scalar(value)
+        exact = _validated_exact_scalar(value, as_truth=True)
         if exact:
             return self.statements(path, node.body if exact[0] else node.orelse, env)
         if value.unknown or value.class_roots or tracked_roots(value):
