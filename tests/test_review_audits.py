@@ -16379,3 +16379,66 @@ def test_registry_label_requires_closed_imported_consumers(tmp_path, effect, act
         any(row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET" for row in ledger)
         is active
     )
+
+
+@pytest.mark.parametrize(
+    ("variant", "active"),
+    [
+        ("isolated", False),
+        ("raw_header", True),
+        ("unpatched", True),
+        ("wrong_slot", True),
+        ("no_collection", True),
+    ],
+)
+def test_test_literal_requires_closed_digest_and_mock_interval(
+    tmp_path, variant, active
+):
+    (tmp_path / "checker.py").write_text(
+        "import hashlib\nimport requests\n"
+        "BASE = 'https://example.invalid/check/'\n"
+        "def digest(value):\n"
+        "    return hashlib.sha256(value.encode('utf-8')).hexdigest()\n"
+        "def lookup(value):\n"
+        "    hashed = digest(value)\n"
+        "    front, tail = hashed[:4], hashed[4:]\n"
+        "    reply = requests.get(BASE + front"
+        + (", headers={'X-Example': value}" if variant == "raw_header" else "")
+        + ")\n"
+        "    if reply.text == tail:\n        return 1\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    if variant != "no_collection":
+        (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    exercise = "        checker.lookup(secret)\n"
+    if variant == "unpatched":
+        exercise = "        pass\n    checker.lookup(secret)\n"
+    method = "post" if variant == "wrong_slot" else "get"
+    (tmp_path / "test_checker.py").write_text(
+        "from unittest.mock import patch\nimport checker\n"
+        "def test_local_input():\n"
+        "    secret = 'fixed-catalog-test-data'\n"
+        f"    with patch.object(checker.requests, '{method}', return_value=None) as recorded:\n"
+        + exercise
+        + "    emitted = recorded.call_args.args[0]\n"
+        "    assert secret not in emitted\n"
+        "    assert checker.digest(secret)[:4] == emitted[-4:]\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["defect_policy_decision"]["state"] != "BLOCKED"
+    assert (
+        any(
+            row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+            for row in report["finding_tier_report"]["ledger"]
+        )
+        is active
+    )

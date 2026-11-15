@@ -1319,9 +1319,575 @@ def _launch_mounts_closed(service, work, entry, mapped):
 
 def captured_noncredential_assignment(node, target, aliases):
     """Route source-bound non-credential roles at the common raw boundary."""
-    return captured_public_registry_label(
-        node, target, aliases
-    ) or captured_unread_settings_field(node, target)
+    return (
+        captured_public_registry_label(node, target, aliases)
+        or captured_unread_settings_field(node, target)
+        or captured_test_derived_input(node, target)
+    )
+
+
+def captured_test_derived_input(node, target):
+    """Prove a test value feeds a derived payload and a locally replaced effect."""
+    if not isinstance(target, ast.Name) or not isinstance(node.value, ast.Constant):
+        return False
+    value = node.value.value
+    if type(value) is not str or len(value) > 4096:
+        return False
+    from .context_efficiency import _SECRET_BYTES
+    from .credential_role_identity_effects import _enclosing_function
+    from .semantic_credential_sensor import _security_helper_source_context
+
+    module, source, path = _security_helper_source_context(node, None)
+    if path is None or not source.validate(path):
+        return False
+    owner = _enclosing_function(node, source.parents[path])
+    if not (
+        isinstance(node, ast.Assign)
+        and node.targets == [target]
+        and isinstance(owner, ast.FunctionDef)
+        and owner in module.body
+        and node in owner.body
+        and not owner.decorator_list
+        and any(isinstance(stmt, ast.With) for stmt in owner.body)
+        and not any(pattern.search(value.encode()) for pattern in _SECRET_BYTES)
+    ):
+        return False
+    return _CapturedDerivedTestInput(module, source, path, owner, node).proven()
+
+
+class _CapturedDerivedTestInput:
+    """Close the literal, the derived operands, and the patch interval separately."""
+
+    def __init__(self, module, source, path, function, assignment):
+        from .credential_role_identity_effects import source_symbol_index
+
+        self.module, self.source, self.path = module, source, path
+        self.function, self.assignment = function, assignment
+        self.parents = source.parents[path]
+        self.symbols = source_symbol_index(source)
+        self.patch = None
+        self.effects = []
+        self.digest_assertions = set()
+
+    def proven(self):
+        from .credential_role_identity_effects import _enclosing_function
+        from .finite_capture import captured_value_use_closure
+        from .mock_fixture_provenance import _app_test_function_external_uses_clear
+
+        if self.symbols is None or not self._selected():
+            return False
+        self.patch = self._patch_statement()
+        if self.patch is None:
+            return False
+        proof = captured_value_use_closure(
+            self.function,
+            self.assignment.value,
+            self.parents,
+            lambda node: _enclosing_function(node, self.parents),
+            lambda _scope: None,
+            self._use,
+        )
+        return (
+            proof is not None
+            and len(self.effects) == 1
+            and _app_test_function_external_uses_clear(
+                self.symbols, self.path, self.function
+            )
+            and self._provider_closure()
+        )
+
+    def _selected(self):
+        from .pytest_collection_audit import (
+            _pytest_collection_hook_names,
+            _pytest_collection_settings,
+            _pytest_file_matches,
+            _pytest_name_matches,
+            _pytest_plugin_declaration_active,
+            captured_pytest_configuration,
+        )
+
+        context = getattr(self.module, "_security_oracle_context", {})
+        configs = context.get("_security_launch_configs")
+        if configs is None:
+            root, captured = getattr(
+                self.module, "_security_source_context", (None, {})
+            )
+            if root is None:
+                return False
+            configs = {
+                Path(path).relative_to(root).as_posix(): data
+                for path, data in captured.items()
+                if Path(path).is_relative_to(root)
+            }
+        selected = captured_pytest_configuration(configs)
+        if selected is None:
+            return False
+        settings = _pytest_collection_settings(selected["identity"])
+        if not (
+            _pytest_file_matches(
+                self.source.relative(self.path), settings["python_files"]
+            )
+            and _pytest_name_matches(self.function.name, settings["python_functions"])
+        ):
+            return False
+        return all(
+            self.source.validate(path)
+            and not _pytest_collection_hook_names(
+                tree, path.name == "conftest.py", False
+            )
+            and not any(_pytest_plugin_declaration_active(node) for node in tree.body)
+            and not any(
+                isinstance(node, ast.Name) and node.id == "__test__"
+                for node in ast.walk(tree)
+            )
+            for path, tree in self.source.snapshots.items()
+        )
+
+    def _canonical(self, path, node, function=None):
+        from .mock_fixture_provenance import _app_expression_name
+
+        return _app_expression_name(self.symbols, path, node, function)
+
+    def _patch_statement(self):
+        patches = []
+        for node in self.function.body:
+            match node:
+                case ast.With(
+                    items=[
+                        ast.withitem(
+                            context_expr=ast.Call(
+                                args=[
+                                    ast.Attribute() as receiver,
+                                    ast.Constant(value=str() as member),
+                                ],
+                                keywords=[ast.keyword(arg="return_value")],
+                            ) as factory,
+                            optional_vars=ast.Name() as mock,
+                        )
+                    ],
+                    body=[ast.Expr(value=ast.Call() as exercise)],
+                ) if (
+                    self._canonical(self.path, factory.func, self.function)
+                    == "unittest.mock.patch.object"
+                ):
+                    patches.append((receiver, member, mock, exercise))
+        return patches[0] if len(patches) == 1 else None
+
+    def _use(self, scope, ref):
+        if scope is not self.function or not isinstance(ref, ast.Name):
+            return None
+        parent = self.parents.get(id(ref))
+        if (
+            isinstance(parent, ast.Call)
+            and parent.args == [ref]
+            and not parent.keywords
+        ):
+            if parent is self.patch[3]:
+                effect = self._mocked_digest_effect(parent)
+                if effect is None:
+                    return None
+                self.effects.append(effect)
+                return parent
+            return self._digest_assertion(parent)
+        return self._absence_assertion(ref, parent)
+
+    def _digest_assertion(self, call):
+        bracket = self.parents.get(id(call))
+        compare = self.parents.get(id(bracket))
+        statement = self.parents.get(id(compare))
+        if not (
+            isinstance(bracket, ast.Subscript)
+            and bracket.value is call
+            and _digest_slice_bound(bracket, upper=True) is not None
+            and isinstance(compare, ast.Compare)
+            and len(compare.ops) == 1
+            and isinstance(compare.ops[0], ast.Eq)
+            and isinstance(statement, ast.Assert)
+            and statement.test is compare
+            and statement.msg is None
+        ):
+            return None
+        provider = self._digest_callable(self.path, call)
+        if provider is None:
+            return None
+        self.digest_assertions.add(provider)
+        return statement
+
+    def _absence_assertion(self, ref, compare):
+        match compare:
+            case ast.Compare(
+                left=left, ops=[ast.NotIn()], comparators=[ast.Name(id=name)]
+            ) if left is ref:
+                statement = self.parents.get(id(compare))
+                if (
+                    isinstance(statement, ast.Assert)
+                    and statement.test is compare
+                    and statement.msg is None
+                ):
+                    return (
+                        statement
+                        if self._mock_argument_local(name, statement)
+                        else None
+                    )
+        return None
+
+    def _mock_argument_local(self, name, statement):
+        from .credential_role_constructor_provider import (
+            binding_dominates,
+            binding_occurrences,
+        )
+
+        bindings = binding_occurrences(self.function.body, name)
+        if len(bindings) != 1:
+            return False
+        assignment = self.parents.get(id(bindings[0]))
+        if not isinstance(assignment, ast.Assign) or not binding_dominates(
+            assignment, statement, self.parents, self.function
+        ):
+            return False
+        match assignment.value:
+            case ast.Subscript(
+                value=ast.Attribute(
+                    value=ast.Attribute(
+                        value=ast.Name(id=mock) as receiver, attr="call_args"
+                    ),
+                    attr="args",
+                ),
+                slice=ast.Constant(value=0),
+            ):
+                return (
+                    mock == self.patch[2].id
+                    and binding_occurrences(self.function.body, mock) == [self.patch[2]]
+                    and list(_settings_names(self.function, mock)) == [receiver]
+                )
+        return False
+
+    def _digest_callable(self, path, call):
+        from .credential_role_identity_effects import resolve_source_identity_call
+
+        result = resolve_source_identity_call(call, path, self.source)
+        if not result or not result.negative_binding_closed:
+            return None
+        fn = result.function
+        if not (
+            isinstance(fn, ast.FunctionDef)
+            and len(fn.args.args) == 1
+            and not fn.args.defaults
+            and len(result.arguments) == 1
+        ):
+            return None
+        body = _fixture_effect_body(fn)
+        if len(body) != 1 or not isinstance(body[0], ast.Return):
+            return None
+        digest = _digest_return_shape(body[0].value, fn.args.args[0].arg)
+        if digest is None:
+            return None
+        provider = self._canonical(result.path, digest.func, fn)
+        return (
+            provider
+            if provider in {"hashlib.sha1", "hashlib.sha256", "hashlib.sha512"}
+            else None
+        )
+
+    def _mocked_digest_effect(self, call):
+        from .credential_role_identity_effects import resolve_source_identity_call
+
+        bound = resolve_source_identity_call(call, self.path, self.source)
+        if not bound or not bound.negative_binding_closed:
+            return None
+        formal = next(
+            (name for name, arg in bound.arguments.items() if arg is call.args[0]), None
+        )
+        if formal is None:
+            return None
+        return self._derived_receiver_effect(bound.path, bound.function, formal)
+
+    def _derived_receiver_effect(self, path, function, formal):
+        body = _fixture_effect_body(function)
+        if len(body) < 3:
+            return None
+        match body[:3]:
+            case [
+                ast.Assign(
+                    targets=[ast.Name(id=digest)],
+                    value=ast.Call(
+                        args=[ast.Name(id=arg) as raw], keywords=[]
+                    ) as derive,
+                ),
+                ast.Assign(
+                    targets=[
+                        ast.Tuple(elts=[ast.Name(id=prefix), ast.Name(id=suffix)])
+                    ],
+                    value=ast.Tuple(
+                        elts=[ast.Subscript() as first, ast.Subscript() as rest]
+                    ),
+                ),
+                ast.Assign(
+                    targets=[ast.Name()],
+                    value=ast.Call(
+                        args=[
+                            ast.BinOp(
+                                op=ast.Add(),
+                                left=base,
+                                right=ast.Name(id=prefix_use) as excerpt,
+                            )
+                        ]
+                    ) as request,
+                ),
+            ] if formal == arg and prefix_use == prefix:
+                pass
+            case _:
+                return None
+        split = _digest_partition(function, digest, first, rest)
+        if not (
+            split is not None
+            and list(_settings_names(function, formal)) == [raw]
+            and list(_settings_names(function, prefix)) == [excerpt]
+            and _digest_comparison_only(function, suffix, self.source.parents[path])
+        ):
+            return None
+        provider = self._digest_callable(path, derive)
+        selected = self._patch_matches_request(path, function, request, base)
+        if provider is None or selected is None:
+            return None
+        return (provider, selected)
+
+    def _patch_matches_request(self, path, function, request, base):
+        from .import_context import captured_import_module
+
+        receiver, member, _, _ = self.patch
+        if not isinstance(request.func, ast.Attribute) or request.func.attr != member:
+            return None
+        if member != "get" or not isinstance(request.func.value, ast.Name):
+            return None
+        bound = self._canonical(self.path, receiver, self.function)
+        provider = self._canonical(path, request.func.value, function)
+        if not bound or provider != "requests":
+            return None
+        module, _, attribute = bound.rpartition(".")
+        if attribute != request.func.value.id or captured_import_module(
+            self.source, self.path, module
+        ) != (True, path):
+            return None
+        if not _fixed_digest_request_base(
+            _captured_text_operand(self.source, self.symbols, path, function, base)
+        ):
+            return None
+        return path, request.func.value.id, provider + "." + member
+
+    def _provider_closure(self):
+        from . import review_audits as audit
+        from .credential_role_constructor_provider import (
+            _captured_terminal_provider_mutation,
+        )
+
+        digest, (owner, slot, transport) = self.effects[0]
+        if any(
+            name == root + ".py" or name.startswith(root + "/")
+            for name in self.symbols["module_paths"]
+            for root in ("unittest", "requests", "hashlib")
+        ):
+            return False
+        if not _captured_named_provider_unchanged(
+            self.source, owner, slot, readonly_argument=_fixed_mock_patch_operand
+        ):
+            return False
+        return (
+            not _captured_terminal_provider_mutation(
+                self.source,
+                audit,
+                digest,
+                additional_bindings=(
+                    ("unittest.mock.patch.object", None),
+                    *(
+                        (name, None)
+                        for name in sorted(self.digest_assertions - {digest})
+                    ),
+                ),
+            )
+            and transport == "requests.get"
+        )
+
+
+def _fixed_mock_patch_operand(node, aliases, parents):
+    """A scoped standard-library patch reads the module binding it will patch."""
+    from . import review_audits as audit
+
+    call = parents.get(id(node))
+    owner = parents.get(id(call))
+    return (
+        isinstance(call, ast.Call)
+        and len(call.args) == 2
+        and call.args[0] is node
+        and isinstance(call.args[1], ast.Constant)
+        and call.args[1].value == "get"
+        and [kw.arg for kw in call.keywords] == ["return_value"]
+        and isinstance(owner, ast.withitem)
+        and owner.context_expr is call
+        and audit._resolved_ast_name(call.func, aliases) == "unittest.mock.patch.object"
+    )
+
+
+def _fixture_effect_body(function):
+    body = function.body
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and type(body[0].value.value) is str
+    ):
+        return body[1:]
+    return body
+
+
+def _digest_return_shape(value, formal):
+    match value:
+        case ast.Call(
+            func=ast.Attribute(value=inner, attr=("upper" | "lower")),
+            args=[],
+            keywords=[],
+        ):
+            value = inner
+    match value:
+        case ast.Call(
+            func=ast.Attribute(
+                value=ast.Call(
+                    args=[
+                        ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id=selected), attr="encode"
+                            ),
+                            args=[ast.Constant(value=("utf-8" | "ascii"))],
+                            keywords=[],
+                        )
+                    ],
+                    keywords=[],
+                ) as digest,
+                attr="hexdigest",
+            ),
+            args=[],
+            keywords=[],
+        ) if selected == formal:
+            return digest
+    return None
+
+
+def _digest_partition(function, name, first, rest):
+    if not all(
+        isinstance(part.value, ast.Name) and part.value.id == name
+        for part in (first, rest)
+    ):
+        return None
+    if set(_settings_names(function, name)) != {first.value, rest.value}:
+        return None
+    start, end = (
+        _digest_slice_bound(rest, upper=False),
+        _digest_slice_bound(first, upper=True),
+    )
+    return start if start == end else None
+
+
+def _digest_slice_bound(bracket, *, upper):
+    slc = bracket.slice
+    if not isinstance(slc, ast.Slice) or slc.step is not None:
+        return None
+    index, empty = (slc.upper, slc.lower) if upper else (slc.lower, slc.upper)
+    if (
+        empty is not None
+        or not isinstance(index, ast.Constant)
+        or type(index.value) is not int
+    ):
+        return None
+    return index.value if 0 < index.value < 40 else None
+
+
+def _digest_comparison_only(function, suffix, parents):
+    uses = tuple(_settings_names(function, suffix))
+    if len(uses) != 1:
+        return False
+    compare = parents.get(id(uses[0]))
+    return (
+        isinstance(compare, ast.Compare)
+        and compare.comparators == [uses[0]]
+        and len(compare.ops) == 1
+        and isinstance(compare.ops[0], ast.Eq)
+        and isinstance(parents.get(id(compare)), ast.If)
+    )
+
+
+def _captured_text_operand(source, symbols, path, function, expression):
+    """Resolve a copied immutable module string while checking live slot writes."""
+    from .mock_fixture_provenance import _app_source_symbol
+
+    if isinstance(expression, ast.Constant):
+        return expression.value
+    if not isinstance(expression, ast.Name):
+        return None
+    selected = _app_source_symbol(symbols, path, expression, function)
+    if selected is None:
+        return None
+    owner, binding = selected
+    match binding:
+        case ast.Assign(
+            targets=[ast.Name() as target], value=ast.Constant(value=str() as text)
+        ):
+            if binding not in source.snapshots[owner].body:
+                return None
+        case _:
+            return None
+    immutable = _text_binding_reads(source, symbols, selected, target.id)
+    return (
+        text
+        if immutable
+        and expression in immutable
+        and _captured_module_text_unchanged(source, owner, target, immutable)
+        else None
+    )
+
+
+def _text_binding_reads(source, symbols, selected, name):
+    from .credential_role_identity_effects import _enclosing_function
+    from .mock_fixture_provenance import _app_source_symbol
+
+    reads = set()
+    for path, tree in source.snapshots.items():
+        if not source.validate(path):
+            return None
+        parents = source.parents[path]
+        for ref in ast.walk(tree):
+            candidate = (
+                ref.id if isinstance(ref, ast.Name) else getattr(ref, "attr", "")
+            )
+            if candidate != name or not isinstance(getattr(ref, "ctx", None), ast.Load):
+                continue
+            if (
+                _app_source_symbol(
+                    symbols, path, ref, _enclosing_function(ref, parents)
+                )
+                == selected
+            ):
+                reads.add(ref)
+    return reads
+
+
+def _fixed_digest_request_base(value):
+    from urllib.parse import urlsplit
+
+    if type(value) is not str:
+        return False
+    try:
+        bits = urlsplit(value)
+        return (
+            bits.scheme == "https"
+            and bool(bits.hostname)
+            and bits.path.endswith("/")
+            and bits.username is None
+            and bits.password is None
+            and not bits.query
+            and not bits.fragment
+        )
+    except ValueError:
+        return False
 
 
 def captured_unread_settings_field(node, target):
