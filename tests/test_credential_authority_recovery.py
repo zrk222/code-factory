@@ -1343,6 +1343,15 @@ def test_source_role_hatch_selected_package_keeps_actionable_default():
         "dynamic_route",
         "decorator_wrapper",
         "builtin_override",
+        "module_exec",
+        "module_eval",
+        "module_globals_write",
+        "late_application",
+        "imported_reflection",
+        "escaped_reflection",
+        "imported_helper",
+        "imported_helper_reflection",
+        "conditional_application",
     ],
 )
 def test_http_signature_authority_requires_rejection_and_current_providers(change):
@@ -1394,6 +1403,31 @@ def signed():
         "dynamic_route": ('route("/signed"', "route(dynamic_path"),
         "decorator_wrapper": ("app = Flask", "Flask = opaque\napp = Flask"),
         "builtin_override": ("    supplied =", "    bytes = opaque\n    supplied ="),
+        "module_exec": (
+            "@app.route",
+            'exec("hmac.compare_digest = replacement")\n@app.route',
+        ),
+        "module_eval": (
+            "@app.route",
+            'eval("globals().update(WEBHOOK_SECRET=other)")\n@app.route',
+        ),
+        "module_globals_write": (
+            "@app.route",
+            'globals()["WEBHOOK_SECRET"] = other\n@app.route',
+        ),
+        "late_application": ("app = Flask(__name__)\n", ""),
+        "imported_reflection": (
+            "@app.route",
+            'from builtins import globals as ns\nns()["WEBHOOK_SECRET"] = other\n@app.route',
+        ),
+        "escaped_reflection": (
+            "@app.route",
+            "capabilities = {'dynamic': exec}\nopaque(capabilities)\n@app.route",
+        ),
+        "conditional_application": (
+            "app = Flask(__name__)\n",
+            "if opaque:\n    app = Flask(__name__)\n",
+        ),
     }
     if change in ("loop", "loop_bypass"):
         start, end = route.index("    timestamp ="), route.index("    app.logger.info")
@@ -1417,9 +1451,22 @@ def signed():
         before, after = changes[change]
         assert before in route
         route = route.replace(before, after)
-    row = _recovery_row({"service.py": route.lstrip()}, "WEBHOOK_SECRET", "service.py")
+    if change == "late_application":
+        route += "\napp = Flask(__name__)\n"
+    source = {"service.py": route.lstrip()}
+    if change in ("imported_helper", "imported_helper_reflection"):
+        source["service.py"] = "import helper\n" + source["service.py"]
+        source["helper.py"] = (
+            "from builtins import exec as evaluate\n"
+            "capabilities = [evaluate]\nopaque(capabilities)\n"
+            if change == "imported_helper_reflection"
+            else "marker = True\n"
+        )
+    row = _recovery_row(source, "WEBHOOK_SECRET", "service.py")
     assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
-    assert (row["tier"] == "SUPPORTED_DEFECT") is (change in ("direct", "loop")), row
+    assert (row["tier"] == "SUPPORTED_DEFECT") is (
+        change in ("direct", "loop", "imported_helper")
+    ), row
     if row["tier"] == "SUPPORTED_DEFECT":
         proof = row["credential_authority_observation"]
         assert proof["consumer_role"] == "verified_http_signature_rejection"

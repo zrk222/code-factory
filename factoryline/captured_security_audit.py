@@ -325,8 +325,11 @@ class _CapturedHTTPSignatureFlow:
         handler, function = self.origin.handler, self.function
         tree = self.origin.index.snapshots[self.path]
         creation = handler["application"]["creation"]
+        allocation = handler["application"]["statement"]
         if not (
             function in tree.body
+            and allocation in tree.body
+            and tree.body.index(allocation) < tree.body.index(function)
             and function.decorator_list == [handler["decorator"]]
             and handler["application"]["path"] == self.path
             and handler["receiver"] is handler["application"]
@@ -404,6 +407,9 @@ class _CapturedHTTPSignatureFlow:
         from .credential_identity_audit import _app_digest_algorithm_argument
         from .runtime_audit_integrity import _conditional_module_name
         from .semantic_credential_sensor import _signing_framework_external
+        from .type_intent_provider_provenance import (
+            _module_has_dynamic_capability_access,
+        )
 
         origin, handler = self.origin, self.origin.handler
         index, app = origin.index, handler["application"]["name"]
@@ -453,6 +459,24 @@ class _CapturedHTTPSignatureFlow:
             for name in providers
         ):
             return False
+        for path, snapshot in index.snapshots.items():
+            nodes = tuple(ast.walk(snapshot))
+            direct_calls = {node.func for node in nodes if isinstance(node, ast.Call)}
+            if _module_has_dynamic_capability_access(
+                tuple(
+                    node
+                    for node in nodes
+                    if path == self.path or node not in direct_calls
+                )
+            ):
+                return False
+            if not all(
+                origin.provider_reflection_closed(
+                    nodes, origin.context["aliases"][path], root
+                )
+                for root in {name.split(".")[0] for name in providers}
+            ):
+                return False
         module = _conditional_module_name(index.relative(self.path))
         bindings = [(name, None) for name in providers]
         bindings.extend(
