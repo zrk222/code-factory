@@ -74,6 +74,7 @@ def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
     }
 
 
+@pytest.mark.parametrize("guarded", [False, True])
 @pytest.mark.parametrize(
     "first,second,supported",
     [
@@ -84,12 +85,15 @@ def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
     ],
 )
 def test_django_startup_defaults_preserve_first_settings_selection(
-    first, second, supported
+    first, second, supported, guarded
 ):
+    selected = f"os.environ.setdefault('DJANGO_SETTINGS_MODULE', {first!r})\n"
+    if guarded:
+        selected = "if not os.environ.get('DJANGO_SETTINGS_MODULE'):\n    " + selected
     startup = (
         "import os\nfrom django.core.wsgi import get_wsgi_application\n"
         "os.environ.setdefault('UNRELATED', 'service.other')\n"
-        f"os.environ.setdefault('DJANGO_SETTINGS_MODULE', {first!r})\n"
+        f"{selected}"
         f"os.environ.setdefault('DJANGO_SETTINGS_MODULE', {second!r})\n"
         "application = get_wsgi_application()\n"
     )
@@ -102,7 +106,7 @@ def test_django_startup_defaults_preserve_first_settings_selection(
         proof = row["credential_authority_observation"]
         assert proof["selected_consumer"]["model"] == "django.admin.feedback.v1"
         assert any(
-            edge["path"] == "start.py" and edge["span"][0] == 4
+            edge["path"] == "start.py" and edge["span"][0] == 4 + guarded
             for edge in proof["transfers"]
         )
 
@@ -118,6 +122,11 @@ def test_django_startup_defaults_preserve_first_settings_selection(
         "os.environ.setdefault('UNRELATED', mutate_environment())\n",
         "if os.getenv('MODE') == 'other':\n"
         "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
+        "if not os.environ.get('UNRELATED'):\n"
+        "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
+        "if not os.environ.get('DJANGO_SETTINGS_MODULE'):\n"
+        "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n"
+        "    unknown_consumer()\n",
         "if os.getenv('MODE') == 'other':\n"
         "    from os import environ as selected_env\n"
         "    selected_env.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
@@ -194,13 +203,17 @@ def test_django_family_management_loader_requires_closed_invocation(mutation):
 
 
 @pytest.mark.parametrize(
-    "helper",
-    ["captured_django_management_contract", "captured_django_startup_statements"],
+    "module,helper",
+    [
+        ("import_context", "captured_django_management_contract"),
+        ("import_context", "captured_django_startup_statements"),
+        ("captured_security_audit", "captured_django_startup_body"),
+    ],
 )
 def test_django_family_changed_loader_invalidates_retained_proof_epoch(
-    monkeypatch, helper
+    monkeypatch, module, helper
 ):
-    from factoryline import import_context
+    from importlib import import_module
     from factoryline.credential_role_constructor_provider import (
         _helper_snapshot,
         helper_epochs_valid,
@@ -214,7 +227,11 @@ def test_django_family_changed_loader_invalidates_retained_proof_epoch(
     def replaced(_context, _path):
         return None
 
-    monkeypatch.setattr(getattr(import_context, helper), "__code__", replaced.__code__)
+    monkeypatch.setattr(
+        getattr(import_module(f"factoryline.{module}"), helper),
+        "__code__",
+        replaced.__code__,
+    )
     assert not helper_epochs_valid(epochs)
 
 

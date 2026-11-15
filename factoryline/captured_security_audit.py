@@ -9,6 +9,45 @@ from copy import deepcopy
 from pathlib import Path, PurePosixPath
 
 
+def captured_django_startup_body(node):
+    """Project only guards equivalent to the existing default-binding operation."""
+    from .intent_quality import _canary_main_guard_test
+    from .review_audits import _name
+
+    if not isinstance(node, ast.If):
+        return (node,)
+    if _canary_main_guard_test(node.test):
+        return node.body
+    key = "DJANGO_SETTINGS_MODULE"
+    match node:
+        case ast.If(
+            test=ast.UnaryOp(
+                op=ast.Not(),
+                operand=ast.Call(
+                    func=get, args=[ast.Constant(value=read)], keywords=[]
+                ),
+            ),
+            body=[
+                ast.Expr(
+                    value=ast.Call(
+                        func=put,
+                        args=[ast.Constant(value=write), ast.Constant(value=str())],
+                        keywords=[],
+                    )
+                ) as default
+            ],
+            orelse=[],
+        ) if read == write == key and (_name(get), _name(put)) == (
+            "os.environ.get",
+            "os.environ.setdefault",
+        ):
+            # For a present key setdefault is inert, even when its value is empty.
+            # The existing loader verifier still binds os and checks provider mutation.
+            return (default,)
+        case _:
+            return (node,)
+
+
 def _captured_hmac_operands(call):
     """Bind a one-shot HMAC constructor with explicit message and digest operands."""
     from . import _bind_source_call

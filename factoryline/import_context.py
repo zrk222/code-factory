@@ -895,21 +895,13 @@ def captured_django_management_contract(context, path):
 
 def captured_django_startup_statements(context, path):
     """Use the same invocation proof for consumer and settings-owner analysis."""
-    from .intent_quality import _canary_main_guard_test
+    from .captured_security_audit import captured_django_startup_body
 
     contract = captured_django_management_contract(context, path)
     if contract is not None:
         return contract["statements"]
     tree = context["index"].snapshots[path]
-    return [
-        child
-        for node in tree.body
-        for child in (
-            node.body
-            if isinstance(node, ast.If) and _canary_main_guard_test(node.test)
-            else [node]
-        )
-    ]
+    return [child for node in tree.body for child in captured_django_startup_body(node)]
 
 
 def captured_script_module(context, parts, origin):
@@ -1600,6 +1592,7 @@ def unique_import_source(matches, *, strict):
 
 def import_resolution_helpers():
     """Expose current resolver bindings/code to the existing native cache epoch."""
+    from .captured_security_audit import captured_django_startup_body
     from .pytest_collection_audit import captured_pytest_helpers
     from .credential_role_constructor_provider import (
         SourceSnapshotIndex,
@@ -1658,6 +1651,7 @@ def import_resolution_helpers():
         captured_script_module,
         captured_django_management_contract,
         captured_django_startup_statements,
+        captured_django_startup_body,
         _script_statements,
         _script_import_layout,
         _script_main_guard_matches,
