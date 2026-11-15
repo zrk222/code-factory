@@ -514,6 +514,7 @@ def captured_test_profile(
     reverse_inputs=False,
     extra_configs=None,
     unbound_config=None,
+    verified_missing_configs=(),
 ):
     from factoryline.pytest_collection_audit import captured_test_invocation_profile
 
@@ -537,6 +538,9 @@ def captured_test_profile(
         for name, raw in configuration_bytes.items()
         if name != unbound_config
     }
+    identities.update(
+        {name: {"path": name, "state": "missing"} for name in verified_missing_configs}
+    )
     if script is not None:
         script_path = tmp_path / "runtests.py"
         raw = script.encode()
@@ -573,6 +577,73 @@ def captured_test_profile(
         invocation_sources,
         configuration_identities=identities,
     )
+
+
+@pytest.mark.parametrize(
+    ("complete", "source_has_explicit_config", "expected"),
+    [
+        (True, False, "DECLARED"),
+        (False, False, "UNRESOLVED"),
+        (True, True, "UNRESOLVED"),
+    ],
+)
+def test_pytest_default_profile_requires_bound_configuration_precedence(
+    tmp_path, complete, source_has_explicit_config, expected
+):
+    from factoryline.pytest_collection_audit import _PYTEST_CONFIG_SECTIONS
+
+    absent = [name for name, _ in _PYTEST_CONFIG_SECTIONS] if complete else []
+    configs = {}
+    if source_has_explicit_config:
+        absent.remove("pytest.ini")
+        configs = {"pytest.ini": b"[pytest]\naddopts=-p unknown_collector\n"}
+    evidence = captured_test_profile(
+        tmp_path,
+        workflow="jobs:\n  test:\n    steps:\n      - run: python -m pytest -q\n",
+        verified_missing_configs=absent,
+        extra_configs=configs,
+    )
+    assert evidence["status"] == expected
+    if expected == "DECLARED":
+        assert evidence["selector"]["configuration"] == {
+            "path": None,
+            "state": "missing",
+        }
+        assert set(evidence["selector"]["python_files"]) == {"test_*.py", "*_test.py"}
+        assert set(absent) <= evidence["configuration_identities"].keys()
+        assert evidence["execution_status"] == "NOT_EXECUTED"
+
+
+@pytest.mark.parametrize(
+    ("command", "shadow", "expected"),
+    [
+        ("python -m unittest discover -s tests -v", False, "DECLARED"),
+        ("python -m unittest discover -s ../tests", False, "UNRESOLVED"),
+        ("python -m unittest discover -s tests -p case.py", False, "UNRESOLVED"),
+        ("python -m unittest discover -s tests", True, "UNRESOLVED"),
+    ],
+)
+def test_captured_unittest_discovery_binds_standard_runner(
+    tmp_path, command, shadow, expected
+):
+    sources = {"tests/test_scope.py": "from unittest import TestCase"}
+    if shadow:
+        sources["unittest.py"] = "def runtime_override(): pass"
+    evidence = captured_test_profile(
+        tmp_path,
+        workflow=f"jobs:\n  test:\n    steps:\n      - run: {command}\n",
+        extra_sources=sources,
+    )
+    assert evidence["status"] == expected
+    if expected == "DECLARED":
+        assert evidence["runner"] == "unittest"
+        assert evidence["selector"]["start_directory"] == "tests"
+        assert evidence["execution_status"] == "NOT_EXECUTED"
+
+
+def test_unittest_profile_does_not_activate_pytest_django_settings():
+    authority = scope._SourceTestScope.configured_settings_authority
+    assert authority(object(), {"status": "DECLARED", "runner": "unittest"}) is None
 
 
 _NATIVE_RUNNER_SOURCE = (

@@ -5569,6 +5569,8 @@ class _SourceTestScope:
         )
 
         declared = profile["status"] == "DECLARED"
+        if declared and profile["runner"] not in {"pytest", "django.DiscoverRunner"}:
+            return None
         configs = self.index["configuration_bytes"]
         native = declared and profile["runner"] == "django.DiscoverRunner"
         if native:

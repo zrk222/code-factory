@@ -160,6 +160,17 @@ def _pytest_function_test_disabled(statement, function_name):
     )
 
 
+_PYTEST_CONFIG_SECTIONS = (
+    ("pytest.toml", "toml-pytest"),
+    (".pytest.toml", "toml-pytest"),
+    ("pytest.ini", "pytest"),
+    (".pytest.ini", "pytest"),
+    ("pyproject.toml", "pyproject"),
+    ("tox.ini", "pytest"),
+    ("setup.cfg", "tool:pytest"),
+)
+
+
 def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
     """Read the selected root config, with explicit uncertainty for static scans."""
     from .review_audits import (
@@ -171,16 +182,7 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
 
     allow_unknown = allow_unknown or _ADVISORY_COLLECTION.get()
     defaults = set(_TEST_FILE_PATTERNS)
-    candidates = (
-        ("pytest.toml", "toml-pytest"),
-        (".pytest.toml", "toml-pytest"),
-        ("pytest.ini", "pytest"),
-        (".pytest.ini", "pytest"),
-        ("pyproject.toml", "pyproject"),
-        ("tox.ini", "pytest"),
-        ("setup.cfg", "tool:pytest"),
-    )
-    for relative, section in candidates:
+    for relative, section in _PYTEST_CONFIG_SECTIONS:
         result = _pytest_config_file(root, relative, section, defaults)
         if result is not None and result[1].get("state") != "absent-section":
             state = result[1].get("state")
@@ -494,22 +496,18 @@ def _toml_pytest_pattern_value(text, section):
 
 
 def captured_pytest_configuration(
-    captured, *, source_role_only=False, include_tox_invocations=True
+    captured,
+    *,
+    source_role_only=False,
+    include_tox_invocations=True,
+    complete_precedence=False,
 ):
     """Select captured root configuration with collection's exact precedence."""
     from .review_audits import _TEST_FILE_PATTERNS
 
     if not isinstance(captured, dict):
         return None
-    for name, section in (
-        ("pytest.toml", "toml-pytest"),
-        (".pytest.toml", "toml-pytest"),
-        ("pytest.ini", "pytest"),
-        (".pytest.ini", "pytest"),
-        ("pyproject.toml", "pyproject"),
-        ("tox.ini", "pytest"),
-        ("setup.cfg", "tool:pytest"),
-    ):
+    for name, section in _PYTEST_CONFIG_SECTIONS:
         if name not in captured:
             continue
         raw = captured[name]
@@ -526,18 +524,20 @@ def captured_pytest_configuration(
             options = _pytest_configuration_options(raw.decode("utf-8"), section)
         except (UnicodeError, ValueError, configparser.Error):
             return None
-        if options is _ABSENT_PYTEST_SECTION:
-            options = {}
-        effective = _pytest_captured_invocation_options(
-            captured,
-            options,
-            source_role_only=source_role_only,
-            include_tox_invocations=include_tox_invocations,
-        )
-        if effective is None:
+        options = {} if options is _ABSENT_PYTEST_SECTION else options
+        break
+    else:
+        if complete_precedence is not True:
             return None
-        return {"identity": identity, "options": effective}
-    return None
+        identity = {"path": None, "state": "missing", **_pytest_collection_settings()}
+        options = {}
+    effective = _pytest_captured_invocation_options(
+        captured,
+        options,
+        source_role_only=source_role_only,
+        include_tox_invocations=include_tox_invocations,
+    )
+    return None if effective is None else {"identity": identity, "options": effective}
 
 
 def captured_test_invocation_profile(
@@ -637,7 +637,11 @@ def _captured_test_invocation_profile(
     )
     if runner == "pytest":
         selection = captured_pytest_configuration(
-            configuration_bytes, include_tox_invocations=False
+            configuration_bytes,
+            include_tox_invocations=False,
+            complete_precedence=all(
+                name in configuration_identities for name, _ in _PYTEST_CONFIG_SECTIONS
+            ),
         )
         if selection is None:
             return None
@@ -673,7 +677,8 @@ def _captured_test_invocation_profile(
         }
     else:
         selector = workflows[0]["runner"]
-        if len({row["runner"]["settings_module"] for row in workflows}) != 1:
+        key = "start_directory" if runner == "unittest" else "settings_module"
+        if len({row["runner"][key] for row in workflows}) != 1:
             return None
     return {
         "schema": "factory.captured-test-invocation-profile.v1",
@@ -691,11 +696,12 @@ def _captured_test_invocation_profile(
                 if key in configuration_identities[name]
             }
             for name in sorted(configuration_identities)
-            if configuration_identities[name]["state"] == "read"
+            if name in {row["workflow"] for row in workflows}
+            or runner == "pytest"
             and (
-                name in {row["workflow"] for row in workflows}
-                or runner == "pytest"
-                and name in configuration_bytes
+                name in configuration_bytes
+                or selector["configuration"].get("state") == "missing"
+                and any(name == candidate for candidate, _ in _PYTEST_CONFIG_SECTIONS)
             )
         },
         "sources": source_rows,
@@ -822,7 +828,38 @@ def _captured_workflow_projection(
                 dispositions.append(disposition)
     except (UnicodeError, ValueError, TypeError, yaml.YAMLError):
         return None
+    if not _captured_unittest_sources_closed(workflows, source):
+        return None
     return workflows, dispositions
+
+
+def _captured_unittest_sources_closed(workflows, source):
+    from pathlib import PurePosixPath
+
+    roots = {
+        row["runner"]["start_directory"]
+        for row in workflows
+        if isinstance(row["runner"], dict) and row["runner"]["kind"] == "unittest"
+    }
+    if not roots:
+        return True
+    if not source.bounded:
+        return False
+    paths = {PurePosixPath(source.relative(path)): path for path in source.snapshots}
+    if any(
+        path.parts[0] == "unittest" or path.name in {"unittest.py", "sitecustomize.py"}
+        for path in paths
+    ):
+        return False
+    return all(
+        any(
+            path.is_relative_to(root)
+            and path.match("test*.py")
+            and source.validate(origin)
+            for path, origin in paths.items()
+        )
+        for root in roots
+    )
 
 
 def _captured_workflow_rows(
@@ -1060,7 +1097,7 @@ def _captured_step_command(
     )
     if row is None:
         return None
-    if not row or row.get("runner") == "pytest":
+    if not row or "runner" in row:
         return row, row_effects, row_env
     runner_path = (posix_path(cwd) / argv[1]).as_posix()
     if (
@@ -1117,7 +1154,8 @@ def _captured_invocation_row(
         and len(argv) >= 3
         and argv[2] == "pytest"
     )
-    if not (python_script or pytest):
+    unittest = _captured_unittest_selection(argv, cwd)
+    if not (python_script or pytest or unittest):
         return (
             None
             if _captured_test_like_command(argv)
@@ -1148,9 +1186,27 @@ def _captured_invocation_row(
         "condition": conditions,
         "declared_environment": [*env, *shell_env],
     }
-    if pytest:
-        row["runner"] = "pytest"
+    if pytest or unittest:
+        row["runner"] = "pytest" if pytest else unittest
     return row
+
+
+def _captured_unittest_selection(argv, cwd):
+    """Return default discovery only for a captured, static repository start directory."""
+    from pathlib import PurePosixPath
+
+    match argv:
+        case ["python", "-m", "unittest", "discover", "-s", directory, *flags] if (
+            _captured_repository_relative(directory)
+            and flags in ([], ["-v"], ["-q"])
+            and cwd == "."
+        ):
+            return {
+                "kind": "unittest",
+                "start_directory": PurePosixPath(directory).as_posix(),
+                "pattern": "test*.py",
+            }
+    return None
 
 
 def _captured_test_like_command(argv):
