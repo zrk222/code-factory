@@ -14063,6 +14063,56 @@ def test_yaml_safe_loader_credit_checks_captured_peer_module_mutation(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "selection, other_use, peer_source, expected",
+    [
+        ("", "", "", False),
+        ("typ='safe'", "", "", False),
+        ("typ='unsafe'", "", "", True),
+        ("typ=mode", "", "", True),
+        ("", "inspect_loader(parser)\n", "", True),
+        ("", "parser.Constructor = replacement\n", "", True),
+        (
+            "",
+            "",
+            "from audit_subject import parser\nparser.Constructor = replacement\n",
+            True,
+        ),
+        (
+            "",
+            "",
+            "from ruamel.yaml import YAML\nYAML.Constructor = replacement\n",
+            True,
+        ),
+    ],
+)
+def test_captured_yaml_receiver_requires_readonly_loader(
+    tmp_path, selection, other_use, peer_source, expected
+):
+    (tmp_path / "audit_subject.py").write_text(
+        "from ruamel.yaml import YAML as Parser\n"
+        f"parser = Parser({selection})\n"
+        f"{other_use}"
+        "def read(config):\n"
+        "    return parser.load(config)\n",
+        encoding="utf-8",
+    )
+    if peer_source:
+        (tmp_path / "loader_patch.py").write_text(peer_source, encoding="utf-8")
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    findings = [
+        row for row in report["findings"] if row["code"] == "SECURITY_UNSAFE_YAML"
+    ]
+    assert len(findings) == int(expected)
+    if expected:
+        assert findings[0]["facts"]["call"] == "ruamel.yaml.YAML.load"
+
+
+@pytest.mark.parametrize(
     "fixture,type_path",
     [
         ("jwt", "jwt.api_jwt.PyJWT"),

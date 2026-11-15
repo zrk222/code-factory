@@ -3429,7 +3429,7 @@ def _security_flow_snapshot(node, resolved, constants):
     )
 
 
-def _security_flow_logger_factory_alias(value, resolved, call_name):
+def _security_flow_factory_alias(value, resolved, call_name):
     if not isinstance(value, ast.Call):
         return None
     called = call_name(value.func)
@@ -3438,9 +3438,9 @@ def _security_flow_logger_factory_alias(value, resolved, call_name):
     if reference is None:
         return None
     factory = reference + ("." + tail if tail else "")
-    return (
-        "logging.Logger" if factory in {"logging.getLogger", "logging.Logger"} else None
-    )
+    if factory in {"logging.getLogger", "logging.Logger"}:
+        return "logging.Logger"
+    return factory if factory == "ruamel.yaml.YAML" else None
 
 
 def _security_flow_assignment(statement, resolved, constants):
@@ -3456,7 +3456,7 @@ def _security_flow_assignment(statement, resolved, constants):
     head, _, tail = name.partition(".")
     reference = resolved.get(head)
     alias = reference + ("." + tail if tail else "") if reference else None
-    factory_alias = _security_flow_logger_factory_alias(value, resolved, audit._name)
+    factory_alias = _security_flow_factory_alias(value, resolved, audit._name)
     if factory_alias is not None:
         alias = factory_alias
     literal = value.value if isinstance(value, ast.Constant) else constants.get(name)

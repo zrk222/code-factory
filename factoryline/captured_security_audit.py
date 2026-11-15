@@ -60,6 +60,118 @@ def _captured_hmac_operands(call):
     return bound["key"], bound["msg"], bound["digestmod"]
 
 
+def yaml_loading_finding(provider, relative, call, aliases):
+    """Apply the selected parser's loader contract before emitting a diagnostic."""
+    from .review_audits import _security_finding
+    from .security_configuration import yaml_safe_loader
+
+    if provider in {"ruamel.yaml.YAML.load", "ruamel.yaml.YAML.load_all"}:
+        if _ruamel_loader_closed(call, aliases):
+            return None
+        message = "YAML instance loader mode or constructor authority is unverified."
+    elif provider in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
+        if provider == "yaml.load" and yaml_safe_loader(call, aliases):
+            return None
+        message = "YAML is loaded without an explicit reviewed Loader."
+    else:
+        return None
+    return _security_finding(
+        "SECURITY_UNSAFE_YAML", relative, call, message, "HIGH", call=provider
+    )
+
+
+def _ruamel_loader_closed(call, aliases):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+    from .review_integrity import _security_module_scope
+    from .runtime_audit_integrity import _conditional_module_name
+    from .semantic_credential_sensor import _security_source_path
+
+    module = _security_module_scope(getattr(call, "_security_lexical_scope", None))
+    index = getattr(module, "_security_source_model", None)
+    owner = _security_source_path(index, module)
+    if owner is None or not isinstance(call.func, ast.Attribute):
+        return False
+    receiver = call.func.value
+    if not isinstance(receiver, ast.Name):
+        return False
+    origin = _yaml_instance_origin(module, receiver.id, aliases)
+    paths = index.module_paths()
+    if (
+        origin is None
+        or paths is None
+        or any(p.name == "ruamel.py" or "ruamel" in p.parts for p in index.snapshots)
+    ):
+        return False
+    bindings = tuple(
+        (_conditional_module_name(name) + "." + receiver.id, (owner, receiver.id))
+        for name, path in paths.items()
+        if path == owner
+    )
+    return not _captured_terminal_provider_mutation(
+        index,
+        audit,
+        "ruamel.yaml.YAML",
+        additional_bindings=bindings,
+        readonly_nodes=(origin,),
+    )
+
+
+def _yaml_instance_origin(module, name, aliases):
+    """Use a single constructor with no raw receiver escapes or local mutation."""
+    from .security_configuration import _canonical
+
+    references = [
+        ref for ref in ast.walk(module) if isinstance(ref, ast.Name) and ref.id == name
+    ]
+    stores = [ref for ref in references if isinstance(ref.ctx, ast.Store)]
+    match stores:
+        case [origin]:
+            pass
+        case _:
+            return None
+    assignment = getattr(origin, "_security_parent", None)
+    if not isinstance(assignment, ast.Assign) or assignment.targets != [origin]:
+        return None
+    if isinstance(getattr(assignment, "_security_lexical_scope", None), ast.ClassDef):
+        return None
+    constructor = assignment.value
+    if not (
+        isinstance(constructor, ast.Call)
+        and _canonical(constructor, aliases) == "ruamel.yaml.YAML"
+        and _yaml_safe_constructor_mode(constructor)
+        and all(ref is origin or _yaml_instance_read_call(ref) for ref in references)
+    ):
+        return None
+    return origin
+
+
+def _yaml_safe_constructor_mode(constructor):
+    if constructor.args:
+        return False
+    match constructor.keywords:
+        case []:
+            return True
+        case [ast.keyword(arg="typ", value=ast.Constant(value=str() as mode))]:
+            return mode in {"rt", "safe", "base"}
+        case _:
+            return False
+
+
+def _yaml_instance_read_call(reference):
+    access = getattr(reference, "_security_parent", None)
+    call = getattr(access, "_security_parent", None)
+    return (
+        isinstance(reference.ctx, ast.Load)
+        and isinstance(access, ast.Attribute)
+        and access.attr in {"load", "load_all"}
+        and isinstance(call, ast.Call)
+        and call.func is access
+    )
+
+
 def _captured_credential_handler_authority(context, finding, handler, declaration):
     from .credential_endpoint_admission import _OperativeCredentialOrigin
     from .review_audits import _resolved_ast_name

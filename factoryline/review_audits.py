@@ -1434,16 +1434,12 @@ def _security_call_finding(
         code = "SECURITY_UNSAFE_DESERIALIZATION"
         message = "Pickle-like deserialization can execute attacker-controlled code."
         facts = {"call": call}
-    elif call in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
-        from .security_configuration import yaml_safe_loader
+    elif call.startswith(("yaml.", "ruamel.yaml.YAML.")):
+        from .captured_security_audit import yaml_loading_finding
 
-        if call == "yaml.load" and yaml_safe_loader(
-            node, getattr(node, "_security_configuration_aliases", {})
-        ):
-            return None
-        code = "SECURITY_UNSAFE_YAML"
-        message = "YAML is loaded without an explicit reviewed Loader."
-        facts = {"call": call}
+        return yaml_loading_finding(
+            call, relative, node, getattr(node, "_security_configuration_aliases", {})
+        )
     else:
         from .security_configuration import tls_finding
 
