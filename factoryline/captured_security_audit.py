@@ -1897,6 +1897,47 @@ def _text_binding_reads(source, symbols, selected, name):
     return reads
 
 
+def captured_builtin_copy(scope, flow, path, call, arguments, keywords):
+    """Transfer an exact builtin container without invoking arbitrary iteration."""
+    from dataclasses import replace
+
+    from .credential_role_identity_effects import _validated_exact_scalar
+
+    callee = call.func
+    if not isinstance(callee, ast.Name) or keywords or len(arguments) > 1:
+        return None
+    canonical = scope.canonical(path, callee)
+    if (
+        canonical is None
+        and callee.id in {"list", "tuple", "dict"}
+        and scope.audit._app_builtin_annotation_inert(scope.index, path, callee)
+    ):
+        canonical = "builtins." + callee.id
+    if canonical not in {"builtins.list", "builtins.tuple", "builtins.dict"}:
+        return None
+    if not scope.audit._app_signing_terminal_stable(scope.index, canonical):
+        return None
+    kind = canonical.partition(".")[2]
+    original = arguments[0] if arguments else None
+    if original is not None and (
+        not _validated_exact_scalar(original, as_truth=True)
+        or original.inert_kind
+        not in ({"dict"} if kind == "dict" else {"list", "tuple"})
+    ):
+        return None
+    scope.witness(path, call, "modeled_test_scope_container_copy")
+    if kind == "tuple" and original is not None and original.inert_kind == "tuple":
+        return original
+    result = flow.allocate_container(
+        path, call, kind, original.items if original is not None else ()
+    )
+    return (
+        replace(result, roots=original.roots, trace=original.trace)
+        if original
+        else result
+    )
+
+
 def _fixed_digest_request_base(value):
     from urllib.parse import urlsplit
 

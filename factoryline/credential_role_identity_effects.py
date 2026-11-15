@@ -618,7 +618,7 @@ def _bounded_guard_scalar(value):
 
 def _validated_exact_scalar(value, *, as_truth=False):
     if as_truth and value.inert_kind in {"dict", "list", "tuple"}:
-        if value.class_roots or _has_unknown_content(value):
+        if not value.container_id or value.class_roots or _has_unknown_content(value):
             return ()
         return (bool(value.items),)
     scalar = value._exact_scalar

@@ -3400,12 +3400,12 @@ class _CredentialRoleFlow:
         if isinstance(node, (ast.Constant, ast.Name)):
             return self.leaf(path, node, env)
         if isinstance(node, (ast.Tuple, ast.List)):
-            values = tuple(
-                (i, self.expression(path, v, env)) for i, v in enumerate(node.elts)
-            )
-            return _Value(
-                items=values,
-                inert_kind="tuple" if isinstance(node, ast.Tuple) else "list",
+            kind = "tuple" if isinstance(node, ast.Tuple) else "list"
+            return self.allocate_container(
+                path,
+                node,
+                kind,
+                ((i, self.expression(path, v, env)) for i, v in enumerate(node.elts)),
             )
         if isinstance(node, ast.Dict):
             return self.literal_dict(path, node, env)
@@ -5411,19 +5411,20 @@ class _SourceTestScope:
 
     def contract(self, flow, path, call, receiver, args, kwargs):
         """Apply supported construction or API transfers and record their witnesses."""
+        from .captured_security_audit import captured_builtin_copy
+
         self.flow = flow
         created = self.construct(flow, path, call, args, kwargs)
+        if created is None:
+            created = captured_builtin_copy(self, flow, path, call, args, kwargs)
         if created is not None:
             return created
         canonical = self.canonical(path, call.func)
+        model_receiver = None
         selected = self.object_class(receiver)
         if selected and self.test_owner(*selected):
             canonical = "unittest.TestCase." + call.func.attr
             model_receiver = ("testcase", receiver, True)
-        else:
-            model_receiver = None
-        if receiver is not None and receiver.inert_kind == "scope_namespace":
-            receiver = None
         if not canonical:
             return None
         stable = self.audit._app_signing_terminal_stable(

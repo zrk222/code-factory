@@ -88,6 +88,46 @@ def test_fixture_identity_scope_short_circuits_exact_builtin_containers(
     assert (result is not None) is supported
 
 
+@pytest.mark.parametrize(
+    ("body", "supported"),
+    [
+        ("copy = list((SECRET,))\nassert copy[0] == SECRET", True),
+        ("copy = tuple([SECRET])\nassert copy[0] == SECRET", True),
+        ("copy = dict({'key': SECRET})\nassert copy['key'] == SECRET", True),
+        ("copy = list() or [SECRET]\nassert copy[0] == SECRET", True),
+        ("copy = list(external(SECRET))", False),
+        ("copy = list({'key': SECRET})", False),
+        ("copy = list(iterable=[SECRET])", False),
+        ("list = external\ncopy = list([SECRET])", False),
+    ],
+)
+def test_fixture_scope_copies_only_bound_exact_builtin_shapes(
+    tmp_path, body, supported
+):
+    result = evidence(
+        tmp_path, unittest_source("SECRET = 'ordinary-value-9417'\n" + body)
+    )
+    assert (result is not None) is supported
+
+
+def test_captured_dict_copy_does_not_share_mutations(tmp_path):
+    source = unittest_source(
+        "SECRET = 'ordinary-value-9417'\n"
+        "original = {}\n"
+        "cloned = dict(original)\n"
+        "cloned['key'] = SECRET\n"
+        "if original:\n"
+        "    external(SECRET)\n"
+        "assert cloned['key'] == SECRET"
+    )
+    assert evidence(tmp_path, source) is not None
+
+
+def test_unknown_dictionary_shape_is_not_treated_as_empty():
+    projected = effects._Value(roots=frozenset({"credential"}), inert_kind="dict")
+    assert effects._validated_exact_scalar(projected, as_truth=True) == ()
+
+
 @pytest.mark.parametrize("custom", ["run", "__getattribute__", "setUpClass"])
 def test_custom_unittest_owner_cannot_obtain_local_scope_proof(tmp_path, custom):
     source = unittest_source(
