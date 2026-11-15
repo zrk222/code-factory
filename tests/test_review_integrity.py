@@ -4862,19 +4862,18 @@ def test_sql_driver_resolution_helper_contracts():
         )
         == "sqlite3"
     )
-    assert (
-        sql_return_kind(
-            ast.Return(value=ast.Name(id="db")),
-            {},
-            set(),
-            {"db"},
-            set(),
-            lambda *_: None,
-            lambda *_: None,
-            lambda *_: False,
-        )
-        == "connection"
-    )
+    assert sql_return_kind(
+        ast.Return(value=ast.Name(id="db")),
+        {},
+        set(),
+        connection_names,
+        set(),
+        lambda node, aliases, bindings: sql_connection_driver(
+            node, aliases, bindings, {}, resolver
+        ),
+        lambda *_: None,
+        lambda *_: None,
+    ) == ("connection", "sqlite3")
     assert sql_sink_driver(call, {}, set(), cursor_names, {}, resolver) == "psycopg"
     assert sql_statement_argument(call, "sqlalchemy", {}, resolver).value == "SELECT 1"
     assert sql_sink_label(call, "psycopg") == "psycopg.execute"
@@ -4886,6 +4885,74 @@ def test_sql_driver_resolution_helper_contracts():
     )
     assert finding["args"][0] == "SECURITY_SQL_INJECTION"
     assert finding["kwargs"]["call"] == "psycopg.execute"
+
+
+@pytest.mark.parametrize(
+    ("variation", "expected"),
+    [
+        ("closed", []),
+        ("unknown-field", ["sqlite3.execute"]),
+        ("escaping-function", ["sqlite3.execute"]),
+        ("multiple-drivers", ["sql.execute"]),
+        ("custom-factory", ["sqlite3.execute"]),
+        ("unknown-argument", ["sqlite3.execute"]),
+    ],
+)
+def test_captured_sql_statement_text_uses_bound_fields(tmp_path, variation, expected):
+    from factoryline.review_audits import security_scan
+
+    storage = """import sqlite3
+
+def open_db():
+    db = sqlite3.connect(':memory:')
+    return db
+
+def select_items(filters, order='name'):
+    db = open_db()
+    cursor = db.cursor()
+    statement = 'SELECT name FROM sample WHERE 1=1'
+    parameters = []
+    for row in filters:
+        column = row.get('column')
+        value = row.get('value')
+        statement += f' AND {column}=?'
+        parameters.append(value)
+    statement += f' ORDER BY {order}'
+    cursor.execute(statement, parameters)
+    return cursor.fetchall()
+"""
+    caller = """from storage import select_items
+
+def load(value):
+    return select_items([{'column': 'name', 'value': value}])
+"""
+    if variation == "unknown-field":
+        caller = caller.replace("'column': 'name'", "'column': value")
+    elif variation == "escaping-function":
+        caller += "\nregistered = {'reader': select_items}\n"
+    elif variation == "multiple-drivers":
+        storage = storage.replace(
+            "    db = sqlite3.connect",
+            "    if choose_other:\n        return other_connection()\n"
+            "    db = sqlite3.connect",
+            1,
+        )
+    elif variation == "custom-factory":
+        storage = storage.replace(
+            "':memory:')", "':memory:', factory=custom_driver)", 1
+        )
+    elif variation == "unknown-argument":
+        caller = caller.replace("load(value)", "load(value, order)").replace(
+            "'value': value}])", "'value': value}], order)"
+        )
+    (tmp_path / "storage.py").write_text(storage, encoding="utf-8")
+    (tmp_path / "app.py").write_text(caller, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert [
+        row["facts"]["call"]
+        for row in result["findings"]
+        if row["code"] == "SECURITY_SQL_INJECTION"
+    ] == expected
 
 
 def test_sql_provenance_binding_helper_contracts():

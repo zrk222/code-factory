@@ -3584,7 +3584,14 @@ def _security_function_connector_return_kind(function, aliases, helpers):
     for statement in function.body:
         kind = _security_return_kind(statement, aliases, helpers, connections, cursors)
         if kind:
-            return kind
+            returns = [n for n in _lexical_nodes(function) if isinstance(n, ast.Return)]
+            if (
+                not function.decorator_list
+                and returns == [statement]
+                and function.body[-1] is statement
+            ):
+                return kind
+            return kind[0], "sql"
         _security_track_connector_assignment(
             statement, aliases, helpers, connections, cursors
         )
@@ -3651,9 +3658,10 @@ def _security_sql_cursor_driver(node, aliases, connections, cursors, helpers):
 
 def _security_helper_call(node, kind, aliases, helpers):
     if not isinstance(node, ast.Call):
-        return False
+        return None
     name = security_call_name(node, aliases)
-    return helpers.get(name) == kind and _security_call_unshadowed(node, name)
+    role, driver = helpers.get(name, (None, None))
+    return driver if role == kind and _security_call_unshadowed(node, name) else None
 
 
 def _security_scope_source_sink_findings(relative, scope, aliases, helpers):

@@ -2350,7 +2350,351 @@ def captured_sql_batch_has_literal_statements(call, query):
             args=[ast.Name(), ast.Name() as values],
             keywords=[],
         ) if query is call.args[0] and query.id != values.id:
-            return _captured_sql_batch_from_loop(call, query.id, values.id)
+            return _captured_sql_batch_from_loop(
+                call, query.id, values.id
+            ) or _captured_statement_text_closed(call, query)
+    return False
+
+
+def _captured_statement_text_closed(call, query):
+    """Prove captured statement text from closed scalar inputs and field reads."""
+    from .semantic_credential_sensor import _security_helper_source_context
+    from .credential_role_constructor_provider import (
+        binding_occurrences,
+        _scope_scope_bindings,
+    )
+    from .credential_role_identity_effects import _Value, resolve_source_identity_call
+    from .credential_role_method_use_getter_audit import CapturedOriginProjection
+    from .mock_fixture_provenance import _app_source_symbol, _django_name
+    from .type_intent_provider_provenance import _module_has_dynamic_capability_access
+
+    if not (
+        isinstance(query, ast.Name)
+        and len(call.args) == 2
+        and call.args[0] is query
+        and not call.keywords
+        and isinstance(call.args[1], ast.Name)
+    ):
+        return False
+    tree, index, path = _security_helper_source_context(call, None)
+    if path is None or not index.validate(path):
+        return False
+    parents = index.parents[path]
+    owner = _sql_batch_function(call, tree, parents)
+    if (
+        owner is None
+        or owner.decorator_list
+        or binding_occurrences(tree.body, owner.name) != [owner]
+    ):
+        return False
+    nodes = tuple(ast.walk(owner))
+    if not any(
+        isinstance(n, ast.AugAssign)
+        and isinstance(n.target, ast.Name)
+        and n.target.id == query.id
+        for n in nodes
+    ):
+        return False
+    if any(isinstance(n, (ast.Global, ast.Nonlocal)) for n in nodes):
+        return False
+    projection = CapturedOriginProjection(index, lambda *_args: (False, None))
+    callers = _captured_closed_text_callers(
+        index,
+        projection,
+        path,
+        owner,
+        _app_source_symbol,
+        _scope_scope_bindings,
+        resolve_source_identity_call,
+        _module_has_dynamic_capability_access,
+    )
+    if not callers:
+        return False
+    name = _django_name(projection.symbols, path)
+    if not projection._symbol_closed(
+        [(name + "." + owner.name, path, owner.name)],
+        _Value(),
+        readonly_call=lambda expr: id(expr) in callers,
+    ):
+        return False
+    if not _captured_sql_receiver_allocation(
+        call, owner, index, path, binding_occurrences
+    ):
+        return False
+    return _CapturedTextDefinitions(
+        nodes, parents, tuple(callers.values()), owner, binding_occurrences
+    ).prove(query)
+
+
+def _captured_closed_text_callers(
+    index, projection, owner_path, owner, resolve, scope, bind, dynamic
+):
+    callers, work = {}, 0
+    for path, tree in index.snapshots.items():
+        if not index.validate(path):
+            return {}
+        nodes = tuple(ast.walk(tree))
+        work += len(nodes)
+        if work > 16000 or dynamic(nodes):
+            return {}
+        parents = index.parents[path]
+        for expr in nodes:
+            if not isinstance(expr, (ast.Name, ast.Attribute)) or not isinstance(
+                expr.ctx, ast.Load
+            ):
+                continue
+            found = resolve(projection.symbols, path, expr, scope(expr, parents, None))
+            if found is None or found[0] != owner_path or found[1] is not owner:
+                continue
+            site = parents.get(id(expr))
+            if not isinstance(site, ast.Call) or site.func is not expr:
+                return {}
+            resolved = bind(site, path, index)
+            if (
+                resolved is None
+                or resolved.function is not owner
+                or not resolved.negative_binding_closed
+            ):
+                return {}
+            callers[id(site)] = resolved.arguments
+    return callers
+
+
+class _CapturedTextDefinitions:
+    """Prove scalar text from bounded captured definitions and literal record fields."""
+
+    def __init__(self, nodes, parents, actuals, owner, binds):
+        self.parents, self.actuals = parents, actuals
+        self.owner, self.binds, self.cache = owner, binds, {}
+        self.refs, self.active, self.known, self.fields = {}, set(), {}, {}
+        for n in nodes:
+            if isinstance(n, ast.Name):
+                self.refs.setdefault(n.id, []).append(n)
+
+    @staticmethod
+    def literal(expr):
+        return isinstance(expr, ast.Constant) and type(expr.value) in {
+            str,
+            int,
+            bool,
+            type(None),
+        }
+
+    def formal(self, name):
+        return [row.get(name) for row in self.actuals]
+
+    def prove(self, expr):
+        match expr:
+            case ast.Constant():
+                return self.literal(expr)
+            case ast.Name(id=name):
+                return self.name(name)
+            case ast.BinOp(left=left, op=ast.Add(), right=right):
+                return self.prove(left) and self.prove(right)
+            case ast.IfExp(body=left, orelse=right):
+                return self.prove(left) and self.prove(right)
+            case ast.JoinedStr(values=parts):
+                return all(self.prove(part) for part in parts)
+            case ast.FormattedValue(value=value, conversion=-1, format_spec=None):
+                return self.prove(value)
+            case ast.Call(
+                func=ast.Attribute(value=ast.Name(id=row), attr="get"),
+                args=[ast.Constant(value=key), *defaults],
+                keywords=[],
+            ) if type(key) is str:
+                return (
+                    len(defaults) <= 1
+                    and all(map(self.literal, defaults))
+                    and self.row_field(row, key)
+                )
+            case _:
+                return False
+
+    def name(self, name):
+        if name in self.known:
+            return self.known[name]
+        if name in self.active or len(self.active) >= 24:
+            return False
+        self.active.add(name)
+        is_formal = any(name in row for row in self.actuals)
+        base = is_formal and all(map(self.literal, self.formal(name)))
+        if is_formal and not base:
+            self.active.remove(name)
+            return False
+        for node in self.binds(self.owner.body, name, per_pass_facts=self.cache):
+            statement = self.parents.get(id(node))
+            if not self.assignment(statement, node):
+                self.active.remove(name)
+                return False
+            base |= isinstance(statement, (ast.Assign, ast.AnnAssign))
+        self.active.remove(name)
+        self.known[name] = base
+        return base
+
+    def assignment(self, statement, node):
+        match statement:
+            case ast.Assign(targets=[target], value=value) if target is node:
+                return self.prove(value)
+            case ast.AnnAssign(target=target, value=value) if target is node:
+                return self.prove(value)
+            case ast.AugAssign(target=target, op=ast.Add(), value=value) if (
+                target is node
+            ):
+                return self.prove(value)
+            case _:
+                return False
+
+    def row_field(self, name, key):
+        if name not in self.fields:
+            self.fields[name] = self.row_fields(name)
+        return key in self.fields[name]
+
+    def row_fields(self, row):
+        refs = self.refs.get(row, ())
+        writes = self.binds(self.owner.body, row, per_pass_facts=self.cache)
+        if len(writes) != 1:
+            return set()
+        loop = self.parents.get(id(writes[0]))
+        if (
+            not isinstance(loop, ast.For)
+            or loop.target is not writes[0]
+            or not isinstance(loop.iter, ast.Name)
+        ):
+            return set()
+        if not all(self.row_read(n) for n in refs if isinstance(n.ctx, ast.Load)):
+            return set()
+        formal = loop.iter.id
+        if self.binds(self.owner.body, formal, per_pass_facts=self.cache) or not all(
+            self.collection_read(n, loop.iter) for n in self.refs.get(formal, ())
+        ):
+            return set()
+        fields = None
+        for incoming in self.formal(formal):
+            if isinstance(incoming, ast.Constant) and incoming.value is None:
+                continue
+            if (
+                not isinstance(incoming, (ast.List, ast.Tuple))
+                or len(incoming.elts) > 64
+            ):
+                return set()
+            for expr in incoming.elts:
+                known = self.record_fields(expr)
+                if known is None:
+                    return set()
+                fields = known if fields is None else fields & known
+        return fields or set()
+
+    def record_fields(self, expr):
+        if not isinstance(expr, ast.Dict) or not all(
+            isinstance(k, ast.Constant) and type(k.value) is str for k in expr.keys
+        ):
+            return None
+        keys = [k.value for k in expr.keys]
+        if len(keys) != len(set(keys)) or not all(
+            self.literal(v) or isinstance(v, ast.Name) for v in expr.values
+        ):
+            return None
+        return {k for k, v in zip(keys, expr.values) if self.literal(v)}
+
+    def row_read(self, node):
+        member = self.parents.get(id(node))
+        call = self.parents.get(id(member))
+        return (
+            isinstance(member, ast.Attribute)
+            and member.value is node
+            and member.attr == "get"
+            and isinstance(call, ast.Call)
+            and call.func is member
+        )
+
+    def collection_read(self, node, iterator):
+        parent = self.parents.get(id(node))
+        return isinstance(node.ctx, ast.Load) and (
+            node is iterator or isinstance(parent, ast.If) and parent.test is node
+        )
+
+
+def _captured_sql_binding(expr, use, lexical, parents, bind_names):
+    """Return a unique assignment that dominates the observed receiver use."""
+    from .credential_role_constructor_provider import binding_dominates
+
+    if not isinstance(expr, ast.Name):
+        return expr
+    found = bind_names(lexical.body, expr.id)
+    if len(found) != 1:
+        return None
+    binding = parents.get(id(found[0]))
+    targets = getattr(binding, "targets", None) or [getattr(binding, "target", None)]
+    if (
+        isinstance(binding, (ast.Assign, ast.AnnAssign))
+        and targets == found
+        and binding_dominates(binding, use, parents, lexical)
+    ):
+        return binding.value
+    return None
+
+
+def _captured_sql_receiver_allocation(call, owner, index, path, bind_names):
+    """Bind the actual cursor and native allocation before applying statement proof."""
+    from .credential_identity_audit import _app_signing_terminal_stable
+    from .credential_role_identity_effects import resolve_source_identity_call
+    from . import review_audits as audit, review_integrity as flow
+    from .credential_role_method_use_getter_audit import CapturedOriginProjection
+
+    cursor = _captured_sql_binding(
+        call.func.value, call, owner, index.parents[path], bind_names
+    )
+    match cursor:
+        case ast.Call(
+            func=ast.Attribute(value=db, attr="cursor"), args=[], keywords=[]
+        ):
+            connection = _captured_sql_binding(
+                db, cursor, owner, index.parents[path], bind_names
+            )
+        case _:
+            return False
+    projection = CapturedOriginProjection(index, lambda *_args: (False, None))
+    for _ in range(8):
+        if not isinstance(connection, ast.Call):
+            return False
+        canonical = flow.security_call_name(
+            connection, audit._module_security_aliases(index.snapshots[path])
+        )
+        if canonical == "sqlite3.connect":
+            module_paths = projection.symbols.get("module_paths", {})
+            return (
+                len(connection.args) == 1
+                and not isinstance(connection.args[0], ast.Starred)
+                and not connection.keywords
+                and "sqlite3" not in module_paths
+                and all(
+                    _app_signing_terminal_stable(projection.symbols, provider)
+                    for provider in (
+                        "sqlite3.connect",
+                        "sqlite3.Connection.cursor",
+                        "sqlite3.Cursor.execute",
+                    )
+                )
+            )
+        bound = resolve_source_identity_call(connection, path, index)
+        if (
+            bound is None
+            or not bound.negative_binding_closed
+            or not isinstance(bound.function, ast.FunctionDef)
+            or bound.function.decorator_list
+        ):
+            return False
+        helper, path = bound.function, bound.path
+        returns = [n for n in flow._lexical_nodes(helper) if isinstance(n, ast.Return)]
+        if (
+            len(returns) != 1
+            or helper.body[-1] is not returns[0]
+            or any(isinstance(n, (ast.Global, ast.Nonlocal)) for n in ast.walk(helper))
+        ):
+            return False
+        connection = _captured_sql_binding(
+            returns[0].value, returns[0], helper, index.parents[path], bind_names
+        )
     return False
 
 
