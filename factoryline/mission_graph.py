@@ -565,7 +565,7 @@ def _verify_chain(
     row: sqlite3.Row,
     mission_path: Path,
     mission: dict[str, Any],
-) -> list[str]:
+) -> tuple[list[str], list[sqlite3.Row]]:
     errors: list[str] = []
     if (
         row["mission_path"] != str(mission_path)
@@ -594,7 +594,7 @@ def _verify_chain(
         or row["state"] != last_state
     ):
         errors.append("thread head differs from event chain")
-    return errors
+    return errors, events
 
 
 def _verify_stored_event(
@@ -1055,7 +1055,7 @@ def apply_mission_event(
     try:
         connection.execute("BEGIN IMMEDIATE")
         row = _thread(connection, mission["id"])
-        errors = _verify_chain(connection, row, mission_path, mission)
+        errors, _ = _verify_chain(connection, row, mission_path, mission)
         if errors:
             raise MissionGraphError("MISSION_GRAPH_DRIFT", "; ".join(errors))
         duplicate = connection.execute(
@@ -1185,8 +1185,9 @@ def mission_graph_status(mission_path: Path, root: Path) -> dict:
         return init_mission_graph(mission_path, root)
     connection = _connect(database)
     try:
+        connection.execute("BEGIN")
         row = _thread(connection, mission["id"])
-        errors = _verify_chain(connection, row, mission_path, mission)
+        errors, _ = _verify_chain(connection, row, mission_path, mission)
         if errors:
             raise MissionGraphError("MISSION_GRAPH_DRIFT", "; ".join(errors))
         result = _row_state(row, mission)
@@ -1201,27 +1202,30 @@ def mission_graph_status(mission_path: Path, root: Path) -> dict:
 
 
 def mission_graph_history(mission_path: Path, root: Path) -> dict:
-    """Return the verified ordered transition history for one mission thread."""
-    status = mission_graph_status(mission_path, root)
+    """Read the verified thread head and ordered events from one snapshot."""
     mission_path, mission = _mission(root, mission_path)
-    connection = _connect(_db_path(root, mission_path))
+    database = _db_path(root, mission_path)
+    if not database.exists():
+        init_mission_graph(mission_path, root)
+    connection = _connect(database)
     try:
-        events = [
-            {**json.loads(row["event_json"]), "event_sha256": row["event_sha"]}
-            for row in connection.execute(
-                "SELECT * FROM graph_events WHERE thread_id=? ORDER BY version",
-                (mission["id"],),
-            )
-        ]
+        connection.execute("BEGIN")
+        thread = _thread(connection, mission["id"])
+        errors, events = _verify_chain(connection, thread, mission_path, mission)
+        if errors:
+            raise MissionGraphError("MISSION_GRAPH_DRIFT", "; ".join(errors))
     finally:
         connection.close()
     return {
         "schema": "factory.mission.graph.history.v1",
         "mission_id": mission["id"],
-        "state": status["state"],
-        "version": status["version"],
-        "events": events,
-        "chain_head": status["event_tip"],
+        "state": thread["state"],
+        "version": thread["version"],
+        "events": [
+            {**json.loads(row["event_json"]), "event_sha256": row["event_sha"]}
+            for row in events
+        ],
+        "chain_head": thread["event_tip"],
         "marker": "MISSION_GRAPH_HASH_CHAIN_BOUND",
     }
 
@@ -1237,8 +1241,9 @@ def verify_mission_graph(mission_path: Path, root: Path) -> dict:
             )
         connection = _connect(database)
         try:
+            connection.execute("BEGIN")
             row = _thread(connection, mission["id"])
-            errors = _verify_chain(connection, row, mission_path, mission)
+            errors, _ = _verify_chain(connection, row, mission_path, mission)
         finally:
             connection.close()
     except MissionGraphError as exc:
