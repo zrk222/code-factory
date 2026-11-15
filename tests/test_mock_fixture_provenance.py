@@ -2476,6 +2476,80 @@ def test_local_data_role_closes_captured_string_format_to_mock_url(tmp_path):
     assert {row["role"] for row in evidence["uses"]} == {"MOCK_RESPONSE_URL"}
 
 
+@pytest.mark.parametrize(
+    ("pytest_ini", "eligible"),
+    [
+        (None, True),
+        ("DJANGO_SETTINGS_MODULE = tests.settings", True),
+        ("DJANGO_SETTINGS_MODULE = alternate_settings", False),
+        ("DJANGO_SETTINGS_MODULE = tests.settings\npythonpath = external", False),
+        (
+            "DJANGO_SETTINGS_MODULE = tests.settings\naddopts = --ds=alternate_settings",
+            False,
+        ),
+    ],
+)
+def test_module_fixture_role_uses_effective_pytest_settings(
+    tmp_path, pytest_ini, eligible
+):
+    _write(
+        tmp_path,
+        "pyproject.toml",
+        "[tool.pytest.ini_options]\nDJANGO_SETTINGS_MODULE = 'tests.settings'\n"
+        "django_find_project = false\n",
+    )
+    if pytest_ini is not None:
+        _write(
+            tmp_path,
+            "pytest.ini",
+            f"[pytest]\ndjango_find_project = false\n{pytest_ini}\n",
+        )
+    _write(tmp_path, "demo/__init__.py", "")
+    _write(
+        tmp_path,
+        "demo/models.py",
+        "from django.contrib.auth.models import AbstractUser\nclass User(AbstractUser):\n    pass\n",
+    )
+    _write(tmp_path, "tests/__init__.py", "")
+    _write(
+        tmp_path,
+        "tests/settings.py",
+        "INSTALLED_APPS = ['django.contrib.auth', 'django.contrib.contenttypes', 'demo']\n"
+        "AUTH_USER_MODEL = 'demo.User'\n"
+        "DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}}\n",
+    )
+    _write(
+        tmp_path,
+        "tests/test_auth.py",
+        "from django.test import TestCase\n"
+        "from django.contrib.auth import get_user_model\n"
+        "PASSWORD = 'local-fictional-password'\n"
+        "USERNAME = 'new-user'\n"
+        "class LoginTest(TestCase):\n"
+        "    def setUp(self):\n"
+        "        super().setUp()\n"
+        "        get_user_model().objects.create_user(username=USERNAME, password=PASSWORD)\n"
+        "    def test_login(self):\n"
+        "        assert self.client.login(username=USERNAME, password=PASSWORD)\n",
+    )
+    report = security_scan(
+        tmp_path, cache_enabled=False, defect_policy="source-role-v3"
+    )
+    assert report["audit_coverage"]["complete"]
+    findings = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    proved = [
+        row
+        for row in report.get("primitive_observations", [])
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(findings) == int(not eligible)
+    assert len(proved) == int(eligible)
+    if proved:
+        assert proved[0]["facts"]["disposition"] == "TEST_OWNED_APPLICATION_CREDENTIAL"
+
+
 def test_module_secret_key_mock_url_keeps_module_role_unknown(tmp_path):
     evidence = _metadata143_projection(
         tmp_path,

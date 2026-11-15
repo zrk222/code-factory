@@ -512,6 +512,8 @@ def captured_test_profile(
     extra_sources=None,
     other_workflows=None,
     reverse_inputs=False,
+    extra_configs=None,
+    unbound_config=None,
 ):
     from factoryline.pytest_collection_audit import captured_test_invocation_profile
 
@@ -524,7 +526,7 @@ def captured_test_profile(
         workflow_inputs = dict(reversed(list(workflow_inputs.items())))
     invocation_sources = dict(workflow_inputs)
     modules, source_bytes, inventory = {}, {}, {}
-    configuration_bytes = dict(workflow_inputs)
+    configuration_bytes = {**workflow_inputs, **(extra_configs or {})}
     identities = {
         name: {
             "path": name,
@@ -532,7 +534,8 @@ def captured_test_profile(
             "sha256": hashlib.sha256(raw).hexdigest(),
             "bytes": len(raw),
         }
-        for name, raw in workflow_inputs.items()
+        for name, raw in configuration_bytes.items()
+        if name != unbound_config
     }
     if script is not None:
         script_path = tmp_path / "runtests.py"
@@ -997,6 +1000,102 @@ def test_captured_native_invocation_refuses_shell_selection_or_path_mutations(
 def test_captured_pytest_invocation_needs_bound_selector_or_absence(tmp_path):
     workflow = "jobs:\n  test:\n    steps:\n      - run: pytest -ra\n"
     assert captured_test_profile(tmp_path, workflow=workflow)["status"] == "UNRESOLVED"
+
+
+@pytest.mark.parametrize(
+    "config_in_tox,unbound",
+    [(False, False), (True, False), (False, True)],
+)
+def test_captured_pytest_invocation_binds_config_without_borrowing_tox(
+    tmp_path, config_in_tox, unbound
+):
+    workflow = "jobs:\n  test:\n    steps:\n      - run: pytest -ra\n"
+    selector = b"[pytest]\nDJANGO_SETTINGS_MODULE = direct.settings\n"
+    tox = b"[testenv]\ncommands = pytest --ds=tox.settings\n"
+    configs = (
+        {"tox.ini": selector + tox}
+        if config_in_tox
+        else {"pytest.ini": selector, "tox.ini": tox}
+    )
+    profile = captured_test_profile(
+        tmp_path,
+        workflow=workflow,
+        extra_configs=configs,
+        unbound_config="tox.ini" if unbound else None,
+    )
+    if unbound:
+        assert profile["status"] == "UNRESOLVED"
+    else:
+        assert profile["status"] == "DECLARED"
+        assert profile["selector"]["settings_module"] == "direct.settings"
+        assert profile["selector"]["configuration"]["path"] == (
+            "tox.ini" if config_in_tox else "pytest.ini"
+        )
+        assert profile["configuration_identities"]["tox.ini"]["sha256"] == (
+            hashlib.sha256(configs["tox.ini"]).hexdigest()
+        )
+
+
+@pytest.mark.parametrize("direct_matches", [True, False])
+def test_source_settings_role_uses_workflow_selector_and_receipt(
+    tmp_path, direct_matches
+):
+    direct, tox = (
+        ("support.configuration", "alternate.settings")
+        if direct_matches
+        else ("alternate.settings", "support.configuration")
+    )
+    index, path, assignment = configured_authority_scope(
+        tmp_path,
+        {
+            "pytest.ini": f"[pytest]\nDJANGO_SETTINGS_MODULE={direct}\n".encode(),
+            "tox.ini": f"[testenv]\ncommands=pytest --ds={tox}\n".encode(),
+            ".github/workflows/ci.yml": b"jobs:\n  test:\n    steps:\n      - run: pytest -ra\n",
+        },
+    )
+    from factoryline.review_audits import security_scan
+
+    result = scope._source_test_scope_evidence(index, path, assignment, "SECRET_KEY")
+    report = security_scan(
+        tmp_path, cache_enabled=False, defect_policy="source-role-v3"
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["audit_coverage"]["complete"] is True
+    rows = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert (
+        len(rows) == 1 and rows[0]["raw_finding"]["path"] == "support/configuration.py"
+    )
+    assert rows[0]["tier"] == (
+        "PROVEN_PRIMITIVE" if direct_matches else "NEEDS_CONTEXT"
+    )
+    if not direct_matches:
+        assert result is None
+        return
+    assert result is not None
+    invocation = result["settings_selection"]["invocation"]
+    assert invocation["runner"] == "pytest"
+    assert invocation["execution_status"] == "NOT_EXECUTED"
+    assert invocation["selector"]["settings_module"] == direct
+    assert invocation["invocations"][0]["argv"] == ["pytest", "-ra"]
+    assert "sources" not in invocation
+    workflow = index["configuration_bytes"][".github/workflows/ci.yml"]
+    assert (
+        invocation["configuration_identities"][".github/workflows/ci.yml"]["sha256"]
+        == hashlib.sha256(workflow).hexdigest()
+    )
+    proved = next(
+        row
+        for row in report["primitive_observations"]
+        if row["path"] == "support/configuration.py"
+    )
+    assert (
+        proved["facts"]["fixture_evidence"]["settings_selection"]["invocation"]
+        == invocation
+    )
 
 
 def test_captured_workflows_without_test_entry_are_explicit_noncontributors(tmp_path):
