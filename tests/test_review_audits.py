@@ -16274,6 +16274,7 @@ def test_sql_batch_keeps_statement_and_bound_values_separate(
         ("reexport", True),
         ("wrong_mount", True),
         ("unmapped_launch", True),
+        ("case_alias_launch", True),
     ],
 )
 def test_bounded_scan_requires_closed_settings_uses(tmp_path, control, active):
@@ -16305,7 +16306,8 @@ def test_bounded_scan_requires_closed_settings_uses(tmp_path, control, active):
             "from app.config import load_options as options\n", encoding="utf-8"
         )
     target = "missing.main" if control == "unmapped_launch" else "app.main"
-    (app.parent / "Dockerfile").write_text(
+    docker = "dockerfile" if control == "case_alias_launch" else "Dockerfile"
+    (app.parent / docker).write_text(
         "FROM python:3.11\nWORKDIR /srv\nCOPY app ./app\n"
         f'CMD ["python", "-m", "uvicorn", "{target}:api"]\n',
         encoding="utf-8",
@@ -16328,9 +16330,17 @@ def test_bounded_scan_requires_closed_settings_uses(tmp_path, control, active):
     result = prepare_bounded_security_report(args)
     assert result["audit_coverage"]["complete"] is True
     assert result["finding_conservation"]["state"] == "PASS"
-    assert {"compose.yaml", "backend/Dockerfile"} <= {
+    selected = {
         entry["path"] for entry in result["oracle_context"]["configuration_sources"]
     }
+    assert "compose.yaml" in selected
+    expected = "backend/" + docker
+    if (app.parent / "Dockerfile").exists():
+        assert expected in selected
+    elif control == "case_alias_launch":
+        assert expected not in selected
+    if control == "case_alias_launch":
+        assert "backend/Dockerfile" not in selected
     assert (
         any(
             item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
@@ -16442,3 +16452,31 @@ def test_test_literal_requires_closed_digest_and_mock_interval(
         )
         is active
     )
+
+
+def test_bounded_sql_schema_remains_ancillary_to_native_verification(tmp_path):
+    schema = tmp_path / "schema"
+    schema.mkdir()
+    (schema / "tables.sql").write_text(
+        "CREATE TABLE examples (id INTEGER PRIMARY KEY);", encoding="utf-8"
+    )
+    (tmp_path / "client.py").write_text(
+        "import requests\n"
+        "def query():\n"
+        "    return requests.get('https://example.invalid', verify=False)\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    configuration = report["oracle_context"]["configuration_sources"]
+    assert "schema/tables.sql" in {row["path"] for row in configuration}
+    assert report["finding_conservation"]["native_rows"] == "VERIFIED"
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["defect_policy_decision"]["state"] != "BLOCKED"
+    assert [
+        item["raw_finding"]["code"] for item in report["finding_tier_report"]["ledger"]
+    ] == ["SECURITY_TLS_VERIFY_DISABLED"]

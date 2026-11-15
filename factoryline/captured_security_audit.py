@@ -979,12 +979,12 @@ _LAUNCH_BLOCKERS = (
 def is_launch_configuration(name):
     """Identify only bounded Compose selectors and declared Docker build inputs."""
     return isinstance(name, str) and (
-        name in (*_COMPOSE_PROFILE_FILES, *_LAUNCH_BLOCKERS)
+        name.casefold() in (*_COMPOSE_PROFILE_FILES, *_LAUNCH_BLOCKERS)
         or bool(
             re.fullmatch(
                 r"(?:[\w.-]+/)*(?:Dockerfile(?:\.[\w.-]+)?|\.dockerignore)",
                 name,
-                re.ASCII,
+                re.ASCII | re.IGNORECASE,
             )
         )
         and all(part not in {".", ".."} for part in name.split("/"))
@@ -1046,11 +1046,22 @@ def _compose_build(service):
     return (root, path) if is_launch_configuration(path) else None
 
 
+def _observed_launcher_path(root, declared):
+    """Bind a selector to its actual spelling on case-insensitive filesystems."""
+    try:
+        actual = (root / declared).resolve(strict=True).relative_to(root).as_posix()
+    except (OSError, ValueError, RuntimeError):
+        return declared
+    return actual if actual.casefold() == declared.casefold() else declared
+
+
 def capture_launch_configuration(root, read_source, limit, paths):
     """Discover only local build inputs referenced by the captured Compose files."""
     cached = {}
     selected = set(paths)
-    for name in (*_COMPOSE_PROFILE_FILES, *_LAUNCH_BLOCKERS):
+    workspace = Path(root).resolve()
+    for declared in (*_COMPOSE_PROFILE_FILES, *_LAUNCH_BLOCKERS):
+        name = _observed_launcher_path(workspace, declared)
         try:
             raw = read_source(root, name)
         except (OSError, ValueError, RuntimeError) as exc:
@@ -1062,13 +1073,16 @@ def capture_launch_configuration(root, read_source, limit, paths):
             continue
         cached[name] = raw
         selected.add(name)
-        services = _compose_services(raw) if len(raw) <= limit else None
+        services = (
+            _compose_services(raw) if name == declared and len(raw) <= limit else None
+        )
         for entry in (services or {}).values():
             build = _compose_build(entry)
             if build is not None:
                 directory, docker = build
                 selected.update(
-                    (
+                    _observed_launcher_path(workspace, option)
+                    for option in (
                         docker,
                         (directory / ".dockerignore").as_posix(),
                         docker + ".dockerignore",
@@ -1103,7 +1117,14 @@ def _launch_text_sources(module):
 
 def _launch_import_roots(source, configs):
     """Map a fixed ASGI target through declared build copies and bounded mounts."""
-    if not configs or any(name in configs for name in _LAUNCH_BLOCKERS):
+    folded = {name.casefold() for name in configs}
+    if (
+        not folded
+        or folded.intersection(_LAUNCH_BLOCKERS)
+        or any(
+            path in folded and path not in configs for path in _COMPOSE_PROFILE_FILES
+        )
+    ):
         return frozenset()
     roots = set()
     for path in _COMPOSE_PROFILE_FILES:
@@ -1117,15 +1138,17 @@ def _launch_import_roots(source, configs):
             if selected is None:
                 continue
             directory, docker_path = selected
+            if docker_path.casefold() in folded and docker_path not in configs:
+                return frozenset()
             launched = _fixed_python_launch(configs.get(docker_path), directory)
             if launched is None:
                 continue
             work, copies, entry = launched
-            if not _launch_service_closed(service, directory, docker_path, configs):
-                return frozenset()
             mapped = _mapped_launch_sources(source, copies, work, entry)
-            if len(mapped) != 1 or not _launch_mounts_closed(
-                service, work, entry, mapped
+            if (
+                not _launch_service_closed(service, directory, docker_path, configs)
+                or len(mapped) != 1
+                or not _launch_mounts_closed(service, work, entry, mapped)
             ):
                 return frozenset()
             paths, _ = next(iter(mapped))
@@ -1267,8 +1290,12 @@ def _launch_service_closed(service, context, docker, configs):
         )
         and isinstance(env, (dict, list))
         and _launch_environment_closed(env)
-        and (context / ".dockerignore").as_posix() not in configs
-        and docker + ".dockerignore" not in configs
+        and not set(name.casefold() for name in configs).intersection(
+            {
+                (context / ".dockerignore").as_posix().casefold(),
+                (docker + ".dockerignore").casefold(),
+            }
+        )
     )
 
 

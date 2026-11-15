@@ -344,20 +344,20 @@ def _trusted_core_source_binding(
     if not isinstance(path, str):
         return None
     relative = PurePosixPath(path)
+    if configuration:
+        allowed = (
+            (path == "factory.database.json" or relative.suffix.casefold() == ".sql")
+            if database_configuration
+            else path in application_configuration_names((path,))
+        )
+    else:
+        allowed = relative.suffix == ".py"
     if (
         relative.is_absolute()
         or not relative.parts
         or ".." in relative.parts
         or relative.as_posix() != path
-        or (
-            (
-                path != "factory.database.json"
-                if database_configuration
-                else path not in application_configuration_names((path,))
-            )
-            if configuration
-            else relative.suffix != ".py"
-        )
+        or not allowed
         or not isinstance(digest, str)
         or re.fullmatch(r"[0-9a-f]{64}", digest) is None
     ):

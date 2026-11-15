@@ -5788,11 +5788,7 @@ def _scan_security_sources(
         )
         _verify_security_bindings(
             workspace,
-            [
-                row
-                for row in database.get("configuration_sources", [])
-                if row["path"] == "factory.database.json"
-            ],
+            database.get("configuration_sources", []),
             captured_out=primitive_source_bytes_out,
         )
     scanned = {item["path"] for item in bindings}

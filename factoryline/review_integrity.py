@@ -4923,11 +4923,11 @@ def _trusted_core_configured_bindings(core, sources, configurations, source_bind
     database_bindings = (
         database.get("configuration_sources", []) if isinstance(database, dict) else []
     )
-    if not isinstance(database_bindings, list) or database_rows != [
-        row
-        for row in database_bindings
-        if isinstance(row, dict) and row.get("path") == "factory.database.json"
-    ]:
+    if (
+        not isinstance(database_bindings, list)
+        or any(row not in configurations for row in database_bindings)
+        or any(row not in database_bindings for row in database_rows)
+    ):
         return None
     bindings = {}
     for row, configuration in [
@@ -4937,7 +4937,7 @@ def _trusted_core_configured_bindings(core, sources, configurations, source_bind
         validated = source_binding(
             row,
             configuration=configuration,
-            database_configuration=configuration and row in database_rows,
+            database_configuration=configuration and row in database_bindings,
         )
         if validated is None or validated[0] in bindings:
             return None
