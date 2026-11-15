@@ -378,7 +378,78 @@ def _cli_receiver_uses_closed(scope, name, before):
     return True
 
 
-def _public_registry_use(reference, aliases):
+def _environment_label_diagnostic(source, path, node):
+    """An exact raised message uses a label as text; a lookup must separately prove it."""
+    parents = source.parents[path]
+    item = parents.get(id(node))
+    if (
+        not isinstance(item, ast.FormattedValue)
+        or item.value is not node
+        or item.format_spec is not None
+        or item.conversion != -1
+    ):
+        return None
+    message = parents.get(id(item))
+    call = parents.get(id(message))
+    raised = parents.get(id(call))
+    if not (
+        isinstance(message, ast.JoinedStr)
+        and all(
+            part is item or isinstance(part, ast.Constant) for part in message.values
+        )
+        and isinstance(call, ast.Call)
+        and call.args == [message]
+        and not call.keywords
+        and isinstance(raised, ast.Raise)
+        and raised.exc is call
+        and isinstance(call.func, ast.Name)
+    ):
+        return None
+    from .credential_identity_audit import (
+        _app_builtin_annotation_inert,
+        _app_signing_captured_provider_stable,
+    )
+    from .credential_role_identity_effects import (
+        source_symbol_index,
+        _enclosing_function,
+    )
+    from .mock_fixture_provenance import _app_source_symbol
+
+    index = source_symbol_index(source)
+    if index is None:
+        return None
+    scope = _enclosing_function(call, parents)
+    found = _app_source_symbol(index, path, call.func, scope)
+    builtins = {"Exception", "RuntimeError", "ValueError"}
+    if found is None:
+        stable = call.func.id in builtins and _app_builtin_annotation_inert(
+            index, path, call.func
+        )
+    else:
+        owner_path, owner = found
+        stable = (
+            isinstance(owner, ast.ClassDef)
+            and not owner.decorator_list
+            and not owner.keywords
+            and len(owner.bases) == 1
+            and isinstance(owner.bases[0], ast.Name)
+            and owner.bases[0].id in builtins
+            and _app_builtin_annotation_inert(index, owner_path, owner.bases[0])
+            and all(
+                isinstance(part, ast.Pass)
+                or isinstance(part, ast.Expr)
+                and isinstance(part.value, ast.Constant)
+                and isinstance(part.value.value, str)
+                for part in owner.body
+            )
+            and _app_signing_captured_provider_stable(index, [found])
+        )
+    return "diagnostic" if stable else None
+
+
+def _public_registry_use(reference, aliases, source, path):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import _presentation_provider_shadow
     from .security_configuration import _canonical
 
     parent = getattr(reference, "_security_parent", None)
@@ -387,7 +458,18 @@ def _public_registry_use(reference, aliases):
         and parent.args == [reference]
         and not parent.keywords
     ):
-        return _canonical(parent, aliases) in {"os.environ.get", "os.getenv"}
+        root = parent.func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        return (
+            _canonical(parent, aliases) in {"os.environ.get", "os.getenv"}
+            and isinstance(root, ast.Name)
+            and not _presentation_provider_shadow(
+                parent.func, root.id, source, path, audit
+            )
+        )
+    if isinstance(parent, ast.FormattedValue):
+        return _environment_label_diagnostic(source, path, reference)
     match parent:
         case ast.BinOp(left=ast.Constant(value=str()), op=ast.Mod(), right=right) if (
             right is reference
@@ -414,7 +496,7 @@ def _public_registry_use(reference, aliases):
 
 
 def captured_public_registry_label(node, target, aliases):
-    """Keep mixed CLI help uses separate from the verified lookup-only proof."""
+    """Recognize closed registry labels used only for lookup and public messages."""
     value = getattr(node.value, "value", None)
     if (
         not isinstance(value, str)
@@ -433,9 +515,9 @@ def captured_public_registry_label(node, target, aliases):
     index, owner, origin, _value, references = source
     if origin is not target:
         return False
-    roles = [_public_registry_use(ref, aliases) for ref in references]
+    roles = [_public_registry_use(ref, aliases, index, owner) for ref in references]
     return (
-        "help" in roles
+        ("help" in roles or "diagnostic" in roles)
         and True in roles
         and all(roles)
         and _captured_module_text_unchanged(
@@ -443,7 +525,11 @@ def captured_public_registry_label(node, target, aliases):
             owner,
             origin,
             frozenset(references),
-            providers=("os.environ", "os.getenv", *_CLI_METADATA_FACTORIES),
+            providers=(
+                "os.environ",
+                "os.getenv",
+                *(_CLI_METADATA_FACTORIES if "help" in roles else ()),
+            ),
         )
     )
 

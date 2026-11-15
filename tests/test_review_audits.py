@@ -14151,6 +14151,52 @@ def test_credential_label_requires_closed_registry_and_metadata_uses(
 
 
 @pytest.mark.parametrize(
+    "variant, active",
+    [
+        ("closed", False),
+        ("no_lookup", True),
+        ("lookup_rebound", True),
+        ("exception_rebound", True),
+        ("operational_use", True),
+    ],
+)
+def test_registry_label_requires_closed_exception_message_and_lookup(
+    tmp_path, variant, active
+):
+    source = "import os\nSECRET_ENV = 'SERVICE_SIGNING_KEY'\n"
+    if variant == "exception_rebound":
+        source += "RuntimeError = replacement\n"
+    if variant == "lookup_rebound":
+        source += "def read(os):\n"
+    else:
+        source += "def read():\n"
+    if variant == "operational_use":
+        source += "    enroll(password=SECRET_ENV)\n"
+    lookup = "None" if variant == "no_lookup" else "os.getenv(SECRET_ENV)"
+    source += f"    value = {lookup}\n    if value is None:\n        raise RuntimeError(f'Missing {{SECRET_ENV}}')\n    return value\n"
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["defect_policy_decision"]["state"] != "BLOCKED"
+    assert report["finding_conservation"]["state"] == "PASS"
+    ledger = report["finding_tier_report"]["ledger"]
+    assert (
+        bool(
+            [
+                row
+                for row in ledger
+                if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+            ]
+        )
+        is active
+    )
+
+
+@pytest.mark.parametrize(
     "url, argument, tier",
     [
         ("https://example.invalid/data", "", "SUPPORTED_DEFECT"),
