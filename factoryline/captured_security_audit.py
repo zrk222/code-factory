@@ -92,9 +92,11 @@ class _CapturedHTTPSignatureFlow:
         self.request_reads = set()
 
     def canonical(self, node):
+        """Resolve a captured expression against the handler provider bindings."""
         return self.origin.canonical(self.path, node, self.function)
 
     def expression(self, node, values):
+        """Project supported expressions into signature-flow kinds and header origins."""
         match node:
             case ast.Name(id=name) if name in values:
                 return values[name]
@@ -122,6 +124,7 @@ class _CapturedHTTPSignatureFlow:
         return "", frozenset()
 
     def key_origin(self, node):
+        """Require a source-bound key reference without competing assignments."""
         from .credential_role_constructor_provider import binding_occurrences
 
         origin = self.origin
@@ -142,6 +145,7 @@ class _CapturedHTTPSignatureFlow:
         )
 
     def call(self, node, values):
+        """Track supported HMAC construction, comparison and value conversions."""
         canonical = self.canonical(node.func)
         if canonical == "hmac.new":
             return self.constructor(node, values)
@@ -163,6 +167,7 @@ class _CapturedHTTPSignatureFlow:
         return self.member_call(node, values)
 
     def constructor(self, node, values):
+        """Bind the published key and request payload to SHA-256 HMAC."""
         operands = _captured_hmac_operands(node)
         if operands is None:
             return "", frozenset()
@@ -180,6 +185,7 @@ class _CapturedHTTPSignatureFlow:
         return "hmac", headers
 
     def encoded_header(self, node, values):
+        """Recognize UTF-8 header encoding only when bytes is unshadowed."""
         from .credential_role_constructor_provider import binding_occurrences
 
         match node:
@@ -200,6 +206,7 @@ class _CapturedHTTPSignatureFlow:
         return None
 
     def member_call(self, node, values):
+        """Project supported header reads, splits, encodings and digest extraction."""
         if node.keywords:
             return "", frozenset()
         match node.func, node.args:
@@ -227,6 +234,7 @@ class _CapturedHTTPSignatureFlow:
         return "", frozenset()
 
     def response(self, statement, success):
+        """Recognize a typed Flask response in the required HTTP status class."""
         match statement:
             case ast.Return(
                 value=ast.Call(
@@ -247,6 +255,7 @@ class _CapturedHTTPSignatureFlow:
         return False
 
     def logging(self, statement):
+        """Allow bounded handler logging while recording provider dependencies."""
         receiver = self.origin.handler["application"]["name"]
         match statement:
             case ast.Expr(
@@ -269,6 +278,7 @@ class _CapturedHTTPSignatureFlow:
         return False
 
     def rejects(self, statement, values):
+        """Require a failed signature comparison to return an HTTP rejection."""
         match statement:
             case ast.If(
                 test=ast.UnaryOp(op=ast.Not(), operand=condition),
@@ -285,6 +295,7 @@ class _CapturedHTTPSignatureFlow:
         return False
 
     def assignments(self, statements, values):
+        """Propagate supported signature values through simple local assignments."""
         for statement in statements:
             match statement:
                 case ast.Assign(targets=[ast.Name(id=name)], value=node):
@@ -297,6 +308,7 @@ class _CapturedHTTPSignatureFlow:
         return True
 
     def guarded(self, statements, values):
+        """Prove direct or nonempty-loop signature rejection before success."""
         if not statements:
             return False
         *prefix, guard = statements
@@ -320,6 +332,7 @@ class _CapturedHTTPSignatureFlow:
         return self.rejects(guard, values)
 
     def authority(self):
+        """Build source-bound authority after route, dataflow and provider checks."""
         from .semantic_credential_sensor import _flask_constructor_arguments
 
         handler, function = self.origin.handler, self.function
@@ -368,6 +381,7 @@ class _CapturedHTTPSignatureFlow:
 
     @staticmethod
     def route_path(decorator):
+        """Require a literal route; validate explicit methods when supplied."""
         match decorator:
             case ast.Call(
                 func=ast.Attribute(attr=method),
@@ -400,6 +414,7 @@ class _CapturedHTTPSignatureFlow:
         return False
 
     def providers_closed(self, tree):
+        """Reject mutated or reflective providers across captured source modules."""
         from . import review_audits as audit
         from .credential_role_constructor_provider import (
             _captured_terminal_provider_mutation,
