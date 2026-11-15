@@ -2596,6 +2596,7 @@ def _captured_terminal_provider_mutation(
     readonly_argument=None,
     local_binding=None,
     additional_bindings=(),
+    readonly_nodes=(),
 ):
     from .runtime_audit_integrity import _conditional_module_name
 
@@ -2606,7 +2607,7 @@ def _captured_terminal_provider_mutation(
             return True
         if not _terminal_source_context_valid(index, tree, covered_contexts):
             return True
-        nodes = list(ast.walk(tree))
+        nodes = [node for node in ast.walk(tree) if node not in readonly_nodes]
         relative = index.relative(path)
         module = _conditional_module_name(relative)
         package = (

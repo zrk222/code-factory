@@ -1134,9 +1134,7 @@ def _upload_filename_domain_kind(test, source_names, aliases):
                 character_class.fullmatch(char) for char in ("/", "\\", ".")
             ):
                 return "regex_reject" if invalid else "regex_safe"
-    return (
-        "empty_only" if isinstance(node, ast.Name) and node.id in source_names else None
-    )
+    return None
 
 
 def _upload_guard_dominates(scope, call, statement, source_names, aliases):
@@ -1237,9 +1235,9 @@ def source_domain_guarded(scope, call, source_names, aliases):
         ):
             return True
         if _upload_guard_dominates(scope, call, statement, source_names, aliases):
-            if kinds & (rejected | {"empty_only"}):
+            if kinds & rejected:
                 return True
-            blocked.update(kinds if kinds <= components else ())
+            blocked.update(kinds & components)
         match test:
             case ast.Compare(
                 ops=[ast.Eq()],

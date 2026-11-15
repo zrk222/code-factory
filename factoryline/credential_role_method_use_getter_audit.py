@@ -5070,7 +5070,7 @@ class _SourceTestScope:
         self.witness(path, node, "test_origin_read")
         return "TEST_ORIGIN_READ"
 
-    def _pytest_collection(self):
+    def _pytest_collection(self, selected=None):
         """Rebuild supported pytest selectors from captured configuration bytes only."""
         from .pytest_collection_audit import (
             _pytest_collection_hook_names,
@@ -5080,8 +5080,10 @@ class _SourceTestScope:
             captured_pytest_configuration,
         )
 
-        configurations = self.index.get("configuration_bytes")
-        selected = captured_pytest_configuration(configurations)
+        if selected is None:
+            selected = captured_pytest_configuration(
+                self.index.get("configuration_bytes")
+            )
         if selected is None:
             # No captured config does not prove absence of a higher-priority config.
             return None
@@ -5525,9 +5527,7 @@ class _SourceTestScope:
         provider, module, selected, native = authority
         if native and not self.witness_native_settings_profile(profile):
             return False
-        collected = self.configured_settings_invocations(
-            selected, profile if native else None
-        )
+        collected = self.configured_settings_invocations(selected, profile)
         if not collected or not self.configured_settings_uses(module, collected):
             return False
         if (
@@ -5554,9 +5554,9 @@ class _SourceTestScope:
             "configuration": selected["identity"]
             if selected
             else profile["configuration_identities"],
-            "invocation": selected["options"].get("captured_invocations")
-            if selected
-            else profile,
+            "invocation": profile
+            if profile["status"] == "DECLARED"
+            else selected["options"].get("captured_invocations"),
         }
         return True
 
@@ -5568,27 +5568,25 @@ class _SourceTestScope:
             captured_pytest_django_provider,
         )
 
-        native = (
-            profile["status"] == "DECLARED"
-            and profile["runner"] == "django.DiscoverRunner"
-        )
+        declared = profile["status"] == "DECLARED"
+        configs = self.index["configuration_bytes"]
+        native = declared and profile["runner"] == "django.DiscoverRunner"
         if native:
-            provider = captured_distribution_provider(
-                self.index["configuration_bytes"], "django"
-            )
+            provider = captured_distribution_provider(configs, "django")
             module, selected = profile["selector"].get("settings_module"), None
         else:
-            provider = captured_pytest_django_provider(
-                self.index["configuration_bytes"]
+            provider = captured_pytest_django_provider(configs)
+            selected = captured_pytest_configuration(
+                configs, include_tox_invocations=not declared
             )
-            selected = captured_pytest_configuration(self.index["configuration_bytes"])
             if (
                 provider is None
                 or self.fixture._django_provider_root_shadowed(
                     self.index["module_paths"], "pytest_django"
                 )
                 or selected is None
-                or self._pytest_collection() is None
+                or (declared and provider["path"] == "tox.ini")
+                or self._pytest_collection(selected) is None
             ):
                 return None
             module = selected["options"].get("DJANGO_SETTINGS_MODULE")
@@ -5620,9 +5618,12 @@ class _SourceTestScope:
             for n, b in configs.items()
             if isinstance(b, bytes)
         }
-        return captured_test_invocation_profile(
+        profile = captured_test_invocation_profile(
             self.index, configs, sources, configuration_identities=identities
         )
+        if profile["runner"] == "pytest":
+            profile.pop("sources")
+        return profile
 
     def witness_native_settings_profile(self, profile):
         """Bind each native bootstrap milestone to its exact source node."""

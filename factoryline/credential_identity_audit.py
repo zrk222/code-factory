@@ -6,6 +6,7 @@ from pathlib import Path
 
 from . import credential_role_identity_effects as _legacy
 from .captured_security_audit import (
+    _captured_hmac_operands,
     source_role_distribution_domain as source_role_distribution_domain,
 )
 
@@ -152,40 +153,33 @@ def django_test_domain_evidence(context, path, observation, selected):
 def _django_test_project_settings(index):
     from .pytest_collection_audit import (
         _pytest_collection_settings,
-        _pytest_config_data,
         _pytest_config_uses_custom_collection,
+        captured_pytest_configuration,
     )
-    from .review_audits import _TEST_FILE_PATTERNS
+    from .review_audits import tomllib
 
     captured = index["configuration_bytes"]
-    if any(
-        name in captured
-        for name in (
-            "pytest.toml",
-            ".pytest.toml",
-            "pytest.ini",
-            ".pytest.ini",
-            "tox.ini",
-            "setup.cfg",
-        )
-    ):
+    if {
+        "pytest.toml",
+        ".pytest.toml",
+        "pytest.ini",
+        ".pytest.ini",
+        "tox.ini",
+        "setup.cfg",
+    } & captured.keys():
         return None
-    raw = captured.get("pyproject.toml")
-    project = _legacy._fixture_project(index)
-    if not isinstance(raw, bytes) or not project:
+    selected = captured_pytest_configuration(captured)
+    if selected is None or _pytest_config_uses_custom_collection(selected["options"]):
         return None
-    _files, identity = _pytest_config_data(
-        raw, "pyproject.toml", "pyproject", set(_TEST_FILE_PATTERNS)
+    try:
+        project = tomllib.loads(captured["pyproject.toml"].decode("utf-8"))
+    except (KeyError, UnicodeError, ValueError, RecursionError):
+        return None
+    return (
+        project,
+        selected["options"],
+        _pytest_collection_settings(selected["identity"]),
     )
-    options = _legacy._fixture_pytest_options(index)
-    if (
-        identity.get("state") != "read"
-        or not options
-        or _pytest_config_uses_custom_collection(options)
-    ):
-        return None
-    patterns = _pytest_collection_settings(identity)
-    return project, options, patterns
 
 
 def _django_test_domain_profile(index, path):
@@ -678,18 +672,14 @@ def _app_digest_call(index, path, owner, call, actual, secret):
     ):
         return None
     constructor = result.func.value
-    if (
-        not isinstance(constructor, ast.Call)
-        or constructor.keywords
-        or len(constructor.args) != 3
-    ):
+    if (operands := _captured_hmac_operands(constructor)) is None:
         return None
     if (
         fixture._app_expression_name(index, target, constructor.func, helper)
         != "hmac.new"
     ):
         return None
-    key, message, algorithm = constructor.args
+    key, message, algorithm = operands
     if fixture._app_expression_name(
         index, target, algorithm, helper
     ) != "hashlib.sha256" or not _app_digest_bytes(key, values, {secret}):
@@ -820,16 +810,17 @@ def _app_digest_algorithm_argument(node, aliases, parents):
     from . import review_audits as audit
 
     call = parents.get(id(node))
-    if not _app_digest_lexical_read(call, node, parents):
-        return False
-    return (
+    if isinstance(call, ast.keyword):
+        call = parents.get(id(call))
+    if not (
         isinstance(call, ast.Call)
-        and not call.keywords
-        and len(call.args) == 3
-        and call.args[2] is node
         and audit._resolved_ast_name(call.func, aliases) == "hmac.new"
         and audit._resolved_ast_name(node, aliases) == "hashlib.sha256"
-    )
+        and _app_digest_lexical_read(call, node, parents)
+    ):
+        return False
+    operands = _captured_hmac_operands(call)
+    return operands is not None and operands[2] is node
 
 
 def _app_digest_lexical_read(call, node, parents):
@@ -5795,12 +5786,17 @@ def _app_incomplete_plaintext_evidence(
 
 def application_identity_helper_epoch():
     """Bind every moved application audit predicate and its core callees."""
+    from .review_integrity import source_binding_helpers
+
     return (
+        *source_binding_helpers(),
+        ast.parse,
         _legacy._APP_RECEIVER_HOOKS_CACHE_TOKEN,
         _TEST_SCOPE_CONTRACT_EPOCH,
         application_test_scope_role_evidence,
         application_value_role_evidence,
         _app_digest_call,
+        _captured_hmac_operands,
         _app_digest_bytes,
         _app_digest_algorithm_argument,
         _app_digest_bound_values,

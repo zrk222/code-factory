@@ -327,6 +327,122 @@ def _declaration_context(index, finding):
     return build_retrieval_context(finding, index, "consequential security use", None)
 
 
+def test_nested_class_member_delivery_is_bounded_unverified_and_hash_bound(tmp_path):
+    import json
+
+    from factoryline.jev_classifier import (
+        JevClassificationError,
+        build_informed_actionability_case,
+    )
+
+    source = (
+        "class Holder:\n"
+        "    class Fields:\n        credential = 'fixture'\n"
+        + "    # owner exceeds the excerpt limit\n"
+        * 260
+        + "    def consume(self):\n"
+        "        self.Fields.credential = 'unrelated write'\n"
+        "        return self.data[self.__class__.Fields.credential]\n"
+        "    def wrong(self):\n        return self.Other.credential\n"
+        "    def shadowed(self, Holder):\n        return Holder.Fields.credential\n"
+        "    @staticmethod\n"
+        "    def static(other):\n        return other.Fields.credential\n"
+        "    def comprehension(self, values):\n"
+        "        return [self.Fields.credential for self in values]\n"
+        "    class Sibling:\n"
+        "        def unrelated(self):\n            return self.Fields.credential\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, {"owner.py": source}, "owner.py")
+    arguments = {"candidate_commit": "a" * 40, "requirement": "Review source use"}
+    packet = build_informed_actionability_case(finding, index, **arguments)
+    artifacts = packet["state"]["evidence"]["artifacts"]
+    excerpts = [row for row in artifacts if row["kind"] == "source_excerpt"]
+    consumer = next(row for row in excerpts if "return self.data[" in row["content"])
+    assert consumer["source_binding"]["sha256"] == finding["source_sha256"]
+    assert consumer["sha256"] == sha256(consumer["content"].encode()).hexdigest()
+    assert not any(
+        marker in row["content"]
+        for row in excerpts
+        for marker in (
+            "unrelated write",
+            "return self.Other",
+            "return Holder.Fields",
+            "return self.Fields",
+            "return other.Fields",
+            "for self in values",
+        )
+    )
+    ledger = json.loads(
+        next(
+            row["content"] for row in artifacts if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert ledger["status"] == "INCOMPLETE"
+    assert ledger["authority"]["status"] == "UNKNOWN"
+    assert ledger["edges"] == []
+    assert ledger["structural_context"]["validated_trace_edges"] == 0
+    assert (
+        ledger["structural_context"]["class_member_receiver_identity"] == "UNVERIFIED"
+    )
+    assert all(len(row["content"].encode()) <= 8192 for row in excerpts)
+
+    path = tmp_path / "owner.py"
+    index.source_bytes[path] += b"\n# changed"
+    with pytest.raises(JevClassificationError, match="SINK_SOURCE_STALE"):
+        build_informed_actionability_case(finding, index, **arguments)
+
+
+def test_class_member_delivery_respects_search_budget_and_local_receiver_binding(
+    tmp_path,
+):
+    source = (
+        "class Holder:\n"
+        "    credential = 'fixture'\n"
+        + "    # owner exceeds the excerpt limit\n"
+        * 260
+        + "    def rebound(self, other):\n"
+        "        self = other\n        return self.credential  # rebound\n"
+        "    def use(self):\n        return self.credential  # possible use\n"
+        "    def large(self):\n"
+        + "        pass\n" * 520
+        + "        return self.credential  # beyond budget\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, {"owner.py": source}, "owner.py")
+    context = _declaration_context(index, finding)
+    hints = [row["content"] for row in context["excerpts"]]
+    assert any("possible use" in hint for hint in hints)
+    assert not any("rebound" in hint or "beyond budget" in hint for hint in hints)
+    assert "declaration_reference_search_budget" in context["truncation"]
+
+
+def test_class_member_search_budget_without_hint_does_not_report_receiver(tmp_path):
+    source = (
+        "class Holder:\n"
+        "    credential = 'fixture'\n"
+        "    def large(self):\n"
+        + "        pass  # keep this method outside the excerpt limit\n" * 520
+        + "        return self.credential\n"
+    )
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "owner.py": source,
+            "external.py": "def load():\n    return load_module('owner')\n",
+        },
+        "owner.py",
+    )
+    context = _declaration_context(index, finding)
+    assert "declaration_reference_search_budget" in context["truncation"]
+    assert "class_member_receiver_identity" not in context["structural_context"]
+    assert any(
+        row["path"] == "external.py" and "load_module('owner')" in row["content"]
+        for row in context["excerpts"]
+    )
+    assert not any(
+        "return self.credential" in row["content"] for row in context["excerpts"]
+    )
+
+
 def test_declaration_neighborhood_retains_whole_small_module_and_distant_consumer(
     tmp_path,
 ):

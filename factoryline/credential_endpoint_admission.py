@@ -2153,19 +2153,15 @@ def operative_signing_default_evidence(finding, context):
         and observation.get("consumer_role") == "django.SECRET_KEY"
     ):
         return _django_default_authority(finding, context, declaration, observation)
-    return next(
-        (
-            witness
-            for handler in _CredentialHandlerIndex(context).boundaries()
-            if handler["application"]["framework"] == "fastapi"
-            for origin in (
-                _OperativeCredentialOrigin(context, finding, handler, declaration),
-            )
-            for witness in (origin.handler_authority(),)
-            if witness is not None
-        ),
-        None,
-    )
+    from .captured_security_audit import _captured_credential_handler_authority
+
+    for handler in _CredentialHandlerIndex(context).boundaries():
+        witness = _captured_credential_handler_authority(
+            context, finding, handler, declaration
+        )
+        if witness is not None:
+            return witness
+    return None
 
 
 def _django_default_authority(finding, context, declaration, observation):
@@ -4853,15 +4849,19 @@ class _CredentialHandlerIndex:
             or call.args
         ):
             return None
-        if any(
-            k.arg not in {"template_name", "next_page", "success_url", "login_url"}
-            or not isinstance(k.value, ast.Constant)
-            or not isinstance(k.value.value, str)
+        provider = call.func.value
+        canonical = self.canonical(path, provider)
+        allowed = dict.fromkeys(("template_name", "next_page"), str)
+        if canonical == "django.contrib.auth.views.LoginView":
+            allowed.update(redirect_authenticated_user=bool, success_url=str)
+        elif canonical != "django.contrib.auth.views.LogoutView":
+            allowed.update(dict.fromkeys(("success_url", "login_url"), str))
+        if len({k.arg for k in call.keywords}) != len(call.keywords) or any(
+            not isinstance(k.value, ast.Constant)
+            or type(k.value.value) is not allowed.get(k.arg)
             for k in call.keywords
         ):
             return None
-        provider = call.func.value
-        canonical = self.canonical(path, provider)
         if self._django_view_provider(canonical):
             return path, provider
         selected = _signing_source_symbol(

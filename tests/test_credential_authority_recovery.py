@@ -74,6 +74,7 @@ def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
     }
 
 
+@pytest.mark.parametrize("guarded", [False, True])
 @pytest.mark.parametrize(
     "first,second,supported",
     [
@@ -84,12 +85,15 @@ def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
     ],
 )
 def test_django_startup_defaults_preserve_first_settings_selection(
-    first, second, supported
+    first, second, supported, guarded
 ):
+    selected = f"os.environ.setdefault('DJANGO_SETTINGS_MODULE', {first!r})\n"
+    if guarded:
+        selected = "if not os.environ.get('DJANGO_SETTINGS_MODULE'):\n    " + selected
     startup = (
         "import os\nfrom django.core.wsgi import get_wsgi_application\n"
         "os.environ.setdefault('UNRELATED', 'service.other')\n"
-        f"os.environ.setdefault('DJANGO_SETTINGS_MODULE', {first!r})\n"
+        f"{selected}"
         f"os.environ.setdefault('DJANGO_SETTINGS_MODULE', {second!r})\n"
         "application = get_wsgi_application()\n"
     )
@@ -102,7 +106,7 @@ def test_django_startup_defaults_preserve_first_settings_selection(
         proof = row["credential_authority_observation"]
         assert proof["selected_consumer"]["model"] == "django.admin.feedback.v1"
         assert any(
-            edge["path"] == "start.py" and edge["span"][0] == 4
+            edge["path"] == "start.py" and edge["span"][0] == 4 + guarded
             for edge in proof["transfers"]
         )
 
@@ -118,6 +122,11 @@ def test_django_startup_defaults_preserve_first_settings_selection(
         "os.environ.setdefault('UNRELATED', mutate_environment())\n",
         "if os.getenv('MODE') == 'other':\n"
         "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
+        "if not os.environ.get('UNRELATED'):\n"
+        "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
+        "if not os.environ.get('DJANGO_SETTINGS_MODULE'):\n"
+        "    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n"
+        "    unknown_consumer()\n",
         "if os.getenv('MODE') == 'other':\n"
         "    from os import environ as selected_env\n"
         "    selected_env.setdefault('DJANGO_SETTINGS_MODULE', 'service.other')\n",
@@ -194,13 +203,17 @@ def test_django_family_management_loader_requires_closed_invocation(mutation):
 
 
 @pytest.mark.parametrize(
-    "helper",
-    ["captured_django_management_contract", "captured_django_startup_statements"],
+    "module,helper",
+    [
+        ("import_context", "captured_django_management_contract"),
+        ("import_context", "captured_django_startup_statements"),
+        ("captured_security_audit", "captured_django_startup_body"),
+    ],
 )
 def test_django_family_changed_loader_invalidates_retained_proof_epoch(
-    monkeypatch, helper
+    monkeypatch, module, helper
 ):
-    from factoryline import import_context
+    from importlib import import_module
     from factoryline.credential_role_constructor_provider import (
         _helper_snapshot,
         helper_epochs_valid,
@@ -214,7 +227,11 @@ def test_django_family_changed_loader_invalidates_retained_proof_epoch(
     def replaced(_context, _path):
         return None
 
-    monkeypatch.setattr(getattr(import_context, helper), "__code__", replaced.__code__)
+    monkeypatch.setattr(
+        getattr(import_module(f"factoryline.{module}"), helper),
+        "__code__",
+        replaced.__code__,
+    )
     assert not helper_epochs_valid(epochs)
 
 
@@ -1303,6 +1320,158 @@ def test_source_role_hatch_selected_package_keeps_actionable_default():
         source_role_distribution_domain(captured, "example_service/example/settings.py")
         is None
     )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "direct",
+        "loop",
+        "ignored_compare",
+        "wrong_key",
+        "wrong_payload",
+        "header_in_payload",
+        "bad_digest",
+        "wrong_status",
+        "loop_bypass",
+        "provider_write",
+        "digest_method_write",
+        "request_class_write",
+        "request_write",
+        "route_override",
+        "key_override",
+        "dynamic_route",
+        "decorator_wrapper",
+        "builtin_override",
+        "module_exec",
+        "module_eval",
+        "module_globals_write",
+        "late_application",
+        "imported_reflection",
+        "escaped_reflection",
+        "imported_helper",
+        "imported_helper_reflection",
+        "conditional_application",
+    ],
+)
+def test_http_signature_authority_requires_rejection_and_current_providers(change):
+    route = """
+import hmac
+from hashlib import sha256
+from flask import Flask, Response, request
+app = Flask(__name__)
+WEBHOOK_SECRET = "sample-signing-material-bound-to-endpoint"
+
+@app.route("/signed", methods=["POST"])
+def signed():
+    supplied = request.headers.get("Signature", "")
+    timestamp = request.headers["Timestamp"]
+    payload = bytes(timestamp, "utf8") + b":" + request.data
+    computed = hmac.new(key=WEBHOOK_SECRET.encode(), msg=payload, digestmod=sha256)
+    valid = hmac.compare_digest(computed.hexdigest(), supplied)
+    if not valid:
+        app.logger.warning("Invalid signature")
+        return Response("Invalid signature", status=400)
+    app.logger.info(request.json)
+    return Response("accepted", status=200)
+"""
+    changes = {
+        "ignored_compare": ("if not valid:", "if not supplied:"),
+        "wrong_key": ("WEBHOOK_SECRET.encode()", "b'other-material'"),
+        "wrong_payload": ("msg=payload", "msg=b'fixed-message'"),
+        "header_in_payload": ('headers["Timestamp"]', 'headers["signature"]'),
+        "bad_digest": ("digestmod=sha256", "digestmod=opaque"),
+        "wrong_status": ("status=400", "status=200"),
+        "provider_write": ("app = Flask", "hmac.compare_digest = opaque\napp = Flask"),
+        "digest_method_write": (
+            "app = Flask",
+            "hmac.HMAC.hexdigest = opaque\napp = Flask",
+        ),
+        "request_class_write": (
+            "app = Flask",
+            "from flask import Request\nRequest.headers = opaque\napp = Flask",
+        ),
+        "request_write": (
+            "app = Flask",
+            "request.headers['Signature'] = 'x'\napp = Flask",
+        ),
+        "route_override": ("def signed():", "@wrapper\ndef signed():"),
+        "key_override": (
+            "    supplied =",
+            "    WEBHOOK_SECRET = other\n    supplied =",
+        ),
+        "dynamic_route": ('route("/signed"', "route(dynamic_path"),
+        "decorator_wrapper": ("app = Flask", "Flask = opaque\napp = Flask"),
+        "builtin_override": ("    supplied =", "    bytes = opaque\n    supplied ="),
+        "module_exec": (
+            "@app.route",
+            'exec("hmac.compare_digest = replacement")\n@app.route',
+        ),
+        "module_eval": (
+            "@app.route",
+            'eval("globals().update(WEBHOOK_SECRET=other)")\n@app.route',
+        ),
+        "module_globals_write": (
+            "@app.route",
+            'globals()["WEBHOOK_SECRET"] = other\n@app.route',
+        ),
+        "late_application": ("app = Flask(__name__)\n", ""),
+        "imported_reflection": (
+            "@app.route",
+            'from builtins import globals as ns\nns()["WEBHOOK_SECRET"] = other\n@app.route',
+        ),
+        "escaped_reflection": (
+            "@app.route",
+            "capabilities = {'dynamic': exec}\nopaque(capabilities)\n@app.route",
+        ),
+        "conditional_application": (
+            "app = Flask(__name__)\n",
+            "if opaque:\n    app = Flask(__name__)\n",
+        ),
+    }
+    if change in ("loop", "loop_bypass"):
+        start, end = route.index("    timestamp ="), route.index("    app.logger.info")
+        body = route[start:end]
+        route = (
+            route[:start]
+            + '    for signature in supplied.split(","):\n'
+            + "".join(
+                "    " + line
+                for line in body.replace(", supplied)", ", signature)").splitlines(
+                    keepends=True
+                )
+            )
+            + route[end:]
+        )
+    if change == "loop_bypass":
+        route = route.replace(
+            "        if not valid:", "        break\n        if not valid:"
+        )
+    if change in changes:
+        before, after = changes[change]
+        assert before in route
+        route = route.replace(before, after)
+    if change == "late_application":
+        route += "\napp = Flask(__name__)\n"
+    source = {"service.py": route.lstrip()}
+    if change in ("imported_helper", "imported_helper_reflection"):
+        source["service.py"] = "import helper\n" + source["service.py"]
+        source["helper.py"] = (
+            "from builtins import exec as evaluate\n"
+            "capabilities = [evaluate]\nopaque(capabilities)\n"
+            if change == "imported_helper_reflection"
+            else "marker = True\n"
+        )
+    row = _recovery_row(source, "WEBHOOK_SECRET", "service.py")
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    assert (row["tier"] == "SUPPORTED_DEFECT") is (
+        change in ("direct", "loop", "imported_helper")
+    ), row
+    if row["tier"] == "SUPPORTED_DEFECT":
+        proof = row["credential_authority_observation"]
+        assert proof["consumer_role"] == "verified_http_signature_rejection"
+        assert proof["runtime_execution"] == "not_performed"
+        assert {r["path"] for r in proof["transfers"]} == {"service.py"}
 
 
 @pytest.mark.parametrize(
@@ -4009,6 +4178,112 @@ def test_selected_admin_route_allows_closed_unrelated_later_handler(container):
         f"urlpatterns = {expression}\n"
     )
     assert _recovery_row(files)["tier"] == "SUPPORTED_DEFECT"
+
+
+@pytest.mark.parametrize(
+    ("constructor", "mutation", "tier"),
+    [
+        (
+            'provider.LoginView.as_view(template_name="signin.html", redirect_authenticated_user=True, success_url="/welcome/")',
+            "",
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=False)",
+            "",
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            'provider.LoginView.as_view(**{"redirect_authenticated_user": True})',
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'provider.LogoutView.as_view(next_page="/")',
+            "",
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=bool(1))",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=1)",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=True, redirect_authenticated_user=False)",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'provider.LoginView.as_view(redirect_authenticated_user=True, unsupported="literal")',
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LogoutView.as_view(redirect_authenticated_user=True)",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'provider.LogoutView.as_view(success_url="/")',
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'provider.LoginView.as_view(redirect_authenticated_user=True, login_url="/")',
+            "",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=True)",
+            "provider.LoginView.as_view = replacement",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.LoginView.as_view(redirect_authenticated_user=True)",
+            "provider = replacement",
+            "NEEDS_CONTEXT",
+        ),
+        (
+            "provider.PasswordResetView.as_view(redirect_authenticated_user=True)",
+            "",
+            "NEEDS_CONTEXT",
+        ),
+    ],
+    ids=[
+        "login",
+        "login-false",
+        "unpacked-keywords",
+        "logout",
+        "computed",
+        "integer",
+        "duplicate",
+        "unknown-keyword",
+        "wrong-class",
+        "logout-success-url",
+        "login-url",
+        "provider-mutation",
+        "provider-shadow",
+        "other-constructor",
+    ],
+)
+def test_selected_admin_route_binds_auth_view_constructor(constructor, mutation, tier):
+    files = _recovery_sources()
+    files["service/urls.py"] = (
+        "from django.contrib import admin\nfrom django.urls import include, path\n"
+        'urlpatterns = [path("admin/", admin.site.urls), path("", include("service.tail"))]\n'
+    )
+    files["service/tail.py"] = (
+        "from django.contrib.auth import views as provider\nfrom django.urls import path\n"
+        f'{mutation}\nurlpatterns = [path("callback/", {constructor})]\n'
+    )
+    row = _recovery_row(files)
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    assert row["tier"] == tier
 
 
 @pytest.mark.parametrize(
