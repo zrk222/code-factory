@@ -325,7 +325,12 @@ def test_unknown_collection_does_not_consult_fixture_proof_provider(
 
 
 @pytest.mark.parametrize("policy", ["trusted-core-v1", "source-role-v3"])
-def test_unknown_collection_reseal_revokes_real_application_fixture(tmp_path, policy):
+@pytest.mark.parametrize(
+    "capture_state", [None, "changed_during_scan", "collection_unresolved"]
+)
+def test_unverified_collection_reseal_revokes_real_application_fixture(
+    tmp_path, policy, capture_state
+):
     from factoryline import review_audits as audit
 
     _write(tmp_path, "checks/login.py", _APP133_DRF)
@@ -335,9 +340,11 @@ def test_unknown_collection_reseal_revokes_real_application_fixture(tmp_path, po
         for row in report.get("primitive_observations", [])
     )
     bound_sources = list(report["sources"])
-    report["oracle_context"]["pytest_collection"] = _unknown_collection_core()[
-        "oracle_context"
-    ]["pytest_collection"]
+    report["oracle_context"]["pytest_collection"] = (
+        _unknown_collection_core()["oracle_context"]["pytest_collection"]
+        if capture_state is None
+        else {"state": "missing", "capture_state": capture_state}
+    )
     report["selected_defect_policy"] = policy
     sealed = audit._seal_security_scan(report.copy())
     assert sealed["state"] == "INCOMPLETE"

@@ -399,7 +399,10 @@ def _trusted_core_database_context_valid(value):
 def _unknown_collection(core):
     oracle = core.get("oracle_context")
     capture = oracle.get("pytest_collection") if isinstance(oracle, dict) else None
-    return isinstance(capture, dict) and capture.get("collection_state") == "UNKNOWN"
+    return isinstance(capture, dict) and (
+        capture.get("collection_state") == "UNKNOWN"
+        or capture.get("capture_state", "stable_pre_post") != "stable_pre_post"
+    )
 
 
 def _trusted_core_tenant_arguments(core, audit):
@@ -408,8 +411,7 @@ def _trusted_core_tenant_arguments(core, audit):
         return None
     pytest_capture = oracle_context.get("pytest_collection")
     if _unknown_collection(core) or (
-        isinstance(pytest_capture, dict)
-        and pytest_capture.get("capture_state") != "stable_pre_post"
+        isinstance(pytest_capture, dict) and "capture_state" not in pytest_capture
     ):
         return None
 
