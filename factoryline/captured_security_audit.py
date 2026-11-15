@@ -751,6 +751,239 @@ def bind_urllib_tls_context(finding, source, aliases):
     return finding
 
 
+def captured_sql_batch_has_literal_statements(call, query):
+    """Keep bound data separate from SQL text through captured row producers."""
+    match call:
+        case ast.Call(
+            func=ast.Attribute(attr="execute"),
+            args=[ast.Name(), ast.Name() as values],
+            keywords=[],
+        ) if query is call.args[0] and query.id != values.id:
+            return _captured_sql_batch_from_loop(call, query.id, values.id)
+    return False
+
+
+def _captured_sql_batch_from_loop(call, statement_name, values_name):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .semantic_credential_sensor import _security_helper_source_context
+
+    tree, index, path = _security_helper_source_context(call, None)
+    if path is None or not index.validate(path):
+        return False
+    parents = index.parents[path]
+    expression = parents.get(id(call))
+    loop = parents.get(id(expression))
+    match loop:
+        case ast.For(
+            target=ast.Tuple(elts=[ast.Name(id=left), ast.Name(id=right)]),
+            iter=ast.Name(id=formal),
+            body=[ast.Expr() as body],
+            orelse=[],
+        ) if (left, right, body.value) == (statement_name, values_name, call):
+            sink = _sql_batch_function(loop, tree, parents)
+        case _:
+            return False
+    if sink is None or binding_occurrences(sink.body, formal):
+        return False
+    if _sql_batch_name_refs(sink, formal) != [loop.iter]:
+        return False
+    callers = _sql_batch_callers(index, path, tree, sink)
+    default_nodes = (*sink.args.defaults, *sink.args.kw_defaults)
+    return bool(callers) and all(
+        proof.arguments.get(formal) not in default_nodes
+        and _sql_bound_rows(proof.arguments.get(formal), site, tree, index, path)
+        for site, proof in callers
+    )
+
+
+def _sql_batch_function(node, tree, parents):
+    from .credential_role_constructor_provider import _scope_scope_bindings
+
+    function = _scope_scope_bindings(node, parents, tree)
+    return (
+        function
+        if function in tree.body and isinstance(function, ast.FunctionDef)
+        else None
+    )
+
+
+def _sql_batch_callers(index, path, tree, function):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import binding_occurrences
+    from .credential_role_identity_effects import resolve_source_identity_call
+    from .type_intent_provider_provenance import _module_has_dynamic_capability_access
+
+    if binding_occurrences(tree.body, function.name) != [function]:
+        return []
+    nodes = tuple(ast.walk(tree))
+    if _module_has_dynamic_capability_access(nodes):
+        return []
+    if not _sql_batch_imports_closed(index, path, audit):
+        return []
+    parents, callers = index.parents[path], []
+    for ref in nodes:
+        if not isinstance(ref, ast.Name) or ref.id != function.name:
+            continue
+        site = parents.get(id(ref))
+        if not isinstance(site, ast.Call) or site.func is not ref:
+            return []
+        proof = resolve_source_identity_call(site, path, index)
+        if (
+            proof is None
+            or proof.function is not function
+            or not proof.negative_binding_closed
+        ):
+            return []
+        callers.append((site, proof))
+    return callers
+
+
+def _sql_batch_imports_closed(index, path, audit):
+    from .import_context import _shell_import_aliases
+    from .runtime_audit_integrity import _conditional_module_name
+
+    module = _conditional_module_name(index.relative(path))
+    for other, snapshot in index.snapshots.items():
+        if other == path:
+            continue
+        package = _conditional_module_name(index.relative(other))
+        if other.name != "__init__.py":
+            package = package.rpartition(".")[0]
+        aliases = _shell_import_aliases(
+            tuple(ast.walk(snapshot)), audit, module, package=package
+        )
+        if aliases is None or any(
+            part in {module, path.stem}
+            or module.startswith(part + ".")
+            or part.startswith(module + ".")
+            for part in aliases.values()
+        ):
+            return False
+    return True
+
+
+def _sql_bound_rows(value, site, tree, index, path):
+    from .credential_role_constructor_provider import (
+        binding_dominates,
+        binding_occurrences,
+    )
+    from .credential_role_identity_effects import resolve_source_identity_call
+
+    if isinstance(value, (ast.List, ast.Tuple)):
+        return all(_sql_bound_row(row) for row in value.elts)
+    if not isinstance(value, ast.Name):
+        return False
+    parents = index.parents[path]
+    scope = _sql_batch_function(site, tree, parents)
+    if scope is None:
+        return False
+    match _sql_batch_assignment(binding_occurrences(scope.body, value.id), parents):
+        case (
+            ast.Assign(
+                targets=[ast.Tuple(elts=targets)], value=ast.Call() as build
+            ) as assignment
+        ):
+            if not binding_dominates(assignment, site, parents, scope):
+                return False
+        case _:
+            return False
+    names = [target.id for target in targets if isinstance(target, ast.Name)]
+    if len(set(names)) != len(targets):
+        return False
+    slot = names.index(value.id)
+    if set(_sql_batch_name_refs(scope, value.id)) != {value, targets[slot]}:
+        return False
+    provider = resolve_source_identity_call(build, path, index)
+    if (
+        provider is None
+        or provider.path != path
+        or not provider.negative_binding_closed
+    ):
+        return False
+    return _sql_batch_return_slot(provider.function, slot, len(names), parents)
+
+
+def _sql_batch_return_slot(producer, slot, arity, parents):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .review_integrity import _implementation_scope_nodes
+
+    returns = [
+        node
+        for node in _implementation_scope_nodes(producer)
+        if isinstance(node, ast.Return)
+    ]
+    if len(returns) != 1 or returns[0] is not producer.body[-1]:
+        return False
+    result = returns[0].value
+    if not isinstance(result, ast.Tuple) or len(result.elts) != arity:
+        return False
+    carrier = result.elts[slot]
+    if isinstance(carrier, (ast.List, ast.Tuple)):
+        return all(_sql_bound_row(row) for row in carrier.elts)
+    if not isinstance(carrier, ast.Name):
+        return False
+    match _sql_batch_assignment(
+        binding_occurrences(producer.body, carrier.id), parents
+    ):
+        case (
+            ast.Assign(
+                targets=[ast.Name() as target], value=ast.List(elts=rows)
+            ) as init
+        ):
+            if init not in producer.body or not all(
+                _sql_bound_row(row) for row in rows
+            ):
+                return False
+        case _:
+            return False
+    return all(
+        ref in (target, carrier) or _sql_batch_append(ref, parents, init, producer)
+        for ref in ast.walk(producer)
+        if isinstance(ref, ast.Name) and ref.id == carrier.id
+    )
+
+
+def _sql_batch_assignment(bindings, parents):
+    match bindings:
+        case [ast.Name(ctx=ast.Store()) as name]:
+            parent = parents.get(id(name))
+            return parents.get(id(parent)) if isinstance(parent, ast.Tuple) else parent
+    return None
+
+
+def _sql_batch_name_refs(scope, name):
+    return [
+        ref for ref in ast.walk(scope) if isinstance(ref, ast.Name) and ref.id == name
+    ]
+
+
+def _sql_batch_append(ref, parents, init, producer):
+    from .credential_role_constructor_provider import binding_dominates
+
+    attribute = parents.get(id(ref))
+    invocation = parents.get(id(attribute))
+    return (
+        isinstance(attribute, ast.Attribute)
+        and attribute.attr == "append"
+        and isinstance(invocation, ast.Call)
+        and invocation.func is attribute
+        and not invocation.keywords
+        and len(invocation.args) == 1
+        and _sql_bound_row(invocation.args[0])
+        and binding_dominates(init, invocation, parents, producer)
+    )
+
+
+def _sql_bound_row(row):
+    return (
+        isinstance(row, (ast.Tuple, ast.List))
+        and len(row.elts) == 2
+        and isinstance(row.elts[0], ast.Constant)
+        and type(row.elts[0].value) is str
+        and isinstance(row.elts[1], (ast.Tuple, ast.List))
+    )
+
+
 def _captured_credential_handler_authority(context, finding, handler, declaration):
     from .credential_endpoint_admission import _OperativeCredentialOrigin
     from .review_audits import _resolved_ast_name

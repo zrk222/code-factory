@@ -1,16 +1,7 @@
 """Deterministic quality checks for natural-language intent boundaries.
 
-AI-authored text is untrusted input even when it appears in a signed or
-hash-bound artifact.  A digest proves that text was not changed after it was
-captured; it does not prove that the text was specific enough to test.  This
-module supplies a small, dependency-free lexical guard for the places where
-FactoryLine accepts intent, promises, requirements, or acceptance evidence.
-
-The lexical guard is deliberately conservative and explainable: it rejects
-known placeholders/vague phrases and statements that lack an action or (when
-requested) an observable evidence signal. AST implementation contracts and
-SQL provenance helpers remain available here through their established APIs.
-A human still owns confirmation and an independent verifier still owns results.
+Intent summaries, implementation contracts and SQL provenance are
+checked independently of artifact signatures. A human still owns approval.
 """
 
 from __future__ import annotations
@@ -2790,6 +2781,8 @@ def unsafe_sql_driver(
     is_tainted,
 ):
     """Return the proven driver only when its SQL statement is request-tainted."""
+    from .captured_security_audit import captured_sql_batch_has_literal_statements
+
     driver = sql_sink_driver(
         call,
         aliases,
@@ -2810,7 +2803,12 @@ def unsafe_sql_driver(
     if driver is None:
         return None
     query = sql_statement_argument(call, driver, aliases, resolve_call)
-    return driver if is_tainted(query, requests, parameters, aliases) else None
+    if is_tainted(query, requests, parameters, aliases):
+        if driver != "sqlite3" or not captured_sql_batch_has_literal_statements(
+            call, query
+        ):
+            return driver
+    return None
 
 
 def scoped_unsafe_sql_driver(

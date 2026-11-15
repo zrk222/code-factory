@@ -16172,3 +16172,59 @@ def test_bounded_security_report_keeps_unknown_collection_read_only(tmp_path):
     assert report["audit_coverage"]["complete"] is True
     assert bounded_security_exit_code(args, report) == 2
     assert not (tmp_path / ".factory").exists()
+
+
+@pytest.mark.parametrize(
+    ("statement", "use", "expected"),
+    [
+        ("'SELECT name FROM catalog WHERE id = ?'", "", False),
+        ("candidate", "", True),
+        ("'SELECT name FROM catalog WHERE id = ?'", "    inspect_rows(batch)\n", True),
+        ("'SELECT name FROM catalog WHERE id = ?'", "    alias = apply\n", True),
+    ],
+)
+def test_sql_batch_keeps_statement_and_bound_values_separate(
+    tmp_path, statement, use, expected
+):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    source = (
+        "import sqlite3\n"
+        "def build(candidate):\n"
+        "    rows = []\n"
+        f"    rows.append(({statement}, (candidate,)))\n"
+        "    return None, rows\n"
+        "def apply(batch):\n"
+        "    connection = sqlite3.connect('local.db')\n"
+        "    with connection:\n"
+        "        cursor = connection.cursor()\n"
+        "        for statement, parameters in batch:\n"
+        "            cursor.execute(statement, parameters)\n"
+        "def main(candidate):\n"
+        "    ignored, batch = build(candidate)\n"
+        f"{use}"
+        "    apply(batch)\n"
+    )
+    (tmp_path / "batch.py").write_text(source, encoding="utf-8")
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert (
+        any(
+            row["raw_finding"]["code"] == "SECURITY_SQL_INJECTION"
+            for row in report["finding_tier_report"]["ledger"]
+        )
+        is expected
+    )
