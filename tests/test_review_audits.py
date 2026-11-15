@@ -16228,3 +16228,78 @@ def test_sql_batch_keeps_statement_and_bound_values_separate(
         )
         is expected
     )
+
+
+@pytest.mark.parametrize(
+    ("control", "active"),
+    [
+        ("closed", False),
+        ("field_read", True),
+        ("bulk_export", True),
+        ("reexport", True),
+        ("wrong_mount", True),
+        ("unmapped_launch", True),
+    ],
+)
+def test_bounded_scan_requires_closed_settings_uses(tmp_path, control, active):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    app = tmp_path / "backend" / "app"
+    app.mkdir(parents=True)
+    (app / "config.py").write_text(
+        "from pydantic_settings import BaseSettings\n"
+        "class ServiceOptions(BaseSettings):\n"
+        "    secret_key: str = 'unused-development-setting'\n"
+        "    title: str = 'catalog'\n\n"
+        "def load_options():\n"
+        "    return ServiceOptions()\n",
+        encoding="utf-8",
+    )
+    extra = {
+        "field_read": "load_options().secret_key\n",
+        "bulk_export": "accept_options(load_options())\n",
+        "reexport": "from app.alias import options as exported\naccept_options(exported())\n",
+    }.get(control, "")
+    (app / "main.py").write_text(
+        "from app.config import load_options\nlabel = load_options().title\n" + extra,
+        encoding="utf-8",
+    )
+    if control == "reexport":
+        (app / "alias.py").write_text(
+            "from app.config import load_options as options\n", encoding="utf-8"
+        )
+    target = "missing.main" if control == "unmapped_launch" else "app.main"
+    (app.parent / "Dockerfile").write_text(
+        "FROM python:3.11\nWORKDIR /srv\nCOPY app ./app\n"
+        f'CMD ["python", "-m", "uvicorn", "{target}:api"]\n',
+        encoding="utf-8",
+    )
+    mount = "    volumes: ['workspace:/srv']\n" if control == "wrong_mount" else ""
+    (tmp_path / "compose.yaml").write_text(
+        "services:\n  api:\n    build: ./backend\n" + mount, encoding="utf-8"
+    )
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+        ]
+    )
+    result = prepare_bounded_security_report(args)
+    assert result["audit_coverage"]["complete"] is True
+    assert result["finding_conservation"]["state"] == "PASS"
+    assert {"compose.yaml", "backend/Dockerfile"} <= {
+        entry["path"] for entry in result["oracle_context"]["configuration_sources"]
+    }
+    assert (
+        any(
+            item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+            for item in result["finding_tier_report"]["ledger"]
+        )
+        is active
+    )

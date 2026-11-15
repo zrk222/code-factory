@@ -1506,11 +1506,11 @@ def _literal_credential_candidate(node, target):
 def _literal_assignment_diagnostic(
     relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr, aliases=None
 ) -> dict[str, Any] | None:
-    from .captured_security_audit import captured_public_registry_label
+    from .captured_security_audit import captured_noncredential_assignment
 
     if not _literal_credential_candidate(node, target):
         return None
-    if captured_public_registry_label(node, target, aliases or {}):
+    if captured_noncredential_assignment(node, target, aliases or {}):
         return None
     return _security_finding(
         "SECURITY_HARDCODED_SECRET",

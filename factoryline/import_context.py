@@ -521,6 +521,9 @@ def application_configuration_names(paths=()):
             if isinstance(name, str)
             and re.fullmatch(r"\.github/workflows/[^/\\:\x00]+\.ya?ml", name)
         )
+    from .captured_security_audit import is_launch_configuration
+
+    names.update(filter(is_launch_configuration, paths))
     return frozenset(names)
 
 
@@ -548,6 +551,9 @@ def application_profile_configuration(root, read_source, limit):
             raise ValueError("workflow_inventory_exceeds_capture_profile")
     except (OSError, ValueError) as exc:
         return [], {"workflow_inventory": {"state": str(exc)}}, False
+    from .captured_security_audit import capture_launch_configuration
+
+    paths, read_source = capture_launch_configuration(root, read_source, limit, paths)
     for name in sorted(application_configuration_names(paths)):
         identity = {"path": name}
         try:
