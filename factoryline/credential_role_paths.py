@@ -2264,7 +2264,7 @@ def _conditional_https_url_binding(sink, url):
 
 def tls_security_finding(call, relative, node, aliases=None):
     """Preserve request TLS findings and add conditional legacy client findings."""
-    from urllib.parse import urlsplit
+    from .captured_security_audit import tls_transport_relation, bind_urllib_tls_context
     from .semantic_credential_sensor import (
         _SECURITY_EFFECT_CONTRACTS_BASELINE,
         _http_url_argument,
@@ -2278,7 +2278,6 @@ def tls_security_finding(call, relative, node, aliases=None):
         security_precondition_providers_confirmed,
         tls_verification_disabled,
     )
-    from .captured_security_audit import captured_module_text
     from .security_configuration import legacy_tls_verification_risk
 
     if tls_verification_disabled(call, node):
@@ -2291,6 +2290,8 @@ def tls_security_finding(call, relative, node, aliases=None):
             call=call,
         )
         aliases = aliases or {}
+        if call == "ssl._create_unverified_context":
+            return bind_urllib_tls_context(finding, node, aliases)
         contract = _SECURITY_EFFECT_CONTRACTS_BASELINE["SECURITY_TLS_VERIFY_DISABLED"]
         url = _http_url_argument(node, call)
         conditional_https = _conditional_https_url_binding(node, url)
@@ -2305,33 +2306,7 @@ def tls_security_finding(call, relative, node, aliases=None):
             None,
         )
         module = _security_module_scope(getattr(node, "_security_lexical_scope", None))
-        transport = None
-        url_value = None
-        match url:
-            case ast.Constant(value=value):
-                url_value = value
-            case ast.Name():
-                url_value = captured_module_text(node, url)
-        match url_value:
-            case str():
-                try:
-                    transport = (
-                        "static_https"
-                        if urlsplit(url_value).scheme.casefold() == "https"
-                        else None
-                    )
-                except (ValueError, UnicodeError):
-                    pass
-        match (transport, url):
-            case (
-                None,
-                ast.BinOp(op=ast.Add(), left=ast.Constant(value=str() as prefix)),
-            ) | (None, ast.JoinedStr(values=[ast.Constant(value=str() as prefix), *_])):
-                transport = (
-                    "https_capable"
-                    if prefix.casefold().startswith("https://")
-                    else None
-                )
+        transport = tls_transport_relation(url, node)
         transport = {None: transport, False: None}.get(
             conditional_https, conditional_https
         )

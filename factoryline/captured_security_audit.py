@@ -449,6 +449,223 @@ def captured_public_registry_label(node, target, aliases):
     )
 
 
+def tls_transport_relation(url, site):
+    """Classify the selected source URL without performing network I/O."""
+    from urllib.parse import urlsplit
+
+    match url:
+        case ast.Constant(value=str() as value):
+            pass
+        case ast.Name():
+            value = captured_module_text(site, url)
+        case (
+            ast.BinOp(op=ast.Add(), left=ast.Constant(value=str() as prefix))
+            | ast.JoinedStr(values=[ast.Constant(value=str() as prefix), *_])
+        ):
+            return "https_capable" if prefix.casefold().startswith("https://") else None
+        case _:
+            return None
+    try:
+        parsed = urlsplit(value) if value else None
+        return (
+            "static_https"
+            if parsed and parsed.scheme == "https" and parsed.hostname
+            else None
+        )
+    except (ValueError, UnicodeError):
+        return None
+
+
+def _local_transport_value(node, reference):
+    """Resolve a direct local allocation and its complete set of lexical uses."""
+    from .credential_role_constructor_provider import binding_occurrences
+
+    scope = getattr(node, "_security_lexical_scope", None)
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    if reference.id not in getattr(scope, "_security_local_names", ()):
+        return None
+    match binding_occurrences(scope.body, reference.id):
+        case [ast.Name() as definition]:
+            pass
+        case _:
+            return None
+    assignment = getattr(definition, "_security_parent", None)
+    if not (
+        isinstance(assignment, ast.Assign)
+        and assignment in scope.body
+        and assignment.targets == [definition]
+    ):
+        return None
+    uses = [
+        item
+        for item in ast.walk(scope)
+        if isinstance(item, ast.Name)
+        and item.id == reference.id
+        and item is not definition
+    ]
+    if any(
+        not isinstance(item.ctx, ast.Load)
+        or getattr(item, "_security_lexical_scope", None) is not scope
+        or item.lineno <= assignment.end_lineno
+        for item in uses
+    ):
+        return None
+    return assignment.value, uses
+
+
+def _urllib_context_uses(source):
+    """Follow an inline context or a definite local with no unrelated uses."""
+    parent = getattr(source, "_security_parent", None)
+    if isinstance(parent, ast.keyword):
+        return (source,)
+    if not (
+        isinstance(parent, ast.Assign)
+        and len(parent.targets) == 1
+        and isinstance(parent.targets[0], ast.Name)
+        and parent.value is source
+    ):
+        return ()
+    proof = _local_transport_value(source, parent.targets[0])
+    return proof[1] if proof is not None and proof[0] is source else ()
+
+
+def _stdlib_http_url(call, positional, keyword_only=()):
+    from .security_configuration import _expanded, _keyword
+
+    keywords = {item.arg for item in call.keywords}
+    if (
+        _expanded(call)
+        or len(call.args) > len(positional)
+        or len(keywords) != len(call.keywords)
+        or not keywords <= set(positional[len(call.args) :] + keyword_only)
+    ):
+        return None
+    return _keyword(call, "url", 0)
+
+
+def _urllib_request_transport(call, aliases):
+    from .security_configuration import _canonical
+
+    target = _stdlib_http_url(call, ("url", "data", "timeout"), ("context",))
+    if isinstance(target, ast.Name):
+        proof = _local_transport_value(call, target)
+        if proof is not None and proof[1] == [target]:
+            target = proof[0]
+    if (
+        isinstance(target, ast.Call)
+        and _canonical(target, aliases) == "urllib.request.Request"
+    ):
+        target = _stdlib_http_url(
+            target,
+            ("url", "data", "headers", "origin_req_host", "unverifiable", "method"),
+        )
+    return tls_transport_relation(target, call)
+
+
+def _urllib_context_consumer(reference, aliases):
+    from .security_configuration import _canonical, _expanded
+    from .semantic_credential_sensor import security_precondition_path_possible
+
+    keyword = getattr(reference, "_security_parent", None)
+    call = getattr(keyword, "_security_parent", None)
+    if not (
+        isinstance(keyword, ast.keyword)
+        and keyword.arg == "context"
+        and isinstance(call, ast.Call)
+        and not _expanded(call)
+        and sum(item.arg == "context" for item in call.keywords) == 1
+        and _canonical(call, aliases) == "urllib.request.urlopen"
+        and security_precondition_path_possible(call)
+    ):
+        return None
+    return call, _urllib_request_transport(call, aliases)
+
+
+def _stdlib_tls_providers_closed(source):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+    from .review_integrity import _security_module_scope
+
+    module = _security_module_scope(getattr(source, "_security_lexical_scope", None))
+    index = getattr(module, "_security_source_model", None)
+    return (
+        index is not None
+        and not any(
+            p.name in {"ssl.py", "urllib.py"} or "urllib" in p.parts
+            for p in index.snapshots
+        )
+        and not _captured_terminal_provider_mutation(
+            index,
+            audit,
+            "ssl._create_unverified_context",
+            additional_bindings=(
+                ("urllib.request.urlopen", None),
+                ("urllib.request.Request", None),
+            ),
+        )
+    )
+
+
+def bind_urllib_tls_context(finding, source, aliases):
+    """Bind a verified stdlib HTTPS consumer to its exact TLS context allocation."""
+    from .security_configuration import _canonical
+    from .semantic_credential_sensor import (
+        _SECURITY_EFFECT_CONTRACTS_BASELINE,
+        security_precondition_path_possible,
+        supported_security_precondition,
+    )
+
+    if (
+        source.args
+        or source.keywords
+        or _canonical(source, aliases) != "ssl._create_unverified_context"
+        or not security_precondition_path_possible(source)
+    ):
+        return finding
+    consumers = [
+        _urllib_context_consumer(ref, aliases) for ref in _urllib_context_uses(source)
+    ]
+    if not consumers or None in consumers:
+        return finding
+    selected = next(
+        ((call, relation) for call, relation in consumers if relation), None
+    )
+    if selected is None or not _stdlib_tls_providers_closed(source):
+        return finding
+    contract = _SECURITY_EFFECT_CONTRACTS_BASELINE[finding["code"]]
+    call, relation = selected
+    witness = {
+        "effect_kind": contract["effect_kind"],
+        "source_span": [
+            source.lineno,
+            source.col_offset,
+            source.end_lineno,
+            source.end_col_offset,
+        ],
+        "effect_facts": {
+            "provider_id": "urllib.request.urlopen",
+            "verification_setting": "unverified_context",
+            "transport_relation": relation,
+            "https_operation_span": [
+                call.lineno,
+                call.col_offset,
+                call.end_lineno,
+                call.end_col_offset,
+            ],
+        },
+    }
+    finding["facts"]["security_precondition"] = supported_security_precondition(
+        source,
+        contract["source_role"],
+        contract["consumer_role"],
+        witness,
+    )
+    return finding
+
+
 def _captured_credential_handler_authority(context, finding, handler, declaration):
     from .credential_endpoint_admission import _OperativeCredentialOrigin
     from .review_audits import _resolved_ast_name

@@ -14179,6 +14179,63 @@ def test_tls_transport_requires_actual_module_value(tmp_path, url, argument, tie
 
 
 @pytest.mark.parametrize(
+    "scheme, intervening, consumer, expected",
+    [
+        ("https", "", "return urllib.request.urlopen(req, context=ctx)\n", True),
+        ("http", "", "return urllib.request.urlopen(req, context=ctx)\n", False),
+        (
+            "https",
+            "ctx = replacement\n",
+            "return urllib.request.urlopen(req, context=ctx)\n",
+            False,
+        ),
+        (
+            "https",
+            "req.full_url = other_url\n",
+            "return urllib.request.urlopen(req, context=ctx)\n",
+            False,
+        ),
+        ("https", "", "return ctx\n", False),
+        ("https", "", "return urllib.request.urlopen(req, ctx)\n", False),
+        (
+            "https",
+            "urllib.request.urlopen = replacement\n",
+            "return urllib.request.urlopen(req, context=ctx)\n",
+            False,
+        ),
+    ],
+)
+def test_stdlib_tls_context_requires_bound_https_consumer(
+    tmp_path, scheme, intervening, consumer, expected
+):
+    from textwrap import indent
+
+    (tmp_path / "app.py").write_text(
+        "import ssl\nimport urllib.request\n"
+        "def read():\n"
+        + indent(
+            f"req = urllib.request.Request('{scheme}://example.invalid/data')\n"
+            "ctx = ssl._create_unverified_context()\n" + intervening + consumer,
+            "    ",
+        ),
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    rows = [
+        r
+        for r in report["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_TLS_VERIFY_DISABLED"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["tier"] == ("SUPPORTED_DEFECT" if expected else "NEEDS_CONTEXT")
+
+
+@pytest.mark.parametrize(
     "fixture,type_path",
     [
         ("jwt", "jwt.api_jwt.PyJWT"),
