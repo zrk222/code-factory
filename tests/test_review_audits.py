@@ -925,6 +925,70 @@ def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expect
                 )
 
 
+_UPLOAD_COMPONENT_TESTS = tuple(
+    f"{component!r} in name" for component in ("/", "\\", "..", ":")
+)
+
+
+@pytest.mark.parametrize(
+    "guard, supported",
+    [
+        ("if not uploaded:\n        return", True),
+        ("if not name:\n        return", True),
+        ("if name not in ('first.pdf', 'second.pdf'):\n        return", False),
+        (
+            "if "
+            + " or ".join(("not name", *_UPLOAD_COMPONENT_TESTS))
+            + ":\n        return",
+            False,
+        ),
+        (
+            "if "
+            + " or ".join(("unknown()", *_UPLOAD_COMPONENT_TESTS))
+            + ":\n        return",
+            False,
+        ),
+        (
+            "if "
+            + " or ".join(("unknown()", *_UPLOAD_COMPONENT_TESTS[:-1]))
+            + ":\n        return",
+            True,
+        ),
+        (
+            "if " + " and ".join(_UPLOAD_COMPONENT_TESTS) + ":\n        return",
+            True,
+        ),
+        (
+            "if os.path.commonpath([base, path]) == base:\n"
+            "        uploaded.save(path)\n        return\n    return",
+            False,
+        ),
+    ],
+)
+def test_flask_upload_existence_checks_do_not_establish_containment(
+    tmp_path, guard, supported
+):
+    source = (
+        "import os\n"
+        "from flask import request\n"
+        "def upload():\n"
+        "    uploaded = request.files.get('file')\n"
+        "    base = 'uploads'\n"
+        "    name = uploaded.filename\n"
+        "    path = os.path.join(base, name)\n"
+        f"    {guard}\n"
+        + ("    uploaded.save(path)\n" if "commonpath" not in guard else "")
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    [row] = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_PATH_TRAVERSAL"
+    ]
+    assert (row["tier"] == "SUPPORTED_DEFECT") is supported
+
+
 def test_security_scan_synthetic_django_password_comparison(tmp_path):
     source = (
         "from django.http import HttpResponse\n"
