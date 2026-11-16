@@ -30,6 +30,11 @@ _UNRESOLVED_CONFIG_REASONS = {
 }
 
 
+def pytest_collection_authoritative(identity):
+    """Reject fixture authority for unknown or discovery-only collection."""
+    return (identity or {}).get("collection_state") not in {"UNKNOWN", "DISCOVERY_ONLY"}
+
+
 @contextmanager
 def advisory_collection_context(enabled=True):
     """Let repository scans retain static results when collection is unknown."""
@@ -195,7 +200,7 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
             identity = _pytest_collection_source_identity(
                 root, identity, source_files, allow_unknown=allow_unknown
             )
-            if identity.get("collection_state") == "UNKNOWN":
+            if not pytest_collection_authoritative(identity):
                 patterns = set()
             return patterns, identity
     patterns, identity = (
@@ -212,7 +217,7 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
         root, identity, source_files, allow_unknown=allow_unknown
     )
     return (
-        set() if identity.get("collection_state") == "UNKNOWN" else patterns
+        set() if not pytest_collection_authoritative(identity) else patterns
     ), identity
 
 
@@ -232,13 +237,20 @@ def _pytest_collection_source_identity(
 
     sources = []
     hooks = []
+    roots = identity.get("static_testpaths", ())
+    profile = identity.get("static_discovery")
+    discovered, doctests = [], []
     settings = _pytest_collection_settings(identity)
     files = _security_source_files(root) if source_files is None else source_files
     for path in files:
         relative = path.relative_to(root).as_posix()
         is_conftest = path.name == "conftest.py"
         is_test_module = _pytest_file_matches(relative, settings["python_files"])
-        if not is_conftest and not is_test_module:
+        in_declared_root = any(relative.startswith(p + "/") for p in roots)
+        is_doctest_module = (
+            profile == "doctest" and in_declared_root and not is_conftest
+        )
+        if not (is_conftest or is_test_module or is_doctest_module):
             continue
         data = None
         try:
@@ -263,6 +275,16 @@ def _pytest_collection_source_identity(
                 )
             continue
         found = _pytest_collection_hook_names(tree, is_conftest, is_test_module)
+        discovered.extend(
+            _pytest_discovery_source(
+                relative, data, in_declared_root and is_test_module
+            )
+        )
+        doctests.extend(
+            _pytest_discovery_source(
+                relative, data, is_doctest_module and _pytest_has_literal_doctest(tree)
+            )
+        )
         plugin_assignment = (is_conftest or is_test_module) and any(
             _pytest_plugin_declaration_active(node) for node in tree.body
         )
@@ -295,8 +317,55 @@ def _pytest_collection_source_identity(
             "Cannot determine pytest test collection: custom collection hooks "
             "or pytest plugins are unsupported."
         )
+    return _pytest_source_collection_report(
+        identity, hooks, sources, discovered, doctests
+    )
+
+
+def _pytest_discovery_source(relative, raw, selected):
+    return (
+        [{"path": relative, "sha256": hashlib.sha256(raw).hexdigest()}]
+        if selected
+        else []
+    )
+
+
+def _pytest_has_literal_doctest(tree):
+    return any(
+        line.lstrip().startswith(">>> ")
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        )
+        for line in (ast.get_docstring(node, clean=False) or "").splitlines()
+    )
+
+
+def _pytest_source_collection_report(identity, hooks, sources, discovered, doctests):
     input_state = identity.get("state")
     reason = _UNRESOLVED_CONFIG_REASONS.get(input_state)
+    roots = identity.get("static_testpaths", ())
+    if (
+        roots
+        and not hooks
+        and all(
+            any(row["path"].startswith(p + "/") for row in (*discovered, *doctests))
+            for p in roots
+        )
+    ):
+        return {
+            **identity,
+            "state": "declared-static",
+            "collection_state": "DISCOVERY_ONLY",
+            "mode": "static_pytest_discovery",
+            "reason": f"{identity['static_discovery']}_execution_unverified",
+            "python_files": [],
+            "python_functions": [],
+            "python_classes": [],
+            "static_test_sources": sorted(discovered, key=lambda row: row["path"]),
+            "static_doctest_sources": sorted(doctests, key=lambda row: row["path"]),
+            "conftest_sources": sources,
+        }
     unknown = bool(hooks or reason)
     if unknown:
         reason = reason or _pytest_collection_hook_gap_reason(hooks)
@@ -432,6 +501,11 @@ def _pytest_config_data(data, relative, section, defaults):
     if configured is _UNSUPPORTED_PYTEST_CONFIG:
         return defaults, {**identity, "state": "unsupported"}
     if configured is _UNMODELED_BUILTIN_COLLECTION:
+        options = _pytest_configuration_options(text, section)
+        discovery = _pytest_static_discovery_options(options)
+        if discovery is not None:
+            identity.update(_pytest_patterns_from_options(options))
+            identity["static_discovery"], identity["static_testpaths"] = discovery
         return defaults, {**identity, "state": "unmodeled-builtin-collection"}
     if configured is _ABSENT_PYTEST_SECTION:
         if relative in {"pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini"}:
@@ -2852,6 +2926,49 @@ def _pytest_custom_collection_state(options):
     if _pytest_config_uses_custom_collection({**options, "addopts": remaining}):
         return _UNSUPPORTED_PYTEST_CONFIG
     return _UNMODELED_BUILTIN_COLLECTION
+
+
+def _pytest_static_discovery_options(options):
+    """Select literal roots only when no other option changes test discovery."""
+    if set(options) - {
+        "addopts",
+        "doctest_optionflags",
+        "filterwarnings",
+        "minversion",
+        "python_classes",
+        "python_files",
+        "python_functions",
+        "strict",
+        "testpaths",
+    }:
+        return None
+    flags = _pytest_pattern_list(options.get("addopts"))
+    paths = _pytest_pattern_list(options.get("testpaths"))
+    if (
+        not isinstance(flags, list)
+        or not isinstance(paths, list)
+        or not 0 < len(paths) <= 64
+    ):
+        return None
+    if not all(
+        isinstance(path, str)
+        and len(path) <= 240
+        and re.fullmatch(
+            r"[A-Za-z0-9_-]+(?:[.][A-Za-z0-9_-]+)*(?:/[A-Za-z0-9_-]+(?:[.][A-Za-z0-9_-]+)*)*",
+            path,
+        )
+        for path in paths
+    ):
+        return None
+    # A TOML array is already tokenized; neither embedded whitespace nor
+    # unexpected options may be silently interpreted as reporting flags.
+    reporting = {"-ra", "-q", "-v", "--quiet", "--verbose", "--disable-warnings"}
+    values = [flag for flag in flags if flag not in reporting]
+    if values in (["--import-mode=importlib"], ["--import-mode", "importlib"]):
+        return "importlib", sorted(set(paths))
+    if values == ["--doctest-modules"]:
+        return "doctest", sorted(set(paths))
+    return None
 
 
 def _pytest_pattern_list(value):

@@ -400,7 +400,7 @@ def _unknown_collection(core):
     oracle = core.get("oracle_context")
     capture = oracle.get("pytest_collection") if isinstance(oracle, dict) else None
     return isinstance(capture, dict) and (
-        capture.get("collection_state") == "UNKNOWN"
+        capture.get("collection_state") in {"UNKNOWN", "DISCOVERY_ONLY"}
         or capture.get("capture_state", "stable_pre_post") != "stable_pre_post"
     )
 

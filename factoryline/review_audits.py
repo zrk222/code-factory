@@ -29,6 +29,7 @@ import time
 from typing import Any
 
 from .pytest_collection_audit import (
+    pytest_collection_authoritative,
     configparser as configparser,
     fnmatchcase as fnmatchcase,
     tomllib as tomllib,
@@ -3993,6 +3994,7 @@ def _project_oracle_context(
     ty_identity = config_identity["typecheck"].get("ty", {})
     ty_sources = {root / item for item in ty_identity.get("selected", [])}
     import_views = contracts.new_import_views(len(files))
+    collection_known = pytest_collection_authoritative(collection_identity)
     contexts, edges = _build_oracle_context(
         root,
         files,
@@ -4000,8 +4002,7 @@ def _project_oracle_context(
         typecheck_sources,
         ty_sources,
         import_views,
-        collection_known=(collection_identity or {}).get("collection_state")
-        != "UNKNOWN",
+        collection_known=collection_known,
     )
     type_intent_hollow.bind_negative_checker_context(
         root, contexts, config_identity["typecheck"]
@@ -4013,7 +4014,7 @@ def _project_oracle_context(
         bind_application_fixture_context,
     )
 
-    if (collection_identity or {}).get("collection_state") != "UNKNOWN":
+    if collection_known:
         bind_django_fixture_context(
             root,
             snapshots,
@@ -4043,8 +4044,7 @@ def _project_oracle_context(
             imports=resolved,
             source_index=fixture_source,
             configuration_valid=config_cacheable,
-            collection_known=(collection_identity or {}).get("collection_state")
-            != "UNKNOWN",
+            collection_known=collection_known,
         )
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved

@@ -303,6 +303,12 @@ def _print_repo_scan(result: dict, code: int) -> None:
         print(
             f"collection: UNKNOWN ({collection.get('path') or 'collection hooks'}; {collection.get('reason', 'unmodeled collection')}); static findings retained, test-oracle authority unavailable."
         )
+    elif collection.get("collection_state") == "DISCOVERY_ONLY":
+        print(
+            f"collection: {len(collection['static_test_sources'])} test modules and "
+            f"{len(collection['static_doctest_sources'])} Python doctest modules matched static discovery; "
+            "imports and test-oracle authority unverified."
+        )
     print(
         "scope    : Python AST static checks; JS/shell and other languages require external workers."
     )

@@ -898,7 +898,8 @@ def _security_scan_pytest_collection(
         from .pytest_collection_audit import advisory_collection_context
 
         with advisory_collection_context(
-            identity.get("mode") == "static_without_collection"
+            identity.get("mode")
+            in {"static_without_collection", "static_pytest_discovery"}
         ):
             current_patterns, current_identity = _pytest_collection_config(
                 root, allow_unknown=identity.get("mode") == "security_only"
@@ -932,6 +933,8 @@ def _security_scan_pytest_collection(
     return (
         "PYTEST_COLLECTION_UNKNOWN"
         if current_identity.get("collection_state") == "UNKNOWN"
+        else "PYTEST_COLLECTION_DISCOVERY_ONLY"
+        if current_identity.get("collection_state") == "DISCOVERY_ONLY"
         else "CURRENT_PYTEST_COLLECTION_VERIFIED"
     )
 
@@ -1059,7 +1062,8 @@ def _security_scan_projection(
         "candidate_freshness": freshness,
         "source_freshness": (
             "CURRENT_SOURCE_HASHES_VERIFIED"
-            if freshness == "PYTEST_COLLECTION_UNKNOWN"
+            if freshness
+            in {"PYTEST_COLLECTION_UNKNOWN", "PYTEST_COLLECTION_DISCOVERY_ONLY"}
             else freshness
         ),
         "source_count": coverage["files_audited"],

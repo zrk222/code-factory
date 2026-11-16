@@ -1385,10 +1385,12 @@ def _apply_security_scan_report_metadata(
             tenant_read_configuration
         )
     if collection_identity is not None:
+        from .pytest_collection_audit import pytest_collection_authoritative
+
         core["oracle_context"]["static_pytest_collection"] = deepcopy(
             collection_identity
         )
-        if collection_identity.get("collection_state") == "UNKNOWN":
+        if not pytest_collection_authoritative(collection_identity):
             core["oracle_context"]["pytest_collection"] = deepcopy(collection_identity)
             core["state"] = "INCOMPLETE"
 
