@@ -1603,6 +1603,30 @@ def test_tier314_flask_login_session_accepts_cross_module_signing_default():
     )
 
 
+@pytest.mark.parametrize("mutation", [None, "rewritten-key", "wrong-receiver"])
+def test_config_reader_binds_factory_local_flask_instance(mutation):
+    from textwrap import indent
+
+    files = _flask_login_config_sources()
+    files["config.py"] = "class Config:\n" + indent(files["config.py"], "    ")
+    prelude, body = files["app.py"].split("app = Flask", 1)
+    body = "app = Flask" + body.replace("from_object('config')", "from_object(Config)")
+    if mutation == "rewritten-key":
+        body += "Config.SECRET_KEY = replacement\n"
+    elif mutation == "wrong-receiver":
+        body = body.replace(
+            "app.config.from_object(Config)", "unknown.config.from_object(Config)"
+        )
+    files["app.py"] = (
+        prelude.replace("from flask import *", "from flask import Flask")
+        + "from config import Config\n\ndef create_app():\n"
+        + indent(body + "return app\n", "    ")
+        + "\napplication = create_app()\n"
+    )
+    row = _captured_secret_tiers(files, "config.py")["ledger"][0]
+    assert row["tier"] == ("SUPPORTED_DEFECT" if mutation is None else "NEEDS_CONTEXT")
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

@@ -1372,27 +1372,23 @@ def _flask_config_class_closed(context, path, scope, key, seen=()):
 
 
 def _flask_config_reader_argument(node, parents, graph, path):
+    from .credential_role_identity_effects import _enclosing_function
+
     call = parents.get(id(node))
-    if (
-        not isinstance(call, ast.Call)
-        or len(call.args) != 1
-        or call.args[0] is not node
-        or call.keywords
-    ):
+    if not isinstance(call, ast.Call) or call.args != [node] or call.keywords:
         return False
-    function = call.func
-    if not (
-        isinstance(function, ast.Attribute)
-        and function.attr == "from_object"
-        and isinstance(function.value, ast.Attribute)
-        and function.value.attr == "config"
-    ):
-        return False
-    receiver = graph.binding(path, function.value.value)
+    match call.func:
+        case ast.Attribute(
+            attr="from_object",
+            value=ast.Attribute(attr="config", value=receiver),
+        ):
+            selected = graph.binding(path, receiver, _enclosing_function(call, parents))
+        case _:
+            return False
     return (
-        receiver is not None
-        and receiver["framework"] == "flask"
-        and receiver["kind"] == "application"
+        selected is not None
+        and selected["framework"] == "flask"
+        and selected["kind"] == "application"
     )
 
 
