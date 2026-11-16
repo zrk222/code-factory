@@ -1161,7 +1161,7 @@ def resolve_import_source(
     source_index=None,
     package_binding_exclude=None,
 ):
-    """Resolve one source candidate, retaining legacy live-path behavior."""
+    """Honor captured sibling-package priority and preserve cross-root ambiguity."""
     if captured:
         if not captured_import_inventory_matches(root, path, node, module, eligible):
             return None
@@ -1183,6 +1183,12 @@ def resolve_import_source(
         captured_inventory=eligible if captured else None,
     ):
         selected = choice if captured else live_import_path(choice, root_abs)
+        if (
+            captured
+            and choice.name != "__init__.py"
+            and choice.with_suffix("") / "__init__.py" in sources
+        ):
+            continue
         if selected in sources and captured_import_path(root_abs, selected):
             matches[kind].add(sources[selected])
     return _select_resolved_import(
@@ -1583,17 +1589,10 @@ def live_import_path(choice, root):
 def unique_import_source(matches, *, strict):
     """Reject ambiguity and cross-root child/package contradictions."""
     children, packages = matches["child"], matches["package"]
-    if strict and len(packages) > 1:
+    if strict and children and packages:
         return None
-    if children:
-        if len(children) != 1:
-            return None
-        child = next(iter(children))
-        if strict and packages:
-            # Paths cannot establish which existing package attribute is exported.
-            return None
-        return child
-    return next(iter(packages)) if len(packages) == 1 else None
+    candidates = children or packages
+    return next(iter(candidates)) if len(candidates) == 1 else None
 
 
 def import_resolution_helpers():
