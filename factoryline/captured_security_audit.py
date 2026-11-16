@@ -2143,11 +2143,16 @@ def _launch_unread_field(index, path, module, owner, name):
     )
 
 
+_SETTINGS_CONFIG_KEYS = {"env_file", "env_file_encoding", "case_sensitive", "extra"}
+_SETTINGS_OPAQUE_MODULES = {"importlib", "runpy", "__main__"}
+
+
 def _launch_settings_fields(symbols, path, owner):
     """Allow plain data fields; dynamic class features have no negative authority."""
     if owner.decorator_list or owner.keywords:
         return None
     fields = {}
+    configurations = []
     for statement in owner.body:
         match statement:
             case ast.Expr(value=ast.Constant(value=str())):
@@ -2163,11 +2168,12 @@ def _launch_settings_fields(symbols, path, owner):
             case ast.Assign(
                 targets=[ast.Name(id="model_config")], value=ast.Call() as call
             ):
-                if not _launch_safe_settings_config(symbols, path, call):
-                    return None
+                configurations.append(_launch_safe_settings_config(symbols, path, call))
+            case ast.ClassDef(name="Config") as config:
+                configurations.append(_legacy_literal_settings_config(config))
             case _:
                 return None
-    return fields
+    return fields if len(configurations) <= 1 and all(configurations) else None
 
 
 def _plain_settings_field(symbols, path, fields, name, annotation, value):
@@ -2177,11 +2183,34 @@ def _plain_settings_field(symbols, path, fields, name, annotation, value):
         _settings_annotation_node(symbols, path, item) for item in ast.walk(annotation)
     ):
         return False
+    if isinstance(value, ast.Call):
+        value = _literal_settings_default(symbols, path, value)
+        if value is None:
+            return False
     try:
         ast.literal_eval(value)
     except (ValueError, TypeError, SyntaxError, RecursionError):
         return False
     return True
+
+
+def _literal_settings_default(symbols, path, call):
+    from .mock_fixture_provenance import _app_expression_name
+
+    match call:
+        case ast.Call(
+            func=provider,
+            args=[],
+            keywords=[
+                ast.keyword(arg="default_factory", value=ast.Lambda() as factory)
+            ],
+        ) if _app_expression_name(symbols, path, provider) == "pydantic.Field":
+            if not any(ast.iter_child_nodes(factory.args)) and not any(
+                isinstance(node, (ast.Call, ast.Name))
+                for node in ast.walk(factory.body)
+            ):
+                return factory.body
+    return None
 
 
 def _settings_annotation_node(symbols, path, item):
@@ -2207,17 +2236,37 @@ def _settings_annotation_node(symbols, path, item):
 def _launch_safe_settings_config(symbols, path, call):
     from .mock_fixture_provenance import _app_expression_name
 
-    allowed = {"env_file", "env_file_encoding", "case_sensitive", "extra"}
     return (
         not call.args
         and len(call.keywords) == len({key.arg for key in call.keywords})
         and _app_expression_name(symbols, path, call.func)
         == "pydantic_settings.SettingsConfigDict"
         and all(
-            key.arg in allowed and isinstance(key.value, ast.Constant)
+            key.arg in _SETTINGS_CONFIG_KEYS and isinstance(key.value, ast.Constant)
             for key in call.keywords
         )
     )
+
+
+def _legacy_literal_settings_config(config):
+    if config.bases or config.keywords or config.decorator_list:
+        return False
+    keys = set()
+    for statement in config.body:
+        match statement:
+            case ast.Expr(value=ast.Constant(value=str())):
+                continue
+            case ast.Assign(
+                targets=[ast.Name(id=name)], value=ast.Constant(value=value)
+            ) if name in _SETTINGS_CONFIG_KEYS and name not in keys:
+                if name == "case_sensitive" and type(value) is not bool:
+                    return False
+                if name != "case_sensitive" and type(value) not in {str, type(None)}:
+                    return False
+                keys.add(name)
+            case _:
+                return False
+    return True
 
 
 def _launch_settings_carrier(symbols, path, tree, owner):
@@ -2273,11 +2322,7 @@ def _settings_names(tree, name):
 def _settings_read_set(
     index, symbols, path, root, owner_tree, carrier, owner, fields, name
 ):
-    from . import review_audits as audit
-    from .credential_role_constructor_provider import (
-        _captured_terminal_provider_mutation,
-        binding_occurrences,
-    )
+    from .credential_role_constructor_provider import binding_occurrences
     from .runtime_audit_integrity import _conditional_module_name
 
     carrier_name, definition = carrier
@@ -2292,11 +2337,6 @@ def _settings_read_set(
         )
         if name
     }
-    if any(
-        "pydantic_settings" in p.parts or p.name == "pydantic_settings.py"
-        for p in index.snapshots
-    ):
-        return False
     singleton = definition if isinstance(definition, ast.Name) else None
     if singleton is not None:
         fields = {
@@ -2307,12 +2347,15 @@ def _settings_read_set(
         }
     read, reexports = set(), {}
     for file, tree in index.snapshots.items():
-        if not index.validate(file):
-            return False
-        aliases = _settings_consumer_aliases(
-            symbols, file, tree, canonical, carrier_name, owner
-        )
-        if aliases is None:
+        if (
+            not index.validate(file)
+            or (
+                aliases := _settings_consumer_aliases(
+                    symbols, file, tree, canonical, carrier_name, owner
+                )
+            )
+            is None
+        ):
             return False
         if file == path:
             aliases.add(carrier_name)
@@ -2326,13 +2369,29 @@ def _settings_read_set(
         index, symbols, root, reexports
     ):
         return False
+    return _settings_source_providers_stable(index)
+
+
+def _settings_source_providers_stable(index):
+    """Reject writes to provider namespaces, including lazy exports and base classes."""
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+
+    providers = ("pydantic_settings", "pydantic", "pydantic_core")
+    if any(
+        provider in path.parts or path.name == provider + ".py"
+        for path in index.snapshots
+        for provider in providers
+    ):
+        return False
     return not _captured_terminal_provider_mutation(
         index,
         audit,
-        "pydantic_settings.BaseSettings",
-        additional_bindings=(
-            ("pydantic_settings.SettingsConfigDict", None),
-            ("functools.lru_cache", None),
+        providers[0],
+        additional_bindings=tuple(
+            (name, None) for name in (*providers[1:], "functools.lru_cache")
         ),
     )
 
@@ -2466,7 +2525,7 @@ def _settings_opaque_access(node):
     if isinstance(node, ast.Attribute):
         return node.attr in _SETTINGS_OPAQUE_NAMES
     if isinstance(node, ast.ImportFrom):
-        return node.module in {"importlib", "runpy"} or any(
+        return node.module in _SETTINGS_OPAQUE_MODULES or any(
             alias.name == "*"
             or alias.name in _SETTINGS_OPAQUE_NAMES
             or node.module == "sys"
@@ -2475,7 +2534,7 @@ def _settings_opaque_access(node):
         )
     if isinstance(node, ast.Import):
         return any(
-            alias.name.partition(".")[0] in {"importlib", "runpy"}
+            alias.name.partition(".")[0] in _SETTINGS_OPAQUE_MODULES
             for alias in node.names
         )
     return (
@@ -2511,9 +2570,63 @@ def _settings_allocation_uses(reference, tree, parents, singleton):
     scope = _scope_scope_bindings(parent, parents, tree)
     if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
         return ()
-    if parent not in scope.body or binding_occurrences(scope.body, name) != [target]:
+    if binding_occurrences(scope.body, name) != [target]:
         return ()
-    return tuple(_settings_names(scope, name))
+    reads = tuple(_settings_names(scope, name))
+    if parent in scope.body:
+        return reads
+    return _settings_guarded_alias_reads(scope, parent, parents, reads, name)
+
+
+def _settings_guarded_alias_reads(scope, allocation, parents, reads, name):
+    from .credential_role_constructor_provider import (
+        _scope_scope_bindings,
+        binding_occurrences,
+    )
+    from .intent_quality import _canary_main_guard_test
+
+    guard = parents.get(id(allocation))
+    if not (
+        isinstance(scope, ast.Module)
+        and isinstance(guard, ast.If)
+        and guard in scope.body
+        and not guard.orelse
+        and allocation in guard.body
+        and _canary_main_guard_test(guard.test)
+        and not binding_occurrences(scope.body, "__name__")
+    ):
+        return ()
+    guarded_nodes = set(ast.walk(guard))
+    local_reads = []
+    for ref in reads:
+        lexical_scope = _scope_scope_bindings(ref, parents, scope)
+        if lexical_scope is scope:
+            if ref not in guarded_nodes or ref.lineno <= allocation.end_lineno:
+                return ()
+            local_reads.append(ref)
+        elif not _settings_separate_local_read(lexical_scope, ref, name, parents):
+            return ()
+    return tuple(local_reads)
+
+
+def _settings_separate_local_read(scope, ref, name, parents):
+    from .credential_role_constructor_provider import (
+        binding_dominates,
+        binding_occurrences,
+    )
+
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) or any(
+        isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names
+        for node in ast.walk(scope)
+    ):
+        return False
+    match binding_occurrences(scope.body, name):
+        case [ast.Name(ctx=ast.Store()) as binding]:
+            assignment = parents.get(id(binding))
+            return assignment in scope.body and binding_dominates(
+                assignment, ref, parents, scope
+            )
+    return False
 
 
 def _settings_member_read(node, fields, parents, reads):

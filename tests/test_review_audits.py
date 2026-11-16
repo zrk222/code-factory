@@ -16377,23 +16377,38 @@ def test_sql_batch_keeps_statement_and_bound_values_separate(
 
 
 @pytest.mark.parametrize(
-    ("control", "active"),
+    ("control", "active", "singleton"),
     [
-        ("closed", False),
-        ("field_read", True),
-        ("bulk_export", True),
-        ("rebound", True),
-        ("global_rebound", True),
-        ("package_opaque", True),
-        ("package_plain", False),
-        ("registry_namespace", True),
-        ("reexport", True),
-        ("wrong_mount", True),
-        ("unmapped_launch", True),
-        ("case_alias_launch", True),
+        (control, active, singleton)
+        for singleton in (False, True)
+        for control, active in (
+            ("closed", False),
+            ("field_read", True),
+            ("bulk_export", True),
+            ("rebound", True),
+            ("global_rebound", True),
+            ("package_opaque", True),
+            ("package_plain", False),
+            ("registry_namespace", True),
+            ("reexport", True),
+            ("wrong_mount", True),
+            ("unmapped_launch", True),
+            ("case_alias_launch", True),
+        )
+    ]
+    + [
+        ("guarded", False, False),
+        ("guarded_read", True, False),
+        ("guarded_escape", True, False),
+        ("guarded_preallocation", True, False),
+        ("guarded_default", True, False),
+        ("guarded_dynamic_factory", True, False),
+        ("guarded_mutated_field", True, False),
+        ("guarded_mutated_provider", True, False),
+        ("guarded_mutated_provider_base", True, False),
+        ("guarded_double_config", True, False),
     ],
 )
-@pytest.mark.parametrize("singleton", [False, True])
 def test_bounded_scan_requires_closed_settings_uses(
     tmp_path, control, active, singleton
 ):
@@ -16413,11 +16428,25 @@ def test_bounded_scan_requires_closed_settings_uses(
     )
     if package:
         carrier += f"local_label = {access}.title\n"
+    config = ""
+    if control.startswith("guarded"):
+        default = (
+            "load_origins()" if control == "guarded_dynamic_factory" else "['local']"
+        )
+        config = (
+            f"    origins: list[str] = pydantic.Field(default_factory=lambda: {default})\n"
+            "    class Config:\n"
+            "        env_file = '.env'\n"
+            "        case_sensitive = False\n"
+        )
+        if control == "guarded_double_config":
+            config += "    model_config = SettingsConfigDict(env_file='.env')\n"
     (app / ("__init__.py" if package else "config.py")).write_text(
-        "from pydantic_settings import BaseSettings\n"
+        "import pydantic\n"
+        "from pydantic_settings import BaseSettings, SettingsConfigDict\n"
         "class ServiceOptions(BaseSettings):\n"
         "    secret_key: str = 'unused-development-setting'\n"
-        "    title: str = 'catalog'\n\n" + carrier,
+        "    title: str = 'catalog'\n" + config + "\n" + carrier,
         encoding="utf-8",
     )
     extra = {
@@ -16436,8 +16465,35 @@ def test_bounded_scan_requires_closed_settings_uses(
             else "accept_options(exposed_options())\n"
         ),
     }.get(control, "")
+    reads = f"label = {access}.title\n"
+    if control.startswith("guarded"):
+        reads = (
+            f"def label():\n    options = {access}\n    return options.title\n"
+            "if __name__ == '__main__':\n"
+            + (
+                "    print(options.title)\n"
+                if control == "guarded_preallocation"
+                else ""
+            )
+            + f"    options = {access}\n"
+            + (
+                "    print(options.secret_key)\n"
+                if control == "guarded_read"
+                else "    print(options.title)\n"
+            )
+        )
+        extra = {
+            "guarded_escape": "accept_options(options)\n",
+            "guarded_default": "def export(settings=options):\n    return settings\n",
+            "guarded_mutated_field": "import pydantic\npydantic.Field = replacement\n",
+            "guarded_mutated_provider": "from pydantic import fields\nfields.Field = replacement\n",
+            "guarded_mutated_provider_base": (
+                "from pydantic_settings.main import BaseSettings\n"
+                "BaseSettings.settings_customise_sources = replacement\n"
+            ),
+        }.get(control, "")
     (app / "main.py").write_text(
-        f"from {module} import {member}\nlabel = {access}.title\n" + extra,
+        f"from {module} import {member}\n" + reads + extra,
         encoding="utf-8",
     )
     if control == "reexport":
