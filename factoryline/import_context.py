@@ -504,16 +504,9 @@ def _shell_import_aliases(nodes, audit, provider, *, package=None):
 
 def application_configuration_names(paths=()):
     """Select the same canonical configuration inputs at every proof boundary."""
-    names = {
-        "requirements.txt",
-        "pyproject.toml",
-        "tox.ini",
-        "pytest.toml",
-        ".pytest.toml",
-        "pytest.ini",
-        ".pytest.ini",
-        "setup.cfg",
-    }
+    from .pytest_collection_audit import captured_test_configuration_names
+
+    names = {"requirements.txt", *captured_test_configuration_names(paths)}
     if isinstance(paths, (dict, list, tuple, set, frozenset)):
         names.update(
             name
@@ -552,9 +545,11 @@ def application_profile_configuration(root, read_source, limit):
     except (OSError, ValueError) as exc:
         return [], {"workflow_inventory": {"state": str(exc)}}, False
     from .captured_security_audit import capture_launch_configuration
+    from .pytest_collection_audit import unmodeled_test_workflow_paths
 
+    paths.extend(unmodeled_test_workflow_paths(root))
     paths, read_source = capture_launch_configuration(root, read_source, limit, paths)
-    for name in sorted(application_configuration_names(paths)):
+    for name in sorted(application_configuration_names(paths), key=read_source.order):
         identity = {"path": name}
         try:
             raw = read_source(root, name)
@@ -587,9 +582,10 @@ def application_profile_configuration(root, read_source, limit):
                 identity.update(binding, state="read")
         identities[name] = identity
     # Type-check capture owns these two bindings; share all capture identities.
+    bindings.sort(key=lambda row: row["path"])
     return (
         [row for row in bindings if row["path"] not in {"pyproject.toml", "tox.ini"}],
-        identities,
+        dict(sorted(identities.items())),
         valid,
     )
 

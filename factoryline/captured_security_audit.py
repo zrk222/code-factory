@@ -1222,6 +1222,7 @@ def capture_launch_configuration(root, read_source, limit, paths):
     def read(workspace, name):
         return cached[name] if name in cached else read_source(workspace, name)
 
+    read.order = lambda name: (name not in cached, name)
     return selected, read
 
 

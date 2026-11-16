@@ -175,6 +175,26 @@ _PYTEST_CONFIG_SECTIONS = (
     ("setup.cfg", "tool:pytest"),
 )
 
+_UNMODELED_TEST_WORKFLOWS = frozenset(
+    {".travis.yml", ".gitlab-ci.yml", "azure-pipelines.yml"}
+)
+
+
+def captured_test_configuration_names(paths):
+    """Use the same selectors and unmodeled descriptors in both scan passes."""
+    return {name for name, _ in _PYTEST_CONFIG_SECTIONS}.union(
+        _UNMODELED_TEST_WORKFLOWS.intersection(paths)
+    )
+
+
+def unmodeled_test_workflow_paths(root):
+    """Discover external workflow descriptors without interpreting their scripts."""
+    return (
+        name
+        for name in sorted(_UNMODELED_TEST_WORKFLOWS)
+        if (Path(root) / name).is_file() or (Path(root) / name).is_symlink()
+    )
+
 
 def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
     """Read the selected root config, with explicit uncertainty for static scans."""
@@ -1093,10 +1113,18 @@ def _captured_test_invocation_profile(
         return None
     workflows, workflow_dispositions = projected
     if not workflows:
+        unmodeled = sorted(_UNMODELED_TEST_WORKFLOWS.intersection(configuration_bytes))
+        workflow_dispositions.extend(
+            {"path": name, "status": "UNRESOLVED"} for name in unmodeled
+        )
         return {
             "schema": "factory.captured-test-invocation-profile.v1",
-            "status": "NO_TEST_INVOCATION",
-            "reason": "all-captured-workflows-are-valid-noncontributors",
+            "status": "UNRESOLVED" if unmodeled else "NO_TEST_INVOCATION",
+            "reason": (
+                "captured-workflow-dialect-unmodeled"
+                if unmodeled
+                else "all-captured-workflows-are-valid-noncontributors"
+            ),
             "execution_status": "NOT_EXECUTED",
             "runner": None,
             "selector": None,

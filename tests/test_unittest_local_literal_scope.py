@@ -1490,6 +1490,39 @@ def test_captured_workflows_claim_absence_only_for_known_noncontributors(
         ]
 
 
+@pytest.mark.parametrize(
+    "external_workflow", [".travis.yml", ".gitlab-ci.yml", "azure-pipelines.yml"]
+)
+def test_unmodeled_workflow_prevents_false_test_invocation_absence(
+    tmp_path, external_workflow
+):
+    from factoryline.import_context import application_profile_configuration
+
+    raw = b"script: tox\n"
+    (tmp_path / external_workflow).write_bytes(raw)
+    rows, identities, valid = application_profile_configuration(
+        tmp_path, lambda root, name: (root / name).read_bytes(), 1024
+    )
+    assert valid and identities[external_workflow]["state"] == "read"
+    assert any(
+        row["path"] == external_workflow
+        and row["sha256"] == hashlib.sha256(raw).hexdigest()
+        for row in rows
+    )
+    profile = captured_test_profile(
+        tmp_path,
+        workflow="jobs:\n  update:\n    steps:\n      - run: gh pr view\n",
+        extra_configs={external_workflow: raw},
+    )
+    assert profile["status"] == "UNRESOLVED" and profile["invocations"] == []
+    assert profile["reason"] == "captured-workflow-dialect-unmodeled"
+    assert {"path": external_workflow, "status": "UNRESOLVED"} in profile["workflows"]
+    assert (
+        profile["configuration_identities"][external_workflow]["sha256"]
+        == identities[external_workflow]["sha256"]
+    )
+
+
 def test_captured_native_profile_is_independent_of_input_mapping_order(tmp_path):
     workflow = "jobs:\n  test:\n    steps:\n      - run: python runtests.py\n"
     extras = {
