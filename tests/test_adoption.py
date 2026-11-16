@@ -1135,12 +1135,33 @@ def test_daily_scan_accepts_479_python_files_on_first_run(tmp_path, deep):
 
 
 @pytest.mark.parametrize("deep", [False, True])
+def test_normal_scan_accepts_pytest_cache_only_plugin_disable(tmp_path, deep):
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\naddopts = -p no:cacheprovider\n", encoding="utf-8"
+    )
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "test_case.py").write_text(
+        "from app import value\n\ndef test_value():\n    assert value == 1\n",
+        encoding="utf-8",
+    )
+    result = run_repo_scan(tmp_path, deep=deep)
+    security = result["static_security"]
+    assert security["audit_coverage"]["complete"] is True
+    assert security["audit_coverage"]["files_audited"] == 2
+    collection = security["oracle_context"]["static_pytest_collection"]
+    assert collection.get("collection_state") not in {"UNKNOWN", "DISCOVERY_ONLY"}
+    assert collection["path"] == "pytest.ini"
+
+
+@pytest.mark.parametrize("deep", [False, True])
 @pytest.mark.parametrize(
     "config",
     [
         '[tool.pytest.ini_options]\naddopts = "--doctest-modules"\ntestpaths = ["tests"]\n',
         '[tool.pytest]\nstrict = true\ntestpaths = ["tests"]\naddopts = ["-ra", "--import-mode=importlib"]\n',
         '[tool.pytest.ini_options]\naddopts = "-p custom_plugin"\n',
+        '[tool.pytest.ini_options]\naddopts = "-p no:cacheprovider -p custom_plugin"\n',
+        '[tool.pytest.ini_options]\naddopts = "-p no:cacheprovider --last-failed"\n',
     ],
 )
 def test_normal_scan_collection_uncertainty_keeps_source_analysis(

@@ -2880,12 +2880,21 @@ def _pytest_config_uses_custom_collection(options):
         addopts = " ".join(addopts)
     if not isinstance(addopts, str):
         return True
-    tokens = addopts.split()
     return any(
-        token == "-p"
-        or token.startswith("-p")
+        token.startswith("-p")
         or token.split("=", 1)[0]
         in {
+            "--",
+            "--cache-clear",
+            "--cache-show",
+            "--failed-first",
+            "--ff",
+            "--last-failed",
+            "--last-failed-no-failures",
+            "--lf",
+            "--lfnf",
+            "--new-first",
+            "--nf",
             "--ignore",
             "--ignore-glob",
             "--deselect",
@@ -2897,8 +2906,19 @@ def _pytest_config_uses_custom_collection(options):
             "--import-mode",
             "--override-ini",
         }
-        for token in tokens
+        for token in _pytest_collection_flags(addopts.split())
     )
+
+
+def _pytest_collection_flags(tokens):
+    """Omit only the exact built-in cache disable from collection analysis."""
+    position = 0
+    while position < len(tokens):
+        if tokens[position : position + 2] == ["-p", "no:cacheprovider"]:
+            position += 2
+        else:
+            yield tokens[position]
+            position += 1
 
 
 def _pytest_custom_collection_state(options):
@@ -2963,7 +2983,7 @@ def _pytest_static_discovery_options(options):
     # A TOML array is already tokenized; neither embedded whitespace nor
     # unexpected options may be silently interpreted as reporting flags.
     reporting = {"-ra", "-q", "-v", "--quiet", "--verbose", "--disable-warnings"}
-    values = [flag for flag in flags if flag not in reporting]
+    values = [flag for flag in _pytest_collection_flags(flags) if flag not in reporting]
     if values in (["--import-mode=importlib"], ["--import-mode", "importlib"]):
         return "importlib", sorted(set(paths))
     if values == ["--doctest-modules"]:
