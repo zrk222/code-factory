@@ -4955,6 +4955,83 @@ def load(value):
     ] == expected
 
 
+@pytest.mark.parametrize(
+    ("variation", "expected"),
+    [
+        ("fixed", []),
+        ("dictionary-cursor", []),
+        ("escaped-wrapper", ["mysql.connector.execute"]),
+        ("mixed-statements", ["mysql.connector.execute"]),
+        ("custom-cursor", ["mysql.connector.execute"]),
+        ("custom-converter", ["mysql.connector.execute"]),
+        ("local-provider", ["mysql.connector.execute"]),
+        ("source-layout-provider", ["mysql.connector.execute"]),
+        ("provider-rebound", ["mysql.connector.execute"]),
+    ],
+)
+def test_captured_sql_wrapper_distinguishes_statement_from_bound_data(
+    tmp_path, variation, expected
+):
+    from factoryline.review_audits import security_scan
+
+    storage = """import mysql.connector
+
+def connect():
+    return mysql.connector.connect(host="local.invalid", database="fixture")
+
+def query(statement, values=()):
+    connection = connect()
+    cursor = connection.cursor()
+    cursor.execute(statement, values)
+    cursor.close()
+    connection.close()
+"""
+    app = """from storage import query
+
+def load(value):
+    return query("SELECT name FROM records WHERE id = %s", (value,))
+"""
+    if variation == "dictionary-cursor":
+        storage = storage.replace(
+            "connection.cursor()", "connection.cursor(dictionary=True)"
+        )
+    elif variation == "escaped-wrapper":
+        app += "\nregistered_query = query\n"
+    elif variation == "mixed-statements":
+        app += "\ndef query_text(text):\n    return query(text, ())\n"
+    elif variation == "custom-cursor":
+        storage = storage.replace(
+            "connection.cursor()", "connection.cursor(cursor_class=custom)"
+        )
+    elif variation == "custom-converter":
+        storage = storage.replace(
+            'database="fixture"', 'database="fixture", converter_class=custom'
+        )
+    elif variation in {"local-provider", "source-layout-provider", "provider-rebound"}:
+        path, text = {
+            "local-provider": ("mysql.py", "# project-local provider\n"),
+            "source-layout-provider": (
+                "src/mysql/__init__.py",
+                "# project-local package\n",
+            ),
+            "provider-rebound": (
+                "configuration.py",
+                "import mysql.connector\nmysql.connector.connect = custom\n",
+            ),
+        }[variation]
+        destination = tmp_path / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(text, encoding="utf-8")
+    (tmp_path / "storage.py").write_text(storage, encoding="utf-8")
+    (tmp_path / "app.py").write_text(app, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert [
+        row["facts"]["call"]
+        for row in result["findings"]
+        if row["code"] == "SECURITY_SQL_INJECTION"
+    ] == expected
+
+
 def test_sql_provenance_binding_helper_contracts():
     import ast
 

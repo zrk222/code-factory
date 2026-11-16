@@ -2425,21 +2425,24 @@ def _settings_member_read(node, fields, parents, reads):
     return True
 
 
-def captured_sql_batch_has_literal_statements(call, query):
-    """Keep bound data separate from SQL text through captured row producers."""
+def captured_sql_statement_text_closed(call, query, driver):
+    """Keep bound data separate from source-closed statement text."""
+    if driver not in {"sqlite3", "mysql.connector"}:
+        return False
     match call:
         case ast.Call(
             func=ast.Attribute(attr="execute"),
             args=[ast.Name(), ast.Name() as values],
             keywords=[],
         ) if query is call.args[0] and query.id != values.id:
-            return _captured_sql_batch_from_loop(
-                call, query.id, values.id
-            ) or _captured_statement_text_closed(call, query)
+            return (
+                driver == "sqlite3"
+                and _captured_sql_batch_from_loop(call, query.id, values.id)
+            ) or _captured_statement_text_closed(call, query, driver)
     return False
 
 
-def _captured_statement_text_closed(call, query):
+def _captured_statement_text_closed(call, query, driver):
     """Prove captured statement text from closed scalar inputs and field reads."""
     from .semantic_credential_sensor import _security_helper_source_context
     from .credential_role_constructor_provider import (
@@ -2471,11 +2474,21 @@ def _captured_statement_text_closed(call, query):
     ):
         return False
     nodes = tuple(ast.walk(owner))
-    if not any(
-        isinstance(n, ast.AugAssign)
-        and isinstance(n.target, ast.Name)
-        and n.target.id == query.id
-        for n in nodes
+    if not (
+        any(
+            arg.arg == query.id
+            for arg in (
+                *owner.args.posonlyargs,
+                *owner.args.args,
+                *owner.args.kwonlyargs,
+            )
+        )
+        or any(
+            isinstance(n, ast.AugAssign)
+            and isinstance(n.target, ast.Name)
+            and n.target.id == query.id
+            for n in nodes
+        )
     ):
         return False
     if any(isinstance(n, (ast.Global, ast.Nonlocal)) for n in nodes):
@@ -2501,7 +2514,7 @@ def _captured_statement_text_closed(call, query):
     ):
         return False
     if not _captured_sql_receiver_allocation(
-        call, owner, index, path, binding_occurrences
+        call, owner, index, path, binding_occurrences, driver
     ):
         return False
     return _CapturedTextDefinitions(
@@ -2717,9 +2730,8 @@ def _captured_sql_binding(expr, use, lexical, parents, bind_names):
     return None
 
 
-def _captured_sql_receiver_allocation(call, owner, index, path, bind_names):
+def _captured_sql_receiver_allocation(call, owner, index, path, bind_names, driver):
     """Bind the actual cursor and native allocation before applying statement proof."""
-    from .credential_identity_audit import _app_signing_terminal_stable
     from .credential_role_identity_effects import resolve_source_identity_call
     from . import review_audits as audit, review_integrity as flow
     from .credential_role_method_use_getter_audit import CapturedOriginProjection
@@ -2729,8 +2741,8 @@ def _captured_sql_receiver_allocation(call, owner, index, path, bind_names):
     )
     match cursor:
         case ast.Call(
-            func=ast.Attribute(value=db, attr="cursor"), args=[], keywords=[]
-        ):
+            func=ast.Attribute(value=db, attr="cursor"), args=[], keywords=options
+        ) if _sql_cursor_options_closed(options, driver):
             connection = _captured_sql_binding(
                 db, cursor, owner, index.parents[path], bind_names
             )
@@ -2740,24 +2752,11 @@ def _captured_sql_receiver_allocation(call, owner, index, path, bind_names):
     for _ in range(8):
         if not isinstance(connection, ast.Call):
             return False
-        canonical = flow.security_call_name(
-            connection, audit._module_security_aliases(index.snapshots[path])
-        )
-        if canonical == "sqlite3.connect":
-            module_paths = projection.symbols.get("module_paths", {})
-            return (
-                len(connection.args) == 1
-                and not isinstance(connection.args[0], ast.Starred)
-                and not connection.keywords
-                and "sqlite3" not in module_paths
-                and all(
-                    _app_signing_terminal_stable(projection.symbols, provider)
-                    for provider in (
-                        "sqlite3.connect",
-                        "sqlite3.Connection.cursor",
-                        "sqlite3.Cursor.execute",
-                    )
-                )
+        aliases = audit._module_security_aliases(index.snapshots[path])
+        canonical = flow.security_call_name(connection, aliases)
+        if canonical == driver + ".connect":
+            return _closed_sql_connector(
+                connection, driver, projection.symbols, aliases
             )
         bound = resolve_source_identity_call(connection, path, index)
         if (
@@ -2779,6 +2778,53 @@ def _captured_sql_receiver_allocation(call, owner, index, path, bind_names):
             returns[0].value, returns[0], helper, index.parents[path], bind_names
         )
     return False
+
+
+def _sql_cursor_options_closed(options, driver):
+    return not options or (
+        driver == "mysql.connector"
+        and len(options) == 1
+        and options[0].arg == "dictionary"
+        and isinstance(options[0].value, ast.Constant)
+        and type(options[0].value.value) is bool
+    )
+
+
+def _closed_sql_connector(connection, driver, symbols, aliases):
+    from . import review_audits as audit, review_integrity as flow
+    from .credential_identity_audit import _app_signing_terminal_stable
+
+    root = driver.partition(".")[0]
+    if any(
+        {root, root + ".py"}.intersection(path.casefold().split("/"))
+        for path in symbols["module_paths"]
+    ):
+        return False
+    if driver == "sqlite3":
+        return (
+            len(connection.args) == 1
+            and not isinstance(connection.args[0], ast.Starred)
+            and not connection.keywords
+            and all(
+                _app_signing_terminal_stable(symbols, provider)
+                for provider in (
+                    "sqlite3.connect",
+                    "sqlite3.Connection.cursor",
+                    "sqlite3.Cursor.execute",
+                )
+            )
+        )
+    head = audit._call_name(connection).partition(".")[0]
+    visible, _constants = flow._security_flow_bindings(connection, aliases)
+    return (
+        head in visible
+        and not connection.args
+        and all(
+            kw.arg in {"host", "port", "user", "password", "database", "unix_socket"}
+            for kw in connection.keywords
+        )
+        and _app_signing_terminal_stable(symbols, root)
+    )
 
 
 def _captured_sql_batch_from_loop(call, statement_name, values_name):

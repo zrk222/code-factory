@@ -2756,7 +2756,7 @@ def unsafe_sql_driver(
     is_tainted,
 ):
     """Return the proven driver only when its SQL statement is request-tainted."""
-    from .captured_security_audit import captured_sql_batch_has_literal_statements
+    from .captured_security_audit import captured_sql_statement_text_closed
 
     driver = sql_sink_driver(
         call,
@@ -2778,9 +2778,7 @@ def unsafe_sql_driver(
         return None
     query = sql_statement_argument(call, driver, aliases, resolve_call)
     if is_tainted(query, requests, parameters, aliases):
-        if driver != "sqlite3" or not captured_sql_batch_has_literal_statements(
-            call, query
-        ):
+        if not captured_sql_statement_text_closed(call, query, driver):
             return driver
     return None
 
