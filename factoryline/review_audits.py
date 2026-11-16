@@ -866,6 +866,7 @@ _SECRET_ASSIGNMENT = re.compile(
 _PLACEHOLDER_SECRET = re.compile(
     r"(?i)^(?:$|changeme|replace[-_ ]?me|example|placeholder|your[-_ ]|<[^>]+>|\$\{[^}]+\})$"
 )
+_AWS_DEMO = re.compile(rb"\bAKIA(IOSFODNN7EXAMPLE|I44QH8DHBEXAMPLE|1234567890ABCDEF)\b")
 _TEST_SECRET_FIXTURE_VALUES = frozenset({"config"})
 _URL_QUOTING_CHARSET = frozenset("%!*'();:@&=+$,/?#[]")
 
@@ -1470,23 +1471,18 @@ def _bare_except_finding(
 
 
 def _secret_literal(node: ast.Assign | ast.AnnAssign) -> str | None:
-    value = node.value
-    if (
-        not isinstance(value, ast.Constant)
-        or not isinstance(value.value, str)
-        or not value.value.strip()
-        or _PLACEHOLDER_SECRET.match(value.value.strip())
-    ):
+    if not isinstance(node.value, ast.Constant):
         return None
-    return value.value
+    value = node.value.value
+    if not isinstance(value, str) or not (text := value.strip()):
+        return None
+    return None if _PLACEHOLDER_SECRET.match(text) else value
 
 
 def _url_quoting_charset(value: str) -> bool:
     """Recognize only the complete reserved-punctuation alphabet fixture."""
-    visible = value.strip()
-    return len(visible) == len(_URL_QUOTING_CHARSET) and set(visible) == set(
-        _URL_QUOTING_CHARSET
-    )
+    word = value.strip()
+    return len(word) == len(_URL_QUOTING_CHARSET) and set(word) == _URL_QUOTING_CHARSET
 
 
 def _credential_role_witness(node, target, aliases):
@@ -1503,7 +1499,11 @@ def _literal_credential_candidate(node, target):
     return isinstance(target, ast.Name) and (
         bool(_SECRET_ASSIGNMENT.search(target.id))
         or (value := _secret_literal(node)) is not None
-        and any(pattern.search(value.encode("utf-8")) for pattern in _SECRET_BYTES)
+        and any(
+            not _AWS_DEMO.match(match.string, match.start())
+            for pattern in _SECRET_BYTES
+            for match in pattern.finditer(value.encode())
+        )
     )
 
 
@@ -1541,15 +1541,15 @@ def _literal_assignment_diagnostics(
     is_test_source = "tests" in Path(relative).parts or Path(relative).name.startswith(
         "test_"
     )
-    if value is None or (is_test_source and _url_quoting_charset(value)):
-        return []
-    # Evaluate the exception at the input boundary; diagnostic builders receive
-    # only symbol/location metadata, never the credential literal itself.
     if (
-        relative.startswith("tests/")
+        value is None
+        or is_test_source
+        and _url_quoting_charset(value)
+        or relative.startswith("tests/")
         and value.strip().casefold() in _TEST_SECRET_FIXTURE_VALUES
     ):
         return []
+    # Diagnostic builders receive metadata, never the credential literal.
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
     findings = []
     for target in targets:
