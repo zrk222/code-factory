@@ -1619,7 +1619,7 @@ def _captured_shell_target_unresolved(argv, command):
             argv
         )
     return _captured_shell_compound(command) and (
-        _captured_test_like_command(argv) or any(arg.endswith(".py") for arg in argv)
+        _captured_test_like_command(argv) or _captured_unknown_python_command(argv)
     )
 
 
@@ -1747,7 +1747,7 @@ def _captured_unknown_python_command(argv):
                 "compileall",
                 "ensurepip",
             }
-        return len(tokens) > 1 and (tokens[1].endswith(".py") or tokens[1] == "-c")
+        return len(argv) > 1 and argv[1:] not in (["-V"], ["-VV"], ["--version"])
     return any(
         token.endswith(".py") or token in {"python", "python3", "pytest", "tox", "nox"}
         for token in tokens

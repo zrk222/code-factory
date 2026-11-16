@@ -1461,15 +1461,33 @@ def test_source_settings_role_uses_workflow_selector_and_receipt(
     )
 
 
-def test_captured_workflows_without_test_entry_are_explicit_noncontributors(tmp_path):
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("gh pr view", "NO_TEST_INVOCATION"),
+        ("python -V", "NO_TEST_INVOCATION"),
+        ("python -m pip --version", "NO_TEST_INVOCATION"),
+        ("python tests/*", "UNRESOLVED"),
+        ("echo ready | python tests/*", "UNRESOLVED"),
+        ("python './tests/*'", "UNRESOLVED"),
+        ("python scripts/check", "UNRESOLVED"),
+        ("python -", "UNRESOLVED"),
+        ("python -v", "UNRESOLVED"),
+    ],
+)
+def test_captured_workflows_claim_absence_only_for_known_noncontributors(
+    tmp_path, command, expected
+):
     profile = captured_test_profile(
         tmp_path,
-        workflow="jobs:\n  update:\n    steps:\n      - run: gh pr view\n",
+        workflow=f"jobs:\n  update:\n    steps:\n      - run: {command}\n",
     )
-    assert profile["status"] == "NO_TEST_INVOCATION"
-    assert profile["workflows"] == [
-        {"path": ".github/workflows/ci.yml", "status": "NO_TEST_INVOCATION"}
-    ]
+    assert profile["status"] == expected
+    assert profile["invocations"] == []
+    if expected == "NO_TEST_INVOCATION":
+        assert profile["workflows"] == [
+            {"path": ".github/workflows/ci.yml", "status": expected}
+        ]
 
 
 def test_captured_native_profile_is_independent_of_input_mapping_order(tmp_path):
