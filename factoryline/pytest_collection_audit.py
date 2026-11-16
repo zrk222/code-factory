@@ -2134,6 +2134,7 @@ def _pytest_tox_environment(parser, section):
     )
 
 
+_PYTEST_CACHE_DISABLE = ("-p", "no:cacheprovider")
 _PYTEST_ARGUMENT_EFFECTS = (
     ("-q", (0, "report")),
     ("-v", (0, "report")),
@@ -2173,8 +2174,13 @@ def _pytest_argument_effect(
     token, arguments, *, coverage_provider, source_role_only=False
 ):
     """Project one recognized argument or refuse its missing/unknown effect."""
-    if token == "--":
-        return None
+    cache_flag, cache_selection = _PYTEST_CACHE_DISABLE
+    if token in {"--", cache_flag}:
+        return (
+            {}
+            if token == cache_flag and next(arguments, None) == cache_selection
+            else None
+        )
     flag, separator, inline_value = token.partition("=")
     if token == "--ds" or flag == "--ds" and separator:
         module = next(arguments, None) if token == "--ds" else inline_value
@@ -3085,9 +3091,14 @@ def _pytest_config_uses_custom_collection(options):
 
 def _pytest_collection_flags(tokens):
     """Omit only the exact built-in cache disable from collection analysis."""
+    cache_flag, cache_selection = _PYTEST_CACHE_DISABLE
     position = 0
     while position < len(tokens):
-        if tokens[position : position + 2] == ["-p", "no:cacheprovider"]:
+        if (
+            tokens[position] == cache_flag
+            and position + 1 < len(tokens)
+            and tokens[position + 1] == cache_selection
+        ):
             position += 2
         else:
             yield tokens[position]
@@ -3187,6 +3198,7 @@ def captured_pytest_helpers():
         for name, value in globals().items()
         if callable(value) and getattr(value, "__module__", None) == __name__
     ) + (
+        _PYTEST_CACHE_DISABLE,
         _PYTEST_ARGUMENT_EFFECTS,
         DJANGO_IMPLICIT_KEY_EFFECTS,
         DJANGO_IMPLICIT_KEY_METHODS,

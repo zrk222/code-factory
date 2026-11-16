@@ -1347,6 +1347,37 @@ def test_captured_tox_selection_accepts_legacy_report_flags(flag):
     ]
 
 
+@pytest.mark.parametrize(
+    ("args", "addopts", "expected"),
+    [
+        ("-q", "-p no:cacheprovider", "DECLARED"),
+        ("-p no:cacheprovider -q", "-q", "DECLARED"),
+        ("-q", "-p external_plugin", "UNRESOLVED"),
+        ("-p no:external_plugin", "-q", "UNRESOLVED"),
+        ("-p", "-q", "UNRESOLVED"),
+        ("--junitxml -p no:cacheprovider result.xml", "-q", "UNRESOLVED"),
+    ],
+)
+def test_captured_invocation_respects_exact_cache_disable(
+    tmp_path, args, addopts, expected
+):
+    raw = f"[pytest]\naddopts={addopts}\n".encode()
+    result = captured_test_profile(
+        tmp_path,
+        workflow=f"jobs:\n  test:\n    steps:\n      - run: python -m pytest {args}\n",
+        extra_configs={"pytest.ini": raw},
+    )
+    assert result["status"] == expected
+    assert result["execution_status"] == "NOT_EXECUTED"
+    if expected == "DECLARED":
+        assert result["runner"] == "pytest"
+        assert (
+            result["selector"]["configuration"]["sha256"]
+            == hashlib.sha256(raw).hexdigest()
+        )
+        assert result["invocations"][0]["selector_effects"] == {}
+
+
 def test_pytest_coverage_flags_require_same_profile_provider():
     from factoryline.pytest_collection_audit import captured_pytest_configuration
 
