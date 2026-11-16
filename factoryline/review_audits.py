@@ -63,7 +63,7 @@ from .audit_action_refs import (
     _security_scan_state as _security_scan_state,
     _security_scan_action_summary as _security_scan_action_summary,
     _validate_source_file_limit as _validate_source_file_limit,
-    with_captured_declaration_proof,
+    with_captured_declaration_proof as with_decl_proof,
 )
 from .finite_capture import closed_shell_finding, shell_execution_calls
 from .deep_audit_io import local_file
@@ -1393,7 +1393,7 @@ def _dynamic_execution_finding(
             **fixed,
         )
     rejected = contracts.literal_exec_rejected(node)
-    finding = _security_finding(
+    return _security_finding(
         "SECURITY_DYNAMIC_EXECUTION",
         relative,
         node,
@@ -1404,7 +1404,6 @@ def _dynamic_execution_finding(
         call=call,
         **rejected,
     )
-    return with_captured_declaration_proof(relative, node, finding)
 
 
 def _security_call_finding(
@@ -5343,7 +5342,7 @@ def _security_node_findings(
                     "This is not external-byte input; custom object reducers still execute code."
                 )
                 finding["facts"]["input_provenance"] = "direct_local_serialization"
-        return [finding] if finding is not None else []
+        return [with_decl_proof(relative, node, finding)] if finding is not None else []
     if isinstance(node, ast.ExceptHandler):
         finding = _bare_except_finding(relative, node)
         return [finding] if finding is not None else []
