@@ -1503,6 +1503,7 @@ def _literal_credential_candidate(node, target):
     return isinstance(target, ast.Name) and (
         bool(_SECRET_ASSIGNMENT.search(target.id))
         or (value := _secret_literal(node)) is not None
+        and value not in {"AKIAIOSFODNN7EXAMPLE", "AKIAI44QH8DHBEXAMPLE"}
         and any(pattern.search(value.encode("utf-8")) for pattern in _SECRET_BYTES)
     )
 
@@ -1543,8 +1544,7 @@ def _literal_assignment_diagnostics(
     )
     if value is None or (is_test_source and _url_quoting_charset(value)):
         return []
-    # Evaluate the exception at the input boundary; diagnostic builders receive
-    # only symbol/location metadata, never the credential literal itself.
+    # Diagnostic builders receive metadata, never the credential literal.
     if (
         relative.startswith("tests/")
         and value.strip().casefold() in _TEST_SECRET_FIXTURE_VALUES

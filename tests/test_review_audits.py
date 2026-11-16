@@ -11772,6 +11772,23 @@ def test_short_hardcoded_credentials_are_detected_without_disclosing_value(
     assert '"x"' not in findings
 
 
+def test_documented_key_ids_only_clear_exact_format_only_findings(tmp_path):
+    (tmp_path / "app.py").write_text(
+        'example = "AKIAIOSFODNN7EXAMPLE"\n'
+        'inactive_example = "AKIAI44QH8DHBEXAMPLE"\n'
+        'api_key = "AKIAIOSFODNN7EXAMPLE"\n'
+        'payload = "example: AKIAIOSFODNN7EXAMPLE"\n'
+        'unknown = "AKIAIOSFODNN7EXAMPLF"\n',
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert [
+        item["line"]
+        for item in result["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ] == [3, 4, 5]
+
+
 def test_config_fixture_secrets_are_exempt_without_hiding_credentials(tmp_path):
     tests = tmp_path / "tests"
     tests.mkdir()
