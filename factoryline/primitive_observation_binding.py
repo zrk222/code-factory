@@ -39,10 +39,7 @@ _FINDING_TIER_POLICY = {
 }
 
 _MISSING_PREMISES = {
-    "SECURITY_LITERAL_HTTP_CREDENTIAL": [
-        "operational_authority",
-        "reachability",
-    ],
+    "SECURITY_LITERAL_HTTP_CREDENTIAL": ["operational_authority", "reachability"],
     "SECURITY_HARDCODED_SECRET": [
         "operative_credential_consumer",
         "security_authority_binding",
@@ -61,7 +58,8 @@ _MISSING_PREMISES = {
         "external_or_mutable_serialized_data_provenance",
         "dangerous_load_reachability",
     ],
-    "SECURITY_WEAK_TLS": ["reachable_remote_endpoint_or_operational_context"],
+    "SECURITY_TLS_VERIFY_DISABLED": ["effective_tls_policy", "remote_reachability"],
+    "SECURITY_UNSAFE_YAML": ["loader_authority", "serialized_input_provenance"],
     "SECURITY_LOG_INJECTION": [
         "untrusted_log_value",
         "log_record_injection_effect",

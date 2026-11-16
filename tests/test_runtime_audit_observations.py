@@ -2240,6 +2240,11 @@ def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
         "    connection = sqlite3.connect(':memory:')\n"
         '    connection.execute("SELECT * FROM t WHERE name=\'" + query + "\'")\n'
         "    pickle.loads(payload)\n"
+        "import requests, yaml\n"
+        "def fetch(url):\n"
+        "    requests.get(url, verify=False)\n"
+        "def parse(payload):\n"
+        "    yaml.load(payload)\n"
     )
     (tmp_path / "app.py").write_text(source, encoding="utf-8")
     report = audit.security_scan(
@@ -2263,6 +2268,8 @@ def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
         ("SECURITY_SHELL_COMMAND", 10),
         ("SECURITY_SQL_INJECTION", 12),
         ("SECURITY_UNSAFE_DESERIALIZATION", 13),
+        ("SECURITY_TLS_VERIFY_DISABLED", 16),
+        ("SECURITY_UNSAFE_YAML", 18),
     }
     assert set(rows) == expected_supported | expected_unresolved
     assert {key for key, row in rows.items() if row["tier"] == "SUPPORTED_DEFECT"} == (
@@ -2272,6 +2279,14 @@ def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
         expected_unresolved
     )
     assert all(rows[key].get("missing_premises") for key in expected_unresolved)
+    assert rows[("SECURITY_TLS_VERIFY_DISABLED", 16)]["missing_premises"] == [
+        "effective_tls_policy",
+        "remote_reachability",
+    ]
+    assert rows[("SECURITY_UNSAFE_YAML", 18)]["missing_premises"] == [
+        "loader_authority",
+        "serialized_input_provenance",
+    ]
     log_row = rows[("SECURITY_LOG_INJECTION", 4)]
     assert log_row["tier"] == "NEEDS_CONTEXT"
     assert set(log_row["missing_premises"]) == {
