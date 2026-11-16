@@ -1510,20 +1510,21 @@ def _synthetic_provisional_scan(tmp_path, monkeypatch, fault):
         proof = getattr(capture, "provisional_exclusions", None)
         if proof is not None and (root.is_absolute() or fault != "missing-proof"):
             for row in rows:
-                proof.add(
-                    tuple(
-                        row[key]
-                        for key in (
-                            "code",
-                            "path",
-                            "line",
-                            "column",
-                            "end_line",
-                            "end_column",
-                            "severity",
-                        )
+                point = tuple(
+                    row[key]
+                    for key in (
+                        "code",
+                        "path",
+                        "line",
+                        "column",
+                        "end_line",
+                        "end_column",
+                        "severity",
                     )
                 )
+                if fault == "changed-witness":
+                    point += (("a" if root.is_absolute() else "b") * 64,)
+                proof.add(point)
                 if not root.is_absolute() and fault == "changed-raw":
                     row["message"] = "Same span with different raw content."
             if fault == "duplicate":
@@ -1580,6 +1581,7 @@ def _inject_provisional_seal_fault(tmp_path, monkeypatch, fault):
     [
         None,
         "missing-proof",
+        "changed-witness",
         "changed-raw",
         "duplicate",
         "stale",
@@ -1632,6 +1634,50 @@ def test_provisional_exclusion_is_atomic_across_the_seal(tmp_path, monkeypatch, 
             False,
         ]
     assert not report["agent_actions"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "observed"),
+    [
+        ("", False),
+        ("    shared.append(item)\n", True),
+        ("    item['text'] = incoming\n", True),
+        ("    aliases = ns\n", True),
+    ],
+)
+def test_raw_declaration_exclusion_requires_closed_use(tmp_path, extra, observed):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / "check.py").write_text(
+        "from __future__ import annotations\n"
+        "records: list[dict] = [{'name': 'sample', 'text': 'def sample(): return 1'}]\n"
+        "records += [{'name': 'second', 'text': 'def second(): return 2'}]\n"
+        "if __name__ == '__main__':\n"
+        "  for item in records:\n"
+        "    name = item['name']\n"
+        "    ns: dict = {}\n"
+        "    exec(item['text'], ns)\n"
+        "    target = ns[name]\n"
+        f"{extra}"
+        "def caller_supplied(text):\n"
+        "    exec(text)\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(
+        tmp_path,
+        defect_policy="source-role-v3",
+        security_only=True,
+        cache_enabled=False,
+    )
+    ledger = report["finding_tier_report"]["ledger"]
+    dynamic = {
+        row["raw_finding"]["line"]
+        for row in ledger
+        if row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    }
+    assert dynamic == ({8, 12} if observed else {11})
+    assert report["finding_conservation"]["state"] == "PASS"
 
 
 @pytest.mark.parametrize(

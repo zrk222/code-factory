@@ -7675,7 +7675,7 @@ def test_closed_declaration_binding_accepts_exact_contract_and_rejects_span_forg
         "call_span": [1, 0, 1, 24],
         "literal_span": [1, 12, 1, 23],
     }
-    finding = {"line": 1, "column": 0, "facts": facts}
+    finding = {"line": 1, "column": 0, "end_line": 1, "end_column": 24, "facts": facts}
     assert binding.closed_declaration_binding(finding, review_integrity)
     forged = json.loads(json.dumps(finding))
     forged["facts"]["literal_span"] = [1, 12, 1, 25]

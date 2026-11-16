@@ -63,6 +63,7 @@ from .audit_action_refs import (
     _security_scan_state as _security_scan_state,
     _security_scan_action_summary as _security_scan_action_summary,
     _validate_source_file_limit as _validate_source_file_limit,
+    with_captured_declaration_proof,
 )
 from .finite_capture import closed_shell_finding, shell_execution_calls
 from .deep_audit_io import local_file
@@ -1379,8 +1380,6 @@ def _security_finding(
 def _dynamic_execution_finding(
     call: str, relative: str, node: ast.AST
 ) -> dict[str, Any] | None:
-    if call not in {"eval", "exec", "builtins.eval", "builtins.exec"}:
-        return None
     if fixed := integrity.fixed_program_witness(relative, node, call):
         return _security_finding(
             "SECURITY_DYNAMIC_EXECUTION",
@@ -1394,7 +1393,7 @@ def _dynamic_execution_finding(
             **fixed,
         )
     rejected = contracts.literal_exec_rejected(node)
-    return _security_finding(
+    finding = _security_finding(
         "SECURITY_DYNAMIC_EXECUTION",
         relative,
         node,
@@ -1405,6 +1404,7 @@ def _dynamic_execution_finding(
         call=call,
         **rejected,
     )
+    return with_captured_declaration_proof(relative, node, finding)
 
 
 def _security_call_finding(

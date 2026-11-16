@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import math
 import re
 import json
@@ -1316,17 +1317,338 @@ def _without_provisional_rows(rows, keys, primitive):
     return [row for row in rows if primitive._native_surface_identity(row) not in keys]
 
 
+def _declaration_bindings(nodes, names):
+    from .import_context import _binding_name
+
+    return {
+        node
+        for node in nodes
+        if _binding_name(node) in names
+        or isinstance(node, ast.alias)
+        and (node.asname or node.name.split(".")[0]) in names
+        or isinstance(node, (ast.Global, ast.Nonlocal))
+        and names.intersection(node.names)
+    }
+
+
+def _declaration_record_field(node, owner):
+    match node:
+        case ast.Subscript(
+            value=ast.Name(id=name),
+            slice=ast.Constant(value=str() as key),
+            ctx=ast.Load(),
+        ) if name == owner:
+            return key
+    return None
+
+
+def _declaration_record_domain(tree, gate, loop, nodes):
+    if not isinstance(loop.iter, ast.Name):
+        return None
+    name, allowed, records = loop.iter.id, {loop.iter}, []
+    deferred = any(
+        isinstance(stmt, ast.ImportFrom)
+        and stmt.module == "__future__"
+        and any(alias.name == "annotations" for alias in stmt.names)
+        for stmt in tree.body
+    )
+    for statement in tree.body[: tree.body.index(gate)]:
+        match statement:
+            case (
+                ast.Assign(targets=[ast.Name() as target], value=ast.List() as value)
+                | ast.AnnAssign(
+                    target=ast.Name() as target,
+                    value=ast.List() as value,
+                )
+            ) if target.id == name and not records:
+                if isinstance(statement, ast.AnnAssign) and not (
+                    deferred or isinstance(statement.annotation, ast.Name)
+                ):
+                    return None
+            case ast.AugAssign(
+                target=ast.Name() as target, op=ast.Add(), value=ast.List() as value
+            ) if target.id == name and records:
+                pass
+            case _:
+                continue
+        if len(records) + len(value.elts) > 64 or not all(
+            isinstance(item, ast.Dict) for item in value.elts
+        ):
+            return None
+        allowed.add(target)
+        records.extend(value.elts)
+    uses = {node for node in nodes if isinstance(node, ast.Name) and node.id == name}
+    return (
+        records
+        if records
+        and uses == allowed
+        and _declaration_bindings(nodes, {name}) < allowed
+        else None
+    )
+
+
+def _plain_function_declaration(source, name):
+    from .finite_capture import _fixed_eval_attribute_hazard, _fixed_eval_name_hazard
+
+    if not (type(source) is str and type(name) is str and len(source) <= 16384):
+        return False
+    tree = ast.parse(source)
+    if len(tree.body) != 1 or not isinstance(function := tree.body[0], ast.FunctionDef):
+        return False
+    args = function.args
+    if (
+        function.name != name
+        or name.startswith("_")
+        or function.decorator_list
+        or function.returns
+        or getattr(function, "type_params", ())
+        or any([*args.defaults, *args.kw_defaults])
+        or any(node.annotation for node in ast.walk(args) if isinstance(node, ast.arg))
+    ):
+        return False
+    reflection = {
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+        "getattr",
+        "setattr",
+        "delattr",
+        "globals",
+        "locals",
+        "vars",
+        "__builtins__",
+    }
+    return not any(
+        _fixed_eval_name_hazard(node, None, reflection)
+        or _fixed_eval_attribute_hazard(node)
+        for node in ast.walk(function)
+    ) and _declaration_provider_clear(tree)
+
+
+def _declaration_provider_clear(tree):
+    from .finite_capture import _fixed_eval_builtin_provider_risk
+
+    return not any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__main__"
+        or isinstance(node, ast.alias)
+        and node.name in {"__main__", "*"}
+        for node in ast.walk(tree)
+    ) and not _fixed_eval_builtin_provider_risk(tree)
+
+
+def _owned_declaration_seed(seed, preceding, nodes):
+    if not isinstance(seed, ast.Dict) or any(
+        not isinstance(key, ast.Constant)
+        or type(key.value) is not str
+        or not key.value.isidentifier()
+        or key.value.startswith("_")
+        for key in seed.keys
+    ):
+        return False
+    if len({key.value for key in seed.keys}) != len(seed.keys) or any(
+        not isinstance(value, (ast.Name, ast.Constant)) for value in seed.values
+    ):
+        return False
+    names = {node.id for node in seed.values if isinstance(node, ast.Name)}
+    owned = {
+        alias
+        for stmt in preceding
+        if isinstance(stmt, ast.Import)
+        for alias in stmt.names
+        if (alias.asname or alias.name.split(".")[0]) in names
+    }
+    return len(owned) == len(names) and _declaration_bindings(nodes, names) == owned
+
+
+def _declaration_loop_use(loop, statement, call):
+    """Prove the record and namespace are used only at the selected read boundary."""
+    owner, namespace = loop.target.id, call.args[1]
+    nodes = list(ast.walk(loop))
+    parents = {
+        child: parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    if _declaration_bindings(nodes, {owner}) != {loop.target} or any(
+        _declaration_record_field(parents.get(node), owner) is None
+        for node in nodes
+        if isinstance(node, ast.Name) and node.id == owner and node is not loop.target
+    ):
+        return None
+    i = loop.body.index(statement)
+    if not 1 <= i < len(loop.body) - 1:
+        return None
+    match loop.body[i - 1]:
+        case (
+            ast.Assign(targets=[ast.Name() as target], value=seed)
+            | ast.AnnAssign(
+                target=ast.Name() as target, annotation=ast.Name(), value=seed
+            )
+        ) if target.id == namespace.id:
+            pass
+        case _:
+            return None
+    match loop.body[i + 1]:
+        case ast.Assign(
+            value=ast.Subscript(value=ast.Name() as access, slice=ast.Name(id=selector))
+        ) if access.id == namespace.id:
+            pass
+        case _:
+            return None
+    uses = {
+        node for node in nodes if isinstance(node, ast.Name) and node.id == namespace.id
+    }
+    if uses != {target, namespace, access} or _declaration_bindings(
+        nodes, {namespace.id}
+    ) != {target}:
+        return None
+    for stmt in loop.body[: i - 1]:
+        match stmt:
+            case ast.Assign(targets=[ast.Name(id=name) as bound], value=value) if (
+                name == selector
+            ):
+                if _declaration_bindings(nodes, {selector}) == {bound}:
+                    return seed, _declaration_record_field(value, owner)
+    return None
+
+
+def _declaration_entry(tree, node):
+    for gate in tree.body:
+        match gate:
+            case ast.If(
+                test=ast.Compare(
+                    left=ast.Name(id="__name__"),
+                    ops=[ast.Eq()],
+                    comparators=[ast.Constant(value="__main__")],
+                ),
+                orelse=[],
+            ):
+                for loop in gate.body:
+                    if isinstance(loop, ast.For) and isinstance(loop.target, ast.Name):
+                        for i, stmt in enumerate(loop.body):
+                            if isinstance(stmt, ast.Expr) and stmt.value is node:
+                                return gate, loop, i, stmt
+    return None
+
+
+def _captured_declaration_domain_clear(tree, call, entry):
+    gate, loop, _, statement = entry
+    nodes = list(ast.walk(tree))
+    if _declaration_bindings(nodes, {"exec", "__name__"}):
+        return False
+    program = _declaration_record_field(call.args[0], loop.target.id)
+    boundary = _declaration_loop_use(loop, statement, call)
+    if program is None or boundary is None or boundary[1] in {None, program}:
+        return False
+    seed, selector = boundary
+    if not _owned_declaration_seed(seed, tree.body[: tree.body.index(gate)], nodes):
+        return False
+    domain = _declaration_record_domain(tree, gate, loop, nodes)
+    if not domain:
+        return False
+    for row in domain:
+        record = ast.literal_eval(row)
+        if len(record) != len(row.keys) or not _plain_function_declaration(
+            record.get(program), record.get(selector)
+        ):
+            return False
+    return True
+
+
+def _captured_declaration_authority(index, path, node):
+    from .runtime_audit_integrity import _exact_source_call
+
+    exact = _exact_source_call(index.source_bytes[path], node)
+    if exact is None:
+        return None
+    tree, call = exact
+    entry = _declaration_entry(tree, call)
+    if entry is None or not _captured_declaration_domain_clear(tree, call, entry):
+        return None
+    gate, loop, pos, statement = entry
+    # Mask only the already verified declaration when checking provider effects.
+    # This tree belongs to the verifier; the scanner's source AST is untouched.
+    loop.body[pos] = ast.copy_location(ast.Pass(), statement)
+    if not _declaration_provider_clear(tree):
+        return None
+    sources = {}
+    for peer, snapshot in index.snapshots.items():
+        relative = index.relative(peer)
+        if relative is None or relative in sources or not index.validate(peer):
+            return None
+        if peer != path and not _declaration_provider_clear(snapshot):
+            return None
+        sources[relative] = index.inventory[peer]
+    return sha256(
+        canonical_bytes(
+            ["closed-entry-declaration-v1", sources, gate.lineno, loop.lineno]
+        )
+    ).hexdigest()
+
+
+def with_captured_declaration_proof(relative, node, row):
+    """Attach proof without altering native raw data before replay."""
+    if (
+        not row
+        or row["code"] != "SECURITY_DYNAMIC_EXECUTION"
+        or row["severity"] != "HIGH"
+    ):
+        return row
+    match node:
+        case ast.Call(
+            func=ast.Name(id="exec"), args=[ast.Subscript(), ast.Name()], keywords=[]
+        ):
+            pass
+        case _:
+            return row
+    from .captured_security_audit import _native_span
+    from .pytest_collection_audit import _captured_pytest_inputs
+    from .semantic_credential_sensor import _security_helper_source_context
+
+    module, index, path = _security_helper_source_context(node, None)
+    stage = getattr(_captured_pytest_inputs(module)[1], "provisional_exclusions", None)
+    if type(stage) is not set or path is None or len(index.snapshots) > 128:
+        return row
+    try:
+        if index.relative(path) != relative or not index.validate(path):
+            return row
+        span = _native_span(node)
+        authority = _captured_declaration_authority(index, path, node) if span else None
+        if authority:
+            stage.add((row["code"], relative, *span, row["severity"], authority))
+    except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
+        pass
+    return row
+
+
+def _provisional_witnesses(points):
+    witnesses = {}
+    for point in points:
+        if len(point) not in (7, 8):
+            raise ValueError("invalid source role point")
+        identity = tuple((type(value), value) for value in point[:7])
+        authority = point[7] if len(point) == 8 else None
+        if identity in witnesses or (
+            len(point) == 8
+            and not (
+                type(authority) is str and re.fullmatch(r"[0-9a-f]{64}", authority)
+            )
+        ):
+            raise ValueError("ambiguous or invalid source role point")
+        witnesses[identity] = authority
+    return witnesses
+
+
 def _stage_provisional_exclusions(
     audit, core, claims, proof, baseline, input_physical, native_rows, primitive
 ):
-    """Stage only one-to-one originals confirmed by both scans and the raw ledger."""
-
-    def typed(points):
-        return {tuple((type(value), value) for value in point) for point in points}
-
-    keys = typed(claims)
-    if native_rows is None or not keys <= typed(proof):
+    """Stage only rows whose source proof and original bytes agree in replay."""
+    if native_rows is None:
         return None, (), set()
+    claimed, verified = _provisional_witnesses(claims), _provisional_witnesses(proof)
+    if not claimed.items() <= verified.items():
+        return None, (), set()
+    keys = set(claimed)
     identity = primitive._native_surface_identity
     originals = [row for row in input_physical if identity(row) in keys]
     if Counter(map(identity, originals)) != Counter(keys):
