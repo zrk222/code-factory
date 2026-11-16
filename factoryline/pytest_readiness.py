@@ -2667,19 +2667,50 @@ def _typecheck_search_paths(
     ):
         return None, facts
     normalized = {
-        name: [str(_typecheck_resolver_path(value)) for value in values]
+        name: [
+            str(_typecheck_resolver_path(value, runtime_owned=name == "package_path"))
+            for value in values
+        ]
         for name, values in paths.items()
     }
     return normalized, facts
 
 
-def _typecheck_resolver_path(value):
+def _typecheck_resolver_path(value, *, runtime_owned=False):
     path = Path(value)
     if not path.is_absolute():
         raise ValueError("Checker search path must be absolute")
     if _typecheck_path_chain_linked(path):
-        raise ValueError("Checker search path contains a linked ancestor")
+        runtime = _typecheck_runtime_junction() if runtime_owned else None
+        if runtime is None or not path.is_relative_to(runtime[0]):
+            raise ValueError("Checker search path contains a linked ancestor")
+        tail = path.relative_to(runtime[0])
+        path = runtime[1] / tail
+        if ".." in tail.parts or _typecheck_path_chain_linked(path):
+            raise ValueError("Checker search path contains a linked ancestor")
     return path.resolve()
+
+
+def _typecheck_runtime_junction():
+    """Bind only the base directory of the interpreter running this probe."""
+    if os.name != "nt":
+        return None
+    base = Path(sys.base_prefix)
+    executable = Path(sys._base_executable)
+    if executable.parent != base or _typecheck_path_chain_linked(base.parent):
+        return None
+    try:
+        if base.lstat().st_reparse_tag != stat.IO_REPARSE_TAG_MOUNT_POINT:
+            return None
+        target = base.resolve(strict=True)
+        physical_executable = target / executable.name
+        if executable.resolve(
+            strict=True
+        ) != physical_executable or _typecheck_path_chain_linked(physical_executable):
+            return None
+    except OSError:
+        return None
+    return base, target, physical_executable
 
 
 def _typecheck_path_chain_linked(path):
@@ -3196,6 +3227,10 @@ def _typecheck_python_identity():
         "executable_path_sha256": hashlib.sha256(str(executable).encode()).hexdigest(),
         "executable_sha256": digest,
     }
+    if (runtime := _typecheck_runtime_junction()) is not None:
+        base = runtime[2]
+        identity["base_path_sha256"] = hashlib.sha256(str(base).encode()).hexdigest()
+        identity["base_sha256"], _ = _challenge_source_digest(base, 128 * 1024 * 1024)
     return hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()

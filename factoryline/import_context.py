@@ -14,11 +14,11 @@ import ast
 import hashlib
 import re
 from copy import deepcopy
-from collections import defaultdict
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 
 _FINGERPRINT_EPOCH = ContextVar("factory_structural_fingerprint_epoch", default=None)
+_AST_DUMP_OPTIONS = dict.fromkeys({"show_empty"} & ast.dump.__kwdefaults__.keys(), True)
 
 
 def structural_ast_fingerprint(tree):
@@ -446,9 +446,9 @@ def _structural_ast_leaf_digest(value):
         or len(tuple(islice(_iter_ast_nodes(value), 129))) > 128
     ):
         return None
+    dump = ast.dump(value, include_attributes=True, **_AST_DUMP_OPTIONS)
     return hashlib.sha256(
-        b"BOUNDED_DUMP\0"
-        + ast.dump(value, include_attributes=True).encode("utf-8", "surrogatepass")
+        b"BOUNDED_DUMP\0" + dump.encode("utf-8", "surrogatepass")
     ).digest()
 
 
