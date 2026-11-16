@@ -16416,6 +16416,8 @@ def test_sql_batch_keeps_statement_and_bound_values_separate(
             ("wrong_mount", True),
             ("unmapped_launch", True),
             ("case_alias_launch", True),
+            ("alternate_unbound_local_build", True),
+            ("alternate_disjoint_build", False),
         )
     ]
     + [
@@ -16530,9 +16532,21 @@ def test_bounded_scan_requires_closed_settings_uses(
         encoding="utf-8",
     )
     mount = "    volumes: ['workspace:/srv']\n" if control == "wrong_mount" else ""
-    (tmp_path / "compose.yaml").write_text(
-        "services:\n  api:\n    build: ./backend\n" + mount, encoding="utf-8"
-    )
+    compose = "services:\n  api:\n    build: ./backend\n" + mount
+    if control.startswith("alternate_"):
+        build_root = (
+            "backend" if control == "alternate_unbound_local_build" else "assets"
+        )
+        (tmp_path / build_root).mkdir(exist_ok=True)
+        (tmp_path / build_root / "Dockerfile.metadata").write_text(
+            "FROM scratch\n", encoding="utf-8"
+        )
+        compose += (
+            "  metadata:\n    build:\n"
+            f"      context: ./{build_root}\n"
+            "      dockerfile: Dockerfile.metadata\n"
+        )
+    (tmp_path / "compose.yaml").write_text(compose, encoding="utf-8")
     args = _build_parser().parse_args(
         [
             "audit",

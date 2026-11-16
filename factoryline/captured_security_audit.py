@@ -1246,44 +1246,42 @@ def _launch_text_sources(module):
     }
 
 
-def _launch_import_roots(source, configs):
-    """Map a fixed ASGI target through declared build copies and bounded mounts."""
+def _launch_import_roots(source, configs, focal_path):
+    """Map fixed launches and reject unresolved builds that may own the focal source."""
     folded = {name.casefold() for name in configs}
-    if (
-        not folded
-        or folded.intersection(_LAUNCH_BLOCKERS)
-        or any(
-            path in folded and path not in configs for path in _COMPOSE_PROFILE_FILES
-        )
-    ):
+    if folded.intersection(_LAUNCH_BLOCKERS):
         return frozenset()
+    focal = PurePosixPath(focal_path.relative_to(source.root).as_posix().casefold())
     roots = set()
-    for path in _COMPOSE_PROFILE_FILES:
-        if path not in configs:
-            continue
-        services = _compose_services(configs[path])
-        if services is None:
+    for path in sorted(folded.intersection(_COMPOSE_PROFILE_FILES)):
+        services = _compose_services(configs.get(path))
+        if services is None or not all(
+            isinstance(item, dict) for item in services.values()
+        ):
             return frozenset()
-        for service in services.values():
-            selected = _compose_build(service)
-            if selected is None:
-                continue
+        for service in (item for item in services.values() if "build" in item):
+            if (selected := _compose_build(service)) is None:
+                return frozenset()
             directory, docker_path = selected
-            if docker_path.casefold() in folded and docker_path not in configs:
+            if not _launch_service_closed(service, directory, docker_path, configs):
                 return frozenset()
             launched = _fixed_python_launch(configs.get(docker_path), directory)
             if launched is None:
+                overlap = focal.is_relative_to(PurePosixPath(str(directory).casefold()))
+                if (
+                    overlap
+                    or service.get("volumes")
+                    or (docker_path.casefold() in folded and docker_path not in configs)
+                ):
+                    return frozenset()
                 continue
             work, copies, entry = launched
             mapped = _mapped_launch_sources(source, copies, work, entry)
-            if (
-                not _launch_service_closed(service, directory, docker_path, configs)
-                or len(mapped) != 1
-                or not _launch_mounts_closed(service, work, entry, mapped)
+            if len(mapped) != 1 or not _launch_mounts_closed(
+                service, work, entry, mapped
             ):
                 return frozenset()
-            paths, _ = next(iter(mapped))
-            roots.add(paths)
+            roots.add(next(iter(mapped))[0])
     return frozenset(roots) if len(roots) == 1 else frozenset()
 
 
@@ -2548,7 +2546,7 @@ def _launch_unread_field(index, path, module, owner, name):
         != "pydantic_settings.BaseSettings"
     ):
         return False
-    roots = _launch_import_roots(index, config)
+    roots = _launch_import_roots(index, config, path)
     if len(roots) != 1 or not path.is_relative_to(scope := next(iter(roots))):
         return False
     fields = _launch_settings_fields(symbols, path, owner)
