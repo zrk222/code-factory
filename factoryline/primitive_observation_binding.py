@@ -1242,11 +1242,7 @@ def _local_control_label_binding(finding, sources, bindings, source_bytes):
 def _closed_literal_pickle_binding(finding, sources, bindings, source_bytes):
     from . import review_audits as audit
 
-    captured = (
-        _jwt_bound_source_inventory(source_bytes, bindings)
-        if isinstance(source_bytes, dict)
-        else None
-    )
+    captured = _jwt_bound_source_inventory(source_bytes, bindings, python_only=True)
     if captured is None or len(sources) != len(bindings):
         return False
     path = finding.get("path")
@@ -1484,10 +1480,15 @@ def _fixed_program_expected_witness(
 ):
     disposition = facts.get("disposition")
     if disposition != "PROVEN_FIXED_LITERAL_PROGRAM" and (
-        not isinstance(source_bytes, dict)
-        or not isinstance(sources, (list, tuple))
+        not isinstance(sources, (list, tuple))
         or _jwt_bound_source_inventory(
-            source_bytes, {row["path"]: row["sha256"] for row in sources}
+            source_bytes,
+            {row["path"]: row["sha256"] for row in sources},
+            python_only=disposition
+            in {
+                "PROVEN_CLOSED_DECLARATION_INPUT",
+                "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+            },
         )
         is None
     ):
@@ -1590,12 +1591,9 @@ def closed_shell_binding(finding, sources, bindings, source_bytes):
     facts = finding.get("facts", {})
     relative = finding.get("path")
     call = facts.get("call", "")
-    if not isinstance(source_bytes, dict) or not all(
-        isinstance(k, str) for k in (relative, call, *source_bytes)
-    ):
+    if not all(isinstance(value, str) for value in (relative, call)):
         return False
-    source_bytes = {k: v for k, v in source_bytes.items() if Path(k).suffix == ".py"}
-    captured = _jwt_bound_source_inventory(source_bytes, bindings)
+    captured = _jwt_bound_source_inventory(source_bytes, bindings, python_only=True)
     if captured is None:
         return False
     raw = captured.get(Path(relative))
@@ -1603,7 +1601,9 @@ def closed_shell_binding(finding, sources, bindings, source_bytes):
     if (finding.get("code"), finding.get("severity")) != (code, "INFO"):
         return False
     proof = closed_shell_operation_witness(raw, relative, facts.get("call_span"), call)
-    inventory = closed_shell_workspace(source_bytes, call.split(".")[0])
+    inventory = closed_shell_workspace(
+        {name: source_bytes[name] for name in bindings}, call.split(".")[0]
+    )
     if not proof or inventory is None:
         return False
     proof["workspace_sources_sha256"] = inventory
@@ -1651,7 +1651,9 @@ def _jwt_operation_recomputes_from_sources(
     return all(facts.get(key) == value for key, value in regenerated.items())
 
 
-def _jwt_bound_source_inventory(source_bytes, bindings):
+def _jwt_bound_source_inventory(source_bytes, bindings, *, python_only=False):
+    if not isinstance(source_bytes, dict):
+        return None
     captured = {}
     for name, raw in source_bytes.items():
         if not isinstance(name, str) or not isinstance(raw, bytes):
@@ -1659,13 +1661,11 @@ def _jwt_bound_source_inventory(source_bytes, bindings):
         path = Path(name)
         if path.is_absolute() or ".." in path.parts:
             return None
-        captured[path] = raw
-    if set(source_bytes) != set(bindings) or any(
-        hashlib.sha256(source_bytes[name]).hexdigest() != digest
-        for name, digest in bindings.items()
-    ):
-        return None
-    return captured
+        if not python_only or path.suffix == ".py":
+            if hashlib.sha256(raw).hexdigest() != bindings.get(name):
+                return None
+            captured[path] = raw
+    return captured if len(captured) == len(bindings) else None
 
 
 def _jwt_declaration_targets(tree, facts):

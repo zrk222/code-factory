@@ -3595,6 +3595,40 @@ def test_finite_eval_rejects_prior_function_invocation():
     assert witness(source) == {}
 
 
+@pytest.mark.parametrize(
+    ("source", "disposition"),
+    [
+        (
+            "import pickle\ndef roundtrip():\n    return pickle.loads(pickle.dumps({'key': 2}))\n",
+            "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
+        ),
+        (SOURCE, "PROVEN_FINITE_LITERAL_EVAL_INPUT"),
+        (
+            "def alias():\n    ctx = {}\n    exec('type Alias = int', ctx, None)\n",
+            "PROVEN_CLOSED_DECLARATION_INPUT",
+        ),
+    ],
+)
+def test_source_only_primitive_proof_with_project_configuration(
+    tmp_path, source, disposition
+):
+    from scripts.precision_native_capture import scan_capture
+
+    (tmp_path / "control.py").write_text(source, encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\npython_files = ['test_*.py']\n", encoding="utf-8"
+    )
+
+    _, report = scan_capture(tmp_path)
+    assert report["audit_coverage"]["complete"]
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["finding_tier_report"]["raw_diagnostics"]["count"] == 1
+    assert not report["findings"]
+    assert [
+        row["facts"]["disposition"] for row in report["primitive_observations"]
+    ] == [disposition]
+
+
 def test_finite_eval_native_scan_retains_primitive(tmp_path):
     from factoryline.review_audits import security_scan
 
