@@ -515,6 +515,14 @@ def _trusted_core_native_security_rows(captured, tenant, audit, fixture_bindings
     )
 
 
+def _native_surface_identity(row):
+    return tuple(
+        (type(value), value)
+        for key in (*_RULE_SPAN_KEYS, "severity")
+        for value in (row.get(key, 0 if key == "column" else None),)
+    )
+
+
 def _trusted_core_surface_matches(core, native_rows):
     surface = [
         row
@@ -526,14 +534,7 @@ def _trusted_core_surface_matches(core, native_rows):
     ]
     try:
         surface_ids, native_ids = (
-            Counter(
-                tuple(
-                    (type(value), value)
-                    for key in (*_RULE_SPAN_KEYS, "severity")
-                    for value in (row.get(key, 0 if key == "column" else None),)
-                )
-                for row in rows
-            )
+            Counter(map(_native_surface_identity, rows))
             for rows in (surface, native_rows)
         )
     except TypeError:

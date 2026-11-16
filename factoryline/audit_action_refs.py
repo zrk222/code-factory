@@ -893,6 +893,7 @@ def _security_scan_verification_state(audit, core, captured, primitive):
         "_trusted_core_complete_sources",
         "_trusted_core_tenant_arguments",
         "_trusted_core_surface_matches",
+        "_native_surface_identity",
         "security_defect_policy_decision",
     )
     return (
@@ -1187,6 +1188,53 @@ def _security_scan_block_conservation_failure(
         )
 
 
+def _unreconciled_native_diagnostics(core, captured, baseline, native_rows):
+    """Expose missing verifier findings without treating them as policy inputs."""
+    from .primitive_observation_binding import _RULE_SPAN_KEYS, _native_surface_identity
+
+    if not isinstance(captured, dict):
+        return []
+    source_hashes = {
+        row["path"]: row["sha256"]
+        for row in core.get("sources", [])
+        if isinstance(row, dict)
+        and isinstance(row.get("path"), str)
+        and isinstance(row.get("sha256"), str)
+    }
+    present = Counter()
+    for row in baseline:
+        try:
+            present[_native_surface_identity(row)] += 1
+        except TypeError:
+            continue
+    missing, checked = [], {}
+    for row in native_rows:
+        try:
+            identity = _native_surface_identity(row)
+            if present[identity]:
+                present[identity] -= 1
+                continue
+        except (AttributeError, TypeError):
+            continue
+        path = row.get("path")
+        if not isinstance(path, str) or path not in source_hashes:
+            continue
+        if path not in checked:
+            raw = captured.get(path)
+            checked[path] = (
+                isinstance(raw, bytes)
+                and sha256(raw).hexdigest() == source_hashes[path]
+            )
+        if not checked[path]:
+            continue
+        diagnostic = {
+            key: row.get(key, 0 if key == "column" else None)
+            for key in (*_RULE_SPAN_KEYS, "severity")
+        }
+        missing.append({**diagnostic, "source_sha256": source_hashes[path]})
+    return missing
+
+
 def _partition_with_fixture_authority(audit, core, captured, rows, *, stale=False):
     if captured is not None:
         core["_primitive_source_bytes"] = captured
@@ -1237,7 +1285,7 @@ def _security_scan_partition_native_rows(audit, core, captured, primitive):
         native_rows,
         stale=fixture_claim and (verified is None or verified[4] is None),
     )
-    if native_rows is not None:
+    if native_expected_rows is not None:
         try:
             current = state_builder(audit, core, captured, primitive)
             if (current, _security_scan_verification_state, state_builder.__code__) != (
@@ -1325,6 +1373,12 @@ def seal_security_scan(
     )
     core["finding_conservation"] = conservation
     if conservation["state"] == "FAILED":
+        if native_surface_mismatch and not native_verification_invalidated:
+            missing = _unreconciled_native_diagnostics(
+                core, captured, input_physical, native_expected_rows
+            )
+            if missing:
+                conservation["unreconciled_native_diagnostics"] = missing
         _security_scan_block_conservation_failure(core, baseline, input_physical)
     result = _finish_security_scan_seal(audit, core, captured, baseline, input_physical)
     caller_core.clear()

@@ -6765,6 +6765,67 @@ def test_faulty_complete_native_surface_keeps_original_blocked_outcome(
     assert checked["finding_tier_report"] == base["finding_tier_report"]
 
 
+@pytest.mark.parametrize("drift", [False, True])
+def test_verifier_only_diagnostic_is_visible_without_authority(
+    tmp_path, monkeypatch, capsys, drift
+):
+    from factoryline.cli_audit import _print_selected_security_policy
+
+    source = b"API_KEY = 'literal-for-test-only-42'\n"
+    base = _trusted_core_policy316_seal(tmp_path, source)
+    native = base["finding_tier_report"]["ledger"][0]["raw_finding"]
+    core = copy.deepcopy(dict(base))
+    core["_primitive_source_bytes"] = dict(base._captured_sources)
+    for name in ("findings", "context_reviews", "primitive_observations"):
+        core[name] = []
+    core["finding_counts"] = {}
+    core["finding_tier_report"]["ledger"] = []
+    core["finding_conservation"]["unreconciled_native_diagnostics"] = [
+        {"code": "SECURITY_STALE", "path": "old.py"}
+    ]
+
+    if drift:
+        partition = review_integrity.partition_proven_primitive_observations
+
+        def change_coverage(work, rows=None):
+            partition(work, rows)
+            work["audit_coverage"]["complete"] = False
+
+        monkeypatch.setattr(
+            review_integrity, "partition_proven_primitive_observations", change_coverage
+        )
+
+    result = review_audits._seal_security_scan(core)
+
+    conservation = result["finding_conservation"]
+    assert conservation["state"] == "FAILED"
+    assert conservation["native_surface_mismatch"] is True
+    assert conservation["native_verification_state_changed"] is drift
+    assert result["defect_policy_decision"]["state"] == "BLOCKED"
+    assert result["defect_policy_decision"]["exit_code"] == 2
+    assert result["agent_actions"] == []
+    assert result["findings"] == []
+    assert result["finding_tier_report"]["ledger"] == []
+    _print_selected_security_policy(result)
+    printed = capsys.readouterr().out
+    if drift:
+        assert "unreconciled_native_diagnostics" not in conservation
+        assert "UNRECONCILED" not in printed
+    else:
+        keys = ("code", "path", "line", "column", "end_line", "end_column", "severity")
+        assert conservation["unreconciled_native_diagnostics"] == [
+            {
+                **{key: native.get(key) for key in keys},
+                "source_sha256": hashlib.sha256(source).hexdigest(),
+            }
+        ]
+        assert (
+            'UNRECONCILED SECURITY_HARDCODED_SECRET: "app.py":1 (review only)'
+            in printed
+        )
+        assert source.decode().strip() not in printed
+
+
 @pytest.mark.parametrize(
     "change",
     ["source", "cycle", "tenant", "profile", "scanner", "provider", "coverage"],
