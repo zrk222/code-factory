@@ -5,12 +5,13 @@ import copy
 import hashlib
 import json
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from pathlib import PurePosixPath
 from contextvars import ContextVar
 
 _ROLE_REBUILD_CONTEXT = ContextVar("factory-role-rebuild-context", default=None)
+_RULE_SPAN_KEYS = ("code", "path", "line", "column", "end_line", "end_column")
 
 _FINDING_TIER_POLICY = {
     "schema": "factory.security.finding-tiers.v1",
@@ -519,16 +520,20 @@ def _trusted_core_surface_matches(core, native_rows):
         and isinstance(row.get("code"), str)
         and row["code"].startswith("SECURITY_")
     ]
-    surface_ids, native_ids = (
-        sorted(
-            tuple(
-                row.get(key, 0) if key == "column" else row.get(key)
-                for key in ("path", "line", "column", "code", "severity")
+    try:
+        surface_ids, native_ids = (
+            Counter(
+                tuple(
+                    (type(value), value)
+                    for key in (*_RULE_SPAN_KEYS, "severity")
+                    for value in (row.get(key, 0 if key == "column" else None),)
+                )
+                for row in rows
             )
-            for row in rows
+            for rows in (surface, native_rows)
         )
-        for rows in (surface, native_rows)
-    )
+    except TypeError:
+        return False
     return surface_ids == native_ids
 
 
@@ -725,10 +730,13 @@ def _finding_pickle_byte_origin(finding, captured, bound, cache):
     """Add independently rebuilt byte provenance without changing finding authority."""
     if not bound or finding.get("code") != "SECURITY_UNSAFE_DESERIALIZATION":
         return None
+    span = [finding.get(key) for key in _RULE_SPAN_KEYS[2:]]
+    if not valid_source_span(span):
+        return None
     path = finding["path"]
     if path not in cache:
         cache[path] = _pickle_byte_origins_for_source(path, captured)
-    entry = cache[path].get((finding.get("line"), finding.get("column")))
+    entry = cache[path].get(tuple(span))
     facts = finding.get("facts", {})
     if (
         entry is None
@@ -767,7 +775,7 @@ def _pickle_byte_origins_for_source(path, captured):
             call_name = audit._normalized_call_name(node, aliases)
             observation = local_pickle_byte_origin(node, call_name, aliases, audit)
             if observation is not None:
-                result[(node.lineno, node.col_offset)] = {
+                result[tuple(_pickle_span(node))] = {
                     "origin": observation,
                     "native_call": call_name,
                 }
@@ -952,20 +960,17 @@ def _finding_missing_premises(finding, bound):
 
 def _finding_rule_scorecards(ledger):
     """Run-local yield and abstention; never invent labels or confidence."""
+    grouped = defaultdict(Counter)
+    for row in ledger:
+        grouped[str(row["source_identity"]["code"])][row["tier"]] += 1
     rows = []
-    for code in sorted({str(row["source_identity"]["code"]) for row in ledger}):
-        selected = [
-            row for row in ledger if str(row["source_identity"]["code"]) == code
-        ]
-        counts = {
-            tier: sum(row["tier"] == tier for row in selected)
-            for tier in _FINDING_TIER_POLICY["tiers"]
-        }
+    for code, selected in sorted(grouped.items()):
+        counts = {tier: selected[tier] for tier in _FINDING_TIER_POLICY["tiers"]}
         rows.append(
             {
                 "rule_id": code,
                 "lane": "security" if code.startswith("SECURITY_") else "other",
-                "raw_count": len(selected),
+                "raw_count": selected.total(),
                 "tier_counts": counts,
                 "abstention_count": counts["NEEDS_CONTEXT"],
                 "measured_actionable_precision": None,
@@ -1075,13 +1080,18 @@ def _regenerate_source_model(sources, bindings):
     return regenerate_security_source_model(sources, bindings)
 
 
+def _same_rule_span(left, right):
+    return all(
+        type(a) is type(b) and a == b
+        for key in _RULE_SPAN_KEYS
+        for a, b in ((left.get(key), right.get(key)),)
+    )
+
+
 def _matches_regenerated_finding(finding, native_rows):
     facts = finding.get("facts", {})
     return any(
-        candidate.get("code") == finding.get("code")
-        and candidate.get("path") == finding.get("path")
-        and candidate.get("line") == finding.get("line")
-        and candidate.get("column") == finding.get("column")
+        _same_rule_span(candidate, finding)
         and candidate.get("facts", {}).get("name") == facts.get("name")
         for candidate in native_rows
         if isinstance(candidate, dict) and isinstance(candidate.get("facts"), dict)
@@ -1145,10 +1155,7 @@ def _known_format_declaration(finding, source_bytes):
 def _matches_proven_primitive(finding, observations):
     facts = finding.get("facts", {})
     return any(
-        row.get("code") == finding.get("code")
-        and row.get("path") == finding.get("path")
-        and row.get("line") == finding.get("line")
-        and row.get("column", 0) == finding.get("column", 0)
+        _same_rule_span(row, finding)
         and row.get("severity") == finding.get("severity")
         and isinstance(row.get("facts"), dict)
         and isinstance(facts, dict)
@@ -1252,10 +1259,7 @@ def _closed_literal_pickle_binding(finding, sources, bindings, source_bytes):
     except (SyntaxError, ValueError, TypeError, RecursionError):
         return False
     return any(
-        row.get("code") == finding.get("code")
-        and row.get("line") == finding.get("line")
-        and row.get("column") == finding.get("column")
-        and row.get("facts") == finding.get("facts")
+        _same_rule_span(row, finding) and row.get("facts") == finding.get("facts")
         for row in rows
     )
 
@@ -1319,14 +1323,7 @@ def _jwt_primitive_identity(finding, facts, bindings, provider, workspace_digest
 
 
 def _jwt_primitive_declared_span(finding, span):
-    return bool(
-        isinstance(span, list)
-        and len(span) == 4
-        and span[0] == finding.get("line")
-        and span[1] == finding.get("column")
-        and span[2] >= span[0]
-        and span[3] >= span[1]
-    )
+    return _proof_span_matches(finding, span)
 
 
 def _jwt_operation_spans_valid(facts, integrity):
@@ -1423,10 +1420,7 @@ def _fixed_program_chain_binding(finding, facts, sources, source_bytes, integrit
     ):
         return False
     call_span = facts.get("call_span")
-    if not valid_source_span(call_span) or call_span[:2] != [
-        finding.get("line"),
-        finding.get("column"),
-    ]:
+    if not _proof_span_matches(finding, call_span):
         return False
     try:
         tree = ast.parse(raw, filename=source_path)
@@ -1606,10 +1600,7 @@ def closed_shell_binding(finding, sources, bindings, source_bytes):
     if not proof or inventory is None:
         return False
     proof["workspace_sources_sha256"] = inventory
-    return bool(
-        facts == proof
-        and facts["call_span"][:2] == [finding.get("line"), finding.get("column")]
-    )
+    return facts == proof and _proof_span_matches(finding, facts["call_span"])
 
 
 def _jwt_operation_recomputes_from_sources(
@@ -3603,9 +3594,7 @@ def _application_fixture_claim(finding, facts, evidence, bindings, digest):
         and evidence.get("inventory_sha256") == digest
         and evidence.get("source") == finding.get("path")
         and evidence.get("source_sha256") == bindings.get(finding.get("path"))
-        and valid_source_span(facts.get("declaration_span"))
-        and facts["declaration_span"][:2]
-        == [finding.get("line"), finding.get("column")]
+        and _proof_span_matches(finding, facts.get("declaration_span"))
         and _application_assurance_binding(facts, evidence)
     )
 
@@ -4335,9 +4324,7 @@ def _django_fixture_hashes(facts, evidence, digest):
 
 
 def _django_fixture_span(finding, facts):
-    return valid_source_span(facts.get("declaration_span")) and facts[
-        "declaration_span"
-    ][:2] == [finding.get("line"), finding.get("column")]
+    return _proof_span_matches(finding, facts.get("declaration_span"))
 
 
 def _proof_facts_digest(unsigned):
@@ -4378,7 +4365,7 @@ def _closed_declaration_identity(finding, facts, span, audit):
     return (
         re.fullmatch(r"[0-9a-f]{64}", facts["program_sha256"]) is not None
         and audit._valid_source_span(span)
-        and span[:2] == [finding.get("line"), finding.get("column")]
+        and _proof_span_matches(finding, span)
     )
 
 
@@ -4388,6 +4375,11 @@ def _closed_declaration_literal(facts, span, audit):
     ) <= tuple(facts["literal_span"][:2]) <= tuple(facts["literal_span"][2:]) <= tuple(
         span[2:]
     )
+
+
+def _proof_span_matches(finding, span):
+    location = [finding.get(key) for key in _RULE_SPAN_KEYS[2:]]
+    return valid_source_span(location) and valid_source_span(span) and location == span
 
 
 def valid_source_span(span):
@@ -4854,6 +4846,8 @@ def primitive_binding_helpers():
 
     return (
         matches_regenerated_security_precondition,
+        _same_rule_span,
+        _proof_span_matches,
         regenerate_security_source_model,
         security_effect_fact_matches,
         valid_security_precondition,

@@ -2414,6 +2414,7 @@ def matches_regenerated_security_precondition(finding, native_rows, regenerated_
     """Copy only a source-verified proof whose complete stable claims still match."""
     from copy import deepcopy
     from collections.abc import Mapping
+    from .primitive_observation_binding import _same_rule_span
 
     match finding:
         case {"code": code, "facts": dict() as facts}:
@@ -2493,10 +2494,7 @@ def matches_regenerated_security_precondition(finding, native_rows, regenerated_
             if isinstance(candidate, dict)
             for current_facts in (candidate.get("facts", {}),)
             if isinstance(current_facts, dict)
-            if all(
-                candidate.get(key) == finding.get(key)
-                for key in ("code", "path", "line", "column")
-            )
+            if _same_rule_span(candidate, finding)
             for regenerated in (current_facts.get("security_precondition"),)
             if valid_security_precondition(
                 regenerated, finding, require_effect_witness=effect_contract is not None
@@ -2599,6 +2597,13 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
                 ),
                 valid_source_span(sink_span),
                 sink_span[:2] == [finding.get("line"), finding.get("column", 0)],
+                not ({"end_line", "end_column"} & finding.keys())
+                or (
+                    type(finding.get("end_line"))
+                    is type(finding.get("end_column"))
+                    is int
+                    and sink_span[2:] == [finding["end_line"], finding["end_column"]]
+                ),
             )
         ):
             pass

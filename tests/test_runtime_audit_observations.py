@@ -2216,6 +2216,87 @@ def test_shared_configuration_capture_rejects_changed_bytes(tmp_path, monkeypatc
     assert retained == {}
 
 
+def test_rule_attribution_does_not_reuse_proof_at_a_shared_expression_start(tmp_path):
+    from factoryline import review_audits as audit
+    from factoryline.credential_role_paths import (
+        matches_regenerated_security_precondition,
+        valid_security_precondition,
+    )
+    from factoryline.primitive_observation_binding import (
+        _matches_proven_primitive,
+        _matches_regenerated_finding,
+    )
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\n"
+        "def handler():\n"
+        "    return eval(request.get_data(as_text=True)).strip()\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(tmp_path, cache_enabled=False, security_only=True)
+    finding = next(
+        row for row in report["findings"] if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
+    premise = finding["facts"]["security_precondition"]
+    assert valid_security_precondition(premise, finding)
+    assert matches_regenerated_security_precondition(finding, [finding], {})
+    assert _matches_regenerated_finding(finding, [finding])
+    assert _matches_proven_primitive(finding, [finding])
+
+    wider = {**finding, "end_column": finding["end_column"] + len(".strip()")}
+    other_rule = {**finding, "code": "SECURITY_SHELL_COMMAND"}
+    for unrelated in (wider, other_rule):
+        assert not matches_regenerated_security_precondition(unrelated, [finding], {})
+        assert not _matches_regenerated_finding(unrelated, [finding])
+        assert not _matches_proven_primitive(unrelated, [finding])
+    assert not valid_security_precondition(premise, wider)
+    assert not valid_security_precondition(premise, {**finding, "end_line": False})
+
+
+@pytest.mark.parametrize("end_column", [None, False, [], 99, "equal_float"])
+def test_reseal_rejects_wrong_primitive_span_even_if_ledger_agrees(
+    tmp_path, end_column
+):
+    from copy import deepcopy
+    from factoryline import review_audits as audit
+
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('brew --prefix example')\n", encoding="utf-8"
+    )
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["primitive_observation_count"] == 1
+    if end_column == "equal_float":
+        from factoryline.primitive_observation_binding import closed_shell_binding
+
+        original = report["primitive_observations"][0]
+        end_column = float(original["end_column"])
+        captured = dict(report._captured_sources)
+        bindings = {entry["path"]: entry["sha256"] for entry in report["sources"]}
+        assert not closed_shell_binding(
+            {**original, "end_column": end_column},
+            report["sources"],
+            bindings,
+            captured,
+        )
+    core = deepcopy(dict(report))
+    core["_primitive_source_bytes"] = dict(report._captured_sources)
+    core["primitive_observations"][0]["end_column"] = end_column
+    core["finding_tier_report"]["ledger"][0]["raw_finding"]["end_column"] = end_column
+    checked = audit._seal_security_scan(core)
+    assert checked["finding_conservation"]["state"] == "FAILED"
+    assert checked["primitive_observations"] == []
+    assert checked["agent_actions"] == []
+    assert (
+        checked["finding_conservation"]["baseline_raw_diagnostics"][0]["end_column"]
+        == end_column
+    )
+
+
 @pytest.mark.parametrize(
     "policy",
     ["trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
@@ -2279,6 +2360,17 @@ def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
         expected_unresolved
     )
     assert all(rows[key].get("missing_premises") for key in expected_unresolved)
+    execution = next(
+        card
+        for card in report["finding_tier_report"]["rule_scorecards"]
+        if card["rule_id"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
+    assert execution["raw_count"] == 2
+    assert execution["tier_counts"] == {
+        "SUPPORTED_DEFECT": 1,
+        "NEEDS_CONTEXT": 1,
+        "PROVEN_PRIMITIVE": 0,
+    }
     assert rows[("SECURITY_TLS_VERIFY_DISABLED", 16)]["missing_premises"] == [
         "effective_tls_policy",
         "remote_reachability",
