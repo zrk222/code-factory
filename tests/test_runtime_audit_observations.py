@@ -1441,14 +1441,24 @@ def test_collection_transaction_cli_final_guard_fails_closed(
 
 
 @pytest.mark.parametrize(
-    "drift", [None, "requirements.txt", ".github/workflows/ci.yml"]
+    ("drift", "native_failure"),
+    [
+        (None, None),
+        ("requirements.txt", None),
+        (".github/workflows/ci.yml", None),
+        (None, "unavailable"),
+        (None, "mismatch"),
+    ],
 )
-def test_final_receipt_rechecks_application_fixture_configuration(
-    tmp_path, monkeypatch, capsys, drift
+def test_final_receipt_rechecks_application_fixture_authority(
+    tmp_path, monkeypatch, capsys, drift, native_failure
 ):
     from copy import deepcopy
 
-    from factoryline import review_audits as audit
+    from factoryline import (
+        primitive_observation_binding as primitive,
+        review_audits as audit,
+    )
     from factoryline.cli import main
 
     (tmp_path / "pytest.ini").write_text("[pytest]\n")
@@ -1471,12 +1481,22 @@ def test_final_receipt_rechecks_application_fixture_configuration(
     seal = audit._seal_security_scan
     initial = []
     seal_calls = []
+    native_attempts = []
+
+    def unavailable_native(*args):
+        native_attempts.append(len(args))
+        return None if native_failure == "unavailable" else []
+
+    if native_failure:
+        monkeypatch.setattr(
+            primitive, "_trusted_core_native_security_rows", unavailable_native
+        )
 
     def observe_then_mutate(*args, **kwargs):
         seal_calls.append(True)
         sealed = seal(*args, **kwargs)
         if not initial:
-            initial.append(deepcopy(sealed["primitive_observations"]))
+            initial.append(deepcopy(sealed.get("primitive_observations", [])))
             if drift:
                 path = tmp_path / drift
                 path.parent.mkdir(exist_ok=True, parents=True)
@@ -1504,14 +1524,26 @@ def test_final_receipt_rechecks_application_fixture_configuration(
         for row in initial[0]
         if row["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
     ]
-    assert len(original) == 1
     assert report["finding_conservation"]["expected_raw_rows"] == 1
     assert report["finding_conservation"]["physical_raw_rows"] == 1
-    if drift is None:
+    if native_failure:
+        assert 4 in native_attempts
+        assert not original and not report.get("primitive_observations")
+        assert not report["agent_actions"]
+        (row,) = report["findings"]
+        assert (row["code"], row["path"], row["line"]) == (
+            "SECURITY_HARDCODED_SECRET",
+            "test_login.py",
+            8,
+        )
+        assert code == 2
+    elif drift is None:
+        assert len(original) == 1
         assert len(seal_calls) == 1
         assert report["primitive_observations"] == original
         assert report["finding_conservation"]["state"] == "PASS"
     else:
+        assert len(original) == 1
         assert len(seal_calls) == 2
         assert not report.get("primitive_observations")
         assert not report["agent_actions"]

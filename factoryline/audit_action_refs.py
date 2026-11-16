@@ -1287,7 +1287,7 @@ def _security_scan_partition_native_rows(audit, core, captured, primitive):
         core,
         captured,
         native_rows,
-        stale=fixture_claim and (verified is None or verified[4] is None),
+        stale=fixture_claim and (native_rows is None or verified[4] is None),
     )
     if native_expected_rows is not None:
         try:
