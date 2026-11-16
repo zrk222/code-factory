@@ -1894,6 +1894,8 @@ def _closed_shell_operation(command):
     """Recognize simple non-interpreter operations, never arbitrary shell safety."""
     import re
 
+    if type(command) is str and not command:
+        return "empty_command_input"
     if not isinstance(command, str) or not re.fullmatch(
         r"[A-Za-z0-9_.@+* -]{1,512}", command
     ):
@@ -2256,9 +2258,10 @@ def closed_shell_operation_witness(raw, relative, span, call_name):
         "operation_role": role,
         "hypothesis": "SOURCE_COMMAND_INJECTION",
         "input_effect": "CLOSED_LITERAL_COMMAND_SYNTAX",
-        "operational_effects": "LOCAL_ARTIFACT_MUTATION"
-        if role == "executable_packing"
-        else "METADATA_QUERY",
+        "operational_effects": {
+            "empty_command_input": "NO_COMMAND_PAYLOAD",
+            "executable_packing": "LOCAL_ARTIFACT_MUTATION",
+        }.get(role, "METADATA_QUERY"),
         "runtime_assurance": "INCOMPLETE",
         "filesystem_assurance": "UNASSESSED",
         "executable_provenance": "UNASSESSED",

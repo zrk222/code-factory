@@ -2960,24 +2960,42 @@ def test_closed_shell_provider_and_input_ambiguity_stays_unproved(tmp_path, sour
     assert not report.get("primitive_observations")
 
 
-def test_closed_shell_source_binding_rejects_forgery_and_shadow(tmp_path):
+@pytest.mark.parametrize(
+    ("provider", "call", "effect"),
+    [
+        ("os", "os.system('upx --best app')", "LOCAL_ARTIFACT_MUTATION"),
+        ("os", "os.system('')", "NO_COMMAND_PAYLOAD"),
+        ("subprocess", "subprocess.run('', shell=True)", "NO_COMMAND_PAYLOAD"),
+    ],
+)
+def test_closed_shell_source_binding_rejects_forgery_and_shadow(
+    tmp_path, provider, call, effect
+):
     from factoryline.review_audits import security_scan
     from factoryline.primitive_observation_binding import closed_shell_binding
 
     path = tmp_path / "build.py"
-    path.write_text("import os\nos.system('upx --best app')\n", encoding="utf-8")
+    path.write_text(f"import {provider}\n{call}\n", encoding="utf-8")
     report = security_scan(tmp_path, cache_enabled=False)
     finding = report["primitive_observations"][0]
+    assert finding["facts"]["operational_effects"] == effect
+    assert finding["facts"]["runtime_assurance"] == "INCOMPLETE"
     sources = report["sources"]
     bindings = {row["path"]: row["sha256"] for row in sources}
-    raw = {"build.py": path.read_bytes()}
+    raw = {
+        "build.py": path.read_bytes(),
+        "pyproject.toml": b"[tool.pytest.ini_options]",
+    }
     assert closed_shell_binding(finding, sources, bindings, raw)
+    assert not closed_shell_binding(
+        finding, sources, bindings, {**raw, "unbound.py": b"pass\n"}
+    )
     forged = json.loads(json.dumps(finding))
     forged["facts"]["operation_role"] = "safe"
     assert not closed_shell_binding(forged, sources, bindings, raw)
-    raw["build.py"] = b"import os\nos.system('rm -rf /')\n"
+    raw["build.py"] = b"# changed source\n"
     assert not closed_shell_binding(finding, sources, bindings, raw)
-    (tmp_path / "os.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / f"{provider}.py").write_text("pass\n", encoding="utf-8")
     assert not security_scan(tmp_path, cache_enabled=False).get(
         "primitive_observations"
     )

@@ -1590,10 +1590,11 @@ def closed_shell_binding(finding, sources, bindings, source_bytes):
     facts = finding.get("facts", {})
     relative = finding.get("path")
     call = facts.get("call", "")
-    if not all(isinstance(value, str) for value in (relative, call)):
+    if not isinstance(source_bytes, dict) or not all(
+        isinstance(k, str) for k in (relative, call, *source_bytes)
+    ):
         return False
-    if not isinstance(source_bytes, dict):
-        return False
+    source_bytes = {k: v for k, v in source_bytes.items() if Path(k).suffix == ".py"}
     captured = _jwt_bound_source_inventory(source_bytes, bindings)
     if captured is None:
         return False
