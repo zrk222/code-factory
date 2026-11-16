@@ -16382,39 +16382,67 @@ def test_sql_batch_keeps_statement_and_bound_values_separate(
         ("closed", False),
         ("field_read", True),
         ("bulk_export", True),
+        ("rebound", True),
+        ("global_rebound", True),
+        ("package_opaque", True),
+        ("package_plain", False),
+        ("registry_namespace", True),
         ("reexport", True),
         ("wrong_mount", True),
         ("unmapped_launch", True),
         ("case_alias_launch", True),
     ],
 )
-def test_bounded_scan_requires_closed_settings_uses(tmp_path, control, active):
+@pytest.mark.parametrize("singleton", [False, True])
+def test_bounded_scan_requires_closed_settings_uses(
+    tmp_path, control, active, singleton
+):
     from factoryline.cli import _build_parser
     from factoryline.cli_audit import prepare_bounded_security_report
 
     app = tmp_path / "backend" / "app"
     app.mkdir(parents=True)
-    (app / "config.py").write_text(
+    member = "options" if singleton else "load_options"
+    access = member if singleton else f"{member}()"
+    package = control.startswith("package_")
+    module = "app" if package else "app.config"
+    carrier = (
+        "options = ServiceOptions()\n"
+        if singleton
+        else "def load_options():\n    return ServiceOptions()\n"
+    )
+    if package:
+        carrier += f"local_label = {access}.title\n"
+    (app / ("__init__.py" if package else "config.py")).write_text(
         "from pydantic_settings import BaseSettings\n"
         "class ServiceOptions(BaseSettings):\n"
         "    secret_key: str = 'unused-development-setting'\n"
-        "    title: str = 'catalog'\n\n"
-        "def load_options():\n"
-        "    return ServiceOptions()\n",
+        "    title: str = 'catalog'\n\n" + carrier,
         encoding="utf-8",
     )
     extra = {
-        "field_read": "load_options().secret_key\n",
-        "bulk_export": "accept_options(load_options())\n",
-        "reexport": "from app.alias import options as exported\naccept_options(exported())\n",
+        "closed": "def labels():\n    modules = []\n    return modules\n",
+        "field_read": f"{access}.secret_key\n",
+        "bulk_export": f"accept_options({access})\n",
+        "rebound": f"{member} = replacement\n",
+        "global_rebound": f"def rebind():\n    global {member}\n"
+        f"    from other import replacement as {member}\n",
+        "package_opaque": f"accept_options({access})\n",
+        "registry_namespace": "from sys import modules as loaded_modules\n",
+        "reexport": "from app.alias import exposed_options\n"
+        + (
+            "accept_options(exposed_options)\n"
+            if singleton
+            else "accept_options(exposed_options())\n"
+        ),
     }.get(control, "")
     (app / "main.py").write_text(
-        "from app.config import load_options\nlabel = load_options().title\n" + extra,
+        f"from {module} import {member}\nlabel = {access}.title\n" + extra,
         encoding="utf-8",
     )
     if control == "reexport":
         (app / "alias.py").write_text(
-            "from app.config import load_options as options\n", encoding="utf-8"
+            f"from app.config import {member} as exposed_options\n", encoding="utf-8"
         )
     target = "missing.main" if control == "unmapped_launch" else "app.main"
     docker = "dockerfile" if control == "case_alias_launch" else "Dockerfile"

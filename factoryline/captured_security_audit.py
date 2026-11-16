@@ -2137,9 +2137,9 @@ def _launch_unread_field(index, path, module, owner, name):
     fields = _launch_settings_fields(symbols, path, owner)
     if fields is None or name not in fields:
         return False
-    getter = _launch_settings_getter(symbols, path, module, owner)
-    return getter is not None and _settings_read_set(
-        index, symbols, path, scope, module, getter, owner, fields, name
+    carrier = _launch_settings_carrier(symbols, path, module, owner)
+    return carrier is not None and _settings_read_set(
+        index, symbols, path, scope, module, carrier, owner, fields, name
     )
 
 
@@ -2220,7 +2220,7 @@ def _launch_safe_settings_config(symbols, path, call):
     )
 
 
-def _launch_settings_getter(symbols, path, tree, owner):
+def _launch_settings_carrier(symbols, path, tree, owner):
     from .credential_role_constructor_provider import binding_occurrences
     from .mock_fixture_provenance import _app_expression_name
 
@@ -2242,12 +2242,18 @@ def _launch_settings_getter(symbols, path, tree, owner):
                 ]
                 if decorators not in ([], ["functools.lru_cache"]):
                     return None
-                wrappers.append(statement)
+                wrappers.append((statement.name, statement))
                 if (
                     isinstance(statement.returns, ast.Name)
                     and statement.returns.id == owner.name
                 ):
                     allowed.add(statement.returns)
+                allowed.add(ctor)
+            case ast.Assign(
+                targets=[ast.Name() as binding],
+                value=ast.Call(func=ast.Name() as ctor, args=[], keywords=[]),
+            ) if ctor.id == owner.name and binding.lineno > owner.end_lineno:
+                wrappers.append((binding.id, binding))
                 allowed.add(ctor)
     if len(wrappers) != 1 or binding_occurrences(tree.body, owner.name) != [owner]:
         return None
@@ -2265,38 +2271,56 @@ def _settings_names(tree, name):
 
 
 def _settings_read_set(
-    index, symbols, path, root, owner_tree, getter, owner, fields, name
+    index, symbols, path, root, owner_tree, carrier, owner, fields, name
 ):
     from . import review_audits as audit
     from .credential_role_constructor_provider import (
         _captured_terminal_provider_mutation,
         binding_occurrences,
     )
+    from .runtime_audit_integrity import _conditional_module_name
 
-    if binding_occurrences(owner_tree.body, getter.name) != [getter]:
+    carrier_name, definition = carrier
+    if binding_occurrences(owner_tree.body, carrier_name) != [definition]:
         return False
-    module = ".".join(path.relative_to(root).with_suffix("").parts)
-    canonical = {module}
-    canonical.add(".".join(path.relative_to(index.root).with_suffix("").parts))
+    canonical = {
+        name
+        for base in (root, index.root)
+        for name in (
+            ".".join(path.relative_to(base).with_suffix("").parts),
+            _conditional_module_name(path.relative_to(base).as_posix()),
+        )
+        if name
+    }
     if any(
         "pydantic_settings" in p.parts or p.name == "pydantic_settings.py"
         for p in index.snapshots
     ):
         return False
+    singleton = definition if isinstance(definition, ast.Name) else None
+    if singleton is not None:
+        fields = {
+            key: annotation
+            for key, annotation in fields.items()
+            if isinstance(annotation, ast.Name)
+            and annotation.id in {"str", "int", "float", "bool"}
+        }
     read, reexports = set(), {}
     for file, tree in index.snapshots.items():
         if not index.validate(file):
             return False
         aliases = _settings_consumer_aliases(
-            symbols, file, tree, canonical, getter, owner
+            symbols, file, tree, canonical, carrier_name, owner
         )
         if aliases is None:
             return False
         if file == path:
-            aliases.add(getter.name)
+            aliases.add(carrier_name)
         elif aliases:
             reexports[file] = aliases
-        if not _settings_file_reads(index, file, tree, aliases, fields, name, read):
+        if not _settings_file_reads(
+            index, file, tree, aliases, fields, name, read, singleton
+        ):
             return False
     if not read or not _settings_qualified_aliases_closed(
         index, symbols, root, reexports
@@ -2344,7 +2368,7 @@ def _settings_qualified_aliases_closed(index, symbols, root, reexports):
     return True
 
 
-def _settings_consumer_aliases(symbols, path, tree, modules, getter, owner):
+def _settings_consumer_aliases(symbols, path, tree, modules, carrier_name, owner):
     from .credential_role_constructor_provider import binding_occurrences
     from .mock_fixture_provenance import _django_import_rows, _django_package
 
@@ -2366,14 +2390,14 @@ def _settings_consumer_aliases(symbols, path, tree, modules, getter, owner):
             if module not in modules:
                 continue
             if member == owner.name or (
-                member == getter.name
+                member == carrier_name
                 and (
                     statement not in tree.body
                     or binding_occurrences(tree.body, local) != [statement]
                 )
             ):
                 return None
-            if member == getter.name:
+            if member == carrier_name:
                 aliases.add(local)
     return aliases
 
@@ -2382,6 +2406,9 @@ _SETTINGS_OPAQUE_NAMES = {
     "globals",
     "locals",
     "vars",
+    "getattr",
+    "setattr",
+    "delattr",
     "eval",
     "exec",
     "__import__",
@@ -2393,28 +2420,38 @@ _SETTINGS_OPAQUE_NAMES = {
     "__globals__",
     "__code__",
     "__builtins__",
+    "__getattribute__",
 }
 
 
-def _settings_file_reads(index, path, tree, aliases, fields, field, reads):
+def _settings_file_reads(index, path, tree, aliases, fields, field, reads, singleton):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import _presentation_provider_shadow
+
     nodes = tuple(ast.walk(tree))
     if any(_settings_opaque_access(n) for n in nodes):
         return False
     for node in nodes:
         if isinstance(node, ast.Attribute) and node.attr.casefold() == field.casefold():
             return False
+        if (
+            isinstance(node, (ast.Global, ast.Nonlocal))
+            and aliases.intersection(node.names)
+            or singleton is not None
+            and isinstance(node, ast.Name)
+            and node.id in aliases
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and node is not singleton
+        ):
+            return False
     parents = index.parents[path]
     for alias in aliases:
         for ref in _settings_names(tree, alias):
-            call = parents.get(id(ref))
-            if not (
-                isinstance(call, ast.Call)
-                and call.func is ref
-                and not call.args
-                and not call.keywords
+            if singleton is not None and _presentation_provider_shadow(
+                ref, alias, index, path, audit
             ):
                 return False
-            values = _settings_allocation_uses(call, tree, parents)
+            values = _settings_allocation_uses(ref, tree, parents, singleton)
             if not values or not all(
                 _settings_member_read(n, fields, parents, reads) for n in values
             ):
@@ -2424,12 +2461,14 @@ def _settings_file_reads(index, path, tree, aliases, fields, field, reads):
 
 def _settings_opaque_access(node):
     if isinstance(node, ast.Name):
-        return node.id in _SETTINGS_OPAQUE_NAMES
+        # A bare local name does not address the module registry.
+        return node.id != "modules" and node.id in _SETTINGS_OPAQUE_NAMES
     if isinstance(node, ast.Attribute):
         return node.attr in _SETTINGS_OPAQUE_NAMES
     if isinstance(node, ast.ImportFrom):
         return node.module in {"importlib", "runpy"} or any(
-            alias.name in _SETTINGS_OPAQUE_NAMES
+            alias.name == "*"
+            or alias.name in _SETTINGS_OPAQUE_NAMES
             or node.module == "sys"
             and alias.name in {"path", "meta_path", "path_hooks"}
             for alias in node.names
@@ -2445,12 +2484,22 @@ def _settings_opaque_access(node):
     )
 
 
-def _settings_allocation_uses(call, tree, parents):
+def _settings_allocation_uses(reference, tree, parents, singleton):
     from .credential_role_constructor_provider import (
         _scope_scope_bindings,
         binding_occurrences,
     )
 
+    if singleton is not None:
+        return (reference,)
+    call = parents.get(id(reference))
+    if not (
+        isinstance(call, ast.Call)
+        and call.func is reference
+        and not call.args
+        and not call.keywords
+    ):
+        return ()
     parent = parents.get(id(call))
     if not isinstance(parent, ast.Assign):
         return (call,)
