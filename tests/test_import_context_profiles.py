@@ -1030,7 +1030,8 @@ def test_application_parameter_helper_mutation_invalidates_native_context(
         (["pkg.py"], "import pkg", "pkg.py"),
         (["src/pkg.py"], "import pkg", "src/pkg.py"),
         (["pkg.py", "src/pkg.py"], "import pkg", None),
-        (["pkg.py", "pkg/__init__.py"], "import pkg", None),
+        # PathFinder prefers an initialized package to a sibling module on one path.
+        (["pkg.py", "pkg/__init__.py"], "import pkg", "pkg/__init__.py"),
         (["pkg/child.py", "pkg/__init__.py"], "from pkg import child", None),
         (["pkg/child.py"], "from pkg import child", "pkg/child.py"),
         (["pkg/child.py", "src/pkg.py"], "from pkg import child", None),

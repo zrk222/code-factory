@@ -2561,6 +2561,18 @@ def security_effect_fact_matches(
     return True
 
 
+def _precondition_end_span_matches(sink_span, finding):
+    """Legacy findings may omit both end coordinates, but never just one."""
+    if not ({"end_line", "end_column"} & finding.keys()):
+        return True
+    line_type = type(finding.get("end_line"))
+    column_type = type(finding.get("end_column"))
+    return line_type is column_type is int and sink_span[2:] == [
+        finding["end_line"],
+        finding["end_column"],
+    ]
+
+
 def valid_security_precondition(premise, finding, *, require_effect_witness=False):
     """Validate the stable schema, roles, spans, and effect facts of a precondition."""
     from collections.abc import Mapping
@@ -2597,13 +2609,7 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
                 ),
                 valid_source_span(sink_span),
                 sink_span[:2] == [finding.get("line"), finding.get("column", 0)],
-                not ({"end_line", "end_column"} & finding.keys())
-                or (
-                    type(finding.get("end_line"))
-                    is type(finding.get("end_column"))
-                    is int
-                    and sink_span[2:] == [finding["end_line"], finding["end_column"]]
-                ),
+                _precondition_end_span_matches(sink_span, finding),
             )
         ):
             pass

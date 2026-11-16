@@ -90,6 +90,155 @@ def test_native_scan_filters_only_configuration_rejected_before_authority(
     assert report["audit_coverage"]["complete"] is True
 
 
+def _observe_literal_proof(monkeypatch, helper, literal_name):
+    from factoryline import captured_security_audit
+
+    original = getattr(captured_security_audit, helper)
+    observed = []
+
+    def observe(node, target, *args):
+        proven = original(node, target, *args)
+        if getattr(target, "id", None) == literal_name:
+            observed.append(proven)
+        return proven
+
+    monkeypatch.setattr(captured_security_audit, helper, observe)
+    return observed
+
+
+@pytest.mark.parametrize("extra", ["", "    enroll(SECRET_ENV)\n"])
+def test_captured_public_registry_label_requires_closed_uses(
+    tmp_path, monkeypatch, extra
+):
+    from factoryline.review_audits import security_scan
+
+    observed = _observe_literal_proof(
+        monkeypatch, "captured_public_registry_label", "SECRET_ENV"
+    )
+    (tmp_path / "app.py").write_text(
+        "import os\nSECRET_ENV = 'SERVICE_SIGNING_KEY'\n"
+        "def read():\n"
+        "    value = os.getenv(SECRET_ENV)\n"
+        + extra
+        + "    if value is None:\n        raise RuntimeError(f'Missing {SECRET_ENV}')\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert (not extra) in observed
+    assert any(f["code"] == "SECURITY_HARDCODED_SECRET" for f in raw) is bool(extra)
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
+@pytest.mark.parametrize("directory", ["service", "../outside"])
+def test_capture_launch_configuration_binds_only_contained_build_files(
+    tmp_path, directory
+):
+    from factoryline.captured_security_audit import capture_launch_configuration
+
+    data = f"services:\n  app:\n    build:\n      context: {directory}\n      dockerfile: Dockerfile.custom\n".encode()
+    sources = {"compose.yaml": data}
+
+    def read_source(_root, name):
+        if name == "docker-compose.yml":
+            raise ValueError("unreadable selector")
+        if name not in sources:
+            raise FileNotFoundError(name)
+        return sources[name]
+
+    paths, read = capture_launch_configuration(
+        tmp_path, read_source, 65_536, {"startup.py"}
+    )
+    builds = {
+        "service/Dockerfile.custom",
+        "service/.dockerignore",
+        "service/Dockerfile.custom.dockerignore",
+    }
+    baseline = {"startup.py", "compose.yaml", "docker-compose.yml"}
+    assert paths == (baseline | builds if directory == "service" else baseline)
+    sources["compose.yaml"] = b"changed after capture"
+    assert read(tmp_path, "compose.yaml") == data
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_captured_test_derived_input_requires_exact_patch_boundary(
+    tmp_path, monkeypatch, method
+):
+    from factoryline.review_audits import security_scan
+
+    observed = _observe_literal_proof(
+        monkeypatch, "captured_test_derived_input", "secret"
+    )
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / "checker.py").write_text(
+        "import hashlib\nimport requests\nBASE = 'https://example.invalid/check/'\n"
+        "def digest(value):\n    return hashlib.sha256(value.encode('utf-8')).hexdigest()\n"
+        "def lookup(value):\n    hashed = digest(value)\n    front, tail = hashed[:4], hashed[4:]\n"
+        "    reply = requests.get(BASE + front)\n    if reply.text == tail:\n        return 1\n    return 0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_checker.py").write_text(
+        "from unittest.mock import patch\nimport checker\ndef test_input():\n"
+        "    secret = 'fixed-catalog-test-data'\n"
+        f"    with patch.object(checker.requests, '{method}', return_value=None) as recorded:\n"
+        "        checker.lookup(secret)\n    emitted = recorded.call_args.args[0]\n"
+        "    assert secret not in emitted\n    assert checker.digest(secret)[:4] == emitted[-4:]\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert (method == "get") in observed
+    assert any(f["code"] == "SECURITY_HARDCODED_SECRET" for f in raw) is (
+        method == "post"
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
+@pytest.mark.parametrize("stable", [True, False])
+def test_captured_builtin_copy_preserves_proven_values_only(stable):
+    from types import SimpleNamespace
+
+    from factoryline.captured_security_audit import captured_builtin_copy
+    from factoryline.credential_role_identity_effects import _Value
+
+    call = ast.parse("clone(data)", mode="eval").body
+    witnessed = []
+    scope = SimpleNamespace(
+        canonical=lambda *_: "builtins.list",
+        index={},
+        audit=SimpleNamespace(
+            _app_signing_terminal_stable=lambda _index, name: stable
+            and name == "builtins.list"
+        ),
+        witness=lambda *args: witnessed.append(args),
+    )
+    flow = SimpleNamespace(
+        allocate_container=lambda _path, _call, kind, items: _Value(
+            inert_kind=kind, items=items, container_id="clone"
+        )
+    )
+    original = _Value(
+        inert_kind="tuple", container_id="source", roots=frozenset({"source-root"})
+    )
+    copied = captured_builtin_copy(scope, flow, "test_copy.py", call, [original], {})
+    if stable:
+        assert copied.inert_kind == "list" and copied.container_id == "clone"
+        assert copied.roots == original.roots and witnessed
+    else:
+        assert copied is None and not witnessed
+
+
 def captured_scope(tmp_path, source, filename="test_scope.py"):
     path = tmp_path / filename
     raw = source.encode()

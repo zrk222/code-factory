@@ -569,18 +569,10 @@ def _toml_pytest_pattern_value(text, section):
     return _pytest_pattern_value(text, section)
 
 
-def captured_pytest_configuration(
-    captured,
-    *,
-    source_role_only=False,
-    include_tox_invocations=True,
-    complete_precedence=False,
-):
-    """Select captured root configuration with collection's exact precedence."""
+def _select_captured_pytest_configuration(captured, complete_precedence):
+    """Choose the first authoritative root file and retain its raw options."""
     from .review_audits import _TEST_FILE_PATTERNS
 
-    if not isinstance(captured, dict):
-        return None
     for name, section in _PYTEST_CONFIG_SECTIONS:
         if name not in captured:
             continue
@@ -598,13 +590,26 @@ def captured_pytest_configuration(
             options = _pytest_configuration_options(raw.decode("utf-8"), section)
         except (UnicodeError, ValueError, configparser.Error):
             return None
-        options = {} if options is _ABSENT_PYTEST_SECTION else options
-        break
-    else:
-        if complete_precedence is not True:
-            return None
-        identity = {"path": None, "state": "missing", **_pytest_collection_settings()}
-        options = {}
+        return identity, {} if options is _ABSENT_PYTEST_SECTION else options
+    if complete_precedence is not True:
+        return None
+    return {"path": None, "state": "missing", **_pytest_collection_settings()}, {}
+
+
+def captured_pytest_configuration(
+    captured,
+    *,
+    source_role_only=False,
+    include_tox_invocations=True,
+    complete_precedence=False,
+):
+    """Select captured root configuration with collection's exact precedence."""
+    if not isinstance(captured, dict):
+        return None
+    selected = _select_captured_pytest_configuration(captured, complete_precedence)
+    if selected is None:
+        return None
+    identity, options = selected
     effective = _pytest_captured_invocation_options(
         captured,
         options,

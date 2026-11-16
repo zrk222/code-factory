@@ -26,7 +26,22 @@ def _digest(value):
     return sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
-def test_native_observation_keeps_blocked_raw_without_admission(tmp_path):
+def test_native_observation_keeps_blocked_raw_without_admission(tmp_path, monkeypatch):
+    from scripts import precision_native_capture
+
+    projected = []
+    original = precision_native_capture.project_paired_observation
+
+    def project_checked(report, inventory):
+        with pytest.raises(ValueError, match="source binding changed"):
+            original(report, [*inventory, inventory[0]])
+        result = original(report, inventory)
+        projected.append(result)
+        return result
+
+    monkeypatch.setattr(
+        precision_native_capture, "project_paired_observation", project_checked
+    )
     source = tmp_path / "source"
     source.mkdir()
     (source / "app.py").write_text(
@@ -44,6 +59,7 @@ def test_native_observation_keeps_blocked_raw_without_admission(tmp_path):
     args = ["--root", str(source), "--observation-manifest", str(manifest), "--out"]
     assert capture_main([*args, str(out)]) == 2
     result = _read(out)
+    assert projected == [result]
     assert result["admission_available"] is False
     (finding,) = result["raw"]
     assert finding["identity"][:3] == ["SECURITY_DYNAMIC_EXECUTION", "app.py", 2]

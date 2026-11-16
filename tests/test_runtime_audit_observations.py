@@ -1440,6 +1440,37 @@ def test_collection_transaction_cli_final_guard_fails_closed(
     assert report["defect_policy_decision"]["release_approved"] is False
 
 
+def _scan_operative_assignment_baseline(scan, monkeypatch):
+    from factoryline import captured_security_audit as captured_audit
+    from factoryline.captured_security_audit import (
+        captured_config_rejection_point,
+        captured_noncredential_assignment,
+        captured_unread_settings_field,
+    )
+
+    operative_assignments = set()
+
+    def observe_operative_assignment(node, target, aliases):
+        result = captured_noncredential_assignment(node, target, aliases)
+        if target.id == "OPERATIVE_PASSWORD":
+            operative_assignments.add((node.lineno, target.id))
+            assert not result
+            assert not captured_unread_settings_field(node, target)
+            assert not captured_config_rejection_point(node, target)
+        return result
+
+    with monkeypatch.context() as initial:
+        initial.setattr(
+            captured_audit,
+            "captured_noncredential_assignment",
+            observe_operative_assignment,
+        )
+        baseline = scan()
+    assert operative_assignments == {(1, "OPERATIVE_PASSWORD")}
+    assert not baseline._source_role_capture.get("sealed_exclusion_rows")
+    return baseline
+
+
 def _synthetic_provisional_scan(tmp_path, monkeypatch, fault):
     from factoryline import (
         primitive_observation_binding as primitive,
@@ -1459,7 +1490,8 @@ def _synthetic_provisional_scan(tmp_path, monkeypatch, fault):
             cache_enabled=False,
         )
 
-    (entry,) = scan()["finding_tier_report"]["ledger"]
+    baseline = _scan_operative_assignment_baseline(scan, monkeypatch)
+    (entry,) = baseline["finding_tier_report"]["ledger"]
     scan_tree = audit._security_scan_tree
     native_replay = primitive._trusted_core_native_security_rows
     native_passes = []
@@ -2446,6 +2478,7 @@ def test_shared_configuration_capture_survives_native_copy_and_reseal(
 ):
     from factoryline import review_audits as audit
     from factoryline import primitive_observation_binding as primitive
+    from factoryline.captured_security_audit import is_launch_configuration
 
     configurations = {
         "pyproject.toml": b'[project]\nname="capture-control"\nversion="1"\ndescription="private-config-marker"\n',
@@ -2453,6 +2486,9 @@ def test_shared_configuration_capture_survives_native_copy_and_reseal(
     }
     for path, raw in configurations.items():
         (tmp_path / path).write_bytes(raw)
+    assert not any(is_launch_configuration(path) for path in configurations)
+    assert is_launch_configuration("build/Dockerfile.ci")
+    assert not is_launch_configuration("../Dockerfile.ci")
     (tmp_path / "app.py").write_text("def run(value):\n    return eval(value)\n")
     observed = []
     apply_policy = primitive.apply_pickle_source_role_policy
@@ -2581,7 +2617,14 @@ def test_reseal_rejects_wrong_primitive_span_even_if_ledger_agrees(
 def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
     tmp_path, capsys, policy
 ):
+    import ast
+
     from factoryline import review_audits as audit
+    from factoryline.captured_security_audit import (
+        captured_sql_statement_text_closed,
+        tls_transport_relation,
+        yaml_loading_finding,
+    )
     from factoryline.cli_audit import _print_selected_security_policy
 
     source = (
@@ -2656,6 +2699,20 @@ def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
         "loader_authority",
         "serialized_input_provenance",
     ]
+    calls = {
+        node.lineno: node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+    }
+    yaml_call = calls[18]
+    assert (
+        yaml_loading_finding("yaml.load", "app.py", yaml_call, {})
+        == rows[("SECURITY_UNSAFE_YAML", 18)]["raw_finding"]
+    )
+    assert tls_transport_relation(calls[16].args[0], calls[16]) is None
+    assert not captured_sql_statement_text_closed(
+        calls[12], calls[12].args[0], "sqlite3"
+    )
     log_row = rows[("SECURITY_LOG_INJECTION", 4)]
     assert log_row["tier"] == "NEEDS_CONTEXT"
     assert set(log_row["missing_premises"]) == {
@@ -3673,23 +3730,59 @@ def test_failed_complete_source_model_does_not_fall_back_to_one_file_proof(tmp_p
     assert replay["validation"]["native_source_model"] == "UNAVAILABLE"
 
 
-def test_effect_witness_hydrates_legacy_rows_and_reaches_security_handoff(tmp_path):
+def _observe_bound_tls_context(monkeypatch):
+    from factoryline import captured_security_audit as captured_audit
+    from factoryline.captured_security_audit import (
+        bind_urllib_tls_context,
+        captured_module_text,
+    )
+
+    module_urls = set()
+    tls_context_providers = set()
+
+    def observe_module_text(site, reference):
+        value = captured_module_text(site, reference)
+        module_urls.add((reference.id, value))
+        return value
+
+    monkeypatch.setattr(captured_audit, "captured_module_text", observe_module_text)
+
+    def observe_context(finding, source, aliases):
+        result = bind_urllib_tls_context(finding, source, aliases)
+        precondition = result.get("facts", {}).get("security_precondition", {})
+        effect = precondition.get("effect_witness", {}).get("effect_facts", {})
+        tls_context_providers.add(effect.get("provider_id"))
+        return result
+
+    monkeypatch.setattr(captured_audit, "bind_urllib_tls_context", observe_context)
+
+    return module_urls, tls_context_providers
+
+
+def test_effect_witness_hydrates_legacy_rows_and_reaches_security_handoff(
+    tmp_path, monkeypatch
+):
     from factoryline import primitive_observation_binding as binding
 
+    module_urls, tls_context_providers = _observe_bound_tls_context(monkeypatch)
     source = (
         "import logging\n"
         "import os\n"
-        "import requests\n"
+        "import ssl\nimport urllib.request\n"
         "from flask import request\n"
+        "ENDPOINT = 'https://example.test'\n"
         "def save_upload():\n"
         "    uploaded = request.files['file']\n"
         "    uploaded.save(os.path.join('/uploads', uploaded.filename))\n"
         "def fetch_remote():\n"
-        "    requests.get('https://example.test', verify=False)\n"
+        "    context = ssl._create_unverified_context()\n"
+        "    urllib.request.urlopen(ENDPOINT, context=context)\n"
         "def write_log():\n"
         "    logging.error(request.args['message'])\n"
     )
     scanned, captured = _effect_tier_fixture(tmp_path, source)
+    assert module_urls == {("ENDPOINT", "https://example.test")}
+    assert tls_context_providers == {"urllib.request.urlopen"}
     codes = {
         "SECURITY_PATH_TRAVERSAL",
         "SECURITY_TLS_VERIFY_DISABLED",

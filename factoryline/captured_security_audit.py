@@ -804,11 +804,11 @@ def _environment_scalar_reads(source):
                         yield flow
 
 
-def captured_public_registry_label(node, target, aliases):
-    """Recognize closed registry labels used only for lookup and public messages."""
-    value = getattr(node.value, "value", None)
+def _registry_label_kind(value, aliases):
+    from .context_efficiency import _SECRET_BYTES
+
     if not isinstance(value, str) or not value.isascii() or not value:
-        return False
+        return None
     registry_label = value.isupper() and value.isidentifier()
     if not registry_label and (
         len(value) > 128
@@ -819,68 +819,67 @@ def captured_public_registry_label(node, target, aliases):
             if isinstance(binding, str)
         )
     ):
-        return False
-    from .context_efficiency import _SECRET_BYTES
+        return None
+    return (
+        None if any(p.search(value.encode()) for p in _SECRET_BYTES) else registry_label
+    )
 
-    if any(pattern.search(value.encode()) for pattern in _SECRET_BYTES):
+
+def captured_public_registry_label(node, target, aliases):
+    """Recognize closed registry labels used only for lookup and public messages."""
+    value = getattr(node.value, "value", None)
+    registry_label = _registry_label_kind(value, aliases)
+    if registry_label is None:
         return False
     source = _captured_immutable_module_text(node, target.id)
-    if source is None:
+    if source is None or source[2] is not target:
         return False
-    index, owner, origin, _value, references = source
-    if origin is not target:
-        return False
-    local_roles = [
-        _public_registry_use(ref, aliases, index, owner) for ref in references
-    ]
+    index, owner, origin, _, references = source
+    roles = [_public_registry_use(ref, aliases, index, owner) for ref in references]
     if not registry_label and not all(
-        role in _CREDENTIAL_LOCATOR_PROVIDERS for role in local_roles
+        role in _CREDENTIAL_LOCATOR_PROVIDERS for role in roles
     ):
         return False
     foreign = _registry_external_references(index, owner, origin)
     if foreign is None:
         return False
-    uses = [(ref, owner, aliases) for ref in references] + foreign
-    roles = local_roles + [
+    roles.extend(
         _public_registry_use(ref, occurrence, index, path)
         for ref, path, occurrence in foreign
-    ]
-    readonly = {ref for ref, _, _ in uses}
+    )
+    readonly = set(references) | {ref for ref, _, _ in foreign}
+    binding = index, owner, origin, readonly
+    return _registry_roles_closed(binding, value, registry_label, roles)
+
+
+def _registry_roles_closed(binding, value, registry_label, roles):
+    index, _, origin, readonly = binding
     if "stderr" in roles:
         readonly.update(_registry_stderr_operands(index))
     if roles and all(role in _CREDENTIAL_LOCATOR_PROVIDERS for role in roles):
         return _registry_locator_namespace_closed(
             index, origin.id, value
         ) and _captured_module_text_unchanged(
-            index, owner, origin, readonly, ("fastapi.security", "sys.modules")
+            *binding, ("fastapi.security", "sys.modules")
         )
+    if not (registry_label and True in roles and all(roles)):
+        return False
     lookup_only = all(role is True for role in roles)
-    return (
-        registry_label
-        and True in roles
-        and all(roles)
-        and (
-            bool({"help", "stderr", "diagnostic"}.intersection(roles))
-            or lookup_only
-            and _registry_binding_namespace_closed(
-                index, origin.id, reject_reflection=True
-            )
+    public = {"help", "stderr", "diagnostic"}.intersection(roles)
+    namespace = partial(_registry_binding_namespace_closed, index, origin.id)
+    if not (public or lookup_only and namespace(reject_reflection=True)):
+        return False
+    providers = ["os.environ", "os.getenv", *(("os._Environ",) if lookup_only else ())]
+    if "help" in roles:
+        providers.extend(
+            (*_CLI_METADATA_FACTORIES, "argparse.ArgumentParser.add_argument")
         )
-        and _captured_module_text_unchanged(
-            index,
-            owner,
-            origin,
-            readonly,
-            providers=(
-                "os.environ",
-                "os.getenv",
-                *(("os._Environ",) if lookup_only else ()),
-                *(_CLI_METADATA_FACTORIES if "help" in roles else ()),
-                *(("argparse.ArgumentParser.add_argument",) if "help" in roles else ()),
-                *(("builtins.print", "sys.stderr") if "stderr" in roles else ()),
-            ),
-            scalar_reads=_environment_scalar_reads(index) if lookup_only else (),
-        )
+    if "stderr" in roles:
+        providers.extend(("builtins.print", "sys.stderr"))
+    return _captured_module_text_unchanged(
+        *binding,
+        providers=tuple(providers),
+        scalar_reads=_environment_scalar_reads(index) if lookup_only else (),
     )
 
 
@@ -1198,9 +1197,9 @@ def capture_launch_configuration(root, read_source, limit, paths):
     """Discover only local build inputs referenced by the captured Compose files."""
     cached = {}
     selected = set(paths)
-    workspace = Path(root).resolve()
+    observe = partial(_observed_launcher_path, Path(root).resolve())
     for declared in (*_COMPOSE_PROFILE_FILES, *_LAUNCH_BLOCKERS):
-        name = _observed_launcher_path(workspace, declared)
+        name = observe(declared)
         try:
             raw = read_source(root, name)
         except (OSError, ValueError, RuntimeError) as exc:
@@ -1215,18 +1214,10 @@ def capture_launch_configuration(root, read_source, limit, paths):
         services = (
             _compose_services(raw) if name == declared and len(raw) <= limit else None
         )
-        for entry in (services or {}).values():
-            build = _compose_build(entry)
-            if build is not None:
-                directory, docker = build
-                selected.update(
-                    _observed_launcher_path(workspace, option)
-                    for option in (
-                        docker,
-                        (directory / ".dockerignore").as_posix(),
-                        docker + ".dockerignore",
-                    )
-                )
+        builds = map(_compose_build, (services or {}).values())
+        for directory, docker in filter(None, builds):
+            ignore = (directory / ".dockerignore").as_posix()
+            selected.update(map(observe, (docker, ignore, docker + ".dockerignore")))
 
     def read(workspace, name):
         return cached[name] if name in cached else read_source(workspace, name)
@@ -1928,31 +1919,32 @@ def _rejection_call_statement(stmt):
 
 def captured_test_derived_input(node, target):
     """Prove a test value feeds a derived payload and a locally replaced effect."""
-    if not isinstance(target, ast.Name) or not isinstance(node.value, ast.Constant):
-        return False
-    value = node.value.value
-    if type(value) is not str or len(value) > 4096:
-        return False
     from .context_efficiency import _SECRET_BYTES
     from .credential_role_identity_effects import _enclosing_function
     from .semantic_credential_sensor import _security_helper_source_context
 
+    match node:
+        case ast.Assign(
+            targets=[ast.Name() as name], value=ast.Constant(value=value)
+        ) if name is target and type(value) is str and len(value) <= 4096:
+            pass
+        case _:
+            return False
     module, source, path = _security_helper_source_context(node, None)
     if path is None or not source.validate(path):
         return False
     owner = _enclosing_function(node, source.parents[path])
-    if not (
-        isinstance(node, ast.Assign)
-        and node.targets == [target]
-        and isinstance(owner, ast.FunctionDef)
-        and owner in module.body
-        and node in owner.body
-        and not owner.decorator_list
-        and any(isinstance(stmt, ast.With) for stmt in owner.body)
-        and not any(pattern.search(value.encode()) for pattern in _SECRET_BYTES)
-    ):
-        return False
-    return _CapturedDerivedTestInput(module, source, path, owner, node).proven()
+    match owner:
+        case ast.FunctionDef(body=body, decorator_list=[]) if (
+            owner in module.body
+            and node in body
+            and any(isinstance(stmt, ast.With) for stmt in body)
+        ):
+            if not any(pattern.search(value.encode()) for pattern in _SECRET_BYTES):
+                return _CapturedDerivedTestInput(
+                    module, source, path, owner, node
+                ).proven()
+    return False
 
 
 class _CapturedDerivedTestInput:
@@ -2451,45 +2443,53 @@ def _text_binding_reads(source, symbols, selected, name):
     return reads
 
 
+def _captured_builtin_copy_kind(scope, path, callee):
+    if not isinstance(callee, ast.Name):
+        return None
+    name, audit = scope.canonical(path, callee), scope.audit
+    kinds = {
+        "builtins.list": "list",
+        "builtins.tuple": "tuple",
+        "builtins.dict": "dict",
+    }
+    if (
+        name is None
+        and (builtin := "builtins." + callee.id) in kinds
+        and audit._app_builtin_annotation_inert(scope.index, path, callee)
+    ):
+        name = builtin
+    return (
+        kinds[name]
+        if name in kinds and audit._app_signing_terminal_stable(scope.index, name)
+        else None
+    )
+
+
 def captured_builtin_copy(scope, flow, path, call, arguments, keywords):
     """Transfer an exact builtin container without invoking arbitrary iteration."""
     from dataclasses import replace
-
     from .credential_role_identity_effects import _validated_exact_scalar
 
-    callee = call.func
-    if not isinstance(callee, ast.Name) or keywords or len(arguments) > 1:
-        return None
-    canonical = scope.canonical(path, callee)
     if (
-        canonical is None
-        and callee.id in {"list", "tuple", "dict"}
-        and scope.audit._app_builtin_annotation_inert(scope.index, path, callee)
+        keywords
+        or len(arguments) > 1
+        or not (kind := _captured_builtin_copy_kind(scope, path, call.func))
     ):
-        canonical = "builtins." + callee.id
-    if canonical not in {"builtins.list", "builtins.tuple", "builtins.dict"}:
         return None
-    if not scope.audit._app_signing_terminal_stable(scope.index, canonical):
-        return None
-    kind = canonical.partition(".")[2]
-    original = arguments[0] if arguments else None
+    (original,) = arguments or (None,)
+    allowed = {"dict": {"dict"}}.get(kind, {"list", "tuple"})
     if original is not None and (
         not _validated_exact_scalar(original, as_truth=True)
-        or original.inert_kind
-        not in ({"dict"} if kind == "dict" else {"list", "tuple"})
+        or original.inert_kind not in allowed
     ):
         return None
     scope.witness(path, call, "modeled_test_scope_container_copy")
-    if kind == "tuple" and original is not None and original.inert_kind == "tuple":
+    if original is None:
+        return flow.allocate_container(path, call, kind, ())
+    if (kind, original.inert_kind) == ("tuple", "tuple"):
         return original
-    result = flow.allocate_container(
-        path, call, kind, original.items if original is not None else ()
-    )
-    return (
-        replace(result, roots=original.roots, trace=original.trace)
-        if original
-        else result
-    )
+    result = flow.allocate_container(path, call, kind, original.items)
+    return replace(result, roots=original.roots, trace=original.trace)
 
 
 def _fixed_digest_request_base(value):

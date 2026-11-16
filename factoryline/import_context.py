@@ -1167,33 +1167,34 @@ def resolve_import_source(
             return None
         root_abs, sources = root, eligible.paths
     else:
-        root_abs = root.resolve()
-        sources = (
-            eligible
-            if isinstance(eligible, dict)
-            else {p.resolve(): p for p in eligible}
-        )
-    matches = {"child": set(), "package": set()}
-    for choice, kind in import_source_choices(
+        root_abs, sources = root.resolve(), eligible
+        if not isinstance(eligible, dict):
+            sources = {p.resolve(): p for p in eligible}
+    choices = import_source_choices(
         root,
         path,
         node,
         module,
         imported,
         captured_inventory=eligible if captured else None,
-    ):
-        selected = choice if captured else live_import_path(choice, root_abs)
-        if (
-            captured
-            and choice.name != "__init__.py"
-            and choice.with_suffix("") / "__init__.py" in sources
-        ):
-            continue
-        if selected in sources and captured_import_path(root_abs, selected):
-            matches[kind].add(sources[selected])
+    )
+    matches = _matching_import_sources(choices, root_abs, sources, captured=captured)
     return _select_resolved_import(
         matches, captured, imported, source_index, eligible, package_binding_exclude
     )
+
+
+def _matching_import_sources(choices, root_abs, sources, *, captured):
+    """Group in-root candidates after captured sibling packages shadow modules."""
+    matches = {"child": set(), "package": set()}
+    for choice, kind in choices:
+        selected = choice if captured else live_import_path(choice, root_abs)
+        if captured and choice.name != "__init__.py":
+            if choice.with_suffix("") / "__init__.py" in sources:
+                continue
+        if selected in sources and captured_import_path(root_abs, selected):
+            matches[kind].add(sources[selected])
+    return matches
 
 
 def _select_resolved_import(

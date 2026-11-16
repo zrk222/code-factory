@@ -11,6 +11,84 @@ from factoryline.review_audits import security_scan
 import pytest
 
 
+def test_captured_configuration_owns_explicit_pytest_selection(tmp_path):
+    from types import SimpleNamespace
+
+    from factoryline.pytest_collection_audit import (
+        captured_pytest_documents,
+        captured_pytest_function_selected,
+        pytest_collection_authoritative,
+    )
+
+    path = tmp_path / "check_example.py"
+    configuration = b"[pytest]\npython_files = check_*.py\npython_functions = check_*\n"
+    captured = SimpleNamespace(
+        _security_source_context=(tmp_path, {tmp_path / "pytest.ini": configuration}),
+    )
+    documents = captured_pytest_documents(captured)
+    subject = SimpleNamespace(relative=lambda p: p.relative_to(tmp_path).as_posix())
+    selected, rejected = ast.parse("def check_case(): pass\ndef test_case(): pass").body
+    assert documents == {"pytest.ini": configuration}
+    assert captured_pytest_function_selected(subject, path, selected, documents)
+    assert not captured_pytest_function_selected(subject, path, rejected, documents)
+    assert not captured_pytest_function_selected(subject, path, selected, {})
+    assert pytest_collection_authoritative({"collection_state": "KNOWN"})
+    for state in ("UNKNOWN", "DISCOVERY_ONLY"):
+        assert not pytest_collection_authoritative({"collection_state": state})
+
+
+def test_rejection_projection_restricts_scalar_conversions_and_composition():
+    from factoryline.pytest_collection_audit import ConfigurationRejectionProjection
+
+    projection = ConfigurationRejectionProjection(
+        lambda _owner, node, _names: node.id if isinstance(node, ast.Name) else "",
+        None,
+        {},
+    )
+
+    def read(node):
+        return projection.value(node, {})
+
+    label = projection.inert_value(ast.parse("'fixture'", mode="eval").body, read)
+    assert projection.scalar_call("str", label) == label
+    assert projection.scalar_call("custom_str", label) is None
+    assert (
+        projection.inert_value(ast.parse("f'{label!r}'", mode="eval").body, read)
+        is None
+    )
+    assert read(ast.parse("str(effect())", mode="eval").body) is None
+
+
+def test_django_runner_settings_argument_is_bound_to_capture_identity(tmp_path):
+    from types import SimpleNamespace
+
+    from factoryline.pytest_collection_audit import (
+        native_django_runner_roots,
+        native_django_settings_argument,
+    )
+
+    path = tmp_path / "runtests.py"
+    getter = ast.parse("get_runner(settings)", mode="eval").body
+    node = getter.args[0]
+    scope = SimpleNamespace(
+        native_profile_nodes={id(node)},
+        canonical=lambda owner, fn: "django.test.utils.get_runner"
+        if (owner, fn) == (path, getter.func)
+        else "",
+    )
+    assert native_django_settings_argument(scope, path, node, getter)
+    assert not native_django_settings_argument(
+        scope, path, ast.Name(id="settings"), getter
+    )
+    assert not native_django_settings_argument(
+        scope, path.with_name("other.py"), node, getter
+    )
+    runner = {"cwd": "src", "runner": {"runner_test_package": "suite.tests"}}
+    assert native_django_runner_roots(tmp_path, {"invocations": [runner]}) == {
+        tmp_path / "src/suite/tests"
+    }
+
+
 def test_scope_api_jwt_roles_decline_payload_leaks_and_mutations():
     from factoryline.credential_role_constructor_provider import (
         credential_scope_api_contract as contract,
@@ -4424,6 +4502,8 @@ def test_constructor_source_method_role_cli_retains_raw_and_live(tmp_path, capsy
 def test_native_django_settings_scope_closes_framework_carrier(
     tmp_path, variant, monkeypatch
 ):
+    from factoryline import audit_action_refs
+
     _write(tmp_path, "pyproject.toml", '[project]\ndependencies = ["Django"]\n')
     _write(
         tmp_path,
@@ -4464,12 +4544,30 @@ def test_native_django_settings_scope_closes_framework_carrier(
         "collection_drift_during_verification",
         "missing_collection_witness",
     }
+    rebuilt = []
+    if variant == "independent_verifier":
+        original = audit_action_refs.rebuild_application_fixture_context
+
+        def record_fixture_context(audit, model, verified, bindings):
+            context = original(audit, model, verified, bindings)
+            rebuilt.append((model.root, tuple(bindings or ()), set(context)))
+            return context
+
+        monkeypatch.setattr(
+            audit_action_refs,
+            "rebuild_application_fixture_context",
+            record_fixture_context,
+        )
     report = security_scan(
         tmp_path,
         cache_enabled=False,
         security_only=verify,
         defect_policy="source-role-v3" if verify else "legacy-v1",
     )
+    if variant == "independent_verifier":
+        ((root, checked, sources),) = rebuilt
+        assert not root.is_absolute() and checked
+        assert root / "tests/settings.py" in sources
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
@@ -4494,39 +4592,43 @@ def test_native_django_settings_scope_closes_framework_carrier(
         variant.startswith("collection_drift")
         or variant == "missing_collection_witness"
     ):
-        from factoryline import review_integrity
-        from factoryline.review_audits import _seal_security_scan
-
-        def drift():
-            _write(tmp_path, "pytest.ini", "[pytest]\npython_files = test_*.py\n")
-
-        if variant == "collection_drift_during_verification":
-            partition = review_integrity.partition_proven_primitive_observations
-
-            def mutate_after_partition(core, native_rows=None):
-                result = partition(core, native_rows)
-                if native_rows is not None:
-                    drift()
-                return result
-
-            monkeypatch.setattr(
-                review_integrity,
-                "partition_proven_primitive_observations",
-                mutate_after_partition,
-            )
-        elif variant == "collection_drift":
-            drift()
-        else:
-            report._source_role_capture.pop("fixture_workspace")
-        stale = _seal_security_scan(report)
-        assert stale["defect_policy_decision"]["state"] == "BLOCKED"
-        assert not stale["primitive_observations"] and not stale["agent_actions"]
-        assert stale["finding_conservation"]["native_verification_state_changed"] == (
-            variant == "collection_drift_during_verification"
+        _assert_django_fixture_reseal_fails_closed(
+            tmp_path, variant, monkeypatch, report
         )
-        assert any(
-            row["code"] == "SECURITY_HARDCODED_SECRET" for row in stale["findings"]
+
+
+def _assert_django_fixture_reseal_fails_closed(tmp_path, variant, monkeypatch, report):
+    from factoryline import review_integrity
+    from factoryline.review_audits import _seal_security_scan
+
+    def drift():
+        _write(tmp_path, "pytest.ini", "[pytest]\npython_files = test_*.py\n")
+
+    if variant == "collection_drift_during_verification":
+        partition = review_integrity.partition_proven_primitive_observations
+
+        def mutate_after_partition(core, native_rows=None):
+            result = partition(core, native_rows)
+            if native_rows is not None:
+                drift()
+            return result
+
+        monkeypatch.setattr(
+            review_integrity,
+            "partition_proven_primitive_observations",
+            mutate_after_partition,
         )
+    elif variant == "collection_drift":
+        drift()
+    else:
+        report._source_role_capture.pop("fixture_workspace")
+    stale = _seal_security_scan(report)
+    assert stale["defect_policy_decision"]["state"] == "BLOCKED"
+    assert not stale["primitive_observations"] and not stale["agent_actions"]
+    assert stale["finding_conservation"]["native_verification_state_changed"] == (
+        variant == "collection_drift_during_verification"
+    )
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in stale["findings"])
 
 
 _REQUEST_SIGNING273 = """from slack_sdk.signature import SignatureVerifier
