@@ -1,6 +1,7 @@
 """Source-bound captured security evidence shared by verification consumers."""
 
 import ast
+from functools import partial
 import hashlib
 from hashlib import sha256
 import json
@@ -1488,6 +1489,440 @@ def captured_noncredential_assignment(node, target, aliases):
         captured_public_registry_label(node, target, aliases)
         or captured_unread_settings_field(node, target)
         or captured_test_derived_input(node, target)
+        or captured_config_rejection_point(node, target)
+    )
+
+
+def captured_config_rejection_point(node, target):
+    """Stage a source-only rejection proof without suppressing a raw finding."""
+    from .context_efficiency import _SECRET_BYTES
+    from .pytest_collection_audit import (
+        _captured_pytest_inputs,
+        captured_pytest_documents,
+    )
+    from .semantic_credential_sensor import _security_helper_source_context
+
+    scope = _rejected_config_scope(node, target)
+    if scope is None:
+        return False
+    module, source, path = _security_helper_source_context(node, None)
+    stage = getattr(_captured_pytest_inputs(module)[1], "provisional_exclusions", None)
+    if type(stage) is not set or not (
+        location := _rejected_config_location(source, path, node, scope)
+    ):
+        return False
+    try:
+        material = node.value.value.encode()
+    except UnicodeError:
+        return False
+    if any(pattern.search(material) for pattern in _SECRET_BYTES):
+        return False
+    if _CapturedConfigRejection(source, path).proven(
+        module, *scope, captured_pytest_documents(module)
+    ):
+        stage.add(("SECURITY_HARDCODED_SECRET", *location, "CRITICAL"))
+    return False
+
+
+def _rejected_config_scope(node, target):
+    match node:
+        case ast.Assign(
+            targets=[ast.Name() as name], value=ast.Constant(value=value)
+        ) if (
+            name is target
+            and name.id.isupper()
+            and type(value) is str
+            and len(value) <= 4096
+        ):
+            cls = getattr(node, "_security_parent", None)
+            owner = getattr(cls, "_security_parent", None)
+            if isinstance(cls, ast.ClassDef) and isinstance(owner, ast.FunctionDef):
+                return cls, owner
+    return None
+
+
+def _rejected_config_location(source, path, node, scope):
+    if (
+        path is None
+        or not source.validate(path)
+        or not (span := _native_span(node))
+        or not (relative := source.relative(path))
+    ):
+        return None
+    parents = source.parents[path]
+    if (parents.get(id(node)), parents.get(id(scope[0]))) == scope:
+        return relative, *span
+    return None
+
+
+class _CapturedConfigRejection:
+    """Close the selected class, loader, and all paths before the policy raise."""
+
+    def __init__(self, source, path):
+        from .credential_role_identity_effects import source_symbol_index
+
+        self.source, self.path = source, path
+        self.symbols = source_symbol_index(source)
+        self.external = {"flask.Flask", "flask.config.Config", "pytest.raises"}
+        self.readonly = set()
+
+    def proven(self, module, cls, owner, documents):
+        from .credential_role_constructor_provider import binding_occurrences
+        from .credential_role_identity_effects import resolve_source_identity_call
+        from .mock_fixture_provenance import _app_test_function_external_uses_clear
+        from .pytest_collection_audit import (
+            ConfigurationRejectionProjection,
+            _rejection_single_argument,
+            captured_pytest_function_selected,
+        )
+
+        if (
+            self.symbols is None
+            or owner not in module.body
+            or owner.decorator_list
+            or any(ast.iter_child_nodes(owner.args))
+        ):
+            return False
+        match owner.body:
+            case [
+                selected,
+                ast.With(
+                    items=[
+                        ast.withitem(
+                            context_expr=ast.Call() as expect, optional_vars=None
+                        )
+                    ],
+                    body=[ast.Expr(value=ast.Call() as invocation)],
+                ),
+            ] if selected is cls:
+                pass
+            case _:
+                return False
+        references = tuple(_settings_names(owner, cls.name))
+        if len(references) != 1 or binding_occurrences(owner.body, cls.name) != [cls]:
+            return False
+        if not (
+            len(expect.args) == 1
+            and not expect.keywords
+            and self.provider(self.path, owner, expect.func) == "pytest.raises"
+            and self.provider(self.path, owner, expect.args[0]) == "RuntimeError"
+            and captured_pytest_function_selected(
+                self.source, self.path, owner, documents, invocation_index=self.symbols
+            )
+            and _app_test_function_external_uses_clear(self.symbols, self.path, owner)
+        ):
+            return False
+        bound = resolve_source_identity_call(
+            invocation, self.path, self.source, lexical_scope=owner
+        )
+        if not bound or not bound.negative_binding_closed or len(bound.arguments) != 1:
+            return False
+        formal, actual = next(iter(bound.arguments.items()))
+        if actual is not references[0] or binding_occurrences(
+            bound.function.body, formal
+        ):
+            return False
+        config = self.configuration(cls, owner)
+        policy = self.policy(bound.path, bound.function, formal)
+        if config is None or policy is None:
+            return False
+        receiver = _rejection_single_argument(policy)
+        if receiver is None:
+            return False
+        projection = ConfigurationRejectionProjection(
+            partial(self.provider, bound.path),
+            policy,
+            config,
+            receiver,
+            resolve_guard=partial(self.local_function, bound.path),
+        )
+        return projection.terminal(policy.body) is not None and self.providers_closed(
+            bound
+        )
+
+    def provider(self, path, owner, node, names=()):
+        from .credential_role_constructor_provider import binding_occurrences
+        from .mock_fixture_provenance import (
+            _app_expression_name,
+            _django_builtins_unshadowed,
+        )
+        from .pytest_collection_audit import _rejection_single_argument
+
+        root = node
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id in names:
+            return None
+        if (
+            isinstance(node, ast.Name)
+            and node.id in {"int", "float", "str", "RuntimeError"}
+            and _django_builtins_unshadowed(self.symbols, path, {node.id})
+            and (
+                owner is None
+                or not binding_occurrences(owner.body, node.id)
+                and _rejection_single_argument(owner) != node.id
+            )
+        ):
+            self.external.add("builtins." + node.id)
+            return node.id
+        provider = _app_expression_name(self.symbols, path, node, owner)
+        if provider in {"os.environ.get", "pathlib.Path"}:
+            self.external.add(provider)
+        return provider
+
+    def configuration(self, cls, owner):
+        from .credential_role_constructor_provider import binding_occurrences
+        from .mock_fixture_provenance import _app_source_symbol
+        from .pytest_collection_audit import (
+            ConfigurationRejectionProjection,
+            _projection_unknown,
+        )
+
+        chain = [(self.path, cls)]
+        while chain[-1][1].bases:
+            p, current = chain[-1]
+            if len(chain) >= 8 or len(current.bases) != 1:
+                return None
+            base = _app_source_symbol(
+                self.symbols, p, current.bases[0], owner if current is cls else None
+            )
+            if not base or not isinstance(base[1], ast.ClassDef) or base in chain:
+                return None
+            chain.append(base)
+        self.bases = chain[1:]
+        props = {}
+        for p, current in reversed(chain):
+            tree = self.source.snapshots[p]
+            if (
+                current.keywords
+                or current.decorator_list
+                or current is not cls
+                and current not in tree.body
+            ):
+                return None
+            domain = ConfigurationRejectionProjection(
+                partial(self.provider, p), owner if current is cls else None, {}
+            )
+            global_names = {}
+            if current is not cls:
+                if binding_occurrences(tree.body, "__file__"):
+                    return None
+                prefix = [
+                    n
+                    for n in tree.body
+                    if isinstance(n, ast.Assign) and n.lineno < current.lineno
+                ]
+                global_names = domain.namespace(
+                    prefix, {"__file__": _projection_unknown("str")}
+                )
+                if global_names is None or any(
+                    len(binding_occurrences(tree.body, name)) != 1
+                    for name in global_names
+                    if name != "__file__"
+                ):
+                    return None
+            fields = domain.namespace(current.body, global_names, fields=True)
+            if fields is None:
+                return None
+            props.update(fields)
+        return props
+
+    def local_function(self, path, node, owner):
+        from .mock_fixture_provenance import _app_source_symbol
+
+        ref = _app_source_symbol(self.symbols, path, node, owner)
+        if (
+            ref
+            and ref[0] == path
+            and isinstance((fn := ref[1]), ast.FunctionDef)
+            and not fn.decorator_list
+            and _captured_named_provider_unchanged(self.source, path, fn.name)
+        ):
+            return fn
+        return None
+
+    def allocated_receiver(self, path, function, allocation):
+        from .credential_role_constructor_provider import binding_occurrences
+        from .pytest_collection_audit import _rejection_assignment
+        from .semantic_credential_sensor import _flask_bind_created_app
+
+        receiver = _rejection_assignment(allocation)
+        if receiver is None or not isinstance(allocation.value, ast.Call):
+            return None
+        invocation = allocation.value
+        ctor = invocation.func
+        if (
+            not isinstance(ctor, ast.Name)
+            or self.provider(path, function, ctor) != "flask.Flask"
+        ):
+            return None
+        if not (
+            len(invocation.args) == 1
+            and isinstance(invocation.args[0], ast.Name)
+            and invocation.args[0].id == "__name__"
+            and not any(
+                binding_occurrences(body, "__name__")
+                for body in (function.body, self.source.snapshots[path].body)
+            )
+            and all(
+                k.arg == "instance_relative_config"
+                and isinstance(k.value, ast.Constant)
+                and type(k.value.value) is bool
+                for k in invocation.keywords
+            )
+        ):
+            return None
+        allocated = {}
+        _flask_bind_created_app(allocation, allocated, {ctor.id: "flask.Flask"})
+        return receiver if allocated.get(receiver) is invocation else None
+
+    def policy(self, path, function, formal):
+        if function.decorator_list or len(function.body) < 3:
+            return None
+        allocation, loader, *prefix = function.body
+        receiver = self.allocated_receiver(path, function, allocation)
+        load = _rejection_call_statement(loader)
+        if not (
+            receiver
+            and load
+            and not load.keywords
+            and len(load.args) == 1
+            and ast.unparse(load.func) == receiver + ".config.from_object"
+            and tuple(_settings_names(function, formal)) == tuple(load.args)
+        ):
+            return None
+        for stmt in prefix:
+            call = _rejection_call_statement(stmt)
+            if not call or call.keywords or not isinstance(call.func, ast.Name):
+                return None
+            callee = self.local_function(path, call.func, function)
+            if callee is None:
+                return None
+            if (
+                len(call.args) == 1
+                and isinstance(call.args[0], ast.Name)
+                and call.args[0].id == receiver
+            ):
+                return callee
+            if (
+                call.args
+                or any(ast.iter_child_nodes(callee.args))
+                or not 0 < len(callee.body) <= 8
+                or not all(self.registry(path, callee, n) for n in callee.body)
+            ):
+                return None
+        return None
+
+    def registry(self, path, owner, statement):
+        from .pytest_collection_audit import _rejection_single_argument
+
+        call = _rejection_call_statement(statement)
+        if not (
+            call
+            and not call.keywords
+            and len(call.args) == 2
+            and self.provider(path, owner, call.func) == "sqlite3.register_adapter"
+        ):
+            return False
+        key, callback = call.args
+        native = self.provider(path, owner, key)
+        if (
+            native not in {"datetime.date", "datetime.datetime"}
+            or not isinstance(callback, ast.Lambda)
+            or (arg := _rejection_single_argument(callback)) is None
+        ):
+            return False
+        body = callback.body
+        if not (
+            isinstance(body, ast.Call)
+            and not body.args
+            and len(body.keywords) <= 1
+            and isinstance(body.func, ast.Attribute)
+            and body.func.attr == "isoformat"
+            and isinstance(body.func.value, ast.Name)
+            and body.func.value.id == arg
+            and all(
+                k.arg == "sep"
+                and isinstance(k.value, ast.Constant)
+                and type(k.value.value) is str
+                for k in body.keywords
+            )
+        ):
+            return False
+        self.external.update((native, "sqlite3.register_adapter"))
+        self.readonly.add(key)
+        return True
+
+    def providers_closed(self, bound):
+        from . import review_audits as audit
+        from .credential_role_constructor_provider import (
+            _captured_terminal_provider_mutation,
+        )
+        from .credential_role_identity_effects import _enclosing_function
+        from .mock_fixture_provenance import _app_source_symbol
+
+        base_reads, env_writes = set(), []
+        for p, tree in self.source.snapshots.items():
+            if not self.source.validate(p):
+                return False
+            parents = self.source.parents[p]
+            for n in ast.walk(tree):
+                if (
+                    self.bases
+                    and isinstance(n, ast.Call)
+                    and len(n.args) == 1
+                    and not n.keywords
+                    and _app_source_symbol(
+                        self.symbols, p, n.func, _enclosing_function(n, parents)
+                    )
+                    == (bound.path, bound.function)
+                ):
+                    base_reads.add(n.args[0])
+                if (
+                    isinstance(n, ast.Assign)
+                    and len(n.targets) == 1
+                    and isinstance((lhs := n.targets[0]), ast.Subscript)
+                    and isinstance(lhs.slice, ast.Constant)
+                    and type(lhs.slice.value) is str
+                    and self.provider(p, _enclosing_function(n, parents), lhs.value)
+                    == "os.environ"
+                ):
+                    env_writes.append(lhs)
+        if not all(
+            _captured_named_provider_unchanged(
+                self.source,
+                p,
+                c.name,
+                readonly_argument=lambda n, _a, _p: n in base_reads,
+            )
+            for p, c in self.bases
+        ):
+            return False
+        roots = {name.split(".", 1)[0] for name in self.external}
+        if any(
+            name.split("/", 1)[0].removesuffix(".py") in roots
+            for name in self.symbols["module_paths"]
+        ):
+            return False
+        return not any(
+            _captured_terminal_provider_mutation(
+                self.source,
+                audit,
+                provider,
+                readonly_argument=(lambda n, _a, _p: n in self.readonly)
+                if provider.startswith("datetime.")
+                else None,
+                readonly_nodes=env_writes if provider == "os.environ.get" else (),
+            )
+            for provider in sorted(self.external)
+        )
+
+
+def _rejection_call_statement(stmt):
+    return (
+        stmt.value
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+        else None
     )
 
 
@@ -1564,35 +1999,16 @@ class _CapturedDerivedTestInput:
     def _selected(self):
         from .pytest_collection_audit import (
             _pytest_collection_hook_names,
-            _pytest_collection_settings,
-            _pytest_file_matches,
-            _pytest_name_matches,
             _pytest_plugin_declaration_active,
-            captured_pytest_configuration,
+            captured_pytest_documents,
+            captured_pytest_function_selected,
         )
 
-        context = getattr(self.module, "_security_oracle_context", {})
-        configs = context.get("_security_launch_configs")
-        if configs is None:
-            root, captured = getattr(
-                self.module, "_security_source_context", (None, {})
-            )
-            if root is None:
-                return False
-            configs = {
-                Path(path).relative_to(root).as_posix(): data
-                for path, data in captured.items()
-                if Path(path).is_relative_to(root)
-            }
-        selected = captured_pytest_configuration(configs)
-        if selected is None:
-            return False
-        settings = _pytest_collection_settings(selected["identity"])
-        if not (
-            _pytest_file_matches(
-                self.source.relative(self.path), settings["python_files"]
-            )
-            and _pytest_name_matches(self.function.name, settings["python_functions"])
+        if not captured_pytest_function_selected(
+            self.source,
+            self.path,
+            self.function,
+            captured_pytest_documents(self.module),
         ):
             return False
         return all(

@@ -232,14 +232,9 @@ def security_defect_policy_decision(
 
 
 def _security_tier_reports_match(actual, expected_rows, prior_tiers):
-    actual_rows = _security_tier_rows(actual)
-    if actual_rows is None or expected_rows is None or actual_rows != expected_rows:
+    if expected_rows is None or _security_tier_rows(actual) != expected_rows:
         return False
-    if prior_tiers is not None:
-        prior_rows = _security_tier_rows(prior_tiers)
-        if prior_rows is None or prior_rows != expected_rows:
-            return False
-    return True
+    return prior_tiers is None or _security_tier_rows(prior_tiers) == expected_rows
 
 
 def _trusted_core_regenerated_tiers(core, captured_sources, _verifier_native_rows=None):
@@ -461,13 +456,19 @@ def _trusted_core_tenant_arguments(core, audit):
     return calls, argument_bindings, applies
 
 
-def _trusted_core_native_security_rows(captured, tenant, audit, fixture_bindings=None):
-    from .audit_action_refs import rebuild_application_fixture_context
+def _trusted_core_native_security_rows(
+    captured, tenant, audit, fixture_bindings=None, *, provisional_exclusions=None
+):
+    from . import audit_action_refs
     from .runtime_audit_common import RuntimeAuditError
 
     calls, argument_bindings, applies = tenant
     native_rows = []
-    captured_paths = {Path(path): raw for path, raw in captured.items()}
+    proof = provisional_exclusions if fixture_bindings is not None else None
+    captured_paths = audit_action_refs._ConfigurationProofCapture(
+        {Path(path): raw for path, raw in captured.items()},
+        provisional_exclusions=proof,
+    )
     source_model = _regenerate_source_model(
         captured,
         {path: hashlib.sha256(raw).hexdigest() for path, raw in captured.items()},
@@ -481,7 +482,7 @@ def _trusted_core_native_security_rows(captured, tenant, audit, fixture_bindings
     }
     try:
         with audit._security_snapshot_analysis_batch({"source": source_model}):
-            fixture_contexts = rebuild_application_fixture_context(
+            fixture_contexts = audit_action_refs.rebuild_application_fixture_context(
                 audit, source_model, captured, fixture_bindings
             )
             for path in (path for path in captured_paths if path.suffix == ".py"):

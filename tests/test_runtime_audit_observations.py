@@ -1440,6 +1440,168 @@ def test_collection_transaction_cli_final_guard_fails_closed(
     assert report["defect_policy_decision"]["release_approved"] is False
 
 
+def _synthetic_provisional_scan(tmp_path, monkeypatch, fault):
+    from factoryline import (
+        primitive_observation_binding as primitive,
+        review_audits as audit,
+    )
+
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / "standalone.py").write_text(
+        "OPERATIVE_PASSWORD = 'ordinary-value'\n", encoding="utf-8"
+    )
+
+    def scan():
+        return audit.security_scan(
+            tmp_path,
+            defect_policy="source-role-v3",
+            security_only=True,
+            cache_enabled=False,
+        )
+
+    (entry,) = scan()["finding_tier_report"]["ledger"]
+    scan_tree = audit._security_scan_tree
+    native_replay = primitive._trusted_core_native_security_rows
+    native_passes = []
+
+    def tracked_replay(*args, **kwargs):
+        native_passes.append("provisional_exclusions" in kwargs)
+        return native_replay(*args, **kwargs)
+
+    monkeypatch.setattr(primitive, "_trusted_core_native_security_rows", tracked_replay)
+
+    def stage(root, path, tree, calls, bindings, context, *args, **kwargs):
+        rows = scan_tree(root, path, tree, calls, bindings, context, *args, **kwargs)
+        capture = context.get("_security_launch_configs")
+        if capture is None:
+            capture = context["_security_source_context"][1]
+        proof = getattr(capture, "provisional_exclusions", None)
+        if proof is not None and (root.is_absolute() or fault != "missing-proof"):
+            for row in rows:
+                proof.add(
+                    tuple(
+                        row[key]
+                        for key in (
+                            "code",
+                            "path",
+                            "line",
+                            "column",
+                            "end_line",
+                            "end_column",
+                            "severity",
+                        )
+                    )
+                )
+                if not root.is_absolute() and fault == "changed-raw":
+                    row["message"] = "Same span with different raw content."
+            if fault == "duplicate":
+                rows = [*rows, *rows]
+        return rows
+
+    monkeypatch.setattr(audit, "_security_scan_tree", stage)
+    return scan, entry, native_passes
+
+
+def _inject_provisional_seal_fault(tmp_path, monkeypatch, fault):
+    from factoryline import audit_action_refs as actions
+
+    if fault == "stale":
+        partition = actions._partition_with_fixture_authority
+
+        def drift_after_partition(audit, core, *args, **kwargs):
+            partition(audit, core, *args, **kwargs)
+            if not core["finding_tier_report"]["ledger"]:
+                (tmp_path / "requirements.txt").write_text(
+                    "# changed\n", encoding="utf-8"
+                )
+
+        monkeypatch.setattr(
+            actions, "_partition_with_fixture_authority", drift_after_partition
+        )
+    if fault == "policy":
+        apply_policy = actions._apply_security_scan_policy
+
+        def block_policy(audit, core, *args):
+            apply_policy(audit, core, *args)
+            if not core["finding_tier_report"]["ledger"]:
+                core["defect_policy_decision"].update(
+                    state="BLOCKED", failure_code="SECURITY_TEST_POLICY_BLOCKED"
+                )
+
+        monkeypatch.setattr(actions, "_apply_security_scan_policy", block_policy)
+    if fault == "conservation":
+        check = actions._security_scan_conservation
+
+        def block_conservation(core, baseline, *args):
+            result = check(core, baseline, *args)
+            if not baseline:
+                result.update(
+                    state="FAILED", failure_code="SECURITY_TEST_CONSERVATION_FAILED"
+                )
+            return result
+
+        monkeypatch.setattr(actions, "_security_scan_conservation", block_conservation)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "missing-proof",
+        "changed-raw",
+        "duplicate",
+        "stale",
+        "policy",
+        "conservation",
+        "already-restored",
+    ],
+)
+def test_provisional_exclusion_is_atomic_across_the_seal(tmp_path, monkeypatch, fault):
+    from factoryline import review_audits as audit
+
+    scan, entry, native_passes = _synthetic_provisional_scan(
+        tmp_path, monkeypatch, fault
+    )
+    _inject_provisional_seal_fault(tmp_path, monkeypatch, fault)
+    original = entry["raw_finding"]
+    report = scan()
+    if fault == "already-restored":
+        assert not report["findings"] and not report["finding_tier_report"]["ledger"]
+        report["findings"].append(original)
+        report["finding_tier_report"]["ledger"].append(entry)
+        report = audit._seal_security_scan(report)
+    ledger = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    if fault is None:
+        assert report["finding_conservation"]["state"] == "PASS"
+        assert not ledger and not report["findings"]
+        report = audit._seal_security_scan(report)
+        assert report["finding_conservation"]["state"] == "PASS"
+        assert not report["finding_tier_report"]["ledger"] and not report["findings"]
+    else:
+        assert report["finding_conservation"]["state"] == "FAILED"
+        assert (
+            ledger
+            == [original] * (2 if fault == "duplicate" else 1)
+            == report["findings"]
+        )
+    rollback_reasons = {
+        "already-restored": "SECURITY_PROVISIONAL_EXCLUSION_POLICY_BLOCKED",
+        "policy": "SECURITY_TEST_POLICY_BLOCKED",
+        "conservation": "SECURITY_TEST_CONSERVATION_FAILED",
+    }
+    if fault in rollback_reasons:
+        conservation = report["finding_conservation"]
+        assert conservation["native_rows"] == "VERIFIED"
+        assert conservation["native_verification_state_changed"] is False
+        assert conservation["failure_code"] == rollback_reasons[fault]
+        assert conservation["provisional_exclusion_rollback"] == rollback_reasons[fault]
+        assert native_passes == ([True] if fault == "already-restored" else []) + [
+            True,
+            False,
+        ]
+    assert not report["agent_actions"]
+
+
 @pytest.mark.parametrize(
     ("drift", "native_failure"),
     [

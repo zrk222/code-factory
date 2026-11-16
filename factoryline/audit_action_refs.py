@@ -498,6 +498,21 @@ def _captured_application_source_bytes(
     return captured
 
 
+class _ConfigurationProofCapture(dict):
+    """Own one provisional proof collector without changing the captured bytes map."""
+
+    def __init__(self, *args, provisional_exclusions=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.provisional_exclusions = provisional_exclusions
+
+    def bind_provisional_exclusions(self, captured, workspace):
+        if self.provisional_exclusions:
+            captured.source_role_capture["fixture_workspace"] = workspace
+            captured.source_role_capture["provisional_exclusions"] = tuple(
+                sorted(self.provisional_exclusions)
+            )
+
+
 class _CapturedSecuritySources(dict):
     """Keep auxiliary source-role bytes outside the scanner's Python inventory."""
 
@@ -1174,7 +1189,10 @@ def _security_scan_block_conservation_failure(
     conservation["input_physical_raw_diagnostics"] = input_physical
     core["state"] = "BLOCKED"
     message = (
-        "Security finding conservation failed after policy; raw diagnostics were "
+        f"Provisional exclusion rolled back ({failure_code}); raw diagnostics were "
+        "retained and no repair actions were emitted."
+        if conservation.get("provisional_exclusion_rollback")
+        else "Security finding conservation failed after policy; raw diagnostics were "
         "retained and no repair actions were emitted."
     )
     core["action_summary"] = f"{core.get('action_summary', '')} {message}".strip()
@@ -1251,28 +1269,170 @@ def _partition_with_fixture_authority(audit, core, captured, rows, *, stale=Fals
         core.pop("_stale_fixture_authority", None)
 
 
-def _security_scan_partition_native_rows(audit, core, captured, primitive):
+def _restore_provisional_rows(core):
+    """Recover original diagnostics before the next independent verification."""
+    originals = getattr(core, "_source_role_capture", {}).get(
+        "sealed_exclusion_rows", ()
+    )
+    if not originals:
+        return
+
+    def missing_from(rows):
+        present = Counter()
+        for row in rows:
+            try:
+                present[_canonical(row)] += 1
+            except (TypeError, ValueError):
+                continue
+        for row in originals:
+            key = _canonical(row)
+            if present[key]:
+                present[key] -= 1
+            else:
+                yield deepcopy(row)
+
+    core["findings"] = [
+        *core.get("findings", []),
+        *missing_from(_security_scan_diagnostic_rows(core)),
+    ]
+    report = core.get("finding_tier_report", {})
+    ledger = report.get("ledger")
+    if isinstance(ledger, list):
+        raw_rows = (
+            entry.get("raw_finding") for entry in ledger if isinstance(entry, dict)
+        )
+        core["finding_tier_report"] = {
+            **report,
+            "ledger": [
+                *ledger,
+                *({"raw_finding": row} for row in missing_from(raw_rows)),
+            ],
+        }
+
+
+def _without_provisional_rows(rows, keys, primitive):
+    return [row for row in rows if primitive._native_surface_identity(row) not in keys]
+
+
+def _stage_provisional_exclusions(
+    audit, core, claims, proof, baseline, input_physical, native_rows, primitive
+):
+    """Stage only one-to-one originals confirmed by both scans and the raw ledger."""
+
+    def typed(points):
+        return {tuple((type(value), value) for value in point) for point in points}
+
+    keys = typed(claims)
+    if native_rows is None or not keys <= typed(proof):
+        return None, (), set()
+    identity = primitive._native_surface_identity
+    originals = [row for row in input_physical if identity(row) in keys]
+    if Counter(map(identity, originals)) != Counter(keys):
+        return None, (), set()
+    raw = _security_scan_identity_counts(originals)
+    if raw is None or any(
+        _security_scan_identity_counts(row for row in rows if identity(row) in keys)
+        != raw
+        for rows in (baseline, native_rows)
+    ):
+        return None, (), set()
+    candidate = core.copy()
+    candidate["findings"] = _without_provisional_rows(core["findings"], keys, primitive)
+    if "primitive_observations" in core:
+        candidate["primitive_observations"] = _without_provisional_rows(
+            core["primitive_observations"], keys, primitive
+        )
+    report = core.get("finding_tier_report")
+    if isinstance(report, dict) and isinstance(report.get("ledger"), list):
+        candidate["finding_tier_report"] = {
+            **report,
+            "ledger": [
+                row
+                for row in report["ledger"]
+                if identity(row["raw_finding"]) not in keys
+            ],
+        }
+    findings = candidate["findings"]
+    candidate["finding_counts"] = dict(
+        sorted(Counter(row["code"] for row in findings).items())
+    )
+    candidate["state"] = audit._security_scan_state(
+        core["sources"], findings, core.get("database_context"), core["audit_coverage"]
+    )
+    candidate["action_summary"] = audit._security_scan_action_summary(
+        candidate["state"]
+    )
+    return candidate, originals, keys
+
+
+def _security_scan_replay_native_rows(
+    audit, core, captured, primitive, state_builder, proof
+):
+    """Replay the verified source snapshot and compare its full diagnostic surface."""
+    verified = expected = None
+    try:
+        verified = state_builder(audit, core, captured, primitive)
+        if verified is None:
+            return verified, None, expected, False
+        sources, tenant, _, _, fixture = verified
+        rows = primitive._trusted_core_native_security_rows(
+            sources[0],
+            tenant,
+            audit,
+            *((fixture,) if fixture is not None else ()),
+            **(
+                {"provisional_exclusions": proof}
+                if proof is not None and fixture is not None
+                else {}
+            ),
+        )
+        if rows is None:
+            return verified, None, expected, False
+        expected = deepcopy(rows)
+        if not primitive._trusted_core_surface_matches(core, rows):
+            return verified, None, expected, True
+        return verified, rows, expected, False
+    except Exception:
+        return verified, None, expected, False
+
+
+def _security_scan_partition_native_rows(
+    audit, core, captured, primitive, baseline, input_physical, *, allow_exclusions=True
+):
     """Partition from fresh native rows and retain invalidation evidence."""
     state_builder = _security_scan_verification_state
     state_code = state_builder.__code__
-    native_rows = verified = None
-    native_expected_rows = None
-    native_surface_mismatch = False
+    capture = getattr(captured, "source_role_capture", {})
+    claims = (
+        set(capture.get("provisional_exclusions", ()))
+        if allow_exclusions and core.get("selected_defect_policy") == "source-role-v3"
+        else set()
+    )
+    proof = set() if claims else None
+    verified, native_rows, native_expected_rows, native_surface_mismatch = (
+        _security_scan_replay_native_rows(
+            audit, core, captured, primitive, state_builder, proof
+        )
+    )
     native_verification_invalidated = False
-    try:
-        verified = state_builder(audit, core, captured, primitive)
-        if verified is not None:
-            args = (verified[0][0], verified[1], audit)
-            native_rows = primitive._trusted_core_native_security_rows(
-                *args, *((verified[4],) if verified[4] is not None else ())
+    staged, originals, keys = None, (), set()
+    if claims and not native_surface_mismatch:
+        try:
+            staged, originals, keys = _stage_provisional_exclusions(
+                audit,
+                core,
+                claims,
+                proof,
+                baseline,
+                input_physical,
+                native_rows,
+                primitive,
             )
-            if native_rows is not None:
-                native_expected_rows = deepcopy(native_rows)
-                if not primitive._trusted_core_surface_matches(core, native_rows):
-                    native_surface_mismatch = True
-                    native_rows = None
-    except Exception:
-        native_rows = None
+        except (AttributeError, KeyError, TypeError, ValueError):
+            pass
+        if staged is None:
+            native_verification_invalidated = True
+            native_rows = None
     fixture_claim = bool(
         core.get("selected_defect_policy")
         and any(
@@ -1282,16 +1442,23 @@ def _security_scan_partition_native_rows(audit, core, captured, primitive):
             for row in core.get(field, ())
         )
     )
+    partitioned = core if staged is None else staged
+    partition_rows = (
+        native_rows
+        if staged is None
+        else _without_provisional_rows(native_rows, keys, primitive)
+    )
+    stale_fixture = fixture_claim and (native_rows is None or verified[4] is None)
     _partition_with_fixture_authority(
         audit,
-        core,
+        partitioned,
         captured,
-        native_rows,
-        stale=fixture_claim and (native_rows is None or verified[4] is None),
+        partition_rows,
+        stale=stale_fixture,
     )
-    if native_expected_rows is not None:
+    if native_expected_rows is not None and not native_verification_invalidated:
         try:
-            current = state_builder(audit, core, captured, primitive)
+            current = state_builder(audit, partitioned, captured, primitive)
             if (current, _security_scan_verification_state, state_builder.__code__) != (
                 verified,
                 state_builder,
@@ -1302,32 +1469,38 @@ def _security_scan_partition_native_rows(audit, core, captured, primitive):
         except Exception:
             native_verification_invalidated = True
             native_rows = None
-    if native_verification_invalidated and fixture_claim:
-        _partition_with_fixture_authority(audit, core, captured, None, stale=True)
+    capture.pop("sealed_exclusion_rows", None)
+    if native_verification_invalidated:
+        if staged is not None or (fixture_claim and not stale_fixture):
+            _partition_with_fixture_authority(
+                audit, core, captured, None, stale=fixture_claim
+            )
+        keys = set()
+    elif staged is not None:
+        core.clear()
+        core.update(staged)
+        capture["sealed_exclusion_rows"] = tuple(deepcopy(originals))
+        native_rows = partition_rows
+        native_expected_rows = _without_provisional_rows(
+            native_expected_rows, keys, primitive
+        )
     return (
         native_rows,
         native_expected_rows,
         native_surface_mismatch,
         native_verification_invalidated,
+        keys,
     )
 
 
-def seal_security_scan(
-    audit,
-    core: dict[str, Any],
-    *,
-    producer_source_model=None,
-    _verified_runtime_rows=None,
-) -> dict[str, Any]:
-    """Revalidate local captures on every seal; never serialize their source bytes."""
-    caller_core = core
-    working_core = _security_scan_transaction_copy(caller_core)
-    input_ledger = working_core.get("finding_tier_report", {}).get("ledger", [])
+def _security_scan_seal_baseline(core, runtime_rows):
+    """Snapshot both raw surfaces before partitioning can change either."""
+    input_ledger = core.get("finding_tier_report", {}).get("ledger", [])
     verified_runtime_rows = _security_scan_verified_runtime_rows(
-        working_core, _verified_runtime_rows, input_ledger
+        core, runtime_rows, input_ledger
     )
     input_physical = deepcopy(
-        _security_scan_diagnostic_rows(working_core, verified_runtime_rows)
+        _security_scan_diagnostic_rows(core, verified_runtime_rows)
     )
     baseline = deepcopy(
         [row["raw_finding"] for row in input_ledger]
@@ -1339,9 +1512,62 @@ def seal_security_scan(
         )
         else input_physical
     )
-    core = working_core
-    prior_state, prior_summary = core.get("state"), core.get("action_summary")
+    return baseline, input_physical, verified_runtime_rows
+
+
+def _record_security_scan_conservation(
+    core,
+    captured,
+    conservation,
+    baseline,
+    input_physical,
+    native_expected_rows,
+    provisional_failure,
+):
+    """Record the conservation check and keep forensic rows on failed seals."""
+    if provisional_failure is not None:
+        conservation.update(
+            state="FAILED", provisional_exclusion_rollback=provisional_failure
+        )
+    core["finding_conservation"] = conservation
+    if conservation["state"] != "FAILED":
+        return
+    if (
+        conservation["native_surface_mismatch"]
+        and not conservation["native_verification_state_changed"]
+    ):
+        missing = _unreconciled_native_diagnostics(
+            core, captured, input_physical, native_expected_rows
+        )
+        if missing:
+            conservation["unreconciled_native_diagnostics"] = missing
+    _security_scan_block_conservation_failure(
+        core,
+        baseline,
+        input_physical,
+        provisional_failure
+        or conservation.get("failure_code")
+        or "SECURITY_FINDING_CONSERVATION_FAILED",
+    )
+
+
+def seal_security_scan(
+    audit,
+    core: dict[str, Any],
+    *,
+    producer_source_model=None,
+    _verified_runtime_rows=None,
+    _provisional_failure=None,
+) -> dict[str, Any]:
+    """Revalidate local captures on every seal; never serialize their source bytes."""
+    caller_core = core
+    core = _security_scan_transaction_copy(caller_core)
     prior_tier_report = core.get("finding_tier_report")
+    _restore_provisional_rows(core)
+    baseline, input_physical, verified_runtime_rows = _security_scan_seal_baseline(
+        core, _verified_runtime_rows
+    )
+    prior_state, prior_summary = core.get("state"), core.get("action_summary")
     captured = _prepare_security_scan_sources(core, prior_tier_report)
     from . import primitive_observation_binding as primitive
 
@@ -1350,7 +1576,21 @@ def seal_security_scan(
         native_expected_rows,
         native_surface_mismatch,
         native_verification_invalidated,
-    ) = _security_scan_partition_native_rows(audit, core, captured, primitive)
+        exclusions,
+    ) = _security_scan_partition_native_rows(
+        audit,
+        core,
+        captured,
+        primitive,
+        baseline,
+        input_physical,
+        allow_exclusions=_provisional_failure is None,
+    )
+    if exclusions:
+        baseline = _without_provisional_rows(baseline, exclusions, primitive)
+        input_physical = _without_provisional_rows(
+            input_physical, exclusions, primitive
+        )
     from .captured_security_audit import _revalidate_scan_role_support
 
     _revalidate_scan_role_support(audit, core, captured, primitive, native_rows)
@@ -1375,16 +1615,33 @@ def seal_security_scan(
         native_verification_invalidated,
         verified_runtime_rows,
     )
-    core["finding_conservation"] = conservation
-    if conservation["state"] == "FAILED":
-        if native_surface_mismatch and not native_verification_invalidated:
-            missing = _unreconciled_native_diagnostics(
-                core, captured, input_physical, native_expected_rows
-            )
-            if missing:
-                conservation["unreconciled_native_diagnostics"] = missing
-        _security_scan_block_conservation_failure(core, baseline, input_physical)
+    _record_security_scan_conservation(
+        core,
+        captured,
+        conservation,
+        baseline,
+        input_physical,
+        native_expected_rows,
+        _provisional_failure,
+    )
     result = _finish_security_scan_seal(audit, core, captured, baseline, input_physical)
+    if exclusions and any(
+        value.get("state") == "BLOCKED"
+        for value in (result, result.get("defect_policy_decision", {}))
+    ):
+        # The caller still holds the untouched raw rows and the prior tier evidence.
+        failure_code = (
+            conservation.get("failure_code")
+            or core.get("defect_policy_decision", {}).get("failure_code")
+            or "SECURITY_PROVISIONAL_EXCLUSION_POLICY_BLOCKED"
+        )
+        return seal_security_scan(
+            audit,
+            caller_core,
+            producer_source_model=producer_source_model,
+            _verified_runtime_rows=_verified_runtime_rows,
+            _provisional_failure=failure_code,
+        )
     caller_core.clear()
     caller_core.update(result)
     if type(caller_core) is _SourceBoundSecurityReport:
@@ -1679,6 +1936,45 @@ def _prepare_security_scan_transaction(
     return transaction
 
 
+def _collect_security_scan_inputs(audit, transaction, runtime_requested):
+    """Collect the source inventory and any provisional evidence before sealing."""
+    database_context = {}
+    captured = _CapturedSecuritySources()
+    conditional = transaction.profile["conditional"]
+    configuration = _ConfigurationProofCapture(
+        provisional_exclusions=(
+            set()
+            if transaction.selected_policy == "source-role-v3"
+            and not conditional
+            and not runtime_requested
+            else None
+        )
+    )
+    producer_source_model = {"configuration_bytes": configuration}
+    collection_identity = {}
+    scanned = audit._scan_security_sources(
+        transaction.workspace,
+        transaction.files,
+        transaction.tenant_read_calls,
+        transaction.tenant_read_bindings,
+        transaction.tenant_read_scopes,
+        cache_enabled=transaction.cache_enabled and not conditional,
+        database_context=database_context,
+        primitive_source_bytes_out=captured,
+        capture_all_sources=conditional or transaction.selected_policy != "legacy-v1",
+        producer_source_model_out=producer_source_model,
+        collection_identity_out=collection_identity,
+    )
+    configuration.bind_provisional_exclusions(captured, transaction.workspace)
+    return (
+        scanned,
+        database_context,
+        captured,
+        producer_source_model.get("source"),
+        collection_identity,
+    )
+
+
 def security_scan(
     audit,
     root: Path,
@@ -1737,29 +2033,14 @@ def security_scan(
         effective_security_only = transaction.effective_security_only
         tenant_read_calls = transaction.tenant_read_calls
         tenant_read_bindings = transaction.tenant_read_bindings
-        tenant_read_scopes = transaction.tenant_read_scopes
-        cache_enabled = transaction.cache_enabled
         files = transaction.files
-        database_context = {}
-        primitive_source_bytes = _CapturedSecuritySources()
-        producer_source_model = {}
-        collection_identity = {}
-        bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
-            audit._scan_security_sources(
-                workspace,
-                files,
-                tenant_read_calls,
-                tenant_read_bindings,
-                tenant_read_scopes,
-                cache_enabled=cache_enabled and (not profile["conditional"]),
-                database_context=database_context,
-                primitive_source_bytes_out=primitive_source_bytes,
-                capture_all_sources=profile["conditional"]
-                or selected_policy != "legacy-v1",
-                producer_source_model_out=producer_source_model,
-                collection_identity_out=collection_identity,
-            )
-        )
+        (
+            (bindings, findings, counts, outcomes, oracle_edges, oracle_configuration),
+            database_context,
+            primitive_source_bytes,
+            producer_source_model,
+            collection_identity,
+        ) = _collect_security_scan_inputs(audit, transaction, runtime_requested)
         receipt_observation = None
         if bind_collection_receipt:
             from .mission_control_status import _capture_security_scan_collection
@@ -1792,7 +2073,7 @@ def security_scan(
                 if profile["conditional"] or runtime_requested
                 else tenant_read_configuration
             ),
-            producer_source_model=producer_source_model.get("source"),
+            producer_source_model=producer_source_model,
             collection_observation=receipt_observation,
             defer_collection_binding=runtime_requested,
         )
@@ -1804,7 +2085,7 @@ def security_scan(
             profile,
             selected_policy,
             primitive_source_bytes,
-            producer_source_model.get("source"),
+            producer_source_model,
             tenant_read_configuration,
         )
         return _finish_security_scan_collection_receipt(
@@ -1815,7 +2096,7 @@ def security_scan(
             receipt_observation.get("after") if receipt_observation else None,
             collection_identity,
             effective_security_only,
-            producer_source_model.get("source"),
+            producer_source_model,
             enabled=bind_collection_receipt,
         )
 

@@ -3939,7 +3939,7 @@ def _project_oracle_context(
     configuration_owner = (
         producer_source_model_out if producer_source_model_out is not None else {}
     )
-    configuration_owner["configuration_bytes"] = {}
+    configuration_owner.setdefault("configuration_bytes", {}).clear()
     _verify_security_bindings(
         root, config_bindings, captured_out=configuration_owner["configuration_bytes"]
     )

@@ -10,6 +10,86 @@ from factoryline import credential_role_method_use_getter_audit as scope
 from factoryline.mock_fixture_provenance import application_test_index
 
 
+@pytest.mark.parametrize(
+    "variant",
+    ["rejected", "may-return", "unmodeled-effect", "eager-default", "descriptor"],
+)
+def test_native_scan_filters_only_configuration_rejected_before_authority(
+    tmp_path, variant
+):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    expression = "app.config.get('SECRET_KEY', '')"
+    if variant == "eager-default":
+        expression = "app.config.get('SECRET_KEY', unknown_default())"
+    prefix = "    inspect_receiver(app)\n" if variant == "unmodeled-effect" else ""
+    comparison = "not in" if variant == "may-return" else "in"
+    (tmp_path / "app.py").write_text(
+        "from flask import Flask\n"
+        "def validate(app):\n"
+        f"{prefix}"
+        f"    setting = {expression}\n"
+        f"    if setting.strip().lower() {comparison} {{'local-test-key'}}:\n"
+        "        raise RuntimeError('invalid configuration')\n"
+        "def make_app(configuration):\n"
+        "    app = Flask(__name__)\n"
+        "    app.config.from_object(configuration)\n"
+        "    validate(app)\n"
+        "    return app\n",
+        encoding="utf-8",
+    )
+    descriptor = (
+        "        @property\n        def OTHER(self):\n            return ignored()\n"
+        if variant == "descriptor"
+        else ""
+    )
+    (tmp_path / "test_app.py").write_text(
+        "import pytest\n"
+        "from app import make_app\n"
+        "def test_rejected_configuration():\n"
+        "    class Configuration:\n"
+        "        SECRET_KEY = 'LOCAL-TEST-KEY'\n"
+        f"{descriptor}"
+        "    with pytest.raises(RuntimeError):\n"
+        "        make_app(Configuration)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / "standalone.py").write_text(
+        "OPERATIVE_PASSWORD = 'unrelated-control'\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github/workflows/tests.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(
+        "name: tests\non: [push]\njobs:\n  tests:\n"
+        "    runs-on: ubuntu-latest\n    steps:\n      - run: python -m pytest\n",
+        encoding="utf-8",
+    )
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    paths = [
+        entry["raw_finding"]["path"]
+        for entry in report["finding_tier_report"]["ledger"]
+    ]
+    assert paths == (
+        ["standalone.py"] if variant == "rejected" else ["standalone.py", "test_app.py"]
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["audit_coverage"]["complete"] is True
+
+
 def captured_scope(tmp_path, source, filename="test_scope.py"):
     path = tmp_path / filename
     raw = source.encode()

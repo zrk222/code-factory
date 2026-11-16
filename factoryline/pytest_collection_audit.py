@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import configparser
 import ast
+import configparser
 import hashlib
 import re
 import shlex
@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from fnmatch import fnmatchcase
 from functools import lru_cache
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import yaml
 
 try:
@@ -612,6 +612,425 @@ def captured_pytest_configuration(
         include_tox_invocations=include_tox_invocations,
     )
     return None if effective is None else {"identity": identity, "options": effective}
+
+
+def _captured_pytest_inputs(module):
+    explicit = getattr(module, "_security_oracle_context", {}).get(
+        "_security_launch_configs"
+    )
+    if explicit is not None:
+        return None, explicit
+    context = getattr(module, "_security_source_context", None)
+    match context:
+        case (Path() as root, dict() as captured) if isinstance(context, tuple):
+            return root, captured
+        case _:
+            return None, None
+
+
+def captured_pytest_documents(module):
+    """Read configuration from private producer or verifier capture state."""
+    root, captured = _captured_pytest_inputs(module)
+    if root is None:
+        return captured if isinstance(captured, dict) else None
+    return {
+        Path(path).relative_to(root).as_posix(): raw
+        for path, raw in captured.items()
+        if isinstance(path, (str, Path)) and Path(path).is_relative_to(root)
+    }
+
+
+def captured_pytest_function_selected(
+    source, path, function, documents, *, invocation_index=None
+):
+    """Match a function against explicit configuration and optional declared invocations."""
+    from .import_context import application_configuration_names
+
+    if invocation_index is None:
+        selection = captured_pytest_configuration(documents)
+        if selection is None:
+            return False
+        selector = _pytest_collection_settings(selection["identity"])
+    else:
+        if not isinstance(documents, dict):
+            return False
+        names = application_configuration_names(documents)
+        configs = {name: raw for name, raw in documents.items() if name in names}
+        if not all(isinstance(raw, bytes) for raw in configs.values()):
+            return False
+        sources = {source.relative(p): raw for p, raw in source.source_bytes.items()}
+        sources.update(
+            (name, raw)
+            for name, raw in configs.items()
+            if name.startswith(".github/workflows/")
+        )
+        identities = {
+            name: {
+                "path": name,
+                "state": "read",
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": len(raw),
+            }
+            for name, raw in configs.items()
+        }
+        profile = captured_test_invocation_profile(
+            invocation_index, configs, sources, configuration_identities=identities
+        )
+        if profile["status"] != "DECLARED" or profile["runner"] != "pytest":
+            return False
+        selector = profile["selector"]
+        if selector["configuration"][
+            "state"
+        ] != "read" or not _captured_pytest_setup_closed(
+            source, path, invocation_index
+        ):
+            return False
+    return _pytest_file_matches(
+        source.relative(path), selector["python_files"]
+    ) and _pytest_name_matches(function.name, selector["python_functions"])
+
+
+def _captured_pytest_setup_closed(source, path, index):
+    from .mock_fixture_provenance import _app_expression_name
+
+    for p, tree in source.snapshots.items():
+        if (
+            not source.validate(p)
+            or p.name == "conftest.py"
+            or _pytest_collection_hook_names(tree, False, True)
+        ):
+            return False
+        if any(
+            _pytest_plugin_declaration_active(n)
+            or isinstance(n, (ast.Name, ast.Attribute))
+            and getattr(n, "id", getattr(n, "attr", None)) in {"__test__", "pytestmark"}
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            for n in ast.walk(tree)
+        ):
+            return False
+    for stmt in source.snapshots[path].body:
+        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if stmt.name in {"setup_module", "setUpModule", "setup_function"}:
+            return False
+        for decorator in stmt.decorator_list:
+            if (
+                not isinstance(decorator, ast.Call)
+                or _app_expression_name(index, path, decorator.func) != "pytest.fixture"
+            ):
+                return False
+            if decorator.args or any(
+                k.arg in {None, "autouse"}
+                and not (
+                    k.arg == "autouse"
+                    and isinstance(k.value, ast.Constant)
+                    and k.value.value is False
+                )
+                for k in decorator.keywords
+            ):
+                return False
+    return True
+
+
+def _rejection_single_argument(fn):
+    args = fn.args
+    if len(args.args) == 1 and len(tuple(ast.iter_child_nodes(args))) == 1:
+        return args.args[0].arg
+    return None
+
+
+def _rejection_assignment(stmt):
+    match stmt:
+        case ast.Assign(targets=[ast.Name(id=name)]) if not name.startswith("_"):
+            return name
+    return None
+
+
+_PROJECTION_UNKNOWN = object()
+_PROJECTION_SCALARS = {"bool", "str", "int", "float", "bytes", "NoneType"}
+
+
+def _projection_exact(value):
+    kind = "set" if isinstance(value, frozenset) else type(value).__name__
+    return frozenset({kind}), value
+
+
+def _projection_unknown(*kinds):
+    return frozenset(kinds), _PROJECTION_UNKNOWN
+
+
+def _projection_is(value, *kinds):
+    return value is not None and value[0].issubset(kinds)
+
+
+def _projection_join(left, right):
+    return left if left == right else _projection_unknown(*(left[0] | right[0]))
+
+
+def _projection_truth(value):
+    return {False, True} if value[1] is _PROJECTION_UNKNOWN else {bool(value[1])}
+
+
+class ConfigurationRejectionProjection:
+    """Bounded abstract scalars; an unsupported reachable effect invalidates proof."""
+
+    def __init__(
+        self, resolve_provider, owner, config, receiver=None, *, resolve_guard=None
+    ):
+        self.resolve_provider, self.owner = resolve_provider, owner
+        self.config, self.receiver = config, receiver
+        self.resolve_guard = resolve_guard
+        self.budget = 128
+
+    def namespace(self, body, parent, *, fields=False):
+        names = {}
+        for stmt in body:
+            name = _rejection_assignment(stmt)
+            if name is None or name in names:
+                return None
+            value = self.value(stmt.value, {**parent, **names})
+            if (
+                value is None
+                or fields
+                and not _projection_is(value, *_PROJECTION_SCALARS, "set")
+            ):
+                return None
+            names[name] = value
+        return names
+
+    def terminal(self, body, names=None, depth=0):
+        if depth > 12 or self.budget < len(body):
+            return None
+        self.budget -= len(body)
+        names = dict(names or {})
+        for i, stmt in enumerate(body):
+            if (name := _rejection_assignment(stmt)) is not None:
+                value = self.value(stmt.value, names)
+                if value is None or name == self.receiver:
+                    return None
+                names[name] = value
+            elif isinstance(stmt, ast.If):
+                return self._conditional_terminal(stmt, body[i + 1 :], names, depth)
+            else:
+                return self._terminal_raise(stmt, names)
+        return None
+
+    def _conditional_terminal(self, stmt, continuation, names, depth):
+        result = self.value(stmt.test, names)
+        if result is None:
+            result = self.guard(stmt.test, names)
+        if not _projection_is(result, "bool"):
+            return None
+        outcomes = {
+            self.terminal(
+                [*(stmt.body if yes else stmt.orelse), *continuation], names, depth + 1
+            )
+            for yes in _projection_truth(result)
+        }
+        return next(iter(outcomes)) if len(outcomes) == 1 else None
+
+    def _terminal_raise(self, stmt, names):
+        match stmt:
+            case ast.Raise(
+                cause=None, exc=ast.Call(func=func, args=args, keywords=[])
+            ) if (
+                len(args) <= 1
+                and self.provider(func, names) == "RuntimeError"
+                and all(_projection_is(self.value(arg, names), "str") for arg in args)
+            ):
+                return stmt
+        return None
+
+    def guard(self, node, names):
+        match node:
+            case ast.Call(
+                func=ast.Name(id=callee), args=[ast.Name(id=receiver)], keywords=[]
+            ) if (
+                self.resolve_guard is not None
+                and receiver == self.receiver
+                and callee not in names
+            ):
+                helper = self.resolve_guard(node.func, self.owner)
+            case _:
+                return None
+        if (
+            helper is None
+            or len(helper.body) != 1
+            or not isinstance(helper.body[0], ast.Return)
+        ):
+            return None
+        receiver = _rejection_single_argument(helper)
+        if receiver is None:
+            return None
+        return ConfigurationRejectionProjection(
+            self.resolve_provider, helper, self.config, receiver
+        ).value(helper.body[0].value, {})
+
+    def provider(self, node, names):
+        return self.resolve_provider(self.owner, node, names)
+
+    def value(self, node, names, depth=0):
+        if depth > 24:
+            return None
+
+        def read(child):
+            return self.value(child, names, depth + 1)
+
+        match node:
+            case ast.Name(id=name):
+                return names.get(name)
+            case ast.Call():
+                return self.call(node, names, read)
+            case ast.Compare(left=left, ops=[op], comparators=[right]):
+                return self.compare(op, read(left), read(right))
+            case ast.BoolOp(op=op, values=values):
+                return self.boolean(op, values, read)
+            case ast.IfExp(test=test, body=body, orelse=other):
+                condition = read(test)
+                if _projection_is(condition, "bool"):
+                    values = [
+                        read(body if yes else other)
+                        for yes in _projection_truth(condition)
+                    ]
+                    if all(v is not None for v in values):
+                        return _projection_join(values[0], values[-1])
+            case _:
+                return self.inert_value(node, read)
+        return None
+
+    @staticmethod
+    def inert_value(node, read):
+        match node:
+            case ast.Constant(value=value) if (
+                type(value).__name__ in _PROJECTION_SCALARS
+            ):
+                return _projection_exact(value)
+            case ast.Attribute(value=child, attr="parent") if _projection_is(
+                read(child), "path"
+            ):
+                return _projection_unknown("path")
+            case ast.Set(elts=items) if len(items) <= 128:
+                from .review_audits import _constant_value
+
+                value = _constant_value(node)
+                if type(value) is set and all(type(item) is str for item in value):
+                    return _projection_exact(frozenset(value))
+            case ast.BinOp(left=left, op=op, right=right):
+                shape = {ast.Div: ("path", "str"), ast.Mult: ("int", "int")}.get(
+                    type(op)
+                )
+                if (
+                    shape
+                    and _projection_is(read(left), shape[0])
+                    and _projection_is(read(right), shape[1])
+                ):
+                    return _projection_unknown(shape[0])
+            case ast.JoinedStr(values=parts) if all(
+                isinstance(p, ast.Constant)
+                or isinstance(p, ast.FormattedValue)
+                and p.conversion == -1
+                and p.format_spec is None
+                and _projection_is(read(p.value), "str", "int", "float", "path")
+                for p in parts
+            ):
+                return _projection_unknown("str")
+        return None
+
+    def call(self, node, names, read):
+        if node.keywords:
+            return None
+        func, values = node.func, [read(n) for n in node.args]
+        if any(v is None for v in values):
+            return None  # Python evaluates lookup defaults even when the key exists.
+        if self.receiver and ast.unparse(func) == self.receiver + ".config.get":
+            return self._lookup(values)
+        canonical = self.provider(func, names)
+        if canonical == "os.environ.get":
+            return self._lookup(values, environment=True)
+        if len(values) == 1:
+            return self.scalar_call(canonical, values[0])
+        if not values and isinstance(func, ast.Attribute):
+            return self._scalar_member(func.attr, read(func.value))
+        return None
+
+    def _lookup(self, values, *, environment=False):
+        if len(values) not in (1, 2) or not _projection_is(values[0], "str"):
+            return None
+        if not environment:
+            return self.config.get(
+                values[0][1]
+            )  # Other fields may have framework defaults.
+        default = values[1] if len(values) == 2 else _projection_exact(None)
+        if _projection_is(default, "str", "NoneType"):
+            return _projection_join(_projection_unknown("str"), default)
+        return None
+
+    @staticmethod
+    def scalar_call(name, value):
+        if name == "pathlib.Path" and _projection_is(value, "str", "path"):
+            return _projection_unknown("path")
+        if name == "str" and _projection_is(value, *_PROJECTION_SCALARS, "path"):
+            return (
+                _projection_unknown("str")
+                if value[1] is _PROJECTION_UNKNOWN
+                else _projection_exact(str(value[1]))
+            )
+        if name in {"int", "float"} and _projection_is(
+            value, "int", "float", "bool", "str"
+        ):
+            return _projection_unknown(name)
+        return None
+
+    @staticmethod
+    def _scalar_member(name, value):
+        if name in {"strip", "lower", "upper"} and _projection_is(value, "str"):
+            return (
+                value
+                if value[1] is _PROJECTION_UNKNOWN
+                else _projection_exact(getattr(value[1], name)())
+            )
+        if name in {"resolve", "as_posix"} and _projection_is(value, "path"):
+            return _projection_unknown("path" if name == "resolve" else "str")
+        return None
+
+    @staticmethod
+    def compare(op, left, right):
+        membership = isinstance(op, (ast.In, ast.NotIn))
+        if membership:
+            if not (_projection_is(left, "str") and _projection_is(right, "set")):
+                return None
+        elif not isinstance(op, (ast.Eq, ast.NotEq)) or not all(
+            _projection_is(v, *_PROJECTION_SCALARS) for v in (left, right)
+        ):
+            return None
+        first, second = left[1], right[1]
+        if first is _PROJECTION_UNKNOWN or second is _PROJECTION_UNKNOWN:
+            return _projection_unknown("bool")
+        same = first in second if membership else first == second
+        return _projection_exact(same != isinstance(op, (ast.NotEq, ast.NotIn)))
+
+    @staticmethod
+    def boolean(op, values, read):
+        result = read(values[0])
+        keep = isinstance(op, ast.Or)
+        for operand in values[1:]:
+            if not _projection_is(result, *_PROJECTION_SCALARS):
+                return None
+            truth = _projection_truth(result)
+            if truth == {keep}:
+                return result
+            right = read(operand)
+            if right is None:
+                return None
+            if truth == {not keep}:
+                result = right
+                continue
+            if _projection_is(result, "bool"):
+                result = _projection_exact(keep)
+            elif keep:
+                result = _projection_unknown(*(result[0] - {"NoneType"}))
+            result = _projection_join(result, right)
+        return result
 
 
 def captured_test_invocation_profile(
