@@ -264,14 +264,16 @@ def _uses_module_binding(reference, module):
     return True
 
 
-def _captured_module_text_unchanged(index, owner, target, references, providers=()):
+def _captured_module_text_unchanged(
+    index, owner, target, references, providers=(), *, scalar_reads=()
+):
     return _captured_named_provider_unchanged(
         index,
         owner,
         target.id,
         providers,
         readonly_argument=lambda node, _aliases, _parents: node in references,
-        readonly_nodes=(target,),
+        readonly_nodes=(target, *scalar_reads),
     )
 
 
@@ -747,14 +749,58 @@ def _registry_locator_namespace_closed(source, name, value):
         for path in paths
     ):
         return False
+    return _registry_binding_namespace_closed(source, name)
+
+
+def _registry_binding_namespace_closed(source, name, *, reject_reflection=False):
+    attributes = {name}
+    dynamic = frozenset()
+    if reject_reflection:
+        paths = source.module_paths()
+        if paths is None or any(
+            {"os", "os.py"}.intersection(path.casefold().split("/")) for path in paths
+        ):
+            return False
+        dynamic = frozenset(
+            {"eval", "exec", "globals", "locals", "vars", "__import__", "import_module"}
+        )
+        attributes.update(dynamic | {"__dict__", "__globals__", "__getattribute__"})
     return not any(
         isinstance(item, ast.Attribute)
-        and item.attr == name
+        and item.attr in attributes
         or isinstance(item, ast.ImportFrom)
         and any(alias.name in {name, "*"} for alias in item.names)
+        or isinstance(item, (ast.Name, ast.alias))
+        and (item.id if isinstance(item, ast.Name) else item.name) in dynamic
         for tree in source.snapshots.values()
         for item in ast.walk(tree)
     )
+
+
+def _environment_scalar_reads(source):
+    """A direct read returns a string, never the verified stdlib mapping."""
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import _presentation_provider_shadow
+
+    for path, tree in source.snapshots.items():
+        aliases = audit._module_security_aliases(tree)
+        for flow in ast.walk(tree):
+            if not isinstance(flow, (ast.Return, ast.Yield)):
+                continue
+            match flow.value:
+                case (
+                    ast.Subscript(value=ast.Name(id=root) as mapping, ctx=ast.Load())
+                    | ast.Subscript(
+                        value=ast.Attribute(value=ast.Name(id=root)) as mapping,
+                        ctx=ast.Load(),
+                    )
+                ):
+                    if audit._resolved_ast_name(
+                        mapping, aliases
+                    ) == "os.environ" and not _presentation_provider_shadow(
+                        mapping, root, source, path, audit
+                    ):
+                        yield flow
 
 
 def captured_public_registry_label(node, target, aliases):
@@ -807,11 +853,18 @@ def captured_public_registry_label(node, target, aliases):
         ) and _captured_module_text_unchanged(
             index, owner, origin, readonly, ("fastapi.security", "sys.modules")
         )
+    lookup_only = all(role is True for role in roles)
     return (
         registry_label
-        and bool({"help", "stderr", "diagnostic"}.intersection(roles))
         and True in roles
         and all(roles)
+        and (
+            bool({"help", "stderr", "diagnostic"}.intersection(roles))
+            or lookup_only
+            and _registry_binding_namespace_closed(
+                index, origin.id, reject_reflection=True
+            )
+        )
         and _captured_module_text_unchanged(
             index,
             owner,
@@ -820,10 +873,12 @@ def captured_public_registry_label(node, target, aliases):
             providers=(
                 "os.environ",
                 "os.getenv",
+                *(("os._Environ",) if lookup_only else ()),
                 *(_CLI_METADATA_FACTORIES if "help" in roles else ()),
                 *(("argparse.ArgumentParser.add_argument",) if "help" in roles else ()),
                 *(("builtins.print", "sys.stderr") if "stderr" in roles else ()),
             ),
+            scalar_reads=_environment_scalar_reads(index) if lookup_only else (),
         )
     )
 

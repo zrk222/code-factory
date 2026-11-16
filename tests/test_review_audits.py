@@ -14212,6 +14212,56 @@ def test_credential_locators_are_not_credential_values(tmp_path, carrier, other_
 
 
 @pytest.mark.parametrize(
+    "extra, peer, library, is_locator",
+    [
+        ("", "", "os.getenv", True),
+        ("", "", "os.environ.get", True),
+        ("def other(name):\n    return os.environ[name]\n", "", "os.getenv", True),
+        ("def other():\n    return os.environ\n", "", "os.getenv", False),
+        ("use(API_KEY_ENV)\n", "", "os.getenv", False),
+        ("", "import app\nuse(app.API_KEY_ENV)\n", "os.getenv", False),
+        ("", "import app\nuse(getattr(app, 'API_KEY_ENV'))\n", "os.getenv", False),
+        ("", "from app import *\nuse(API_KEY_ENV)\n", "os.getenv", False),
+        ("use(globals()['API_KEY_ENV'])\n", "", "os.getenv", False),
+        ("os.getenv = replacement\n", "", "os.getenv", False),
+        ("os.environ.get = replacement\n", "", "os.environ.get", False),
+        ("os._Environ.__getitem__ = replacement\n", "", "os.environ.get", False),
+        ("import sys\nsys.modules['os'] = replacement\n", "", "os.getenv", False),
+        ("", "", "read_from_unknown_provider", False),
+    ],
+)
+def test_environment_locator_requires_only_proven_key_uses(
+    tmp_path, extra, peer, library, is_locator
+):
+    (tmp_path / "app.py").write_text(
+        "import os\n"
+        "API_KEY_ENV = 'SERVICE_SIGNING_KEY'\n"
+        "API_KEY_VALUE = 'synthetic-control-value-only'\n"
+        f"def read():\n    return {library}(API_KEY_ENV)\n"
+        "def accepts(key):\n    return key == API_KEY_VALUE\n" + extra,
+        encoding="utf-8",
+    )
+    if peer:
+        (tmp_path / "peer.py").write_text(peer, encoding="utf-8")
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["audit_coverage"]["complete"]
+    assert report["finding_conservation"]["state"] == "PASS"
+    names = {
+        item["raw_finding"]["facts"]["name"]
+        for item in report["finding_tier_report"]["ledger"]
+        if item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    assert names == (
+        {"API_KEY_VALUE"} if is_locator else {"API_KEY_ENV", "API_KEY_VALUE"}
+    )
+
+
+@pytest.mark.parametrize(
     "variant, active",
     [
         ("closed", False),
