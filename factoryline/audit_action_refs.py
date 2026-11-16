@@ -483,13 +483,19 @@ def _captured_application_source_bytes(
 ):
     from .captured_security_audit import _captured_application_source_bytes as capture
 
-    return capture(
+    captured = capture(
         workspace,
         findings,
         bindings,
         source_bytes,
         capture_all_sources=capture_all_sources,
     )
+    if any(
+        row.get("facts", {}).get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+        for row in findings
+    ):
+        captured.source_role_capture["fixture_workspace"] = workspace
+    return captured
 
 
 class _CapturedSecuritySources(dict):
@@ -788,6 +794,70 @@ def _finish_security_scan_seal(audit, core, captured, baseline, input_physical):
     return core
 
 
+def _security_fixture_verifier_bindings(audit, core, captured, verified):
+    """Validate current collection and configuration; producer proof rows are not inputs."""
+    from .import_context import (
+        application_configuration_names,
+        application_profile_configuration,
+    )
+    from .pytest_collection_audit import pytest_collection_authoritative
+
+    root = getattr(captured, "source_role_capture", {}).get("fixture_workspace")
+    if not isinstance(root, Path) or not root.is_absolute():
+        return None
+    expected = core.get("oracle_context", {}).get("static_pytest_collection")
+    try:
+        files = audit._security_source_files(root)
+        observed = {path.relative_to(root).as_posix() for path in files}
+        if observed != {name for name in verified if name.endswith(".py")}:
+            return None
+        audit._verify_security_bindings(root, core["sources"])
+        _, current = audit._pytest_collection_config(root, files, allow_unknown=True)
+        if current != expected or not pytest_collection_authoritative(current):
+            return None
+        _, identities, valid = application_profile_configuration(
+            root, audit._security_source_bytes, audit.MAX_BYTES
+        )
+    except (OSError, ValueError, audit.ReviewAuditError, audit.RuntimeAuditError):
+        return None
+    names = application_configuration_names(verified) & verified.keys()
+    reads = {
+        name: item["sha256"]
+        for name, item in identities.items()
+        if item.get("state") == "read"
+    }
+    if not valid or reads.keys() != names:
+        return None
+    expected_digests = tuple(sorted(reads.items()))
+    if any(
+        sha256(verified[name]).hexdigest() != digest
+        for name, digest in expected_digests
+    ):
+        return None
+    return expected_digests
+
+
+def rebuild_application_fixture_context(audit, model, verified, fixture_bindings):
+    """Build per-source fixture annotations from independently owned syntax and bytes."""
+    if fixture_bindings is None:
+        return {}
+    from .context_efficiency import bind_application_fixture_context
+
+    configs = {name: verified[name] for name, _ in fixture_bindings}
+    contexts = {}
+    bind_application_fixture_context(
+        model.root,
+        model.snapshots,
+        contexts,
+        [{"path": name, "sha256": digest} for name, digest in fixture_bindings],
+        lambda _root, name: configs[name],
+        audit.MAX_BYTES,
+        source_bytes=model.source_bytes,
+        source_inventory=model.inventory,
+    )
+    return contexts
+
+
 def _security_scan_verification_state(audit, core, captured, primitive):
     """Snapshot the complete source, tenant and implementation identity for resealing."""
     if core.get("selected_defect_policy") not in {
@@ -838,9 +908,12 @@ def _security_scan_verification_state(audit, core, captured, primitive):
             (fn, getattr(fn, "__code__", None))
             for fn in (
                 audit._security_scan_tree,
+                _security_fixture_verifier_bindings,
+                rebuild_application_fixture_context,
                 *(getattr(primitive, k) for k in functions),
             )
         ),
+        _security_fixture_verifier_bindings(audit, core, captured, sources[0]),
     )
 
 
@@ -1114,19 +1187,32 @@ def _security_scan_block_conservation_failure(
         )
 
 
+def _partition_with_fixture_authority(audit, core, captured, rows, *, stale=False):
+    if captured is not None:
+        core["_primitive_source_bytes"] = captured
+    if stale:
+        core["_stale_fixture_authority"] = True
+    try:
+        audit.integrity.partition_proven_primitive_observations(core, rows)
+    finally:
+        core.pop("_primitive_source_bytes", None)
+        core.pop("_stale_fixture_authority", None)
+
+
 def _security_scan_partition_native_rows(audit, core, captured, primitive):
     """Partition from fresh native rows and retain invalidation evidence."""
     state_builder = _security_scan_verification_state
     state_code = state_builder.__code__
-    native_rows = None
+    native_rows = verified = None
     native_expected_rows = None
     native_surface_mismatch = False
     native_verification_invalidated = False
     try:
         verified = state_builder(audit, core, captured, primitive)
         if verified is not None:
+            args = (verified[0][0], verified[1], audit)
             native_rows = primitive._trusted_core_native_security_rows(
-                verified[0][0], verified[1], audit
+                *args, *((verified[4],) if verified[4] is not None else ())
             )
             if native_rows is not None:
                 native_expected_rows = deepcopy(native_rows)
@@ -1135,10 +1221,22 @@ def _security_scan_partition_native_rows(audit, core, captured, primitive):
                     native_rows = None
     except Exception:
         native_rows = None
-    try:
-        audit.integrity.partition_proven_primitive_observations(core, native_rows)
-    finally:
-        core.pop("_primitive_source_bytes", None)
+    fixture_claim = bool(
+        core.get("selected_defect_policy")
+        and any(
+            row.get("facts", {}).get("disposition")
+            == "TEST_OWNED_APPLICATION_CREDENTIAL"
+            for field in ("findings", "primitive_observations")
+            for row in core.get(field, ())
+        )
+    )
+    _partition_with_fixture_authority(
+        audit,
+        core,
+        captured,
+        native_rows,
+        stale=fixture_claim and (verified is None or verified[4] is None),
+    )
     if native_rows is not None:
         try:
             current = state_builder(audit, core, captured, primitive)
@@ -1152,6 +1250,8 @@ def _security_scan_partition_native_rows(audit, core, captured, primitive):
         except Exception:
             native_verification_invalidated = True
             native_rows = None
+    if native_verification_invalidated and fixture_claim:
+        _partition_with_fixture_authority(audit, core, captured, None, stale=True)
     return (
         native_rows,
         native_expected_rows,

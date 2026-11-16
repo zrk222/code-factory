@@ -461,7 +461,8 @@ def _trusted_core_tenant_arguments(core, audit):
     return calls, argument_bindings, applies
 
 
-def _trusted_core_native_security_rows(captured, tenant, audit):
+def _trusted_core_native_security_rows(captured, tenant, audit, fixture_bindings=None):
+    from .audit_action_refs import rebuild_application_fixture_context
     from .runtime_audit_common import RuntimeAuditError
 
     calls, argument_bindings, applies = tenant
@@ -480,6 +481,9 @@ def _trusted_core_native_security_rows(captured, tenant, audit):
     }
     try:
         with audit._security_snapshot_analysis_batch({"source": source_model}):
+            fixture_contexts = rebuild_application_fixture_context(
+                audit, source_model, captured, fixture_bindings
+            )
             for path in (path for path in captured_paths if path.suffix == ".py"):
                 rows = audit._security_scan_tree(
                     Path("."),
@@ -487,7 +491,7 @@ def _trusted_core_native_security_rows(captured, tenant, audit):
                     source_model.snapshots[path],
                     calls,
                     argument_bindings,
-                    context.copy(),
+                    {**context, **fixture_contexts.get(path, {})},
                     tenant_policy_applies=applies,
                     security_only=True,
                 )
@@ -3466,28 +3470,29 @@ def _primitive_source_capture(core):
 
 
 def _current_primitive_binding(finding, core, bindings, audit, captured=None):
-    if _unknown_collection(core) and finding.get("facts", {}).get("disposition") in {
+    facts = finding.get("facts", {})
+    disposition = facts.get("disposition")
+    if disposition == "TEST_OWNED_APPLICATION_CREDENTIAL" and core.get(
+        "_stale_fixture_authority"
+    ):
+        return False
+    if _unknown_collection(core) and disposition in {
         "TEST_OWNED_LOCAL_FIXTURE",
         "TEST_OWNED_APPLICATION_CREDENTIAL",
         "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
     }:
         return False
-    if _valid_security_precondition(
-        finding.get("facts", {}).get("security_precondition"), finding
-    ):
+    if _valid_security_precondition(facts.get("security_precondition"), finding):
         return False
     captured = _primitive_source_capture(core) if captured is None else captured
-    if finding.get("facts", {}).get("disposition") == "CONDITIONAL_PROVIDER_CONTRACT":
+    if disposition == "CONDITIONAL_PROVIDER_CONTRACT":
         if "_primitive_source_bytes" not in core and captured:
             core = {**core, "_primitive_source_bytes": captured}
         return _conditional_provider_binding(finding, core, bindings, audit)
     sources = core.get("sources", [])
-    if (
-        finding.get("facts", {}).get("disposition")
-        == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX"
-    ):
+    if disposition == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX":
         return closed_shell_binding(finding, sources, bindings, captured)
-    if finding.get("facts", {}).get("disposition") in {
+    if disposition in {
         "TEST_OWNED_LOCAL_FIXTURE",
         "TEST_OWNED_APPLICATION_CREDENTIAL",
         "SOURCE_PRESENTATION_METADATA",

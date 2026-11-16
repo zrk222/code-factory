@@ -5518,10 +5518,10 @@ class _SourceTestScope:
         ]:
             return False
         profile = self.configured_settings_invocation_profile()
-        if profile["status"] == "UNRESOLVED":
-            return False
-        authority = self.configured_settings_authority(profile)
-        if authority is None:
+        if (
+            profile["status"] == "UNRESOLVED"
+            or (authority := self.configured_settings_authority(profile)) is None
+        ):
             return False
         provider, module, selected, native = authority
         if native and not self.witness_native_settings_profile(profile):
@@ -5535,16 +5535,10 @@ class _SourceTestScope:
         ):
             return False
         self.witness(self.path, self.assignment, "configured_test_settings_binding")
-        for path, function in (
-            (path, fn) for path, functions in collected.items() for fn in functions
-        ):
-            self.witness(
-                path,
-                function,
-                "declared_django_settings_invocation"
-                if native
-                else "declared_pytest_settings_invocation",
-            )
+        role = f"declared_{'django' if native else 'pytest'}_settings_invocation"
+        for path, functions in collected.items():
+            for function in functions:
+                self.witness(path, function, role)
         self.settings_selection = {
             "selection_assurance": "SOURCE_BOUND_CONDITIONAL",
             "execution_status": "NOT_EXECUTED",
@@ -5635,17 +5629,16 @@ class _SourceTestScope:
             "runner_span": "native_django_runner_invocation",
         }
         for invocation in profile["invocations"]:
-            path = self.source.root / invocation["script"]
-            spans = {tuple(invocation["runner"][k]): v for k, v in roles.items()}
+            path, runner = self.source.root / invocation["script"], invocation["runner"]
+            spans = {tuple(runner[k]): role for k, role in roles.items()}
+            if resolution := runner.get("runner_resolution_span"):
+                spans[tuple(resolution)] = "native_django_runner_resolution"
             for n in ast.walk(self.index["modules"][path]):
-                span = tuple(
-                    getattr(n, a, -1)
-                    for a in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-                )
-                if span in spans:
-                    role = spans.pop(span)
-                    self.witness(path, n, role)
-                    self.native_profile_nodes.update(id(child) for child in ast.walk(n))
+                if isinstance(n, ast.stmt):
+                    span = tuple(self.fixture._evidence_node_span(n))
+                    if span in spans:
+                        self.witness(path, n, spans.pop(span))
+                        self.native_profile_nodes.update(map(id, ast.walk(n)))
             if spans:
                 return False
         return True
@@ -5654,7 +5647,7 @@ class _SourceTestScope:
         """Collect source-bound test owners selected by the declared runner."""
         from pathlib import Path
 
-        from .pytest_collection_audit import _pytest_collection_settings
+        from . import pytest_collection_audit as collection
 
         maps = self.audit._legacy._fixture_class_maps(self.index)
         if maps is None:
@@ -5663,7 +5656,7 @@ class _SourceTestScope:
             isinstance(profile, dict)
             and profile.get("runner") == "django.DiscoverRunner"
         ):
-            roots = {self.source.root / row["cwd"] for row in profile["invocations"]}
+            roots = collection.native_django_runner_roots(self.source.root, profile)
             if not roots:
                 return {}
             patterns = {
@@ -5690,7 +5683,7 @@ class _SourceTestScope:
             }
         if selected is None:
             return {}
-        patterns = _pytest_collection_settings(selected["identity"])
+        patterns = collection._pytest_collection_settings(selected["identity"])
         roots = selected["options"].get("testpaths", ["."])
         roots = roots.split() if isinstance(roots, str) else roots
         if (
@@ -5723,6 +5716,7 @@ class _SourceTestScope:
             _signing_provider_clear,
             _signing_provider_reads,
         )
+        from .pytest_collection_audit import NATIVE_DJANGO_RUNNER_PROVIDERS
 
         if not self.view or not self.view.complete:
             return False
@@ -5739,8 +5733,7 @@ class _SourceTestScope:
                 roots=(
                     *_DJANGO_LOADER_ROOTS,
                     "django.setup",
-                    "django.test.runner.DiscoverRunner",
-                    "django.test.runner.DiscoverRunner.run_tests",
+                    *NATIVE_DJANGO_RUNNER_PROVIDERS,
                     "django.conf.settings.SECRET_KEY",
                     "django.conf.settings.SECRET_KEY_FALLBACKS",
                     "pytest.main",
@@ -5830,6 +5823,7 @@ class _SourceTestScope:
         from .pytest_collection_audit import (
             DJANGO_IMPLICIT_KEY_EFFECTS,
             DJANGO_IMPLICIT_KEY_METHODS,
+            native_django_settings_argument,
         )
 
         name = self.canonical(path, node) or getattr(node, "id", "")
@@ -5858,6 +5852,10 @@ class _SourceTestScope:
                 and parent.func is node
             )
         reference = parent if name == "django.conf.settings" else node
+        if name == "django.conf.settings" and native_django_settings_argument(
+            self, path, node, reference
+        ):
+            return False
         attribute = (
             reference.attr
             if isinstance(reference, ast.Attribute)

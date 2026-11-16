@@ -4409,9 +4409,21 @@ def test_constructor_source_method_role_cli_retains_raw_and_live(tmp_path, capsy
 
 @pytest.mark.parametrize(
     "variant",
-    ["closed", "second_setup", "setup_alias", "copied_key", "settings_reflection"],
+    [
+        "closed",
+        "independent_verifier",
+        "collection_drift",
+        "collection_drift_during_verification",
+        "missing_collection_witness",
+        "second_setup",
+        "setup_alias",
+        "copied_key",
+        "settings_reflection",
+    ],
 )
-def test_native_django_settings_scope_closes_framework_carrier(tmp_path, variant):
+def test_native_django_settings_scope_closes_framework_carrier(
+    tmp_path, variant, monkeypatch
+):
     _write(tmp_path, "pyproject.toml", '[project]\ndependencies = ["Django"]\n')
     _write(
         tmp_path,
@@ -4446,11 +4458,22 @@ def test_native_django_settings_scope_closes_framework_carrier(tmp_path, variant
         runner.write_text(
             "import support\n" + runner.read_text(encoding="utf-8"), encoding="utf-8"
         )
-    report = security_scan(tmp_path, cache_enabled=False)
+    verify = variant in {
+        "independent_verifier",
+        "collection_drift",
+        "collection_drift_during_verification",
+        "missing_collection_witness",
+    }
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=verify,
+        defect_policy="source-role-v3" if verify else "legacy-v1",
+    )
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
-    if variant == "closed":
+    if variant == "closed" or verify:
         assert not active, report
         assert any(
             row.get("facts", {}).get("fixture_evidence", {}).get("profile")
@@ -4459,6 +4482,51 @@ def test_native_django_settings_scope_closes_framework_carrier(tmp_path, variant
         ), report
     else:
         assert active, report
+    if verify:
+        assert (
+            report["defect_policy_decision"]["state"]
+            == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+        )
+        assert report["finding_conservation"]["state"] == "PASS"
+        rows = report["finding_tier_report"]["ledger"]
+        assert len(rows) == 1 and rows[0]["tier"] == "PROVEN_PRIMITIVE"
+    if (
+        variant.startswith("collection_drift")
+        or variant == "missing_collection_witness"
+    ):
+        from factoryline import review_integrity
+        from factoryline.review_audits import _seal_security_scan
+
+        def drift():
+            _write(tmp_path, "pytest.ini", "[pytest]\npython_files = test_*.py\n")
+
+        if variant == "collection_drift_during_verification":
+            partition = review_integrity.partition_proven_primitive_observations
+
+            def mutate_after_partition(core, native_rows=None):
+                result = partition(core, native_rows)
+                if native_rows is not None:
+                    drift()
+                return result
+
+            monkeypatch.setattr(
+                review_integrity,
+                "partition_proven_primitive_observations",
+                mutate_after_partition,
+            )
+        elif variant == "collection_drift":
+            drift()
+        else:
+            report._source_role_capture.pop("fixture_workspace")
+        stale = _seal_security_scan(report)
+        assert stale["defect_policy_decision"]["state"] == "BLOCKED"
+        assert not stale["primitive_observations"] and not stale["agent_actions"]
+        assert stale["finding_conservation"]["native_verification_state_changed"] == (
+            variant == "collection_drift_during_verification"
+        )
+        assert any(
+            row["code"] == "SECURITY_HARDCODED_SECRET" for row in stale["findings"]
+        )
 
 
 _REQUEST_SIGNING273 = """from slack_sdk.signature import SignatureVerifier

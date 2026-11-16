@@ -1577,6 +1577,14 @@ DJANGO_IMPLICIT_KEY_METHODS = frozenset(
     }
 )
 
+NATIVE_DJANGO_RUNNER_PROVIDERS = (
+    "django.test.runner.DiscoverRunner",
+    "django.test.runner.DiscoverRunner.run_tests",
+    "django.test.utils.get_runner",
+    "django.conf.global_settings.TEST_RUNNER",
+    "django.conf.settings.TEST_RUNNER",
+)
+
 
 def _captured_django_runner(index, path, tree, aliases):
     """Bind a captured Django setup and DiscoverRunner invocation by imports."""
@@ -1586,45 +1594,36 @@ def _captured_django_runner(index, path, tree, aliases):
     from .intent_quality import _canary_main_guard_test
 
     statements = _captured_native_guard_body(tree, _canary_main_guard_test)
-    if statements is None or len(statements) not in {4, 5}:
+    if statements is None or len(statements) not in {4, 5, 6}:
         return None
     startup = captured_django_startup_statements(
         {"index": index["source"], "aliases": {path: aliases}}, path
     )
     if startup[-len(statements) :] != statements:
         return None
-    selector, setup, allocation, invocation, *exit_statements = statements
-    if not _captured_selector_assignment(selector, aliases):
-        return None
-    if not _captured_setup_call(setup, aliases) or not _captured_runner_allocation(
-        allocation, aliases
-    ):
-        return None
-    variable = allocation.targets[0].id
-    if (
-        not isinstance(invocation, ast.Assign)
-        or len(invocation.targets) != 1
-        or not isinstance(invocation.targets[0], ast.Name)
-    ):
-        return None
-    call = invocation.value
-    if (
-        not isinstance(call, ast.Call)
-        or not isinstance(call.func, ast.Attribute)
-        or call.func.attr != "run_tests"
-        or not isinstance(call.func.value, ast.Name)
-        or call.func.value.id != variable
-        or len(call.args) != 1
-        or not isinstance(call.args[0], ast.List)
-        or call.args[0].elts
-        or call.keywords
-    ):
-        return None
-    if exit_statements and not _captured_system_exit(
-        exit_statements[0], aliases, invocation.targets[0].id
-    ):
-        return None
+    selector, setup, *flow = statements
     settings_module = _captured_selector_assignment(selector, aliases)
+    if not settings_module or not _captured_setup_call(setup, aliases):
+        return None
+    resolution = None
+    if len(flow) == 4:
+        resolution, allocation, invocation, *exit_statements = flow
+        if not _captured_default_runner_resolution(
+            index, path, settings_module, resolution, allocation, aliases
+        ):
+            return None
+    else:
+        allocation, invocation, *exit_statements = flow
+        if not _captured_runner_allocation(allocation, aliases):
+            return None
+    result = _captured_runner_invocation(
+        invocation, allocation, settings_module, resolution, aliases
+    )
+    if result is None or (
+        exit_statements
+        and not _captured_system_exit(exit_statements[0], aliases, result)
+    ):
+        return None
     return {
         "kind": "django.DiscoverRunner",
         "settings_module": settings_module,
@@ -1654,8 +1653,182 @@ def _captured_django_runner(index, path, tree, aliases):
             invocation.end_lineno,
             invocation.end_col_offset,
         ],
+        **(
+            {
+                "runner_test_package": settings_module.rpartition(".")[0],
+                "runner_resolution_span": [
+                    resolution.lineno,
+                    resolution.col_offset,
+                    resolution.end_lineno,
+                    resolution.end_col_offset,
+                ],
+            }
+            if resolution is not None
+            else {}
+        ),
         "settings_selector": "SOURCE_BOUND_LITERAL",
     }
+
+
+def _captured_runner_invocation(
+    invocation, allocation, settings_module, resolution, aliases
+):
+    """Bind run_tests to the allocated runner and its exact literal label."""
+    match invocation:
+        case ast.Assign(
+            targets=[ast.Name(id=result)],
+            value=ast.Call(
+                func=ast.Attribute(value=ast.Name(id=receiver), attr="run_tests"),
+                args=[ast.List() as labels],
+                keywords=[],
+            ),
+        ) if receiver == allocation.targets[0].id:
+            pass
+        case _:
+            return None
+    if not _captured_runner_labels(labels, settings_module, resolution):
+        return None
+    if resolution is not None:
+        bindings = {resolution.targets[0].id, receiver, result}
+        if (
+            len(bindings) != 3
+            or bindings.intersection({*aliases, "bool", "__name__"})
+            or "__name__" in aliases
+        ):
+            return None
+    return result
+
+
+def _captured_runner_labels(labels, settings_module, resolution):
+    if resolution is None:
+        return not labels.elts
+    match labels.elts:
+        case [ast.Constant(value=str() as label)]:
+            return label == settings_module.rpartition(".")[0]
+    return False
+
+
+def native_django_runner_roots(root, profile):
+    """Project the selected package; direct discovery retains its working directory."""
+    return {
+        (root / row["cwd"]).joinpath(
+            *row["runner"].get("runner_test_package", "").split(".")
+        )
+        for row in profile["invocations"]
+    }
+
+
+def native_django_settings_argument(scope, path, node, invocation):
+    """Recognize only the settings proxy passed in a witnessed runner resolution."""
+    return (
+        id(node) in scope.native_profile_nodes
+        and isinstance(invocation, ast.Call)
+        and invocation.args == [node]
+        and scope.canonical(path, invocation.func) == "django.test.utils.get_runner"
+    )
+
+
+def _captured_default_runner_resolution(index, path, module, node, allocation, aliases):
+    """Bind get_runner(settings) to default DiscoverRunner without loading Django."""
+    from .mock_fixture_provenance import _django_provider_root_shadowed
+    from .review_audits import _resolved_ast_name
+
+    match node, allocation:
+        case (
+            ast.Assign(
+                targets=[ast.Name(id=runner)],
+                value=ast.Call(func=getter, args=[ast.Name() as proxy], keywords=[]),
+            ),
+            ast.Assign(
+                targets=[ast.Name()],
+                value=ast.Call(func=ast.Name(id=allocated), args=[], keywords=[]),
+            ),
+        ) if runner == allocated:
+            pass
+        case _:
+            return False
+    if (
+        _resolved_ast_name(getter, aliases) != "django.test.utils.get_runner"
+        or _resolved_ast_name(proxy, aliases) != "django.conf.settings"
+        or any(
+            _django_provider_root_shadowed(index["module_paths"], name)
+            for name in ("django", "os", "sys")
+        )
+    ):
+        return False
+    if not _captured_runner_imports_closed(index["modules"][path]):
+        return False
+    tree = _captured_default_runner_settings(index, path, module)
+    if tree is None:
+        return False
+    for statement in tree.body:
+        if isinstance(statement, ast.Expr) and isinstance(
+            statement.value, ast.Constant
+        ):
+            continue
+        if not (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(target := statement.targets[0], ast.Name)
+            and target.id.isupper()
+            and target.id != "TEST_RUNNER"
+        ):
+            return False
+        try:
+            ast.literal_eval(statement.value)
+        except (ValueError, SyntaxError, TypeError, RecursionError):
+            return False
+    return True
+
+
+def _captured_runner_imports_closed(tree):
+    allowed = {"django", "os", "sys", "django.conf", "django.test.utils"}
+    return all(
+        all(item.name in allowed for item in stmt.names)
+        if isinstance(stmt, ast.Import)
+        else not stmt.level and stmt.module in allowed
+        for stmt in tree.body
+        if isinstance(stmt, (ast.Import, ast.ImportFrom))
+    )
+
+
+def _captured_default_runner_settings(index, path, module):
+    from .mock_fixture_provenance import _django_mod
+
+    source = index["source"]
+    parts = module.split(".")
+    if (
+        path.parent != source.root
+        or len(parts) < 2
+        or not all(part.isidentifier() for part in parts)
+    ):
+        return None
+    selected, tree = _django_mod(index, module)
+    stem = source.root.joinpath(*parts)
+    if selected != stem.with_suffix(".py") or stem / "__init__.py" in source.snapshots:
+        return None
+    for depth in range(1, len(parts)):
+        folder = source.root.joinpath(*parts[:depth])
+        package = folder / "__init__.py"
+        if (
+            folder.with_suffix(".py") in source.snapshots
+            or package not in source.snapshots
+            or not source.validate(package)
+            or not all(
+                _captured_runner_docstring(stmt)
+                for stmt in source.snapshots[package].body
+            )
+        ):
+            return None
+    return tree
+
+
+def _captured_runner_docstring(node):
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and type(node.value.value) is str
+    )
 
 
 def _captured_native_guard_body(tree, main_guard_test):
@@ -3017,6 +3190,7 @@ def captured_pytest_helpers():
         _PYTEST_ARGUMENT_EFFECTS,
         DJANGO_IMPLICIT_KEY_EFFECTS,
         DJANGO_IMPLICIT_KEY_METHODS,
+        NATIVE_DJANGO_RUNNER_PROVIDERS,
         yaml.compose,
         yaml.Loader,
         yaml.MappingNode,
