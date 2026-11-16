@@ -15975,3 +15975,222 @@ def test_bounded_security_report_keeps_unknown_collection_read_only(tmp_path):
     assert report["audit_coverage"]["complete"] is True
     assert bounded_security_exit_code(args, report) == 2
     assert not (tmp_path / ".factory").exists()
+
+
+@pytest.mark.parametrize(
+    "extra, peer, library, is_locator",
+    [
+        ("", "", "os.getenv", True),
+        ("", "", "os.environ.get", True),
+        ("def other(name):\n    return os.environ[name]\n", "", "os.getenv", True),
+        ("def other():\n    return os.environ\n", "", "os.getenv", False),
+        ("use(API_KEY_ENV)\n", "", "os.getenv", False),
+        ("", "import app\nuse(app.API_KEY_ENV)\n", "os.getenv", False),
+        ("", "import app\nuse(getattr(app, 'API_KEY_ENV'))\n", "os.getenv", False),
+        ("", "from app import *\nuse(API_KEY_ENV)\n", "os.getenv", False),
+        ("use(globals()['API_KEY_ENV'])\n", "", "os.getenv", False),
+        ("os.getenv = replacement\n", "", "os.getenv", False),
+        ("os.environ.get = replacement\n", "", "os.environ.get", False),
+        ("os._Environ.__getitem__ = replacement\n", "", "os.environ.get", False),
+        ("import sys\nsys.modules['os'] = replacement\n", "", "os.getenv", False),
+        ("", "", "read_from_unknown_provider", False),
+    ],
+)
+def test_environment_locator_requires_only_proven_key_uses(
+    tmp_path, extra, peer, library, is_locator
+):
+    (tmp_path / "app.py").write_text(
+        "import os\n"
+        "API_KEY_ENV = 'SERVICE_SIGNING_KEY'\n"
+        "API_KEY_VALUE = 'synthetic-control-value-only'\n"
+        f"def read():\n    return {library}(API_KEY_ENV)\n"
+        "def accepts(key):\n    return key == API_KEY_VALUE\n" + extra,
+        encoding="utf-8",
+    )
+    if peer:
+        (tmp_path / "peer.py").write_text(peer, encoding="utf-8")
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["audit_coverage"]["complete"]
+    assert report["finding_conservation"]["state"] == "PASS"
+    names = {
+        item["raw_finding"]["facts"]["name"]
+        for item in report["finding_tier_report"]["ledger"]
+        if item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    assert names == (
+        {"API_KEY_VALUE"} if is_locator else {"API_KEY_ENV", "API_KEY_VALUE"}
+    )
+
+
+@pytest.mark.parametrize(
+    ("control", "active", "singleton"),
+    [
+        (control, active, singleton)
+        for singleton in (False, True)
+        for control, active in (
+            ("closed", False),
+            ("field_read", True),
+            ("bulk_export", True),
+            ("rebound", True),
+            ("global_rebound", True),
+            ("package_opaque", True),
+            ("package_plain", False),
+            ("registry_namespace", True),
+            ("reexport", True),
+            ("wrong_mount", True),
+            ("unmapped_launch", True),
+            ("case_alias_launch", True),
+        )
+    ]
+    + [
+        ("guarded", False, False),
+        ("guarded_read", True, False),
+        ("guarded_escape", True, False),
+        ("guarded_preallocation", True, False),
+        ("guarded_default", True, False),
+        ("guarded_dynamic_factory", True, False),
+        ("guarded_mutated_field", True, False),
+        ("guarded_mutated_provider", True, False),
+        ("guarded_mutated_provider_base", True, False),
+        ("guarded_double_config", True, False),
+    ],
+)
+def test_bounded_scan_requires_closed_settings_uses(
+    tmp_path, control, active, singleton
+):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    app = tmp_path / "backend" / "app"
+    app.mkdir(parents=True)
+    member = "options" if singleton else "load_options"
+    access = member if singleton else f"{member}()"
+    package = control.startswith("package_")
+    module = "app" if package else "app.config"
+    carrier = (
+        "options = ServiceOptions()\n"
+        if singleton
+        else "def load_options():\n    return ServiceOptions()\n"
+    )
+    if package:
+        carrier += f"local_label = {access}.title\n"
+    config = ""
+    if control.startswith("guarded"):
+        default = (
+            "load_origins()" if control == "guarded_dynamic_factory" else "['local']"
+        )
+        config = (
+            f"    origins: list[str] = pydantic.Field(default_factory=lambda: {default})\n"
+            "    class Config:\n"
+            "        env_file = '.env'\n"
+            "        case_sensitive = False\n"
+        )
+        if control == "guarded_double_config":
+            config += "    model_config = SettingsConfigDict(env_file='.env')\n"
+    (app / ("__init__.py" if package else "config.py")).write_text(
+        "import pydantic\n"
+        "from pydantic_settings import BaseSettings, SettingsConfigDict\n"
+        "class ServiceOptions(BaseSettings):\n"
+        "    secret_key: str = 'unused-development-setting'\n"
+        "    title: str = 'catalog'\n" + config + "\n" + carrier,
+        encoding="utf-8",
+    )
+    extra = {
+        "closed": "def labels():\n    modules = []\n    return modules\n",
+        "field_read": f"{access}.secret_key\n",
+        "bulk_export": f"accept_options({access})\n",
+        "rebound": f"{member} = replacement\n",
+        "global_rebound": f"def rebind():\n    global {member}\n"
+        f"    from other import replacement as {member}\n",
+        "package_opaque": f"accept_options({access})\n",
+        "registry_namespace": "from sys import modules as loaded_modules\n",
+        "reexport": "from app.alias import exposed_options\n"
+        + (
+            "accept_options(exposed_options)\n"
+            if singleton
+            else "accept_options(exposed_options())\n"
+        ),
+    }.get(control, "")
+    reads = f"label = {access}.title\n"
+    if control.startswith("guarded"):
+        reads = (
+            f"def label():\n    options = {access}\n    return options.title\n"
+            "if __name__ == '__main__':\n"
+            + (
+                "    print(options.title)\n"
+                if control == "guarded_preallocation"
+                else ""
+            )
+            + f"    options = {access}\n"
+            + (
+                "    print(options.secret_key)\n"
+                if control == "guarded_read"
+                else "    print(options.title)\n"
+            )
+        )
+        extra = {
+            "guarded_escape": "accept_options(options)\n",
+            "guarded_default": "def export(settings=options):\n    return settings\n",
+            "guarded_mutated_field": "import pydantic\npydantic.Field = replacement\n",
+            "guarded_mutated_provider": "from pydantic import fields\nfields.Field = replacement\n",
+            "guarded_mutated_provider_base": (
+                "from pydantic_settings.main import BaseSettings\n"
+                "BaseSettings.settings_customise_sources = replacement\n"
+            ),
+        }.get(control, "")
+    (app / "main.py").write_text(
+        f"from {module} import {member}\n" + reads + extra,
+        encoding="utf-8",
+    )
+    if control == "reexport":
+        (app / "alias.py").write_text(
+            f"from app.config import {member} as exposed_options\n", encoding="utf-8"
+        )
+    target = "missing.main" if control == "unmapped_launch" else "app.main"
+    docker = "dockerfile" if control == "case_alias_launch" else "Dockerfile"
+    (app.parent / docker).write_text(
+        "FROM python:3.11\nWORKDIR /srv\nCOPY app ./app\n"
+        f'CMD ["python", "-m", "uvicorn", "{target}:api"]\n',
+        encoding="utf-8",
+    )
+    mount = "    volumes: ['workspace:/srv']\n" if control == "wrong_mount" else ""
+    (tmp_path / "compose.yaml").write_text(
+        "services:\n  api:\n    build: ./backend\n" + mount, encoding="utf-8"
+    )
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+        ]
+    )
+    result = prepare_bounded_security_report(args)
+    assert result["audit_coverage"]["complete"] is True
+    assert result["finding_conservation"]["state"] == "PASS"
+    selected = {
+        entry["path"] for entry in result["oracle_context"]["configuration_sources"]
+    }
+    assert "compose.yaml" in selected
+    expected = "backend/" + docker
+    if (app.parent / "Dockerfile").exists():
+        assert expected in selected
+    elif control == "case_alias_launch":
+        assert expected not in selected
+    if control == "case_alias_launch":
+        assert "backend/Dockerfile" not in selected
+    assert (
+        any(
+            item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+            for item in result["finding_tier_report"]["ledger"]
+        )
+        is active
+    )

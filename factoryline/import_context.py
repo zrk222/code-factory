@@ -504,6 +504,8 @@ def _shell_import_aliases(nodes, audit, provider, *, package=None):
 
 def application_configuration_names(paths=()):
     """Select the same canonical configuration inputs at every proof boundary."""
+    from .captured_security_audit import is_launch_configuration
+
     names = {
         "requirements.txt",
         "pyproject.toml",
@@ -521,12 +523,14 @@ def application_configuration_names(paths=()):
             if isinstance(name, str)
             and re.fullmatch(r"\.github/workflows/[^/\\:\x00]+\.ya?ml", name)
         )
+        names.update(filter(is_launch_configuration, paths))
     return frozenset(names)
 
 
 def application_profile_configuration(root, read_source, limit):
     """Capture unparsed selector bytes; neither presence nor content grants authority."""
     from itertools import islice
+    from .captured_security_audit import capture_launch_configuration
     from .context_efficiency import _has_reparse_ancestor
     from .review_audits import MAX_SECURITY_SOURCE_FILES
 
@@ -548,7 +552,8 @@ def application_profile_configuration(root, read_source, limit):
             raise ValueError("workflow_inventory_exceeds_capture_profile")
     except (OSError, ValueError) as exc:
         return [], {"workflow_inventory": {"state": str(exc)}}, False
-    for name in sorted(application_configuration_names(paths)):
+    paths, read_source = capture_launch_configuration(root, read_source, limit, paths)
+    for name in sorted(application_configuration_names(paths), key=read_source.order):
         identity = {"path": name}
         try:
             raw = read_source(root, name)
@@ -580,10 +585,11 @@ def application_profile_configuration(root, read_source, limit):
                 bindings.append(binding)
                 identity.update(binding, state="read")
         identities[name] = identity
+    bindings.sort(key=lambda row: row["path"])
     # Type-check capture owns these two bindings; share all capture identities.
     return (
         [row for row in bindings if row["path"] not in {"pyproject.toml", "tox.ini"}],
-        identities,
+        dict(sorted(identities.items())),
         valid,
     )
 

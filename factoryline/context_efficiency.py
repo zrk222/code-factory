@@ -839,6 +839,9 @@ def _consume_security_snapshots(
                     **contexts.get(path, {}),
                     "_tenant_policy_applies": scope.get("_policy_applies", False),
                     "_security_source_context": (workspace, retained),
+                    "_security_launch_configs": (source_model_out or {}).get(
+                        "configuration_bytes", {}
+                    ),
                     "_security_provider_mutation_cache": provider_mutations,
                     "_security_source_model": (source_model_out or {}).get("source"),
                 }

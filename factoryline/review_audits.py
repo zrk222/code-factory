@@ -1510,7 +1510,9 @@ def _literal_credential_candidate(node, target):
 def _literal_assignment_diagnostic(
     relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr, aliases=None
 ) -> dict[str, Any] | None:
-    if not _literal_credential_candidate(node, target):
+    from .captured_security_audit import captured_credential_candidate
+
+    if not captured_credential_candidate(node, target, aliases):
         return None
     return _security_finding(
         "SECURITY_HARDCODED_SECRET",

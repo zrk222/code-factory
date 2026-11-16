@@ -7,6 +7,7 @@ import json
 import re
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
+from functools import partial
 
 
 def captured_django_startup_body(node):
@@ -2375,3 +2376,1208 @@ def _revalidate_scan_role_support(audit, core, captured, primitive, native_rows)
             partition_state="VALIDATED" if coverage_complete else "INCOMPLETE",
             _verifier_native_rows=native_rows,
         )
+
+
+def _captured_immutable_module_text(site, name):
+    """Locate one unconditional module binding and gather every source-visible use."""
+    from .credential_role_constructor_provider import binding_occurrences
+    from .review_integrity import _security_module_scope
+    from .semantic_credential_sensor import _security_source_path
+
+    module = _security_module_scope(getattr(site, "_security_lexical_scope", None))
+    index = getattr(module, "_security_source_model", None)
+    owner = _security_source_path(index, module)
+    if owner is None or not index.validate(owner):
+        return None
+    match binding_occurrences(module.body, name):
+        case [ast.Name() as target]:
+            pass
+        case _:
+            return None
+    declaration = getattr(target, "_security_parent", None)
+    if declaration not in module.body or not isinstance(declaration, ast.Assign):
+        return None
+    if declaration.targets != [target] or not isinstance(
+        declaration.value, ast.Constant
+    ):
+        return None
+    value = declaration.value.value
+    if type(value) is not str or len(value) > 4096:
+        return None
+    uses = [
+        ref
+        for ref in ast.walk(module)
+        if isinstance(ref, ast.Name) and ref.id == name and ref is not target
+    ]
+    if any(
+        not isinstance(ref.ctx, ast.Load) or not _uses_module_binding(ref, module)
+        for ref in uses
+    ):
+        return None
+    return index, owner, target, value, uses
+
+
+def _uses_module_binding(reference, module):
+    scope = getattr(reference, "_security_lexical_scope", None)
+    while scope is not module:
+        if scope is None or any(
+            reference.id in getattr(scope, field, ())
+            for field in (
+                "_security_local_names",
+                "_security_parameter_names",
+                "_security_nonlocal_names",
+            )
+        ):
+            return False
+        scope = getattr(scope, "_security_parent_scope", None)
+    return True
+
+
+def _captured_module_text_unchanged(
+    index, owner, target, references, providers=(), *, scalar_reads=()
+):
+    return _captured_named_provider_unchanged(
+        index,
+        owner,
+        target.id,
+        providers,
+        readonly_argument=lambda node, _aliases, _parents: node in references,
+        readonly_nodes=(target, *scalar_reads),
+    )
+
+
+def _captured_named_provider_unchanged(
+    index, owner, name, providers=(), *, readonly_argument=None, readonly_nodes=()
+):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+    from .runtime_audit_integrity import _conditional_module_name
+
+    paths = index.module_paths()
+    if paths is None:
+        return False
+    bindings = [
+        (_conditional_module_name(module) + "." + name, (owner, name))
+        for module, path in paths.items()
+        if path == owner
+    ]
+    if not bindings:
+        return False
+    canonical, local = bindings[0]
+    return not _captured_terminal_provider_mutation(
+        index,
+        audit,
+        canonical,
+        local_binding=local,
+        additional_bindings=(
+            *bindings[1:],
+            *((provider, None) for provider in providers),
+        ),
+        readonly_argument=readonly_argument,
+        readonly_nodes=readonly_nodes,
+    )
+
+
+def _registry_external_references(source, owner, origin):
+    """Gather closed direct imports of the same bound label including local aliases."""
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _presentation_provider_shadow,
+        binding_occurrences,
+    )
+    from .credential_role_identity_effects import source_symbol_index
+
+    symbols = source_symbol_index(source)
+    if symbols is None:
+        return None
+    identity = owner, source.parents[owner].get(id(origin))
+    result = []
+    for path, tree in source.snapshots.items():
+        if path == owner:
+            continue
+        if not source.validate(path):
+            return None
+        imported = _registry_imported_names(symbols, path, tree, identity)
+        if not imported:
+            continue
+        aliases = audit._module_security_aliases(tree)
+        for name, statement in imported.items():
+            if binding_occurrences(tree.body, name) != [statement]:
+                return None
+            for ref in _settings_names(tree, name):
+                if _presentation_provider_shadow(ref, name, source, path, audit):
+                    return None
+                result.append((ref, path, aliases))
+    return result
+
+
+def _registry_imported_names(symbols, path, tree, identity):
+    from .mock_fixture_provenance import _app_source_symbol
+
+    matched = {}
+    for statement in tree.body:
+        if not isinstance(statement, ast.ImportFrom):
+            continue
+        for alias in statement.names:
+            name = alias.asname or alias.name
+            if name == "*":
+                continue
+            if (
+                _app_source_symbol(symbols, path, ast.Name(id=name, ctx=ast.Load()))
+                == identity
+            ):
+                matched[name] = statement
+    return matched
+
+
+def _registry_binding_namespace_closed(source, name, *, reject_reflection=False):
+    attributes = {name}
+    dynamic = frozenset()
+    if reject_reflection:
+        paths = source.module_paths()
+        if paths is None or any(
+            {"os", "os.py"}.intersection(path.casefold().split("/")) for path in paths
+        ):
+            return False
+        dynamic = frozenset(
+            {"eval", "exec", "globals", "locals", "vars", "__import__", "import_module"}
+        )
+        attributes.update(dynamic | {"__dict__", "__globals__", "__getattribute__"})
+    return not any(
+        isinstance(item, ast.Attribute)
+        and item.attr in attributes
+        or isinstance(item, ast.ImportFrom)
+        and any(alias.name in {name, "*"} for alias in item.names)
+        or isinstance(item, (ast.Name, ast.alias))
+        and (item.id if isinstance(item, ast.Name) else item.name) in dynamic
+        for tree in source.snapshots.values()
+        for item in ast.walk(tree)
+    )
+
+
+def _environment_scalar_reads(source):
+    """A direct read returns a string, never the verified stdlib mapping."""
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import _presentation_provider_shadow
+
+    for path, tree in source.snapshots.items():
+        aliases = audit._module_security_aliases(tree)
+        for flow in ast.walk(tree):
+            if not isinstance(flow, (ast.Return, ast.Yield)):
+                continue
+            match flow.value:
+                case (
+                    ast.Subscript(value=ast.Name(id=root) as mapping, ctx=ast.Load())
+                    | ast.Subscript(
+                        value=ast.Attribute(value=ast.Name(id=root)) as mapping,
+                        ctx=ast.Load(),
+                    )
+                ):
+                    if audit._resolved_ast_name(
+                        mapping, aliases
+                    ) == "os.environ" and not _presentation_provider_shadow(
+                        mapping, root, source, path, audit
+                    ):
+                        yield flow
+
+
+_COMPOSE_PROFILE_FILES = (
+    "compose.yaml",
+    "compose.yml",
+    "docker-compose.yaml",
+    "docker-compose.yml",
+)
+
+
+_LAUNCH_BLOCKERS = (
+    "compose.override.yaml",
+    "compose.override.yml",
+    "docker-compose.override.yaml",
+    "docker-compose.override.yml",
+)
+
+
+def is_launch_configuration(name):
+    """Identify only bounded Compose selectors and declared Docker build inputs."""
+    return isinstance(name, str) and (
+        name.casefold() in (*_COMPOSE_PROFILE_FILES, *_LAUNCH_BLOCKERS)
+        or bool(
+            re.fullmatch(
+                r"(?:[\w.-]+/)*(?:Dockerfile(?:\.[\w.-]+)?|\.dockerignore)",
+                name,
+                re.ASCII | re.IGNORECASE,
+            )
+        )
+        and all(part not in {".", ".."} for part in name.split("/"))
+    )
+
+
+def _compose_services(raw):
+    import yaml
+
+    if not isinstance(raw, bytes) or len(raw) > 65_536:
+        return None
+    try:
+        if any(
+            getattr(event, "anchor", None) or getattr(event, "tag", None)
+            for event in yaml.parse(raw, Loader=yaml.SafeLoader)
+        ):
+            return None
+        node = yaml.compose(raw, Loader=yaml.SafeLoader)
+        pending = [node]
+        while pending:
+            current = pending.pop()
+            if isinstance(current, yaml.MappingNode):
+                keys = [
+                    key.value
+                    for key, _ in current.value
+                    if isinstance(key, yaml.ScalarNode)
+                ]
+                if len(keys) != len(current.value) or len(set(keys)) != len(keys):
+                    return None
+                pending.extend(value for _, value in current.value)
+            elif isinstance(current, yaml.SequenceNode):
+                pending.extend(current.value)
+        document = yaml.safe_load(raw)
+    except (yaml.YAMLError, UnicodeError, ValueError, RecursionError, TypeError):
+        return None
+    if not isinstance(document, dict) or "include" in document:
+        return None
+    services = document.get("services")
+    return services if isinstance(services, dict) else None
+
+
+def _compose_build(service):
+    build = service.get("build") if isinstance(service, dict) else None
+    if isinstance(build, str):
+        build = {"context": build}
+    if not isinstance(build, dict) or not set(build) <= {"context", "dockerfile"}:
+        return None
+    context, file = build.get("context", "."), build.get("dockerfile", "Dockerfile")
+    if not all(isinstance(part, str) for part in (context, file)):
+        return None
+    root, docker = PurePosixPath(context), PurePosixPath(file)
+    if (
+        root.is_absolute()
+        or docker.is_absolute()
+        or ".." in (*root.parts, *docker.parts)
+    ):
+        return None
+    path = (root / docker).as_posix()
+    return (root, path) if is_launch_configuration(path) else None
+
+
+def _observed_launcher_path(root, declared):
+    """Bind a selector to its actual spelling on case-insensitive filesystems."""
+    try:
+        actual = (root / declared).resolve(strict=True).relative_to(root).as_posix()
+    except (OSError, ValueError, RuntimeError):
+        return declared
+    return actual if actual.casefold() == declared.casefold() else declared
+
+
+def capture_launch_configuration(root, read_source, limit, paths):
+    """Discover only local build inputs referenced by the captured Compose files."""
+    cached = {}
+    selected = set(paths)
+    observe = partial(_observed_launcher_path, Path(root).resolve())
+    for declared in (*_COMPOSE_PROFILE_FILES, *_LAUNCH_BLOCKERS):
+        name = observe(declared)
+        try:
+            raw = read_source(root, name)
+        except (OSError, ValueError, RuntimeError) as exc:
+            if not (
+                isinstance(exc, FileNotFoundError)
+                or getattr(exc, "code", None) == "E_SOURCE_MISSING"
+            ):
+                selected.add(name)
+            continue
+        cached[name] = raw
+        selected.add(name)
+        services = (
+            _compose_services(raw) if name == declared and len(raw) <= limit else None
+        )
+        builds = map(_compose_build, (services or {}).values())
+        for directory, docker in filter(None, builds):
+            ignore = (directory / ".dockerignore").as_posix()
+            selected.update(map(observe, (docker, ignore, docker + ".dockerignore")))
+
+    def read(workspace, name):
+        return cached[name] if name in cached else read_source(workspace, name)
+
+    read.order = lambda name: (name not in cached, name)
+    return selected, read
+
+
+def _launch_text_sources(module):
+    context = getattr(module, "_security_source_context", None)
+    if not isinstance(context, tuple) or len(context) != 2:
+        return {}
+    root, documents = context
+    explicit = getattr(module, "_security_oracle_context", {}).get(
+        "_security_launch_configs"
+    )
+    if explicit is not None:
+        return {
+            name: raw for name, raw in explicit.items() if is_launch_configuration(name)
+        }
+    return {
+        relative: raw
+        for path, raw in documents.items()
+        if Path(path).is_relative_to(root)
+        and is_launch_configuration(relative := Path(path).relative_to(root).as_posix())
+    }
+
+
+def _launch_import_roots(source, configs):
+    """Map a fixed ASGI target through declared build copies and bounded mounts."""
+    folded = {name.casefold() for name in configs}
+    if (
+        not folded
+        or folded.intersection(_LAUNCH_BLOCKERS)
+        or any(
+            path in folded and path not in configs for path in _COMPOSE_PROFILE_FILES
+        )
+    ):
+        return frozenset()
+    roots = set()
+    for path in _COMPOSE_PROFILE_FILES:
+        if path not in configs:
+            continue
+        services = _compose_services(configs[path])
+        if services is None:
+            return frozenset()
+        for service in services.values():
+            selected = _compose_build(service)
+            if selected is None:
+                continue
+            directory, docker_path = selected
+            if docker_path.casefold() in folded and docker_path not in configs:
+                return frozenset()
+            launched = _fixed_python_launch(configs.get(docker_path), directory)
+            if launched is None:
+                continue
+            work, copies, entry = launched
+            mapped = _mapped_launch_sources(source, copies, work, entry)
+            if (
+                not _launch_service_closed(service, directory, docker_path, configs)
+                or len(mapped) != 1
+                or not _launch_mounts_closed(service, work, entry, mapped)
+            ):
+                return frozenset()
+            paths, _ = next(iter(mapped))
+            roots.add(paths)
+    return frozenset(roots) if len(roots) == 1 else frozenset()
+
+
+def _fixed_python_launch(raw, context):
+    if not isinstance(raw, bytes) or len(raw) > 65_536:
+        return None
+    try:
+        parsed = _docker_launch_steps(
+            raw.decode("utf-8").replace("\\\n", " ").splitlines(), context
+        )
+    except (UnicodeError, ValueError, TypeError, IndexError):
+        return None
+    if parsed is None:
+        return None
+    work, copies, argv = parsed
+    entry = _asgi_launch_entry(argv)
+    return (work, copies, entry) if entry else None
+
+
+def _docker_launch_steps(lines, context):
+    work, copies, argv = PurePosixPath("/"), [], []
+    first = False
+    for line in lines:
+        directive, _, value = line.strip().partition(" ")
+        if not directive or directive.startswith("#"):
+            continue
+        match directive.upper():
+            case "FROM" if not first:
+                first = True
+            case "WORKDIR" if re.fullmatch(r"/(?:[A-Za-z0-9_-]+/?)+", value):
+                work = PurePosixPath(value)
+            case "COPY":
+                copy = _docker_fixed_copy(value, context, work)
+                if copy is None:
+                    return None
+                copies.append(copy)
+            case "CMD" if not argv:
+                argv = _docker_json_argv(value)
+            case instruction if _launch_build_metadata(instruction, value, copies):
+                pass
+            case "USER" | "EXPOSE" | "HEALTHCHECK" | "LABEL":
+                pass
+            case _:
+                return None
+    return (work, copies, argv) if first else None
+
+
+def _docker_json_argv(value):
+    argv = json.loads(value)
+    if not isinstance(argv, list) or any(type(arg) is not str for arg in argv):
+        raise ValueError("expected literal Docker CMD")
+    return argv
+
+
+def _docker_fixed_copy(value, context, work):
+    import shlex
+
+    rows = shlex.split(value)
+    if rows and re.fullmatch(r"--chown=[\w-]+:[\w-]+", rows[0], re.ASCII):
+        rows = rows[1:]
+    if len(rows) != 2 or not all(
+        re.fullmatch(r"[A-Za-z0-9_./-]+", item) for item in rows
+    ):
+        return None
+    src, dst = map(PurePosixPath, rows)
+    if src.is_absolute() or ".." in (*src.parts, *dst.parts):
+        return None
+    return context / src, work / dst
+
+
+def _asgi_launch_entry(argv):
+    match argv:
+        case ["uvicorn", target, *flags] | ["python", "-m", "uvicorn", target, *flags]:
+            module, sep, variable = target.partition(":")
+            if (
+                sep
+                and variable.isidentifier()
+                and all(part.isidentifier() for part in module.split("."))
+                and len(flags) % 2 == 0
+                and set(flags[::2]) <= {"--host", "--port", "--workers", "--log-level"}
+            ):
+                return tuple(module.split("."))
+    return ()
+
+
+def _launch_build_metadata(instruction, value, copies):
+    if instruction == "ENV":
+        return _launch_environment_closed(value.split())
+    return instruction == "RUN" and _launch_build_step_closed(value, copies)
+
+
+def _launch_build_step_closed(value, copied):
+    """Decline late opaque build effects; admit only allocation/ownership metadata."""
+    if not any(src.suffix != ".txt" for src, _ in copied):
+        return True
+    if not re.fullmatch(r"[A-Za-z0-9_:/ .&-]+", value):
+        return False
+    return all(
+        command.split()[0] in {"mkdir", "chown", "useradd"}
+        for command in value.split("&&")
+        if command.strip()
+    )
+
+
+def _launch_environment_closed(entries):
+    return all(
+        isinstance(entry, str)
+        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key := entry.split("=")[0])
+        and (
+            not key.startswith(("PYTHON", "UVICORN", "LD_", "DYLD_"))
+            or key in {"PYTHONDONTWRITEBYTECODE", "PYTHONUNBUFFERED"}
+        )
+        and key not in {"PATH", "BASH_ENV", "ENV", "GUNICORN_CMD_ARGS"}
+        for entry in entries
+    )
+
+
+def _launch_service_closed(service, context, docker, configs):
+    env = service.get("environment", {})
+    return (
+        not set(service).intersection(
+            {
+                "command",
+                "entrypoint",
+                "working_dir",
+                "env_file",
+                "extends",
+                "volumes_from",
+                "configs",
+                "secrets",
+                "develop",
+                "post_start",
+                "pre_stop",
+            }
+        )
+        and isinstance(env, (dict, list))
+        and _launch_environment_closed(env)
+        and not set(name.casefold() for name in configs).intersection(
+            {
+                (context / ".dockerignore").as_posix().casefold(),
+                (docker + ".dockerignore").casefold(),
+            }
+        )
+    )
+
+
+def _mapped_launch_sources(index, copies, work, entry):
+    mapped = set()
+    module_path = work.joinpath(*entry).with_suffix(".py")
+    protected = work / entry[0]
+    for origin, destination in copies:
+        if destination.is_relative_to(protected) and not module_path.is_relative_to(
+            destination
+        ):
+            return set()
+        if not module_path.is_relative_to(destination):
+            continue
+        relative = origin / module_path.relative_to(destination)
+        path = index.root / relative.as_posix()
+        if path in index.snapshots and index.validate(path):
+            mapped.add((path.parents[len(entry) - 1], relative))
+        elif origin.suffix != ".txt" or destination != work:
+            return set()
+    return mapped
+
+
+def _launch_mounts_closed(service, work, entry, mapped):
+    protected = work / entry[0]
+    _, launch = next(iter(mapped))
+    source_dir = launch.parents[len(entry) - 2] if len(entry) >= 2 else launch
+    mounts = service.get("volumes", [])
+    if not isinstance(mounts, list):
+        return False
+    for mount in mounts:
+        if not isinstance(mount, str):
+            return False
+        origin, sep, target = mount.partition(":")
+        target, _, mode = target.partition(":")
+        path = PurePosixPath(target)
+        if not sep or not path.is_absolute() or ".." in path.parts:
+            return False
+        if (path.is_relative_to(protected) or protected.is_relative_to(path)) and not (
+            path == protected
+            and origin.startswith("./")
+            and PurePosixPath(origin) == source_dir
+            and mode == "ro"
+        ):
+            return False
+    return True
+
+
+def captured_unread_settings_field(node, target):
+    """Reject a literal credential classification only for a closed settings field."""
+    if not isinstance(node, ast.AnnAssign) or not isinstance(target, ast.Name):
+        return False
+    owner = getattr(node, "_security_parent", None)
+    if not isinstance(owner, ast.ClassDef) or len(owner.bases) != 1:
+        return False
+    value = getattr(node.value, "value", None)
+    if type(value) is not str:
+        return False
+    from .context_efficiency import _SECRET_BYTES
+    from .semantic_credential_sensor import _security_helper_source_context
+
+    if any(pattern.search(value.encode("utf-8")) for pattern in _SECRET_BYTES):
+        return False
+    module, index, path = _security_helper_source_context(node, None)
+    if path is None or not index.validate(path) or owner not in module.body:
+        return False
+    return _launch_unread_field(index, path, module, owner, target.id)
+
+
+def _launch_unread_field(index, path, module, owner, name):
+    from .credential_role_identity_effects import source_symbol_index
+    from .mock_fixture_provenance import _app_expression_name
+
+    config = _launch_text_sources(module)
+    if not config:
+        return False
+    symbols = source_symbol_index(index)
+    if (
+        symbols is None
+        or _app_expression_name(symbols, path, owner.bases[0])
+        != "pydantic_settings.BaseSettings"
+    ):
+        return False
+    roots = _launch_import_roots(index, config)
+    if len(roots) != 1 or not path.is_relative_to(scope := next(iter(roots))):
+        return False
+    fields = _launch_settings_fields(symbols, path, owner)
+    if fields is None or name not in fields:
+        return False
+    carrier = _launch_settings_carrier(symbols, path, module, owner)
+    return carrier is not None and _settings_read_set(
+        index, symbols, path, scope, module, carrier, owner, fields, name
+    )
+
+
+_SETTINGS_CONFIG_KEYS = {"env_file", "env_file_encoding", "case_sensitive", "extra"}
+
+
+_SETTINGS_OPAQUE_MODULES = {"importlib", "runpy", "__main__"}
+
+
+def _launch_settings_fields(symbols, path, owner):
+    """Allow plain data fields; dynamic class features have no negative authority."""
+    if owner.decorator_list or owner.keywords:
+        return None
+    fields = {}
+    configurations = []
+    for statement in owner.body:
+        match statement:
+            case ast.Expr(value=ast.Constant(value=str())):
+                continue
+            case ast.AnnAssign(
+                target=ast.Name(id=name), annotation=annotation, value=value
+            ):
+                if not _plain_settings_field(
+                    symbols, path, fields, name, annotation, value
+                ):
+                    return None
+                fields[name] = annotation
+            case ast.Assign(
+                targets=[ast.Name(id="model_config")], value=ast.Call() as call
+            ):
+                configurations.append(_launch_safe_settings_config(symbols, path, call))
+            case ast.ClassDef(name="Config") as config:
+                configurations.append(_legacy_literal_settings_config(config))
+            case _:
+                return None
+    return fields if len(configurations) <= 1 and all(configurations) else None
+
+
+def _plain_settings_field(symbols, path, fields, name, annotation, value):
+    if name in fields or name.startswith("_") or value is None:
+        return False
+    if not all(
+        _settings_annotation_node(symbols, path, item) for item in ast.walk(annotation)
+    ):
+        return False
+    if isinstance(value, ast.Call):
+        value = _literal_settings_default(symbols, path, value)
+        if value is None:
+            return False
+    try:
+        ast.literal_eval(value)
+    except (ValueError, TypeError, SyntaxError, RecursionError):
+        return False
+    return True
+
+
+def _literal_settings_default(symbols, path, call):
+    from .mock_fixture_provenance import _app_expression_name
+
+    match call:
+        case ast.Call(
+            func=provider,
+            args=[],
+            keywords=[
+                ast.keyword(arg="default_factory", value=ast.Lambda() as factory)
+            ],
+        ) if _app_expression_name(symbols, path, provider) == "pydantic.Field":
+            if not any(ast.iter_child_nodes(factory.args)) and not any(
+                isinstance(node, (ast.Call, ast.Name))
+                for node in ast.walk(factory.body)
+            ):
+                return factory.body
+    return None
+
+
+def _settings_annotation_node(symbols, path, item):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if isinstance(item, ast.Name):
+        if item.id in {"str", "int", "float", "bool", "list", "dict", "tuple", "set"}:
+            return not binding_occurrences(symbols["modules"][path].body, item.id)
+        return _app_expression_name(symbols, path, item) in {
+            "typing.Optional",
+            "typing.List",
+            "typing.Dict",
+            "typing.Tuple",
+            "typing.Set",
+            "typing.Union",
+        }
+    return isinstance(item, (ast.Load, ast.Subscript, ast.Tuple)) or (
+        isinstance(item, ast.Constant) and item.value is None
+    )
+
+
+def _launch_safe_settings_config(symbols, path, call):
+    from .mock_fixture_provenance import _app_expression_name
+
+    return (
+        not call.args
+        and len(call.keywords) == len({key.arg for key in call.keywords})
+        and _app_expression_name(symbols, path, call.func)
+        == "pydantic_settings.SettingsConfigDict"
+        and all(
+            key.arg in _SETTINGS_CONFIG_KEYS and isinstance(key.value, ast.Constant)
+            for key in call.keywords
+        )
+    )
+
+
+def _legacy_literal_settings_config(config):
+    if config.bases or config.keywords or config.decorator_list:
+        return False
+    keys = set()
+    for statement in config.body:
+        match statement:
+            case ast.Expr(value=ast.Constant(value=str())):
+                continue
+            case ast.Assign(
+                targets=[ast.Name(id=name)], value=ast.Constant(value=value)
+            ) if name in _SETTINGS_CONFIG_KEYS and name not in keys:
+                if name == "case_sensitive" and type(value) is not bool:
+                    return False
+                if name != "case_sensitive" and type(value) not in {str, type(None)}:
+                    return False
+                keys.add(name)
+            case _:
+                return False
+    return True
+
+
+def _launch_settings_carrier(symbols, path, tree, owner):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    wrappers = []
+    allowed = set()
+    for statement in tree.body:
+        match statement:
+            case ast.FunctionDef(
+                args=args,
+                body=[
+                    ast.Return(
+                        value=ast.Call(func=ast.Name() as ctor, args=[], keywords=[])
+                    )
+                ],
+            ) if ctor.id == owner.name and not any(ast.iter_child_nodes(args)):
+                decorators = [
+                    _app_expression_name(symbols, path, item)
+                    for item in statement.decorator_list
+                ]
+                if decorators not in ([], ["functools.lru_cache"]):
+                    return None
+                wrappers.append((statement.name, statement))
+                if (
+                    isinstance(statement.returns, ast.Name)
+                    and statement.returns.id == owner.name
+                ):
+                    allowed.add(statement.returns)
+                allowed.add(ctor)
+            case ast.Assign(
+                targets=[ast.Name() as binding],
+                value=ast.Call(func=ast.Name() as ctor, args=[], keywords=[]),
+            ) if ctor.id == owner.name and binding.lineno > owner.end_lineno:
+                wrappers.append((binding.id, binding))
+                allowed.add(ctor)
+    if len(wrappers) != 1 or binding_occurrences(tree.body, owner.name) != [owner]:
+        return None
+    return wrappers[0] if set(_settings_names(tree, owner.name)) == allowed else None
+
+
+def _settings_names(tree, name):
+    return (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id == name
+    )
+
+
+def _settings_read_set(
+    index, symbols, path, root, owner_tree, carrier, owner, fields, name
+):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .runtime_audit_integrity import _conditional_module_name
+
+    carrier_name, definition = carrier
+    if binding_occurrences(owner_tree.body, carrier_name) != [definition]:
+        return False
+    canonical = {
+        name
+        for base in (root, index.root)
+        for name in (
+            ".".join(path.relative_to(base).with_suffix("").parts),
+            _conditional_module_name(path.relative_to(base).as_posix()),
+        )
+        if name
+    }
+    singleton = definition if isinstance(definition, ast.Name) else None
+    if singleton is not None:
+        fields = {
+            key: annotation
+            for key, annotation in fields.items()
+            if isinstance(annotation, ast.Name)
+            and annotation.id in {"str", "int", "float", "bool"}
+        }
+    read, reexports = set(), {}
+    for file, tree in index.snapshots.items():
+        if (
+            not index.validate(file)
+            or (
+                aliases := _settings_consumer_aliases(
+                    symbols, file, tree, canonical, carrier_name, owner
+                )
+            )
+            is None
+        ):
+            return False
+        if file == path:
+            aliases.add(carrier_name)
+        elif aliases:
+            reexports[file] = aliases
+        if not _settings_file_reads(
+            index, file, tree, aliases, fields, name, read, singleton
+        ):
+            return False
+    if not read or not _settings_qualified_aliases_closed(
+        index, symbols, root, reexports
+    ):
+        return False
+    return _settings_source_providers_stable(index)
+
+
+def _settings_source_providers_stable(index):
+    """Reject writes to provider namespaces, including lazy exports and base classes."""
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+
+    providers = ("pydantic_settings", "pydantic", "pydantic_core")
+    if any(
+        provider in path.parts or path.name == provider + ".py"
+        for path in index.snapshots
+        for provider in providers
+    ):
+        return False
+    return not _captured_terminal_provider_mutation(
+        index,
+        audit,
+        providers[0],
+        additional_bindings=tuple(
+            (name, None) for name in (*providers[1:], "functools.lru_cache")
+        ),
+    )
+
+
+def _settings_qualified_aliases_closed(index, symbols, root, reexports):
+    """Check the second namespace edge before declaring a first-edge read closed."""
+    from .mock_fixture_provenance import _django_import_rows, _django_package
+    from .runtime_audit_integrity import _conditional_module_name
+
+    modules = {
+        _conditional_module_name(name): reexports[path]
+        for name, path in symbols["module_paths"].items()
+        if path in reexports
+    }
+    modules.update(
+        {
+            _conditional_module_name(path.relative_to(root).as_posix()): names
+            for path, names in reexports.items()
+            if path.is_relative_to(root)
+        }
+    )
+    if not modules:
+        return True
+    for path, tree in index.snapshots.items():
+        package = _django_package(symbols, path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            for _, selected in _django_import_rows(node, package) or ():
+                module, _, member = selected.rpartition(".")
+                if selected in modules or member in modules.get(module, ()):
+                    return False
+    return True
+
+
+def _settings_consumer_aliases(symbols, path, tree, modules, carrier_name, owner):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _django_import_rows, _django_package
+
+    package = _django_package(symbols, path)
+    aliases = set()
+    for statement in ast.walk(tree):
+        if not isinstance(statement, (ast.Import, ast.ImportFrom)):
+            continue
+        rows = _django_import_rows(statement, package)
+        if rows is None:
+            return None
+        for local, canonical in rows:
+            if any(
+                value == canonical or value.startswith(canonical + ".")
+                for value in modules
+            ):
+                return None
+            module, _, member = canonical.rpartition(".")
+            if module not in modules:
+                continue
+            if member == owner.name or (
+                member == carrier_name
+                and (
+                    statement not in tree.body
+                    or binding_occurrences(tree.body, local) != [statement]
+                )
+            ):
+                return None
+            if member == carrier_name:
+                aliases.add(local)
+    return aliases
+
+
+_SETTINGS_OPAQUE_NAMES = {
+    "globals",
+    "locals",
+    "vars",
+    "getattr",
+    "setattr",
+    "delattr",
+    "eval",
+    "exec",
+    "__import__",
+    "import_module",
+    "run_module",
+    "run_path",
+    "modules",
+    "__dict__",
+    "__globals__",
+    "__code__",
+    "__builtins__",
+    "__getattribute__",
+}
+
+
+def _settings_file_reads(index, path, tree, aliases, fields, field, reads, singleton):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import _presentation_provider_shadow
+
+    nodes = tuple(ast.walk(tree))
+    if any(_settings_opaque_access(n) for n in nodes):
+        return False
+    for node in nodes:
+        if isinstance(node, ast.Attribute) and node.attr.casefold() == field.casefold():
+            return False
+        if (
+            isinstance(node, (ast.Global, ast.Nonlocal))
+            and aliases.intersection(node.names)
+            or singleton is not None
+            and isinstance(node, ast.Name)
+            and node.id in aliases
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and node is not singleton
+        ):
+            return False
+    parents = index.parents[path]
+    for alias in aliases:
+        for ref in _settings_names(tree, alias):
+            if singleton is not None and _presentation_provider_shadow(
+                ref, alias, index, path, audit
+            ):
+                return False
+            values = _settings_allocation_uses(ref, tree, parents, singleton)
+            if not values or not all(
+                _settings_member_read(n, fields, parents, reads) for n in values
+            ):
+                return False
+    return True
+
+
+def _settings_opaque_access(node):
+    if isinstance(node, ast.Name):
+        # A bare local name does not address the module registry.
+        return node.id != "modules" and node.id in _SETTINGS_OPAQUE_NAMES
+    if isinstance(node, ast.Attribute):
+        return node.attr in _SETTINGS_OPAQUE_NAMES
+    if isinstance(node, ast.ImportFrom):
+        return node.module in _SETTINGS_OPAQUE_MODULES or any(
+            alias.name == "*"
+            or alias.name in _SETTINGS_OPAQUE_NAMES
+            or node.module == "sys"
+            and alias.name in {"path", "meta_path", "path_hooks"}
+            for alias in node.names
+        )
+    if isinstance(node, ast.Import):
+        return any(
+            alias.name.partition(".")[0] in _SETTINGS_OPAQUE_MODULES
+            for alias in node.names
+        )
+    return (
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "__getattr__"
+    )
+
+
+def _settings_allocation_uses(reference, tree, parents, singleton):
+    from .credential_role_constructor_provider import (
+        _scope_scope_bindings,
+        binding_occurrences,
+    )
+
+    if singleton is not None:
+        return (reference,)
+    call = parents.get(id(reference))
+    if not (
+        isinstance(call, ast.Call)
+        and call.func is reference
+        and not call.args
+        and not call.keywords
+    ):
+        return ()
+    parent = parents.get(id(call))
+    if not isinstance(parent, ast.Assign):
+        return (call,)
+    match parent.targets:
+        case [ast.Name(id=name) as target]:
+            pass
+        case _:
+            return ()
+    scope = _scope_scope_bindings(parent, parents, tree)
+    if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
+        return ()
+    if binding_occurrences(scope.body, name) != [target]:
+        return ()
+    reads = tuple(_settings_names(scope, name))
+    if parent in scope.body:
+        return reads
+    return _settings_guarded_alias_reads(scope, parent, parents, reads, name)
+
+
+def _settings_guarded_alias_reads(scope, allocation, parents, reads, name):
+    from .credential_role_constructor_provider import (
+        _scope_scope_bindings,
+        binding_occurrences,
+    )
+    from .intent_quality import _canary_main_guard_test
+
+    guard = parents.get(id(allocation))
+    if not (
+        isinstance(scope, ast.Module)
+        and isinstance(guard, ast.If)
+        and guard in scope.body
+        and not guard.orelse
+        and allocation in guard.body
+        and _canary_main_guard_test(guard.test)
+        and not binding_occurrences(scope.body, "__name__")
+    ):
+        return ()
+    guarded_nodes = set(ast.walk(guard))
+    local_reads = []
+    for ref in reads:
+        lexical_scope = _scope_scope_bindings(ref, parents, scope)
+        if lexical_scope is scope:
+            if ref not in guarded_nodes or ref.lineno <= allocation.end_lineno:
+                return ()
+            local_reads.append(ref)
+        elif not _settings_separate_local_read(lexical_scope, ref, name, parents):
+            return ()
+    return tuple(local_reads)
+
+
+def _settings_separate_local_read(scope, ref, name, parents):
+    from .credential_role_constructor_provider import (
+        binding_dominates,
+        binding_occurrences,
+    )
+
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) or any(
+        isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names
+        for node in ast.walk(scope)
+    ):
+        return False
+    match binding_occurrences(scope.body, name):
+        case [ast.Name(ctx=ast.Store()) as binding]:
+            assignment = parents.get(id(binding))
+            return assignment in scope.body and binding_dominates(
+                assignment, ref, parents, scope
+            )
+    return False
+
+
+def _settings_member_read(node, fields, parents, reads):
+    parent = parents.get(id(node))
+    if not (
+        isinstance(parent, ast.Attribute)
+        and parent.value is node
+        and isinstance(parent.ctx, ast.Load)
+        and parent.attr in fields
+    ):
+        return False
+    reads.add(parent.attr)
+    return True
+
+
+def _environment_locator_use(reference, aliases, source, path):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import _presentation_provider_shadow
+    from .security_configuration import _canonical
+
+    parents = source.parents[path]
+    parent = parents.get(id(reference))
+    if (
+        isinstance(parent, ast.Call)
+        and parent.args
+        and parent.args[0] is reference
+        and len(parent.args) <= 2
+        and all(isinstance(default, ast.Constant) for default in parent.args[1:])
+        and not parent.keywords
+    ):
+        root = parent.func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        return (
+            _canonical(parent, aliases) in {"os.environ.get", "os.getenv"}
+            and isinstance(root, ast.Name)
+            and not _presentation_provider_shadow(
+                parent.func, root.id, source, path, audit
+            )
+        )
+    return False
+
+
+def captured_environment_locator(node, target, aliases):
+    """Distinguish a closed environment lookup name from the credential it locates."""
+    from .context_efficiency import _SECRET_BYTES
+
+    value = getattr(node.value, "value", None)
+    if (
+        type(value) is not str
+        or not value.isascii()
+        or not value.isupper()
+        or not value.isidentifier()
+        or any(pattern.search(value.encode()) for pattern in _SECRET_BYTES)
+    ):
+        return False
+    source = _captured_immutable_module_text(node, target.id)
+    if source is None or source[2] is not target:
+        return False
+    index, owner, origin, _, local = source
+    foreign = _registry_external_references(index, owner, origin)
+    if foreign is None or not (local or foreign):
+        return False
+    uses = [(ref, owner, aliases) for ref in local] + foreign
+    if not all(
+        _environment_locator_use(ref, names, index, path) for ref, path, names in uses
+    ):
+        return False
+    return _registry_binding_namespace_closed(
+        index, origin.id, reject_reflection=True
+    ) and _captured_module_text_unchanged(
+        index,
+        owner,
+        origin,
+        {ref for ref, _, _ in uses},
+        ("os.environ", "os.getenv", "os._Environ"),
+        scalar_reads=_environment_scalar_reads(index),
+    )
+
+
+def captured_credential_candidate(node, target, aliases):
+    """Apply literal eligibility and both static exclusions at the raw audit boundary."""
+    from .review_audits import _literal_credential_candidate
+
+    return _literal_credential_candidate(node, target) and not (
+        captured_environment_locator(node, target, aliases or {})
+        or captured_unread_settings_field(node, target)
+    )
