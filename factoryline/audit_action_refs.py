@@ -794,7 +794,7 @@ def _finish_security_scan_seal(audit, core, captured, baseline, input_physical):
     return core
 
 
-def _security_fixture_verifier_bindings(audit, core, captured, verified):
+def _security_fixture_verifier_bindings(audit, core, root, verified):
     """Validate current collection and configuration; producer proof rows are not inputs."""
     from .import_context import (
         application_configuration_names,
@@ -802,7 +802,6 @@ def _security_fixture_verifier_bindings(audit, core, captured, verified):
     )
     from .pytest_collection_audit import pytest_collection_authoritative
 
-    root = getattr(captured, "source_role_capture", {}).get("fixture_workspace")
     if not isinstance(root, Path) or not root.is_absolute():
         return None
     expected = core.get("oracle_context", {}).get("static_pytest_collection")
@@ -914,7 +913,12 @@ def _security_scan_verification_state(audit, core, captured, primitive):
                 *(getattr(primitive, k) for k in functions),
             )
         ),
-        _security_fixture_verifier_bindings(audit, core, captured, sources[0]),
+        _security_fixture_verifier_bindings(
+            audit,
+            core,
+            getattr(captured, "source_role_capture", {}).get("fixture_workspace"),
+            sources[0],
+        ),
     )
 
 
@@ -1843,7 +1847,26 @@ def _finish_security_scan_collection_receipt(
         and isinstance(current, dict)
         and isinstance(current.get("capture_observations"), dict)
     ):
-        return report
+        proof_root = getattr(report, "_source_role_capture", {}).get(
+            "fixture_workspace"
+        )
+        if proof_root is None or not report.get("selected_defect_policy"):
+            return report
+        # Pytest identity does not cover the launch and dependency configuration
+        # used by application fixture proofs.
+        if (
+            proof_root == workspace
+            and _security_fixture_verifier_bindings(
+                audit, report, proof_root, dict(report._captured_sources)
+            )
+            is not None
+        ):
+            return report
+        report = report.copy()
+        report._source_role_capture.pop("fixture_workspace", None)
+        return audit._seal_security_scan(
+            report, producer_source_model=producer_source_model
+        )
     prepared = _bind_security_scan_collection_observation(
         report,
         before,

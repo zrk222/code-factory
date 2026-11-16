@@ -1440,6 +1440,89 @@ def test_collection_transaction_cli_final_guard_fails_closed(
     assert report["defect_policy_decision"]["release_approved"] is False
 
 
+@pytest.mark.parametrize(
+    "drift", [None, "requirements.txt", ".github/workflows/ci.yml"]
+)
+def test_final_receipt_rechecks_application_fixture_configuration(
+    tmp_path, monkeypatch, capsys, drift
+):
+    from copy import deepcopy
+
+    from factoryline import review_audits as audit
+    from factoryline.cli import main
+
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_login.py").write_text(
+        "import base64\n"
+        "from rest_framework import HTTP_HEADER_ENCODING\n"
+        "from rest_framework.test import APITestCase\n"
+        "from django.contrib.auth.models import User\n"
+        "class TestLogin(APITestCase):\n"
+        "    def test_login(self):\n"
+        "        username = 'created-user'\n"
+        "        password = 'fictionalvalue'\n"
+        "        User.objects.create_user(username=username, password=password)\n"
+        "        credentials = f'{username}:{password}'\n"
+        "        encoded = base64.b64encode(credentials.encode(HTTP_HEADER_ENCODING)).decode(HTTP_HEADER_ENCODING)\n"
+        "        self.client.credentials(HTTP_AUTHORIZATION=f'Basic {encoded}')\n"
+        "        response = self.client.post('/session')\n"
+        "        self.assertEqual(response.status_code, 200)\n"
+    )
+    seal = audit._seal_security_scan
+    initial = []
+    seal_calls = []
+
+    def observe_then_mutate(*args, **kwargs):
+        seal_calls.append(True)
+        sealed = seal(*args, **kwargs)
+        if not initial:
+            initial.append(deepcopy(sealed["primitive_observations"]))
+            if drift:
+                path = tmp_path / drift
+                path.parent.mkdir(exist_ok=True, parents=True)
+                path.write_text("# new application profile input\n")
+        return sealed
+
+    monkeypatch.setattr(audit, "_seal_security_scan", observe_then_mutate)
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    report = json.loads(capsys.readouterr().out)
+    config = report["oracle_context"]["pytest_collection"]
+    assert config["capture_state"] == "stable_pre_post"
+    original = [
+        row
+        for row in initial[0]
+        if row["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+    ]
+    assert len(original) == 1
+    assert report["finding_conservation"]["expected_raw_rows"] == 1
+    assert report["finding_conservation"]["physical_raw_rows"] == 1
+    if drift is None:
+        assert len(seal_calls) == 1
+        assert report["primitive_observations"] == original
+        assert report["finding_conservation"]["state"] == "PASS"
+    else:
+        assert len(seal_calls) == 2
+        assert not report.get("primitive_observations")
+        assert not report["agent_actions"]
+        (row,) = [
+            row for row in report["findings"] if row["code"] == original[0]["code"]
+        ]
+        for field in ("path", "line", "column", "end_line", "end_column"):
+            assert row[field] == original[0][field]
+        assert code == 2
+
+
 def test_collection_transaction_source_limit_stays_blocked(
     tmp_path, monkeypatch, capsys
 ):
