@@ -852,22 +852,24 @@ def _security_fixture_verifier_bindings(audit, core, root, verified):
 
 
 def rebuild_application_fixture_context(audit, model, verified, fixture_bindings):
-    """Build per-source fixture annotations from independently owned syntax and bytes."""
-    if fixture_bindings is None:
-        return {}
-    from .context_efficiency import bind_application_fixture_context
+    """Rebuild per-source scan proof from verifier-owned syntax and bytes."""
+    contexts = {path: {} for path in model.snapshots}
+    if fixture_bindings is not None:
+        from .context_efficiency import bind_application_fixture_context
 
-    configs = {name: verified[name] for name, _ in fixture_bindings}
-    contexts = {}
-    bind_application_fixture_context(
-        model.root,
-        model.snapshots,
-        contexts,
-        [{"path": name, "sha256": digest} for name, digest in fixture_bindings],
-        lambda _root, name: configs[name],
-        audit.MAX_BYTES,
-        source_bytes=model.source_bytes,
-        source_inventory=model.inventory,
+        configs = {name: verified[name] for name, _ in fixture_bindings}
+        bind_application_fixture_context(
+            model.root,
+            model.snapshots,
+            contexts,
+            [{"path": name, "sha256": digest} for name, digest in fixture_bindings],
+            lambda _root, name: configs[name],
+            audit.MAX_BYTES,
+            source_bytes=model.source_bytes,
+            source_inventory=model.inventory,
+        )
+    audit.integrity.bind_fixed_program_workspace(
+        model.root, contexts, model.snapshots, list(model.snapshots)
     )
     return contexts
 

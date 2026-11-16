@@ -6596,6 +6596,26 @@ def _trusted_core_policy316_seal(tmp_path, source):
 
 
 @pytest.mark.parametrize("policy", ["trusted-core-v1", "source-role-v3"])
+def test_seal_rebuilds_fixed_program_proof_and_keeps_unknown_input(tmp_path, policy):
+    (tmp_path / "fixed.py").write_text("exec('value = 3')\n", encoding="utf-8")
+    (tmp_path / "unknown.py").write_text(
+        "def render(source):\n    return eval(source)\n", encoding="utf-8"
+    )
+
+    report = review_audits.security_scan(
+        tmp_path, defect_policy=policy, security_only=True, cache_enabled=False
+    )
+
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert [
+        (row["path"], row["severity"]) for row in report["primitive_observations"]
+    ] == [("fixed.py", "INFO")]
+    assert [(row["path"], row["severity"]) for row in report["findings"]] == [
+        ("unknown.py", "HIGH")
+    ]
+
+
+@pytest.mark.parametrize("policy", ["trusted-core-v1", "source-role-v3"])
 def test_complete_native_rows_are_shared_only_within_each_fresh_seal(
     tmp_path, monkeypatch, policy
 ):
