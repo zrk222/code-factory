@@ -611,15 +611,20 @@ def factory_forge_action_sha256():
 
 def _bound_forge_result(root, envelope, report):
     rows = report["stages"]
+    ships = [
+        row for row in rows if (row["module"], row["stage"]) == ("forgeline", "ship")
+    ]
     if (
-        len(rows) != 1
-        or rows[0].get("status") != "ok"
-        or not rows[0].get("intent_receipt")
+        report.get("halted_at")
+        or report.get("paused_at")
+        or any(row.get("status") != "ok" for row in rows)
+        or len(ships) != 1
+        or not ships[0].get("intent_receipt")
     ):
         raise RevenueForgeError(
             "SPECFORGE_JOB_PROOF", "native ForgeLine ship did not verify"
         )
-    receipt, _, _ = _job_forge_snapshot(root, rows[0]["intent_receipt"])
+    receipt, _, _ = _job_forge_snapshot(root, ships[0]["intent_receipt"])
     trace = receipt["outputs"].get("intent_trace", {})
     forge = {
         "shipped": trace.get("shipped"),
@@ -628,7 +633,9 @@ def _bound_forge_result(root, envelope, report):
         "intent_evidence": envelope,
     }
     if (
-        receipt["outputs"].get("assembly_run_id") != report["run_id"]
+        (receipt.get("module"), receipt.get("stage"), receipt.get("ok"))
+        != ("forgeline", "ship", True)
+        or receipt["outputs"].get("assembly_run_id") != report["run_id"]
         or trace.get("intent_hash") != envelope["sealed_hash"]
         or _native_promotion(root, envelope, forge)["intent_trace"] != trace
     ):

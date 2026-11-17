@@ -277,9 +277,16 @@ def _workflow_action_13(a):
 def _workflow_action_14(a):
     if a.cmd == "langgraph" and a.langgraph_cmd == "history":
         if getattr(a, "factory_job", False):
-            return _lazy_import(
-                "specforge_promotion", "_local_factory_mission_timeline"
-            )(Path(a.root), Path(a.mission), after=a.after)
+            from .mission_graph import MissionGraphError
+            from .revenueforge import RevenueForgeError
+            from .specforge_promotion import _local_factory_mission_timeline
+
+            try:
+                return _local_factory_mission_timeline(
+                    Path(a.root), Path(a.mission), after=a.after
+                )
+            except RevenueForgeError as exc:
+                raise MissionGraphError(exc.code, str(exc)) from exc
         result = _lazy_import("mission_graph", "mission_graph_history")(
             Path(a.mission), Path(a.root)
         )

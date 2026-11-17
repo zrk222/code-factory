@@ -975,8 +975,10 @@ Scenario: Preserve the refund identifier
         return mission_graph_history(inputs["mission_path"], inputs["root"])
 
     def test_factory_mission_binding_requires_approval_and_owner(
-        factory_mission_inputs, monkeypatch
+        factory_mission_inputs, monkeypatch, capsys
     ):
+        from factoryline.cli import main
+
         inputs, mission, _ = factory_mission_inputs
         store = _job_store(inputs)
 
@@ -990,6 +992,27 @@ Scenario: Preserve the refund identifier
         assert _job_history(inputs)["events"] == []
 
         _approve_job(inputs, mission)
+        capsys.readouterr()
+        assert (
+            main(
+                [
+                    "langgraph",
+                    "history",
+                    str(inputs["mission_path"]),
+                    "--root",
+                    str(inputs["root"]),
+                    "--factory-job",
+                    "--json",
+                ]
+            )
+            == 1
+        )
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        failure = json.loads(captured.err)
+        assert failure["schema"] == "factory.workflow_error.v1"
+        assert failure["code"] == "SPECFORGE_JOB_STATE"
+        assert "no bound job" in failure["message"]
         with pytest.raises(MissionGraphError) as error:
             bind_factory_mission_job(**{**inputs, "owner": "other-owner"}, store=store)
         assert error.value.code == "MISSION_GRAPH_OWNER_MISMATCH"
@@ -1335,13 +1358,15 @@ Scenario: Preserve the refund identifier
         )
 
     def test_native_promotion_end_to_end(evidence_project):
+        from factoryline.contract import Receipt
+        from factoryline.specforge_promotion import _bound_forge_result
         from forgeline.intent_thread import verify_against_intent
         from forgeline.orchestrator import Orchestrator
         from forgeline.states import State
         from specline.acceptance import export_acceptance_envelope
 
         root, contract, observations = evidence_project
-        export_acceptance_envelope(root, "refunds", contract, observations)
+        envelope = export_acceptance_envelope(root, "refunds", contract, observations)
         trace = verify_against_intent(root, "refunds", root)
         assert trace.traceable
         forge = Orchestrator(root, "refunds")
@@ -1355,6 +1380,38 @@ Scenario: Preserve the refund identifier
         assert receipt["ok"]
         assert receipt["intent_trace"]["intent_traceable"]
         assert not receipt["authority"]["release"]
+        ship = Receipt(
+            module="forgeline",
+            stage="ship",
+            feature="refunds",
+            ok=True,
+            outputs={
+                "assembly_run_id": "fixture-assembly",
+                "intent_trace": receipt["intent_trace"],
+            },
+        ).write(root)
+        ship_row = {
+            "module": "forgeline",
+            "stage": "ship",
+            "status": "ok",
+            "intent_receipt": str(ship),
+        }
+        report = {
+            "run_id": "fixture-assembly",
+            "stages": [
+                {"module": "factoryline", "stage": "agent-contract", "status": "ok"},
+                {"module": "factoryline", "stage": "cdte", "status": "ok"},
+                ship_row,
+            ],
+        }
+        bound_ship = _bound_forge_result(root, envelope, report)
+        assert bound_ship["intent_hash"] == envelope["sealed_hash"]
+        assert bound_ship["shipped"] and bound_ship["intent_traceable"]
+        with pytest.raises(RevenueForgeError) as error:
+            _bound_forge_result(
+                root, envelope, {**report, "stages": [*report["stages"], ship_row]}
+            )
+        assert error.value.code == "SPECFORGE_JOB_PROOF"
         (root / "slices/refunds/intake.py").write_text(
             "def accept(value):\n    return None\n", encoding="utf-8"
         )
