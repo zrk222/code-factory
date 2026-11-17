@@ -94,6 +94,34 @@ def _checkout_uses_requested_tag(job: Any) -> bool:
     )
 
 
+def _python_selects_protected_candidate(job: dict) -> bool:
+    steps = _sequence(job.get("steps"))
+    if len(steps) < 2 or not isinstance(steps[1], dict):
+        return False
+    checkout = {
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+            "ref": "${{ github.sha }}",
+            "fetch-depth": "0",
+            "persist-credentials": "false",
+        },
+    }
+    select = {
+        "name": "Select verified release source",
+        "env": {"CANDIDATE_COMMIT": "${{ needs.guard.outputs.candidate_commit }}"},
+        "run": (
+            "set -euo pipefail\n"
+            'if [[ "$GITHUB_REF" != "refs/heads/main" || ! "$CANDIDATE_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then\n'
+            '  echo "Expected a commit from protected main." >&2\n'
+            "  exit 1\n"
+            "fi\n"
+            'git merge-base --is-ancestor "$CANDIDATE_COMMIT" HEAD\n'
+            'git switch --detach "$CANDIDATE_COMMIT"\n'
+        ),
+    }
+    return steps[:2] == [checkout, select]
+
+
 def _validator_has_tagged_artifact(job: Any, artifact_name: str) -> bool:
     if not isinstance(job, dict):
         return False
@@ -229,9 +257,14 @@ def _validator_jobs_pass(context: dict[str, Any]) -> bool:
     return set(jobs) >= {"guard", *names, "publish"} and all(
         isinstance(job, dict)
         and job.get("needs") == ["guard"]
-        and _checkout_uses_requested_tag(job)
+        and (
+            _checkout_uses_requested_tag(job)
+            or (name == "validate_python" and _python_selects_protected_candidate(job))
+        )
         and _validator_has_tagged_artifact(job, artifact)
-        for job, artifact in zip(context["validator_jobs"], artifacts, strict=True)
+        for name, job, artifact in zip(
+            names, context["validator_jobs"], artifacts, strict=True
+        )
     )
 
 

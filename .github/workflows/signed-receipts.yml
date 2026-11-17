@@ -98,8 +98,12 @@ jobs:
               assert actual.hexdigest().encode() == oid, 'checkout differs from committed source'
           PY
       - name: Install the reviewed audit environment
+        env:
+          CHECK_NAME: ${{ matrix.check }}
         run: |
-          python -m pip install -e ".[dev,enterprise]" code-factory-2-forge==0.10.8
+          extras=dev,enterprise
+          if [[ "$CHECK_NAME" == tests ]]; then extras+=,hosted; fi
+          python -m pip install -e ".[$extras]" code-factory-2-forge==0.10.8
           npm install --no-save --no-package-lock typescript@5.9.3
       - name: Verify pristine candidate before fixed audit
         env:
@@ -166,6 +170,11 @@ jobs:
               assert actual.hexdigest().encode() == oid, 'checkout differs from committed source'
           name = os.environ['CHECK_NAME']
           junit = Path('ci-tests.xml')
+          environment = {'python': sys.version, 'platform': platform.platform()}
+          if name == 'tests':
+              from importlib.metadata import version
+              version('gunicorn')
+              environment['test_profile'] = 'dev,enterprise,hosted'
           payload = {'schema': 'factory.receipt.ci.check.v1', 'ok': True,
                      'identity': {'commit': head, 'workflow_commit': os.environ['WORKFLOW_SHA'], 'repository': os.environ['GITHUB_REPOSITORY'],
                                   'run_id': os.environ['GITHUB_RUN_ID'], 'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
@@ -173,7 +182,7 @@ jobs:
                      'issued_at': datetime.now(timezone.utc).isoformat(),
                      'commands': [{'name': name, 'argv': checks[name], 'exit_code': 0,
                                    'log_sha256': hashlib.sha256(Path(f'ci-{name}.log').read_bytes()).hexdigest()}],
-                     'environment': {'python': sys.version, 'platform': platform.platform()},
+                     'environment': environment,
                      'dependencies': subprocess.check_output([sys.executable, '-m', 'pip', 'freeze'], text=True).splitlines(),
                      'junit_sha256': hashlib.sha256(junit.read_bytes()).hexdigest() if junit.is_file() else None,
                      'authority': 'none', 'signature_status': 'requires_verified_ci_attestation'}
