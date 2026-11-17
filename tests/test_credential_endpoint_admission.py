@@ -1,9 +1,12 @@
 """Coordinator boundaries; mocked rows test admission, not source-flow accuracy."""
 
 import ast
+from collections import Counter
+from contextvars import copy_context
 from copy import deepcopy
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +16,153 @@ from factoryline import credential_endpoint_admission as admission
 from factoryline.credential_endpoint_admission import endpoint_binding
 
 ENDPOINT = "https://appleid.apple.com/auth/token"
+
+
+@pytest.mark.parametrize(
+    "change", [None, "ast", "body", "bytes", "helper", "shadow", "validation_error"]
+)
+def test_independent_signing_ledger_binding_memo_revalidates(change, monkeypatch):
+    from factoryline import credential_role_constructor_provider as binding
+    from factoryline import semantic_credential_sensor as sensor
+
+    raw = b"setting = None\n"
+    source = {"configuration.py": raw}
+    hashes = {"configuration.py": hashlib.sha256(raw).hexdigest()}
+    original = binding._binding_occurrence_events
+    calls, built = [], []
+
+    def counted(*args, **kwargs):
+        calls.append(args[0])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(binding, "_binding_occurrence_events", counted)
+
+    def ledger(*, _verifier_native_rows):
+        context = audit_action_refs._verifier_signing_inventory(sensor, source, hashes)
+        index = context["index"]
+        tree = index.snapshots[Path("configuration.py")]
+        built.append(tree)
+        calls.clear()
+        result = binding.binding_occurrences(tree.body, "setting")
+        result.clear()
+        assert binding.binding_occurrences(tree.body, "setting") == tree.body[0].targets
+        expected = 1 if len(built) == 1 else 2
+        assert len(calls) == expected
+        foreign = ast.parse(raw)
+        assert (
+            binding.binding_occurrences(foreign.body, "setting")
+            == foreign.body[0].targets
+        )
+        assert (
+            binding.binding_occurrences(tree.body, "setting", per_pass_facts={})
+            == tree.body[0].targets
+        )
+        assert len(calls) == expected + 2
+        if len(built) == 1 and change:
+            _mutate_signing_ledger_witness(change, index, tree, binding, monkeypatch)
+        return len(built)
+
+    assert audit_action_refs._bounded_verifier_tier_report(
+        ledger, _verifier_native_rows=[]
+    ) == (2 if change else 1)
+    if change:
+        assert built[0] is not built[1]
+
+
+def _mutate_signing_ledger_witness(change, index, tree, binding, monkeypatch):
+    match change:
+        case "ast":
+            tree.body[0].targets[0].id = "renamed"
+        case "body":
+            tree.body = ast.parse("setting = None").body
+        case "bytes":
+            index.source_bytes[Path("configuration.py")] = b"changed = None\n"
+        case "helper":
+            original = binding._binds
+            monkeypatch.setattr(
+                binding, "_binds", lambda node, name: original(node, name)
+            )
+        case "shadow":
+            tree.body[0].targets[0].id = "renamed"
+            index._matches_snapshot = lambda *args: True
+        case "validation_error":
+
+            def failed_validation(_):
+                raise RuntimeError("optional validation failed")
+
+            monkeypatch.setattr(
+                audit_action_refs._VerifierBindingMemo, "current", failed_validation
+            )
+
+
+def test_independent_signing_ledger_memo_is_bounded_and_invocation_local(monkeypatch):
+    from factoryline import credential_role_constructor_provider as binding
+    from factoryline import semantic_credential_sensor as sensor
+
+    raw = b"setting = None\n"
+    source = {"configuration.py": raw}
+    hashes = {"configuration.py": hashlib.sha256(raw).hexdigest()}
+    walk = binding._binding_occurrence_events
+    calls = Counter()
+    contexts = []
+
+    def counted(statements, name, **kwargs):
+        calls[name] += 1
+        return walk(statements, name, **kwargs)
+
+    monkeypatch.setattr(binding, "_binding_occurrence_events", counted)
+
+    def ledger(*, _verifier_native_rows):
+        context = audit_action_refs._verifier_signing_inventory(sensor, source, hashes)
+        tree = context["index"].snapshots[Path("configuration.py")]
+        contexts.append(copy_context())
+        binding.binding_occurrences(tree.body, "old_query")
+        for i in range(4096):
+            binding.binding_occurrences(tree.body, f"query_{i}")
+        binding.binding_occurrences(tree.body, "query_4095")
+        binding.binding_occurrences(tree.body, "old_query")
+        return tree
+
+    tree = audit_action_refs._bounded_verifier_tier_report(
+        ledger, _verifier_native_rows=[]
+    )
+    assert calls["old_query"] == 2 and calls["query_4095"] == 1
+    binding.binding_occurrences(tree.body, "old_query")
+    assert calls["old_query"] == 3
+    contexts[0].run(binding.binding_occurrences, tree.body, "query_4095")
+    assert calls["query_4095"] == 2
+    audit_action_refs._bounded_verifier_tier_report(ledger, _verifier_native_rows=None)
+    assert calls["query_4095"] == 4
+
+
+@pytest.mark.parametrize("method", ["enroll", "query"])
+def test_independent_signing_ledger_recovers_from_optional_cache_failure(
+    method, monkeypatch
+):
+    from factoryline import credential_role_constructor_provider as binding
+    from factoryline import semantic_credential_sensor as sensor
+
+    raw = b"setting = None\n"
+    source = {"configuration.py": raw}
+    hashes = {"configuration.py": hashlib.sha256(raw).hexdigest()}
+    built = []
+
+    def fail(*args):
+        raise RuntimeError("optional cache operation failed")
+
+    monkeypatch.setattr(audit_action_refs._VerifierBindingMemo, method, fail)
+
+    def ledger(*, _verifier_native_rows):
+        inv = audit_action_refs._verifier_signing_inventory(sensor, source, hashes)
+        tree = inv["index"].snapshots[Path("configuration.py")]
+        built.append(tree)
+        return binding.binding_occurrences(tree.body, "setting")
+
+    rows = audit_action_refs._bounded_verifier_tier_report(
+        ledger, _verifier_native_rows=[]
+    )
+    assert len(built) == 2 and built[0] is not built[1]
+    assert rows == built[1].body[0].targets
 
 
 def _case(tmp_path, monkeypatch, overrides=None):

@@ -361,12 +361,11 @@ def binding_walker_epoch():
 def epoch_binding_occurrences(statements, name, per_pass_facts):
     """Share ordered owned roots and immutable name results only for default None."""
     epoch = _FINGERPRINT_EPOCH.get()
-    if (
-        per_pass_facts is not None
-        or type(name) is not str
-        or epoch is None
-        or not epoch.active
-    ):
+    if epoch is None:
+        from .audit_action_refs import _verifier_binding_query
+
+        return _verifier_binding_query(statements, name, per_pass_facts)
+    if per_pass_facts is not None or type(name) is not str or not epoch.active:
         return statements, None
     roots = tuple(statements)
     facts = _owned_ast_query_facts(epoch, roots)
