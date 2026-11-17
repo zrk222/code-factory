@@ -4455,7 +4455,14 @@ def test_constructor_source_method_role_cli_retains_raw_and_live(tmp_path, capsy
     assert captured.err == ""
     report = json.loads(captured.out)
     assert exit_code == report["defect_policy_decision"]["exit_code"]
-    assert exit_code in {1, 2} and not report["defect_policy_decision"]["clean"]
+    assert exit_code == 0 and not report["defect_policy_decision"]["clean"]
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == 1
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
@@ -6616,7 +6623,14 @@ def test_object_signing_constructor_scalar_context_public_cli_receipt(tmp_path, 
     assert captured.err == ""
     report = json.loads(captured.out)
     assert exit_code == report["defect_policy_decision"]["exit_code"]
-    assert exit_code in {1, 2} and report["defect_policy_decision"]["clean"] is False
+    assert exit_code == 0 and report["defect_policy_decision"]["clean"] is False
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == 1
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
@@ -6689,6 +6703,13 @@ def test_object_signing_constructor_guard_public_cli_receipt(tmp_path, capsys):
     assert "class-owned-signing-material" not in captured.out
     assert "private-scalar-marker" not in captured.out
     assert exit_code == report["defect_policy_decision"]["exit_code"]
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == 1
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
@@ -6918,6 +6939,15 @@ def test_source_bound_pytest_local_scope_native(
     output = capsys.readouterr()
     assert not output.err
     report = json.loads(output.out)
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == (
+        2 if expected_active else 1
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
@@ -6942,7 +6972,7 @@ def test_source_bound_pytest_local_scope_native(
             for row in primitives
         )
     else:
-        assert code in {1, 2}
+        assert code == 0
         assert [row["path"] for row in active] == ["live.py"], report
         assert any(
             row["facts"].get("fixture_evidence", {}).get("profile")
@@ -7086,7 +7116,14 @@ def test_source_bound_test_scope_cli_receipt_and_recompute(tmp_path, capsys):
     output = capsys.readouterr()
     assert not output.err
     report = json.loads(output.out)
-    assert code in {1, 2} and not report["defect_policy_decision"]["clean"]
+    assert code == 0 and not report["defect_policy_decision"]["clean"]
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == 1
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]
     assert [(f["path"], f["severity"]) for f in active] == [("live.py", "CRITICAL")]
     primitives = [

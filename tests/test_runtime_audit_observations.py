@@ -4120,3 +4120,180 @@ def test_effect_witness_invalidates_changed_registry_and_log_helper(
     )
     assert helper_report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
     assert "source_bound_security_precondition" not in helper_report["ledger"][0]
+
+
+@pytest.mark.parametrize(
+    "expression,resolved",
+    [
+        ("'cls' if os.name == 'nt' else 'clear'", True),
+        ("'clear'", True),
+        ("'cls'", True),
+        ("'clear; rm -rf /'", False),
+        ("'rm -rf output'", False),
+        ("'curl example.com'", False),
+        ("command", False),
+        ("'clear' if choice() else command", False),
+    ],
+)
+def test_source_bound_finite_terminal_command_removes_raw_alert_only(
+    tmp_path, expression, resolved
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text(
+        "import os\ndef run(command):\n    os.system(" + expression + ")\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    raw = [
+        r["raw_finding"]
+        for r in report["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_OS_COMMAND"
+    ]
+    assert bool(raw) is not resolved
+    if resolved:
+        assert report["refuted_security_observation_count"] == 1
+        assert (
+            report["refuted_security_observations"][0]["facts"]["operation_role"]
+            == "terminal_display_reset"
+        )
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "mutation,extra",
+    [
+        ("os.system = replacement\n", ""),
+        ("alias = os\nalias.system = replacement\n", ""),
+        ("consume(os)\n", ""),
+        ('import sys\nsys.modules["os"] = replacement\n', ""),
+        ("", "import os\nos.system = replacement\n"),
+    ],
+)
+def test_finite_terminal_command_declines_provider_mutations(tmp_path, mutation, extra):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text(
+        "import os\n" + mutation + "os.system('cls' if os.name == 'nt' else 'clear')\n",
+        encoding="utf-8",
+    )
+    if extra:
+        (tmp_path / "other.py").write_text(extra, encoding="utf-8")
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert any(
+        r["raw_finding"]["code"] == "SECURITY_OS_COMMAND"
+        for r in report["finding_tier_report"]["ledger"]
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "source,proven",
+    [
+        ("import os\nos.system('cls' if os.name == 'nt' else 'clear')\n", True),
+        ("import os\nos.system('cls' if replace_provider() else 'clear')\n", False),
+        ("import os\nos.system('cls' if custom.name == 'nt' else 'clear')\n", False),
+        (
+            "import os\nos.system('cls' if os.name == 'nt' else 'curl example.com')\n",
+            False,
+        ),
+        (
+            "import subprocess\nsubprocess.run('clear', shell=True, executable='custom')\n",
+            False,
+        ),
+    ],
+)
+def test_finite_terminal_command_source_witness_closes_conditions(source, proven):
+    import ast
+    from factoryline.finite_capture import closed_shell_operation_witness
+
+    tree = ast.parse(source)
+    call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call))
+    canonical = "os.system" if source.startswith("import os") else "subprocess.run"
+    span = [
+        getattr(call, key)
+        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+    ]
+    proof = closed_shell_operation_witness(source.encode(), "app.py", span, canonical)
+    assert bool(proof) is proven
+    if proven:
+        assert proof["operation_role"] == "terminal_display_reset"
+        assert proof["input_effect"] == "CLOSED_FINITE_COMMAND_SYNTAX"
+        assert proof["executable_provenance"] == "UNASSESSED"
+        assert proof["target_execution"] == "not_performed"
+
+
+@pytest.mark.parametrize("mutation", ["none", "delete", "count", "facts", "duplicate"])
+def test_finite_terminal_command_refutation_reseal_rejects_sidecar_changes(
+    tmp_path, mutation
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text(
+        "import os\nos.system('clear')\n", encoding="utf-8"
+    )
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    if mutation == "delete":
+        report["refuted_security_observations"] = []
+    elif mutation == "count":
+        report["refuted_security_observation_count"] = 0
+    elif mutation == "facts":
+        report["refuted_security_observations"][0]["facts"]["operation_role"] = "forged"
+    elif mutation == "duplicate":
+        report["refuted_security_observations"].append(
+            copy.deepcopy(report["refuted_security_observations"][0])
+        )
+    rebuilt = audit._seal_security_scan(report)
+    raw = [
+        r["raw_finding"]
+        for r in rebuilt["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_OS_COMMAND"
+    ]
+    if mutation == "none":
+        assert not raw
+        assert rebuilt["refuted_security_observation_count"] == 1
+        assert rebuilt["finding_conservation"]["state"] == "PASS"
+    else:
+        assert raw or rebuilt["finding_conservation"]["state"] != "PASS"
+
+
+@pytest.mark.parametrize(
+    "operation,proven",
+    [
+        ("getattr(response, 'usage_metadata', None)", True),
+        ("getattr(os, 'system')", False),
+        ("alias = os; getattr(alias, 'system')", False),
+        ("getattr(os, selected)", False),
+        ("getattr = replacement; getattr(response, 'usage_metadata', None)", False),
+        ("from other import getattr; getattr(response, 'usage_metadata', None)", False),
+        ("from os import system as execute; getattr(execute, '__globals__')", False),
+    ],
+)
+def test_finite_terminal_command_reflection_tracks_provider_receiver(operation, proven):
+    import ast
+    from factoryline.finite_capture import closed_shell_operation_witness
+
+    raw = ("import os\n" + operation + "\nos.system('clear')\n").encode()
+    call = ast.parse(raw).body[-1].value
+    span = [
+        getattr(call, key)
+        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+    ]
+    assert (
+        bool(closed_shell_operation_witness(raw, "app.py", span, "os.system")) is proven
+    )

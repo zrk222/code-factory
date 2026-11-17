@@ -2316,7 +2316,6 @@ _WORKER_IMPORT_MODULES = frozenset(
         "factoryline/deep_audit_contract.py",
         "factoryline/deep_audit_loop.py",
         "factoryline/deep_audit_attestation.py",
-        "factoryline/audit_action_refs.py",
         "factoryline/audit_taxonomy.py",
         "factoryline/enterprise_receipts.py",
         "factoryline/runtime_audit_common.py",
@@ -2363,7 +2362,10 @@ def _run_worker_import(
         "import factoryline.runtime_audit_process; "
     )
     code += (
-        "from factoryline.deep_audit import _agent_actions; _agent_actions('a'*64, [])"
+        "from factoryline.audit_taxonomy import audit_remediation_packet; "
+        "packet=audit_remediation_packet('a'*64,{'code':'TEST'}); "
+        "assert packet['automatic_execution'] is False; "
+        "assert 'factoryline.audit_action_refs' not in sys.modules"
         if remediation
         else "sys.argv=['factoryline.deep_audit_io','--help']; "
         "runpy.run_module('factoryline.deep_audit_io',run_name='__main__')"
@@ -2410,6 +2412,8 @@ def _assert_worker_image_imports(
     result = _run_worker_import(package_root)
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout
+    remediation = _run_worker_import(package_root, remediation=True)
+    assert remediation.returncode == 0, remediation.stderr
 
 
 def _assert_missing_worker_module_fails(tmp_path: Path) -> None:
@@ -2417,11 +2421,11 @@ def _assert_missing_worker_module_fails(tmp_path: Path) -> None:
     _copy_worker_modules(
         Path.cwd(),
         missing_package,
-        _WORKER_IMPORT_MODULES - {"factoryline/audit_action_refs.py"},
+        _WORKER_IMPORT_MODULES - {"factoryline/audit_taxonomy.py"},
     )
     missing = _run_worker_import(missing_package, remediation=True)
     assert missing.returncode != 0
-    assert "No module named 'factoryline.audit_action_refs'" in missing.stderr
+    assert "No module named 'factoryline.audit_taxonomy'" in missing.stderr
 
 
 def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_path):

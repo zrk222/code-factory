@@ -1600,7 +1600,7 @@ def test_provider_cache351_native_scan_shares_only_one_lifecycle(tmp_path, monke
     from factoryline import finite_capture
 
     (tmp_path / "main.py").write_text(
-        "import requests\nrequests.get('https://example.com')\n"
+        "import requests\nrequests.get('https://example.com', auth=('user', 'password'))\n"
     )
     (tmp_path / "peer.py").write_text("import requests\nrequests.get = replacement\n")
     original = finite_capture._foreign_provider_mutation_cache
@@ -5133,6 +5133,8 @@ def test_local_eval_def_use_binding_recomputes_source_and_rejects_stale_or_forge
         "path": "sample.py",
         "line": call.lineno,
         "column": call.col_offset,
+        "end_line": call.end_lineno,
+        "end_column": call.end_col_offset,
         "severity": "INFO",
         "facts": {"call": "eval", **witness},
     }

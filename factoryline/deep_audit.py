@@ -4131,7 +4131,7 @@ def _agent_actions(
     candidate_sha256: str, repair_queue: list[dict], findings=()
 ) -> list[dict]:
     """Expose the repair queue through a stable agent-facing work-item contract."""
-    from .audit_action_refs import audit_remediation_packet
+    from .audit_taxonomy import audit_remediation_packet
 
     rows, packets = [], {}
     contexts = {finding["finding_id"]: finding for finding in findings}

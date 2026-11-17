@@ -7303,9 +7303,11 @@ def test_native_helper_catalogs_bind_live_predicate_code_and_catalog_schema(
     from factoryline import pytest_collection_audit as collection
 
     policies = (
+        collection._PYTEST_CACHE_DISABLE,
         collection._PYTEST_ARGUMENT_EFFECTS,
         collection.DJANGO_IMPLICIT_KEY_EFFECTS,
         collection.DJANGO_IMPLICIT_KEY_METHODS,
+        collection.NATIVE_DJANGO_RUNNER_PROVIDERS,
     )
     assert workspace and all(
         callable(value) or any(value is policy for policy in policies)
@@ -7683,7 +7685,7 @@ def test_closed_declaration_binding_accepts_exact_contract_and_rejects_span_forg
 
 
 def test_django_fixture_annotation_and_binding_recompute_owner_and_inventory_hashes():
-    source = "def test_secret():\n    token = 'synthetic'\n"
+    source = "def test_secret():\n    password = 'synthetic'\n"
     source_bytes = source.encode()
     source_sha = hashlib.sha256(source_bytes).hexdigest()
     config_bytes = {
@@ -7710,24 +7712,23 @@ def test_django_fixture_annotation_and_binding_recompute_owner_and_inventory_has
     module = ast.parse(source)
     module._oracle_source_sha256 = source_sha
     module._security_oracle_context = {
-        "django_fixture_evidence": {"1:0:token": evidence}
+        "django_fixture_evidence": {"2:4:password": evidence}
     }
-    function = module.body[0]
-    function._security_lexical_scope = module
-    finding = {
-        "code": "SECURITY_HARDCODED_SECRET",
-        "severity": "CRITICAL",
-        "path": "tests/test_app.py",
-        "line": 1,
-        "column": 0,
-        "facts": {"name": "token"},
-    }
-    annotated = binding.annotate_django_fixture(finding, function)
+    review_integrity.bind_security_call_scopes(module)
+    declaration = module.body[0].body[0]
+    finding = review_audits._literal_assignment_diagnostic(
+        "tests/test_app.py", declaration, declaration.targets[0]
+    )
+    assert finding is not None
+    annotated = binding.annotate_django_fixture(finding, declaration)
     assert annotated["facts"]["disposition"] == "TEST_OWNED_LOCAL_FIXTURE"
     sources = [{"path": "tests/test_app.py", "sha256": source_sha}]
     hashes = {"tests/test_app.py": source_sha, **config_hashes}
     assert binding.django_fixture_binding(annotated, sources, hashes)
     assert binding.fixed_primitive_binding(annotated, sources, hashes, review_integrity)
+    forged = json.loads(json.dumps(annotated))
+    forged["end_column"] += 1
+    assert not binding.django_fixture_binding(forged, sources, hashes)
     hashes["tox.ini"] = "0" * 64
     assert not binding.django_fixture_binding(annotated, sources, hashes)
 

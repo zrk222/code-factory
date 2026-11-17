@@ -1904,10 +1904,8 @@ def shell_execution_calls():
 
 def _closed_shell_operation(command):
     """Recognize simple non-interpreter operations, never arbitrary shell safety."""
-    import re
-
-    if type(command) is str and not command:
-        return "empty_command_input"
+    if type(command) is str and command in ("", "clear", "cls"):
+        return "terminal_display_reset" if command else "empty_command_input"
     if not isinstance(command, str) or not re.fullmatch(
         r"[A-Za-z0-9_.@+* -]{1,512}", command
     ):
@@ -1927,38 +1925,54 @@ def _closed_shell_operation(command):
 
 
 def _closed_shell_call_role(call, call_name):
-    """Accept one literal argument and explicit supported shell call options."""
-    if len(call.args) != 1 or not isinstance(call.args[0], ast.Constant):
+    """Close every immutable command alternative and explicit process option."""
+    if len(call.args) != 1 or any(kw.arg is None for kw in call.keywords):
         return None
-    if any(kw.arg is None for kw in call.keywords):
-        return None
-    if call_name == "os.system":
-        if call.keywords:
-            return None
-    elif not any(
+    shell_enabled = any(
         kw.arg == "shell"
         and isinstance(kw.value, ast.Constant)
         and kw.value.value is True
         for kw in call.keywords
-    ):
+    )
+    if call.keywords if call_name == "os.system" else not shell_enabled:
         return None
     # An overridden executable could use the same arguments for different effects.
     if any(
-        kw.arg
-        not in {
-            "shell",
-            "text",
-            "encoding",
-            "errors",
-            "capture_output",
-            "check",
-            "timeout",
-        }
+        kw.arg not in "shell text encoding errors capture_output check timeout".split()
         or not isinstance(kw.value, ast.Constant)
         for kw in call.keywords
     ):
         return None
-    return _closed_shell_operation(call.args[0].value)
+    pending, commands = [call.args[0]], set()
+    for _ in range(64):
+        if not pending:
+            roles = {_closed_shell_operation(command) for command in commands}
+            if len(roles) != 1 or None in roles:
+                return None
+            return next(iter(roles)), tuple(sorted(commands))
+        value = pending.pop()
+        if isinstance(value, ast.IfExp):
+            head = getattr(getattr(call.func, "value", None), "id", None)
+            allowed = "Constant Compare Eq NotEq BoolOp And Or UnaryOp Not Load".split()
+            if any(
+                type(item).__name__ not in allowed
+                and not (
+                    isinstance(item, ast.Attribute)
+                    and item.attr == "name"
+                    and isinstance(item.value, ast.Name)
+                    and item.value.id == head
+                    or isinstance(item, ast.Name)
+                    and item.id == head
+                )
+                for item in ast.walk(value.test)
+            ):
+                return None
+            pending.extend((value.body, value.orelse))
+        elif isinstance(value, ast.Constant) and type(value.value) is str:
+            commands.add(value.value)
+        else:
+            return None
+    return None
 
 
 def _closed_shell_provider_mutated(node, head, supported):
@@ -1973,13 +1987,9 @@ def _closed_shell_provider_mutated(node, head, supported):
         and isinstance(node.ctx, (ast.Store, ast.Del))
     ):
         return True
-    if isinstance(node, ast.arg) and node.arg == head:
-        return True
-    if (
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        and node.name == head
-    ):
-        return True
+    if isinstance(node, (ast.arg, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if getattr(node, "arg", getattr(node, "name", None)) == head:
+            return True
     if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
         base = node.value
         while isinstance(base, ast.Attribute):
@@ -1988,38 +1998,22 @@ def _closed_shell_provider_mutated(node, head, supported):
             name.rsplit(".", 1)[-1] for name in supported
         }:
             return True
-    if isinstance(node, ast.Call) and (
-        node.func.id
-        if isinstance(node.func, ast.Name)
-        else getattr(node.func, "attr", "")
-    ) in {
-        "eval",
-        "exec",
-        "globals",
-        "locals",
-        "vars",
-        "setattr",
-        "delattr",
-        "getattr",
-        "__import__",
-        "patch",
-    }:
+    if (
+        isinstance(node, ast.Call)
+        and (
+            node.func.id
+            if isinstance(node.func, ast.Name)
+            else getattr(node.func, "attr", "")
+        )
+        in "eval exec globals locals vars setattr delattr __import__ patch".split()
+    ):
         return True
     return False
 
 
 def _closed_shell_provider(tree, call, call_name, supported):
     """Bind a simple process call to one stable module-level provider import."""
-    func = call.func
-    name = (
-        func.id
-        if isinstance(func, ast.Name)
-        else (
-            f"{func.value.id}.{func.attr}"
-            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
-            else ""
-        )
-    )
+    name = ast.unparse(call.func)
     head = name.partition(".")[0]
     imports = []
     for statement in tree.body:
@@ -2036,7 +2030,9 @@ def _closed_shell_provider(tree, call, call_name, supported):
     origins = [origin for alias, origin in imports if alias == head]
     if len(origins) != 1 or origins[0] + name[len(head) :] != call_name:
         return False
-    if not _closed_shell_namespace(tree, head):
+    if not _closed_shell_namespace(tree, head) or not _shell_source_provider_clear(
+        ast.unparse(tree).encode(), call_name.partition(".")[0]
+    ):
         return False
     return not any(
         _closed_shell_provider_mutated(node, head, supported) for node in ast.walk(tree)
@@ -2050,17 +2046,9 @@ def _closed_shell_namespace(tree, head):
         for parent in ast.walk(tree)
         for child in ast.iter_child_nodes(parent)
     }
-    reflective = {
-        "eval",
-        "exec",
-        "globals",
-        "locals",
-        "vars",
-        "setattr",
-        "delattr",
-        "getattr",
-        "__import__",
-    }
+    reflective = set(
+        "eval exec globals locals vars setattr delattr getattr __import__".split()
+    )
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Name)
@@ -2087,6 +2075,7 @@ def _closed_shell_namespace(tree, head):
 def _shell_source_provider_clear(raw, provider):
     """Reuse provider mutation/escape indexing across captured helper modules."""
     from . import review_audits as audit
+    from .semantic_credential_sensor import _security_builtin_identity_closed
 
     try:
         tree = ast.parse(raw)
@@ -2094,7 +2083,9 @@ def _shell_source_provider_clear(raw, provider):
         return False
     nodes = list(ast.walk(tree))
     aliases = _shell_import_aliases(nodes, audit, provider)
-    if aliases is None:
+    if aliases is None or not _security_builtin_identity_closed(
+        tree, aliases or {}, {"getattr"}
+    ):
         return False
     parents = {
         id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
@@ -2235,8 +2226,7 @@ def closed_shell_operation_witness(raw, relative, span, call_name):
     """Reconstruct a literal shell-injection classification from captured bytes."""
     if not isinstance(raw, bytes) or len(raw) > 1_000_000:
         return {}
-    supported = shell_execution_calls()
-    if call_name not in supported:
+    if call_name not in (supported := shell_execution_calls()):
         return {}
     try:
         tree = ast.parse(raw)
@@ -2255,11 +2245,12 @@ def closed_shell_operation_witness(raw, relative, span, call_name):
     if len(calls) != 1:
         return {}
     call = calls[0]
-    role = _closed_shell_call_role(call, call_name)
-    if role is None or not _closed_shell_provider(tree, call, call_name, supported):
+    closed = _closed_shell_call_role(call, call_name)
+    if closed is None or not _closed_shell_provider(tree, call, call_name, supported):
         return {}
-    command = call.args[0].value
-    return {
+    role, commands = closed
+    command = commands[0] if len(commands) == 1 else ast.dump(call.args[0])
+    proof = {
         "schema": "factory.closed-shell-operation.v1",
         "disposition": "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
         "source_path": relative,
@@ -2269,16 +2260,25 @@ def closed_shell_operation_witness(raw, relative, span, call_name):
         "command_sha256": hashlib.sha256(command.encode()).hexdigest(),
         "operation_role": role,
         "hypothesis": "SOURCE_COMMAND_INJECTION",
-        "input_effect": "CLOSED_LITERAL_COMMAND_SYNTAX",
+        "input_effect": "CLOSED_LITERAL_COMMAND_SYNTAX"
+        if len(commands) == 1
+        else "CLOSED_FINITE_COMMAND_SYNTAX",
         "operational_effects": {
             "empty_command_input": "NO_COMMAND_PAYLOAD",
             "executable_packing": "LOCAL_ARTIFACT_MUTATION",
+            "terminal_display_reset": "TERMINAL_DISPLAY_MUTATION",
         }.get(role, "METADATA_QUERY"),
         "runtime_assurance": "INCOMPLETE",
         "filesystem_assurance": "UNASSESSED",
         "executable_provenance": "UNASSESSED",
         "target_execution": "not_performed",
     }
+
+    if len(commands) > 1:
+        proof["command_alternatives_sha256"] = [
+            hashlib.sha256(value.encode()).hexdigest() for value in commands
+        ]
+    return proof
 
 
 def closed_shell_finding(call_name, relative, node):
