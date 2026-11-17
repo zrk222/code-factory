@@ -1760,31 +1760,9 @@ def captured_flask_fixture_configuration(scope):
     selected = captured_pytest_configuration(docs, complete_precedence=True)
     if selected is None or not scope._pytest_collection(selected):
         return False
-    loads = list(_fixture_factory_references(scope, origin))
-    if len(loads) != 1:
+    if (endpoint := _fixture_configuration_call(scope, origin)) is None:
         return False
-    path, base = loads[0]
-    parents = scope.source.parents[path]
-    bases = parents[id(base)]
-    derive = parents.get(id(bases))
-    if (
-        not isinstance(derive, ast.Call)
-        or derive.args[1:2] != [bases]
-        or not isinstance(bases, ast.Tuple)
-        or bases.elts != [base]
-    ):
-        return False
-    assignment = parents.get(id(derive))
-    nested = parents.get(id(assignment))
-    fixture = parents.get(id(nested))
-    if not _fixture_configuration_definition(
-        scope, path, fixture, nested, assignment, derive
-    ):
-        return False
-    decorators = fixture.decorator_list
-    if len(decorators) != 1 or scope.canonical(path, decorators[0]) != "pytest.fixture":
-        return False
-    sibling = nested.body[2].value
+    path, derive, fixture, sibling = endpoint
     factory = scope.declaration(path, sibling.func)
     if not _fixture_flask_factory(
         scope, factory, origin, path, sibling
@@ -1808,6 +1786,36 @@ def captured_flask_fixture_configuration(scope):
         "configuration": selected["identity"],
     }
     return True
+
+
+def _fixture_configuration_call(scope, origin):
+    """Close the captured class use through a canonical fixture forwarding call."""
+    loads = list(_fixture_factory_references(scope, origin))
+    if len(loads) != 1:
+        return None
+    path, base = loads[0]
+    parents = scope.source.parents[path]
+    bases = parents[id(base)]
+    derive = parents.get(id(bases))
+    if (
+        not isinstance(derive, ast.Call)
+        or derive.args[1:2] != [bases]
+        or not isinstance(bases, ast.Tuple)
+        or bases.elts != [base]
+    ):
+        return None
+    assignment = parents.get(id(derive))
+    nested = parents.get(id(assignment))
+    fixture = parents.get(id(nested))
+    if not _fixture_configuration_definition(
+        scope, path, fixture, nested, assignment, derive
+    ):
+        return None
+    decorators = fixture.decorator_list
+    if len(decorators) != 1 or scope.canonical(path, decorators[0]) != "pytest.fixture":
+        return None
+    sibling = nested.body[2].value
+    return path, derive, fixture, sibling
 
 
 def _fixture_config_origin(scope):

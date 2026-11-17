@@ -6994,10 +6994,19 @@ def test_source_bound_pytest_local_scope_native(
         ), report
 
 
-def test_captured_make_pytest_selection_requires_a_closed_recipe():
-    from factoryline.pytest_collection_audit import _captured_make_pytest_argv
+def test_captured_make_pytest_selection_requires_a_closed_recipe(tmp_path):
+    from factoryline.pytest_collection_audit import (
+        _captured_make_pytest_argv,
+        captured_makefile_names,
+    )
 
     recipe = b"RUNNER = uv\n.PHONY: test\ntest:\n\t$(RUNNER) run pytest\n"
+    _write(tmp_path, "README.txt", "Not a Make descriptor.\n")
+    _write(tmp_path, "Makefile", recipe.decode())
+    _write(tmp_path, "GNUmakefile", "test:\n\tother-runner\n")
+    _write(tmp_path, "lowercase/makefile", "test:\n\tother-runner\n")
+    assert set(captured_makefile_names(tmp_path)) == {"Makefile", "GNUmakefile"}
+    assert set(captured_makefile_names(tmp_path / "lowercase")) == {"makefile"}
     assert _captured_make_pytest_argv(recipe) == ("uv", "run", "pytest")
     for variant in (
         recipe + b"\tpytest -p custom\n",
@@ -7039,6 +7048,7 @@ def test_make_selected_flask_fixture_config_proves_only_closed_scope(tmp_path, c
 
     from factoryline.credential_role_method_use_getter_audit import _SourceTestScope
     from factoryline.mock_fixture_provenance import application_test_index
+    from factoryline.pytest_collection_audit import captured_flask_fixture_configuration
 
     runtime = (
         "from config import Selected as Alternate\n"
@@ -7095,7 +7105,7 @@ def test_make_selected_flask_fixture_config_proves_only_closed_scope(tmp_path, c
     index = application_test_index(tmp_path, modules, data, hashes, configs)
     path = tmp_path / "config.py"
     proof = _SourceTestScope(index, path, modules[path].body[0].body[1], "SECRET_KEY")
-    assert proof.exercise() is (case == "closed")
+    assert captured_flask_fixture_configuration(proof) is (case == "closed")
 
     from factoryline.review_audits import security_scan
 
