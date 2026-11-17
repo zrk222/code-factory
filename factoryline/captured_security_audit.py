@@ -5138,7 +5138,8 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
         logging_security_effect_witness logging_security_precondition source_span
         upload_path_expression bind_request_sink_precondition tls_security_finding
         upload_name_origin upload_join_effect upload_concat_effect source_domain_guarded
-        _upload_filename_domain_kind _upload_guard_dominates
+        _literal_domain _domain_choices _domain_corridor _upload_domain
+        _logging_plain_source logging_domain_guarded module_binding
         _upload_control_path _upload_definition_reaches _upload_receiver_names
         _upload_prior_field_write _upload_filename_mutated
         bind_upload_sink_precondition

@@ -540,22 +540,32 @@ def _security_structural_builtin_value(expression, environment, request_aliases)
         return identity_value(
             expression, values, strict_calls=True, material_values=True
         )
-    if not (
-        isinstance(expression, ast.Call)
-        and isinstance(expression.func, ast.Attribute)
-        and expression.func.attr in {"encode", "decode"}
-        and not expression.args
-        and not expression.keywords
-    ):
-        return None
+    match expression:
+        case ast.Call(func=ast.Name(id="str"), args=[operand], keywords=[]):
+            from .review_integrity import _security_module_scope
+            from .semantic_credential_sensor import _security_builtin_identity_closed
+
+            module = _security_module_scope(
+                getattr(expression, "_security_lexical_scope", None)
+            )
+            if module is None or not _security_builtin_identity_closed(
+                module, request_aliases, {"str"}
+            ):
+                return None
+            incoming, outgoing = "text", "text"
+        case ast.Call(
+            func=ast.Attribute(value=operand, attr=method), args=[], keywords=[]
+        ) if method in {"encode", "decode"}:
+            incoming, outgoing = (
+                ("text", "bytes") if method == "encode" else ("bytes", "text")
+            )
+        case _:
+            return None
     receiver = security_structural_value(
-        expression.func.value,
+        operand,
         environment,
         request_aliases,
         request_aliases=request_aliases,
-    )
-    incoming, outgoing = (
-        ("text", "bytes") if expression.func.attr == "encode" else ("bytes", "text")
     )
     if (
         not isinstance(receiver, _Value)
@@ -566,6 +576,8 @@ def _security_structural_builtin_value(expression, environment, request_aliases)
         return None
     from dataclasses import replace
 
+    if incoming == outgoing:
+        return receiver
     return replace(
         receiver,
         scalar_kind=outgoing,

@@ -58,7 +58,12 @@ def _captured_log_scan(tmp_path, app_source, settings_source=None, *, startup=Tr
     app_tree = snapshots[app_path]
     app_tree._security_source_model = index
     with audit._security_only_scan_context(True):
-        return audit._security_scan_tree(Path(tmp_path), app_path, app_tree)
+        return audit._security_scan_tree(
+            Path(tmp_path),
+            app_path,
+            app_tree,
+            oracle_context={"_security_source_context": (Path(tmp_path), source_bytes)},
+        )
 
 
 _PLAIN_DJANGO_LOGGING = (
@@ -5567,3 +5572,253 @@ def test_helper_epoch_replacements_include_noncallable_bindings(monkeypatch, tmp
         helpers = admission.validation_helpers()
         assert all(callable(item) and hasattr(item, "__name__") for item in helpers)
         assert len(set(helpers)) > 0
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        (
+            "if value.lower() == 'true' or value.lower() == '1':\n        query += 'yes'\n    elif value.lower() == 'false' or value.lower() == '0':\n        query += 'no'\n    else:\n        return\n    logging.info(f'enabled={value}')",
+            False,
+        ),
+        ("if value not in ('ok',):\n        return\n    logging.info(value)", False),
+        ("if 'ok' != value:\n        raise ValueError\n    logging.info(value)", False),
+        ("if value in ('ok', 'yes'):\n        logging.info(value)", False),
+        (
+            "if value is not None:\n        if value.lower() not in ('ok', 'yes'):\n            return\n        logging.info(value)",
+            False,
+        ),
+        ("if value == 'ok':\n        pass\n    logging.info(value)", True),
+        ("if value == 'ok' or opaque():\n        logging.info(value)", True),
+        (
+            "if value != 'ok' and opaque():\n        return\n    logging.info(value)",
+            True,
+        ),
+        ("if value not in ('ok',):\n        pass\n    logging.info(value)", True),
+        (
+            "if value != 'ok':\n        return\n    value = request.args['other']\n    logging.info(value)",
+            True,
+        ),
+        (
+            "alias = value\n    if alias != 'ok':\n        return\n    logging.info(value)",
+            True,
+        ),
+        ("logging.info(value)\n    if value != 'ok':\n        return", True),
+        ("if value == 'ok\\n':\n        logging.info(value)", True),
+        ("if value == allowed:\n        logging.info(value)", True),
+        (
+            "value = wrap(value)\n    if value.lower() == 'ok':\n        logging.info(value)",
+            True,
+        ),
+        (
+            "value = request.args.get('value', type=Custom)\n    if value.lower() == 'ok':\n        logging.info(value)",
+            True,
+        ),
+        (
+            "value = request.args.get('value', Custom())\n    if value.lower() == 'ok':\n        logging.info(value)",
+            True,
+        ),
+        (
+            "if value != 'ok':\n        return\n    value, other = request.args['other'], 1\n    logging.info(value)",
+            True,
+        ),
+        (
+            "if value != 'ok':\n        return\n    value += request.args['other']\n    logging.info(value)",
+            True,
+        ),
+        (
+            "try:\n        if value != 'ok':\n            raise ValueError\n    except ValueError:\n        pass\n    logging.info(value)",
+            True,
+        ),
+        (
+            "try:\n        if value != 'ok':\n            return\n    finally:\n        logging.info(value)",
+            True,
+        ),
+        (
+            "try:\n        if value != 'ok':\n            raise ValueError\n    except* ValueError:\n        pass\n    logging.info(value)",
+            True,
+        ),
+        (
+            "with context():\n        if value != 'ok':\n            return\n        logging.info(value)",
+            True,
+        ),
+        (
+            "for item in ():\n        if value not in ('ok',):\n            return\n    else:\n        logging.info(value)",
+            True,
+        ),
+        (
+            "for item in items:\n        if skip(item):\n            continue\n        if value != 'ok':\n            return\n    else:\n        logging.info(value)",
+            True,
+        ),
+        (
+            "if value != 'ok':\n        return\n    if False:\n        logging.info(value)",
+            True,
+        ),
+        (
+            "if value != 'ok':\n        return\n    return\n    logging.info(value)",
+            True,
+        ),
+        (
+            "fill = request.args['fill']\n    if value != 'ok':\n        return\n    logging.info(f'{value:{fill}>2}')",
+            True,
+        ),
+        (
+            "fill = request.args['fill']\n    if value != 'ok':\n        return\n    logging.info('%s %s', value, fill)",
+            True,
+        ),
+        ("if (other := value) != 'ok':\n        return\n    logging.info(value)", True),
+        (
+            "if value != 'ok':\n        return\n    await update()\n    logging.info(value)",
+            True,
+        ),
+        (
+            "app.parameter_storage_class = Custom\n    if value.lower() == 'ok':\n        logging.info(value)",
+            True,
+        ),
+        (
+            "logging.info = replacement\n    if value.lower() == 'ok':\n        logging.info(value)",
+            True,
+        ),
+    ],
+)
+def test_log_shared_finite_domain_changes_raw_findings(body, expected):
+    header = "async def run():" if "await " in body else "def run():"
+    rows = _premise_scan(
+        "import logging\nfrom flask import request\n" + header + "\n"
+        "    value = request.args.get('value')\n    query = ''\n    " + body + "\n"
+    )
+    actual = [row for row in rows if row["code"] == "SECURITY_LOG_INJECTION"]
+    expected_lines = [
+        line + 5
+        for line, text in enumerate(body.splitlines(), 1)
+        if "logging.info(" in text
+    ]
+    assert [row["line"] for row in actual] == (expected_lines if expected else [])
+
+
+@pytest.mark.parametrize("declaration", ["global value", "nonlocal value"])
+def test_log_shared_domain_declines_external_binding(declaration):
+    rows = _premise_scan(
+        "import logging\nfrom flask import request\ndef outer():\n    value = None\n"
+        "    def run():\n        " + declaration + "\n"
+        "        value = request.args.get('value')\n"
+        "        if value != 'ok':\n            return\n        logging.info(value)\n"
+    )
+    assert [row["line"] for row in rows if row["code"] == "SECURITY_LOG_INJECTION"] == [
+        10
+    ]
+
+
+def test_log_shared_domain_rejects_captured_storage_override(tmp_path):
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nfrom flask import request\ndef run():\n"
+        "    value = request.args.get('value')\n"
+        "    if value != 'ok':\n        return\n    logging.info(value)\n",
+        "parameter_storage_class = Custom\n",
+    )
+    assert [row["line"] for row in rows if row["code"] == "SECURITY_LOG_INJECTION"] == [
+        7
+    ]
+
+
+def test_shared_domain_binding_api_and_epoch_identity(monkeypatch):
+    from factoryline import credential_endpoint_admission as admission
+    from factoryline import credential_role_paths as roles
+    from factoryline import semantic_credential_sensor as sensors
+
+    tree = ast.parse("value = 'ok'\n")
+    assert roles.module_binding(tree, "value", ast.Assign) is tree.body[0]
+    assert roles._module_binding(tree, "value", ast.Assign) is tree.body[0]
+    assert roles.module_binding.__name__ == "module_binding"
+    assert roles._module_binding.__name__ == "_module_binding"
+    before = admission.endpoint_admission_helpers()
+    native_before = sensors._native_input_inventory_epoch()
+
+    def replacement(*args):
+        return None
+
+    monkeypatch.setattr(roles, "_module_binding", replacement)
+    after = admission.endpoint_admission_helpers()
+    assert before != after
+    assert replacement in after
+    monkeypatch.setattr(roles, "module_binding", replacement)
+    assert sensors._native_input_inventory_epoch() is not native_before
+
+
+@pytest.mark.parametrize("both_guarded", [False, True])
+def test_upload_shared_domain_requires_every_contributing_name(both_guarded):
+    from pathlib import Path
+    from factoryline import credential_role_paths as roles
+
+    source = (
+        "from flask import request, abort\nimport os\ndef upload():\n"
+        "    item = request.files['file']\n    other = request.files['other']\n"
+        "    name = item.filename\n    extra = other.filename\n"
+        "    if name not in ('ok.csv',):\n        abort(400)\n"
+        + (
+            "    if extra not in ('safe.csv',):\n        abort(400)\n"
+            if both_guarded
+            else ""
+        )
+        + "    destination = os.path.join('/srv/uploads', name, extra)\n"
+        "    item.save(destination)\n"
+    )
+    tree = ast.parse(source)
+    audit._security_scan_tree(Path("."), Path("application.py"), tree)
+    scope = tree.body[-1]
+    call = scope.body[-1].value
+    assert (
+        roles.source_domain_guarded(
+            scope, call, {"item", "other", "name", "extra", "destination"}, {}
+        )
+        is both_guarded
+    )
+
+
+def test_log_shared_domain_keeps_tainted_nested_repr_format_spec():
+    rows = _premise_scan(
+        "import logging\nfrom flask import request\ndef run():\n"
+        "    value = request.args['value']\n    fill = request.args['fill']\n"
+        "    if value != 'ok':\n        return\n"
+        "    logging.info(f'{value!r:{fill}>2}')\n"
+    )
+    assert [row["line"] for row in rows if row["code"] == "SECURITY_LOG_INJECTION"] == [
+        8
+    ]
+
+
+@pytest.mark.parametrize(
+    "foreign,expected",
+    [
+        ("import logging\nlogging.basicConfig(level=logging.INFO)\n", False),
+        ("import logging\nconsume(logging.INFO)\n", False),
+        ("import logging\nlogging.info = replacement\n", True),
+        ("import logging\nconsume(logging)\n", True),
+        ("import logging\nconsume(logging.Logger)\n", True),
+        ("import logging\nconsume(logging.getLogger)\n", True),
+        ("import logging\nconsume(logging.StreamHandler)\n", True),
+        ("import logging\nlogging.Formatter = CustomFormatter\n", True),
+        ("import logging\nconsume(logging.shutdown)\n", True),
+        ("import logging\nlogging.INFO = CustomLevel\nconsume(logging.INFO)\n", True),
+        ("import logging\nlogging.FileHandler = CustomHandler\n", True),
+        (
+            "import logging\nlogging.handlers.RotatingFileHandler = CustomHandler\n",
+            True,
+        ),
+        ("import logging\nlogging.Logger.info = replacement\n", True),
+        ('import logging\nsetattr(logging, "info", replacement)\n', True),
+    ],
+)
+def test_log_shared_domain_cross_file_provider_paths(tmp_path, foreign, expected):
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nfrom flask import request\ndef run():\n"
+        "    value = request.args.get('value')\n"
+        "    if value != 'ok':\n        return\n    logging.info(value)\n"
+        "    logging.info(request.args['other'])\n",
+        foreign,
+    )
+    assert [row["line"] for row in rows if row["code"] == "SECURITY_LOG_INJECTION"] == (
+        [7, 8] if expected else [8]
+    )

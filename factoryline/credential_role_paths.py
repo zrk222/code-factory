@@ -24,20 +24,10 @@ from .semantic_credential_sensor import (
     _provider_identity_uncertain,
 )
 
-"""Bounded source-role witnesses for canonical HTTP URL and auth slots."""
-
 
 def useful_body(function):
     """Return executable statements while excluding string-expression docstrings from a function body."""
-    return [
-        n
-        for n in function.body
-        if not (
-            isinstance(n, ast.Expr)
-            and isinstance(n.value, ast.Constant)
-            and isinstance(n.value.value, str)
-        )
-    ]
+    return [n for n in function.body if not _doc(n)]
 
 
 def single_return(function):
@@ -364,14 +354,6 @@ def _decorator_body(function):
     ):
         return body[0], [body[1]]
     return None, []
-
-
-def _doc(node):
-    return (
-        isinstance(node, ast.Expr)
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
-    )
 
 
 def _wrapper_arguments(wrapper):
@@ -1079,186 +1061,247 @@ def upload_path_expression(
     )
 
 
-def _upload_filename_domain_kind(test, source_names, aliases):
-    """Classify only finite safe names, narrow safe fullmatches, or blocked path components."""
+def _literal_domain(test, names, accept, lower=False):
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return set(), set()
+    left, right, op = test.left, test.comparators[0], test.ops[0]
+    if isinstance(op, (ast.Eq, ast.NotEq)) and isinstance(left, ast.Constant):
+        left, right = right, left
+    if lower and isinstance(left, ast.Call) and not left.args and not left.keywords:
+        if isinstance(left.func, ast.Attribute) and left.func.attr == "lower":
+            left = left.func.value
+    if not isinstance(left, ast.Name) or left.id not in names:
+        return set(), set()
+    values = (
+        [right] if isinstance(op, (ast.Eq, ast.NotEq)) else getattr(right, "elts", ())
+    )
+    if (
+        not values
+        or len(values) > 64
+        or not all(
+            isinstance(v, ast.Constant) and type(v.value) is str and accept(v.value)
+            for v in values
+        )
+    ):
+        return set(), set()
+    if isinstance(op, (ast.Eq, ast.In)):
+        return {left.id}, set()
+    if isinstance(op, (ast.NotEq, ast.NotIn)):
+        return set(), {left.id}
+    return set(), set()
+
+
+def _domain_choices(test, classify):
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return _domain_choices(test.operand, classify)[::-1]
+    if isinstance(test, ast.BoolOp):
+        choices = [_domain_choices(v, classify) for v in test.values]
+        combine = (set.union, set.intersection)
+        if isinstance(test.op, ast.Or):
+            combine = combine[::-1]
+        return tuple(fn(*(p[i] for p in choices)) for i, fn in enumerate(combine))
+    return classify(test)
+
+
+def _domain_corridor(body, sink, classify, facts=frozenset(), aliases=None):
+    """Intersect all live branch constraints; unknown control flow fails closed."""
+    from .review_integrity import security_call_name
+
+    facts = set(facts)
+    for statement in body:
+        if isinstance(statement, ast.If):
+            yes, no = _domain_choices(statement.test, classify)
+            outcomes = [
+                _domain_corridor(rows, sink, classify, facts | added, aliases)
+                for rows, added in ((statement.body, yes), (statement.orelse, no))
+            ]
+            found = [result for _state, result in outcomes if result is not None]
+            if found:
+                return None, set.intersection(*found)
+            states = [state for state, _result in outcomes if state is not None]
+            if not states:
+                return None, None
+            facts = set.intersection(*states)
+        elif sink in ast.walk(statement):
+            return None, facts if getattr(statement, "value", None) is sink else set()
+        elif isinstance(statement, (ast.Return, ast.Raise)) or (
+            aliases is not None
+            and isinstance(statement, ast.Expr)
+            and security_call_name(statement.value, aliases)
+            in {"abort", "flask.abort", "werkzeug.exceptions.abort"}
+        ):
+            return None, None
+        elif isinstance(
+            statement, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr, ast.Pass)
+        ):
+            from .review_audits import _bound_names
+
+            changed = _bound_names(statement)
+            facts = {
+                v for v in facts if (v[0] if isinstance(v, tuple) else v) not in changed
+            }
+        else:
+            return None, set()
+    return facts, None
+
+
+def _upload_domain(test, names, aliases):
     import re
     from .review_integrity import security_call_name
 
-    invalid = isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not)
-    node = test.operand if invalid else test
-    if isinstance(node, ast.Compare) and len(node.ops) == len(node.comparators) == 1:
-        op, right = node.ops[0], node.comparators[0]
-        if isinstance(right, ast.Constant) and right.value is None:
-            invalid = isinstance(op, ast.Is)
-            node = node.left
-        elif isinstance(node.left, ast.Name) and node.left.id in source_names:
-            values = getattr(right, "elts", ())
-            safe = isinstance(right, (ast.List, ast.Tuple, ast.Set)) and all(
-                isinstance(value, ast.Constant)
-                and isinstance(value.value, str)
-                and value.value not in {"", ".", ".."}
-                and not any(char in value.value for char in ("/", "\\", ":"))
-                for value in values
-            )
-            if safe:
-                return {ast.In: "finite_safe", ast.NotIn: "finite_reject"}.get(type(op))
-        elif (
-            isinstance(node.left, ast.Constant)
-            and node.left.value in {"/", "\\", "..", ":"}
-            and isinstance(op, ast.In)
-            and isinstance(right, ast.Name)
-            and right.id in source_names
+    finite = _literal_domain(
+        test,
+        names,
+        lambda v: v not in {"", ".", ".."} and not any(c in v for c in "/\\:"),
+    )
+    if any(finite):
+        return finite
+    match test:
+        case ast.Compare(ast.Constant(str() as char), [ast.In()], [ast.Name(name)]) if (
+            char in {"/", "\\", "..", ":"} and name in names
         ):
-            return node.left.value
-    if (
-        isinstance(node, ast.Call)
-        and security_call_name(node, aliases) == "re.fullmatch"
-        and len(node.args) == 2
-        and not node.keywords
-        and isinstance(node.args[0], ast.Constant)
-        and isinstance(node.args[0].value, str)
-        and isinstance(node.args[1], ast.Name)
-        and node.args[1].id in source_names
-    ):
-        match = re.fullmatch(
-            r"\[([A-Za-z0-9_-]+)\]\+\\\.([A-Za-z0-9_-]+)",
-            node.args[0].value,
-        )
-        if match is not None:
-            chars, suffix = match.groups()
+            return set(), {(name, char)}
+        case ast.Compare(left, [(ast.Is() | ast.IsNot()) as op], [ast.Constant(None)]):
+            choices = _upload_domain(left, names, aliases)
+            return choices[::-1] if isinstance(op, ast.Is) else choices
+        case ast.Compare(
+            ast.Call(
+                _,
+                [ast.List([base, ast.Name(name)]) | ast.Tuple([base, ast.Name(name)])],
+            ) as check,
+            [ast.Eq()],
+            [right],
+        ) if name in names:
+            same_base = ast.dump(base) == ast.dump(right)
+            if security_call_name(check, aliases) == "os.path.commonpath" and same_base:
+                return {name}, set()
+        case ast.Call(_, [ast.Constant(str() as pattern), ast.Name(name)], []) if (
+            name in names
+        ):
+            match = re.fullmatch(r"\[([A-Za-z0-9_-]+)\]\+\\\.([A-Za-z0-9_-]+)", pattern)
             try:
-                character_class = re.compile(f"[{chars}]")
+                safe = match and not any(
+                    re.fullmatch(f"[{match[1]}]", char) for char in "/\\."
+                )
             except re.error:
-                return None
-            if suffix and not any(
-                character_class.fullmatch(char) for char in ("/", "\\", ".")
-            ):
-                return "regex_reject" if invalid else "regex_safe"
-    return None
-
-
-def _upload_guard_dominates(scope, call, statement, source_names, aliases):
-    """Require an earlier same-sequence abort and no later rebinding of its checked name."""
-    from .review_audits import _bound_names
-    from .review_integrity import security_call_name
-
-    body = statement.body
-    first = next(
-        (
-            node
-            for node in body
-            if not isinstance(node, ast.Pass)
-            and not (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)
-            )
-        ),
-        None,
-    )
-    rejects = isinstance(first, (ast.Raise, ast.Return)) or (
-        isinstance(first, ast.Expr)
-        and isinstance(first.value, ast.Call)
-        and security_call_name(first.value, aliases)
-        in {"abort", "flask.abort", "werkzeug.exceptions.abort"}
-    )
-    if not rejects:
-        return False
-    parents = {
-        id(child): parent
-        for parent in ast.walk(scope)
-        for child in ast.iter_child_nodes(parent)
-    }
-    cursor = call
-    before = False
-    while cursor is not scope:
-        parent = parents.get(id(cursor))
-        if parent is None:
-            break
-        for _field, value in ast.iter_fields(parent):
-            if isinstance(value, list) and cursor in value and statement in value:
-                before = value.index(statement) < value.index(cursor)
-                break
-        if before or any(
-            isinstance(value, list) and cursor in value and statement in value
-            for _field, value in ast.iter_fields(parent)
-        ):
-            break
-        cursor = parent
-    checked = source_names.intersection(
-        node.id for node in ast.walk(statement.test) if isinstance(node, ast.Name)
-    )
-    changed = any(
-        isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
-        and statement.lineno < node.lineno < call.lineno
-        and getattr(node, "_security_lexical_scope", scope) is scope
-        and checked.intersection(_bound_names(node))
-        for node in ast.walk(scope)
-    )
-    return before and not changed
+                safe = False
+            if safe and security_call_name(test, aliases) == "re.fullmatch":
+                return {name}, set()
+    return set(), set()
 
 
 def source_domain_guarded(scope, call, source_names, aliases):
-    """Require a dominating safe-name domain or an exact commonpath containment test."""
-    from .review_integrity import security_call_name
-
+    """Use the shared live corridor for finite, regex and containment constraints."""
     if not isinstance(scope, ast.AST) or not source_names:
         return False
-    components = {"/", "\\", "..", ":"}
-    safe, rejected, blocked = (
-        {"finite_safe", "regex_safe"},
-        {"finite_reject", "regex_reject"},
-        set(),
+    source_names = source_names - _upload_receiver_names(
+        scope, call, set(), source_names
     )
-    statements = (
-        item
-        for item in ast.walk(scope)
-        if isinstance(item, ast.If)
-        if getattr(item, "_security_lexical_scope", scope) is scope
+    _state, facts = _domain_corridor(
+        scope.body,
+        call,
+        lambda test: _upload_domain(test, source_names, aliases),
+        aliases=aliases,
     )
-    for statement in statements:
-        test = statement.test
-        match test:
-            case ast.BoolOp(op=ast.Or(), values=checks):
-                disjunction = True
-            case _:
-                checks, disjunction = [test], False
-        kinds = {
-            _upload_filename_domain_kind(item, source_names, aliases) for item in checks
-        }
-        nested = any(call in ast.walk(child) for child in statement.body)
-        match (nested, bool(kinds & safe), disjunction, kinds <= safe):
-            case (True, True, False, _) | (True, True, True, True):
-                return True
-        if kinds & rejected and any(
-            call in ast.walk(child) for child in statement.orelse
-        ):
-            return True
-        if _upload_guard_dominates(scope, call, statement, source_names, aliases):
-            if kinds & rejected:
-                return True
-            blocked.update(kinds & components)
-        match test:
-            case ast.Compare(
-                ops=[ast.Eq()],
-                comparators=[base],
-                left=ast.Call(
-                    args=[
-                        ast.List(elts=[intended, ast.Name(id=name)])
-                        | ast.Tuple(elts=[intended, ast.Name(id=name)])
-                    ]
-                ) as comparison,
-            ) if nested:
-                if (
-                    security_call_name(comparison, aliases),
-                    ast.dump(intended),
-                    name,
-                ) in {
-                    ("os.path.commonpath", ast.dump(base), source)
-                    for source in source_names
-                }:
-                    return True
-    return components.issubset(blocked)
+    if facts is None:
+        return False
+    facts.update(
+        name
+        for name in source_names
+        if all((name, char) in facts for char in ("/", "\\", "..", ":"))
+    )
+    final = getattr(call.args[0], "id", None) if call.args else None
+    required = source_names - {final}
+    return final in facts or bool(required) and required <= facts
+
+
+def _logging_plain_source(name, reader, call):
+    from .review_integrity import security_precondition_providers_confirmed
+
+    if not isinstance(reader.scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    module = reader.module_scope(reader.scope)
+    if not security_precondition_providers_confirmed(module) or not getattr(
+        module, "_security_log_provider_stable", False
+    ):
+        return False
+    barriers = set("Global Nonlocal NamedExpr Await Yield YieldFrom".split())
+    if any(type(n).__name__ in barriers for n in ast.walk(reader.scope)):
+        return False
+    definition = module_binding(reader.scope, name, ast.Assign)
+    if definition is None or len(binding_occurrences(reader.scope.body, name)) != 1:
+        return False
+    if definition.lineno >= call.lineno:
+        return False
+    value = definition.value
+    if not reader._source(value):
+        return False
+    subscript = isinstance(value, ast.Subscript)
+    base = value.value if subscript else getattr(value.func, "value", None)
+    if not isinstance(base, ast.Attribute) or base.attr not in {"args", "form"}:
+        return False
+    if isinstance(value, ast.Call) and not (
+        isinstance(value.func, ast.Attribute)
+        and value.func.attr == "get"
+        and not value.keywords
+        and 1 <= len(value.args) <= 2
+        and all(
+            isinstance(v, ast.Constant) and type(v.value) in (str, type(None))
+            for v in value.args
+        )
+    ):
+        return False
+    index = getattr(module, "_security_source_model", None)
+    trees = index.snapshots if index is not None else {None: module}
+    overrides = set(
+        "request_class parameter_storage_class dict_storage_class list_storage_class request_context wsgi_app".split()
+    )
+    return all(
+        (index is None or index.validate(path))
+        and not any(
+            getattr(n, "attr", None) in overrides
+            or getattr(n, "id", None) in overrides
+            or isinstance(n, ast.Constant)
+            and isinstance(n.value, str)
+            and n.value in overrides
+            or isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name in overrides
+            for n in ast.walk(tree)
+        )
+        for path, tree in trees.items()
+    )
+
+
+def logging_domain_guarded(value, call, reader, tainted):
+    """Prove every dynamic log interpolation without changing its input trace."""
+    from .semantic_credential_sensor import security_precondition_path_possible
+
+    nodes = tuple(ast.walk(value))
+    if not security_precondition_path_possible(call) or any(
+        not isinstance(
+            n, (ast.Name, ast.Load, ast.JoinedStr, ast.FormattedValue, ast.Constant)
+        )
+        for n in nodes
+    ):
+        return False
+    if any(
+        isinstance(n, ast.FormattedValue) and n.format_spec is not None for n in nodes
+    ):
+        return False
+    names = {n.id for n in nodes if isinstance(n, ast.Name)}
+    if not names or not all(
+        n in tainted and _logging_plain_source(n, reader, call) for n in names
+    ):
+        return False
+
+    _state, facts = _domain_corridor(
+        reader.scope.body,
+        call,
+        lambda test: _literal_domain(
+            test, names, lambda v: not any(c in v for c in "\r\n"), True
+        ),
+    )
+    return facts is not None and names <= facts
 
 
 def bind_upload_sink_precondition(finding, call, aliases, requests, module):
@@ -3823,10 +3866,6 @@ def _bound_module_settings(statement):
     return names
 
 
-def _returns(function):
-    return [node for node in function.body if isinstance(node, ast.Return)]
-
-
 def _hook_return(node):
     return bool(
         isinstance(node, ast.Call)
@@ -3924,8 +3963,6 @@ def _settings_bridge_constructor(call, owner):
 
 def _settings_bridge_return(tree, hook, assignment):
     returns = _returns(hook)
-    from .credential_role_paths import single_return
-
     if not single_return(hook):
         return None
     if len(returns) != 1 or not _hook_return(returns[0].value):
@@ -3943,14 +3980,6 @@ def module_binding(tree, name, kind):
 
     rows = binding_statements(tree.body, name)
     return rows[0] if len(rows) == 1 and isinstance(rows[0], kind) else None
-
-
-def _doc(node):
-    return (
-        isinstance(node, ast.Expr)
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
-    )
 
 
 def fallback_method(function):
@@ -4352,10 +4381,6 @@ def _parameter_node(function, name):
 _default_getter = default_getter
 
 
-def _returns(function):
-    return [node for node in function.body if isinstance(node, ast.Return)]
-
-
 def _bound_setting_boundary(statement):
     from .review_audits import _bound_names
 
@@ -4363,10 +4388,7 @@ def _bound_setting_boundary(statement):
 
 
 def _module_binding(tree, name, kind):
-    from .credential_role_constructor_provider import binding_statements
-
-    rows = binding_statements(tree.body, name)
-    return rows[0] if len(rows) == 1 and isinstance(rows[0], kind) else None
+    return module_binding(tree, name, kind)
 
 
 def _setting_getter_shape(snapshots):
