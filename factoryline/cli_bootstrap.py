@@ -4,23 +4,17 @@ import sys
 import time
 
 
-_QUICK_HELP = """Code Factory - review your code with less setup.
+_QUICK_HELP = """Code Factory - review your code and its evidence.
 
-Start here:
-  Scan my code       factory scan --root .
-  Open dashboard     factory studio --root .
-  Get guidance       factory guide
+  Quick Python scan   factory scan --root . --static-only
+  Deep review         factory scan --root .
+  Visual workspace    factory studio --root .
+  Scan options        factory scan --help
+  Guidance            factory guide
+  All commands        factory --help-all
 
-Next steps:
-  More scan options  factory scan --help
-  Check setup        factory doctor --strict --json
-  All commands       factory --help-all
-
-Scan reads eligible Python source without running your project.
-Review findings, verify repairs with your tests, then rerun affected checks.
-Keep pytest, mutation testing, CodeQL and Semgrep in your existing CI.
-Missing evidence means INCOMPLETE; a scan is not release approval.
-No adoption, signing keys or tenant configuration needed for a basic scan.
+Quick scan reads Python source without running your project.
+Deep review shows applicable evidence and which checks remain INCOMPLETE.
 """
 
 

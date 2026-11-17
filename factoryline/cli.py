@@ -493,7 +493,7 @@ def __getattr__(name: str):
 def _build_parser(*, common_only: bool = False) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="factory",
-        description="Snap SpecLine, ForgeLine, HSF and Prestige into one assembly line.",
+        description="Review code and collect evidence for changes.",
     )
     sub = p.add_subparsers(dest="cmd")
 
@@ -530,6 +530,9 @@ def _build_parser(*, common_only: bool = False) -> argparse.ArgumentParser:
     )
     plan_verify.add_argument("--json", action="store_true")
     if common_only:
+        from .cli_first_lap import add_scan_parser
+
+        add_scan_parser(sub)
         return p
 
     from .cli_foundations import add_parser as add_foundation_parsers
@@ -2528,9 +2531,6 @@ def _dispatch_route_group_07(a, capture_command, p):
         from .cli_audit import run as run_audit
 
         return run_audit(a)
-    # Kept unreachable for one release so old tracebacks retain their source
-    # shape while the bounded command module becomes the only audit dispatch.
-
     if a.cmd == "evidence-audit":
         from .cli_quality import run_evidence
 
@@ -4777,7 +4777,7 @@ def _dispatch(argv=None) -> int:
             capture_command = capture_command[1:]
         argv = argv[:capture_index]
     with _measure_phase("cli_parse"):
-        if argv and argv[0] in {"home", "doctor", "plan"}:
+        if argv and argv[0] in {"home", "doctor", "plan", "scan"}:
             p = _build_parser(common_only=True)
             a, unknown = p.parse_known_args(argv)
             if unknown:

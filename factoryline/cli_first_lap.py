@@ -8,15 +8,8 @@ from pathlib import Path
 from typing import Any
 
 
-def add_parser(sub: Any) -> None:
-    """Register the First Lap activation and observation subcommands."""
-    first_proof = sub.add_parser(
-        "first-proof",
-        help="run a local sandbox demonstration and bounded workspace inventory",
-    )
-    first_proof.add_argument("--root", default=".")
-    first_proof.add_argument("--out-dir", help="workspace-contained output directory")
-    first_proof.add_argument("--json", action="store_true")
+def add_scan_parser(sub: Any) -> None:
+    """Register the same scan options for quick and full discovery."""
     scan = sub.add_parser(
         "scan",
         help="run every applicable local audit lane with explicit evidence gaps",
@@ -33,7 +26,7 @@ def add_parser(sub: Any) -> None:
         "--deep",
         action="store_true",
         default=True,
-        help="run every applicable local audit lane and expose unmeasured coverage",
+        help="explicitly select the default deep review with applicable evidence lanes",
     )
     scan_scope.add_argument(
         "--static-only",
@@ -58,6 +51,18 @@ def add_parser(sub: Any) -> None:
         ("oracle-environment-sha256", "expected runner/environment contract SHA-256"),
     ):
         scan.add_argument("--" + flag, help=help_text)
+
+
+def add_parser(sub: Any) -> None:
+    """Register scan and the First Lap activation and observation commands."""
+    first_proof = sub.add_parser(
+        "first-proof",
+        help="run a local sandbox demonstration and bounded workspace inventory",
+    )
+    first_proof.add_argument("--root", default=".")
+    first_proof.add_argument("--out-dir", help="workspace-contained output directory")
+    first_proof.add_argument("--json", action="store_true")
+    add_scan_parser(sub)
     first_lap = sub.add_parser(
         "first-lap", help="prepare and verify the human-observed first activation lap"
     )

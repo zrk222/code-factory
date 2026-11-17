@@ -293,6 +293,20 @@ def test_advanced_help_and_explicit_commands_keep_original_dispatch(monkeypatch)
         assert calls[-1] == expected
 
 
+def test_scan_help_does_not_register_optional_workflows(monkeypatch, capsys):
+    from factoryline import cli_first_lap
+
+    def unexpected_registry(_sub):
+        pytest.fail("scan help loaded the full command registry")
+
+    monkeypatch.setattr(cli_first_lap, "add_parser", unexpected_registry)
+    with pytest.raises(SystemExit) as result:
+        bootstrap.main(["scan", "--help"])
+    assert result.value.code == 0
+    output = capsys.readouterr().out
+    assert "--static-only" in output and "--deep" in output
+
+
 def test_home_operator_flow_shows_plan_only_action_without_dummy_commands(
     tmp_path, capsys
 ):
