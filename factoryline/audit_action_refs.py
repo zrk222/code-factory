@@ -505,15 +505,18 @@ def _security_fixture_snapshot_bindings(audit, core, verified):
     """Replay detached, hash-checked bytes through the canonical static verifier."""
     from tempfile import TemporaryDirectory
 
-    with TemporaryDirectory(prefix="factory-fixture-replay-") as directory:
-        root = Path(directory).resolve()
-        for name, raw in verified.items():
-            destination = root / name
-            if not destination.resolve().is_relative_to(root):
-                return None
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(raw)
-        return _security_fixture_verifier_bindings(audit, core, root, verified)
+    try:
+        with TemporaryDirectory(prefix="factory-fixture-replay-") as directory:
+            root = Path(directory).resolve()
+            for name, raw in verified.items():
+                destination = root / name
+                if not destination.resolve().is_relative_to(root):
+                    return None
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(raw)
+            return _security_fixture_verifier_bindings(audit, core, root, verified)
+    except (OSError, ValueError):
+        return None
 
 
 def _has_application_fixture_claim(core):
