@@ -1089,7 +1089,8 @@ def _reduce_thread_receipts(
 def _guard_receipt_pin(path, observed, expected):
     if expected is not None and (observed != expected or _sha_path(path) != expected):
         raise MissionGraphError(
-            "MISSION_GRAPH_RECEIPT_DRIFT", "submitted receipt changed after verification"
+            "MISSION_GRAPH_RECEIPT_DRIFT",
+            "submitted receipt changed after verification",
         )
 
 
