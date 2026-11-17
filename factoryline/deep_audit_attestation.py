@@ -915,7 +915,7 @@ def _gitleaks_ledger_shape(ledger):
 def _gitleaks_ledger_binding(ledger, lane, inventory):
     return _deep_audit_io._gitleaks_ledger_identity(
         ledger, lane, inventory
-    ) and _deep_audit_io._gitleaks_ledger_status(ledger)
+    ) and _deep_audit_io.native_ledger_complete(ledger)
 
 
 def _gitleaks_ledger_identity(ledger, lane, inventory):
@@ -925,16 +925,6 @@ def _gitleaks_ledger_identity(ledger, lane, inventory):
         and ledger["source_sha256"] == inventory["candidate_sha256"]
         and ledger["config_sha256"] == lane["ruleset_sha256"]
         and ledger["root_sha256"] == _deep_audit_io.sha256_bytes(b"/src")
-    )
-
-
-def _gitleaks_ledger_status(ledger):
-    return (
-        ledger["prefilter_bypassed"] is True
-        and ledger["complete"] is True
-        and ledger["overflow"] is False
-        and type(ledger["invalid_paths"]) is int
-        and ledger["invalid_paths"] == 0
     )
 
 

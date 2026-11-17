@@ -27,15 +27,19 @@ numbered packages installed from their matching source train.
 
 Open an issue before changing the receipt protocol or canonical stage order.
 
-## Independent release review
+## Maintainer handoff
 
-The owner selected a separate specialty AI agent for source review. Protected
-main requires the `specialty-ai-review` status and CI. Record the agent's
-findings and their resolutions before merging; a status name alone is not
-review evidence. This is not independent human approval. Publishing requires
-the applicable quality, cadence, artifact, and provider gates documented in
-[release channels](docs/RELEASE_CHANNELS.md). A merge or local receipt does not
-authorize a marketplace upload or establish provider approval.
+1. In a clean clone at the candidate commit, install the [public toolchain](https://github.com/zrk222/code-factory/releases/tag/v0.49.7#install-the-complete-factory),
+   install the candidate with `python -m pip install .`, and run `factory doctor --strict --json` and
+   `python -I scripts/prooflab_e2e.py`. No publisher credentials are needed.
+2. Read the current required checks with `gh pr checks <number> --required`.
+   Record the candidate SHA, commands, failed or skipped checks, and disposition
+   in the PR. Review AI findings separately from human signoff.
+3. Rehearse the review with a second maintainer using their own account.
+   That maintainer verifies the candidate and [release gates](docs/RELEASE_CHANNELS.md)
+   independently. Grant only the repository or publishing access their role
+   needs, and use provider-managed credentials or trusted publishing. Do not
+   share the owner's login, tokens, or local workspace.
 
 Entries in `context/PROGRESS.md` record pipeline activity. `GATE`, `PROOF`, and
 `DONE` entries do not establish human authorship or independent review.

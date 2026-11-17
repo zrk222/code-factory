@@ -51,6 +51,16 @@ def digest(value: object) -> str:
     return sha256_bytes(canonical_bytes(value))
 
 
+def native_ledger_complete(ledger: dict) -> bool:
+    return (
+        ledger["prefilter_bypassed"] is True
+        and ledger["complete"] is True
+        and ledger["overflow"] is False
+        and type(ledger["invalid_paths"]) is int
+        and ledger["invalid_paths"] == 0
+    )
+
+
 def relative_path(value: object) -> str:
     """Require a canonical workspace path, rejecting ambiguous URI, Windows and traversal spellings."""
     text = require_str(value, "path", maximum=512)
@@ -1776,7 +1786,6 @@ _MOVED_EXPORTS = {
         _gitleaks_ledger_matrix
         _gitleaks_ledger_rows
         _gitleaks_ledger_shape
-        _gitleaks_ledger_status
         _gitleaks_preflight
         _gitleaks_row_values
         _gitleaks_scanned_bytes

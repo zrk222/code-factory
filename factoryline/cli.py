@@ -4163,19 +4163,11 @@ def _dispatch_route_group_32(a, capture_command, p):
 
 
 def _dispatch_route_group_33(a, capture_command, p):
-    if a.cmd == "memory":
+    if a.cmd in {"memory", "intent", "judgment"}:
         from .cli_governance import run as run_governance
 
         return run_governance(a)
-    if a.cmd == "change":
-        from .cli_evidence_chain import run as run_evidence_chain
-
-        return run_evidence_chain(a)
-    if a.cmd == "proof-ops":
-        from .cli_evidence_chain import run as run_evidence_chain
-
-        return run_evidence_chain(a)
-    if a.cmd == "proof-review":
+    if a.cmd in {"change", "proof-ops", "proof-review"}:
         from .cli_evidence_chain import run as run_evidence_chain
 
         return run_evidence_chain(a)
@@ -4187,14 +4179,6 @@ def _dispatch_route_group_33(a, capture_command, p):
         from .cli_saas import run as run_saas
 
         return run_saas(a)
-    if a.cmd == "intent":
-        from .cli_governance import run as run_governance
-
-        return run_governance(a)
-    if a.cmd == "judgment":
-        from .cli_governance import run as run_governance
-
-        return run_governance(a)
     if a.cmd == "github":
         from .cli_github import run as run_github
 
@@ -4203,7 +4187,7 @@ def _dispatch_route_group_33(a, capture_command, p):
 
 
 def _dispatch_route_group_34(a, capture_command, p):
-    if a.cmd == "repair":
+    if a.cmd in {"repair", "jetbrains"}:
         from .cli_ide import run as run_ide
 
         return run_ide(a)
@@ -4211,10 +4195,6 @@ def _dispatch_route_group_34(a, capture_command, p):
         from .cli_release import run as run_release
 
         return run_release(a)
-    if a.cmd == "jetbrains":
-        from .cli_ide import run as run_ide
-
-        return run_ide(a)
     if a.cmd in {"mcp", "junie", "issues"}:
         from .cli_integrations import run as run_integrations
 
@@ -4730,23 +4710,7 @@ def _dispatch_route_group_41(a, capture_command, p):
 
 
 def _dispatch_route_group_42(a, capture_command, p):
-    if a.cmd == "passport":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
-    if a.cmd == "verify-passport":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
-    if a.cmd == "challenge":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
-    if a.cmd == "coverage":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
-    if a.cmd == "policy":
+    if a.cmd in {"passport", "verify-passport", "challenge", "coverage", "policy"}:
         from .cli_artifacts import run as run_artifacts
 
         return run_artifacts(a)
