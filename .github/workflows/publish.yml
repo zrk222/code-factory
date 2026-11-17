@@ -245,8 +245,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.guard.outputs.candidate_commit }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select verified release source
+        env:
+          CANDIDATE_COMMIT: ${{ needs.guard.outputs.candidate_commit }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" || ! "$CANDIDATE_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Expected a commit from protected main." >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$CANDIDATE_COMMIT" HEAD
+          git switch --detach "$CANDIDATE_COMMIT"
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
