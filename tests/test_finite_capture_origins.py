@@ -2594,6 +2594,59 @@ def test_shared_call_result_selects_container_value_and_keeps_return_effect(tmp_
     assert dict(selected.items)["selected"].roots == frozenset({"request-body"})
 
 
+@pytest.mark.parametrize(
+    ("scope", "declaration", "called", "expected"),
+    (
+        ("caller", "nonlocal provided", True, None),
+        ("constructor", "nonlocal provided", True, None),
+        ("caller", "global provided", True, "provided"),
+        ("constructor", "global provided", True, "provided"),
+    ),
+)
+def test_captured_field_projection_separates_nested_binding_authority(
+    tmp_path, scope, declaration, called, expected
+):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    constructor = ["        self.sink = provided if provided else fallback"]
+    caller = ["    provided = 'primary'", "    return Entry(provided, 'fallback')"]
+    indent = "        " if scope == "constructor" else "    "
+    nested = [
+        f"{indent}def unrelated():",
+        f"{indent}    {declaration}",
+        f"{indent}    provided = None",
+    ]
+    if called:
+        nested.append(f"{indent}unrelated()")
+    if scope == "constructor":
+        constructor[:0] = nested
+    else:
+        caller[1:1] = nested
+    source = "\n".join(
+        [
+            "class Entry:",
+            "    def __init__(self, provided, fallback):",
+            *constructor,
+            "def caller():",
+            *caller,
+            "",
+        ]
+    ).encode()
+    path = tmp_path / "transfer.py"
+    digest = hashlib.sha256(source).hexdigest()
+    tree = ast.parse(source, filename=str(path))
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: source}, {path: digest})
+    owner, function = tree.body
+    bound = dict(
+        zip(("provided", "fallback"), function.body[-1].value.args, strict=True)
+    )
+    proof = finite.captured_literal_branch_field_transfer(
+        index, path, owner.body[0], bound, path, function, "sink", lambda _node: True
+    )
+    assert (proof["formal"] if proof else None) == expected
+
+
 def test_captured_branch_transfer_binds_literal_caller_and_selected_field(tmp_path):
     """Scalar branch selection transfers only the source-bound actual assigned to the chosen field."""
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex

@@ -1654,14 +1654,20 @@ def _captured_projection_receiver(source, path, constructor, bound):
     receiver = formals[0].arg
     return (
         receiver
-        if _captured_projection_receiver_closed(source, path, constructor, receiver)
+        if _captured_projection_receiver_closed(
+            source, path, constructor, receiver, bound.keys() | {receiver}
+        )
         else None
     )
 
 
-def _captured_projection_receiver_closed(source, path, constructor, receiver):
+def _captured_projection_receiver_closed(source, path, constructor, receiver, names):
     parents = source.parents[path]
     for node in ast.walk(constructor):
+        if isinstance(node, (ast.Nonlocal, ast.Global)) and _captured_binding_exported(
+            node, constructor, names
+        ):
+            return False
         if isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
             return False
         if (
@@ -1683,6 +1689,17 @@ def _captured_projection_receiver_closed(source, path, constructor, receiver):
     return True
 
 
+def _captured_binding_exported(node, function, names):
+    # Nonlocal access can change a captured cell; only this function's
+    # own global declarations change its local binding semantics.
+    from .review_integrity import _lexical_nodes
+
+    return not names.isdisjoint(node.names) and (
+        isinstance(node, ast.Nonlocal)
+        or any(child is node for child in _lexical_nodes(function))
+    )
+
+
 def _captured_call_scalar_context(source, path, caller, expression, default_path):
     if (
         not source.validate(path)
@@ -1690,59 +1707,20 @@ def _captured_call_scalar_context(source, path, caller, expression, default_path
         or id(caller) not in source.parents[path]
     ):
         return False
-    if id(expression) not in source.parents[path]:
-        if default_path is None or not source.validate(default_path):
-            return False
-        if id(expression) not in source.parents[default_path]:
-            return False
-    return True
-
-
-def _captured_unique_scalar_assignment(caller, expression, binding_occurrences):
-    rows = [
-        row
-        for row in caller.body
-        if isinstance(row, ast.Assign)
-        and len(row.targets) == 1
-        and isinstance(row.targets[0], ast.Name)
-        and row.targets[0].id == expression.id
-    ]
-    if len(rows) != 1 or len(binding_occurrences(caller.body, expression.id)) != 1:
-        return None
-    return rows[0]
-
-
-def _captured_call_scalar_expression(source, path, caller, expression):
-    if isinstance(expression, ast.Name):
-        from .credential_role_constructor_provider import binding_occurrences
-
-        if not source.validate(path):
-            return False, None
-        assignment = _captured_unique_scalar_assignment(
-            caller, expression, binding_occurrences
-        )
-        if (
-            assignment is None
-            or assignment not in caller.body
-            or assignment.lineno >= expression.lineno
-        ):
-            return False, None
-        return True, assignment.value
-    return True, expression
+    return id(expression) in source.parents[path] or (
+        default_path is not None
+        and source.validate(default_path)
+        and id(expression) in source.parents[default_path]
+    )
 
 
 def _captured_call_scalar_constant(expression):
-    if isinstance(expression, ast.Constant) and type(expression.value) in {
-        str,
-        bytes,
-        int,
-        float,
-        bool,
-        type(None),
-    }:
-        if isinstance(expression.value, (str, bytes)) and len(expression.value) > 4096:
-            return None
-        return (expression.value,)
+    if isinstance(expression, ast.Constant):
+        value = expression.value
+        if type(value) in {str, bytes}:
+            return (value,) if len(value) <= 4096 else None
+        if type(value) in {int, float, bool, type(None)}:
+            return (value,)
     return None
 
 
@@ -1752,10 +1730,31 @@ def captured_call_scalar(source, path, caller, expression, default_path=None):
         source, path, caller, expression, default_path
     ):
         return None
-    resolved, value = _captured_call_scalar_expression(source, path, caller, expression)
-    if not resolved:
+    if not isinstance(expression, ast.Name):
+        return _captured_call_scalar_constant(expression)
+    from .credential_role_constructor_provider import (
+        binding_dominates,
+        binding_occurrences,
+    )
+
+    parents = source.parents[path]
+    bindings = binding_occurrences(caller.body, expression.id)
+    if len(bindings) != 1 or any(
+        _captured_binding_exported(node, caller, {expression.id})
+        for node in ast.walk(caller)
+        if isinstance(node, (ast.Nonlocal, ast.Global))
+    ):
         return None
-    return _captured_call_scalar_constant(value)
+    binding = bindings[0]
+    assignment = parents.get(id(binding))
+    if (
+        isinstance(assignment, ast.Assign)
+        and assignment.targets == [binding]
+        and assignment in caller.body
+        and binding_dominates(assignment, expression, parents, caller)
+    ):
+        return _captured_call_scalar_constant(assignment.value)
+    return None
 
 
 def _captured_scalar_isinstance_guard(expression, known, builtin_stable):
