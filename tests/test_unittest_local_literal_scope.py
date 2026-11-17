@@ -10,6 +10,288 @@ from factoryline import credential_role_method_use_getter_audit as scope
 from factoryline.mock_fixture_provenance import application_test_index
 
 
+@pytest.mark.parametrize(
+    "variant",
+    ["rejected", "may-return", "unmodeled-effect", "eager-default", "descriptor"],
+)
+def test_native_scan_filters_only_configuration_rejected_before_authority(
+    tmp_path, variant
+):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    expression = "app.config.get('SECRET_KEY', '')"
+    if variant == "eager-default":
+        expression = "app.config.get('SECRET_KEY', unknown_default())"
+    prefix = "    inspect_receiver(app)\n" if variant == "unmodeled-effect" else ""
+    comparison = "not in" if variant == "may-return" else "in"
+    (tmp_path / "app.py").write_text(
+        "from flask import Flask\n"
+        "def validate(app):\n"
+        f"{prefix}"
+        f"    setting = {expression}\n"
+        f"    if setting.strip().lower() {comparison} {{'local-test-key'}}:\n"
+        "        raise RuntimeError('invalid configuration')\n"
+        "def make_app(configuration):\n"
+        "    app = Flask(__name__)\n"
+        "    app.config.from_object(configuration)\n"
+        "    validate(app)\n"
+        "    return app\n",
+        encoding="utf-8",
+    )
+    descriptor = (
+        "        @property\n        def OTHER(self):\n            return ignored()\n"
+        if variant == "descriptor"
+        else ""
+    )
+    (tmp_path / "test_app.py").write_text(
+        "import pytest\n"
+        "from app import make_app\n"
+        "def test_rejected_configuration():\n"
+        "    class Configuration:\n"
+        "        SECRET_KEY = 'LOCAL-TEST-KEY'\n"
+        f"{descriptor}"
+        "    with pytest.raises(RuntimeError):\n"
+        "        make_app(Configuration)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / "standalone.py").write_text(
+        "OPERATIVE_PASSWORD = 'unrelated-control'\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github/workflows/tests.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(
+        "name: tests\non: [push]\njobs:\n  tests:\n"
+        "    runs-on: ubuntu-latest\n    steps:\n      - run: python -m pytest\n",
+        encoding="utf-8",
+    )
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    paths = [
+        entry["raw_finding"]["path"]
+        for entry in report["finding_tier_report"]["ledger"]
+    ]
+    assert paths == (
+        ["standalone.py"] if variant == "rejected" else ["standalone.py", "test_app.py"]
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["audit_coverage"]["complete"] is True
+
+
+def _observe_literal_proof(monkeypatch, helper, literal_name):
+    from factoryline import captured_security_audit
+
+    original = getattr(captured_security_audit, helper)
+    observed = []
+
+    def observe(node, target, *args):
+        proven = original(node, target, *args)
+        if getattr(target, "id", None) == literal_name:
+            observed.append(proven)
+        return proven
+
+    monkeypatch.setattr(captured_security_audit, helper, observe)
+    return observed
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "presentation",
+        "mixed",
+        "rebound",
+        "caught",
+        "caller-caught",
+        "generator",
+        "unknown-context",
+        "finally-read",
+    ],
+)
+def test_exit_message_needs_closed_diagnostic_consumer(tmp_path, variant):
+    from factoryline.review_audits import security_scan
+
+    extra = "    authenticate(PASSWORD_MESSAGE)\n" if variant == "mixed" else ""
+    body = "    sys.exit(PASSWORD_MESSAGE)\n"
+    if variant == "caught":
+        body = "    try:\n        sys.exit(PASSWORD_MESSAGE)\n    except SystemExit as error:\n        authenticate(error.code)\n"
+    invocation = "report()\n"
+    if variant == "generator":
+        body = "    yield None\n" + body
+        invocation = "stream = report()\ntry:\n    list(stream)\nexcept SystemExit as error:\n    authenticate(error.code)\n"
+    if variant == "unknown-context":
+        body = "    with arbitrary_context():\n        sys.exit(PASSWORD_MESSAGE)\n"
+    if variant == "finally-read":
+        body = "    try:\n        sys.exit(PASSWORD_MESSAGE)\n    finally:\n        inspect_exception()\n"
+    if variant == "caller-caught":
+        invocation = "try:\n    report()\nexcept SystemExit as error:\n    authenticate(error.code)\n"
+    source = (
+        "import sys\nPASSWORD_MESSAGE = 'Server rejected the configured password.'\n"
+        + ("sys.exit = arbitrary\n" if variant == "rebound" else "")
+        + "def report():\n"
+        + extra
+        + body
+        + invocation
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf8")
+    report = security_scan(
+        tmp_path,
+        security_only=True,
+        defect_policy="source-role-v3",
+        cache_enabled=False,
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    refuted = report.get("refuted_security_observations", [])
+    assert (
+        sum(row["code"] == "SECURITY_HARDCODED_SECRET" for row in raw),
+        sum(row["code"] == "SECURITY_HARDCODED_SECRET" for row in refuted),
+    ) == ((0, 1) if variant == "presentation" else (1, 0))
+
+
+@pytest.mark.parametrize("extra", ["", "    enroll(SECRET_ENV)\n"])
+def test_captured_public_registry_label_requires_closed_uses(
+    tmp_path, monkeypatch, extra
+):
+    from factoryline.review_audits import security_scan
+
+    observed = _observe_literal_proof(
+        monkeypatch, "captured_public_registry_label", "SECRET_ENV"
+    )
+    (tmp_path / "app.py").write_text(
+        "import os\nSECRET_ENV = 'SERVICE_SIGNING_KEY'\n"
+        "def read():\n"
+        "    value = os.getenv(SECRET_ENV)\n"
+        + extra
+        + "    if value is None:\n        raise RuntimeError(f'Missing {SECRET_ENV}')\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert (not extra) in observed
+    assert any(f["code"] == "SECURITY_HARDCODED_SECRET" for f in raw) is bool(extra)
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
+@pytest.mark.parametrize("directory", ["service", "../outside"])
+def test_capture_launch_configuration_binds_only_contained_build_files(
+    tmp_path, directory
+):
+    from factoryline.captured_security_audit import capture_launch_configuration
+
+    data = f"services:\n  app:\n    build:\n      context: {directory}\n      dockerfile: Dockerfile.custom\n".encode()
+    sources = {"compose.yaml": data}
+
+    def read_source(_root, name):
+        if name == "docker-compose.yml":
+            raise ValueError("unreadable selector")
+        if name not in sources:
+            raise FileNotFoundError(name)
+        return sources[name]
+
+    paths, read = capture_launch_configuration(
+        tmp_path, read_source, 65_536, {"startup.py"}
+    )
+    builds = {
+        "service/Dockerfile.custom",
+        "service/.dockerignore",
+        "service/Dockerfile.custom.dockerignore",
+    }
+    baseline = {"startup.py", "compose.yaml", "docker-compose.yml"}
+    assert paths == (baseline | builds if directory == "service" else baseline)
+    sources["compose.yaml"] = b"changed after capture"
+    assert read(tmp_path, "compose.yaml") == data
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_captured_test_derived_input_requires_exact_patch_boundary(
+    tmp_path, monkeypatch, method
+):
+    from factoryline.review_audits import security_scan
+
+    observed = _observe_literal_proof(
+        monkeypatch, "captured_test_derived_input", "secret"
+    )
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / "checker.py").write_text(
+        "import hashlib\nimport requests\nBASE = 'https://example.invalid/check/'\n"
+        "def digest(value):\n    return hashlib.sha256(value.encode('utf-8')).hexdigest()\n"
+        "def lookup(value):\n    hashed = digest(value)\n    front, tail = hashed[:4], hashed[4:]\n"
+        "    reply = requests.get(BASE + front)\n    if reply.text == tail:\n        return 1\n    return 0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_checker.py").write_text(
+        "from unittest.mock import patch\nimport checker\ndef test_input():\n"
+        "    secret = 'fixed-catalog-test-data'\n"
+        f"    with patch.object(checker.requests, '{method}', return_value=None) as recorded:\n"
+        "        checker.lookup(secret)\n    emitted = recorded.call_args.args[0]\n"
+        "    assert secret not in emitted\n    assert checker.digest(secret)[:4] == emitted[-4:]\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert (method == "get") in observed
+    assert any(f["code"] == "SECURITY_HARDCODED_SECRET" for f in raw) is (
+        method == "post"
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
+@pytest.mark.parametrize("stable", [True, False])
+def test_captured_builtin_copy_preserves_proven_values_only(stable):
+    from types import SimpleNamespace
+
+    from factoryline.captured_security_audit import captured_builtin_copy
+    from factoryline.credential_role_identity_effects import _Value
+
+    call = ast.parse("clone(data)", mode="eval").body
+    witnessed = []
+    scope = SimpleNamespace(
+        canonical=lambda *_: "builtins.list",
+        index={},
+        audit=SimpleNamespace(
+            _app_signing_terminal_stable=lambda _index, name: stable
+            and name == "builtins.list"
+        ),
+        witness=lambda *args: witnessed.append(args),
+    )
+    flow = SimpleNamespace(
+        allocate_container=lambda _path, _call, kind, items: _Value(
+            inert_kind=kind, items=items, container_id="clone"
+        )
+    )
+    original = _Value(
+        inert_kind="tuple", container_id="source", roots=frozenset({"source-root"})
+    )
+    copied = captured_builtin_copy(scope, flow, "test_copy.py", call, [original], {})
+    if stable:
+        assert copied.inert_kind == "list" and copied.container_id == "clone"
+        assert copied.roots == original.roots and witnessed
+    else:
+        assert copied is None and not witnessed
+
+
 def captured_scope(tmp_path, source, filename="test_scope.py"):
     path = tmp_path / filename
     raw = source.encode()
@@ -63,6 +345,69 @@ def test_closed_unittest_local_literal_has_source_scope_only(tmp_path, literal):
     assert any(
         row["role"] == "declared_test_invocation" for row in result["witness_sources"]
     )
+
+
+@pytest.mark.parametrize(
+    ("body", "supported"),
+    [
+        ("observed = [SECRET] or external(SECRET)\nassert observed[0] == SECRET", True),
+        ("observed = [] or [SECRET]\nassert observed[0] == SECRET", True),
+        ("observed = [] and external(SECRET)\nassert SECRET == SECRET", True),
+        ("observed = [] or external(SECRET)", False),
+        ("observed = [unknown] or [SECRET]", False),
+        (
+            "if [SECRET]:\n    assert SECRET == SECRET\nelse:\n    external(SECRET)",
+            True,
+        ),
+    ],
+)
+def test_fixture_identity_scope_short_circuits_exact_builtin_containers(
+    tmp_path, body, supported
+):
+    result = evidence(
+        tmp_path, unittest_source("SECRET = 'ordinary-value-9417'\n" + body)
+    )
+    assert (result is not None) is supported
+
+
+@pytest.mark.parametrize(
+    ("body", "supported"),
+    [
+        ("copy = list((SECRET,))\nassert copy[0] == SECRET", True),
+        ("copy = tuple([SECRET])\nassert copy[0] == SECRET", True),
+        ("copy = dict({'key': SECRET})\nassert copy['key'] == SECRET", True),
+        ("copy = list() or [SECRET]\nassert copy[0] == SECRET", True),
+        ("copy = list(external(SECRET))", False),
+        ("copy = list({'key': SECRET})", False),
+        ("copy = list(iterable=[SECRET])", False),
+        ("list = external\ncopy = list([SECRET])", False),
+    ],
+)
+def test_fixture_scope_copies_only_bound_exact_builtin_shapes(
+    tmp_path, body, supported
+):
+    result = evidence(
+        tmp_path, unittest_source("SECRET = 'ordinary-value-9417'\n" + body)
+    )
+    assert (result is not None) is supported
+
+
+def test_captured_dict_copy_does_not_share_mutations(tmp_path):
+    source = unittest_source(
+        "SECRET = 'ordinary-value-9417'\n"
+        "original = {}\n"
+        "cloned = dict(original)\n"
+        "cloned['key'] = SECRET\n"
+        "if original:\n"
+        "    external(SECRET)\n"
+        "assert cloned['key'] == SECRET"
+    )
+    assert evidence(tmp_path, source) is not None
+
+
+def test_unknown_dictionary_shape_is_not_treated_as_empty():
+    projected = effects._Value(roots=frozenset({"credential"}), inert_kind="dict")
+    assert effects._validated_exact_scalar(projected, as_truth=True) == ()
 
 
 @pytest.mark.parametrize("custom", ["run", "__getattribute__", "setUpClass"])
@@ -514,6 +859,7 @@ def captured_test_profile(
     reverse_inputs=False,
     extra_configs=None,
     unbound_config=None,
+    verified_missing_configs=(),
 ):
     from factoryline.pytest_collection_audit import captured_test_invocation_profile
 
@@ -537,6 +883,9 @@ def captured_test_profile(
         for name, raw in configuration_bytes.items()
         if name != unbound_config
     }
+    identities.update(
+        {name: {"path": name, "state": "missing"} for name in verified_missing_configs}
+    )
     if script is not None:
         script_path = tmp_path / "runtests.py"
         raw = script.encode()
@@ -573,6 +922,73 @@ def captured_test_profile(
         invocation_sources,
         configuration_identities=identities,
     )
+
+
+@pytest.mark.parametrize(
+    ("complete", "source_has_explicit_config", "expected"),
+    [
+        (True, False, "DECLARED"),
+        (False, False, "UNRESOLVED"),
+        (True, True, "UNRESOLVED"),
+    ],
+)
+def test_pytest_default_profile_requires_bound_configuration_precedence(
+    tmp_path, complete, source_has_explicit_config, expected
+):
+    from factoryline.pytest_collection_audit import _PYTEST_CONFIG_SECTIONS
+
+    absent = [name for name, _ in _PYTEST_CONFIG_SECTIONS] if complete else []
+    configs = {}
+    if source_has_explicit_config:
+        absent.remove("pytest.ini")
+        configs = {"pytest.ini": b"[pytest]\naddopts=-p unknown_collector\n"}
+    evidence = captured_test_profile(
+        tmp_path,
+        workflow="jobs:\n  test:\n    steps:\n      - run: python -m pytest -q\n",
+        verified_missing_configs=absent,
+        extra_configs=configs,
+    )
+    assert evidence["status"] == expected
+    if expected == "DECLARED":
+        assert evidence["selector"]["configuration"] == {
+            "path": None,
+            "state": "missing",
+        }
+        assert set(evidence["selector"]["python_files"]) == {"test_*.py", "*_test.py"}
+        assert set(absent) <= evidence["configuration_identities"].keys()
+        assert evidence["execution_status"] == "NOT_EXECUTED"
+
+
+@pytest.mark.parametrize(
+    ("command", "shadow", "expected"),
+    [
+        ("python -m unittest discover -s tests -v", False, "DECLARED"),
+        ("python -m unittest discover -s ../tests", False, "UNRESOLVED"),
+        ("python -m unittest discover -s tests -p case.py", False, "UNRESOLVED"),
+        ("python -m unittest discover -s tests", True, "UNRESOLVED"),
+    ],
+)
+def test_captured_unittest_discovery_binds_standard_runner(
+    tmp_path, command, shadow, expected
+):
+    sources = {"tests/test_scope.py": "from unittest import TestCase"}
+    if shadow:
+        sources["unittest.py"] = "def runtime_override(): pass"
+    evidence = captured_test_profile(
+        tmp_path,
+        workflow=f"jobs:\n  test:\n    steps:\n      - run: {command}\n",
+        extra_sources=sources,
+    )
+    assert evidence["status"] == expected
+    if expected == "DECLARED":
+        assert evidence["runner"] == "unittest"
+        assert evidence["selector"]["start_directory"] == "tests"
+        assert evidence["execution_status"] == "NOT_EXECUTED"
+
+
+def test_unittest_profile_does_not_activate_pytest_django_settings():
+    authority = scope._SourceTestScope.configured_settings_authority
+    assert authority(object(), {"status": "DECLARED", "runner": "unittest"}) is None
 
 
 _NATIVE_RUNNER_SOURCE = (
@@ -1098,15 +1514,66 @@ def test_source_settings_role_uses_workflow_selector_and_receipt(
     )
 
 
-def test_captured_workflows_without_test_entry_are_explicit_noncontributors(tmp_path):
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("gh pr view", "NO_TEST_INVOCATION"),
+        ("python -V", "NO_TEST_INVOCATION"),
+        ("python -m pip --version", "NO_TEST_INVOCATION"),
+        ("python tests/*", "UNRESOLVED"),
+        ("echo ready | python tests/*", "UNRESOLVED"),
+        ("python './tests/*'", "UNRESOLVED"),
+        ("python scripts/check", "UNRESOLVED"),
+        ("python -", "UNRESOLVED"),
+        ("python -v", "UNRESOLVED"),
+    ],
+)
+def test_captured_workflows_claim_absence_only_for_known_noncontributors(
+    tmp_path, command, expected
+):
+    profile = captured_test_profile(
+        tmp_path,
+        workflow=f"jobs:\n  update:\n    steps:\n      - run: {command}\n",
+    )
+    assert profile["status"] == expected
+    assert profile["invocations"] == []
+    if expected == "NO_TEST_INVOCATION":
+        assert profile["workflows"] == [
+            {"path": ".github/workflows/ci.yml", "status": expected}
+        ]
+
+
+@pytest.mark.parametrize(
+    "external_workflow", [".travis.yml", ".gitlab-ci.yml", "azure-pipelines.yml"]
+)
+def test_unmodeled_workflow_prevents_false_test_invocation_absence(
+    tmp_path, external_workflow
+):
+    from factoryline.import_context import application_profile_configuration
+
+    raw = b"script: tox\n"
+    (tmp_path / external_workflow).write_bytes(raw)
+    rows, identities, valid = application_profile_configuration(
+        tmp_path, lambda root, name: (root / name).read_bytes(), 1024
+    )
+    assert valid and identities[external_workflow]["state"] == "read"
+    assert any(
+        row["path"] == external_workflow
+        and row["sha256"] == hashlib.sha256(raw).hexdigest()
+        for row in rows
+    )
     profile = captured_test_profile(
         tmp_path,
         workflow="jobs:\n  update:\n    steps:\n      - run: gh pr view\n",
+        extra_configs={external_workflow: raw},
     )
-    assert profile["status"] == "NO_TEST_INVOCATION"
-    assert profile["workflows"] == [
-        {"path": ".github/workflows/ci.yml", "status": "NO_TEST_INVOCATION"}
-    ]
+    assert profile["status"] == "UNRESOLVED" and profile["invocations"] == []
+    assert profile["reason"] == "captured-workflow-dialect-unmodeled"
+    assert {"path": external_workflow, "status": "UNRESOLVED"} in profile["workflows"]
+    assert (
+        profile["configuration_identities"][external_workflow]["sha256"]
+        == identities[external_workflow]["sha256"]
+    )
 
 
 def test_captured_native_profile_is_independent_of_input_mapping_order(tmp_path):
@@ -1211,6 +1678,37 @@ def test_captured_tox_selection_accepts_legacy_report_flags(flag):
     assert selected["captured_invocations"]["commands"] == [
         ("testenv", f"pytest {flag}")
     ]
+
+
+@pytest.mark.parametrize(
+    ("args", "addopts", "expected"),
+    [
+        ("-q", "-p no:cacheprovider", "DECLARED"),
+        ("-p no:cacheprovider -q", "-q", "DECLARED"),
+        ("-q", "-p external_plugin", "UNRESOLVED"),
+        ("-p no:external_plugin", "-q", "UNRESOLVED"),
+        ("-p", "-q", "UNRESOLVED"),
+        ("--junitxml -p no:cacheprovider result.xml", "-q", "UNRESOLVED"),
+    ],
+)
+def test_captured_invocation_respects_exact_cache_disable(
+    tmp_path, args, addopts, expected
+):
+    raw = f"[pytest]\naddopts={addopts}\n".encode()
+    result = captured_test_profile(
+        tmp_path,
+        workflow=f"jobs:\n  test:\n    steps:\n      - run: python -m pytest {args}\n",
+        extra_configs={"pytest.ini": raw},
+    )
+    assert result["status"] == expected
+    assert result["execution_status"] == "NOT_EXECUTED"
+    if expected == "DECLARED":
+        assert result["runner"] == "pytest"
+        assert (
+            result["selector"]["configuration"]["sha256"]
+            == hashlib.sha256(raw).hexdigest()
+        )
+        assert result["invocations"][0]["selector_effects"] == {}
 
 
 def test_pytest_coverage_flags_require_same_profile_provider():

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import configparser
 import ast
+import configparser
 import hashlib
 import re
 import shlex
@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from fnmatch import fnmatchcase
 from functools import lru_cache
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import yaml
 
 try:
@@ -28,6 +28,11 @@ _UNRESOLVED_CONFIG_REASONS = {
     "unsupported": "unsupported_collection_configuration",
     "unmodeled-builtin-collection": "unmodeled_builtin_collection_options",
 }
+
+
+def pytest_collection_authoritative(identity):
+    """Reject fixture authority for unknown or discovery-only collection."""
+    return (identity or {}).get("collection_state") not in {"UNKNOWN", "DISCOVERY_ONLY"}
 
 
 @contextmanager
@@ -160,6 +165,37 @@ def _pytest_function_test_disabled(statement, function_name):
     )
 
 
+_PYTEST_CONFIG_SECTIONS = (
+    ("pytest.toml", "toml-pytest"),
+    (".pytest.toml", "toml-pytest"),
+    ("pytest.ini", "pytest"),
+    (".pytest.ini", "pytest"),
+    ("pyproject.toml", "pyproject"),
+    ("tox.ini", "pytest"),
+    ("setup.cfg", "tool:pytest"),
+)
+
+_UNMODELED_TEST_WORKFLOWS = frozenset(
+    {".travis.yml", ".gitlab-ci.yml", "azure-pipelines.yml"}
+)
+
+
+def captured_test_configuration_names(paths):
+    """Use the same selectors and unmodeled descriptors in both scan passes."""
+    return {name for name, _ in _PYTEST_CONFIG_SECTIONS}.union(
+        _UNMODELED_TEST_WORKFLOWS.intersection(paths)
+    )
+
+
+def unmodeled_test_workflow_paths(root):
+    """Discover external workflow descriptors without interpreting their scripts."""
+    return (
+        name
+        for name in sorted(_UNMODELED_TEST_WORKFLOWS)
+        if (Path(root) / name).is_file() or (Path(root) / name).is_symlink()
+    )
+
+
 def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
     """Read the selected root config, with explicit uncertainty for static scans."""
     from .review_audits import (
@@ -171,16 +207,7 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
 
     allow_unknown = allow_unknown or _ADVISORY_COLLECTION.get()
     defaults = set(_TEST_FILE_PATTERNS)
-    candidates = (
-        ("pytest.toml", "toml-pytest"),
-        (".pytest.toml", "toml-pytest"),
-        ("pytest.ini", "pytest"),
-        (".pytest.ini", "pytest"),
-        ("pyproject.toml", "pyproject"),
-        ("tox.ini", "pytest"),
-        ("setup.cfg", "tool:pytest"),
-    )
-    for relative, section in candidates:
+    for relative, section in _PYTEST_CONFIG_SECTIONS:
         result = _pytest_config_file(root, relative, section, defaults)
         if result is not None and result[1].get("state") != "absent-section":
             state = result[1].get("state")
@@ -193,7 +220,7 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
             identity = _pytest_collection_source_identity(
                 root, identity, source_files, allow_unknown=allow_unknown
             )
-            if identity.get("collection_state") == "UNKNOWN":
+            if not pytest_collection_authoritative(identity):
                 patterns = set()
             return patterns, identity
     patterns, identity = (
@@ -210,7 +237,7 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
         root, identity, source_files, allow_unknown=allow_unknown
     )
     return (
-        set() if identity.get("collection_state") == "UNKNOWN" else patterns
+        set() if not pytest_collection_authoritative(identity) else patterns
     ), identity
 
 
@@ -230,13 +257,20 @@ def _pytest_collection_source_identity(
 
     sources = []
     hooks = []
+    roots = identity.get("static_testpaths", ())
+    profile = identity.get("static_discovery")
+    discovered, doctests = [], []
     settings = _pytest_collection_settings(identity)
     files = _security_source_files(root) if source_files is None else source_files
     for path in files:
         relative = path.relative_to(root).as_posix()
         is_conftest = path.name == "conftest.py"
         is_test_module = _pytest_file_matches(relative, settings["python_files"])
-        if not is_conftest and not is_test_module:
+        in_declared_root = any(relative.startswith(p + "/") for p in roots)
+        is_doctest_module = (
+            profile == "doctest" and in_declared_root and not is_conftest
+        )
+        if not (is_conftest or is_test_module or is_doctest_module):
             continue
         data = None
         try:
@@ -261,6 +295,16 @@ def _pytest_collection_source_identity(
                 )
             continue
         found = _pytest_collection_hook_names(tree, is_conftest, is_test_module)
+        discovered.extend(
+            _pytest_discovery_source(
+                relative, data, in_declared_root and is_test_module
+            )
+        )
+        doctests.extend(
+            _pytest_discovery_source(
+                relative, data, is_doctest_module and _pytest_has_literal_doctest(tree)
+            )
+        )
         plugin_assignment = (is_conftest or is_test_module) and any(
             _pytest_plugin_declaration_active(node) for node in tree.body
         )
@@ -293,8 +337,55 @@ def _pytest_collection_source_identity(
             "Cannot determine pytest test collection: custom collection hooks "
             "or pytest plugins are unsupported."
         )
+    return _pytest_source_collection_report(
+        identity, hooks, sources, discovered, doctests
+    )
+
+
+def _pytest_discovery_source(relative, raw, selected):
+    return (
+        [{"path": relative, "sha256": hashlib.sha256(raw).hexdigest()}]
+        if selected
+        else []
+    )
+
+
+def _pytest_has_literal_doctest(tree):
+    return any(
+        line.lstrip().startswith(">>> ")
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        )
+        for line in (ast.get_docstring(node, clean=False) or "").splitlines()
+    )
+
+
+def _pytest_source_collection_report(identity, hooks, sources, discovered, doctests):
     input_state = identity.get("state")
     reason = _UNRESOLVED_CONFIG_REASONS.get(input_state)
+    roots = identity.get("static_testpaths", ())
+    if (
+        roots
+        and not hooks
+        and all(
+            any(row["path"].startswith(p + "/") for row in (*discovered, *doctests))
+            for p in roots
+        )
+    ):
+        return {
+            **identity,
+            "state": "declared-static",
+            "collection_state": "DISCOVERY_ONLY",
+            "mode": "static_pytest_discovery",
+            "reason": f"{identity['static_discovery']}_execution_unverified",
+            "python_files": [],
+            "python_functions": [],
+            "python_classes": [],
+            "static_test_sources": sorted(discovered, key=lambda row: row["path"]),
+            "static_doctest_sources": sorted(doctests, key=lambda row: row["path"]),
+            "conftest_sources": sources,
+        }
     unknown = bool(hooks or reason)
     if unknown:
         reason = reason or _pytest_collection_hook_gap_reason(hooks)
@@ -430,6 +521,11 @@ def _pytest_config_data(data, relative, section, defaults):
     if configured is _UNSUPPORTED_PYTEST_CONFIG:
         return defaults, {**identity, "state": "unsupported"}
     if configured is _UNMODELED_BUILTIN_COLLECTION:
+        options = _pytest_configuration_options(text, section)
+        discovery = _pytest_static_discovery_options(options)
+        if discovery is not None:
+            identity.update(_pytest_patterns_from_options(options))
+            identity["static_discovery"], identity["static_testpaths"] = discovery
         return defaults, {**identity, "state": "unmodeled-builtin-collection"}
     if configured is _ABSENT_PYTEST_SECTION:
         if relative in {"pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini"}:
@@ -493,23 +589,11 @@ def _toml_pytest_pattern_value(text, section):
     return _pytest_pattern_value(text, section)
 
 
-def captured_pytest_configuration(
-    captured, *, source_role_only=False, include_tox_invocations=True
-):
-    """Select captured root configuration with collection's exact precedence."""
+def _select_captured_pytest_configuration(captured, complete_precedence):
+    """Choose the first authoritative root file and retain its raw options."""
     from .review_audits import _TEST_FILE_PATTERNS
 
-    if not isinstance(captured, dict):
-        return None
-    for name, section in (
-        ("pytest.toml", "toml-pytest"),
-        (".pytest.toml", "toml-pytest"),
-        ("pytest.ini", "pytest"),
-        (".pytest.ini", "pytest"),
-        ("pyproject.toml", "pyproject"),
-        ("tox.ini", "pytest"),
-        ("setup.cfg", "tool:pytest"),
-    ):
+    for name, section in _PYTEST_CONFIG_SECTIONS:
         if name not in captured:
             continue
         raw = captured[name]
@@ -526,18 +610,462 @@ def captured_pytest_configuration(
             options = _pytest_configuration_options(raw.decode("utf-8"), section)
         except (UnicodeError, ValueError, configparser.Error):
             return None
-        if options is _ABSENT_PYTEST_SECTION:
-            options = {}
-        effective = _pytest_captured_invocation_options(
-            captured,
-            options,
-            source_role_only=source_role_only,
-            include_tox_invocations=include_tox_invocations,
+        return identity, {} if options is _ABSENT_PYTEST_SECTION else options
+    if complete_precedence is not True:
+        return None
+    return {"path": None, "state": "missing", **_pytest_collection_settings()}, {}
+
+
+def captured_pytest_configuration(
+    captured,
+    *,
+    source_role_only=False,
+    include_tox_invocations=True,
+    complete_precedence=False,
+):
+    """Select captured root configuration with collection's exact precedence."""
+    if not isinstance(captured, dict):
+        return None
+    selected = _select_captured_pytest_configuration(captured, complete_precedence)
+    if selected is None:
+        return None
+    identity, options = selected
+    effective = _pytest_captured_invocation_options(
+        captured,
+        options,
+        source_role_only=source_role_only,
+        include_tox_invocations=include_tox_invocations,
+    )
+    return None if effective is None else {"identity": identity, "options": effective}
+
+
+def _captured_pytest_inputs(module):
+    explicit = getattr(module, "_security_oracle_context", {}).get(
+        "_security_launch_configs"
+    )
+    if explicit is not None:
+        return None, explicit
+    context = getattr(module, "_security_source_context", None)
+    match context:
+        case (Path() as root, dict() as captured) if isinstance(context, tuple):
+            return root, captured
+        case _:
+            return None, None
+
+
+def captured_pytest_documents(module):
+    """Read configuration from private producer or verifier capture state."""
+    root, captured = _captured_pytest_inputs(module)
+    if root is None:
+        return captured if isinstance(captured, dict) else None
+    return {
+        Path(path).relative_to(root).as_posix(): raw
+        for path, raw in captured.items()
+        if isinstance(path, (str, Path)) and Path(path).is_relative_to(root)
+    }
+
+
+def captured_pytest_function_selected(
+    source, path, function, documents, *, invocation_index=None
+):
+    """Match a function against explicit configuration and optional declared invocations."""
+    from .import_context import application_configuration_names
+
+    if invocation_index is None:
+        selection = captured_pytest_configuration(documents)
+        if selection is None:
+            return False
+        selector = _pytest_collection_settings(selection["identity"])
+    else:
+        if not isinstance(documents, dict):
+            return False
+        names = application_configuration_names(documents)
+        configs = {name: raw for name, raw in documents.items() if name in names}
+        if not all(isinstance(raw, bytes) for raw in configs.values()):
+            return False
+        sources = {source.relative(p): raw for p, raw in source.source_bytes.items()}
+        sources.update(
+            (name, raw)
+            for name, raw in configs.items()
+            if name.startswith(".github/workflows/")
         )
-        if effective is None:
-            return None
-        return {"identity": identity, "options": effective}
+        identities = {
+            name: {
+                "path": name,
+                "state": "read",
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": len(raw),
+            }
+            for name, raw in configs.items()
+        }
+        profile = captured_test_invocation_profile(
+            invocation_index, configs, sources, configuration_identities=identities
+        )
+        if profile["status"] != "DECLARED" or profile["runner"] != "pytest":
+            return False
+        selector = profile["selector"]
+        if selector["configuration"][
+            "state"
+        ] != "read" or not _captured_pytest_setup_closed(
+            source, path, invocation_index
+        ):
+            return False
+    return _pytest_file_matches(
+        source.relative(path), selector["python_files"]
+    ) and _pytest_name_matches(function.name, selector["python_functions"])
+
+
+def _captured_pytest_setup_closed(source, path, index):
+    from .mock_fixture_provenance import _app_expression_name
+
+    for p, tree in source.snapshots.items():
+        if (
+            not source.validate(p)
+            or p.name == "conftest.py"
+            or _pytest_collection_hook_names(tree, False, True)
+        ):
+            return False
+        if any(
+            _pytest_plugin_declaration_active(n)
+            or isinstance(n, (ast.Name, ast.Attribute))
+            and getattr(n, "id", getattr(n, "attr", None)) in {"__test__", "pytestmark"}
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            for n in ast.walk(tree)
+        ):
+            return False
+    for stmt in source.snapshots[path].body:
+        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if stmt.name in {"setup_module", "setUpModule", "setup_function"}:
+            return False
+        for decorator in stmt.decorator_list:
+            if (
+                not isinstance(decorator, ast.Call)
+                or _app_expression_name(index, path, decorator.func) != "pytest.fixture"
+            ):
+                return False
+            if decorator.args or any(
+                k.arg in {None, "autouse"}
+                and not (
+                    k.arg == "autouse"
+                    and isinstance(k.value, ast.Constant)
+                    and k.value.value is False
+                )
+                for k in decorator.keywords
+            ):
+                return False
+    return True
+
+
+def _rejection_single_argument(fn):
+    args = fn.args
+    if len(args.args) == 1 and len(tuple(ast.iter_child_nodes(args))) == 1:
+        return args.args[0].arg
     return None
+
+
+def _rejection_assignment(stmt):
+    match stmt:
+        case ast.Assign(targets=[ast.Name(id=name)]) if not name.startswith("_"):
+            return name
+    return None
+
+
+_PROJECTION_UNKNOWN = object()
+_PROJECTION_SCALARS = {"bool", "str", "int", "float", "bytes", "NoneType"}
+
+
+def _projection_exact(value):
+    kind = "set" if isinstance(value, frozenset) else type(value).__name__
+    return frozenset({kind}), value
+
+
+def _projection_unknown(*kinds):
+    return frozenset(kinds), _PROJECTION_UNKNOWN
+
+
+def _projection_is(value, *kinds):
+    return value is not None and value[0].issubset(kinds)
+
+
+def _projection_join(left, right):
+    return left if left == right else _projection_unknown(*(left[0] | right[0]))
+
+
+def _projection_truth(value):
+    return {False, True} if value[1] is _PROJECTION_UNKNOWN else {bool(value[1])}
+
+
+class ConfigurationRejectionProjection:
+    """Bounded abstract scalars; an unsupported reachable effect invalidates proof."""
+
+    def __init__(
+        self, resolve_provider, owner, config, receiver=None, *, resolve_guard=None
+    ):
+        self.resolve_provider, self.owner = resolve_provider, owner
+        self.config, self.receiver = config, receiver
+        self.resolve_guard = resolve_guard
+        self.budget = 128
+
+    def namespace(self, body, parent, *, fields=False):
+        """Project distinct inert assignments without accepting unknown field values."""
+        names = {}
+        for stmt in body:
+            name = _rejection_assignment(stmt)
+            if name is None or name in names:
+                return None
+            value = self.value(stmt.value, {**parent, **names})
+            if (
+                value is None
+                or fields
+                and not _projection_is(value, *_PROJECTION_SCALARS, "set")
+            ):
+                return None
+            names[name] = value
+        return names
+
+    def terminal(self, body, names=None, depth=0):
+        """Require every modeled reachable path to end in the same rejection."""
+        if depth > 12 or self.budget < len(body):
+            return None
+        self.budget -= len(body)
+        names = dict(names or {})
+        for i, stmt in enumerate(body):
+            if (name := _rejection_assignment(stmt)) is not None:
+                value = self.value(stmt.value, names)
+                if value is None or name == self.receiver:
+                    return None
+                names[name] = value
+            elif isinstance(stmt, ast.If):
+                return self._conditional_terminal(stmt, body[i + 1 :], names, depth)
+            else:
+                return self._terminal_raise(stmt, names)
+        return None
+
+    def _conditional_terminal(self, stmt, continuation, names, depth):
+        result = self.value(stmt.test, names)
+        if result is None:
+            result = self.guard(stmt.test, names)
+        if not _projection_is(result, "bool"):
+            return None
+        outcomes = {
+            self.terminal(
+                [*(stmt.body if yes else stmt.orelse), *continuation], names, depth + 1
+            )
+            for yes in _projection_truth(result)
+        }
+        return next(iter(outcomes)) if len(outcomes) == 1 else None
+
+    def _terminal_raise(self, stmt, names):
+        match stmt:
+            case ast.Raise(
+                cause=None, exc=ast.Call(func=func, args=args, keywords=[])
+            ) if (
+                len(args) <= 1
+                and self.provider(func, names) == "RuntimeError"
+                and all(_projection_is(self.value(arg, names), "str") for arg in args)
+            ):
+                return stmt
+        return None
+
+    def guard(self, node, names):
+        """Resolve a captured single-return guard for the selected receiver."""
+        match node:
+            case ast.Call(
+                func=ast.Name(id=callee), args=[ast.Name(id=receiver)], keywords=[]
+            ) if (
+                self.resolve_guard is not None
+                and receiver == self.receiver
+                and callee not in names
+            ):
+                helper = self.resolve_guard(node.func, self.owner)
+            case _:
+                return None
+        if (
+            helper is None
+            or len(helper.body) != 1
+            or not isinstance(helper.body[0], ast.Return)
+        ):
+            return None
+        receiver = _rejection_single_argument(helper)
+        if receiver is None:
+            return None
+        return ConfigurationRejectionProjection(
+            self.resolve_provider, helper, self.config, receiver
+        ).value(helper.body[0].value, {})
+
+    def provider(self, node, names):
+        """Resolve the exact provider under the current owner and bindings."""
+        return self.resolve_provider(self.owner, node, names)
+
+    def value(self, node, names, depth=0):
+        """Evaluate bounded scalar expressions while preserving unknown outcomes."""
+        if depth > 24:
+            return None
+
+        def read(child):
+            return self.value(child, names, depth + 1)
+
+        match node:
+            case ast.Name(id=name):
+                return names.get(name)
+            case ast.Call():
+                return self.call(node, names, read)
+            case ast.Compare(left=left, ops=[op], comparators=[right]):
+                return self.compare(op, read(left), read(right))
+            case ast.BoolOp(op=op, values=values):
+                return self.boolean(op, values, read)
+            case ast.IfExp(test=test, body=body, orelse=other):
+                condition = read(test)
+                if _projection_is(condition, "bool"):
+                    values = [
+                        read(body if yes else other)
+                        for yes in _projection_truth(condition)
+                    ]
+                    if all(v is not None for v in values):
+                        return _projection_join(values[0], values[-1])
+            case _:
+                return self.inert_value(node, read)
+        return None
+
+    @staticmethod
+    def inert_value(node, read):
+        """Project literal and structural values without executing captured code."""
+        match node:
+            case ast.Constant(value=value) if (
+                type(value).__name__ in _PROJECTION_SCALARS
+            ):
+                return _projection_exact(value)
+            case ast.Attribute(value=child, attr="parent") if _projection_is(
+                read(child), "path"
+            ):
+                return _projection_unknown("path")
+            case ast.Set(elts=items) if len(items) <= 128:
+                from .review_audits import _constant_value
+
+                value = _constant_value(node)
+                if type(value) is set and all(type(item) is str for item in value):
+                    return _projection_exact(frozenset(value))
+            case ast.BinOp(left=left, op=op, right=right):
+                shape = {ast.Div: ("path", "str"), ast.Mult: ("int", "int")}.get(
+                    type(op)
+                )
+                if (
+                    shape
+                    and _projection_is(read(left), shape[0])
+                    and _projection_is(read(right), shape[1])
+                ):
+                    return _projection_unknown(shape[0])
+            case ast.JoinedStr(values=parts) if all(
+                isinstance(p, ast.Constant)
+                or isinstance(p, ast.FormattedValue)
+                and p.conversion == -1
+                and p.format_spec is None
+                and _projection_is(read(p.value), "str", "int", "float", "path")
+                for p in parts
+            ):
+                return _projection_unknown("str")
+        return None
+
+    def call(self, node, names, read):
+        """Accept only modeled receiver lookups and canonical scalar operations."""
+        if node.keywords:
+            return None
+        func, values = node.func, [read(n) for n in node.args]
+        if any(v is None for v in values):
+            return None  # Python evaluates lookup defaults even when the key exists.
+        if self.receiver and ast.unparse(func) == self.receiver + ".config.get":
+            return self._lookup(values)
+        canonical = self.provider(func, names)
+        if canonical == "os.environ.get":
+            return self._lookup(values, environment=True)
+        if len(values) == 1:
+            return self.scalar_call(canonical, values[0])
+        if not values and isinstance(func, ast.Attribute):
+            return self._scalar_member(func.attr, read(func.value))
+        return None
+
+    def _lookup(self, values, *, environment=False):
+        if len(values) not in (1, 2) or not _projection_is(values[0], "str"):
+            return None
+        if not environment:
+            return self.config.get(
+                values[0][1]
+            )  # Other fields may have framework defaults.
+        default = values[1] if len(values) == 2 else _projection_exact(None)
+        if _projection_is(default, "str", "NoneType"):
+            return _projection_join(_projection_unknown("str"), default)
+        return None
+
+    @staticmethod
+    def scalar_call(name, value):
+        """Project canonical scalar conversions with explicit accepted input kinds."""
+        if name == "pathlib.Path" and _projection_is(value, "str", "path"):
+            return _projection_unknown("path")
+        if name == "str" and _projection_is(value, *_PROJECTION_SCALARS, "path"):
+            return (
+                _projection_unknown("str")
+                if value[1] is _PROJECTION_UNKNOWN
+                else _projection_exact(str(value[1]))
+            )
+        if name in {"int", "float"} and _projection_is(
+            value, "int", "float", "bool", "str"
+        ):
+            return _projection_unknown(name)
+        return None
+
+    @staticmethod
+    def _scalar_member(name, value):
+        if name in {"strip", "lower", "upper"} and _projection_is(value, "str"):
+            return (
+                value
+                if value[1] is _PROJECTION_UNKNOWN
+                else _projection_exact(getattr(value[1], name)())
+            )
+        if name in {"resolve", "as_posix"} and _projection_is(value, "path"):
+            return _projection_unknown("path" if name == "resolve" else "str")
+        return None
+
+    @staticmethod
+    def compare(op, left, right):
+        """Compare bounded scalar domains without granting arbitrary operator effects."""
+        membership = isinstance(op, (ast.In, ast.NotIn))
+        if membership:
+            if not (_projection_is(left, "str") and _projection_is(right, "set")):
+                return None
+        elif not isinstance(op, (ast.Eq, ast.NotEq)) or not all(
+            _projection_is(v, *_PROJECTION_SCALARS) for v in (left, right)
+        ):
+            return None
+        first, second = left[1], right[1]
+        if first is _PROJECTION_UNKNOWN or second is _PROJECTION_UNKNOWN:
+            return _projection_unknown("bool")
+        same = first in second if membership else first == second
+        return _projection_exact(same != isinstance(op, (ast.NotEq, ast.NotIn)))
+
+    @staticmethod
+    def boolean(op, values, read):
+        """Preserve short-circuit evaluation and join only modeled scalar outcomes."""
+        result = read(values[0])
+        keep = isinstance(op, ast.Or)
+        for operand in values[1:]:
+            if not _projection_is(result, *_PROJECTION_SCALARS):
+                return None
+            truth = _projection_truth(result)
+            if truth == {keep}:
+                return result
+            right = read(operand)
+            if right is None:
+                return None
+            if truth == {not keep}:
+                result = right
+                continue
+            if _projection_is(result, "bool"):
+                result = _projection_exact(keep)
+            elif keep:
+                result = _projection_unknown(*(result[0] - {"NoneType"}))
+            result = _projection_join(result, right)
+        return result
 
 
 def captured_test_invocation_profile(
@@ -595,10 +1123,18 @@ def _captured_test_invocation_profile(
         return None
     workflows, workflow_dispositions = projected
     if not workflows:
+        unmodeled = sorted(_UNMODELED_TEST_WORKFLOWS.intersection(configuration_bytes))
+        workflow_dispositions.extend(
+            {"path": name, "status": "UNRESOLVED"} for name in unmodeled
+        )
         return {
             "schema": "factory.captured-test-invocation-profile.v1",
-            "status": "NO_TEST_INVOCATION",
-            "reason": "all-captured-workflows-are-valid-noncontributors",
+            "status": "UNRESOLVED" if unmodeled else "NO_TEST_INVOCATION",
+            "reason": (
+                "captured-workflow-dialect-unmodeled"
+                if unmodeled
+                else "all-captured-workflows-are-valid-noncontributors"
+            ),
             "execution_status": "NOT_EXECUTED",
             "runner": None,
             "selector": None,
@@ -637,7 +1173,11 @@ def _captured_test_invocation_profile(
     )
     if runner == "pytest":
         selection = captured_pytest_configuration(
-            configuration_bytes, include_tox_invocations=False
+            configuration_bytes,
+            include_tox_invocations=False,
+            complete_precedence=all(
+                name in configuration_identities for name, _ in _PYTEST_CONFIG_SECTIONS
+            ),
         )
         if selection is None:
             return None
@@ -673,7 +1213,8 @@ def _captured_test_invocation_profile(
         }
     else:
         selector = workflows[0]["runner"]
-        if len({row["runner"]["settings_module"] for row in workflows}) != 1:
+        key = "start_directory" if runner == "unittest" else "settings_module"
+        if len({row["runner"][key] for row in workflows}) != 1:
             return None
     return {
         "schema": "factory.captured-test-invocation-profile.v1",
@@ -691,11 +1232,12 @@ def _captured_test_invocation_profile(
                 if key in configuration_identities[name]
             }
             for name in sorted(configuration_identities)
-            if configuration_identities[name]["state"] == "read"
+            if name in {row["workflow"] for row in workflows}
+            or runner == "pytest"
             and (
-                name in {row["workflow"] for row in workflows}
-                or runner == "pytest"
-                and name in configuration_bytes
+                name in configuration_bytes
+                or selector["configuration"].get("state") == "missing"
+                and any(name == candidate for candidate, _ in _PYTEST_CONFIG_SECTIONS)
             )
         },
         "sources": source_rows,
@@ -822,7 +1364,38 @@ def _captured_workflow_projection(
                 dispositions.append(disposition)
     except (UnicodeError, ValueError, TypeError, yaml.YAMLError):
         return None
+    if not _captured_unittest_sources_closed(workflows, source):
+        return None
     return workflows, dispositions
+
+
+def _captured_unittest_sources_closed(workflows, source):
+    from pathlib import PurePosixPath
+
+    roots = {
+        row["runner"]["start_directory"]
+        for row in workflows
+        if isinstance(row["runner"], dict) and row["runner"]["kind"] == "unittest"
+    }
+    if not roots:
+        return True
+    if not source.bounded:
+        return False
+    paths = {PurePosixPath(source.relative(path)): path for path in source.snapshots}
+    if any(
+        path.parts[0] == "unittest" or path.name in {"unittest.py", "sitecustomize.py"}
+        for path in paths
+    ):
+        return False
+    return all(
+        any(
+            path.is_relative_to(root)
+            and path.match("test*.py")
+            and source.validate(origin)
+            for path, origin in paths.items()
+        )
+        for root in roots
+    )
 
 
 def _captured_workflow_rows(
@@ -1060,7 +1633,7 @@ def _captured_step_command(
     )
     if row is None:
         return None
-    if not row or row.get("runner") == "pytest":
+    if not row or "runner" in row:
         return row, row_effects, row_env
     runner_path = (posix_path(cwd) / argv[1]).as_posix()
     if (
@@ -1084,7 +1657,7 @@ def _captured_shell_target_unresolved(argv, command):
             argv
         )
     return _captured_shell_compound(command) and (
-        _captured_test_like_command(argv) or any(arg.endswith(".py") for arg in argv)
+        _captured_test_like_command(argv) or _captured_unknown_python_command(argv)
     )
 
 
@@ -1117,7 +1690,8 @@ def _captured_invocation_row(
         and len(argv) >= 3
         and argv[2] == "pytest"
     )
-    if not (python_script or pytest):
+    unittest = _captured_unittest_selection(argv, cwd)
+    if not (python_script or pytest or unittest):
         return (
             None
             if _captured_test_like_command(argv)
@@ -1148,9 +1722,27 @@ def _captured_invocation_row(
         "condition": conditions,
         "declared_environment": [*env, *shell_env],
     }
-    if pytest:
-        row["runner"] = "pytest"
+    if pytest or unittest:
+        row["runner"] = "pytest" if pytest else unittest
     return row
+
+
+def _captured_unittest_selection(argv, cwd):
+    """Return default discovery only for a captured, static repository start directory."""
+    from pathlib import PurePosixPath
+
+    match argv:
+        case ["python", "-m", "unittest", "discover", "-s", directory, *flags] if (
+            _captured_repository_relative(directory)
+            and flags in ([], ["-v"], ["-q"])
+            and cwd == "."
+        ):
+            return {
+                "kind": "unittest",
+                "start_directory": PurePosixPath(directory).as_posix(),
+                "pattern": "test*.py",
+            }
+    return None
 
 
 def _captured_test_like_command(argv):
@@ -1193,7 +1785,7 @@ def _captured_unknown_python_command(argv):
                 "compileall",
                 "ensurepip",
             }
-        return len(tokens) > 1 and (tokens[1].endswith(".py") or tokens[1] == "-c")
+        return len(argv) > 1 and argv[1:] not in (["-V"], ["-VV"], ["--version"])
     return any(
         token.endswith(".py") or token in {"python", "python3", "pytest", "tox", "nox"}
         for token in tokens
@@ -1447,6 +2039,14 @@ DJANGO_IMPLICIT_KEY_METHODS = frozenset(
     }
 )
 
+NATIVE_DJANGO_RUNNER_PROVIDERS = (
+    "django.test.runner.DiscoverRunner",
+    "django.test.runner.DiscoverRunner.run_tests",
+    "django.test.utils.get_runner",
+    "django.conf.global_settings.TEST_RUNNER",
+    "django.conf.settings.TEST_RUNNER",
+)
+
 
 def _captured_django_runner(index, path, tree, aliases):
     """Bind a captured Django setup and DiscoverRunner invocation by imports."""
@@ -1456,45 +2056,36 @@ def _captured_django_runner(index, path, tree, aliases):
     from .intent_quality import _canary_main_guard_test
 
     statements = _captured_native_guard_body(tree, _canary_main_guard_test)
-    if statements is None or len(statements) not in {4, 5}:
+    if statements is None or len(statements) not in {4, 5, 6}:
         return None
     startup = captured_django_startup_statements(
         {"index": index["source"], "aliases": {path: aliases}}, path
     )
     if startup[-len(statements) :] != statements:
         return None
-    selector, setup, allocation, invocation, *exit_statements = statements
-    if not _captured_selector_assignment(selector, aliases):
-        return None
-    if not _captured_setup_call(setup, aliases) or not _captured_runner_allocation(
-        allocation, aliases
-    ):
-        return None
-    variable = allocation.targets[0].id
-    if (
-        not isinstance(invocation, ast.Assign)
-        or len(invocation.targets) != 1
-        or not isinstance(invocation.targets[0], ast.Name)
-    ):
-        return None
-    call = invocation.value
-    if (
-        not isinstance(call, ast.Call)
-        or not isinstance(call.func, ast.Attribute)
-        or call.func.attr != "run_tests"
-        or not isinstance(call.func.value, ast.Name)
-        or call.func.value.id != variable
-        or len(call.args) != 1
-        or not isinstance(call.args[0], ast.List)
-        or call.args[0].elts
-        or call.keywords
-    ):
-        return None
-    if exit_statements and not _captured_system_exit(
-        exit_statements[0], aliases, invocation.targets[0].id
-    ):
-        return None
+    selector, setup, *flow = statements
     settings_module = _captured_selector_assignment(selector, aliases)
+    if not settings_module or not _captured_setup_call(setup, aliases):
+        return None
+    resolution = None
+    if len(flow) == 4:
+        resolution, allocation, invocation, *exit_statements = flow
+        if not _captured_default_runner_resolution(
+            index, path, settings_module, resolution, allocation, aliases
+        ):
+            return None
+    else:
+        allocation, invocation, *exit_statements = flow
+        if not _captured_runner_allocation(allocation, aliases):
+            return None
+    result = _captured_runner_invocation(
+        invocation, allocation, settings_module, resolution, aliases
+    )
+    if result is None or (
+        exit_statements
+        and not _captured_system_exit(exit_statements[0], aliases, result)
+    ):
+        return None
     return {
         "kind": "django.DiscoverRunner",
         "settings_module": settings_module,
@@ -1524,8 +2115,182 @@ def _captured_django_runner(index, path, tree, aliases):
             invocation.end_lineno,
             invocation.end_col_offset,
         ],
+        **(
+            {
+                "runner_test_package": settings_module.rpartition(".")[0],
+                "runner_resolution_span": [
+                    resolution.lineno,
+                    resolution.col_offset,
+                    resolution.end_lineno,
+                    resolution.end_col_offset,
+                ],
+            }
+            if resolution is not None
+            else {}
+        ),
         "settings_selector": "SOURCE_BOUND_LITERAL",
     }
+
+
+def _captured_runner_invocation(
+    invocation, allocation, settings_module, resolution, aliases
+):
+    """Bind run_tests to the allocated runner and its exact literal label."""
+    match invocation:
+        case ast.Assign(
+            targets=[ast.Name(id=result)],
+            value=ast.Call(
+                func=ast.Attribute(value=ast.Name(id=receiver), attr="run_tests"),
+                args=[ast.List() as labels],
+                keywords=[],
+            ),
+        ) if receiver == allocation.targets[0].id:
+            pass
+        case _:
+            return None
+    if not _captured_runner_labels(labels, settings_module, resolution):
+        return None
+    if resolution is not None:
+        bindings = {resolution.targets[0].id, receiver, result}
+        if (
+            len(bindings) != 3
+            or bindings.intersection({*aliases, "bool", "__name__"})
+            or "__name__" in aliases
+        ):
+            return None
+    return result
+
+
+def _captured_runner_labels(labels, settings_module, resolution):
+    if resolution is None:
+        return not labels.elts
+    match labels.elts:
+        case [ast.Constant(value=str() as label)]:
+            return label == settings_module.rpartition(".")[0]
+    return False
+
+
+def native_django_runner_roots(root, profile):
+    """Project the selected package; direct discovery retains its working directory."""
+    return {
+        (root / row["cwd"]).joinpath(
+            *row["runner"].get("runner_test_package", "").split(".")
+        )
+        for row in profile["invocations"]
+    }
+
+
+def native_django_settings_argument(scope, path, node, invocation):
+    """Recognize only the settings proxy passed in a witnessed runner resolution."""
+    return (
+        id(node) in scope.native_profile_nodes
+        and isinstance(invocation, ast.Call)
+        and invocation.args == [node]
+        and scope.canonical(path, invocation.func) == "django.test.utils.get_runner"
+    )
+
+
+def _captured_default_runner_resolution(index, path, module, node, allocation, aliases):
+    """Bind get_runner(settings) to default DiscoverRunner without loading Django."""
+    from .mock_fixture_provenance import _django_provider_root_shadowed
+    from .review_audits import _resolved_ast_name
+
+    match node, allocation:
+        case (
+            ast.Assign(
+                targets=[ast.Name(id=runner)],
+                value=ast.Call(func=getter, args=[ast.Name() as proxy], keywords=[]),
+            ),
+            ast.Assign(
+                targets=[ast.Name()],
+                value=ast.Call(func=ast.Name(id=allocated), args=[], keywords=[]),
+            ),
+        ) if runner == allocated:
+            pass
+        case _:
+            return False
+    if (
+        _resolved_ast_name(getter, aliases) != "django.test.utils.get_runner"
+        or _resolved_ast_name(proxy, aliases) != "django.conf.settings"
+        or any(
+            _django_provider_root_shadowed(index["module_paths"], name)
+            for name in ("django", "os", "sys")
+        )
+    ):
+        return False
+    if not _captured_runner_imports_closed(index["modules"][path]):
+        return False
+    tree = _captured_default_runner_settings(index, path, module)
+    if tree is None:
+        return False
+    for statement in tree.body:
+        if isinstance(statement, ast.Expr) and isinstance(
+            statement.value, ast.Constant
+        ):
+            continue
+        if not (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(target := statement.targets[0], ast.Name)
+            and target.id.isupper()
+            and target.id != "TEST_RUNNER"
+        ):
+            return False
+        try:
+            ast.literal_eval(statement.value)
+        except (ValueError, SyntaxError, TypeError, RecursionError):
+            return False
+    return True
+
+
+def _captured_runner_imports_closed(tree):
+    allowed = {"django", "os", "sys", "django.conf", "django.test.utils"}
+    return all(
+        all(item.name in allowed for item in stmt.names)
+        if isinstance(stmt, ast.Import)
+        else not stmt.level and stmt.module in allowed
+        for stmt in tree.body
+        if isinstance(stmt, (ast.Import, ast.ImportFrom))
+    )
+
+
+def _captured_default_runner_settings(index, path, module):
+    from .mock_fixture_provenance import _django_mod
+
+    source = index["source"]
+    parts = module.split(".")
+    if (
+        path.parent != source.root
+        or len(parts) < 2
+        or not all(part.isidentifier() for part in parts)
+    ):
+        return None
+    selected, tree = _django_mod(index, module)
+    stem = source.root.joinpath(*parts)
+    if selected != stem.with_suffix(".py") or stem / "__init__.py" in source.snapshots:
+        return None
+    for depth in range(1, len(parts)):
+        folder = source.root.joinpath(*parts[:depth])
+        package = folder / "__init__.py"
+        if (
+            folder.with_suffix(".py") in source.snapshots
+            or package not in source.snapshots
+            or not source.validate(package)
+            or not all(
+                _captured_runner_docstring(stmt)
+                for stmt in source.snapshots[package].body
+            )
+        ):
+            return None
+    return tree
+
+
+def _captured_runner_docstring(node):
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and type(node.value.value) is str
+    )
 
 
 def _captured_native_guard_body(tree, main_guard_test):
@@ -1831,6 +2596,7 @@ def _pytest_tox_environment(parser, section):
     )
 
 
+_PYTEST_CACHE_DISABLE = ("-p", "no:cacheprovider")
 _PYTEST_ARGUMENT_EFFECTS = (
     ("-q", (0, "report")),
     ("-v", (0, "report")),
@@ -1870,8 +2636,13 @@ def _pytest_argument_effect(
     token, arguments, *, coverage_provider, source_role_only=False
 ):
     """Project one recognized argument or refuse its missing/unknown effect."""
-    if token == "--":
-        return None
+    cache_flag, cache_selection = _PYTEST_CACHE_DISABLE
+    if token in {"--", cache_flag}:
+        return (
+            {}
+            if token == cache_flag and next(arguments, None) == cache_selection
+            else None
+        )
     flag, separator, inline_value = token.partition("=")
     if token == "--ds" or flag == "--ds" and separator:
         module = next(arguments, None) if token == "--ds" else inline_value
@@ -2750,12 +3521,21 @@ def _pytest_config_uses_custom_collection(options):
         addopts = " ".join(addopts)
     if not isinstance(addopts, str):
         return True
-    tokens = addopts.split()
     return any(
-        token == "-p"
-        or token.startswith("-p")
+        token.startswith("-p")
         or token.split("=", 1)[0]
         in {
+            "--",
+            "--cache-clear",
+            "--cache-show",
+            "--failed-first",
+            "--ff",
+            "--last-failed",
+            "--last-failed-no-failures",
+            "--lf",
+            "--lfnf",
+            "--new-first",
+            "--nf",
             "--ignore",
             "--ignore-glob",
             "--deselect",
@@ -2767,8 +3547,24 @@ def _pytest_config_uses_custom_collection(options):
             "--import-mode",
             "--override-ini",
         }
-        for token in tokens
+        for token in _pytest_collection_flags(addopts.split())
     )
+
+
+def _pytest_collection_flags(tokens):
+    """Omit only the exact built-in cache disable from collection analysis."""
+    cache_flag, cache_selection = _PYTEST_CACHE_DISABLE
+    position = 0
+    while position < len(tokens):
+        if (
+            tokens[position] == cache_flag
+            and position + 1 < len(tokens)
+            and tokens[position + 1] == cache_selection
+        ):
+            position += 2
+        else:
+            yield tokens[position]
+            position += 1
 
 
 def _pytest_custom_collection_state(options):
@@ -2798,6 +3594,49 @@ def _pytest_custom_collection_state(options):
     return _UNMODELED_BUILTIN_COLLECTION
 
 
+def _pytest_static_discovery_options(options):
+    """Select literal roots only when no other option changes test discovery."""
+    if set(options) - {
+        "addopts",
+        "doctest_optionflags",
+        "filterwarnings",
+        "minversion",
+        "python_classes",
+        "python_files",
+        "python_functions",
+        "strict",
+        "testpaths",
+    }:
+        return None
+    flags = _pytest_pattern_list(options.get("addopts"))
+    paths = _pytest_pattern_list(options.get("testpaths"))
+    if (
+        not isinstance(flags, list)
+        or not isinstance(paths, list)
+        or not 0 < len(paths) <= 64
+    ):
+        return None
+    if not all(
+        isinstance(path, str)
+        and len(path) <= 240
+        and re.fullmatch(
+            r"[A-Za-z0-9_-]+(?:[.][A-Za-z0-9_-]+)*(?:/[A-Za-z0-9_-]+(?:[.][A-Za-z0-9_-]+)*)*",
+            path,
+        )
+        for path in paths
+    ):
+        return None
+    # A TOML array is already tokenized; neither embedded whitespace nor
+    # unexpected options may be silently interpreted as reporting flags.
+    reporting = {"-ra", "-q", "-v", "--quiet", "--verbose", "--disable-warnings"}
+    values = [flag for flag in _pytest_collection_flags(flags) if flag not in reporting]
+    if values in (["--import-mode=importlib"], ["--import-mode", "importlib"]):
+        return "importlib", sorted(set(paths))
+    if values == ["--doctest-modules"]:
+        return "doctest", sorted(set(paths))
+    return None
+
+
 def _pytest_pattern_list(value):
     return value.split() if isinstance(value, str) else value
 
@@ -2821,9 +3660,11 @@ def captured_pytest_helpers():
         for name, value in globals().items()
         if callable(value) and getattr(value, "__module__", None) == __name__
     ) + (
+        _PYTEST_CACHE_DISABLE,
         _PYTEST_ARGUMENT_EFFECTS,
         DJANGO_IMPLICIT_KEY_EFFECTS,
         DJANGO_IMPLICIT_KEY_METHODS,
+        NATIVE_DJANGO_RUNNER_PROVIDERS,
         yaml.compose,
         yaml.Loader,
         yaml.MappingNode,

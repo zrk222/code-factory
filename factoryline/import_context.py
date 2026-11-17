@@ -14,11 +14,11 @@ import ast
 import hashlib
 import re
 from copy import deepcopy
-from collections import defaultdict
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 
 _FINGERPRINT_EPOCH = ContextVar("factory_structural_fingerprint_epoch", default=None)
+_AST_DUMP_OPTIONS = dict.fromkeys({"show_empty"} & ast.dump.__kwdefaults__.keys(), True)
 
 
 def structural_ast_fingerprint(tree):
@@ -446,9 +446,9 @@ def _structural_ast_leaf_digest(value):
         or len(tuple(islice(_iter_ast_nodes(value), 129))) > 128
     ):
         return None
+    dump = ast.dump(value, include_attributes=True, **_AST_DUMP_OPTIONS)
     return hashlib.sha256(
-        b"BOUNDED_DUMP\0"
-        + ast.dump(value, include_attributes=True).encode("utf-8", "surrogatepass")
+        b"BOUNDED_DUMP\0" + dump.encode("utf-8", "surrogatepass")
     ).digest()
 
 
@@ -504,16 +504,9 @@ def _shell_import_aliases(nodes, audit, provider, *, package=None):
 
 def application_configuration_names(paths=()):
     """Select the same canonical configuration inputs at every proof boundary."""
-    names = {
-        "requirements.txt",
-        "pyproject.toml",
-        "tox.ini",
-        "pytest.toml",
-        ".pytest.toml",
-        "pytest.ini",
-        ".pytest.ini",
-        "setup.cfg",
-    }
+    from .pytest_collection_audit import captured_test_configuration_names
+
+    names = {"requirements.txt", *captured_test_configuration_names(paths)}
     if isinstance(paths, (dict, list, tuple, set, frozenset)):
         names.update(
             name
@@ -521,6 +514,9 @@ def application_configuration_names(paths=()):
             if isinstance(name, str)
             and re.fullmatch(r"\.github/workflows/[^/\\:\x00]+\.ya?ml", name)
         )
+    from .captured_security_audit import is_launch_configuration
+
+    names.update(filter(is_launch_configuration, paths))
     return frozenset(names)
 
 
@@ -548,7 +544,12 @@ def application_profile_configuration(root, read_source, limit):
             raise ValueError("workflow_inventory_exceeds_capture_profile")
     except (OSError, ValueError) as exc:
         return [], {"workflow_inventory": {"state": str(exc)}}, False
-    for name in sorted(application_configuration_names(paths)):
+    from .captured_security_audit import capture_launch_configuration
+    from .pytest_collection_audit import unmodeled_test_workflow_paths
+
+    paths.extend(unmodeled_test_workflow_paths(root))
+    paths, read_source = capture_launch_configuration(root, read_source, limit, paths)
+    for name in sorted(application_configuration_names(paths), key=read_source.order):
         identity = {"path": name}
         try:
             raw = read_source(root, name)
@@ -581,9 +582,10 @@ def application_profile_configuration(root, read_source, limit):
                 identity.update(binding, state="read")
         identities[name] = identity
     # Type-check capture owns these two bindings; share all capture identities.
+    bindings.sort(key=lambda row: row["path"])
     return (
         [row for row in bindings if row["path"] not in {"pyproject.toml", "tox.ini"}],
-        identities,
+        dict(sorted(identities.items())),
         valid,
     )
 
@@ -1155,33 +1157,40 @@ def resolve_import_source(
     source_index=None,
     package_binding_exclude=None,
 ):
-    """Resolve one source candidate, retaining legacy live-path behavior."""
+    """Honor captured sibling-package priority and preserve cross-root ambiguity."""
     if captured:
         if not captured_import_inventory_matches(root, path, node, module, eligible):
             return None
         root_abs, sources = root, eligible.paths
     else:
-        root_abs = root.resolve()
-        sources = (
-            eligible
-            if isinstance(eligible, dict)
-            else {p.resolve(): p for p in eligible}
-        )
-    matches = {"child": set(), "package": set()}
-    for choice, kind in import_source_choices(
+        root_abs, sources = root.resolve(), eligible
+        if not isinstance(eligible, dict):
+            sources = {p.resolve(): p for p in eligible}
+    choices = import_source_choices(
         root,
         path,
         node,
         module,
         imported,
         captured_inventory=eligible if captured else None,
-    ):
-        selected = choice if captured else live_import_path(choice, root_abs)
-        if selected in sources and captured_import_path(root_abs, selected):
-            matches[kind].add(sources[selected])
+    )
+    matches = _matching_import_sources(choices, root_abs, sources, captured=captured)
     return _select_resolved_import(
         matches, captured, imported, source_index, eligible, package_binding_exclude
     )
+
+
+def _matching_import_sources(choices, root_abs, sources, *, captured):
+    """Group in-root candidates after captured sibling packages shadow modules."""
+    matches = {"child": set(), "package": set()}
+    for choice, kind in choices:
+        selected = choice if captured else live_import_path(choice, root_abs)
+        if captured and choice.name != "__init__.py":
+            if choice.with_suffix("") / "__init__.py" in sources:
+                continue
+        if selected in sources and captured_import_path(root_abs, selected):
+            matches[kind].add(sources[selected])
+    return matches
 
 
 def _select_resolved_import(
@@ -1577,17 +1586,10 @@ def live_import_path(choice, root):
 def unique_import_source(matches, *, strict):
     """Reject ambiguity and cross-root child/package contradictions."""
     children, packages = matches["child"], matches["package"]
-    if strict and len(packages) > 1:
+    if strict and children and packages:
         return None
-    if children:
-        if len(children) != 1:
-            return None
-        child = next(iter(children))
-        if strict and packages:
-            # Paths cannot establish which existing package attribute is exported.
-            return None
-        return child
-    return next(iter(packages)) if len(packages) == 1 else None
+    candidates = children or packages
+    return next(iter(candidates)) if len(candidates) == 1 else None
 
 
 def import_resolution_helpers():

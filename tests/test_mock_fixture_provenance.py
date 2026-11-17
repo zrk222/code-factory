@@ -11,6 +11,84 @@ from factoryline.review_audits import security_scan
 import pytest
 
 
+def test_captured_configuration_owns_explicit_pytest_selection(tmp_path):
+    from types import SimpleNamespace
+
+    from factoryline.pytest_collection_audit import (
+        captured_pytest_documents,
+        captured_pytest_function_selected,
+        pytest_collection_authoritative,
+    )
+
+    path = tmp_path / "check_example.py"
+    configuration = b"[pytest]\npython_files = check_*.py\npython_functions = check_*\n"
+    captured = SimpleNamespace(
+        _security_source_context=(tmp_path, {tmp_path / "pytest.ini": configuration}),
+    )
+    documents = captured_pytest_documents(captured)
+    subject = SimpleNamespace(relative=lambda p: p.relative_to(tmp_path).as_posix())
+    selected, rejected = ast.parse("def check_case(): pass\ndef test_case(): pass").body
+    assert documents == {"pytest.ini": configuration}
+    assert captured_pytest_function_selected(subject, path, selected, documents)
+    assert not captured_pytest_function_selected(subject, path, rejected, documents)
+    assert not captured_pytest_function_selected(subject, path, selected, {})
+    assert pytest_collection_authoritative({"collection_state": "KNOWN"})
+    for state in ("UNKNOWN", "DISCOVERY_ONLY"):
+        assert not pytest_collection_authoritative({"collection_state": state})
+
+
+def test_rejection_projection_restricts_scalar_conversions_and_composition():
+    from factoryline.pytest_collection_audit import ConfigurationRejectionProjection
+
+    projection = ConfigurationRejectionProjection(
+        lambda _owner, node, _names: node.id if isinstance(node, ast.Name) else "",
+        None,
+        {},
+    )
+
+    def read(node):
+        return projection.value(node, {})
+
+    label = projection.inert_value(ast.parse("'fixture'", mode="eval").body, read)
+    assert projection.scalar_call("str", label) == label
+    assert projection.scalar_call("custom_str", label) is None
+    assert (
+        projection.inert_value(ast.parse("f'{label!r}'", mode="eval").body, read)
+        is None
+    )
+    assert read(ast.parse("str(effect())", mode="eval").body) is None
+
+
+def test_django_runner_settings_argument_is_bound_to_capture_identity(tmp_path):
+    from types import SimpleNamespace
+
+    from factoryline.pytest_collection_audit import (
+        native_django_runner_roots,
+        native_django_settings_argument,
+    )
+
+    path = tmp_path / "runtests.py"
+    getter = ast.parse("get_runner(settings)", mode="eval").body
+    node = getter.args[0]
+    scope = SimpleNamespace(
+        native_profile_nodes={id(node)},
+        canonical=lambda owner, fn: "django.test.utils.get_runner"
+        if (owner, fn) == (path, getter.func)
+        else "",
+    )
+    assert native_django_settings_argument(scope, path, node, getter)
+    assert not native_django_settings_argument(
+        scope, path, ast.Name(id="settings"), getter
+    )
+    assert not native_django_settings_argument(
+        scope, path.with_name("other.py"), node, getter
+    )
+    runner = {"cwd": "src", "runner": {"runner_test_package": "suite.tests"}}
+    assert native_django_runner_roots(tmp_path, {"invocations": [runner]}) == {
+        tmp_path / "src/suite/tests"
+    }
+
+
 def test_scope_api_jwt_roles_decline_payload_leaks_and_mutations():
     from factoryline.credential_role_constructor_provider import (
         credential_scope_api_contract as contract,
@@ -325,7 +403,12 @@ def test_unknown_collection_does_not_consult_fixture_proof_provider(
 
 
 @pytest.mark.parametrize("policy", ["trusted-core-v1", "source-role-v3"])
-def test_unknown_collection_reseal_revokes_real_application_fixture(tmp_path, policy):
+@pytest.mark.parametrize(
+    "capture_state", [None, "changed_during_scan", "collection_unresolved"]
+)
+def test_unverified_collection_reseal_revokes_real_application_fixture(
+    tmp_path, policy, capture_state
+):
     from factoryline import review_audits as audit
 
     _write(tmp_path, "checks/login.py", _APP133_DRF)
@@ -335,9 +418,11 @@ def test_unknown_collection_reseal_revokes_real_application_fixture(tmp_path, po
         for row in report.get("primitive_observations", [])
     )
     bound_sources = list(report["sources"])
-    report["oracle_context"]["pytest_collection"] = _unknown_collection_core()[
-        "oracle_context"
-    ]["pytest_collection"]
+    report["oracle_context"]["pytest_collection"] = (
+        _unknown_collection_core()["oracle_context"]["pytest_collection"]
+        if capture_state is None
+        else {"state": "missing", "capture_state": capture_state}
+    )
     report["selected_defect_policy"] = policy
     sealed = audit._seal_security_scan(report.copy())
     assert sealed["state"] == "INCOMPLETE"
@@ -4370,7 +4455,14 @@ def test_constructor_source_method_role_cli_retains_raw_and_live(tmp_path, capsy
     assert captured.err == ""
     report = json.loads(captured.out)
     assert exit_code == report["defect_policy_decision"]["exit_code"]
-    assert exit_code in {1, 2} and not report["defect_policy_decision"]["clean"]
+    assert exit_code == 0 and not report["defect_policy_decision"]["clean"]
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == 1
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
@@ -4402,9 +4494,24 @@ def test_constructor_source_method_role_cli_retains_raw_and_live(tmp_path, capsy
 
 @pytest.mark.parametrize(
     "variant",
-    ["closed", "second_setup", "setup_alias", "copied_key", "settings_reflection"],
+    [
+        "closed",
+        "independent_verifier",
+        "collection_drift",
+        "collection_drift_during_verification",
+        "missing_collection_witness",
+        "detached_collection_witness",
+        "second_setup",
+        "setup_alias",
+        "copied_key",
+        "settings_reflection",
+    ],
 )
-def test_native_django_settings_scope_closes_framework_carrier(tmp_path, variant):
+def test_native_django_settings_scope_closes_framework_carrier(
+    tmp_path, variant, monkeypatch
+):
+    from factoryline import audit_action_refs
+
     _write(tmp_path, "pyproject.toml", '[project]\ndependencies = ["Django"]\n')
     _write(
         tmp_path,
@@ -4439,11 +4546,41 @@ def test_native_django_settings_scope_closes_framework_carrier(tmp_path, variant
         runner.write_text(
             "import support\n" + runner.read_text(encoding="utf-8"), encoding="utf-8"
         )
-    report = security_scan(tmp_path, cache_enabled=False)
+    verify = variant in {
+        "independent_verifier",
+        "collection_drift",
+        "collection_drift_during_verification",
+        "missing_collection_witness",
+        "detached_collection_witness",
+    }
+    rebuilt = []
+    if variant == "independent_verifier":
+        original = audit_action_refs.rebuild_application_fixture_context
+
+        def record_fixture_context(audit, model, verified, bindings):
+            context = original(audit, model, verified, bindings)
+            rebuilt.append((model.root, tuple(bindings or ()), set(context)))
+            return context
+
+        monkeypatch.setattr(
+            audit_action_refs,
+            "rebuild_application_fixture_context",
+            record_fixture_context,
+        )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=verify,
+        defect_policy="source-role-v3" if verify else "legacy-v1",
+    )
+    if variant == "independent_verifier":
+        ((root, checked, sources),) = rebuilt
+        assert not root.is_absolute() and checked
+        assert root / "tests/settings.py" in sources
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
-    if variant == "closed":
+    if variant == "closed" or verify:
         assert not active, report
         assert any(
             row.get("facts", {}).get("fixture_evidence", {}).get("profile")
@@ -4452,6 +4589,66 @@ def test_native_django_settings_scope_closes_framework_carrier(tmp_path, variant
         ), report
     else:
         assert active, report
+    if verify:
+        assert (
+            report["defect_policy_decision"]["state"]
+            == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+        )
+        assert report["finding_conservation"]["state"] == "PASS"
+        rows = report["finding_tier_report"]["ledger"]
+        assert len(rows) == 1 and rows[0]["tier"] == "PROVEN_PRIMITIVE"
+    if variant == "detached_collection_witness":
+        from factoryline.review_audits import _seal_security_scan
+
+        report._source_role_capture.pop("fixture_workspace")
+        detached = _seal_security_scan(report)
+        assert detached["defect_policy_decision"]["state"] == (
+            "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+        )
+        assert detached["finding_conservation"]["state"] == "PASS"
+        assert not detached["findings"] and detached["primitive_observations"]
+    if (
+        variant.startswith("collection_drift")
+        or variant == "missing_collection_witness"
+    ):
+        _assert_django_fixture_reseal_fails_closed(
+            tmp_path, variant, monkeypatch, report
+        )
+
+
+def _assert_django_fixture_reseal_fails_closed(tmp_path, variant, monkeypatch, report):
+    from factoryline import review_integrity
+    from factoryline.review_audits import _seal_security_scan
+
+    def drift():
+        _write(tmp_path, "pytest.ini", "[pytest]\npython_files = test_*.py\n")
+
+    if variant == "collection_drift_during_verification":
+        partition = review_integrity.partition_proven_primitive_observations
+
+        def mutate_after_partition(core, native_rows=None):
+            result = partition(core, native_rows)
+            if native_rows is not None:
+                drift()
+            return result
+
+        monkeypatch.setattr(
+            review_integrity,
+            "partition_proven_primitive_observations",
+            mutate_after_partition,
+        )
+    elif variant == "collection_drift":
+        drift()
+    else:
+        report._source_role_capture.pop("fixture_workspace")
+        report["oracle_context"].pop("static_pytest_collection")
+    stale = _seal_security_scan(report)
+    assert stale["defect_policy_decision"]["state"] == "BLOCKED"
+    assert not stale["primitive_observations"] and not stale["agent_actions"]
+    assert stale["finding_conservation"]["native_verification_state_changed"] == (
+        variant == "collection_drift_during_verification"
+    )
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in stale["findings"])
 
 
 _REQUEST_SIGNING273 = """from slack_sdk.signature import SignatureVerifier
@@ -6369,6 +6566,12 @@ def test_source_metadata_unknown_collection_public_cli(
         if row["path"] == "selectors.py"
     ]
     assert len(metadata) == (1 if consumer == "environment-name" else 0)
+    active = [
+        row
+        for row in first["findings"]
+        if row["path"] == "selectors.py" and row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(active) == (0 if consumer == "environment-name" else 1)
     if metadata:
         assert metadata[0]["facts"]["disposition"] == "SOURCE_PRESENTATION_METADATA"
         assert (
@@ -6433,7 +6636,14 @@ def test_object_signing_constructor_scalar_context_public_cli_receipt(tmp_path, 
     assert captured.err == ""
     report = json.loads(captured.out)
     assert exit_code == report["defect_policy_decision"]["exit_code"]
-    assert exit_code in {1, 2} and report["defect_policy_decision"]["clean"] is False
+    assert exit_code == 0 and report["defect_policy_decision"]["clean"] is False
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == 1
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
@@ -6506,6 +6716,13 @@ def test_object_signing_constructor_guard_public_cli_receipt(tmp_path, capsys):
     assert "class-owned-signing-material" not in captured.out
     assert "private-scalar-marker" not in captured.out
     assert exit_code == report["defect_policy_decision"]["exit_code"]
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == 1
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
@@ -6735,6 +6952,15 @@ def test_source_bound_pytest_local_scope_native(
     output = capsys.readouterr()
     assert not output.err
     report = json.loads(output.out)
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == (
+        2 if expected_active else 1
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [
         row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
@@ -6759,7 +6985,7 @@ def test_source_bound_pytest_local_scope_native(
             for row in primitives
         )
     else:
-        assert code in {1, 2}
+        assert code == 0
         assert [row["path"] for row in active] == ["live.py"], report
         assert any(
             row["facts"].get("fixture_evidence", {}).get("profile")
@@ -6903,7 +7129,14 @@ def test_source_bound_test_scope_cli_receipt_and_recompute(tmp_path, capsys):
     output = capsys.readouterr()
     assert not output.err
     report = json.loads(output.out)
-    assert code in {1, 2} and not report["defect_policy_decision"]["clean"]
+    assert code == 0 and not report["defect_policy_decision"]["clean"]
+    assert (
+        report["defect_policy_decision"]["state"]
+        == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    )
+    assert report["defect_policy_decision"]["supported_defect_count"] == 0
+    assert report["defect_policy_decision"]["needs_context_count"] == 1
+    assert report["finding_conservation"]["state"] == "PASS"
     active = [f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]
     assert [(f["path"], f["severity"]) for f in active] == [("live.py", "CRITICAL")]
     primitives = [

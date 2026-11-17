@@ -4862,19 +4862,18 @@ def test_sql_driver_resolution_helper_contracts():
         )
         == "sqlite3"
     )
-    assert (
-        sql_return_kind(
-            ast.Return(value=ast.Name(id="db")),
-            {},
-            set(),
-            {"db"},
-            set(),
-            lambda *_: None,
-            lambda *_: None,
-            lambda *_: False,
-        )
-        == "connection"
-    )
+    assert sql_return_kind(
+        ast.Return(value=ast.Name(id="db")),
+        {},
+        set(),
+        connection_names,
+        set(),
+        lambda node, aliases, bindings: sql_connection_driver(
+            node, aliases, bindings, {}, resolver
+        ),
+        lambda *_: None,
+        lambda *_: None,
+    ) == ("connection", "sqlite3")
     assert sql_sink_driver(call, {}, set(), cursor_names, {}, resolver) == "psycopg"
     assert sql_statement_argument(call, "sqlalchemy", {}, resolver).value == "SELECT 1"
     assert sql_sink_label(call, "psycopg") == "psycopg.execute"
@@ -4886,6 +4885,151 @@ def test_sql_driver_resolution_helper_contracts():
     )
     assert finding["args"][0] == "SECURITY_SQL_INJECTION"
     assert finding["kwargs"]["call"] == "psycopg.execute"
+
+
+@pytest.mark.parametrize(
+    ("variation", "expected"),
+    [
+        ("closed", []),
+        ("unknown-field", ["sqlite3.execute"]),
+        ("escaping-function", ["sqlite3.execute"]),
+        ("multiple-drivers", ["sql.execute"]),
+        ("custom-factory", ["sqlite3.execute"]),
+        ("unknown-argument", ["sqlite3.execute"]),
+    ],
+)
+def test_captured_sql_statement_text_uses_bound_fields(tmp_path, variation, expected):
+    from factoryline.review_audits import security_scan
+
+    storage = """import sqlite3
+
+def open_db():
+    db = sqlite3.connect(':memory:')
+    return db
+
+def select_items(filters, order='name'):
+    db = open_db()
+    cursor = db.cursor()
+    statement = 'SELECT name FROM sample WHERE 1=1'
+    parameters = []
+    for row in filters:
+        column = row.get('column')
+        value = row.get('value')
+        statement += f' AND {column}=?'
+        parameters.append(value)
+    statement += f' ORDER BY {order}'
+    cursor.execute(statement, parameters)
+    return cursor.fetchall()
+"""
+    caller = """from storage import select_items
+
+def load(value):
+    return select_items([{'column': 'name', 'value': value}])
+"""
+    if variation == "unknown-field":
+        caller = caller.replace("'column': 'name'", "'column': value")
+    elif variation == "escaping-function":
+        caller += "\nregistered = {'reader': select_items}\n"
+    elif variation == "multiple-drivers":
+        storage = storage.replace(
+            "    db = sqlite3.connect",
+            "    if choose_other:\n        return other_connection()\n"
+            "    db = sqlite3.connect",
+            1,
+        )
+    elif variation == "custom-factory":
+        storage = storage.replace(
+            "':memory:')", "':memory:', factory=custom_driver)", 1
+        )
+    elif variation == "unknown-argument":
+        caller = caller.replace("load(value)", "load(value, order)").replace(
+            "'value': value}])", "'value': value}], order)"
+        )
+    (tmp_path / "storage.py").write_text(storage, encoding="utf-8")
+    (tmp_path / "app.py").write_text(caller, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert [
+        row["facts"]["call"]
+        for row in result["findings"]
+        if row["code"] == "SECURITY_SQL_INJECTION"
+    ] == expected
+
+
+@pytest.mark.parametrize(
+    ("variation", "expected"),
+    [
+        ("fixed", []),
+        ("dictionary-cursor", []),
+        ("escaped-wrapper", ["mysql.connector.execute"]),
+        ("mixed-statements", ["mysql.connector.execute"]),
+        ("custom-cursor", ["mysql.connector.execute"]),
+        ("custom-converter", ["mysql.connector.execute"]),
+        ("local-provider", ["mysql.connector.execute"]),
+        ("source-layout-provider", ["mysql.connector.execute"]),
+        ("provider-rebound", ["mysql.connector.execute"]),
+    ],
+)
+def test_captured_sql_wrapper_distinguishes_statement_from_bound_data(
+    tmp_path, variation, expected
+):
+    from factoryline.review_audits import security_scan
+
+    storage = """import mysql.connector
+
+def connect():
+    return mysql.connector.connect(host="local.invalid", database="fixture")
+
+def query(statement, values=()):
+    connection = connect()
+    cursor = connection.cursor()
+    cursor.execute(statement, values)
+    cursor.close()
+    connection.close()
+"""
+    app = """from storage import query
+
+def load(value):
+    return query("SELECT name FROM records WHERE id = %s", (value,))
+"""
+    if variation == "dictionary-cursor":
+        storage = storage.replace(
+            "connection.cursor()", "connection.cursor(dictionary=True)"
+        )
+    elif variation == "escaped-wrapper":
+        app += "\nregistered_query = query\n"
+    elif variation == "mixed-statements":
+        app += "\ndef query_text(text):\n    return query(text, ())\n"
+    elif variation == "custom-cursor":
+        storage = storage.replace(
+            "connection.cursor()", "connection.cursor(cursor_class=custom)"
+        )
+    elif variation == "custom-converter":
+        storage = storage.replace(
+            'database="fixture"', 'database="fixture", converter_class=custom'
+        )
+    elif variation in {"local-provider", "source-layout-provider", "provider-rebound"}:
+        path, text = {
+            "local-provider": ("mysql.py", "# project-local provider\n"),
+            "source-layout-provider": (
+                "src/mysql/__init__.py",
+                "# project-local package\n",
+            ),
+            "provider-rebound": (
+                "configuration.py",
+                "import mysql.connector\nmysql.connector.connect = custom\n",
+            ),
+        }[variation]
+        destination = tmp_path / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(text, encoding="utf-8")
+    (tmp_path / "storage.py").write_text(storage, encoding="utf-8")
+    (tmp_path / "app.py").write_text(app, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert [
+        row["facts"]["call"]
+        for row in result["findings"]
+        if row["code"] == "SECURITY_SQL_INJECTION"
+    ] == expected
 
 
 def test_sql_provenance_binding_helper_contracts():
@@ -7159,9 +7303,11 @@ def test_native_helper_catalogs_bind_live_predicate_code_and_catalog_schema(
     from factoryline import pytest_collection_audit as collection
 
     policies = (
+        collection._PYTEST_CACHE_DISABLE,
         collection._PYTEST_ARGUMENT_EFFECTS,
         collection.DJANGO_IMPLICIT_KEY_EFFECTS,
         collection.DJANGO_IMPLICIT_KEY_METHODS,
+        collection.NATIVE_DJANGO_RUNNER_PROVIDERS,
     )
     assert workspace and all(
         callable(value) or any(value is policy for policy in policies)
@@ -7531,7 +7677,7 @@ def test_closed_declaration_binding_accepts_exact_contract_and_rejects_span_forg
         "call_span": [1, 0, 1, 24],
         "literal_span": [1, 12, 1, 23],
     }
-    finding = {"line": 1, "column": 0, "facts": facts}
+    finding = {"line": 1, "column": 0, "end_line": 1, "end_column": 24, "facts": facts}
     assert binding.closed_declaration_binding(finding, review_integrity)
     forged = json.loads(json.dumps(finding))
     forged["facts"]["literal_span"] = [1, 12, 1, 25]
@@ -7539,7 +7685,7 @@ def test_closed_declaration_binding_accepts_exact_contract_and_rejects_span_forg
 
 
 def test_django_fixture_annotation_and_binding_recompute_owner_and_inventory_hashes():
-    source = "def test_secret():\n    token = 'synthetic'\n"
+    source = "def test_secret():\n    password = 'synthetic'\n"
     source_bytes = source.encode()
     source_sha = hashlib.sha256(source_bytes).hexdigest()
     config_bytes = {
@@ -7566,24 +7712,23 @@ def test_django_fixture_annotation_and_binding_recompute_owner_and_inventory_has
     module = ast.parse(source)
     module._oracle_source_sha256 = source_sha
     module._security_oracle_context = {
-        "django_fixture_evidence": {"1:0:token": evidence}
+        "django_fixture_evidence": {"2:4:password": evidence}
     }
-    function = module.body[0]
-    function._security_lexical_scope = module
-    finding = {
-        "code": "SECURITY_HARDCODED_SECRET",
-        "severity": "CRITICAL",
-        "path": "tests/test_app.py",
-        "line": 1,
-        "column": 0,
-        "facts": {"name": "token"},
-    }
-    annotated = binding.annotate_django_fixture(finding, function)
+    review_integrity.bind_security_call_scopes(module)
+    declaration = module.body[0].body[0]
+    finding = review_audits._literal_assignment_diagnostic(
+        "tests/test_app.py", declaration, declaration.targets[0]
+    )
+    assert finding is not None
+    annotated = binding.annotate_django_fixture(finding, declaration)
     assert annotated["facts"]["disposition"] == "TEST_OWNED_LOCAL_FIXTURE"
     sources = [{"path": "tests/test_app.py", "sha256": source_sha}]
     hashes = {"tests/test_app.py": source_sha, **config_hashes}
     assert binding.django_fixture_binding(annotated, sources, hashes)
     assert binding.fixed_primitive_binding(annotated, sources, hashes, review_integrity)
+    forged = json.loads(json.dumps(annotated))
+    forged["end_column"] += 1
+    assert not binding.django_fixture_binding(forged, sources, hashes)
     hashes["tox.ini"] = "0" * 64
     assert not binding.django_fixture_binding(annotated, sources, hashes)
 

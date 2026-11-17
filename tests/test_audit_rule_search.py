@@ -1370,7 +1370,10 @@ def test_native_observation_chunk_boundary_is_lossless(tmp_path, encoded_size):
     premise = {"detail": ""}
     producer = dict(finding, facts={"security_precondition": premise})
     retained = {
-        **{key: producer[key] for key in ("code", "path", "line", "column")},
+        **{
+            key: producer[key]
+            for key in ("code", "path", "line", "column", "end_line", "end_column")
+        },
         "security_precondition": premise,
     }
     premise["detail"] = "x" * (
@@ -1420,6 +1423,45 @@ def test_native_observation_zero_is_explicit_and_duplicates_are_preserved(tmp_pa
     assert len(rows) == 2 and all(
         row["security_precondition"] == premise for row in rows
     )
+
+
+def test_native_advisory_only_delivers_the_exact_expression_and_rule(tmp_path):
+    from factoryline.audit_rule_search import (
+        build_retrieval_context,
+        retain_native_observations,
+    )
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'local').strip()\n"}
+    )
+    path = tmp_path / "sink.py"
+    tree = index.snapshots[path]
+    tree._security_source_model = index
+    finding["code"] = "SECURITY_UNSAFE_DESERIALIZATION"
+    retain_native_observations(
+        tree,
+        path,
+        [
+            dict(finding, facts={"security_precondition": {"marker": "exact"}}),
+            dict(
+                finding,
+                end_column=finding["end_column"] + len(".strip()"),
+                facts={"security_precondition": {"marker": "outer"}},
+            ),
+            dict(
+                finding,
+                code="SECURITY_UNSAFE_YAML",
+                facts={"security_precondition": {"marker": "other_rule"}},
+            ),
+        ],
+    )
+    result = build_retrieval_context(finding, index, "serialized input origin", None)
+    reported = result["producer_reported_preconditions"]
+    assert reported["authority"] == "none"
+    assert [
+        row["security_precondition"]["marker"] for row in reported["observations"]
+    ] == ["exact"]
+    assert result["producer_precondition_transport"]["retained_observations"] == 3
 
 
 def test_hybrid_enrich_boundary_preserves_capture_and_advisory_authority(tmp_path):
@@ -4816,27 +4858,27 @@ def test_public_cdte_export_writes_aggregate_only_report(tmp_path: Path) -> None
     "payload",
     [
         {
-            "schema": "factory.native-observation-retention.v2",
+            "schema": "factory.native-observation-retention.v3",
             "count": 1,
             "entries": {},
         },
         {
-            "schema": "factory.native-observation-retention.v2",
+            "schema": "factory.native-observation-retention.v3",
             "count": 0,
             "entries": [],
         },
         {
-            "schema": "factory.native-observation-retention.v2",
+            "schema": "factory.native-observation-retention.v3",
             "count": False,
             "entries": {},
         },
         {
-            "schema": "factory.native-observation-retention.v2",
+            "schema": "factory.native-observation-retention.v3",
             "count": -1,
             "entries": {},
         },
         {
-            "schema": "factory.native-observation-retention.v2",
+            "schema": "factory.native-observation-retention.v3",
             "count": 1,
             "entries": {"bad": {"count": True}},
         },

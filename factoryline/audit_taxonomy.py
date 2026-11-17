@@ -682,7 +682,7 @@ def resolve_agent_action_reference(
     taxonomy: dict[str, Any] | None = None,
 ) -> Any:
     """Resolve only code-owned instructions or sanitized report measurements."""
-    from .audit_action_refs import resolve_agent_action_reference as resolve
+    from .deep_audit_contract import resolve_agent_action_reference as resolve
 
     return resolve(report, action, field, taxonomy)
 
@@ -691,9 +691,17 @@ def derive_agent_action_references(
     report: dict[str, Any], action: dict[str, Any]
 ) -> dict[str, str]:
     """Derive canonical references without trusting report-provided pointers."""
-    from .audit_action_refs import derive_agent_action_references as derive
+    from .deep_audit_contract import derive_agent_action_references as derive
 
     return derive(report, action)
+
+
+def __getattr__(name):
+    if name == "audit_remediation_packet":
+        from .deep_audit_contract import audit_remediation_packet
+
+        return audit_remediation_packet
+    raise AttributeError(name)
 
 
 def normalize_measurement_state(state: str) -> str:

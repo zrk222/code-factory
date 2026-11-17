@@ -1,16 +1,7 @@
 """Deterministic quality checks for natural-language intent boundaries.
 
-AI-authored text is untrusted input even when it appears in a signed or
-hash-bound artifact.  A digest proves that text was not changed after it was
-captured; it does not prove that the text was specific enough to test.  This
-module supplies a small, dependency-free lexical guard for the places where
-FactoryLine accepts intent, promises, requirements, or acceptance evidence.
-
-The lexical guard is deliberately conservative and explainable: it rejects
-known placeholders/vague phrases and statements that lack an action or (when
-requested) an observable evidence signal. AST implementation contracts and
-SQL provenance helpers remain available here through their established APIs.
-A human still owns confirmation and an independent verifier still owns results.
+Intent summaries, implementation contracts and SQL provenance are
+checked independently of artifact signatures. A human still owns approval.
 """
 
 from __future__ import annotations
@@ -406,12 +397,17 @@ def scoped_sql_driver(
     statement = getattr(node, "_security_flow_statement", None)
     scoped_aliases = scope_aliases_for(scope, aliases, statement)
     driver = sql_cursor_driver(node, aliases, cursors, scoped_aliases, resolve_call)
-    if driver is None and helper_call(node, "cursor", aliases, helpers):
-        return "mysql.connector"
-    if driver is None and isinstance(node, ast.Call) and call_leaf(node) == "cursor":
+    driver = driver or helper_call(node, "cursor", aliases, helpers)
+    if (
+        not driver
+        and isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and call_leaf(node) == "cursor"
+    ):
+        receiver = node.func.value
         return sql_connection_driver(
-            node.func.value, aliases, connections, scoped_aliases, resolve_call
-        )
+            receiver, aliases, connections, scoped_aliases, resolve_call
+        ) or helper_call(receiver, "connection", aliases, helpers)
     return driver
 
 
@@ -429,18 +425,13 @@ def sql_return_kind(
     if not isinstance(statement, ast.Return):
         return ""
     value = statement.value
-    if isinstance(value, ast.Name):
-        if value.id in connections:
-            return "connection"
-        if value.id in cursors:
-            return "cursor"
-    if connection_driver(value, aliases, connections) or helper_call(
+    driver = connection_driver(value, aliases, connections) or helper_call(
         value, "connection", aliases, helpers
-    ):
-        return "connection"
-    return (
-        "cursor" if cursor_driver(value, aliases, connections, cursors, helpers) else ""
     )
+    if driver:
+        return "connection", driver
+    driver = cursor_driver(value, aliases, connections, cursors, helpers)
+    return ("cursor", driver) if driver else ""
 
 
 def clear_sql_provenance(connection_names, cursor_names, bound_names):
@@ -484,38 +475,13 @@ def track_sql_assignment(
     if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
         return
     value = getattr(statement, "value", None)
-    driver = connection_driver(value)
-    cursor = cursor_driver(value)
-    is_connection, is_cursor = _sql_assignment_kinds(
-        value, aliases, helpers, driver, cursor, helper_call
+    driver = connection_driver(value) or helper_call(
+        value, "connection", aliases, helpers
     )
-    driver = driver or ("mysql.connector" if is_connection else None)
-    cursor = cursor or ("mysql.connector" if is_cursor else None)
+    cursor = cursor_driver(value)
     for name in _sql_assignment_names(statement):
         clear_sql_provenance(connections, cursors, {name})
         bind_sql_provenance(connections, cursors, name, driver, cursor)
-
-
-def _sql_assignment_kinds(value, aliases, helpers, driver, cursor, helper_call):
-    receiver = _sql_call_receiver(value)
-    connection = bool(driver) or helper_call(value, "connection", aliases, helpers)
-    is_cursor = (
-        bool(cursor)
-        or helper_call(value, "cursor", aliases, helpers)
-        or (
-            isinstance(value, ast.Call)
-            and isinstance(value.func, ast.Attribute)
-            and value.func.attr == "cursor"
-            and helper_call(receiver, "connection", aliases, helpers)
-        )
-    )
-    return connection, is_cursor
-
-
-def _sql_call_receiver(value):
-    if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
-        return value.func.value
-    return None
 
 
 def _literal_assignment_diagnostics(relative, node, aliases, diagnostics):
@@ -2790,6 +2756,8 @@ def unsafe_sql_driver(
     is_tainted,
 ):
     """Return the proven driver only when its SQL statement is request-tainted."""
+    from .captured_security_audit import captured_sql_statement_text_closed
+
     driver = sql_sink_driver(
         call,
         aliases,
@@ -2804,13 +2772,15 @@ def unsafe_sql_driver(
         and isinstance(call.func, ast.Attribute)
         and call.func.attr == "execute"
         and call.args
-        and proven_cursor(call.func.value)
     ):
-        driver = "mysql.connector"
+        driver = proven_cursor(call.func.value)
     if driver is None:
         return None
     query = sql_statement_argument(call, driver, aliases, resolve_call)
-    return driver if is_tainted(query, requests, parameters, aliases) else None
+    if is_tainted(query, requests, parameters, aliases):
+        if not captured_sql_statement_text_closed(call, query, driver):
+            return driver
+    return None
 
 
 def scoped_unsafe_sql_driver(
@@ -2861,10 +2831,8 @@ def _proven_sql_cursor(
     cursor_driver,
     helper_call,
 ):
-    if isinstance(receiver, ast.Name):
-        return receiver.id in cursor_names
-    return bool(
-        cursor_driver(receiver, aliases, connection_names, cursor_names, helpers)
+    return cursor_driver(
+        receiver, aliases, connection_names, cursor_names, helpers
     ) or helper_call(receiver, "cursor", aliases, helpers)
 
 
@@ -2908,6 +2876,7 @@ def sql_statement_argument(call, driver, aliases, resolve_call):
         "django": ("sql",),
         "sqlalchemy": ("statement",),
         "mysql.connector": ("operation",),
+        "sql": ("operation", "query", "statement", "sql"),
     }
     statement = bound_sink_argument(call, 0, names.get(driver, ()))
     if (

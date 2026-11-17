@@ -62,21 +62,18 @@ SECURITY_EFFECT_CONTRACTS = MappingProxyType(
                 "effect_kind": "tls_peer_authentication_bypass",
                 "effect_facts": MappingProxyType(
                     {
-                        "provider_id": tuple(
-                            sorted(
-                                {
-                                    *(
-                                        f"{module}.{method}"
-                                        for module in ("requests", "httpx")
-                                        for method in HTTP_CLIENT_METHODS
-                                    ),
-                                    "httpx.Client",
-                                    "httpx.AsyncClient",
-                                    "httpx.stream",
-                                }
-                            )
+                        "provider_id": (
+                            "httpx.AsyncClient",
+                            "httpx.Client",
+                            "httpx.stream",
+                            "urllib.request.urlopen",
+                            *(
+                                f"{module}.{method}"
+                                for module in ("httpx", "requests")
+                                for method in sorted(HTTP_CLIENT_METHODS)
+                            ),
                         ),
-                        "verification_setting": "literal_false",
+                        "verification_setting": ("literal_false", "unverified_context"),
                         "transport_relation": ("static_https", "https_capable"),
                         "https_operation_span": None,
                     }

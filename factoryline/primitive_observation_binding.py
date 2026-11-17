@@ -5,12 +5,13 @@ import copy
 import hashlib
 import json
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from pathlib import PurePosixPath
 from contextvars import ContextVar
 
 _ROLE_REBUILD_CONTEXT = ContextVar("factory-role-rebuild-context", default=None)
+_RULE_SPAN_KEYS = ("code", "path", "line", "column", "end_line", "end_column")
 
 _FINDING_TIER_POLICY = {
     "schema": "factory.security.finding-tiers.v1",
@@ -39,10 +40,7 @@ _FINDING_TIER_POLICY = {
 }
 
 _MISSING_PREMISES = {
-    "SECURITY_LITERAL_HTTP_CREDENTIAL": [
-        "operational_authority",
-        "reachability",
-    ],
+    "SECURITY_LITERAL_HTTP_CREDENTIAL": ["operational_authority", "reachability"],
     "SECURITY_HARDCODED_SECRET": [
         "operative_credential_consumer",
         "security_authority_binding",
@@ -61,7 +59,8 @@ _MISSING_PREMISES = {
         "external_or_mutable_serialized_data_provenance",
         "dangerous_load_reachability",
     ],
-    "SECURITY_WEAK_TLS": ["reachable_remote_endpoint_or_operational_context"],
+    "SECURITY_TLS_VERIFY_DISABLED": ["effective_tls_policy", "remote_reachability"],
+    "SECURITY_UNSAFE_YAML": ["loader_authority", "serialized_input_provenance"],
     "SECURITY_LOG_INJECTION": [
         "untrusted_log_value",
         "log_record_injection_effect",
@@ -233,14 +232,9 @@ def security_defect_policy_decision(
 
 
 def _security_tier_reports_match(actual, expected_rows, prior_tiers):
-    actual_rows = _security_tier_rows(actual)
-    if actual_rows is None or expected_rows is None or actual_rows != expected_rows:
+    if expected_rows is None or _security_tier_rows(actual) != expected_rows:
         return False
-    if prior_tiers is not None:
-        prior_rows = _security_tier_rows(prior_tiers)
-        if prior_rows is None or prior_rows != expected_rows:
-            return False
-    return True
+    return prior_tiers is None or _security_tier_rows(prior_tiers) == expected_rows
 
 
 def _trusted_core_regenerated_tiers(core, captured_sources, _verifier_native_rows=None):
@@ -344,20 +338,20 @@ def _trusted_core_source_binding(
     if not isinstance(path, str):
         return None
     relative = PurePosixPath(path)
+    if configuration:
+        allowed = (
+            (path == "factory.database.json" or relative.suffix.casefold() == ".sql")
+            if database_configuration
+            else path in application_configuration_names((path,))
+        )
+    else:
+        allowed = relative.suffix == ".py"
     if (
         relative.is_absolute()
         or not relative.parts
         or ".." in relative.parts
         or relative.as_posix() != path
-        or (
-            (
-                path != "factory.database.json"
-                if database_configuration
-                else path not in application_configuration_names((path,))
-            )
-            if configuration
-            else relative.suffix != ".py"
-        )
+        or not allowed
         or not isinstance(digest, str)
         or re.fullmatch(r"[0-9a-f]{64}", digest) is None
     ):
@@ -399,7 +393,10 @@ def _trusted_core_database_context_valid(value):
 def _unknown_collection(core):
     oracle = core.get("oracle_context")
     capture = oracle.get("pytest_collection") if isinstance(oracle, dict) else None
-    return isinstance(capture, dict) and capture.get("collection_state") == "UNKNOWN"
+    return isinstance(capture, dict) and (
+        capture.get("collection_state") in {"UNKNOWN", "DISCOVERY_ONLY"}
+        or capture.get("capture_state", "stable_pre_post") != "stable_pre_post"
+    )
 
 
 def _trusted_core_tenant_arguments(core, audit):
@@ -408,8 +405,7 @@ def _trusted_core_tenant_arguments(core, audit):
         return None
     pytest_capture = oracle_context.get("pytest_collection")
     if _unknown_collection(core) or (
-        isinstance(pytest_capture, dict)
-        and pytest_capture.get("capture_state") != "stable_pre_post"
+        isinstance(pytest_capture, dict) and "capture_state" not in pytest_capture
     ):
         return None
 
@@ -460,12 +456,19 @@ def _trusted_core_tenant_arguments(core, audit):
     return calls, argument_bindings, applies
 
 
-def _trusted_core_native_security_rows(captured, tenant, audit):
+def _trusted_core_native_security_rows(
+    captured, tenant, audit, fixture_bindings=None, *, provisional_exclusions=None
+):
+    from . import audit_action_refs
     from .runtime_audit_common import RuntimeAuditError
 
     calls, argument_bindings, applies = tenant
     native_rows = []
-    captured_paths = {Path(path): raw for path, raw in captured.items()}
+    proof = provisional_exclusions if fixture_bindings is not None else None
+    captured_paths = audit_action_refs._ConfigurationProofCapture(
+        {Path(path): raw for path, raw in captured.items()},
+        provisional_exclusions=proof,
+    )
     source_model = _regenerate_source_model(
         captured,
         {path: hashlib.sha256(raw).hexdigest() for path, raw in captured.items()},
@@ -479,6 +482,9 @@ def _trusted_core_native_security_rows(captured, tenant, audit):
     }
     try:
         with audit._security_snapshot_analysis_batch({"source": source_model}):
+            fixture_contexts = audit_action_refs.rebuild_application_fixture_context(
+                audit, source_model, captured, fixture_bindings
+            )
             for path in (path for path in captured_paths if path.suffix == ".py"):
                 rows = audit._security_scan_tree(
                     Path("."),
@@ -486,7 +492,7 @@ def _trusted_core_native_security_rows(captured, tenant, audit):
                     source_model.snapshots[path],
                     calls,
                     argument_bindings,
-                    context.copy(),
+                    {**context, **fixture_contexts.get(path, {})},
                     tenant_policy_applies=applies,
                     security_only=True,
                 )
@@ -510,6 +516,14 @@ def _trusted_core_native_security_rows(captured, tenant, audit):
     )
 
 
+def _native_surface_identity(row):
+    return tuple(
+        (type(value), value)
+        for key in (*_RULE_SPAN_KEYS, "severity")
+        for value in (row.get(key, 0 if key == "column" else None),)
+    )
+
+
 def _trusted_core_surface_matches(core, native_rows):
     surface = [
         row
@@ -519,16 +533,13 @@ def _trusted_core_surface_matches(core, native_rows):
         and isinstance(row.get("code"), str)
         and row["code"].startswith("SECURITY_")
     ]
-    surface_ids, native_ids = (
-        sorted(
-            tuple(
-                row.get(key, 0) if key == "column" else row.get(key)
-                for key in ("path", "line", "column", "code", "severity")
-            )
-            for row in rows
+    try:
+        surface_ids, native_ids = (
+            Counter(map(_native_surface_identity, rows))
+            for rows in (surface, native_rows)
         )
-        for rows in (surface, native_rows)
-    )
+    except TypeError:
+        return False
     return surface_ids == native_ids
 
 
@@ -725,10 +736,13 @@ def _finding_pickle_byte_origin(finding, captured, bound, cache):
     """Add independently rebuilt byte provenance without changing finding authority."""
     if not bound or finding.get("code") != "SECURITY_UNSAFE_DESERIALIZATION":
         return None
+    span = [finding.get(key) for key in _RULE_SPAN_KEYS[2:]]
+    if not valid_source_span(span):
+        return None
     path = finding["path"]
     if path not in cache:
         cache[path] = _pickle_byte_origins_for_source(path, captured)
-    entry = cache[path].get((finding.get("line"), finding.get("column")))
+    entry = cache[path].get(tuple(span))
     facts = finding.get("facts", {})
     if (
         entry is None
@@ -767,7 +781,7 @@ def _pickle_byte_origins_for_source(path, captured):
             call_name = audit._normalized_call_name(node, aliases)
             observation = local_pickle_byte_origin(node, call_name, aliases, audit)
             if observation is not None:
-                result[(node.lineno, node.col_offset)] = {
+                result[tuple(_pickle_span(node))] = {
                     "origin": observation,
                     "native_call": call_name,
                 }
@@ -952,20 +966,17 @@ def _finding_missing_premises(finding, bound):
 
 def _finding_rule_scorecards(ledger):
     """Run-local yield and abstention; never invent labels or confidence."""
+    grouped = defaultdict(Counter)
+    for row in ledger:
+        grouped[str(row["source_identity"]["code"])][row["tier"]] += 1
     rows = []
-    for code in sorted({str(row["source_identity"]["code"]) for row in ledger}):
-        selected = [
-            row for row in ledger if str(row["source_identity"]["code"]) == code
-        ]
-        counts = {
-            tier: sum(row["tier"] == tier for row in selected)
-            for tier in _FINDING_TIER_POLICY["tiers"]
-        }
+    for code, selected in sorted(grouped.items()):
+        counts = {tier: selected[tier] for tier in _FINDING_TIER_POLICY["tiers"]}
         rows.append(
             {
                 "rule_id": code,
                 "lane": "security" if code.startswith("SECURITY_") else "other",
-                "raw_count": len(selected),
+                "raw_count": selected.total(),
                 "tier_counts": counts,
                 "abstention_count": counts["NEEDS_CONTEXT"],
                 "measured_actionable_precision": None,
@@ -1075,13 +1086,18 @@ def _regenerate_source_model(sources, bindings):
     return regenerate_security_source_model(sources, bindings)
 
 
+def _same_rule_span(left, right):
+    return all(
+        type(a) is type(b) and a == b
+        for key in _RULE_SPAN_KEYS
+        for a, b in ((left.get(key), right.get(key)),)
+    )
+
+
 def _matches_regenerated_finding(finding, native_rows):
     facts = finding.get("facts", {})
     return any(
-        candidate.get("code") == finding.get("code")
-        and candidate.get("path") == finding.get("path")
-        and candidate.get("line") == finding.get("line")
-        and candidate.get("column") == finding.get("column")
+        _same_rule_span(candidate, finding)
         and candidate.get("facts", {}).get("name") == facts.get("name")
         for candidate in native_rows
         if isinstance(candidate, dict) and isinstance(candidate.get("facts"), dict)
@@ -1132,7 +1148,7 @@ def _known_format_declaration(finding, source_bytes):
         ):
             continue
         value = (
-            value_node.value.encode("utf-8")
+            value_node.value.encode(errors="surrogatepass")
             if isinstance(value_node.value, str)
             else value_node.value
         )
@@ -1145,10 +1161,7 @@ def _known_format_declaration(finding, source_bytes):
 def _matches_proven_primitive(finding, observations):
     facts = finding.get("facts", {})
     return any(
-        row.get("code") == finding.get("code")
-        and row.get("path") == finding.get("path")
-        and row.get("line") == finding.get("line")
-        and row.get("column", 0) == finding.get("column", 0)
+        _same_rule_span(row, finding)
         and row.get("severity") == finding.get("severity")
         and isinstance(row.get("facts"), dict)
         and isinstance(facts, dict)
@@ -1229,11 +1242,7 @@ def _local_control_label_binding(finding, sources, bindings, source_bytes):
 def _closed_literal_pickle_binding(finding, sources, bindings, source_bytes):
     from . import review_audits as audit
 
-    captured = (
-        _jwt_bound_source_inventory(source_bytes, bindings)
-        if isinstance(source_bytes, dict)
-        else None
-    )
+    captured = _jwt_bound_source_inventory(source_bytes, bindings, python_only=True)
     if captured is None or len(sources) != len(bindings):
         return False
     path = finding.get("path")
@@ -1252,10 +1261,7 @@ def _closed_literal_pickle_binding(finding, sources, bindings, source_bytes):
     except (SyntaxError, ValueError, TypeError, RecursionError):
         return False
     return any(
-        row.get("code") == finding.get("code")
-        and row.get("line") == finding.get("line")
-        and row.get("column") == finding.get("column")
-        and row.get("facts") == finding.get("facts")
+        _same_rule_span(row, finding) and row.get("facts") == finding.get("facts")
         for row in rows
     )
 
@@ -1319,14 +1325,7 @@ def _jwt_primitive_identity(finding, facts, bindings, provider, workspace_digest
 
 
 def _jwt_primitive_declared_span(finding, span):
-    return bool(
-        isinstance(span, list)
-        and len(span) == 4
-        and span[0] == finding.get("line")
-        and span[1] == finding.get("column")
-        and span[2] >= span[0]
-        and span[3] >= span[1]
-    )
+    return _proof_span_matches(finding, span)
 
 
 def _jwt_operation_spans_valid(facts, integrity):
@@ -1423,10 +1422,7 @@ def _fixed_program_chain_binding(finding, facts, sources, source_bytes, integrit
     ):
         return False
     call_span = facts.get("call_span")
-    if not valid_source_span(call_span) or call_span[:2] != [
-        finding.get("line"),
-        finding.get("column"),
-    ]:
+    if not _proof_span_matches(finding, call_span):
         return False
     try:
         tree = ast.parse(raw, filename=source_path)
@@ -1484,10 +1480,15 @@ def _fixed_program_expected_witness(
 ):
     disposition = facts.get("disposition")
     if disposition != "PROVEN_FIXED_LITERAL_PROGRAM" and (
-        not isinstance(source_bytes, dict)
-        or not isinstance(sources, (list, tuple))
+        not isinstance(sources, (list, tuple))
         or _jwt_bound_source_inventory(
-            source_bytes, {row["path"]: row["sha256"] for row in sources}
+            source_bytes,
+            {row["path"]: row["sha256"] for row in sources},
+            python_only=disposition
+            in {
+                "PROVEN_CLOSED_DECLARATION_INPUT",
+                "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+            },
         )
         is None
     ):
@@ -1592,9 +1593,7 @@ def closed_shell_binding(finding, sources, bindings, source_bytes):
     call = facts.get("call", "")
     if not all(isinstance(value, str) for value in (relative, call)):
         return False
-    if not isinstance(source_bytes, dict):
-        return False
-    captured = _jwt_bound_source_inventory(source_bytes, bindings)
+    captured = _jwt_bound_source_inventory(source_bytes, bindings, python_only=True)
     if captured is None:
         return False
     raw = captured.get(Path(relative))
@@ -1602,14 +1601,13 @@ def closed_shell_binding(finding, sources, bindings, source_bytes):
     if (finding.get("code"), finding.get("severity")) != (code, "INFO"):
         return False
     proof = closed_shell_operation_witness(raw, relative, facts.get("call_span"), call)
-    inventory = closed_shell_workspace(source_bytes, call.split(".")[0])
+    inventory = closed_shell_workspace(
+        {name: source_bytes[name] for name in bindings}, call.split(".")[0]
+    )
     if not proof or inventory is None:
         return False
     proof["workspace_sources_sha256"] = inventory
-    return bool(
-        facts == proof
-        and facts["call_span"][:2] == [finding.get("line"), finding.get("column")]
-    )
+    return facts == proof and _proof_span_matches(finding, facts["call_span"])
 
 
 def _jwt_operation_recomputes_from_sources(
@@ -1653,7 +1651,9 @@ def _jwt_operation_recomputes_from_sources(
     return all(facts.get(key) == value for key, value in regenerated.items())
 
 
-def _jwt_bound_source_inventory(source_bytes, bindings):
+def _jwt_bound_source_inventory(source_bytes, bindings, *, python_only=False):
+    if not isinstance(source_bytes, dict):
+        return None
     captured = {}
     for name, raw in source_bytes.items():
         if not isinstance(name, str) or not isinstance(raw, bytes):
@@ -1661,13 +1661,11 @@ def _jwt_bound_source_inventory(source_bytes, bindings):
         path = Path(name)
         if path.is_absolute() or ".." in path.parts:
             return None
-        captured[path] = raw
-    if set(source_bytes) != set(bindings) or any(
-        hashlib.sha256(source_bytes[name]).hexdigest() != digest
-        for name, digest in bindings.items()
-    ):
-        return None
-    return captured
+        if not python_only or path.suffix == ".py":
+            if hashlib.sha256(raw).hexdigest() != bindings.get(name):
+                return None
+            captured[path] = raw
+    return captured if len(captured) == len(bindings) else None
 
 
 def _jwt_declaration_targets(tree, facts):
@@ -3475,28 +3473,29 @@ def _primitive_source_capture(core):
 
 
 def _current_primitive_binding(finding, core, bindings, audit, captured=None):
-    if _unknown_collection(core) and finding.get("facts", {}).get("disposition") in {
+    facts = finding.get("facts", {})
+    disposition = facts.get("disposition")
+    if disposition == "TEST_OWNED_APPLICATION_CREDENTIAL" and core.get(
+        "_stale_fixture_authority"
+    ):
+        return False
+    if _unknown_collection(core) and disposition in {
         "TEST_OWNED_LOCAL_FIXTURE",
         "TEST_OWNED_APPLICATION_CREDENTIAL",
         "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
     }:
         return False
-    if _valid_security_precondition(
-        finding.get("facts", {}).get("security_precondition"), finding
-    ):
+    if _valid_security_precondition(facts.get("security_precondition"), finding):
         return False
     captured = _primitive_source_capture(core) if captured is None else captured
-    if finding.get("facts", {}).get("disposition") == "CONDITIONAL_PROVIDER_CONTRACT":
+    if disposition == "CONDITIONAL_PROVIDER_CONTRACT":
         if "_primitive_source_bytes" not in core and captured:
             core = {**core, "_primitive_source_bytes": captured}
         return _conditional_provider_binding(finding, core, bindings, audit)
     sources = core.get("sources", [])
-    if (
-        finding.get("facts", {}).get("disposition")
-        == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX"
-    ):
+    if disposition == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX":
         return closed_shell_binding(finding, sources, bindings, captured)
-    if finding.get("facts", {}).get("disposition") in {
+    if disposition in {
         "TEST_OWNED_LOCAL_FIXTURE",
         "TEST_OWNED_APPLICATION_CREDENTIAL",
         "SOURCE_PRESENTATION_METADATA",
@@ -3603,9 +3602,7 @@ def _application_fixture_claim(finding, facts, evidence, bindings, digest):
         and evidence.get("inventory_sha256") == digest
         and evidence.get("source") == finding.get("path")
         and evidence.get("source_sha256") == bindings.get(finding.get("path"))
-        and valid_source_span(facts.get("declaration_span"))
-        and facts["declaration_span"][:2]
-        == [finding.get("line"), finding.get("column")]
+        and _proof_span_matches(finding, facts.get("declaration_span"))
         and _application_assurance_binding(facts, evidence)
     )
 
@@ -4335,9 +4332,7 @@ def _django_fixture_hashes(facts, evidence, digest):
 
 
 def _django_fixture_span(finding, facts):
-    return valid_source_span(facts.get("declaration_span")) and facts[
-        "declaration_span"
-    ][:2] == [finding.get("line"), finding.get("column")]
+    return _proof_span_matches(finding, facts.get("declaration_span"))
 
 
 def _proof_facts_digest(unsigned):
@@ -4378,7 +4373,7 @@ def _closed_declaration_identity(finding, facts, span, audit):
     return (
         re.fullmatch(r"[0-9a-f]{64}", facts["program_sha256"]) is not None
         and audit._valid_source_span(span)
-        and span[:2] == [finding.get("line"), finding.get("column")]
+        and _proof_span_matches(finding, span)
     )
 
 
@@ -4388,6 +4383,11 @@ def _closed_declaration_literal(facts, span, audit):
     ) <= tuple(facts["literal_span"][:2]) <= tuple(facts["literal_span"][2:]) <= tuple(
         span[2:]
     )
+
+
+def _proof_span_matches(finding, span):
+    location = [finding.get(key) for key in _RULE_SPAN_KEYS[2:]]
+    return valid_source_span(location) and valid_source_span(span) and location == span
 
 
 def valid_source_span(span):
@@ -4854,6 +4854,8 @@ def primitive_binding_helpers():
 
     return (
         matches_regenerated_security_precondition,
+        _same_rule_span,
+        _proof_span_matches,
         regenerate_security_source_model,
         security_effect_fact_matches,
         valid_security_precondition,

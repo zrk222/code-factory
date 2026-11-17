@@ -2409,3 +2409,67 @@ def test_request_sink_requires_a_dict_trace_before_transport(monkeypatch, flow_k
     assert (premise is not None) is (flow_kind == "dict")
     if premise is not None:
         assert premise["input_value_flow"] is traces[flow_kind]
+
+
+@pytest.mark.parametrize(
+    "source, command, declaration, expected",
+    [
+        ("str(request.args['v'])", "[value]", "", True),
+        ("str(request.args['v'])", "(value,)", "", True),
+        ("str(request.args['v'])", "value", "", True),
+        ("str(request.args['v'])", "['prefix ' + value]", "", True),
+        ("request.args['v']", "[value]", "", True),
+        ("str(request.args['v'])", "['fixed', value]", "", False),
+        ("str(request.args['v'])", "['fixed']", "", False),
+        ("str(request.args['v'])", "[]", "", False),
+        ("str(request.args['v'])", "[*value]", "", False),
+        ("str(request.args['v'])", "[value]", "str = opaque\n", False),
+        (
+            "str(request.args['v'])",
+            "[value]",
+            "import builtins\nbuiltins.str = opaque\n",
+            False,
+        ),
+        ("str(request.args['v'])", "[value]", "subprocess.Popen = opaque\n", False),
+        ("str(request.args['v'])", "[value]", "request.args = opaque\n", False),
+        ("str(unknown)", "[value]", "", False),
+        ("str(request.args.get('v', type=opaque))", "[value]", "", False),
+        ("wrap(request.args['v'])", "[value]", "", False),
+        ("request.json['command']", "[value]", "", False),
+        ("request.get_json()['command']", "[value]", "", False),
+    ],
+)
+def test_public_shell_command_operand_preserves_typed_request_origin(
+    tmp_path, source, command, declaration, expected
+):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(
+        "import subprocess\nfrom flask import request\n"
+        + declaration
+        + "def run():\n    value = "
+        + source
+        + "\n"
+        + "    subprocess.Popen("
+        + command
+        + ", shell=True)\n",
+        encoding="utf8",
+    )
+    report = security_scan(
+        tmp_path,
+        security_only=True,
+        defect_policy="source-role-v3",
+        cache_enabled=False,
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
+    rows = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_SHELL_COMMAND"
+    ]
+    assert len(rows) == 1
+    assert (rows[0]["tier"] == "SUPPORTED_DEFECT") is expected
+    assert (
+        rows[0]["source_identity"]["source_sha256"]
+        == __import__("hashlib").sha256((tmp_path / "app.py").read_bytes()).hexdigest()
+    )

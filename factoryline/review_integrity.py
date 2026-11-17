@@ -3429,7 +3429,7 @@ def _security_flow_snapshot(node, resolved, constants):
     )
 
 
-def _security_flow_logger_factory_alias(value, resolved, call_name):
+def _security_flow_factory_alias(value, resolved, call_name):
     if not isinstance(value, ast.Call):
         return None
     called = call_name(value.func)
@@ -3438,9 +3438,9 @@ def _security_flow_logger_factory_alias(value, resolved, call_name):
     if reference is None:
         return None
     factory = reference + ("." + tail if tail else "")
-    return (
-        "logging.Logger" if factory in {"logging.getLogger", "logging.Logger"} else None
-    )
+    if factory in {"logging.getLogger", "logging.Logger"}:
+        return "logging.Logger"
+    return factory if factory == "ruamel.yaml.YAML" else None
 
 
 def _security_flow_assignment(statement, resolved, constants):
@@ -3456,7 +3456,7 @@ def _security_flow_assignment(statement, resolved, constants):
     head, _, tail = name.partition(".")
     reference = resolved.get(head)
     alias = reference + ("." + tail if tail else "") if reference else None
-    factory_alias = _security_flow_logger_factory_alias(value, resolved, audit._name)
+    factory_alias = _security_flow_factory_alias(value, resolved, audit._name)
     if factory_alias is not None:
         alias = factory_alias
     literal = value.value if isinstance(value, ast.Constant) else constants.get(name)
@@ -3584,7 +3584,14 @@ def _security_function_connector_return_kind(function, aliases, helpers):
     for statement in function.body:
         kind = _security_return_kind(statement, aliases, helpers, connections, cursors)
         if kind:
-            return kind
+            returns = [n for n in _lexical_nodes(function) if isinstance(n, ast.Return)]
+            if (
+                not function.decorator_list
+                and returns == [statement]
+                and function.body[-1] is statement
+            ):
+                return kind
+            return kind[0], "sql"
         _security_track_connector_assignment(
             statement, aliases, helpers, connections, cursors
         )
@@ -3651,9 +3658,10 @@ def _security_sql_cursor_driver(node, aliases, connections, cursors, helpers):
 
 def _security_helper_call(node, kind, aliases, helpers):
     if not isinstance(node, ast.Call):
-        return False
+        return None
     name = security_call_name(node, aliases)
-    return helpers.get(name) == kind and _security_call_unshadowed(node, name)
+    role, driver = helpers.get(name, (None, None))
+    return driver if role == kind and _security_call_unshadowed(node, name) else None
 
 
 def _security_scope_source_sink_findings(relative, scope, aliases, helpers):
@@ -4923,11 +4931,11 @@ def _trusted_core_configured_bindings(core, sources, configurations, source_bind
     database_bindings = (
         database.get("configuration_sources", []) if isinstance(database, dict) else []
     )
-    if not isinstance(database_bindings, list) or database_rows != [
-        row
-        for row in database_bindings
-        if isinstance(row, dict) and row.get("path") == "factory.database.json"
-    ]:
+    if (
+        not isinstance(database_bindings, list)
+        or any(row not in configurations for row in database_bindings)
+        or any(row not in database_bindings for row in database_rows)
+    ):
         return None
     bindings = {}
     for row, configuration in [
@@ -4937,7 +4945,7 @@ def _trusted_core_configured_bindings(core, sources, configurations, source_bind
         validated = source_binding(
             row,
             configuration=configuration,
-            database_configuration=configuration and row in database_rows,
+            database_configuration=configuration and row in database_bindings,
         )
         if validated is None or validated[0] in bindings:
             return None

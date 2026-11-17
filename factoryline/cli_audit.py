@@ -753,6 +753,11 @@ def _print_selected_security_policy(result):
         print(
             f"SUPPORTED_DEFECT [{raw['severity']}] {raw['code']}: {raw['path']}:{raw['line']} — {raw['message']}"
         )
+    for row in result.get("finding_conservation", {}).get(
+        "unreconciled_native_diagnostics", []
+    ):
+        location = json.dumps(row["path"])
+        print(f"UNRECONCILED {row['code']}: {location}:{row['line']} (review only)")
     _print_finding_tier_report(tiers)
     print(
         "Original diagnostics and severities remain in the JSON report and receipt. No clean security result established; policy exit zero does not approve a release and retains unresolved reviews."

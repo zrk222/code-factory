@@ -306,7 +306,7 @@ def test_security_scan_known_native_surface_mismatch_cannot_fallback_to_handoff(
     monkeypatch.setattr(
         audit_action_refs,
         "_security_scan_verification_state",
-        lambda *_: ((None,), (), None, ()),
+        lambda *_: ((None,), (), None, (), None),
     )
     monkeypatch.setattr(
         primitive,
@@ -353,7 +353,7 @@ def test_security_scan_native_reverification_change_cannot_fallback_to_handoff(
         nonlocal calls
         calls += 1
         generation = "verified" if calls == 1 else "changed"
-        return ((generation,), (), None, ())
+        return ((generation,), (), None, (), None)
 
     monkeypatch.setattr(
         audit_action_refs, "_security_scan_verification_state", verification_state
@@ -555,7 +555,7 @@ def test_security_scan_postpolicy_conservation_blocks_and_preserves_diagnostics(
         "clean": True,
     }
     audit, action_calls = _seal_audit(lambda *_: None)
-    verified_state = ((None,), (), None, ())
+    verified_state = ((None,), (), None, (), None)
     monkeypatch.setattr(
         audit_action_refs,
         "_security_scan_verification_state",

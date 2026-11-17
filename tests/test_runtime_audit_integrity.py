@@ -1600,7 +1600,7 @@ def test_provider_cache351_native_scan_shares_only_one_lifecycle(tmp_path, monke
     from factoryline import finite_capture
 
     (tmp_path / "main.py").write_text(
-        "import requests\nrequests.get('https://example.com')\n"
+        "import requests\nrequests.get('https://example.com', auth=('user', 'password'))\n"
     )
     (tmp_path / "peer.py").write_text("import requests\nrequests.get = replacement\n")
     original = finite_capture._foreign_provider_mutation_cache
@@ -2960,24 +2960,42 @@ def test_closed_shell_provider_and_input_ambiguity_stays_unproved(tmp_path, sour
     assert not report.get("primitive_observations")
 
 
-def test_closed_shell_source_binding_rejects_forgery_and_shadow(tmp_path):
+@pytest.mark.parametrize(
+    ("provider", "call", "effect"),
+    [
+        ("os", "os.system('upx --best app')", "LOCAL_ARTIFACT_MUTATION"),
+        ("os", "os.system('')", "NO_COMMAND_PAYLOAD"),
+        ("subprocess", "subprocess.run('', shell=True)", "NO_COMMAND_PAYLOAD"),
+    ],
+)
+def test_closed_shell_source_binding_rejects_forgery_and_shadow(
+    tmp_path, provider, call, effect
+):
     from factoryline.review_audits import security_scan
     from factoryline.primitive_observation_binding import closed_shell_binding
 
     path = tmp_path / "build.py"
-    path.write_text("import os\nos.system('upx --best app')\n", encoding="utf-8")
+    path.write_text(f"import {provider}\n{call}\n", encoding="utf-8")
     report = security_scan(tmp_path, cache_enabled=False)
     finding = report["primitive_observations"][0]
+    assert finding["facts"]["operational_effects"] == effect
+    assert finding["facts"]["runtime_assurance"] == "INCOMPLETE"
     sources = report["sources"]
     bindings = {row["path"]: row["sha256"] for row in sources}
-    raw = {"build.py": path.read_bytes()}
+    raw = {
+        "build.py": path.read_bytes(),
+        "pyproject.toml": b"[tool.pytest.ini_options]",
+    }
     assert closed_shell_binding(finding, sources, bindings, raw)
+    assert not closed_shell_binding(
+        finding, sources, bindings, {**raw, "unbound.py": b"pass\n"}
+    )
     forged = json.loads(json.dumps(finding))
     forged["facts"]["operation_role"] = "safe"
     assert not closed_shell_binding(forged, sources, bindings, raw)
-    raw["build.py"] = b"import os\nos.system('rm -rf /')\n"
+    raw["build.py"] = b"# changed source\n"
     assert not closed_shell_binding(finding, sources, bindings, raw)
-    (tmp_path / "os.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / f"{provider}.py").write_text("pass\n", encoding="utf-8")
     assert not security_scan(tmp_path, cache_enabled=False).get(
         "primitive_observations"
     )
@@ -3575,6 +3593,40 @@ def test_finite_eval_ignores_later_uninvoked_function_effects():
 def test_finite_eval_rejects_prior_function_invocation():
     source = 'def rewrite():\n    globals()["eval"] = replacement\nrewrite()\n' + SOURCE
     assert witness(source) == {}
+
+
+@pytest.mark.parametrize(
+    ("source", "disposition"),
+    [
+        (
+            "import pickle\ndef roundtrip():\n    return pickle.loads(pickle.dumps({'key': 2}))\n",
+            "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
+        ),
+        (SOURCE, "PROVEN_FINITE_LITERAL_EVAL_INPUT"),
+        (
+            "def alias():\n    ctx = {}\n    exec('type Alias = int', ctx, None)\n",
+            "PROVEN_CLOSED_DECLARATION_INPUT",
+        ),
+    ],
+)
+def test_source_only_primitive_proof_with_project_configuration(
+    tmp_path, source, disposition
+):
+    from scripts.precision_native_capture import scan_capture
+
+    (tmp_path / "control.py").write_text(source, encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\npython_files = ['test_*.py']\n", encoding="utf-8"
+    )
+
+    _, report = scan_capture(tmp_path)
+    assert report["audit_coverage"]["complete"]
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["finding_tier_report"]["raw_diagnostics"]["count"] == 1
+    assert not report["findings"]
+    assert [
+        row["facts"]["disposition"] for row in report["primitive_observations"]
+    ] == [disposition]
 
 
 def test_finite_eval_native_scan_retains_primitive(tmp_path):
@@ -5081,6 +5133,8 @@ def test_local_eval_def_use_binding_recomputes_source_and_rejects_stale_or_forge
         "path": "sample.py",
         "line": call.lineno,
         "column": call.col_offset,
+        "end_line": call.end_lineno,
+        "end_column": call.end_col_offset,
         "severity": "INFO",
         "facts": {"call": "eval", **witness},
     }
@@ -6596,6 +6650,26 @@ def _trusted_core_policy316_seal(tmp_path, source):
 
 
 @pytest.mark.parametrize("policy", ["trusted-core-v1", "source-role-v3"])
+def test_seal_rebuilds_fixed_program_proof_and_keeps_unknown_input(tmp_path, policy):
+    (tmp_path / "fixed.py").write_text("exec('value = 3')\n", encoding="utf-8")
+    (tmp_path / "unknown.py").write_text(
+        "def render(source):\n    return eval(source)\n", encoding="utf-8"
+    )
+
+    report = review_audits.security_scan(
+        tmp_path, defect_policy=policy, security_only=True, cache_enabled=False
+    )
+
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert [
+        (row["path"], row["severity"]) for row in report["primitive_observations"]
+    ] == [("fixed.py", "INFO")]
+    assert [(row["path"], row["severity"]) for row in report["findings"]] == [
+        ("unknown.py", "HIGH")
+    ]
+
+
+@pytest.mark.parametrize("policy", ["trusted-core-v1", "source-role-v3"])
 def test_complete_native_rows_are_shared_only_within_each_fresh_seal(
     tmp_path, monkeypatch, policy
 ):
@@ -6763,6 +6837,75 @@ def test_faulty_complete_native_surface_keeps_original_blocked_outcome(
     assert supplied == [None]
     assert checked["defect_policy_decision"]["state"] == "BLOCKED"
     assert checked["finding_tier_report"] == base["finding_tier_report"]
+
+
+@pytest.mark.parametrize("drift", [False, True])
+def test_verifier_only_diagnostic_is_visible_without_authority(
+    tmp_path, monkeypatch, drift
+):
+    source = b"API_KEY = 'literal-for-test-only-42'\n"
+    base = _trusted_core_policy316_seal(tmp_path, source)
+    native = base["finding_tier_report"]["ledger"][0]["raw_finding"]
+    core = copy.deepcopy(dict(base))
+    core["_primitive_source_bytes"] = dict(base._captured_sources)
+    for name in ("findings", "context_reviews", "primitive_observations"):
+        core[name] = []
+    core["finding_counts"] = {}
+    core["finding_tier_report"]["ledger"] = []
+    core["finding_conservation"]["unreconciled_native_diagnostics"] = [
+        {"code": "SECURITY_STALE", "path": "old.py"}
+    ]
+
+    if drift:
+        partition = review_integrity.partition_proven_primitive_observations
+
+        def change_coverage(work, rows=None):
+            partition(work, rows)
+            work["audit_coverage"]["complete"] = False
+
+        monkeypatch.setattr(
+            review_integrity, "partition_proven_primitive_observations", change_coverage
+        )
+
+    result = review_audits._seal_security_scan(core)
+
+    conservation = result["finding_conservation"]
+    assert conservation["state"] == "FAILED"
+    assert conservation["native_surface_mismatch"] is True
+    assert conservation["native_verification_state_changed"] is drift
+    assert result["defect_policy_decision"]["state"] == "BLOCKED"
+    assert result["defect_policy_decision"]["exit_code"] == 2
+    assert result["agent_actions"] == []
+    assert result["findings"] == []
+    assert result["finding_tier_report"]["ledger"] == []
+    assert source.split(b"'")[1].decode() not in json.dumps(result)
+    if drift:
+        assert "unreconciled_native_diagnostics" not in conservation
+    else:
+        keys = ("code", "path", "line", "column", "end_line", "end_column", "severity")
+        assert conservation["unreconciled_native_diagnostics"] == [
+            {
+                **{key: native.get(key) for key in keys},
+                "source_sha256": hashlib.sha256(source).hexdigest(),
+            }
+        ]
+
+
+def test_unreconciled_diagnostic_renderer_uses_only_public_fields(capsys):
+    from factoryline.cli_audit import _print_selected_security_policy
+
+    row = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "app.py",
+        "line": 1,
+        "private_detail": "render-only-redaction-sentinel",
+    }
+    _print_selected_security_policy(
+        {"finding_conservation": {"unreconciled_native_diagnostics": [row]}}
+    )
+    printed = capsys.readouterr().out
+    assert 'UNRECONCILED SECURITY_HARDCODED_SECRET: "app.py":1 (review only)' in printed
+    assert row["private_detail"] not in printed
 
 
 @pytest.mark.parametrize(

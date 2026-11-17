@@ -1135,12 +1135,33 @@ def test_daily_scan_accepts_479_python_files_on_first_run(tmp_path, deep):
 
 
 @pytest.mark.parametrize("deep", [False, True])
+def test_normal_scan_accepts_pytest_cache_only_plugin_disable(tmp_path, deep):
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\naddopts = -p no:cacheprovider\n", encoding="utf-8"
+    )
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "test_case.py").write_text(
+        "from app import value\n\ndef test_value():\n    assert value == 1\n",
+        encoding="utf-8",
+    )
+    result = run_repo_scan(tmp_path, deep=deep)
+    security = result["static_security"]
+    assert security["audit_coverage"]["complete"] is True
+    assert security["audit_coverage"]["files_audited"] == 2
+    collection = security["oracle_context"]["static_pytest_collection"]
+    assert collection.get("collection_state") not in {"UNKNOWN", "DISCOVERY_ONLY"}
+    assert collection["path"] == "pytest.ini"
+
+
+@pytest.mark.parametrize("deep", [False, True])
 @pytest.mark.parametrize(
     "config",
     [
         '[tool.pytest.ini_options]\naddopts = "--doctest-modules"\ntestpaths = ["tests"]\n',
         '[tool.pytest]\nstrict = true\ntestpaths = ["tests"]\naddopts = ["-ra", "--import-mode=importlib"]\n',
         '[tool.pytest.ini_options]\naddopts = "-p custom_plugin"\n',
+        '[tool.pytest.ini_options]\naddopts = "-p no:cacheprovider -p custom_plugin"\n',
+        '[tool.pytest.ini_options]\naddopts = "-p no:cacheprovider --last-failed"\n',
     ],
 )
 def test_normal_scan_collection_uncertainty_keeps_source_analysis(
@@ -1202,6 +1223,55 @@ def test_normal_scan_collection_gap_is_visible_in_human_output(tmp_path, capsys)
     assert "Python audited 1/1" in output
     assert "collection: UNKNOWN" in output
     assert "pyproject.toml" in output
+
+
+@pytest.mark.parametrize("mode", ["importlib", "doctest"])
+def test_static_collection_lists_declared_tests_without_authority(tmp_path, mode):
+    from factoryline.mission_control_status import (
+        prepare_security_scan_receipt_report,
+        security_scan_pytest_collection_snapshot,
+        security_scan_status,
+        write_security_scan_receipt,
+    )
+    from factoryline.pytest_collection_audit import advisory_collection_context
+
+    flag = "--import-mode=importlib" if mode == "importlib" else "--doctest-modules"
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest]\nstrict = true\ntestpaths = ["tests"]\n'
+        f'addopts = ["-ra", "{flag}"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_declared.py").write_text("def test_present(): pass\n")
+    (tmp_path / "test_unselected.py").write_text("def test_unselected(): pass\n")
+    (tmp_path / "tests/helper.py").write_text('"""Example.\n>>> 1 + 1\n2\n"""\n')
+    with advisory_collection_context():
+        before = security_scan_pytest_collection_snapshot(tmp_path)
+        security = run_repo_scan(tmp_path, deep=False)["static_security"]
+        prepared = prepare_security_scan_receipt_report(tmp_path, security, before)
+    write_security_scan_receipt(tmp_path, prepared)
+    assert security["audit_coverage"]["files_audited"] == 3
+    collection = security["oracle_context"]["static_pytest_collection"]
+    assert collection["collection_state"] == "DISCOVERY_ONLY"
+    assert [row["path"] for row in collection["static_test_sources"]] == [
+        "tests/test_declared.py"
+    ]
+    assert [row["path"] for row in collection["static_doctest_sources"]] == (
+        ["tests/helper.py"] if mode == "doctest" else []
+    )
+    assert security["state"] == "INCOMPLETE"
+    assert not any(row["code"].startswith("QUALITY_") for row in security["findings"])
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        == "PYTEST_COLLECTION_DISCOVERY_ONLY"
+    )
+    (tmp_path / "tests/conftest.py").write_text(
+        "def pytest_collection_modifyitems(items):\n    items.clear()\n"
+    )
+    updated = run_repo_scan(tmp_path, deep=False)["static_security"]
+    capture = updated["oracle_context"]["static_pytest_collection"]
+    assert capture["collection_state"] == "UNKNOWN"
+    assert "static_test_sources" not in capture
 
 
 def test_normal_scan_collection_receipt_rechecks_unknown_mode_and_source_drift(

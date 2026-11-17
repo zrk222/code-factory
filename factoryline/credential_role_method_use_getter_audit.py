@@ -3400,12 +3400,12 @@ class _CredentialRoleFlow:
         if isinstance(node, (ast.Constant, ast.Name)):
             return self.leaf(path, node, env)
         if isinstance(node, (ast.Tuple, ast.List)):
-            values = tuple(
-                (i, self.expression(path, v, env)) for i, v in enumerate(node.elts)
-            )
-            return _Value(
-                items=values,
-                inert_kind="tuple" if isinstance(node, ast.Tuple) else "list",
+            kind = "tuple" if isinstance(node, ast.Tuple) else "list"
+            return self.allocate_container(
+                path,
+                node,
+                kind,
+                ((i, self.expression(path, v, env)) for i, v in enumerate(node.elts)),
             )
         if isinstance(node, ast.Dict):
             return self.literal_dict(path, node, env)
@@ -3417,7 +3417,7 @@ class _CredentialRoleFlow:
             return self.call(path, node, env)
         if isinstance(node, ast.IfExp):
             test = self.expression(path, node.test, env)
-            exact = _validated_exact_scalar(test)
+            exact = _validated_exact_scalar(test, as_truth=True)
             if exact:
                 return self.expression(
                     path, node.body if exact[0] else node.orelse, env
@@ -3471,7 +3471,7 @@ class _CredentialRoleFlow:
             return self.scalar_boolean(path, node, env)
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
             value = self.expression(path, node.operand, env)
-            exact = _validated_exact_scalar(value)
+            exact = _validated_exact_scalar(value, as_truth=True)
             if exact:
                 return _constant_identity_value(ast.Constant(value=not exact[0]))
             if value.inert_kind == "scalar" and not _has_unknown_content(value):
@@ -3549,17 +3549,15 @@ class _CredentialRoleFlow:
 
     def scalar_boolean(self, path, node, env):
         """Follow boolean short circuits only when preceding operands are exact."""
-        for position, expression in enumerate(node.values):
+        for expression in node.values[:-1]:
             value = self.expression(path, expression, env)
-            if position == len(node.values) - 1:
-                return value
-            exact = _validated_exact_scalar(value)
+            exact = _validated_exact_scalar(value, as_truth=True)
             if not exact:
                 self.fail("unresolved short-circuit operand", path, expression)
                 return _Value(unknown=True)
             if bool(exact[0]) == isinstance(node.op, ast.Or):
                 return value
-        return _Value(unknown=True)
+        return self.expression(path, node.values[-1], env)
 
     def attribute(self, path, node, env):
         """Read a modeled field or delegate unresolved attributes to the resolver."""
@@ -3907,7 +3905,7 @@ class _CredentialRoleFlow:
     def branch(self, path, node, env):
         """Select exact scalar branches or merge compatible modeled alternatives."""
         value = self.expression(path, node.test, env)
-        exact = _validated_exact_scalar(value)
+        exact = _validated_exact_scalar(value, as_truth=True)
         if exact:
             return self.statements(path, node.body if exact[0] else node.orelse, env)
         if value.unknown or value.class_roots or tracked_roots(value):
@@ -5413,19 +5411,20 @@ class _SourceTestScope:
 
     def contract(self, flow, path, call, receiver, args, kwargs):
         """Apply supported construction or API transfers and record their witnesses."""
+        from .captured_security_audit import captured_builtin_copy
+
         self.flow = flow
         created = self.construct(flow, path, call, args, kwargs)
+        if created is None:
+            created = captured_builtin_copy(self, flow, path, call, args, kwargs)
         if created is not None:
             return created
         canonical = self.canonical(path, call.func)
+        model_receiver = None
         selected = self.object_class(receiver)
         if selected and self.test_owner(*selected):
             canonical = "unittest.TestCase." + call.func.attr
             model_receiver = ("testcase", receiver, True)
-        else:
-            model_receiver = None
-        if receiver is not None and receiver.inert_kind == "scope_namespace":
-            receiver = None
         if not canonical:
             return None
         stable = self.audit._app_signing_terminal_stable(
@@ -5519,10 +5518,10 @@ class _SourceTestScope:
         ]:
             return False
         profile = self.configured_settings_invocation_profile()
-        if profile["status"] == "UNRESOLVED":
-            return False
-        authority = self.configured_settings_authority(profile)
-        if authority is None:
+        if (
+            profile["status"] == "UNRESOLVED"
+            or (authority := self.configured_settings_authority(profile)) is None
+        ):
             return False
         provider, module, selected, native = authority
         if native and not self.witness_native_settings_profile(profile):
@@ -5536,16 +5535,10 @@ class _SourceTestScope:
         ):
             return False
         self.witness(self.path, self.assignment, "configured_test_settings_binding")
-        for path, function in (
-            (path, fn) for path, functions in collected.items() for fn in functions
-        ):
-            self.witness(
-                path,
-                function,
-                "declared_django_settings_invocation"
-                if native
-                else "declared_pytest_settings_invocation",
-            )
+        role = f"declared_{'django' if native else 'pytest'}_settings_invocation"
+        for path, functions in collected.items():
+            for function in functions:
+                self.witness(path, function, role)
         self.settings_selection = {
             "selection_assurance": "SOURCE_BOUND_CONDITIONAL",
             "execution_status": "NOT_EXECUTED",
@@ -5569,6 +5562,8 @@ class _SourceTestScope:
         )
 
         declared = profile["status"] == "DECLARED"
+        if declared and profile["runner"] not in {"pytest", "django.DiscoverRunner"}:
+            return None
         configs = self.index["configuration_bytes"]
         native = declared and profile["runner"] == "django.DiscoverRunner"
         if native:
@@ -5634,17 +5629,16 @@ class _SourceTestScope:
             "runner_span": "native_django_runner_invocation",
         }
         for invocation in profile["invocations"]:
-            path = self.source.root / invocation["script"]
-            spans = {tuple(invocation["runner"][k]): v for k, v in roles.items()}
+            path, runner = self.source.root / invocation["script"], invocation["runner"]
+            spans = {tuple(runner[k]): role for k, role in roles.items()}
+            if resolution := runner.get("runner_resolution_span"):
+                spans[tuple(resolution)] = "native_django_runner_resolution"
             for n in ast.walk(self.index["modules"][path]):
-                span = tuple(
-                    getattr(n, a, -1)
-                    for a in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-                )
-                if span in spans:
-                    role = spans.pop(span)
-                    self.witness(path, n, role)
-                    self.native_profile_nodes.update(id(child) for child in ast.walk(n))
+                if isinstance(n, ast.stmt):
+                    span = tuple(self.fixture._evidence_node_span(n))
+                    if span in spans:
+                        self.witness(path, n, spans.pop(span))
+                        self.native_profile_nodes.update(map(id, ast.walk(n)))
             if spans:
                 return False
         return True
@@ -5653,7 +5647,7 @@ class _SourceTestScope:
         """Collect source-bound test owners selected by the declared runner."""
         from pathlib import Path
 
-        from .pytest_collection_audit import _pytest_collection_settings
+        from . import pytest_collection_audit as collection
 
         maps = self.audit._legacy._fixture_class_maps(self.index)
         if maps is None:
@@ -5662,7 +5656,7 @@ class _SourceTestScope:
             isinstance(profile, dict)
             and profile.get("runner") == "django.DiscoverRunner"
         ):
-            roots = {self.source.root / row["cwd"] for row in profile["invocations"]}
+            roots = collection.native_django_runner_roots(self.source.root, profile)
             if not roots:
                 return {}
             patterns = {
@@ -5689,7 +5683,7 @@ class _SourceTestScope:
             }
         if selected is None:
             return {}
-        patterns = _pytest_collection_settings(selected["identity"])
+        patterns = collection._pytest_collection_settings(selected["identity"])
         roots = selected["options"].get("testpaths", ["."])
         roots = roots.split() if isinstance(roots, str) else roots
         if (
@@ -5722,6 +5716,7 @@ class _SourceTestScope:
             _signing_provider_clear,
             _signing_provider_reads,
         )
+        from .pytest_collection_audit import NATIVE_DJANGO_RUNNER_PROVIDERS
 
         if not self.view or not self.view.complete:
             return False
@@ -5738,8 +5733,7 @@ class _SourceTestScope:
                 roots=(
                     *_DJANGO_LOADER_ROOTS,
                     "django.setup",
-                    "django.test.runner.DiscoverRunner",
-                    "django.test.runner.DiscoverRunner.run_tests",
+                    *NATIVE_DJANGO_RUNNER_PROVIDERS,
                     "django.conf.settings.SECRET_KEY",
                     "django.conf.settings.SECRET_KEY_FALLBACKS",
                     "pytest.main",
@@ -5829,6 +5823,7 @@ class _SourceTestScope:
         from .pytest_collection_audit import (
             DJANGO_IMPLICIT_KEY_EFFECTS,
             DJANGO_IMPLICIT_KEY_METHODS,
+            native_django_settings_argument,
         )
 
         name = self.canonical(path, node) or getattr(node, "id", "")
@@ -5857,6 +5852,10 @@ class _SourceTestScope:
                 and parent.func is node
             )
         reference = parent if name == "django.conf.settings" else node
+        if name == "django.conf.settings" and native_django_settings_argument(
+            self, path, node, reference
+        ):
+            return False
         attribute = (
             reference.attr
             if isinstance(reference, ast.Attribute)

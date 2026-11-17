@@ -100,7 +100,7 @@ class _LogReader:
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 self._assign(statement, tainted, snapshots)
             elif not isinstance(
-                statement, (ast.Expr, ast.Return, ast.Raise, ast.Assert)
+                statement, (ast.Expr, ast.Return, ast.Raise, ast.Assert, ast.AugAssign)
             ):
                 for name in self.audit._bound_names(statement):
                     tainted.pop(name, None)
@@ -212,7 +212,9 @@ class _LogReader:
             (
                 value
                 for value in values
-                if self._flow(value, tainted) and not self._safe(value, tainted)
+                if self._flow(value, tainted)
+                and not self._safe(value, tainted)
+                and not log_evidence.logging_domain_guarded(value, call, self, tainted)
             ),
             None,
         )
@@ -269,9 +271,8 @@ class _LogReader:
                 item for item in node.values if isinstance(item, ast.FormattedValue)
             ]
             return bool(values) and all(
-                not self._flow(item.value, tainted, True)
-                or item.conversion == ord("r")
-                or not self._flow(item.value, tainted)
+                not (item.format_spec and self._flow(item.format_spec, tainted))
+                and (not self._flow(item.value, tainted) or item.conversion == ord("r"))
                 for item in values
             )
         if (

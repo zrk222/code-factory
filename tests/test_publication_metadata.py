@@ -1095,7 +1095,7 @@ def _public_callables() -> list[tuple[Path, ast.FunctionDef | ast.AsyncFunctionD
         tree = ast.parse(path.read_text(encoding="utf-8"))
         nodes = list(tree.body)
         for owner in tree.body:
-            if isinstance(owner, ast.ClassDef):
+            if isinstance(owner, ast.ClassDef) and not owner.name.startswith("_"):
                 nodes.extend(owner.body)
         for node in nodes:
             if isinstance(
@@ -1115,6 +1115,21 @@ def test_every_public_function_and_method_has_a_meaningful_docstring() -> None:
     assert missing == [], "PUBLIC_API_DOCSTRINGS_COMPLETE missing:\n" + "\n".join(
         missing
     )
+
+
+def test_public_callable_inventory_respects_private_class_boundary(
+    tmp_path, monkeypatch
+):
+    import sys
+
+    (tmp_path / "sample.py").write_text(
+        "def exposed(): pass\n"
+        "def _internal(): pass\n"
+        "class Public:\n    def method(self): pass\n    def _hidden(self): pass\n"
+        "class _Private:\n    def implementation(self): pass\n"
+    )
+    monkeypatch.setattr(sys.modules[__name__], "PACKAGE", tmp_path)
+    assert [node.name for _, node in _public_callables()] == ["exposed", "method"]
 
 
 def test_fail_closed_public_surfaces_document_refusal_semantics() -> None:

@@ -14085,6 +14085,371 @@ def test_yaml_safe_loader_credit_checks_captured_peer_module_mutation(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "selection, other_use, peer_source, expected",
+    [
+        ("", "", "", False),
+        ("typ='safe'", "", "", False),
+        ("typ='unsafe'", "", "", True),
+        ("typ=mode", "", "", True),
+        ("", "inspect_loader(parser)\n", "", True),
+        ("", "parser.Constructor = replacement\n", "", True),
+        (
+            "",
+            "",
+            "from audit_subject import parser\nparser.Constructor = replacement\n",
+            True,
+        ),
+        (
+            "",
+            "",
+            "from ruamel.yaml import YAML\nYAML.Constructor = replacement\n",
+            True,
+        ),
+    ],
+)
+def test_captured_yaml_receiver_requires_readonly_loader(
+    tmp_path, selection, other_use, peer_source, expected
+):
+    (tmp_path / "audit_subject.py").write_text(
+        "from ruamel.yaml import YAML as Parser\n"
+        f"parser = Parser({selection})\n"
+        f"{other_use}"
+        "def read(config):\n"
+        "    return parser.load(config)\n",
+        encoding="utf-8",
+    )
+    if peer_source:
+        (tmp_path / "loader_patch.py").write_text(peer_source, encoding="utf-8")
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    findings = [
+        row for row in report["findings"] if row["code"] == "SECURITY_UNSAFE_YAML"
+    ]
+    assert len(findings) == int(expected)
+    if expected:
+        assert findings[0]["facts"]["call"] == "ruamel.yaml.YAML.load"
+
+
+@pytest.mark.parametrize(
+    "extra, expected",
+    [
+        ("", False),
+        ("publish(SECRET_ENV)\n", True),
+        ("parser.add_argument = replacement\n", True),
+    ],
+)
+def test_credential_label_requires_closed_registry_and_metadata_uses(
+    tmp_path, extra, expected
+):
+    (tmp_path / "app.py").write_text(
+        "import argparse\nimport os\n"
+        "SECRET_ENV = 'SERVICE_SIGNING_KEY'\n"
+        "def read():\n    return os.getenv(SECRET_ENV)\n"
+        "def build():\n    parser = argparse.ArgumentParser()\n"
+        + (
+            "    parser.add_argument = replacement\n"
+            if extra.startswith("parser.")
+            else ""
+        )
+        + "    parser.add_argument('--key', help='Read %s' % SECRET_ENV)\n"
+        "    return parser\n" + (extra if extra.startswith("publish(") else ""),
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    rows = report["finding_tier_report"]["ledger"]
+    assert (
+        any(r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET" for r in rows)
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    "carrier",
+    ["APIKeyHeader", "APIKeyQuery", "APIKeyCookie"],
+)
+@pytest.mark.parametrize(
+    "other_use",
+    [
+        "none",
+        "mixed",
+        "rebound",
+        "attribute",
+        "local_import",
+        "wildcard",
+        "local_provider",
+    ],
+)
+def test_credential_locators_are_not_credential_values(tmp_path, carrier, other_use):
+    source = (
+        f"from fastapi.security import {carrier}\n"
+        "API_KEY_NAME = 'X-Control-Key'\n"
+        "API_KEY_VALUE = 'synthetic-control-value-only'\n"
+        f"locator = {carrier}(name=API_KEY_NAME)\n"
+        "def matches(value):\n    return value == API_KEY_VALUE\n"
+    )
+    if other_use == "mixed":
+        source += "def alternate(value):\n    return value == API_KEY_NAME\n"
+    if other_use == "rebound":
+        source = source.replace("locator = ", f"{carrier} = unknown\nlocator = ", 1)
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    peers = {
+        "attribute": "import app\ndef accept(value):\n    return value == app.API_KEY_NAME\n",
+        "local_import": (
+            "def accept(value):\n    from app import API_KEY_NAME as key\n"
+            "    return value == key\n"
+        ),
+        "wildcard": "from app import *\ndef accept(value):\n    return value == API_KEY_NAME\n",
+    }
+    if other_use in peers:
+        (tmp_path / "peer.py").write_text(peers[other_use], encoding="utf-8")
+    if other_use == "local_provider":
+        package = tmp_path / "src" / "fastapi"
+        package.mkdir(parents=True)
+        (package / "security.py").write_text(
+            f"def {carrier}(name):\n    return name\n", encoding="utf-8"
+        )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    emitted = {
+        item["raw_finding"]["facts"]["name"]
+        for item in report["finding_tier_report"]["ledger"]
+        if item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    assert emitted == (
+        {"API_KEY_VALUE"} if other_use == "none" else {"API_KEY_NAME", "API_KEY_VALUE"}
+    )
+
+
+@pytest.mark.parametrize(
+    "extra, peer, library, is_locator",
+    [
+        ("", "", "os.getenv", True),
+        ("", "", "os.environ.get", True),
+        ("def other(name):\n    return os.environ[name]\n", "", "os.getenv", True),
+        ("def other():\n    return os.environ\n", "", "os.getenv", False),
+        ("use(API_KEY_ENV)\n", "", "os.getenv", False),
+        ("", "import app\nuse(app.API_KEY_ENV)\n", "os.getenv", False),
+        ("", "import app\nuse(getattr(app, 'API_KEY_ENV'))\n", "os.getenv", False),
+        ("", "from app import *\nuse(API_KEY_ENV)\n", "os.getenv", False),
+        ("use(globals()['API_KEY_ENV'])\n", "", "os.getenv", False),
+        ("os.getenv = replacement\n", "", "os.getenv", False),
+        ("os.environ.get = replacement\n", "", "os.environ.get", False),
+        ("os._Environ.__getitem__ = replacement\n", "", "os.environ.get", False),
+        ("import sys\nsys.modules['os'] = replacement\n", "", "os.getenv", False),
+        ("", "", "read_from_unknown_provider", False),
+    ],
+)
+def test_environment_locator_requires_only_proven_key_uses(
+    tmp_path, extra, peer, library, is_locator
+):
+    (tmp_path / "app.py").write_text(
+        "import os\n"
+        "API_KEY_ENV = 'SERVICE_SIGNING_KEY'\n"
+        "API_KEY_VALUE = 'synthetic-control-value-only'\n"
+        f"def read():\n    return {library}(API_KEY_ENV)\n"
+        "def accepts(key):\n    return key == API_KEY_VALUE\n" + extra,
+        encoding="utf-8",
+    )
+    if peer:
+        (tmp_path / "peer.py").write_text(peer, encoding="utf-8")
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["audit_coverage"]["complete"]
+    assert report["finding_conservation"]["state"] == "PASS"
+    names = {
+        item["raw_finding"]["facts"]["name"]
+        for item in report["finding_tier_report"]["ledger"]
+        if item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    assert names == (
+        {"API_KEY_VALUE"} if is_locator else {"API_KEY_ENV", "API_KEY_VALUE"}
+    )
+
+
+@pytest.mark.parametrize(
+    "variant, active",
+    [
+        ("closed", False),
+        ("no_lookup", True),
+        ("lookup_rebound", True),
+        ("exception_rebound", True),
+        ("operational_use", True),
+        ("captured_exception", False),
+        ("mutated_test_assertion", True),
+        ("local_test_assertion", True),
+        ("external_class_consumer", True),
+    ],
+)
+def test_registry_label_requires_closed_exception_message_and_lookup(
+    tmp_path, variant, active
+):
+    source = "import os\nSECRET_ENV = 'SERVICE_SIGNING_KEY'\n"
+    error = "RuntimeError"
+    if variant in {
+        "captured_exception",
+        "mutated_test_assertion",
+        "local_test_assertion",
+        "external_class_consumer",
+    }:
+        error = "MissingConfiguration"
+        (tmp_path / "errors.py").write_text(
+            "class MissingConfiguration(ValueError):\n    pass\n", encoding="utf-8"
+        )
+        source += "from errors import MissingConfiguration\n"
+        facade = (
+            "    pytest.raises = replacement\n"
+            if variant == "mutated_test_assertion"
+            else "    pytest = replacement\n"
+            if variant == "local_test_assertion"
+            else ""
+        )
+        (tmp_path / "test_configuration.py").write_text(
+            "import pytest\nfrom errors import MissingConfiguration\n"
+            "from app import read\ndef test_requires_value():\n"
+            + facade
+            + "    with pytest.raises(MissingConfiguration):\n        read()\n"
+            + (
+                "publish(MissingConfiguration)\n"
+                if variant == "external_class_consumer"
+                else ""
+            ),
+            encoding="utf-8",
+        )
+    if variant == "exception_rebound":
+        source += "RuntimeError = replacement\n"
+    if variant == "lookup_rebound":
+        source += "def read(os):\n"
+    else:
+        source += "def read():\n"
+    if variant == "operational_use":
+        source += "    enroll(password=SECRET_ENV)\n"
+    lookup = "None" if variant == "no_lookup" else "os.getenv(SECRET_ENV)"
+    source += f"    value = {lookup}\n    if value is None:\n        raise {error}(f'Missing {{SECRET_ENV}}')\n    return value\n"
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["defect_policy_decision"]["state"] != "BLOCKED"
+    assert report["finding_conservation"]["state"] == "PASS"
+    ledger = report["finding_tier_report"]["ledger"]
+    assert (
+        bool(
+            [
+                row
+                for row in ledger
+                if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+            ]
+        )
+        is active
+    )
+
+
+@pytest.mark.parametrize(
+    "url, argument, tier",
+    [
+        ("https://example.invalid/data", "", "SUPPORTED_DEFECT"),
+        ("http://example.invalid/data", "", "NEEDS_CONTEXT"),
+        ("https://example.invalid/data", "DESTINATION", "NEEDS_CONTEXT"),
+    ],
+)
+def test_tls_transport_requires_actual_module_value(tmp_path, url, argument, tier):
+    (tmp_path / "app.py").write_text(
+        f"import requests\nDESTINATION = {url!r}\n"
+        f"def read({argument}):\n    return requests.get(DESTINATION, verify=False)\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    rows = report["finding_tier_report"]["ledger"]
+    assert [
+        r["tier"]
+        for r in rows
+        if r["raw_finding"]["code"] == "SECURITY_TLS_VERIFY_DISABLED"
+    ] == [tier]
+
+
+@pytest.mark.parametrize(
+    "scheme, intervening, consumer, expected",
+    [
+        ("https", "", "return urllib.request.urlopen(req, context=ctx)\n", True),
+        ("http", "", "return urllib.request.urlopen(req, context=ctx)\n", False),
+        (
+            "https",
+            "ctx = replacement\n",
+            "return urllib.request.urlopen(req, context=ctx)\n",
+            False,
+        ),
+        (
+            "https",
+            "req.full_url = other_url\n",
+            "return urllib.request.urlopen(req, context=ctx)\n",
+            False,
+        ),
+        ("https", "", "return ctx\n", False),
+        ("https", "", "return urllib.request.urlopen(req, ctx)\n", False),
+        (
+            "https",
+            "urllib.request.urlopen = replacement\n",
+            "return urllib.request.urlopen(req, context=ctx)\n",
+            False,
+        ),
+    ],
+)
+def test_stdlib_tls_context_requires_bound_https_consumer(
+    tmp_path, scheme, intervening, consumer, expected
+):
+    from textwrap import indent
+
+    (tmp_path / "app.py").write_text(
+        "import ssl\nimport urllib.request\n"
+        "def read():\n"
+        + indent(
+            f"req = urllib.request.Request('{scheme}://example.invalid/data')\n"
+            "ctx = ssl._create_unverified_context()\n" + intervening + consumer,
+            "    ",
+        ),
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    rows = [
+        r
+        for r in report["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_TLS_VERIFY_DISABLED"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["tier"] == ("SUPPORTED_DEFECT" if expected else "NEEDS_CONTEXT")
+
+
+@pytest.mark.parametrize(
     "fixture,type_path",
     [
         ("jwt", "jwt.api_jwt.PyJWT"),
@@ -15975,3 +16340,403 @@ def test_bounded_security_report_keeps_unknown_collection_read_only(tmp_path):
     assert report["audit_coverage"]["complete"] is True
     assert bounded_security_exit_code(args, report) == 2
     assert not (tmp_path / ".factory").exists()
+
+
+@pytest.mark.parametrize(
+    ("statement", "use", "expected"),
+    [
+        ("'SELECT name FROM catalog WHERE id = ?'", "", False),
+        ("candidate", "", True),
+        ("'SELECT name FROM catalog WHERE id = ?'", "    inspect_rows(batch)\n", True),
+        ("'SELECT name FROM catalog WHERE id = ?'", "    alias = apply\n", True),
+    ],
+)
+def test_sql_batch_keeps_statement_and_bound_values_separate(
+    tmp_path, statement, use, expected
+):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    source = (
+        "import sqlite3\n"
+        "def build(candidate):\n"
+        "    rows = []\n"
+        f"    rows.append(({statement}, (candidate,)))\n"
+        "    return None, rows\n"
+        "def apply(batch):\n"
+        "    connection = sqlite3.connect('local.db')\n"
+        "    with connection:\n"
+        "        cursor = connection.cursor()\n"
+        "        for statement, parameters in batch:\n"
+        "            cursor.execute(statement, parameters)\n"
+        "def main(candidate):\n"
+        "    ignored, batch = build(candidate)\n"
+        f"{use}"
+        "    apply(batch)\n"
+    )
+    (tmp_path / "batch.py").write_text(source, encoding="utf-8")
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert (
+        any(
+            row["raw_finding"]["code"] == "SECURITY_SQL_INJECTION"
+            for row in report["finding_tier_report"]["ledger"]
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("control", "active", "singleton"),
+    [
+        (control, active, singleton)
+        for singleton in (False, True)
+        for control, active in (
+            ("closed", False),
+            ("field_read", True),
+            ("bulk_export", True),
+            ("rebound", True),
+            ("global_rebound", True),
+            ("package_opaque", True),
+            ("package_plain", False),
+            ("registry_namespace", True),
+            ("reexport", True),
+            ("wrong_mount", True),
+            ("unmapped_launch", True),
+            ("case_alias_launch", True),
+            ("alternate_unbound_local_build", True),
+            ("alternate_disjoint_build", False),
+        )
+    ]
+    + [
+        ("guarded", False, False),
+        ("guarded_read", True, False),
+        ("guarded_escape", True, False),
+        ("guarded_preallocation", True, False),
+        ("guarded_default", True, False),
+        ("guarded_dynamic_factory", True, False),
+        ("guarded_mutated_field", True, False),
+        ("guarded_mutated_provider", True, False),
+        ("guarded_mutated_provider_base", True, False),
+        ("guarded_double_config", True, False),
+    ],
+)
+def test_bounded_scan_requires_closed_settings_uses(
+    tmp_path, control, active, singleton
+):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    app = tmp_path / "backend" / "app"
+    app.mkdir(parents=True)
+    member = "options" if singleton else "load_options"
+    access = member if singleton else f"{member}()"
+    package = control.startswith("package_")
+    module = "app" if package else "app.config"
+    carrier = (
+        "options = ServiceOptions()\n"
+        if singleton
+        else "def load_options():\n    return ServiceOptions()\n"
+    )
+    if package:
+        carrier += f"local_label = {access}.title\n"
+    config = ""
+    if control.startswith("guarded"):
+        default = (
+            "load_origins()" if control == "guarded_dynamic_factory" else "['local']"
+        )
+        config = (
+            f"    origins: list[str] = pydantic.Field(default_factory=lambda: {default})\n"
+            "    class Config:\n"
+            "        env_file = '.env'\n"
+            "        case_sensitive = False\n"
+        )
+        if control == "guarded_double_config":
+            config += "    model_config = SettingsConfigDict(env_file='.env')\n"
+    (app / ("__init__.py" if package else "config.py")).write_text(
+        "import pydantic\n"
+        "from pydantic_settings import BaseSettings, SettingsConfigDict\n"
+        "class ServiceOptions(BaseSettings):\n"
+        "    secret_key: str = 'unused-development-setting'\n"
+        "    title: str = 'catalog'\n" + config + "\n" + carrier,
+        encoding="utf-8",
+    )
+    extra = {
+        "closed": "def labels():\n    modules = []\n    return modules\n",
+        "field_read": f"{access}.secret_key\n",
+        "bulk_export": f"accept_options({access})\n",
+        "rebound": f"{member} = replacement\n",
+        "global_rebound": f"def rebind():\n    global {member}\n"
+        f"    from other import replacement as {member}\n",
+        "package_opaque": f"accept_options({access})\n",
+        "registry_namespace": "from sys import modules as loaded_modules\n",
+        "reexport": "from app.alias import exposed_options\n"
+        + (
+            "accept_options(exposed_options)\n"
+            if singleton
+            else "accept_options(exposed_options())\n"
+        ),
+    }.get(control, "")
+    reads = f"label = {access}.title\n"
+    if control.startswith("guarded"):
+        reads = (
+            f"def label():\n    options = {access}\n    return options.title\n"
+            "if __name__ == '__main__':\n"
+            + (
+                "    print(options.title)\n"
+                if control == "guarded_preallocation"
+                else ""
+            )
+            + f"    options = {access}\n"
+            + (
+                "    print(options.secret_key)\n"
+                if control == "guarded_read"
+                else "    print(options.title)\n"
+            )
+        )
+        extra = {
+            "guarded_escape": "accept_options(options)\n",
+            "guarded_default": "def export(settings=options):\n    return settings\n",
+            "guarded_mutated_field": "import pydantic\npydantic.Field = replacement\n",
+            "guarded_mutated_provider": "from pydantic import fields\nfields.Field = replacement\n",
+            "guarded_mutated_provider_base": (
+                "from pydantic_settings.main import BaseSettings\n"
+                "BaseSettings.settings_customise_sources = replacement\n"
+            ),
+        }.get(control, "")
+    (app / "main.py").write_text(
+        f"from {module} import {member}\n" + reads + extra,
+        encoding="utf-8",
+    )
+    if control == "reexport":
+        (app / "alias.py").write_text(
+            f"from app.config import {member} as exposed_options\n", encoding="utf-8"
+        )
+    target = "missing.main" if control == "unmapped_launch" else "app.main"
+    docker = "dockerfile" if control == "case_alias_launch" else "Dockerfile"
+    (app.parent / docker).write_text(
+        "FROM python:3.11\nWORKDIR /srv\nCOPY app ./app\n"
+        f'CMD ["python", "-m", "uvicorn", "{target}:api"]\n',
+        encoding="utf-8",
+    )
+    mount = "    volumes: ['workspace:/srv']\n" if control == "wrong_mount" else ""
+    compose = "services:\n  api:\n    build: ./backend\n" + mount
+    if control.startswith("alternate_"):
+        build_root = (
+            "backend" if control == "alternate_unbound_local_build" else "assets"
+        )
+        (tmp_path / build_root).mkdir(exist_ok=True)
+        (tmp_path / build_root / "Dockerfile.metadata").write_text(
+            "FROM scratch\n", encoding="utf-8"
+        )
+        compose += (
+            "  metadata:\n    build:\n"
+            f"      context: ./{build_root}\n"
+            "      dockerfile: Dockerfile.metadata\n"
+        )
+    (tmp_path / "compose.yaml").write_text(compose, encoding="utf-8")
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+        ]
+    )
+    result = prepare_bounded_security_report(args)
+    assert result["audit_coverage"]["complete"] is True
+    assert result["finding_conservation"]["state"] == "PASS"
+    selected = {
+        entry["path"] for entry in result["oracle_context"]["configuration_sources"]
+    }
+    assert "compose.yaml" in selected
+    expected = "backend/" + docker
+    if (app.parent / "Dockerfile").exists():
+        assert expected in selected
+    elif control == "case_alias_launch":
+        assert expected not in selected
+    if control == "case_alias_launch":
+        assert "backend/Dockerfile" not in selected
+    assert (
+        any(
+            item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+            for item in result["finding_tier_report"]["ledger"]
+        )
+        is active
+    )
+
+
+@pytest.mark.parametrize("variant", ["resolved", "ambiguous", "missing"])
+def test_launcher_capture_uses_directory_entry_spelling(tmp_path, monkeypatch, variant):
+    from factoryline.captured_security_audit import _observed_launcher_path
+
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    actual = backend / "dockerfile"
+    actual.write_text("FROM scratch\n", encoding="utf-8")
+    path_type = type(tmp_path)
+    resolve, iterdir = path_type.resolve, path_type.iterdir
+
+    def preserve_requested_case(path, *args, **kwargs):
+        if path == backend / "Dockerfile":
+            if variant == "missing":
+                raise FileNotFoundError(path)
+            return path
+        return resolve(path, *args, **kwargs)
+
+    def entries(path):
+        if variant == "ambiguous" and path == backend:
+            return iter((actual, backend / "Dockerfile"))
+        return iterdir(path)
+
+    monkeypatch.setattr(path_type, "resolve", preserve_requested_case)
+    monkeypatch.setattr(path_type, "iterdir", entries)
+    expected = "backend/dockerfile" if variant == "resolved" else "backend/Dockerfile"
+    assert _observed_launcher_path(tmp_path, "backend/Dockerfile") == expected
+
+
+@pytest.mark.parametrize(
+    "effect, active",
+    [
+        ("", False),
+        ("publish(label)\n", True),
+        ("sys.stderr = replacement\n", True),
+    ],
+)
+def test_registry_label_requires_closed_imported_consumers(tmp_path, effect, active):
+    (tmp_path / "config.py").write_text(
+        "SECRET_ENV = 'SERVICE_SIGNING_KEY'\n", encoding="utf-8"
+    )
+    (tmp_path / "ui.py").write_text(
+        "import argparse\nimport os\nimport sys\n"
+        "from config import SECRET_ENV as label\n"
+        "def parse_args():\n"
+        "    parser = argparse.ArgumentParser()\n"
+        "    parser.add_argument('--key', help=f'Read {label}')\n"
+        "    return parser\n"
+        "def read():\n"
+        "    key = os.environ.get(label, '')\n"
+        "    if not key:\n"
+        "        print(f'Missing {label}', file=sys.stderr)\n"
+        "    return key\n" + effect,
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["defect_policy_decision"]["state"] != "BLOCKED"
+    ledger = report["finding_tier_report"]["ledger"]
+    assert (
+        any(row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET" for row in ledger)
+        is active
+    )
+
+
+@pytest.mark.parametrize(
+    ("variant", "active"),
+    [
+        ("isolated", False),
+        ("raw_header", True),
+        ("unpatched", True),
+        ("wrong_slot", True),
+        ("no_collection", True),
+    ],
+)
+def test_test_literal_requires_closed_digest_and_mock_interval(
+    tmp_path, variant, active
+):
+    (tmp_path / "checker.py").write_text(
+        "import hashlib\nimport requests\n"
+        "BASE = 'https://example.invalid/check/'\n"
+        "def digest(value):\n"
+        "    return hashlib.sha256(value.encode('utf-8')).hexdigest()\n"
+        "def lookup(value):\n"
+        "    hashed = digest(value)\n"
+        "    front, tail = hashed[:4], hashed[4:]\n"
+        "    reply = requests.get(BASE + front"
+        + (", headers={'X-Example': value}" if variant == "raw_header" else "")
+        + ")\n"
+        "    if reply.text == tail:\n        return 1\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    if variant != "no_collection":
+        (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    exercise = "        checker.lookup(secret)\n"
+    if variant == "unpatched":
+        exercise = "        pass\n    checker.lookup(secret)\n"
+    method = "post" if variant == "wrong_slot" else "get"
+    (tmp_path / "test_checker.py").write_text(
+        "from unittest.mock import patch\nimport checker\n"
+        "def test_local_input():\n"
+        "    secret = 'fixed-catalog-test-data'\n"
+        f"    with patch.object(checker.requests, '{method}', return_value=None) as recorded:\n"
+        + exercise
+        + "    emitted = recorded.call_args.args[0]\n"
+        "    assert secret not in emitted\n"
+        "    assert checker.digest(secret)[:4] == emitted[-4:]\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["defect_policy_decision"]["state"] != "BLOCKED"
+    assert (
+        any(
+            row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+            for row in report["finding_tier_report"]["ledger"]
+        )
+        is active
+    )
+
+
+def test_bounded_sql_schema_remains_ancillary_to_native_verification(tmp_path):
+    schema = tmp_path / "schema"
+    schema.mkdir()
+    (schema / "tables.sql").write_text(
+        "CREATE TABLE examples (id INTEGER PRIMARY KEY);", encoding="utf-8"
+    )
+    (tmp_path / "client.py").write_text(
+        "import requests\n"
+        "def query():\n"
+        "    return requests.get('https://example.invalid', verify=False)\n",
+        encoding="utf-8",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    configuration = report["oracle_context"]["configuration_sources"]
+    assert "schema/tables.sql" in {row["path"] for row in configuration}
+    assert report["finding_conservation"]["native_rows"] == "VERIFIED"
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["defect_policy_decision"]["state"] != "BLOCKED"
+    assert [
+        item["raw_finding"]["code"] for item in report["finding_tier_report"]["ledger"]
+    ] == ["SECURITY_TLS_VERIFY_DISABLED"]

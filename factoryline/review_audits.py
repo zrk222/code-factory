@@ -29,6 +29,7 @@ import time
 from typing import Any
 
 from .pytest_collection_audit import (
+    pytest_collection_authoritative,
     configparser as configparser,
     fnmatchcase as fnmatchcase,
     tomllib as tomllib,
@@ -62,6 +63,7 @@ from .audit_action_refs import (
     _security_scan_state as _security_scan_state,
     _security_scan_action_summary as _security_scan_action_summary,
     _validate_source_file_limit as _validate_source_file_limit,
+    with_captured_declaration_proof as with_decl_proof,
 )
 from .finite_capture import closed_shell_finding, shell_execution_calls
 from .deep_audit_io import local_file
@@ -1378,8 +1380,6 @@ def _security_finding(
 def _dynamic_execution_finding(
     call: str, relative: str, node: ast.AST
 ) -> dict[str, Any] | None:
-    if call not in {"eval", "exec", "builtins.eval", "builtins.exec"}:
-        return None
     if fixed := integrity.fixed_program_witness(relative, node, call):
         return _security_finding(
             "SECURITY_DYNAMIC_EXECUTION",
@@ -1435,16 +1435,12 @@ def _security_call_finding(
         code = "SECURITY_UNSAFE_DESERIALIZATION"
         message = "Pickle-like deserialization can execute attacker-controlled code."
         facts = {"call": call}
-    elif call in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
-        from .security_configuration import yaml_safe_loader
+    elif call.startswith(("yaml.", "ruamel.yaml.YAML.")):
+        from .captured_security_audit import yaml_loading_finding
 
-        if call == "yaml.load" and yaml_safe_loader(
-            node, getattr(node, "_security_configuration_aliases", {})
-        ):
-            return None
-        code = "SECURITY_UNSAFE_YAML"
-        message = "YAML is loaded without an explicit reviewed Loader."
-        facts = {"call": call}
+        return yaml_loading_finding(
+            call, relative, node, getattr(node, "_security_configuration_aliases", {})
+        )
     else:
         from .security_configuration import tls_finding
 
@@ -1499,10 +1495,11 @@ def _literal_credential_candidate(node, target):
     return isinstance(target, ast.Name) and (
         bool(_SECRET_ASSIGNMENT.search(target.id))
         or (value := _secret_literal(node)) is not None
+        and bool(encoded := value.encode(errors="surrogatepass"))
         and any(
             not _AWS_DEMO.match(match.string, match.start())
             for pattern in _SECRET_BYTES
-            for match in pattern.finditer(value.encode())
+            for match in pattern.finditer(encoded)
         )
     )
 
@@ -1510,7 +1507,11 @@ def _literal_credential_candidate(node, target):
 def _literal_assignment_diagnostic(
     relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr, aliases=None
 ) -> dict[str, Any] | None:
+    from .captured_security_audit import captured_noncredential_assignment
+
     if not _literal_credential_candidate(node, target):
+        return None
+    if captured_noncredential_assignment(node, target, aliases or {}):
         return None
     return _security_finding(
         "SECURITY_HARDCODED_SECRET",
@@ -3938,7 +3939,7 @@ def _project_oracle_context(
     configuration_owner = (
         producer_source_model_out if producer_source_model_out is not None else {}
     )
-    configuration_owner["configuration_bytes"] = {}
+    configuration_owner.setdefault("configuration_bytes", {}).clear()
     _verify_security_bindings(
         root, config_bindings, captured_out=configuration_owner["configuration_bytes"]
     )
@@ -3993,6 +3994,7 @@ def _project_oracle_context(
     ty_identity = config_identity["typecheck"].get("ty", {})
     ty_sources = {root / item for item in ty_identity.get("selected", [])}
     import_views = contracts.new_import_views(len(files))
+    collection_known = pytest_collection_authoritative(collection_identity)
     contexts, edges = _build_oracle_context(
         root,
         files,
@@ -4000,8 +4002,7 @@ def _project_oracle_context(
         typecheck_sources,
         ty_sources,
         import_views,
-        collection_known=(collection_identity or {}).get("collection_state")
-        != "UNKNOWN",
+        collection_known=collection_known,
     )
     type_intent_hollow.bind_negative_checker_context(
         root, contexts, config_identity["typecheck"]
@@ -4013,7 +4014,7 @@ def _project_oracle_context(
         bind_application_fixture_context,
     )
 
-    if (collection_identity or {}).get("collection_state") != "UNKNOWN":
+    if collection_known:
         bind_django_fixture_context(
             root,
             snapshots,
@@ -4025,21 +4026,26 @@ def _project_oracle_context(
             source_inventory=source_hashes,
         )
     resolved = contracts._project_import_views(import_views, snapshots)
-    bind_application_fixture_context(
-        root,
-        snapshots,
-        contexts,
-        config_bindings,
-        _security_source_bytes,
-        MAX_BYTES,
-        source_bytes=source_bytes,
-        source_inventory=source_hashes,
-        imports=resolved,
-        source_index=(producer_source_model_out or {}).get("source"),
-        configuration_valid=config_cacheable,
-        collection_known=(collection_identity or {}).get("collection_state")
-        != "UNKNOWN",
-    )
+    fixture_source = (producer_source_model_out or {}).get("source")
+    with (
+        _security_snapshot_analysis_batch(producer_source_model_out)
+        if getattr(fixture_source, "bounded", False)
+        else nullcontext()
+    ):
+        bind_application_fixture_context(
+            root,
+            snapshots,
+            contexts,
+            config_bindings,
+            _security_source_bytes,
+            MAX_BYTES,
+            source_bytes=source_bytes,
+            source_inventory=source_hashes,
+            imports=resolved,
+            source_index=fixture_source,
+            configuration_valid=config_cacheable,
+            collection_known=collection_known,
+        )
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved
     )
@@ -5337,7 +5343,7 @@ def _security_node_findings(
                     "This is not external-byte input; custom object reducers still execute code."
                 )
                 finding["facts"]["input_provenance"] = "direct_local_serialization"
-        return [finding] if finding is not None else []
+        return [with_decl_proof(relative, node, finding)] if finding is not None else []
     if isinstance(node, ast.ExceptHandler):
         finding = _bare_except_finding(relative, node)
         return [finding] if finding is not None else []
@@ -5788,11 +5794,7 @@ def _scan_security_sources(
         )
         _verify_security_bindings(
             workspace,
-            [
-                row
-                for row in database.get("configuration_sources", [])
-                if row["path"] == "factory.database.json"
-            ],
+            database.get("configuration_sources", []),
             captured_out=primitive_source_bytes_out,
         )
     scanned = {item["path"] for item in bindings}

@@ -242,15 +242,11 @@ def _provider_identity_uncertain(
             inventory_projector=inventory_projector,
             inventory_dependencies=inventory_dependencies,
         )
-    if selected_paths:
-        return any(
-            _provider_path_conflicts(path, attribute, root)
-            for path, attribute in mutations
-            for root in roots
-        )
     return any(
-        path == root or path.startswith(root + ".")
-        for path, _attribute in mutations
+        _provider_path_conflicts(path, attribute, root)
+        if selected_paths
+        else path == root or path.startswith(root + ".")
+        for path, attribute in mutations
         for root in roots
     )
 
@@ -261,8 +257,6 @@ def _provider_path_conflicts(path, attribute, selected):
         effective == selected
         or effective.startswith(selected + ".")
         or selected.startswith(effective + ".")
-        or attribute == "*"
-        and selected.startswith(path + ".")
     )
 
 
@@ -1372,27 +1366,23 @@ def _flask_config_class_closed(context, path, scope, key, seen=()):
 
 
 def _flask_config_reader_argument(node, parents, graph, path):
+    from .credential_role_identity_effects import _enclosing_function
+
     call = parents.get(id(node))
-    if (
-        not isinstance(call, ast.Call)
-        or len(call.args) != 1
-        or call.args[0] is not node
-        or call.keywords
-    ):
+    if not isinstance(call, ast.Call) or call.args != [node] or call.keywords:
         return False
-    function = call.func
-    if not (
-        isinstance(function, ast.Attribute)
-        and function.attr == "from_object"
-        and isinstance(function.value, ast.Attribute)
-        and function.value.attr == "config"
-    ):
-        return False
-    receiver = graph.binding(path, function.value.value)
+    match call.func:
+        case ast.Attribute(
+            attr="from_object",
+            value=ast.Attribute(attr="config", value=receiver),
+        ):
+            selected = graph.binding(path, receiver, _enclosing_function(call, parents))
+        case _:
+            return False
     return (
-        receiver is not None
-        and receiver["framework"] == "flask"
-        and receiver["kind"] == "application"
+        selected is not None
+        and selected["framework"] == "flask"
+        and selected["kind"] == "application"
     )
 
 
@@ -3440,20 +3430,25 @@ def _native_input_precondition_eligible(call, canonical, primitive, scope, flow)
 
 
 def _native_input_request_is_supported(call, canonical, requests, aliases, scope, flow):
-    if not flow._security_expr_tainted(call.args[0], requests, set(), aliases):
-        return False
-    if canonical not in {"pickle.loads", "_pickle.loads", "dill.loads"}:
-        return True
-    return (
-        request_payload_value_kind(
-            call.args[0],
+    argument = call.args[0]
+    binary = canonical in {"pickle.loads", "_pickle.loads", "dill.loads"}
+    required = "bytes" if binary else None
+    if canonical in _SHELL_SECURITY_CALLS and isinstance(
+        argument, (ast.List, ast.Tuple)
+    ):
+        argument = argument.elts[0] if len(argument.elts) == 1 else None
+        required = "text"
+    return flow._security_expr_tainted(argument, requests, set(), aliases) and (
+        required is None
+        or request_payload_value_kind(
+            argument,
             requests,
             aliases,
             flow._security_scope_request_aliases,
             scope,
             getattr(call, "_security_flow_statement", None),
         )
-        == "bytes"
+        == required
     )
 
 
@@ -4342,8 +4337,6 @@ def security_precondition_providers_stable(tree, aliases, nodes):
             "dill",
             "yaml",
             "builtins",
-            # Unrelated framework components do not alias an imported provider.
-            # Parent namespace escapes still conflict through selected_paths.
             *(
                 path
                 for path in aliases.values()
@@ -4359,9 +4352,17 @@ def security_precondition_providers_stable(tree, aliases, nodes):
 
 
 def log_security_provider_stable(tree, aliases, nodes):
-    """Check logging provider identity against the captured source mutation inventory."""
+    """Keep scalar level reads distinct from logging provider escapes and writes."""
+    from .review_audits import _resolved_ast_name as resolve
+
+    levels = "DEBUG INFO WARNING WARN ERROR CRITICAL FATAL NOTSET".split()
+    levels = {"logging." + level for level in levels}
     return not _provider_identity_uncertain(
-        tree, aliases, roots=("logging",), nodes=nodes
+        tree,
+        aliases,
+        roots=("logging",),
+        nodes=nodes,
+        argument_predicate=lambda node, names, _: resolve(node, names) not in levels,
     )
 
 

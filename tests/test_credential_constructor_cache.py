@@ -2502,7 +2502,9 @@ def test_shared_validation_producer_batches_cold_and_cached_rows(
         assert owner["source"].source_bytes == sources
         owners.append(owner["source"])
     assert len(queries) == 128
-    assert checks == [owners[0].class_chain_memo] * 2 + [owners[1].class_chain_memo] * 2
+    # Cold fixture projection and producer scanning each validate their boundary;
+    # a cached projection leaves only the producer's entry and exit checks.
+    assert checks == [owners[0].class_chain_memo] * 4 + [owners[1].class_chain_memo] * 2
     assert cache_hits == [True]
 
 
@@ -3315,6 +3317,40 @@ def test_query_facts_import_inventory_remains_fresh(query_facts_memo):
         del index.snapshots[target], index.source_bytes[target], index.inventory[target]
         assert context.captured_import_module(index, path, "target") == (True, None)
     assert not batch.accepted
+
+
+@pytest.mark.parametrize("variant", ["same-root", "foreign-root", "stale", "namespace"])
+def test_captured_factory_call_respects_regular_package_precedence(tmp_path, variant):
+    from factoryline.credential_role_identity_effects import (
+        resolve_source_identity_call,
+    )
+
+    sources = {
+        "launch.py": "from service import factory\ninstance = factory()\n",
+        "service.py": "def factory(override=None): return override\n",
+    }
+    package = "service/__init__.py"
+    if variant != "namespace":
+        sources[package] = sources["service.py"]
+    else:
+        sources["service/other.py"] = "VALUE = 1\n"
+    if variant == "foreign-root":
+        sources["src/service.py"] = sources["service.py"]
+    index, paths = _snapshot(tmp_path, sources)
+    if variant == "stale":
+        index.source_bytes[paths[package]] += b"# changed\n"
+    caller = paths["launch.py"]
+    selected = resolve_source_identity_call(
+        index.snapshots[caller].body[1].value, caller, index
+    )
+    if variant in {"foreign-root", "stale"}:
+        assert selected is None
+    else:
+        expected = "service.py" if variant == "namespace" else package
+        assert selected is not None and selected.negative_binding_closed
+        assert selected.path == paths[expected]
+        assert isinstance(selected.arguments["override"], ast.Constant)
+        assert selected.arguments["override"].value is None
 
 
 def test_query_facts_import_resolution_ambiguity_remains_fresh(tmp_path, monkeypatch):

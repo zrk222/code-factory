@@ -17,7 +17,8 @@ import re
 from typing import Any, Callable, Mapping
 from array import array
 
-_NATIVE_OBSERVATION_KEYS = ("code", "path", "line", "column")
+_NATIVE_OBSERVATION_KEYS = ("code", "path", "line", "column", "end_line", "end_column")
+_NATIVE_OBSERVATION_SCHEMA = "factory.native-observation-retention.v3"
 
 
 def retain_native_observations(tree, path, findings):
@@ -32,7 +33,7 @@ def retain_native_observations(tree, path, findings):
         grouped = {}
         for row in findings:
             if row.get("facts", {}).get("security_precondition"):
-                identity = tuple(row[key] for key in _NATIVE_OBSERVATION_KEYS)
+                identity = tuple(row.get(key) for key in _NATIVE_OBSERVATION_KEYS)
                 grouped.setdefault(identity, []).append(
                     {
                         **dict(zip(_NATIVE_OBSERVATION_KEYS, identity)),
@@ -52,7 +53,7 @@ def retain_native_observations(tree, path, findings):
         tree._secondary_native_observations = (
             raw,
             {
-                "schema": "factory.native-observation-retention.v2",
+                "schema": _NATIVE_OBSERVATION_SCHEMA,
                 "count": sum(entry["count"] for entry in entries.values()),
                 "entries": entries,
                 "index_sha256": _native_observation_index_digest(entries),
@@ -62,7 +63,10 @@ def retain_native_observations(tree, path, findings):
 
 def _native_observation_index_digest(entries):
     rows = [(key, entry["count"], entry["sha256"]) for key, entry in entries.items()]
-    if any(not isinstance(key, tuple) or len(key) != 4 for key, _, _ in rows):
+    if any(
+        not isinstance(key, tuple) or len(key) != len(_NATIVE_OBSERVATION_KEYS)
+        for key, _, _ in rows
+    ):
         raise ValueError("invalid native observation identity key")
     return sha256(json.dumps(rows, ensure_ascii=True).encode()).hexdigest()
 
@@ -71,7 +75,7 @@ def _native_observation_entry(payload, finding):
     entries = payload["entries"]
     counts = [entry["count"] for entry in entries.values()]
     if (
-        payload["schema"] != "factory.native-observation-retention.v2"
+        payload["schema"] != _NATIVE_OBSERVATION_SCHEMA
         or type(payload["count"]) is not int
         or any(type(count) is not int or count < 1 for count in counts)
         or sum(counts) != payload["count"]
@@ -84,15 +88,12 @@ def _native_observation_entry(payload, finding):
 def _native_observation_delivery(payload, finding):
     """Decode only this finding; retained observations have no proof authority."""
     from .jev_classifier import JevClassificationError
+    from .primitive_observation_binding import _same_rule_span
 
     try:
         if isinstance(payload, str):
             return [
-                row
-                for row in json.loads(payload)
-                if all(
-                    row.get(key) == finding.get(key) for key in _NATIVE_OBSERVATION_KEYS
-                )
+                row for row in json.loads(payload) if _same_rule_span(row, finding)
             ], None
         entry = _native_observation_entry(payload, finding)
         rows = []
@@ -102,10 +103,7 @@ def _native_observation_delivery(payload, finding):
                 raise ValueError("native observation digest mismatch")
             rows = json.loads(encoded)
             if len(rows) != entry["count"] or any(
-                any(
-                    row.get(key) != finding.get(key) for key in _NATIVE_OBSERVATION_KEYS
-                )
-                for row in rows
+                not _same_rule_span(row, finding) for row in rows
             ):
                 raise ValueError("native observation identity/count mismatch")
         return rows, {
