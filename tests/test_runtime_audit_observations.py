@@ -4165,11 +4165,13 @@ def test_effect_witness_invalidates_changed_registry_and_log_helper(
         ("'cls' if os.name == 'nt' else 'clear'", True),
         ("'clear'", True),
         ("'cls'", True),
+        ("''", True),
         ("'clear; rm -rf /'", False),
         ("'rm -rf output'", False),
         ("'curl example.com'", False),
         ("command", False),
         ("'clear' if choice() else command", False),
+        ("'' if os.name == 'nt' else command", False),
     ],
 )
 def test_source_bound_finite_terminal_command_removes_raw_alert_only(
@@ -4195,10 +4197,11 @@ def test_source_bound_finite_terminal_command_removes_raw_alert_only(
     assert bool(raw) is not resolved
     if resolved:
         assert report["refuted_security_observation_count"] == 1
-        assert (
-            report["refuted_security_observations"][0]["facts"]["operation_role"]
-            == "terminal_display_reset"
+        facts = report["refuted_security_observations"][0]["facts"]
+        assert facts["operation_role"] == (
+            "empty_command_input" if expression == "''" else "terminal_display_reset"
         )
+        assert facts["runtime_assurance"] == "INCOMPLETE"
     assert report["finding_conservation"]["state"] == "PASS"
 
 
