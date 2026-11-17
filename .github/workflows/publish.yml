@@ -55,6 +55,7 @@ jobs:
       candidate_commit: ${{ steps.candidate.outputs.commit }}
       verified_reuse_run_id: ${{ steps.reuse.outputs.run_id }}
       reuse_receipt: ${{ steps.reuse.outputs.receipt }}
+      release_tests_verified: ${{ steps.signed_tests.outputs.release_tests_verified }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -166,11 +167,31 @@ jobs:
           PY
       - run: python -m pip install -e .
       - name: Require attested clean-runner evidence for this commit
+        id: signed_tests
         env:
           GH_TOKEN: ${{ github.token }}
+          CANDIDATE_COMMIT: ${{ steps.candidate.outputs.commit }}
         run: |
           set -euo pipefail
-          python -m factoryline.signed_receipts fetch-ci "${{ steps.candidate.outputs.commit }}" "$RUNNER_TEMP/ci-release-evidence"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from factoryline.signed_receipts import fetch_ci_receipt
+
+          receipt = fetch_ci_receipt(
+              os.environ["CANDIDATE_COMMIT"],
+              Path(os.environ["RUNNER_TEMP"]) / "ci-release-evidence",
+          )
+          environment = receipt.get("environment")
+          tests = environment.get("tests") if isinstance(environment, dict) else None
+          verified = isinstance(tests, dict) and (
+              tests.get("test_profile") == "dev,enterprise,hosted"
+              and str(tests.get("python", "")).startswith("3.12.")
+              and str(tests.get("platform", "")).startswith("Linux-")
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"release_tests_verified={str(verified).lower()}\n")
+          PY
           if [[ -n "${{ steps.reuse.outputs.run_id }}" ]]; then
             python -m factoryline.signed_receipts fetch-ci "$GITHUB_SHA" "$RUNNER_TEMP/ci-tooling-evidence"
           fi
@@ -232,13 +253,14 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install release test and build tools
-        run: |
-          python -m pip install --upgrade build twine
-          python -m pip install -e ".[dev,enterprise,hosted]"
+      - name: Install release build tools
+        run: python -m pip install --upgrade build twine
 
       - name: Test
-        run: python -m pytest -q
+        if: needs.guard.outputs.release_tests_verified != 'true'
+        run: |
+          python -m pip install -e ".[dev,enterprise,hosted]"
+          python -m pytest -q
 
       - name: Build distributions
         run: python -m build
