@@ -10,6 +10,8 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from contextvars import ContextVar
 
+from .audit_action_refs import _primitive_source_capture
+
 _ROLE_REBUILD_CONTEXT = ContextVar("factory-role-rebuild-context", default=None)
 _RULE_SPAN_KEYS = ("code", "path", "line", "column", "end_line", "end_column")
 
@@ -806,9 +808,10 @@ def _finding_credential_evidence(
     ):
         return None, None, None
     from . import semantic_credential_sensor as sensor
+    from .audit_action_refs import _verifier_signing_inventory
 
     if "inventory" not in cache:
-        cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
+        cache["inventory"] = _verifier_signing_inventory(sensor, captured, bindings)
     inventory = cache["inventory"]
     signing = (
         sensor.signing_configuration_evidence(finding, inventory)
@@ -3367,7 +3370,11 @@ def partition_proven_primitive_observations(core, audit, _verifier_native_rows=N
 
 def _partition_proven_primitive_observations(core, audit, _verifier_native_rows=None):
     """Use one independent source rebuild per byte inventory within this seal."""
-    from .audit_action_refs import _security_scan_action_summary, _security_scan_state
+    from .audit_action_refs import (
+        _bounded_verifier_tier_report,
+        _security_scan_action_summary,
+        _security_scan_state,
+    )
 
     bindings = {row["path"]: row["sha256"] for row in core.get("sources", [])}
     captured = _primitive_source_capture(core)
@@ -3441,7 +3448,8 @@ def _partition_proven_primitive_observations(core, audit, _verifier_native_rows=
         )
         core["action_summary"] = _security_scan_action_summary(core["state"])
     coverage = core.get("audit_coverage", {})
-    core["finding_tier_report"] = build_finding_tier_report(
+    core["finding_tier_report"] = _bounded_verifier_tier_report(
+        build_finding_tier_report,
         raw_findings,
         core.get("primitive_observations", []),
         core.get("sources", []),
@@ -3457,19 +3465,6 @@ def _partition_proven_primitive_observations(core, audit, _verifier_native_rows=
         core["action_summary"] = (
             "Pytest collection is UNKNOWN; fixture and oracle authority remain unassessed."
         )
-
-
-def _primitive_source_capture(core):
-    """Read the report's private source snapshot without exposing it in its mapping."""
-    if "_primitive_source_bytes" in core:
-        captured = core["_primitive_source_bytes"]
-    else:
-        captured = getattr(core, "_captured_sources", ())
-        if type(captured) is tuple and all(
-            type(row) is tuple and len(row) == 2 for row in captured
-        ):
-            captured = dict(captured)
-    return captured if isinstance(captured, dict) else {}
 
 
 def _current_primitive_binding(finding, core, bindings, audit, captured=None):
