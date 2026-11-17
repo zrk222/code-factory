@@ -1670,7 +1670,9 @@ _MAKE_DESCRIPTORS = frozenset({"GNUmakefile", "makefile", "Makefile"})
 
 def captured_makefile_names(root):
     """Record actual directory names, including on case-insensitive filesystems."""
-    return (p.name for p in root.glob("*[Mm]akefile") if p.name in _MAKE_DESCRIPTORS)
+    return (
+        p.name for p in Path(root).glob("*[Mm]akefile") if p.name in _MAKE_DESCRIPTORS
+    )
 
 
 def _captured_make_pytest_argv(raw):
