@@ -1,11 +1,11 @@
 # FactoryLine for VS Code
 
-## VS Code 1.3.3
+## VS Code 1.3.5
 
 Governance infrastructure for high-stakes agentic workloads.
 
-This documentation-only update does not change extension runtime behavior.
-It pairs with Code Factory core 0.49.6.
+The VS Code and Open VSX packages share version 1.3.5 with the JetBrains
+plugin. This release pairs with Code Factory core 0.49.7, installed separately.
 
 You have a change open and a review to finish. FactoryLine keeps local audit
 findings and receipts beside your VS Code workspace, so you can follow a finding
@@ -33,6 +33,8 @@ the workflow helps.
 - **SpecLine** defines the intent, requirements, and acceptance criteria those checks must prove.
 
 ### What’s new in 0.49.6
+
+This documentation-only update does not change extension runtime behavior.
 
 1. **Pre-PR review.** `factory change pre-pr <manifest>` combines candidate source, planned checks, oracle evidence, and feature verification in one receipt. Add `--execute` to run the declared checks.
 2. **Repair continuity.** `factory senior fix` returns `NO_PROGRESS` for a repeated failed candidate and `STEP_BACK` when the round budget is spent. The default budget stops before a fourth round.
@@ -260,7 +262,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.3.3.vsix
+code --install-extension factoryline-vscode-1.3.5.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

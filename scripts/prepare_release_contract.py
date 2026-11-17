@@ -6,6 +6,7 @@ therefore creates the contract after checkout, while the protected provider
 environment is active.  It still seals the original release intent, Oracle
 rules, source commit, and platform versions before any upload step.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,7 +32,9 @@ CORE_STAGES = [
 ]
 
 
-def _rule(identifier: str, statement: str, *, group: str, path: str | None = None) -> dict[str, object]:
+def _rule(
+    identifier: str, statement: str, *, group: str, path: str | None = None
+) -> dict[str, object]:
     value: dict[str, object] = {
         "id": identifier,
         "statement": statement,
@@ -47,15 +50,37 @@ def _rule(identifier: str, statement: str, *, group: str, path: str | None = Non
     return value
 
 
-def prepare(root: Path, *, feature: str, source_path: Path, out: Path, approved_by: str) -> dict[str, object]:
+def _default_intent_source(version: str) -> Path:
+    if tuple(map(int, version.split("."))) >= (0, 49, 7):
+        return Path("CHANGELOG.md")
+    return Path("docs/RELEASE_NOTES_0.46.3.md")
+
+
+def prepare(
+    root: Path,
+    *,
+    feature: str,
+    out: Path,
+    approved_by: str,
+    source_path: Path | None = None,
+) -> dict[str, object]:
     workspace = root.resolve()
-    source = (source_path if source_path.is_absolute() else workspace / source_path).resolve()
+    source_info = source_snapshot(workspace)
+    if not source_info.get("ok"):
+        raise ValueError(str(source_info.get("reason", "source snapshot failed")))
+    if source_path is None:
+        source_path = _default_intent_source(source_info["version"])
+    source = (
+        source_path if source_path.is_absolute() else workspace / source_path
+    ).resolve()
     destination = (out if out.is_absolute() else workspace / out).resolve()
     try:
         source.relative_to(workspace)
         destination.relative_to(workspace)
     except ValueError as exc:
-        raise ValueError("release contract paths must remain inside the workspace") from exc
+        raise ValueError(
+            "release contract paths must remain inside the workspace"
+        ) from exc
     if not source.is_file():
         raise ValueError(f"release intent source is unavailable: {source}")
     if destination.exists():
@@ -69,7 +94,9 @@ def prepare(root: Path, *, feature: str, source_path: Path, out: Path, approved_
         "provider": "github-actions",
         "model": "protected-review",
     }
-    handoff = capture_intent_handoff(workspace, source, agent, f"{feature}-handoff", runtime / "handoff.json")
+    handoff = capture_intent_handoff(
+        workspace, source, agent, f"{feature}-handoff", runtime / "handoff.json"
+    )
     oracle_input = {
         "schema": "factory.oracle-contract-input.v1",
         "id": feature,
@@ -79,21 +106,63 @@ def prepare(root: Path, *, feature: str, source_path: Path, out: Path, approved_
         "scope_paths": ["."],
         "handoff": handoff["path"],
         "sources": [],
-        "requirements": [_rule("candidate-integrity", "The candidate source and declared platform versions remain immutable.", group="requirements")],
-        "forbidden_behaviors": [_rule("gate-bypass", "No external upload may occur before the sealed preflight passes.", group="forbidden_behaviors")],
-        "gates": [_rule("release-preflight", "The source, metadata, and packaged artifacts must pass the release preflight.", group="gates")],
-        "exceptions": [_rule("no-implicit-exception", "No unreviewed exception is permitted for this release.", group="exceptions")],
-        "negative_cases": [_rule("stale-artifact", "A stale or mismatched artifact must fail closed.", group="negative_cases")],
-        "invariants": [_rule("intent-chain", "The release decision remains traceable to the captured intent.", group="invariants")],
-        "tests": [_rule("release-tests", "The release test suite and package checks must pass.", group="tests", path="tests/")],
+        "requirements": [
+            _rule(
+                "candidate-integrity",
+                "The candidate source and declared platform versions remain immutable.",
+                group="requirements",
+            )
+        ],
+        "forbidden_behaviors": [
+            _rule(
+                "gate-bypass",
+                "No external upload may occur before the sealed preflight passes.",
+                group="forbidden_behaviors",
+            )
+        ],
+        "gates": [
+            _rule(
+                "release-preflight",
+                "The source, metadata, and packaged artifacts must pass the release preflight.",
+                group="gates",
+            )
+        ],
+        "exceptions": [
+            _rule(
+                "no-implicit-exception",
+                "No unreviewed exception is permitted for this release.",
+                group="exceptions",
+            )
+        ],
+        "negative_cases": [
+            _rule(
+                "stale-artifact",
+                "A stale or mismatched artifact must fail closed.",
+                group="negative_cases",
+            )
+        ],
+        "invariants": [
+            _rule(
+                "intent-chain",
+                "The release decision remains traceable to the captured intent.",
+                group="invariants",
+            )
+        ],
+        "tests": [
+            _rule(
+                "release-tests",
+                "The release test suite and package checks must pass.",
+                group="tests",
+                path="tests/",
+            )
+        ],
     }
     oracle_input_path = runtime / "oracle-contract-input.json"
-    oracle_input_path.write_text(json.dumps(oracle_input, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    oracle_input_path.write_text(
+        json.dumps(oracle_input, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     oracle_path = workspace / ".factory" / "oracles" / "contracts" / f"{feature}.json"
     oracle = seal_oracle_contract(workspace, oracle_input_path, oracle_path)
-    source_info = source_snapshot(workspace)
-    if not source_info.get("ok"):
-        raise ValueError(str(source_info.get("reason", "source snapshot failed")))
     core: dict[str, object] = {
         "schema": "factory.release-contract.v1",
         "feature": feature,
@@ -104,12 +173,16 @@ def prepare(root: Path, *, feature: str, source_path: Path, out: Path, approved_
         "candidate": {
             "source_version": source_info["version"],
             "source_commit": source_info["commit"],
-            "artifact_versions": source_info.get("platform_versions", {"python": source_info["version"]}),
+            "artifact_versions": source_info.get(
+                "platform_versions", {"python": source_info["version"]}
+            ),
         },
     }
     payload = {**core, "policy_digest": _sha(core)}
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    destination.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return {
         "schema": "factory.release-contract-prepared.v1",
         "marker": "RELEASE_CONTRACT_PREPARED",
@@ -126,11 +199,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--feature", required=True)
-    parser.add_argument("--source", type=Path, default=Path("docs/RELEASE_NOTES_0.46.3.md"))
+    parser.add_argument(
+        "--source", type=Path, help="Override the candidate's default release notes."
+    )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--approved-by", required=True)
     args = parser.parse_args()
-    result = prepare(args.root, feature=args.feature, source_path=args.source, out=args.out, approved_by=args.approved_by)
+    result = prepare(
+        args.root,
+        feature=args.feature,
+        source_path=args.source,
+        out=args.out,
+        approved_by=args.approved_by,
+    )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

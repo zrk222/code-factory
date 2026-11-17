@@ -1,4 +1,4 @@
-__version__ = "0.49.6"
+__version__ = "0.49.7"
 
 import ast
 import hashlib

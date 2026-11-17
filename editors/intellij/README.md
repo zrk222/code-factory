@@ -39,6 +39,9 @@ workspace against subsequent edits. See the [JetBrains VFS persistence guidance]
 
 ## Install
 
+JetBrains plugin 1.3.5 pairs with the separately installed Code Factory CLI
+0.49.7. VS Code and Open VSX share the same editor release version.
+
 1. Install the Code Factory CLI in the Python environment your JetBrains IDE uses.
 2. Install **FactoryLine AI Proof** from the [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33009-factoryline) and restart the IDE.
 3. Open the **FactoryLine** tool window or **Tools > FactoryLine**. If `factory` is not discoverable, set its absolute executable path under **Settings > Tools > FactoryLine**.
