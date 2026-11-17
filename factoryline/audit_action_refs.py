@@ -1600,7 +1600,8 @@ def _negative_semantic_points(rows, core, captured, primitive):
         facts = row.get("facts", {})
         if (
             facts.get("disposition") == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX"
-            and facts.get("operation_role") == "terminal_display_reset"
+            and facts.get("operation_role")
+            in {"empty_command_input", "terminal_display_reset"}
             and facts.get("hypothesis") == "SOURCE_COMMAND_INJECTION"
             and core.get("audit_coverage", {}).get("complete") is True
             and primitive.closed_shell_binding(row, core["sources"], bindings, captured)
