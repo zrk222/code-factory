@@ -2127,3 +2127,25 @@ def test_guard_node_limit_is_checked_before_dumping_subtrees(monkeypatch):
         branch.body,
         branch.orelse,
     )
+
+
+def test_captured_test_configuration_names_and_unmodeled_test_workflow_paths(tmp_path):
+    from factoryline.pytest_collection_audit import (
+        captured_test_configuration_names,
+        unmodeled_test_workflow_paths,
+    )
+
+    (tmp_path / ".gitlab-ci.yml").write_text("test: {}\n")
+    (tmp_path / "azure-pipelines.yml").mkdir()
+    (tmp_path / "unrelated.yml").write_text("test: {}\n")
+    names = captured_test_configuration_names(
+        [".gitlab-ci.yml", "azure-pipelines.yml", "unrelated.yml"]
+    )
+    assert {
+        "pytest.ini",
+        "pyproject.toml",
+        ".gitlab-ci.yml",
+        "azure-pipelines.yml",
+    } <= names
+    assert "unrelated.yml" not in names
+    assert list(unmodeled_test_workflow_paths(tmp_path)) == [".gitlab-ci.yml"]

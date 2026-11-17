@@ -808,6 +808,7 @@ class ConfigurationRejectionProjection:
         self.budget = 128
 
     def namespace(self, body, parent, *, fields=False):
+        """Project distinct inert assignments without accepting unknown field values."""
         names = {}
         for stmt in body:
             name = _rejection_assignment(stmt)
@@ -824,6 +825,7 @@ class ConfigurationRejectionProjection:
         return names
 
     def terminal(self, body, names=None, depth=0):
+        """Require every modeled reachable path to end in the same rejection."""
         if depth > 12 or self.budget < len(body):
             return None
         self.budget -= len(body)
@@ -867,6 +869,7 @@ class ConfigurationRejectionProjection:
         return None
 
     def guard(self, node, names):
+        """Resolve a captured single-return guard for the selected receiver."""
         match node:
             case ast.Call(
                 func=ast.Name(id=callee), args=[ast.Name(id=receiver)], keywords=[]
@@ -892,9 +895,11 @@ class ConfigurationRejectionProjection:
         ).value(helper.body[0].value, {})
 
     def provider(self, node, names):
+        """Resolve the exact provider under the current owner and bindings."""
         return self.resolve_provider(self.owner, node, names)
 
     def value(self, node, names, depth=0):
+        """Evaluate bounded scalar expressions while preserving unknown outcomes."""
         if depth > 24:
             return None
 
@@ -925,6 +930,7 @@ class ConfigurationRejectionProjection:
 
     @staticmethod
     def inert_value(node, read):
+        """Project literal and structural values without executing captured code."""
         match node:
             case ast.Constant(value=value) if (
                 type(value).__name__ in _PROJECTION_SCALARS
@@ -962,6 +968,7 @@ class ConfigurationRejectionProjection:
         return None
 
     def call(self, node, names, read):
+        """Accept only modeled receiver lookups and canonical scalar operations."""
         if node.keywords:
             return None
         func, values = node.func, [read(n) for n in node.args]
@@ -992,6 +999,7 @@ class ConfigurationRejectionProjection:
 
     @staticmethod
     def scalar_call(name, value):
+        """Project canonical scalar conversions with explicit accepted input kinds."""
         if name == "pathlib.Path" and _projection_is(value, "str", "path"):
             return _projection_unknown("path")
         if name == "str" and _projection_is(value, *_PROJECTION_SCALARS, "path"):
@@ -1020,6 +1028,7 @@ class ConfigurationRejectionProjection:
 
     @staticmethod
     def compare(op, left, right):
+        """Compare bounded scalar domains without granting arbitrary operator effects."""
         membership = isinstance(op, (ast.In, ast.NotIn))
         if membership:
             if not (_projection_is(left, "str") and _projection_is(right, "set")):
@@ -1036,6 +1045,7 @@ class ConfigurationRejectionProjection:
 
     @staticmethod
     def boolean(op, values, read):
+        """Preserve short-circuit evaluation and join only modeled scalar outcomes."""
         result = read(values[0])
         keep = isinstance(op, ast.Or)
         for operand in values[1:]:

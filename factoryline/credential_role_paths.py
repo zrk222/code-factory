@@ -1225,9 +1225,6 @@ def _logging_plain_source(name, reader, call):
         module, "_security_log_provider_stable", False
     ):
         return False
-    barriers = set("Global Nonlocal NamedExpr Await Yield YieldFrom".split())
-    if any(type(n).__name__ in barriers for n in ast.walk(reader.scope)):
-        return False
     definition = module_binding(reader.scope, name, ast.Assign)
     if definition is None or len(binding_occurrences(reader.scope.body, name)) != 1:
         return False
@@ -1239,6 +1236,9 @@ def _logging_plain_source(name, reader, call):
     subscript = isinstance(value, ast.Subscript)
     base = value.value if subscript else getattr(value.func, "value", None)
     if not isinstance(base, ast.Attribute) or base.attr not in {"args", "form"}:
+        return False
+    barriers = set("Global Nonlocal NamedExpr Await Yield YieldFrom".split())
+    if any(type(n).__name__ in barriers for n in ast.walk(reader.scope)):
         return False
     if isinstance(value, ast.Call) and not (
         isinstance(value.func, ast.Attribute)
@@ -1276,7 +1276,7 @@ def logging_domain_guarded(value, call, reader, tainted):
     """Prove every dynamic log interpolation without changing its input trace."""
     from .semantic_credential_sensor import security_precondition_path_possible
 
-    nodes = tuple(ast.walk(value))
+    nodes = (value,) if isinstance(value, ast.Name) else tuple(ast.walk(value))
     if not security_precondition_path_possible(call) or any(
         not isinstance(
             n, (ast.Name, ast.Load, ast.JoinedStr, ast.FormattedValue, ast.Constant)

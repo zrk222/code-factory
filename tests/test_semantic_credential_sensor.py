@@ -5682,6 +5682,8 @@ def test_helper_epoch_replacements_include_noncallable_bindings(monkeypatch, tmp
     ],
 )
 def test_log_shared_finite_domain_changes_raw_findings(body, expected):
+    if "except* " in body and not hasattr(ast, "TryStar"):
+        pytest.skip("Exception groups require Python 3.11 or newer.")
     header = "async def run():" if "await " in body else "def run():"
     rows = _premise_scan(
         "import logging\nfrom flask import request\n" + header + "\n"
@@ -5822,3 +5824,26 @@ def test_log_shared_domain_cross_file_provider_paths(tmp_path, foreign, expected
     assert [row["line"] for row in rows if row["code"] == "SECURITY_LOG_INJECTION"] == (
         [7, 8] if expected else [8]
     )
+
+
+@pytest.mark.parametrize("guarded", [False, True])
+def test_logging_domain_guarded_matches_bound_endpoint_proof(monkeypatch, guarded):
+    from factoryline import credential_role_paths as roles
+
+    captured = []
+    original = roles.logging_domain_guarded
+
+    def observe(value, call, reader, tainted):
+        captured.append((value, call, reader, dict(tainted)))
+        return original(value, call, reader, tainted)
+
+    guard = "    if value != 'ok':\n        return\n" if guarded else ""
+    with monkeypatch.context() as patch:
+        patch.setattr(roles, "logging_domain_guarded", observe)
+        rows = _premise_scan(
+            "import logging\nfrom flask import request\ndef run():\n"
+            "    value = request.args['value']\n" + guard + "    logging.info(value)\n"
+        )
+    assert captured
+    assert roles.logging_domain_guarded(*captured[-1]) is guarded
+    assert any(row["code"] == "SECURITY_LOG_INJECTION" for row in rows) is not guarded

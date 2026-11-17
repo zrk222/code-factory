@@ -2502,7 +2502,9 @@ def test_shared_validation_producer_batches_cold_and_cached_rows(
         assert owner["source"].source_bytes == sources
         owners.append(owner["source"])
     assert len(queries) == 128
-    assert checks == [owners[0].class_chain_memo] * 2 + [owners[1].class_chain_memo] * 2
+    # Cold fixture projection and producer scanning each validate their boundary;
+    # a cached projection leaves only the producer's entry and exit checks.
+    assert checks == [owners[0].class_chain_memo] * 4 + [owners[1].class_chain_memo] * 2
     assert cache_hits == [True]
 
 
