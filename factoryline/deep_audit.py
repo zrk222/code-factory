@@ -1855,7 +1855,8 @@ def _native_replay_result(
 def _codeql_replay_runtime(scratch):
     root, package = scratch / "runtime", Path(__file__).parent
     records, total = {}, 0
-    for source in sorted(package.rglob("*.py")):
+    sources = (*package.rglob("*.py"), package / "data" / "junie_pack.json")
+    for source in sorted(sources):
         name = source.relative_to(package).as_posix()
         binding = _deep_audit_io._full_repository_scanner_file_identity(
             package, local_file(package, name)

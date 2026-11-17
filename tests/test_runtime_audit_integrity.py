@@ -6841,10 +6841,8 @@ def test_faulty_complete_native_surface_keeps_original_blocked_outcome(
 
 @pytest.mark.parametrize("drift", [False, True])
 def test_verifier_only_diagnostic_is_visible_without_authority(
-    tmp_path, monkeypatch, capsys, drift
+    tmp_path, monkeypatch, drift
 ):
-    from factoryline.cli_audit import _print_selected_security_policy
-
     source = b"API_KEY = 'literal-for-test-only-42'\n"
     base = _trusted_core_policy316_seal(tmp_path, source)
     native = base["finding_tier_report"]["ledger"][0]["raw_finding"]
@@ -6880,11 +6878,9 @@ def test_verifier_only_diagnostic_is_visible_without_authority(
     assert result["agent_actions"] == []
     assert result["findings"] == []
     assert result["finding_tier_report"]["ledger"] == []
-    _print_selected_security_policy(result)
-    printed = capsys.readouterr().out
+    assert source.split(b"'")[1].decode() not in json.dumps(result)
     if drift:
         assert "unreconciled_native_diagnostics" not in conservation
-        assert "UNRECONCILED" not in printed
     else:
         keys = ("code", "path", "line", "column", "end_line", "end_column", "severity")
         assert conservation["unreconciled_native_diagnostics"] == [
@@ -6893,11 +6889,23 @@ def test_verifier_only_diagnostic_is_visible_without_authority(
                 "source_sha256": hashlib.sha256(source).hexdigest(),
             }
         ]
-        assert (
-            'UNRECONCILED SECURITY_HARDCODED_SECRET: "app.py":1 (review only)'
-            in printed
-        )
-        assert source.decode().strip() not in printed
+
+
+def test_unreconciled_diagnostic_renderer_uses_only_public_fields(capsys):
+    from factoryline.cli_audit import _print_selected_security_policy
+
+    row = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "app.py",
+        "line": 1,
+        "private_detail": "render-only-redaction-sentinel",
+    }
+    _print_selected_security_policy(
+        {"finding_conservation": {"unreconciled_native_diagnostics": [row]}}
+    )
+    printed = capsys.readouterr().out
+    assert 'UNRECONCILED SECURITY_HARDCODED_SECRET: "app.py":1 (review only)' in printed
+    assert row["private_detail"] not in printed
 
 
 @pytest.mark.parametrize(

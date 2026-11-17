@@ -1184,10 +1184,13 @@ def _compose_build(service):
 def _observed_launcher_path(root, declared):
     """Bind a selector to its actual spelling on case-insensitive filesystems."""
     try:
-        actual = (root / declared).resolve(strict=True).relative_to(root).as_posix()
+        (root / declared).resolve(strict=True).relative_to(root)
+        path = root
+        for part in PurePosixPath(declared.casefold()).parts:
+            (path,) = [p for p in path.iterdir() if p.name.casefold() == part]
+        return path.relative_to(root).as_posix()
     except (OSError, ValueError, RuntimeError):
         return declared
-    return actual if actual.casefold() == declared.casefold() else declared
 
 
 def capture_launch_configuration(root, read_source, limit, paths):

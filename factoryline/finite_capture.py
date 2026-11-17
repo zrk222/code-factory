@@ -2083,8 +2083,12 @@ def _shell_source_provider_clear(raw, provider):
         return False
     nodes = list(ast.walk(tree))
     aliases = _shell_import_aliases(nodes, audit, provider)
-    if aliases is None or not _security_builtin_identity_closed(
-        tree, aliases or {}, {"getattr"}
+    reflectors = {
+        name for name, origin in (aliases or {}).items() if origin == "builtins.getattr"
+    } | {"getattr"}
+    if aliases is None or (
+        any(audit._name(node).rsplit(".", 1)[-1] in reflectors for node in nodes)
+        and not _security_builtin_identity_closed(tree, aliases, reflectors)
     ):
         return False
     parents = {
@@ -2117,12 +2121,11 @@ def _shell_source_provider_clear(raw, provider):
         for path, attribute in mutations
     ):
         return False
-    for node in nodes:
-        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
-            origin = audit._resolved_ast_name(node, aliases)
-            if origin.startswith(provider + "."):
+    for node in (item for item in nodes if isinstance(item, ast.Attribute)):
+        if node.attr.startswith("__"):
+            if audit._resolved_ast_name(node, aliases).startswith(provider + "."):
                 return False
-        if isinstance(node, ast.Attribute) and node.attr == "modules":
+        if node.attr == "modules":
             if any(isinstance(n, ast.Constant) and n.value == provider for n in nodes):
                 return False
     return True

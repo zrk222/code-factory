@@ -16581,6 +16581,35 @@ def test_bounded_scan_requires_closed_settings_uses(
     )
 
 
+@pytest.mark.parametrize("variant", ["resolved", "ambiguous", "missing"])
+def test_launcher_capture_uses_directory_entry_spelling(tmp_path, monkeypatch, variant):
+    from factoryline.captured_security_audit import _observed_launcher_path
+
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    actual = backend / "dockerfile"
+    actual.write_text("FROM scratch\n", encoding="utf-8")
+    path_type = type(tmp_path)
+    resolve, iterdir = path_type.resolve, path_type.iterdir
+
+    def preserve_requested_case(path, *args, **kwargs):
+        if path == backend / "Dockerfile":
+            if variant == "missing":
+                raise FileNotFoundError(path)
+            return path
+        return resolve(path, *args, **kwargs)
+
+    def entries(path):
+        if variant == "ambiguous" and path == backend:
+            return iter((actual, backend / "Dockerfile"))
+        return iterdir(path)
+
+    monkeypatch.setattr(path_type, "resolve", preserve_requested_case)
+    monkeypatch.setattr(path_type, "iterdir", entries)
+    expected = "backend/dockerfile" if variant == "resolved" else "backend/Dockerfile"
+    assert _observed_launcher_path(tmp_path, "backend/Dockerfile") == expected
+
+
 @pytest.mark.parametrize(
     "effect, active",
     [

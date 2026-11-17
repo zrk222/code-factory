@@ -6539,7 +6539,7 @@ def test_codeql_replay_runtime_binds_complete_source_and_bootstraps(tmp_path):
     package = Path(__file__).parents[1] / "factoryline"
     records = {
         source.relative_to(package).as_posix(): sha256_bytes(source.read_bytes())
-        for source in package.rglob("*.py")
+        for source in (*package.rglob("*.py"), package / "data" / "junie_pack.json")
     }
     copied = runtime / "factoryline"
     assert {
@@ -6547,7 +6547,7 @@ def test_codeql_replay_runtime_binds_complete_source_and_bootstraps(tmp_path):
         for path in copied.rglob("*")
         if path.is_file()
     } == set(records)
-    assert sum(path.stat().st_size for path in copied.rglob("*.py")) <= 32 * 1024 * 1024
+    assert sum((copied / name).stat().st_size for name in records) <= 32 * 1024 * 1024
     for name, digest_value in records.items():
         assert (
             bound_bytes(copied, {"path": name, "sha256": digest_value})
@@ -6581,6 +6581,8 @@ def test_codeql_replay_runtime_rejects_source_drift(tmp_path, monkeypatch, damag
 
     package = tmp_path / "package"
     package.mkdir()
+    (package / "data").mkdir()
+    (package / "data" / "junie_pack.json").write_bytes(b"{}\n")
     source = package / "worker.py"
     source.write_bytes(b"value = 1\n")
     monkeypatch.setattr(module, "__file__", str(package / "deep_audit.py"))

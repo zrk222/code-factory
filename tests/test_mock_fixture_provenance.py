@@ -4500,6 +4500,7 @@ def test_constructor_source_method_role_cli_retains_raw_and_live(tmp_path, capsy
         "collection_drift",
         "collection_drift_during_verification",
         "missing_collection_witness",
+        "detached_collection_witness",
         "second_setup",
         "setup_alias",
         "copied_key",
@@ -4550,6 +4551,7 @@ def test_native_django_settings_scope_closes_framework_carrier(
         "collection_drift",
         "collection_drift_during_verification",
         "missing_collection_witness",
+        "detached_collection_witness",
     }
     rebuilt = []
     if variant == "independent_verifier":
@@ -4595,6 +4597,16 @@ def test_native_django_settings_scope_closes_framework_carrier(
         assert report["finding_conservation"]["state"] == "PASS"
         rows = report["finding_tier_report"]["ledger"]
         assert len(rows) == 1 and rows[0]["tier"] == "PROVEN_PRIMITIVE"
+    if variant == "detached_collection_witness":
+        from factoryline.review_audits import _seal_security_scan
+
+        report._source_role_capture.pop("fixture_workspace")
+        detached = _seal_security_scan(report)
+        assert detached["defect_policy_decision"]["state"] == (
+            "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+        )
+        assert detached["finding_conservation"]["state"] == "PASS"
+        assert not detached["findings"] and detached["primitive_observations"]
     if (
         variant.startswith("collection_drift")
         or variant == "missing_collection_witness"
@@ -4629,6 +4641,7 @@ def _assert_django_fixture_reseal_fails_closed(tmp_path, variant, monkeypatch, r
         drift()
     else:
         report._source_role_capture.pop("fixture_workspace")
+        report["oracle_context"].pop("static_pytest_collection")
     stale = _seal_security_scan(report)
     assert stale["defect_policy_decision"]["state"] == "BLOCKED"
     assert not stale["primitive_observations"] and not stale["agent_actions"]
