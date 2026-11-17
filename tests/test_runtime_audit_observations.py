@@ -1440,6 +1440,32 @@ def test_collection_transaction_cli_final_guard_fails_closed(
     assert report["defect_policy_decision"]["release_approved"] is False
 
 
+def test_security_scan_retains_literal_with_escaped_unicode_unit(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    literal = repr("test-only " + chr(0xD800))
+    marker = repr("sk-test-" + "x" * 16 + chr(0xD800))
+    (tmp_path / "settings.py").write_text(
+        f"class Settings(object):\n    secret_key: str = {literal}\n"
+        f"note = {literal}\n"
+        f"data = {marker}\n",
+        encoding="ascii",
+    )
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert [
+        row["line"]
+        for row in report["findings"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET" and row["path"] == "settings.py"
+    ] == [2, 4]
+
+
 def _scan_operative_assignment_baseline(scan, monkeypatch):
     from factoryline import captured_security_audit as captured_audit
     from factoryline.captured_security_audit import (

@@ -1148,7 +1148,7 @@ def _known_format_declaration(finding, source_bytes):
         ):
             continue
         value = (
-            value_node.value.encode("utf-8")
+            value_node.value.encode(errors="surrogatepass")
             if isinstance(value_node.value, str)
             else value_node.value
         )

@@ -743,9 +743,18 @@ def _environment_scalar_reads(source):
                         yield flow
 
 
-def _registry_label_kind(value, aliases):
+def _captured_text_may_be_secret(value):
+    """Keep an undecodable candidate active without repeating the pattern scan."""
     from .context_efficiency import _SECRET_BYTES
 
+    try:
+        raw = value.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return any(pattern.search(raw) for pattern in _SECRET_BYTES)
+
+
+def _registry_label_kind(value, aliases):
     if not isinstance(value, str) or not value.isascii() or not value:
         return None
     registry_label = value.isupper() and value.isidentifier()
@@ -759,9 +768,7 @@ def _registry_label_kind(value, aliases):
         )
     ):
         return None
-    return (
-        None if any(p.search(value.encode()) for p in _SECRET_BYTES) else registry_label
-    )
+    return None if _captured_text_may_be_secret(value) else registry_label
 
 
 def captured_public_registry_label(node, target, aliases):
@@ -787,16 +794,13 @@ def captured_public_registry_label(node, target, aliases):
     readonly = set(references) | {ref for ref, _, _ in foreign}
     binding = index, owner, origin, readonly
     if set(roles) == {"exit_message"}:
-        from .context_efficiency import _SECRET_BYTES
         from .pytest_collection_audit import _captured_pytest_inputs
 
         module = index.snapshots[owner]
         stage = getattr(
             _captured_pytest_inputs(module)[1], "provisional_exclusions", None
         )
-        if type(stage) is set and not any(
-            pattern.search(value.encode()) for pattern in _SECRET_BYTES
-        ):
+        if type(stage) is set and not _captured_text_may_be_secret(value):
             if _captured_module_text_unchanged(*binding, providers=("sys.exit",)):
                 stage.add(
                     (
@@ -1485,7 +1489,6 @@ def captured_noncredential_assignment(node, target, aliases):
 
 def captured_config_rejection_point(node, target):
     """Stage a source-only rejection proof without suppressing a raw finding."""
-    from .context_efficiency import _SECRET_BYTES
     from .pytest_collection_audit import (
         _captured_pytest_inputs,
         captured_pytest_documents,
@@ -1501,11 +1504,7 @@ def captured_config_rejection_point(node, target):
         location := _rejected_config_location(source, path, node, scope)
     ):
         return False
-    try:
-        material = node.value.value.encode()
-    except UnicodeError:
-        return False
-    if any(pattern.search(material) for pattern in _SECRET_BYTES):
+    if _captured_text_may_be_secret(node.value.value):
         return False
     if _CapturedConfigRejection(source, path).proven(
         module, *scope, captured_pytest_documents(module)
@@ -1918,7 +1917,6 @@ def _rejection_call_statement(stmt):
 
 def captured_test_derived_input(node, target):
     """Prove a test value feeds a derived payload and a locally replaced effect."""
-    from .context_efficiency import _SECRET_BYTES
     from .credential_role_identity_effects import _enclosing_function
     from .semantic_credential_sensor import _security_helper_source_context
 
@@ -1939,7 +1937,7 @@ def captured_test_derived_input(node, target):
             and node in body
             and any(isinstance(stmt, ast.With) for stmt in body)
         ):
-            if not any(pattern.search(value.encode()) for pattern in _SECRET_BYTES):
+            if not _captured_text_may_be_secret(value):
                 return _CapturedDerivedTestInput(
                     module, source, path, owner, node
                 ).proven()
@@ -2523,10 +2521,9 @@ def captured_unread_settings_field(node, target):
     value = getattr(node.value, "value", None)
     if type(value) is not str:
         return False
-    from .context_efficiency import _SECRET_BYTES
     from .semantic_credential_sensor import _security_helper_source_context
 
-    if any(pattern.search(value.encode("utf-8")) for pattern in _SECRET_BYTES):
+    if _captured_text_may_be_secret(value):
         return False
     module, index, path = _security_helper_source_context(node, None)
     if path is None or not index.validate(path) or owner not in module.body:

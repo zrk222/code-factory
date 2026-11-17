@@ -1495,10 +1495,11 @@ def _literal_credential_candidate(node, target):
     return isinstance(target, ast.Name) and (
         bool(_SECRET_ASSIGNMENT.search(target.id))
         or (value := _secret_literal(node)) is not None
+        and bool(encoded := value.encode(errors="surrogatepass"))
         and any(
             not _AWS_DEMO.match(match.string, match.start())
             for pattern in _SECRET_BYTES
-            for match in pattern.finditer(value.encode())
+            for match in pattern.finditer(encoded)
         )
     )
 

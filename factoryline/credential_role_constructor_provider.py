@@ -1227,9 +1227,10 @@ def _declaration_role(index, path, node, target):
 
 
 def _fact(index, path, node, member, owner, source_role, value):
-    raw = index.source_bytes[path]
-    source_hash = hashlib.sha256(raw).hexdigest()
-    value_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    try:
+        value_hash = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    except UnicodeEncodeError:
+        return None
     relative = index.relative(path)
     if relative is None:
         return None
@@ -1238,7 +1239,7 @@ def _fact(index, path, node, member, owner, source_role, value):
         member,
         owner,
         source_role,
-        source_hash,
+        hashlib.sha256(index.source_bytes[path]).hexdigest(),
         value_hash,
         node.lineno,
         node.col_offset,
