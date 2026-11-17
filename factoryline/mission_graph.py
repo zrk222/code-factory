@@ -388,7 +388,18 @@ def _bound_receipt(
             "MISSION_GRAPH_RECEIPT_INVALID",
             f"receipt must be a file of at most {MAX_EVENT_BYTES} bytes",
         )
-    receipt = _load_json(path)
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_EVENT_BYTES + 1)
+        receipt = json.loads(raw.decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise MissionGraphError(
+            "MISSION_GRAPH_RECEIPT_INVALID", "cannot read transition receipt"
+        ) from exc
+    if not isinstance(receipt, dict) or len(raw) > MAX_EVENT_BYTES:
+        raise MissionGraphError(
+            "MISSION_GRAPH_RECEIPT_INVALID", "one bounded JSON object is required"
+        )
     if not isinstance(receipt.get("schema"), str) or not receipt["schema"]:
         raise MissionGraphError(
             "MISSION_GRAPH_RECEIPT_INVALID", "receipt schema is required"
@@ -398,7 +409,7 @@ def _bound_receipt(
         raise MissionGraphError(
             "MISSION_GRAPH_RECEIPT_INVALID", "receipt mission_id mismatch"
         )
-    return path, receipt, _sha_path(path)
+    return path, receipt, _sha_bytes(raw)
 
 
 def _decision_receipt(
@@ -491,7 +502,7 @@ def _allowed_events(state: str) -> list[str]:
     fixed = {
         "planned": ["approve", "defer", "reject"],
         "deferred": ["approve", "reject"],
-        "creator_running": ["candidate_ready", "pause"],
+        "creator_running": ["candidate_ready", "factory_job_bound", "pause"],
         "independent_verification": ["validation_failed", "validation_passed", "pause"],
         "correction_required": ["retry", "pause"],
         "paused_for_review": ["plan_revised", "resume", "reject"],
@@ -514,6 +525,10 @@ def _transition(state: str, event: str) -> tuple[str, frozenset[str]]:
         ("creator_running", "candidate_ready"): (
             "independent_verification",
             frozenset({"worker"}),
+        ),
+        ("creator_running", "factory_job_bound"): (
+            "creator_running",
+            frozenset({"owner"}),
         ),
         ("creator_running", "pause"): ("paused_for_review", frozenset({"owner"})),
         ("independent_verification", "validation_failed"): (
@@ -696,18 +711,54 @@ def _guard_actor(
 
 
 def _guard_decision_candidate(
-    receipt: dict[str, Any], mission: dict[str, Any], event: str, actor: str
+    receipt: dict[str, Any],
+    mission: dict[str, Any],
+    event: str,
+    actor: str,
+    *,
+    factory_candidate: bool = False,
 ) -> None:
     if event in {"approve", "defer", "reject"}:
         _decision_receipt(receipt, mission, event, actor)
     if (
         event == "candidate_ready"
         and receipt.get("schema") != "factory.mission.candidate.v1"
+        and not factory_candidate
     ):
         raise MissionGraphError(
             "MISSION_GRAPH_CANDIDATE_INVALID",
             "candidate receipt schema must be factory.mission.candidate.v1",
         )
+
+
+def _verified_factory_candidate(
+    connection, root, mission, event, receipt, receipt_file, key, payload
+):
+    if (
+        event != "candidate_ready"
+        or receipt.get("schema") != "factory.mission.candidate-binding.v1"
+    ):
+        return False
+    row = connection.execute(
+        "SELECT event_json FROM graph_events WHERE thread_id=? AND idempotency_key=?",
+        (mission["id"], "factory-job"),
+    ).fetchone()
+    if row is None:
+        return False
+    recorded = json.loads(row["event_json"])
+    if recorded["event"] != "factory_job_bound":
+        return False
+    job = recorded["payload"]["job_sha256"]
+    if key != "factory-candidate-" + job or payload != {"factory_job_sha256": job}:
+        return False
+    if receipt.get("mission", {}).get("mission_sha256") != mission["mission_sha256"]:
+        return False
+    from .product_missions import verify_mission_candidate
+
+    return (
+        verify_mission_candidate(receipt_file, root, owner=mission["owner"])["valid"]
+        is True
+    )
 
 
 def _guard_validation(
@@ -880,6 +931,20 @@ def _guard_context(receipt_file: Path, event: str) -> None:
         )
 
 
+def _guard_factory_job(root, mission, event, key, payload, receipt, receipt_sha):
+    if event != "factory_job_bound":
+        return
+    from .specforge_promotion import _validate_factory_job_binding
+
+    if key != "factory-job" or not _validate_factory_job_binding(
+        root, mission, payload, receipt, receipt_sha
+    ):
+        raise MissionGraphError(
+            "MISSION_GRAPH_FACTORY_JOB_INVALID",
+            "an approved mission requires one current intent and phase plan",
+        )
+
+
 def _reduce_usage(
     row: sqlite3.Row,
     receipt: dict[str, Any],
@@ -964,6 +1029,7 @@ def _reduce_thread(
         "defer": "MISSION_GRAPH_OWNER_DECISION_BOUND",
         "reject": "MISSION_GRAPH_OWNER_DECISION_BOUND",
         "candidate_ready": "MISSION_GRAPH_CANDIDATE_BOUND",
+        "factory_job_bound": "MISSION_GRAPH_FACTORY_JOB_BOUND",
         "validation_failed": "MISSION_GRAPH_VALIDATION_FAILED_BOUND",
         "validation_passed": "MISSION_GRAPH_COMPLETION_BOUND",
         "pause": "MISSION_GRAPH_HUMAN_INTERRUPT",
@@ -1029,6 +1095,8 @@ def apply_mission_event(
     idempotency_key: str,
     receipt_path: Path | None = None,
     payload: dict[str, Any] | None = None,
+    *,
+    expected_receipt_sha256: str | None = None,
 ) -> dict:
     """Validate and atomically append one governed mission transition."""
     root = Path(root).resolve()
@@ -1058,6 +1126,14 @@ def apply_mission_event(
         errors, _ = _verify_chain(connection, row, mission_path, mission)
         if errors:
             raise MissionGraphError("MISSION_GRAPH_DRIFT", "; ".join(errors))
+        if expected_receipt_sha256 is not None and (
+            receipt_sha != expected_receipt_sha256
+            or _sha_path(receipt_file) != expected_receipt_sha256
+        ):
+            raise MissionGraphError(
+                "MISSION_GRAPH_RECEIPT_DRIFT",
+                "submitted receipt changed after verification",
+            )
         duplicate = connection.execute(
             "SELECT * FROM graph_events WHERE thread_id=? AND idempotency_key=?",
             (mission["id"], idempotency_key),
@@ -1077,12 +1153,30 @@ def apply_mission_event(
             }
         target, roles = _transition(row["state"], event)
         _guard_actor(row, mission, event, actor, role, roles)
-        _guard_decision_candidate(receipt, mission, event, actor)
+        _guard_decision_candidate(
+            receipt,
+            mission,
+            event,
+            actor,
+            factory_candidate=_verified_factory_candidate(
+                connection,
+                root,
+                mission,
+                event,
+                receipt,
+                receipt_file,
+                idempotency_key,
+                payload,
+            ),
+        )
         _guard_validation(row, receipt_file, receipt, mission, event, actor, payload)
         _guard_retry_review(
             connection, row, root, receipt_file, receipt, event, payload
         )
         _guard_context(receipt_file, event)
+        _guard_factory_job(
+            root, mission, event, idempotency_key, payload, receipt, receipt_sha
+        )
         if (
             event == "retry"
             and row["attempts"] + 1 > mission["budgets"]["max_iterations"]

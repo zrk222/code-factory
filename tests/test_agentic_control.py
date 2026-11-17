@@ -971,6 +971,120 @@ def workflow_store(root, clock=None, **options):
     )
 
 
+@pytest.fixture
+def local_workflow_source(workflow_source):
+    return {
+        **workflow_source,
+        "provider": "factoryline",
+        "account": "local",
+        "kind": "mission",
+        "external_id": "a" * 64,
+        "head_sha": "b" * 40,
+    }
+
+
+def local_workflow_store(root, clock=None):
+    from factoryline.agentic_control import WorkflowEventStore
+
+    return WorkflowEventStore(
+        root, [("factoryline", "local", "owner/repo")], clock=clock
+    )
+
+
+def test_local_mission_intake_deduplicates_across_restart(
+    tmp_path, local_workflow_source
+):
+    store = local_workflow_store(tmp_path)
+    source = {**local_workflow_source, "head_sha": "b" * 64}
+    first = store.intake("mission-open", source)
+    assert first["status"] == "created"
+    assert first["item"]["source"] == source
+
+    reopened = local_workflow_store(tmp_path)
+    replay = reopened.intake("mission-open", source)
+    assert replay["status"] == "duplicate"
+    assert replay["item"] == first["item"]
+    assert not any(replay["authority"].values())
+    key = replay["item"]["source_key"]
+    assert len(reopened.history(key)["events"]) == 1
+
+    with pytest.raises(AgenticControlError) as error:
+        reopened.intake("mission-open", {**source, "external_id": "c" * 64})
+    assert error.value.code == "E_WORKFLOW_EVENT_REUSE"
+    with pytest.raises(AgenticControlError) as error:
+        reopened.intake("mission-changed", {**source, "head_sha": "d" * 64})
+    assert error.value.code == "E_WORKFLOW_REVISION"
+    assert reopened.get(key) == first["item"]
+
+
+def test_local_mission_missing_source_cannot_claim(tmp_path, local_workflow_source):
+    store = local_workflow_store(tmp_path)
+    key = store.intake("mission-open", local_workflow_source)["item"]["source_key"]
+    missing = store.intake(
+        "mission-missing",
+        {**local_workflow_source, "state": "missing", "revision": 2, "head_sha": None},
+    )["item"]
+    assert missing["source_key"] == key
+    assert missing["phase"] == "source_missing"
+    assert store.intake("late-open", local_workflow_source)["status"] == "stale"
+    with pytest.raises(AgenticControlError) as error:
+        store.claim(key, "worker-a")
+    assert error.value.code == "E_WORKFLOW_PHASE"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"account": "another"},
+        {"repository": "other/repo"},
+        {"repository": "owner/repo "},
+        {"provider": "github"},
+        {"kind": "issue"},
+        {"external_id": "not-a-job-digest"},
+        {"head_sha": "b" * 41},
+        {"head_sha": int("1" * 40)},
+        {"head_sha": None},
+        {"state": "missing"},
+        {"state": "closed"},
+        {"state": "merged"},
+        {"revision": True},
+        {"authority": "do-not-store"},
+    ],
+)
+def test_local_mission_source_rejects_mismatches(
+    tmp_path, local_workflow_source, change
+):
+    with pytest.raises(AgenticControlError) as error:
+        local_workflow_store(tmp_path).intake(
+            "mission-open", {**local_workflow_source, **change}
+        )
+    assert error.value.code == "E_WORKFLOW_SOURCE"
+
+
+def test_existing_remote_scope_does_not_imply_local_opt_in(
+    tmp_path, local_workflow_source
+):
+    from factoryline.agentic_control import WorkflowEventStore
+
+    store = workflow_store(tmp_path)
+    with pytest.raises(AgenticControlError) as error:
+        store.intake("mission-open", local_workflow_source)
+    assert error.value.code == "E_WORKFLOW_SOURCE"
+    with pytest.raises(AgenticControlError) as error:
+        WorkflowEventStore(
+            tmp_path,
+            [
+                ("github", "account-1", "owner/repo"),
+                ("factoryline", "local", "owner/repo"),
+            ],
+        )
+    assert error.value.code == "E_WORKFLOW_SCOPE"
+    with pytest.raises(AgenticControlError) as error:
+        WorkflowEventStore(tmp_path, [("factoryline", "account-1", "owner/repo")])
+    assert error.value.code == "E_WORKFLOW_SCOPE"
+    assert "exact local mission scope" in str(error.value)
+
+
 def test_runtime_source_events_survive_store_restart_and_duplicate(
     tmp_path, workflow_source
 ):
@@ -1298,11 +1412,11 @@ class _IncidentTestDriver:
         return self.handle
 
 
-def _incident_supervisor(tmp_path, driver, clock=None):
+def _incident_supervisor(tmp_path, driver, clock=None, *, store_factory=workflow_store):
     from factoryline.agentic_control import DurableIncidentDriver, INCIDENT_PHASES
 
     return DurableIncidentDriver(
-        workflow_store(tmp_path, clock),
+        store_factory(tmp_path, clock),
         {"local-test": driver},
         authorizer=lambda owner, intent: owner == "worker-a",
         phase_verifiers={
@@ -1341,6 +1455,114 @@ def _launch_incident_phase(supervisor, key, **changes):
     return supervisor.launch_phase(key, **arguments)
 
 
+def _claim_proof_dispatch(supervisor, source, phase="verify"):
+    store = supervisor.store
+    item = store.intake("proof-request", source)["item"]
+    key = item["source_key"]
+    _, binding = supervisor._intent(item, phase, "1" * 64, "2" * 64, "local-test")
+    claimed = store.claim(key, "worker-a", ttl=1, driver_binding=binding)["item"]
+    return key, claimed["run"], binding
+
+
+def test_proof_dispatch_reservation_fences_concurrent_requests_and_replacement_claims(
+    tmp_path, local_workflow_source
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    def clock():
+        return 100.0
+
+    supervisor = _incident_supervisor(
+        tmp_path, _IncidentTestDriver(), clock, store_factory=local_workflow_store
+    )
+    key, run, binding = _claim_proof_dispatch(supervisor, local_workflow_source)
+    intent = binding["action_intent_sha256"]
+    reopened = local_workflow_store(tmp_path, clock)
+    start = Barrier(2, timeout=5)
+
+    def reserve(store):
+        start.wait()
+        try:
+            return store.reserve_factory_proof_dispatch(
+                key, "worker-a", run["id"], intent
+            )["status"]
+        except AgenticControlError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = list(executor.map(reserve, [supervisor.store, reopened]))
+    assert sorted(statuses) == ["E_WORKFLOW_PROOF_DISPATCH_RESERVED", "reserved"]
+    assert reopened.get(key)["run"]["proof_dispatch_reserved"] is True
+
+    absent = reopened.reconcile_run(
+        key,
+        lambda current: {"run_id": current["id"], "handle": None, "state": "missing"},
+    )["item"]
+    assert (
+        absent["run"] is None and absent["last_run"]["proof_dispatch_reserved"] is True
+    )
+    replacement = reopened.claim(key, "worker-a", driver_binding=binding)["item"]["run"]
+    with pytest.raises(AgenticControlError) as error:
+        reopened.reserve_factory_proof_dispatch(
+            key, "worker-a", replacement["id"], intent
+        )
+    assert error.value.code == "E_WORKFLOW_PROOF_DISPATCH_RESERVED"
+    reservations = [
+        row
+        for row in reopened.history(key)["events"]
+        if row["action"] == "proof_dispatch_reserved"
+    ]
+    assert len(reservations) == 1
+    assert reservations[0]["item"]["run"]["id"] == run["id"]
+
+
+@pytest.mark.parametrize(
+    ("change", "code"),
+    [
+        ("remote", "E_WORKFLOW_PROOF_DISPATCH"),
+        ("other-phase", "E_WORKFLOW_PROOF_DISPATCH"),
+        ("wrong-run", "E_WORKFLOW_PROOF_DISPATCH"),
+        ("wrong-intent", "E_WORKFLOW_PROOF_DISPATCH"),
+        ("wrong-owner", "E_WORKFLOW_FENCED"),
+        ("source-changed", "E_WORKFLOW_FENCED"),
+        ("expired", "E_WORKFLOW_RECOVERY_REQUIRED"),
+    ],
+)
+def test_proof_dispatch_rejects_unbound_or_stale_runs(
+    tmp_path, local_workflow_source, workflow_source, change, code
+):
+    clock = [100.0]
+    remote = change == "remote"
+    source = workflow_source if remote else local_workflow_source
+    supervisor = _incident_supervisor(
+        tmp_path,
+        _IncidentTestDriver(),
+        lambda: clock[0],
+        store_factory=workflow_store if remote else local_workflow_store,
+    )
+    key, run, binding = _claim_proof_dispatch(
+        supervisor, source, "detect" if change == "other-phase" else "verify"
+    )
+    store = supervisor.store
+    if change == "source-changed":
+        store.intake("new-head", {**source, "revision": 2, "head_sha": "c" * 40})
+    if change == "expired":
+        clock[0] = run["expires_at"]
+    with pytest.raises(AgenticControlError) as error:
+        store.reserve_factory_proof_dispatch(
+            key,
+            "worker-b" if change == "wrong-owner" else "worker-a",
+            "a" * 64 if change == "wrong-run" else run["id"],
+            "b" * 64 if change == "wrong-intent" else binding["action_intent_sha256"],
+        )
+    assert error.value.code == code
+    assert not any(
+        row["action"] == "proof_dispatch_reserved"
+        for row in store.history(key)["events"]
+    )
+
+
 def test_incident_driver_persists_hash_bound_checkpoint_across_restart(
     tmp_path, workflow_source
 ):
@@ -1370,22 +1592,28 @@ def test_incident_driver_persists_hash_bound_checkpoint_across_restart(
     assert saved["owner_epoch"] == launched["item"]["run"]["epoch"]
 
 
+@pytest.mark.parametrize("local", [False, True], ids=["github-issue", "local-mission"])
 def test_incident_driver_recovers_launch_crash_without_duplicate_launch(
-    tmp_path, workflow_source
+    tmp_path, workflow_source, local_workflow_source, local
 ):
-    store = workflow_store(tmp_path)
-    key = store.intake("incident-crash", workflow_source)["item"]["source_key"]
+    store_factory = local_workflow_store if local else workflow_store
+    source = local_workflow_source if local else workflow_source
+    key = store_factory(tmp_path).intake("incident-crash", source)["item"]["source_key"]
     driver = _IncidentTestDriver(launch_error=True)
-    uncertain = _launch_incident_phase(_incident_supervisor(tmp_path, driver), key)
+    uncertain = _launch_incident_phase(
+        _incident_supervisor(tmp_path, driver, store_factory=store_factory), key
+    )
     assert uncertain["status"] == "unknown"
     assert len(driver.launches) == 1
-    assert workflow_store(tmp_path).get(key)["run"]["handle"] is None
+    assert store_factory(tmp_path).get(key)["run"]["handle"] is None
 
     driver.launch_error = False
-    recovered = _launch_incident_phase(_incident_supervisor(tmp_path, driver), key)
+    recovered = _launch_incident_phase(
+        _incident_supervisor(tmp_path, driver, store_factory=store_factory), key
+    )
     assert recovered["status"] == "live"
     assert len(driver.launches) == 1
-    assert workflow_store(tmp_path).get(key)["run"]["handle"] == "incident-handle-1"
+    assert store_factory(tmp_path).get(key)["run"]["handle"] == "incident-handle-1"
 
 
 def test_incident_driver_recovers_handle_persistence_crash_after_lease_expiry(
@@ -1418,6 +1646,54 @@ def test_incident_driver_recovers_handle_persistence_crash_after_lease_expiry(
     assert workflow_store(tmp_path, lambda: 102.0).get(key)["run"]["handle"] == (
         "incident-handle-1"
     )
+
+
+def test_incident_driver_never_launches_a_claim_expired_during_authorization(
+    tmp_path, local_workflow_source
+):
+    clock = [100.0]
+    supervisor = _incident_supervisor(
+        tmp_path,
+        _IncidentTestDriver(),
+        lambda: clock[0],
+        store_factory=local_workflow_store,
+    )
+    store = supervisor.store
+    driver = supervisor.drivers["local-test"]
+    key = store.intake("expire-before-launch", local_workflow_source)["item"][
+        "source_key"
+    ]
+    expire_first_claim = True
+
+    def authorize(owner, _intent):
+        nonlocal expire_first_claim
+        run = store.get(key)["run"]
+        if expire_first_claim and run is not None:
+            clock[0] = run["expires_at"]
+            expire_first_claim = False
+        return owner == "worker-a"
+
+    supervisor.authorizer = authorize
+    expired = _launch_incident_phase(supervisor, key, ttl=1)
+    assert expired["status"] == "unknown"
+    claim = expired["item"]["run"]
+    assert claim["expires_at"] == clock[0] and claim["handle"] is None
+    assert driver.launches == []
+
+    driver.state = "unknown"
+    assert _launch_incident_phase(supervisor, key)["item"]["run"] == claim
+    assert driver.launches == []
+    driver.state = "missing"
+    absent = _launch_incident_phase(supervisor, key)
+    assert absent["status"] == "retired" and absent["item"]["run"] is None
+    assert driver.launches == []
+
+    retried = _launch_incident_phase(supervisor, key)
+    assert retried["status"] == "launched"
+    assert len(driver.launches) == 1
+    run_id, intent_id, _ = driver.launches[0]
+    assert run_id != claim["id"]
+    assert intent_id == claim["driver_binding"]["action_intent_sha256"]
 
 
 def test_incident_driver_unknown_lookup_never_launches_and_missing_retry_is_bounded(
