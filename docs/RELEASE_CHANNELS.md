@@ -32,6 +32,24 @@ not turn a source merge into release approval.
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
+### Launch measurement
+
+Capture raw distribution signals before interpreting them. The helper saves
+PyPI and, when authenticated through `gh`, GitHub traffic responses in one JSON
+receipt. It does not calculate users, conversion, or savings.
+
+```powershell
+.\scripts\capture_launch_metrics.ps1 `
+  -Campaign "linkedin-launch" `
+  -PostUrl "https://www.linkedin.com/posts/..."
+```
+
+The output goes to `.factory/launch-metrics/` and records the observation time,
+raw sources, and any unavailable source errors. Run it before posting, on the
+next day, and after material discussions or posts. Compare dated observations;
+do not describe PyPI downloads as unique humans or attribute them to a campaign
+without a separate source.
+
 ### Previous JetBrains 1.3.3 candidate
 
 JetBrains 1.3.3 contains the saved-VFS consistency and background Studio startup
