@@ -1419,7 +1419,7 @@ class PresentationRoleIndex:
         }
 
     def _chain(self, path, name):
-        return class_chain(
+        return resolve_class_chain(
             self.source, path, name, self.imports, self.classes, self.audit
         )
 
