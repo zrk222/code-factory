@@ -35,10 +35,15 @@ The [quick guide](docs/START_HERE.md) explains scan results and CI options.
 **[SpecLine](https://github.com/zrk222/code-factory-1-spec)** captures what needs
 to be true, **[ForgeLine](https://github.com/zrk222/code-factory-2-forge)**
 coordinates execution, and **FactoryLine** records the proof and next action.
+**HSF** (Harness Software Factory) compiles selected rules into repeatable logic.
+**Prestige** checks design where applicable. **AppForge** handles app and mobile
+delivery inside Code Factory.
 Core 0.49.7 connects these steps in a resumable local mission with recorded
 recovery and resource-aware checks.
 [Install the full toolchain](docs/START_HERE.md#install-the-full-toolchain) or see
 the [proof workflow](docs/PROOF_REVIEW_WORKFLOW.md).
+
+![The JetBrains plugin connects to the local FactoryLine core. AppForge runs inside the core, with SpecLine, ForgeLine, HSF, and Prestige as companions.](https://github.com/zrk222/code-factory/releases/download/v0.49.7/code-factory-workflow.png)
 
 ## Product walkthrough
 
