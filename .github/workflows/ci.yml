@@ -320,7 +320,8 @@ jobs:
       - name: Install pinned TypeScript parser for the ForgeLine TSX doctor canary
         run: npm install --no-save --no-package-lock typescript@5.9.3
       - name: Install candidate wheel with public companion wheels
-        run: python -m pip install --only-binary=:all: ".[dev,factory]"
+        run: >-
+          python -m pip install --only-binary=:all: ".[dev,factory]"
       - name: Run HSF admission extraction-failure integration test
         run: >-
           python -m pytest -q
