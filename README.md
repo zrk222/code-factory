@@ -1,9 +1,10 @@
 # Code Factory
 
-Review agent-written code, trace findings to their source, and record which
-checks support your decision.
+Review agent-written code by collecting local software review evidence:
+trace findings to their source and record which checks support your decision.
+Code Factory does not certify software.
 
-**Core 0.49.7 · Editor packages 1.3.5**
+**Code Factory core 0.49.7 · VS Code and Open VSX 1.3.5 · JetBrains 1.3.5**
 
 [Release downloads](https://github.com/zrk222/code-factory/releases/tag/v0.49.7) ·
 [Quick guide](docs/START_HERE.md) · [Screenshots](#product-walkthrough)
@@ -26,6 +27,7 @@ JavaScript, shell, and other languages needs configured workers. A clean static
 scan does not establish runtime coverage. Missing evidence stays **INCOMPLETE**.
 
 `factory --help` shows the common paths; `factory --help-all` lists the full CLI.
+`factory guide` helps you choose the next step.
 The [quick guide](docs/START_HERE.md) explains scan results and CI options.
 
 ## Build, check, review
@@ -71,7 +73,10 @@ labels. [Case ledger](https://github.com/zrk222/code-factory/releases/download/v
 
 [Runtime assurance](docs/RUNTIME_ASSURANCE.md) ·
 [GitHub review](docs/GITHUB_PROOF_REVIEW.md) ·
-[Release channels](docs/RELEASE_CHANNELS.md) ·
+[Release channels and publication evidence](docs/RELEASE_CHANNELS.md) ·
+[Changelog](CHANGELOG.md) ·
+[Audit condition inventory](docs/AUDIT_CONDITION_INVENTORY.md) ·
+Historical [repository self-audit receipt](evidence/self-audit/quality-reassessment-2026-10-04.json) ·
 [Commercial availability](docs/COMMERCIAL_PACKAGING.md) ·
 [Documentation index](docs/DOCUMENTATION_INDEX.json)
 
