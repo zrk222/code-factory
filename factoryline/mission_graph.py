@@ -1086,6 +1086,13 @@ def _reduce_thread_receipts(
         state["context_json"] = receipt_ref
 
 
+def _guard_receipt_pin(path, observed, expected):
+    if expected is not None and (observed != expected or _sha_path(path) != expected):
+        raise MissionGraphError(
+            "MISSION_GRAPH_RECEIPT_DRIFT", "submitted receipt changed after verification"
+        )
+
+
 def apply_mission_event(
     mission_path: Path,
     root: Path,
@@ -1126,14 +1133,7 @@ def apply_mission_event(
         errors, _ = _verify_chain(connection, row, mission_path, mission)
         if errors:
             raise MissionGraphError("MISSION_GRAPH_DRIFT", "; ".join(errors))
-        if expected_receipt_sha256 is not None and (
-            receipt_sha != expected_receipt_sha256
-            or _sha_path(receipt_file) != expected_receipt_sha256
-        ):
-            raise MissionGraphError(
-                "MISSION_GRAPH_RECEIPT_DRIFT",
-                "submitted receipt changed after verification",
-            )
+        _guard_receipt_pin(receipt_file, receipt_sha, expected_receipt_sha256)
         duplicate = connection.execute(
             "SELECT * FROM graph_events WHERE thread_id=? AND idempotency_key=?",
             (mission["id"], idempotency_key),
