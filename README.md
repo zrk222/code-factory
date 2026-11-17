@@ -30,11 +30,13 @@ The [quick guide](docs/START_HERE.md) explains scan results and CI options.
 
 ## Build, check, review
 
-**SpecLine** captures what needs to be true, **ForgeLine** coordinates scoped
-execution, and **FactoryLine** records the proof and next review action.
+**[SpecLine](https://github.com/zrk222/code-factory-1-spec)** captures what needs
+to be true, **[ForgeLine](https://github.com/zrk222/code-factory-2-forge)**
+coordinates execution, and **FactoryLine** records the proof and next action.
 Core 0.49.7 connects these steps in a resumable local mission with recorded
 recovery and resource-aware checks.
-See the [changelog](CHANGELOG.md) and [proof workflow](docs/PROOF_REVIEW_WORKFLOW.md).
+[Install the full toolchain](docs/START_HERE.md#install-the-full-toolchain) or see
+the [proof workflow](docs/PROOF_REVIEW_WORKFLOW.md).
 
 ## Product walkthrough
 

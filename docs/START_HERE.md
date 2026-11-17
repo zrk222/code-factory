@@ -55,6 +55,22 @@ evidence. Other CI providers can invoke the CLI and retain the JSON as an artifa
 - **Manage approvals and signed evidence:** see
   [enterprise operations](ENTERPRISE_OPERATIONS.md).
 
+### Install the full toolchain
+
+The core wheel installs the scanner and coordinator. For Core 0.49.7, install
+the published SpecLine, ForgeLine, HSF, and Prestige wheels in the same Python
+3.11+ environment:
+
+```powershell
+python -m pip install factoryline-code-factory==0.49.7 code-factory-1-spec==0.5.4 code-factory-2-forge==0.10.8 code-factory-3-compile==0.5.5 code-factory-4-design==0.8.0
+factory doctor --strict --json
+```
+
+The distribution names differ from their commands: `specline`, `forge`, `hsf`,
+and `prestige`. The core scan does not require those packages. For a source
+build of this repository, `python -m pip install ".[factory]"` selects the same
+companion versions.
+
 `factory doctor --strict --json` checks setup. `factory --help-all` lists advanced
 commands. In interactive terminals an optional version notice uses a daily PyPI
 check; set `FACTORY_DISABLE_UPDATE_CHECK=1` to disable it.
