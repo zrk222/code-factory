@@ -5449,6 +5449,8 @@ class _SourceTestScope:
 
     def exercise(self):
         """Check all captured origin uses and exercise every validated test owner."""
+        from .pytest_collection_audit import captured_flask_fixture_configuration
+
         trial = object.__new__(type(self))
         trial.__dict__ = {
             **self.__dict__,
@@ -5466,7 +5468,7 @@ class _SourceTestScope:
             or self.fact is None
             or self.fact.source_role not in {"module_literal", "local_literal"}
         ):
-            return False
+            return captured_flask_fixture_configuration(self)
         if self.fact.source_role == "local_literal":
             parents = self.source.parents[self.path]
             function = self.audit._legacy._enclosing_function(self.assignment, parents)

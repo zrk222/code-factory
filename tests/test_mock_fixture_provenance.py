@@ -6994,6 +6994,167 @@ def test_source_bound_pytest_local_scope_native(
         ), report
 
 
+def test_captured_make_pytest_selection_requires_a_closed_recipe():
+    from factoryline.pytest_collection_audit import _captured_make_pytest_argv
+
+    recipe = b"RUNNER = uv\n.PHONY: test\ntest:\n\t$(RUNNER) run pytest\n"
+    assert _captured_make_pytest_argv(recipe) == ("uv", "run", "pytest")
+    for variant in (
+        recipe + b"\tpytest -p custom\n",
+        recipe + b"include other.mk\n",
+        recipe + b"RUNNER = /other/uv\n",
+        recipe + b"export PYTEST_ADDOPTS = -p custom\n",
+        recipe + b"GNUmakefile:\n\tgenerate\n",
+        recipe + b"Makefile: input\n\tgenerate\n",
+        recipe + b"makefile:\n\tgenerate\n",
+        recipe.replace(b"test:\n", b"test: configure\n"),
+        recipe.replace(b"run pytest", b"run pytest; python custom.py"),
+        recipe.replace(b"run pytest", b"run pytest -p custom"),
+    ):
+        assert _captured_make_pytest_argv(variant) is None
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "closed",
+        "runtime_alias_base",
+        "dynamic_keys",
+        "nested_consumer",
+        "loader",
+        "unused",
+        "async",
+        "class",
+        "shadow",
+        "toggle",
+        "opaque",
+        "duplicate",
+        "GNUmakefile",
+        "makefile",
+    ],
+)
+def test_make_selected_flask_fixture_config_proves_only_closed_scope(tmp_path, case):
+    import ast
+    import hashlib
+
+    from factoryline.credential_role_method_use_getter_audit import _SourceTestScope
+    from factoryline.mock_fixture_provenance import application_test_index
+
+    runtime = (
+        "from config import Selected as Alternate\n"
+        "class Intermediate(Alternate):\n    pass\n"
+        "class Running(Intermediate):\n    pass\n"
+        if case == "runtime_alias_base"
+        else "class Running:\n    pass\n"
+    )
+    call = {
+        "dynamic_keys": "fixture_factory(**source())",
+        "loader": "request.getfixturevalue('fixture_factory')()",
+        "unused": "pass",
+        "nested_consumer": "fixture_factory()\n    deferred = lambda: fixture_factory()",
+        "toggle": "fixture_factory(TESTING=False)",
+    }.get(case, "fixture_factory()")
+    test_code = f"def test_config(fixture_factory, request):\n    {call}\n"
+    test_code += {
+        "async": "async def test_async(fixture_factory):\n    fixture_factory()\n",
+        "class": "class TestConfig:\n    def test_other(self, *, fixture_factory):\n        fixture_factory()\n",
+        "shadow": "\nimport pytest\n@pytest.fixture\ndef fixture_factory():\n    return None\n",
+    }.get(case, "")
+    sample = "7aF0caB9342d1eaCc585fF71E9a856aa" if case == "opaque" else "local-sample"
+    files = {
+        "config.py": f"class Selected:\n    TESTING = True\n    SECRET_KEY = {sample!r}\n",
+        "runtime.py": runtime,
+        "service.py": (
+            "from flask import Flask\nfrom runtime import Running\n"
+            "def build(config=Running):\n    server = Flask(__name__)\n"
+            "    server.config.from_object(config)\n    return server\n"
+        ),
+        "entry.py": "from service import build\nserver = build()\n",
+        "tests/conftest.py": (
+            "import pytest\nfrom config import Selected\nfrom service import build\n"
+            "@pytest.fixture\ndef fixture_factory():\n"
+            "    def create(**overrides):\n        config = {'ENABLED': True, **overrides}\n"
+            "        derived = type('Derived', (Selected,), config)\n"
+            "        return build(derived)\n    return create\n"
+        ),
+        "tests/test_flow.py": test_code,
+    }
+    if case == "duplicate":
+        files["entry.py"] += f"API_KEY = {sample!r}\n"
+    data, modules, hashes = {}, {}, {}
+    for name, source in files.items():
+        _write(tmp_path, name, source)
+        path = tmp_path / name
+        data[path] = path.read_bytes()
+        hashes[path] = hashlib.sha256(data[path]).hexdigest()
+        modules[path] = ast.parse(data[path], filename=name)
+        modules[path]._oracle_source_sha256 = hashes[path]
+    configs = {"Makefile": b"test:\n\tpytest\n"}
+    if case in {"GNUmakefile", "makefile"}:
+        configs[case] = b"test:\n\tother-runner\n"
+    index = application_test_index(tmp_path, modules, data, hashes, configs)
+    path = tmp_path / "config.py"
+    proof = _SourceTestScope(index, path, modules[path].body[0].body[1], "SECRET_KEY")
+    assert proof.exercise() is (case == "closed")
+
+    from factoryline.review_audits import security_scan
+
+    for name, raw in configs.items():
+        if name == "makefile" and (tmp_path / name).exists():
+            # Case-insensitive filesystems cannot represent both names.
+            return
+        _write(tmp_path, name, raw.decode())
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+
+    def is_config_secret(row):
+        return row["code"] == "SECURITY_HARDCODED_SECRET" and row["path"] == "config.py"
+
+    active = [
+        row["raw_finding"]
+        for row in report["finding_tier_report"]["ledger"]
+        if is_config_secret(row["raw_finding"])
+    ]
+    refuted = [
+        row
+        for row in report.get("refuted_security_observations", [])
+        if is_config_secret(row)
+    ]
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert (len(active), len(refuted)) == ((0, 1) if case == "closed" else (1, 0))
+    if refuted:
+        from factoryline.primitive_observation_binding import (
+            application_fixture_binding,
+        )
+
+        selection = refuted[0]["facts"]["fixture_evidence"]["settings_selection"]
+        assert selection["authority_role"] == "SOURCE_BOUND_TEST_CONFIGURATION"
+        sources = [
+            *report["sources"],
+            *report["oracle_context"]["configuration_sources"],
+        ]
+        bindings = {row["path"]: row["sha256"] for row in sources}
+        source_bytes = {name: (tmp_path / name).read_bytes() for name in bindings}
+        assert application_fixture_binding(refuted[0], sources, bindings, source_bytes)
+        for name in ("Makefile", "tests/conftest.py"):
+            assert not application_fixture_binding(
+                refuted[0],
+                sources,
+                bindings,
+                {**source_bytes, name: source_bytes[name] + b"\n# changed\n"},
+            )
+        assert not application_fixture_binding(
+            refuted[0],
+            sources,
+            bindings,
+            {name: raw for name, raw in source_bytes.items() if name != "Makefile"},
+        )
+
+
 def test_source_scope_local_origin_survives_literal_resolution(tmp_path):
     import ast
     import hashlib

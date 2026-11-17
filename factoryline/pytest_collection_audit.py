@@ -1665,6 +1665,604 @@ def _captured_shell_compound(command):
     return any(token in command for token in ("&&", "||", ";", "|", ">", "<"))
 
 
+_MAKE_DESCRIPTORS = frozenset({"GNUmakefile", "makefile", "Makefile"})
+
+
+def captured_makefile_names(root):
+    """Record actual directory names, including on case-insensitive filesystems."""
+    return (p.name for p in root.glob("*[Mm]akefile") if p.name in _MAKE_DESCRIPTORS)
+
+
+def _captured_make_pytest_argv(raw):
+    """Project one literal test recipe without evaluating Make or its shell."""
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except (AttributeError, UnicodeError):
+        return None
+    parsed = _captured_make_test_recipe(lines)
+    if parsed is None:
+        return None
+    recipe, variables = parsed
+    if recipe == "pytest":
+        return ("pytest",)
+    match = re.fullmatch(r"(uv|\$\(([A-Za-z_][A-Za-z_0-9]*)\))\s+run\s+pytest", recipe)
+    if match and (match[1] == "uv" or variables.get(match[2]) == "uv"):
+        return ("uv", "run", "pytest")
+    return None
+
+
+def _captured_make_test_recipe(lines):
+    """Collect one non-continued test recipe and its literal variable bindings."""
+    variables, targets, recipes = {}, set(), []
+    target, continued = None, False
+    for line in lines:
+        if (
+            not line
+            or not continued
+            and not line.startswith("\t")
+            and (not line.strip() or line.lstrip().startswith("#"))
+        ):
+            continue
+        if line.startswith("\t") or continued:
+            if target is None:
+                return None
+            continued = line.endswith("\\")
+            if target == "test":
+                if continued:
+                    return None
+                recipes.append(line.strip())
+            continue
+        target = _captured_make_header(line, variables, targets)
+        if target is False:
+            return None
+    return (recipes[0], variables) if len(recipes) == 1 and not continued else None
+
+
+def _captured_make_header(line, variables, targets):
+    if match := re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)\s*=\s*([^$]+)", line):
+        name, value = match.groups()
+        if (
+            name in variables
+            or name in {"SHELL", "PATH", "MAKEFLAGS", "MAKEFILES", "BASH_ENV", "ENV"}
+            or name.startswith(("PYTEST_", "UV_"))
+        ):
+            return False
+        variables[name] = value.strip()
+        return None
+    if match := re.fullmatch(r"([A-Za-z_][\w.-]*|\.PHONY):\s*([\w. -]*)", line):
+        target, dependencies = match.groups()
+        if (
+            target not in targets
+            and target not in _MAKE_DESCRIPTORS
+            and not (target == "test" and dependencies)
+        ):
+            targets.add(target)
+            return target
+    return False
+
+
+def captured_flask_fixture_configuration(scope):
+    """Prove selection of one captured class through a pytest-owned Flask factory."""
+    docs = scope.index["configuration_bytes"]
+    if (
+        _MAKE_DESCRIPTORS.intersection(docs) != {"Makefile"}
+        or (origin := _fixture_config_origin(scope)) is None
+    ):
+        return False
+    owner = origin[1]
+    argv = _captured_make_pytest_argv(docs.get("Makefile"))
+    if (
+        not argv
+        or scope.configured_settings_invocation_profile()["status"]
+        != "NO_TEST_INVOCATION"
+    ):
+        return False
+    selected = captured_pytest_configuration(docs, complete_precedence=True)
+    if selected is None or not scope._pytest_collection(selected):
+        return False
+    loads = list(_fixture_factory_references(scope, origin))
+    if len(loads) != 1:
+        return False
+    path, base = loads[0]
+    parents = scope.source.parents[path]
+    bases = parents[id(base)]
+    derive = parents.get(id(bases))
+    if (
+        not isinstance(derive, ast.Call)
+        or derive.args[1:2] != [bases]
+        or not isinstance(bases, ast.Tuple)
+        or bases.elts != [base]
+    ):
+        return False
+    assignment = parents.get(id(derive))
+    nested = parents.get(id(assignment))
+    fixture = parents.get(id(nested))
+    if not _fixture_configuration_definition(
+        scope, path, fixture, nested, assignment, derive
+    ):
+        return False
+    decorators = fixture.decorator_list
+    if len(decorators) != 1 or scope.canonical(path, decorators[0]) != "pytest.fixture":
+        return False
+    sibling = nested.body[2].value
+    factory = scope.declaration(path, sibling.func)
+    if not _fixture_flask_factory(
+        scope, factory, origin, path, sibling
+    ) or not _fixture_material_calls(scope, path, fixture, selected):
+        return False
+    scope.witness(scope.path, owner, "closed_test_configuration_class")
+    scope.witness(path, derive, "captured_fixture_configuration_inheritance")
+    scope.witness(path, sibling, "captured_fixture_factory_argument")
+    scope.witness(
+        factory[0], factory[1].body[1], "captured_flask_configuration_selection"
+    )
+    scope.settings_selection = {
+        "authority_role": "SOURCE_BOUND_TEST_CONFIGURATION",
+        "selection_assurance": "SOURCE_BOUND_CONDITIONAL",
+        "execution_status": "NOT_EXECUTED",
+        "invocation": {
+            "path": "Makefile",
+            "sha256": hashlib.sha256(docs["Makefile"]).hexdigest(),
+            "argv": argv,
+        },
+        "configuration": selected["identity"],
+    }
+    return True
+
+
+def _fixture_config_origin(scope):
+    """Bind one fixture-configured Flask signing field with no observed mixed role."""
+    from .captured_security_audit import _captured_text_may_be_secret
+    from .credential_role_constructor_provider import binding_occurrences
+
+    if (
+        scope.fact is None
+        or scope.fact.source_role != "class_literal"
+        or scope.secret != "SECRET_KEY"
+    ):
+        return None
+    value = scope.assignment.value.value
+    if _captured_text_may_be_secret(value) or not re.fullmatch(
+        r"[a-z]{2,16}(?:-[a-z]{2,16}){1,4}", value
+    ):
+        return None
+    origin = scope.path, scope.source.parents[scope.path].get(id(scope.assignment))
+    owner = origin[1]
+    if (
+        owner not in scope.index["modules"][scope.path].body
+        or owner.keywords
+        or owner.decorator_list
+    ):
+        return None
+    if binding_occurrences(owner.body, scope.secret) != [
+        scope.assignment.targets[0]
+        if isinstance(scope.assignment, ast.Assign)
+        else scope.assignment.target
+    ]:
+        return None
+    flags = binding_occurrences(owner.body, "TESTING")
+    if (
+        len(flags) != 1
+        or not isinstance(
+            flag := scope.source.parents[scope.path].get(id(flags[0])), ast.Assign
+        )
+        or flag not in owner.body
+        or not isinstance(flag.value, ast.Constant)
+        or flag.value.value is not True
+    ):
+        return None
+    if (
+        not scope.view
+        or not scope.view.complete
+        or scope.view._data_reflection_conflict(scope.fact)
+        or scope.view._reflection_conflict(scope.fact, {(scope.path, owner.name)})
+    ):
+        return None
+    ancestry = scope.view._chain(scope.path, owner.name)
+    if not ancestry or not all(
+        _fixture_config_class_closed(cls) for _, _, cls in ancestry
+    ):
+        return None
+    if any(
+        isinstance(n, ast.Constant)
+        and n is not scope.assignment.value
+        and n.value == value
+        for module in scope.index["modules"].values()
+        for n in ast.walk(module)
+    ):
+        return None
+    return origin
+
+
+def _fixture_config_class_closed(owner):
+    """Keep class namespace behavior, descriptors and custom metaclasses unresolved."""
+    return (
+        not owner.keywords
+        and not owner.decorator_list
+        and all(
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and not stmt.targets[0].id.startswith("_")
+            or isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            or isinstance(stmt, ast.Pass)
+            for stmt in owner.body
+        )
+    )
+
+
+def _fixture_factory_references(scope, selected):
+    """Find exact loads, including aliases, reexports, and non-call escapes."""
+    names = {selected[1].name}
+    names.update(
+        row.asname
+        for tree in scope.index["modules"].values()
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for row in node.names
+        if row.asname
+    )
+    for name in names:
+        for path, node in scope.view.references.get(name, ()):
+            if (
+                isinstance(node.ctx, ast.Load)
+                and scope.declaration(path, node) == selected
+            ):
+                yield path, node
+
+
+def _fixture_configuration_definition(scope, path, fixture, nested, assignment, derive):
+    """Bind the closure so the derived class can reach only one exact factory call."""
+    from .credential_role_constructor_provider import binding_occurrences
+
+    if (
+        path.name != "conftest.py"
+        or not isinstance(fixture, ast.FunctionDef)
+        or fixture not in scope.index["modules"][path].body
+        or any(ast.iter_child_nodes(fixture.args))
+        or not isinstance(nested, ast.FunctionDef)
+        or nested.decorator_list
+        or len(nested.body) != 3
+        or binding_occurrences(fixture.body, nested.name) != [nested]
+    ):
+        return False
+    match fixture.body:
+        case [*prefix, selected, ast.Return(value=ast.Name(id=returned))] if (
+            selected is nested and returned == nested.name
+        ):
+            if not all(
+                isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
+                for n in prefix
+            ):
+                return False
+        case _:
+            return False
+    overlay, creation, forwarding = nested.body
+    derived = _rejection_assignment(assignment)
+    overlay_name = _rejection_assignment(overlay)
+    if not derived or not overlay_name or creation is not assignment:
+        return False
+    match nested.args, overlay.value, forwarding, derive:
+        case (
+            ast.arguments(
+                posonlyargs=[],
+                args=[],
+                kwonlyargs=[],
+                vararg=None,
+                kwarg=ast.arg(arg=overrides),
+            ),
+            ast.Dict(keys=[*keys, None], values=[*_, ast.Name(id=spread)]),
+            ast.Return(value=ast.Call(args=[ast.Name(id=forward)], keywords=[])),
+            ast.Call(
+                func=ast.Name(id="type"),
+                args=[ast.Constant(value=str()), _, ast.Name(id=mapping)],
+                keywords=[],
+            ),
+        ) if spread == overrides and forward == derived and mapping == overlay_name:
+            return (
+                scope.fixture._django_builtins_unshadowed(scope.index, path, {"type"})
+                and not any(
+                    binding_occurrences(nested.body, name)
+                    for name in ("type", overrides)
+                )
+                and all(
+                    isinstance(key, ast.Constant)
+                    and _fixture_override_key_allowed(key.value)
+                    for key in keys
+                )
+            )
+    return False
+
+
+def _fixture_flask_factory(scope, factory, origin, fixture_path, invocation):
+    """Close the provider's configuration operand and all alternate call sites."""
+    if factory is None or not isinstance(factory[1], ast.FunctionDef):
+        return False
+    path, function = factory
+    args = function.args
+    if (
+        function.decorator_list
+        or len(function.body) < 2
+        or len(args.args) != 1
+        or len(args.defaults) != 1
+    ):
+        return False
+    default = scope.declaration(path, args.defaults[0])
+    if default is None or default == origin or not isinstance(default[1], ast.ClassDef):
+        return False
+    chain = scope.view._chain(default[0], default[1].name)
+    if not chain or any((p, cls) == origin for p, _, cls in chain):
+        return False
+    if (load := _fixture_flask_load(scope, path, function)) is None:
+        return False
+    origin_names = (
+        origin[1].name,
+        scope.fixture._django_name(scope.index, origin[0]) + "." + origin[1].name,
+    )
+    if any(
+        isinstance(node, ast.Attribute) and node is not load.func
+        for _, node in scope.view.references.get("from_object", ())
+    ) or any(
+        isinstance(node, ast.Constant) and node.value in origin_names
+        for module in scope.index["modules"].values()
+        for node in ast.walk(module)
+    ):
+        return False
+    uses = []
+    for use_path, use in _fixture_factory_references(scope, factory):
+        parent = scope.source.parents[use_path].get(id(use))
+        if not isinstance(parent, ast.Call) or parent.func is not use:
+            return False
+        if parent.args or parent.keywords:
+            uses.append((use_path, parent))
+    return uses == [(fixture_path, invocation)]
+
+
+def _fixture_flask_load(scope, path, function):
+    from .captured_security_audit import (
+        _CapturedConfigRejection,
+        _rejection_call_statement,
+        _settings_names,
+    )
+    from .credential_role_constructor_provider import binding_occurrences
+
+    allocate, inject = function.body[:2]
+    receiver = _CapturedConfigRejection(scope.source, path).allocated_receiver(
+        path, function, allocate
+    )
+    load = _rejection_call_statement(inject)
+    formal = function.args.args[0].arg
+    if (
+        not receiver
+        or allocate.value.keywords
+        or not load
+        or load.keywords
+        or ast.unparse(load.func) != receiver + ".config.from_object"
+        or len(load.args) != 1
+        or tuple(_settings_names(function, formal)) != tuple(load.args)
+        or binding_occurrences(function.body, formal)
+    ):
+        return None
+    return load
+
+
+def _fixture_material_calls(scope, fixture_path, fixture, selected):
+    """Close injected callable arguments and exact helper forwarding."""
+    from .mock_fixture_provenance import _app_test_function_external_uses_clear
+
+    name = fixture.name
+    if selected["options"].get(
+        "testpaths"
+    ) or not _app_test_function_external_uses_clear(scope.index, fixture_path, fixture):
+        return False
+    for target in ("pytest.fixture", "flask.Flask", "flask.config.Config.from_object"):
+        if not scope.audit._app_signing_terminal_stable(scope.index, target):
+            return False
+    settings = _pytest_collection_settings(selected["identity"])
+    functions = _fixture_material_owners(scope, fixture_path, fixture, settings)
+    if (
+        not functions
+        or (edges := _fixture_material_edges(scope, name, functions)) is None
+    ):
+        return False
+    forwarded, material, collected_edges = edges
+    if not (material & collected_edges or any(functions[key][2] for key in material)):
+        return False
+    for (path, function), (owner, _position, _collected) in functions.items():
+        if owner:
+            scope.witness(path, function, "captured_fixture_callable_owner")
+            continue
+        actual = {
+            (p, scope.source.parents[p].get(id(use)))
+            for p, use in _fixture_factory_references(scope, (path, function))
+        }
+        if not actual or actual != {
+            (p, call) for callee, p, call in forwarded if callee == (path, function)
+        }:
+            return False
+    return True
+
+
+def _fixture_material_owners(scope, fixture_path, fixture, settings):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    name, functions = fixture.name, {}
+    for path, tree in scope.index["modules"].items():
+        if any(_pytest_plugin_declaration_active(n) for n in tree.body) or any(
+            isinstance(n, ast.Attribute)
+            and n.attr in {"getfixturevalue", "__builtins__"}
+            or isinstance(n, (ast.Name, ast.Attribute))
+            and getattr(n, "id", getattr(n, "attr", None))
+            in {"eval", "exec", "__import__", "__builtins__"}
+            or isinstance(n, ast.Attribute)
+            and n.attr in {"modules", "import_module"}
+            and scope.canonical(path, n) in {"sys.modules", "importlib.import_module"}
+            or isinstance(n, (ast.Name, ast.Attribute))
+            and getattr(n, "id", getattr(n, "attr", None)) in {"pytestmark", "__test__"}
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            for n in ast.walk(tree)
+        ):
+            return None
+        if binding_occurrences(tree.body, name) != (
+            [fixture] if path == fixture_path else []
+        ):
+            return None
+        owners = _fixture_module_owners(scope, path, tree, fixture_path, name, settings)
+        if owners is None:
+            return None
+        functions.update(owners)
+    return functions
+
+
+def _fixture_module_owners(scope, path, tree, fixture_path, name, settings):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .credential_role_identity_effects import _argument_names
+    from .mock_fixture_provenance import _app_test_function_external_uses_clear
+
+    functions = {}
+    for function in ast.walk(tree):
+        if not isinstance(
+            function, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        ):
+            continue
+        if any(
+            isinstance(mark, ast.Call)
+            and scope.canonical(path, mark.func) == "pytest.fixture"
+            and any(k.arg == "name" for k in mark.keywords)
+            for mark in getattr(function, "decorator_list", ())
+        ):
+            return None
+        if name not in _argument_names(function):
+            continue
+        if not isinstance(function, ast.FunctionDef) or function not in tree.body:
+            return None
+        positions = [i for i, arg in enumerate(function.args.args) if arg.arg == name]
+        if not path.is_relative_to(fixture_path.parent) or len(positions) != 1:
+            return None
+        if binding_occurrences(function.body, name):
+            return None
+        decorators = function.decorator_list
+        fixture_owner = (
+            path == fixture_path
+            and len(decorators) == 1
+            and scope.canonical(path, decorators[0]) == "pytest.fixture"
+        )
+        collected = (
+            _pytest_file_matches(scope.source.relative(path), settings["python_files"])
+            and _pytest_name_matches(function.name, settings["python_functions"])
+            and not _pytest_test_disabled(function, {}, [tree])
+            and all(scope._pytest_parametrize_decorator(path, n) for n in decorators)
+            and _app_test_function_external_uses_clear(scope.index, path, function)
+        )
+        functions[path, function] = (
+            fixture_owner or collected,
+            positions[0],
+            collected,
+        )
+    return functions
+
+
+def _fixture_material_edges(scope, name, functions):
+    forwarded, material, collected_edges = set(), set(), set()
+    for path, function in functions:
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Name) or node.id != name:
+                continue
+            edge = _fixture_material_operand(scope, functions, path, function, node)
+            if edge is None:
+                return None
+            callee, call, active = edge
+            if callee is not None:
+                forwarded.add((callee, path, call))
+                if active and functions[path, function][2]:
+                    collected_edges.add(callee)
+            elif active:
+                material.add((path, function))
+    return forwarded, material, collected_edges
+
+
+def _fixture_material_operand(scope, functions, path, function, node):
+    parents = scope.source.parents[path]
+    parent = parents.get(id(node))
+    if (
+        not isinstance(node.ctx, ast.Load)
+        or not isinstance(parent, ast.Call)
+        or scope.audit._legacy._enclosing_function(node, parents) is not function
+        or scope.audit._legacy._has_nested_scope(node, function, parents)
+    ):
+        return None
+    active = scope.fixture._app_active_call(scope.index, path, function, parent)
+    if parent.func is node:
+        if parent.args or not _fixture_override_keys(parent, function):
+            return None
+        return (
+            None,
+            parent,
+            active and not any(k.arg == "SECRET_KEY" for k in parent.keywords),
+        )
+    callee = scope.declaration(path, parent.func)
+    if not functions[path, function][0] or callee not in functions:
+        return None
+    target_is_owner, position, _ = functions[callee]
+    if (
+        target_is_owner
+        or parent.keywords
+        or any(isinstance(a, ast.Starred) for a in parent.args)
+        or parent.args[position : position + 1] != [node]
+    ):
+        return None
+    return callee, parent, active
+
+
+def _fixture_override_key_allowed(name):
+    return (
+        isinstance(name, str)
+        and name.isupper()
+        and name.isidentifier()
+        and not name.startswith("_")
+        and name not in {"TESTING", "SECRET_KEY", "SECRET_KEY_FALLBACKS"}
+    )
+
+
+def _fixture_override_keys(call, function):
+    for keyword in call.keywords:
+        if keyword.arg is not None:
+            if not (
+                _fixture_override_key_allowed(keyword.arg)
+                or keyword.arg == "SECRET_KEY"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is None
+            ):
+                return False
+            continue
+        if not isinstance(keyword.value, ast.Dict):
+            return False
+        for key in keyword.value.keys:
+            if isinstance(key, ast.Constant) and _fixture_override_key_allowed(
+                key.value
+            ):
+                continue
+            if isinstance(key, ast.Name) and any(
+                len(mark.args) == 2
+                and not mark.keywords
+                and isinstance(mark.args[0], ast.Constant)
+                and mark.args[0].value == key.id
+                and isinstance(mark.args[1], (ast.List, ast.Tuple))
+                and bool(mark.args[1].elts)
+                and all(
+                    isinstance(n, ast.Constant)
+                    and _fixture_override_key_allowed(n.value)
+                    for n in mark.args[1].elts
+                )
+                for mark in function.decorator_list
+                if isinstance(mark, ast.Call)
+            ):
+                continue
+            return False
+    return True
+
+
 def _captured_invocation_row(
     argv,
     context,
