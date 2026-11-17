@@ -14,23 +14,44 @@ from pathlib import Path
 
 from .runtime_audit_common import canonical_bytes
 
-from .audit_taxonomy import (
-    _canonical,
-    ACTION_EXECUTION_CONTRACT as ACTION_EXECUTION_CONTRACT,
-    audit_remediation_packet as audit_remediation_packet,
-    derive_agent_action_references as derive_agent_action_references,
-    resolve_agent_action_reference as resolve_agent_action_reference,
-    _expected_reference as _expected_reference,
-    _bound_report as _bound_report,
-    _validate_report_shape as _validate_report_shape,
-    _validate_report_contract as _validate_report_contract,
-    _validate_report_digest as _validate_report_digest,
-    _taxonomy_value as _taxonomy_value,
-    _denominator as _denominator,
-    _CODE_RULES as _CODE_RULES,
-    _NUMBER_FIELDS as _NUMBER_FIELDS,
-    _DENOMINATOR_STATES as _DENOMINATOR_STATES,
+from .audit_taxonomy import _canonical
+
+
+_ACTION_CONTRACT_EXPORTS = frozenset(
+    """_expected_reference
+    derive_agent_action_references
+    _bound_report
+    _validate_report_shape
+    _validate_report_contract
+    _validate_report_digest
+    _taxonomy_value
+    _denominator
+    resolve_agent_action_reference
+    ACTION_EXECUTION_CONTRACT
+    _CODE_RULES
+    _NUMBER_FIELDS
+    _DENOMINATOR_STATES""".split()
 )
+
+
+def __getattr__(name: str):
+    """Resolve legacy action exports without loading worker contracts on import."""
+    if name in _ACTION_CONTRACT_EXPORTS:
+        from . import deep_audit_contract
+
+        return getattr(deep_audit_contract, name)
+    raise AttributeError(name)
+
+
+def audit_remediation_packet(
+    candidate_sha256: str,
+    finding: dict[str, Any],
+    source_bound_security_precondition: dict[str, Any] | None = None,
+) -> dict:
+    """Create a deterministic host-agent handoff; evidence remains untrusted data."""
+    from .deep_audit_contract import audit_remediation_packet as packet
+
+    return packet(candidate_sha256, finding, source_bound_security_precondition)
 
 
 def _security_scan_candidate_payload(

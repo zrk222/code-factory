@@ -2362,7 +2362,7 @@ def _run_worker_import(
         "import factoryline.runtime_audit_process; "
     )
     code += (
-        "from factoryline.audit_taxonomy import audit_remediation_packet; "
+        "from factoryline.deep_audit_contract import audit_remediation_packet; "
         "packet=audit_remediation_packet('a'*64,{'code':'TEST'}); "
         "assert packet['automatic_execution'] is False; "
         "assert 'factoryline.audit_action_refs' not in sys.modules"

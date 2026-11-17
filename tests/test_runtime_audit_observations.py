@@ -1646,7 +1646,10 @@ def test_provisional_exclusion_is_atomic_across_the_seal(tmp_path, monkeypatch, 
     ],
 )
 def test_raw_declaration_exclusion_requires_closed_use(tmp_path, extra, observed):
+    import ast
+
     from factoryline import review_audits as audit
+    from factoryline.audit_action_refs import with_captured_declaration_proof
 
     (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
     (tmp_path / "check.py").write_text(
@@ -1677,6 +1680,14 @@ def test_raw_declaration_exclusion_requires_closed_use(tmp_path, extra, observed
         if row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
     }
     assert dynamic == ({8, 12} if observed else {11})
+    refuted = report.get("refuted_security_observations", [])
+    assert [row["line"] for row in refuted] == ([] if observed else [8])
+    if refuted:
+        unbound = ast.parse("exec(item['text'], ns)").body[0].value
+        original = {**refuted[0], "facts": {}}
+        assert (
+            with_captured_declaration_proof("check.py", unbound, original) is original
+        )
     assert report["finding_conservation"]["state"] == "PASS"
 
 

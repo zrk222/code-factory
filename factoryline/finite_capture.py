@@ -2249,8 +2249,13 @@ def closed_shell_operation_witness(raw, relative, span, call_name):
     if closed is None or not _closed_shell_provider(tree, call, call_name, supported):
         return {}
     role, commands = closed
-    command = commands[0] if len(commands) == 1 else ast.dump(call.args[0])
-    proof = {
+    command, effect, alternatives = commands[0], "CLOSED_LITERAL_COMMAND_SYNTAX", {}
+    if len(commands) > 1:
+        command, effect = ast.dump(call.args[0]), "CLOSED_FINITE_COMMAND_SYNTAX"
+        alternatives["command_alternatives_sha256"] = [
+            hashlib.sha256(value.encode()).hexdigest() for value in commands
+        ]
+    return {
         "schema": "factory.closed-shell-operation.v1",
         "disposition": "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
         "source_path": relative,
@@ -2260,9 +2265,7 @@ def closed_shell_operation_witness(raw, relative, span, call_name):
         "command_sha256": hashlib.sha256(command.encode()).hexdigest(),
         "operation_role": role,
         "hypothesis": "SOURCE_COMMAND_INJECTION",
-        "input_effect": "CLOSED_LITERAL_COMMAND_SYNTAX"
-        if len(commands) == 1
-        else "CLOSED_FINITE_COMMAND_SYNTAX",
+        "input_effect": effect,
         "operational_effects": {
             "empty_command_input": "NO_COMMAND_PAYLOAD",
             "executable_packing": "LOCAL_ARTIFACT_MUTATION",
@@ -2272,13 +2275,8 @@ def closed_shell_operation_witness(raw, relative, span, call_name):
         "filesystem_assurance": "UNASSESSED",
         "executable_provenance": "UNASSESSED",
         "target_execution": "not_performed",
+        **alternatives,
     }
-
-    if len(commands) > 1:
-        proof["command_alternatives_sha256"] = [
-            hashlib.sha256(value.encode()).hexdigest() for value in commands
-        ]
-    return proof
 
 
 def closed_shell_finding(call_name, relative, node):

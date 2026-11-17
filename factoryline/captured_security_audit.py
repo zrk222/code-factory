@@ -768,10 +768,8 @@ def captured_public_registry_label(node, target, aliases):
     """Recognize closed registry labels used only for lookup and public messages."""
     value = getattr(node.value, "value", None)
     registry_label = _registry_label_kind(value, aliases)
-    if (
-        registry_label is None
-        and "sys" not in aliases.values()
-        and "sys.exit" not in aliases.values()
+    if registry_label is None and {"sys", "sys.exit"}.isdisjoint(
+        binding for binding in aliases.values() if isinstance(binding, str)
     ):
         return False
     source = _captured_immutable_module_text(node, target.id)
@@ -788,7 +786,7 @@ def captured_public_registry_label(node, target, aliases):
     )
     readonly = set(references) | {ref for ref, _, _ in foreign}
     binding = index, owner, origin, readonly
-    if roles and set(roles) == {"exit_message"}:
+    if set(roles) == {"exit_message"}:
         from .context_efficiency import _SECRET_BYTES
         from .pytest_collection_audit import _captured_pytest_inputs
 
@@ -808,8 +806,6 @@ def captured_public_registry_label(node, target, aliases):
                         "CRITICAL",
                     )
                 )
-        return False
-    if registry_label is None:
         return False
     return _registry_roles_closed(binding, value, registry_label, roles)
 
@@ -851,6 +847,8 @@ def _exit_chain_closed(source, path, site, active=()):
 
 
 def _registry_roles_closed(binding, value, registry_label, roles):
+    if registry_label is None:
+        return False
     index, _, origin, readonly = binding
     if "stderr" in roles:
         readonly.update(_registry_stderr_operands(index))
