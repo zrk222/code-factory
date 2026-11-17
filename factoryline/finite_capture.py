@@ -1655,14 +1655,14 @@ def _captured_projection_receiver(source, path, constructor, bound):
     return (
         receiver
         if _captured_projection_receiver_closed(
-            source, path, constructor, receiver, bound.keys() | {receiver}
+            source, path, constructor, receiver, bound
         )
         else None
     )
 
 
-def _captured_projection_receiver_closed(source, path, constructor, receiver, names):
-    parents = source.parents[path]
+def _captured_projection_receiver_closed(source, path, constructor, receiver, names=()):
+    parents, names = source.parents[path], {receiver, *names}
     for node in ast.walk(constructor):
         if isinstance(node, (ast.Nonlocal, ast.Global)) and _captured_binding_exported(
             node, constructor, names
