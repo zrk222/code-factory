@@ -3354,6 +3354,17 @@ def _runtime_source(value, allowed):
         raise AgenticControlError(
             "E_WORKFLOW_SOURCE", "source is outside connected scope"
         )
+    if type(source["revision"]) is not int or not 0 <= source["revision"] < 2**63:
+        raise AgenticControlError(
+            "E_WORKFLOW_SOURCE", "monotonic source revision required"
+        )
+    if source["provider"] == "factoryline":
+        if source != value:
+            raise AgenticControlError(
+                "E_WORKFLOW_SOURCE", "local mission source must already be normalized"
+            )
+        _validate_local_mission_source(source)
+        return source
     if source["kind"] not in {"issue", "pull_request"} or source["state"] not in {
         "open",
         "closed",
@@ -3362,10 +3373,6 @@ def _runtime_source(value, allowed):
     }:
         raise AgenticControlError(
             "E_WORKFLOW_SOURCE", "unsupported source state or kind"
-        )
-    if type(source["revision"]) is not int or not 0 <= source["revision"] < 2**63:
-        raise AgenticControlError(
-            "E_WORKFLOW_SOURCE", "monotonic source revision required"
         )
     if source["head_sha"] is not None and not _GIT_SHA.fullmatch(
         str(source["head_sha"])
@@ -3378,6 +3385,30 @@ def _runtime_source(value, allowed):
             "E_WORKFLOW_SOURCE", "merged observation requires PR head"
         )
     return source
+
+
+def _validate_local_mission_source(source):
+    """Accept a local job identity without inheriting any provider authority."""
+    if (
+        source["account"] != "local"
+        or source["kind"] != "mission"
+        or not _SHA.fullmatch(source["external_id"])
+        or source["state"] not in {"open", "missing"}
+    ):
+        raise AgenticControlError(
+            "E_WORKFLOW_SOURCE", "local mission identity is invalid"
+        )
+    head = source["head_sha"]
+    if source["state"] == "missing":
+        valid_head = head is None
+    else:
+        valid_head = (
+            isinstance(head, str)
+            and len(head) in {40, 64}
+            and _GIT_SHA.fullmatch(head) is not None
+        )
+    if not valid_head:
+        raise AgenticControlError("E_WORKFLOW_SOURCE", "local mission head is invalid")
 
 
 def _runtime_source_key(source):
@@ -3494,7 +3525,12 @@ class WorkflowEventStore:
             normalized = tuple(
                 _bounded_text(value, "source scope", 512) for value in entry
             )
-            if normalized[0] not in {
+            if normalized[0] == "factoryline":
+                if normalized[1] != "local" or tuple(entry) != normalized:
+                    raise AgenticControlError(
+                        "E_WORKFLOW_SCOPE", "exact local mission scope required"
+                    )
+            elif normalized[0] not in {
                 "github",
                 "gitlab",
                 "linear",
@@ -3772,6 +3808,58 @@ class WorkflowEventStore:
                 "E_WORKFLOW_FENCED", "stale owner cannot change this run"
             )
         return run
+
+    def reserve_factory_proof_dispatch(self, key, owner, run_id, action_intent_sha256):
+        """Let the trusted host reserve one verify dispatch for this local mission."""
+        return self.reserve_factory_dispatch(
+            key, owner, run_id, action_intent_sha256, "verify"
+        )
+
+    def reserve_factory_dispatch(self, key, owner, run_id, action_intent_sha256, phase):
+        """Persist one native repair or proof dispatch before the host runs it."""
+        marker = {
+            "repair": "forge_dispatch_reserved",
+            "verify": "proof_dispatch_reserved",
+        }.get(phase)
+        if marker is None:
+            raise AgenticControlError(
+                "E_WORKFLOW_PROOF_DISPATCH", "invalid native phase"
+            )
+        owner = _id(owner, "owner")
+        _digest(run_id, "run id")
+        _digest(action_intent_sha256, "action intent")
+        with self._connect() as db:
+            item = self._read(db, key)
+            run = self._owned(item, owner, item["epoch"])
+            if run["expires_at"] <= self.clock():
+                raise AgenticControlError(
+                    "E_WORKFLOW_RECOVERY_REQUIRED", "expired lease requires observation"
+                )
+            source = _runtime_source(item["source"], self.allowed)
+            binding = run.get("driver_binding", {})
+            if (
+                (source["provider"], source["state"]) != ("factoryline", "open")
+                or run["id"] != run_id
+                or (binding.get("phase"), binding.get("action_intent_sha256"))
+                != (phase, action_intent_sha256)
+                or binding.get("source_sha256") != _sha(source)
+            ):
+                raise AgenticControlError(
+                    "E_WORKFLOW_PROOF_DISPATCH",
+                    "current local native phase binding required",
+                )
+            prior = db.execute(
+                "SELECT 1 FROM journal WHERE source_key=? AND action=? LIMIT 1",
+                (key, marker),
+            ).fetchone()
+            if run.get(marker) or prior is not None:
+                raise AgenticControlError(
+                    "E_WORKFLOW_PROOF_DISPATCH_RESERVED",
+                    "phase dispatch was already reserved; reconcile retained evidence",
+                )
+            run[marker] = True
+            self._write(db, item, marker)
+            return _runtime_result(item, "reserved", "Dispatch this bound phase once")
 
     def heartbeat(self, key, owner, epoch, *, ttl=30, handle=None):
         """Renew the current live owner and bind its immutable driver handle."""
@@ -4274,6 +4362,10 @@ class DurableIncidentDriver:
                 raise AgenticControlError(
                     "E_WORKFLOW_FENCED",
                     "source or owner epoch changed before driver launch",
+                )
+            if claimed["run"]["expires_at"] <= self.store.clock():
+                raise AgenticControlError(
+                    "E_WORKFLOW_RECOVERY_REQUIRED", "claim expired before driver launch"
                 )
             handle = _bounded_text(
                 driver.launch(

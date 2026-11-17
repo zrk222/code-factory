@@ -25,14 +25,19 @@ short_description: Audit code, review evidence, and resolve defects.
 
 # Code Factory
 
-## Code Factory 0.49.6
+## Code Factory 0.49.7
 
 Governance infrastructure for high-stakes agentic workloads.
 
-[Verified wheel](https://huggingface.co/spaces/zrk222/code-factory/blob/24d51e618d685618725a850ba34be6a7df88a6d9/factoryline_code_factory-0.49.6-py3-none-any.whl) ·
-[PyPI](https://pypi.org/project/factoryline-code-factory/0.49.6/) ·
-[GitHub release](https://github.com/zrk222/code-factory/releases/tag/v0.49.6) ·
-[Zenodo](https://doi.org/10.5281/zenodo.24029905)
+[PyPI](https://pypi.org/project/factoryline-code-factory/0.49.7/) ·
+[GitHub release and wheel](https://github.com/zrk222/code-factory/releases/tag/v0.49.7) ·
+[Zenodo collection](https://doi.org/10.5281/zenodo.21381405)
+
+SpecLine seals intent, ForgeLine runs registered work, and FactoryLine verifies
+the proof. The mission history connects recovery, evidence, and the next
+operator decision. VS Code, Open VSX, and JetBrains target 1.3.5.
+
+### Earlier precision measurements
 
 The exposed N443-38 replay measured **88.24% decided actionable precision**
 (30/34), up from 85.71% on the same observed cases. All 30 original true

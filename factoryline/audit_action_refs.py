@@ -5,7 +5,8 @@ from __future__ import annotations
 import ast
 import re
 import json
-from collections import Counter
+from collections import Counter, OrderedDict
+from contextvars import ContextVar
 from copy import deepcopy
 from hashlib import sha256
 from types import SimpleNamespace
@@ -978,6 +979,231 @@ def _unreconciled_native_diagnostics(core, captured, baseline, native_rows):
     return missing
 
 
+_VERIFIER_BINDING_MEMO = ContextVar("factory_verifier_binding_memo", default=None)
+
+
+def _verifier_binding_helpers():
+    from . import import_context, semantic_credential_sensor as sensor
+    from .credential_role_constructor_provider import (
+        SourceSnapshotIndex,
+        _ast_matches_source,
+    )
+
+    return (
+        import_context.epoch_binding_occurrences,
+        import_context.binding_walker_epoch,
+        sensor.signing_configuration_inventory,
+        sensor._signing_inventory_snapshots,
+        SourceSnapshotIndex._matches_snapshot,
+        _ast_matches_source,
+        _verifier_owned_nodes,
+        _verifier_binding_query,
+        ast.walk,
+        ast.iter_child_nodes,
+        ast.parse,
+        ast.dump,
+        sha256,
+    )
+
+
+def _verifier_owned_nodes(snapshots):
+    nodes = []
+    for tree in snapshots.values():
+        for node in ast.walk(tree):
+            nodes.append(node)
+            if len(nodes) > 65536:
+                return None
+    return tuple(nodes)
+
+
+class _VerifierBindingMemo:
+    """Cache default binding queries over one independently parsed signing graph."""
+
+    def __init__(self):
+        self.entries = OrderedDict()
+        self.inputs = None
+        self.changed = False
+        self.active = True
+
+    def enroll(self, inventory, captured, bindings):
+        from .credential_role_constructor_provider import (
+            SourceSnapshotIndex,
+            _helper_snapshot,
+        )
+        from .import_context import binding_walker_epoch
+
+        index = inventory.get("index") if isinstance(inventory, dict) else None
+        if (
+            not self.active
+            or type(index) is not SourceSnapshotIndex
+            or not index.bounded
+        ):
+            return
+        if self.inputs is not None:
+            self.changed = True
+            return
+        self.node_order = _verifier_owned_nodes(index.snapshots)
+        self.helpers = _helper_snapshot(_verifier_binding_helpers)
+        if not self.node_order or self.helpers is None:
+            return
+        self.owned = frozenset(self.node_order)
+        self.walker = binding_walker_epoch()
+        self.inputs = (
+            index,
+            dict(index.snapshots),
+            dict(index.source_bytes),
+            dict(index.inventory),
+            captured,
+            dict(captured),
+            bindings,
+            dict(bindings),
+        )
+
+    def query(self, statements, name):
+        from .credential_role_constructor_provider import _binding_occurrence_events
+        from .import_context import binding_walker_epoch
+
+        if (
+            not self.active
+            or self.inputs is None
+            or self.changed
+            or type(statements) not in (list, tuple)
+        ):
+            return statements, None
+        if not 0 < len(statements) <= 256:
+            return statements, None
+        roots = tuple(statements)
+        if any(
+            not isinstance(node, ast.AST) or node not in self.owned for node in roots
+        ):
+            return statements, None
+        if self.walker != binding_walker_epoch():
+            self.changed = True
+            return statements, None
+        key = roots, name
+        if key not in self.entries:
+            rows = tuple(_binding_occurrence_events(roots, name))
+            if self.walker != binding_walker_epoch():
+                self.changed = True
+                return statements, None
+            if len(rows) > 256:
+                return roots, rows
+            if len(self.entries) == 4096:
+                self.entries.popitem(last=False)
+            self.entries[key] = rows
+        self.entries.move_to_end(key)
+        return roots, self.entries[key]
+
+    def current(self):
+        from .credential_role_constructor_provider import (
+            SourceSnapshotIndex,
+            _helper_snapshot,
+            _same_helper_epoch,
+        )
+        from .import_context import binding_walker_epoch
+
+        if self.inputs is None:
+            return not self.changed
+        index, trees, raw, digests, captured, before, bindings, keys = self.inputs
+        if (
+            self.changed
+            or captured != before
+            or bindings != keys
+            or self.walker != binding_walker_epoch()
+            or not _same_helper_epoch(
+                _helper_snapshot(_verifier_binding_helpers), self.helpers
+            )
+        ):
+            return False
+        return (
+            index.snapshots == trees
+            and index.source_bytes == raw
+            and index.inventory == digests
+            and all(
+                SourceSnapshotIndex._matches_snapshot(
+                    index, p, tree, raw[p], sha256(raw[p]).hexdigest()
+                )
+                for p, tree in trees.items()
+            )
+            and _verifier_owned_nodes(trees) == self.node_order
+        )
+
+    def retire(self):
+        """Disable inherited contexts and release snapshot references after staging."""
+        self.active = False
+        self.entries.clear()
+        self.inputs = None
+        self.node_order = self.owned = ()
+
+
+def _verifier_signing_inventory(sensor, captured, bindings):
+    inventory = sensor.signing_configuration_inventory(captured, bindings)
+    memo = _VERIFIER_BINDING_MEMO.get()
+    if memo is not None:
+        try:
+            memo.enroll(inventory, captured, bindings)
+        except Exception:
+            memo.changed = True
+    return inventory
+
+
+def _verifier_binding_query(statements, name, per_pass_facts):
+    memo = _VERIFIER_BINDING_MEMO.get()
+    if memo is None or per_pass_facts is not None or type(name) is not str:
+        return statements, None
+    try:
+        return memo.query(statements, name)
+    except Exception:
+        # The raw walker still owns ordinary errors on the uncached path.
+        memo.changed = True
+        return statements, None
+
+
+def _verifier_ledger_current(memo):
+    try:
+        return memo is None or memo.current()
+    except Exception:
+        return False
+
+
+def _bounded_verifier_tier_report(build, *args, **kwargs):
+    """Publish a staged ledger only after checking its independent binding epoch."""
+    memo = (
+        _VerifierBindingMemo()
+        if kwargs.get("_verifier_native_rows") is not None
+        else None
+    )
+    token = _VERIFIER_BINDING_MEMO.set(memo)
+    try:
+        report = build(*args, **kwargs)
+        current = _verifier_ledger_current(memo)
+    finally:
+        if memo is not None:
+            memo.retire()
+        _VERIFIER_BINDING_MEMO.reset(token)
+    if current:
+        return report
+
+    token = _VERIFIER_BINDING_MEMO.set(None)
+    try:
+        return build(*args, **kwargs)
+    finally:
+        _VERIFIER_BINDING_MEMO.reset(token)
+
+
+def _primitive_source_capture(core):
+    """Read the report's private source snapshot without exposing it in its mapping."""
+    if "_primitive_source_bytes" in core:
+        captured = core["_primitive_source_bytes"]
+    else:
+        captured = getattr(core, "_captured_sources", ())
+        if type(captured) is tuple and all(
+            type(row) is tuple and len(row) == 2 for row in captured
+        ):
+            captured = dict(captured)
+    return captured if isinstance(captured, dict) else {}
+
+
 def _partition_with_fixture_authority(audit, core, captured, rows, *, stale=False):
     if captured is not None:
         core["_primitive_source_bytes"] = captured
@@ -1409,7 +1635,8 @@ def _negative_semantic_points(rows, core, captured, primitive, *, verify_fixture
         facts = row.get("facts", {})
         if (
             facts.get("disposition") == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX"
-            and facts.get("operation_role") == "terminal_display_reset"
+            and facts.get("operation_role")
+            in {"empty_command_input", "terminal_display_reset"}
             and facts.get("hypothesis") == "SOURCE_COMMAND_INJECTION"
             and primitive.closed_shell_binding(row, core["sources"], bindings, captured)
         ):

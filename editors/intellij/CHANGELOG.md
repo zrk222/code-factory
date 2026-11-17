@@ -1,5 +1,10 @@
 # FactoryLine for IntelliJ Changelog
 
+## 1.3.5 - 2026-11-17 (candidate; publication gated)
+
+- Align the JetBrains plugin version with VS Code and Open VSX. This release
+  pairs with the separately installed Code Factory CLI 0.49.7.
+
 ## 1.3.4 - 2026-11-06 (candidate; publication gated)
 
 - Prepare a fresh Marketplace archive with the saved-file VFS and background

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.49.7
+
+- Bind approved SpecLine intent, registered ForgeLine actions, and FactoryLine proof to one resumable local mission.
+- Reconcile a recorded action before retry. The mission history links approvals, recovery, proof, and the next action.
+- Run declared independent proof checks in resource-admitted waves and recheck checkpoint authority before dispatch.
+- Align VS Code, Open VSX, and JetBrains at 1.3.5.
+
 ## 0.49.6 — 2026-11-06
 
 - Add guarded pre-PR evaluation, source-bound incident-to-regression packets,

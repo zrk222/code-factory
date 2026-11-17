@@ -114,14 +114,16 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "factory graph ops --root . --json" in page
     assert "PRD Grill" in readme
     assert "factory prd grill PRD.md --root . --mode quick" in page
+    # These are historical captures, separate from the current release links above.
+    capture_release = "0.49.6"
     for name in (
         "studio-product-mission-0496.png",
         "graph-ops-proof-guide-0496.png",
         "graph-ops-findings-0496.png",
         "graph-ops-finding-detail-0496.png",
     ):
-        assert f"/releases/download/v{__version__}/{name}" in page
-        assert f"/releases/download/v{__version__}/{name}" in readme
+        assert f"/releases/download/v{capture_release}/{name}" in page
+        assert f"/releases/download/v{capture_release}/{name}" in readme
     assert "graph-ops-dashboard-current.png" not in page
     assert "graph-ops-audit-telemetry-current.png" not in page
     assert "factoryline-logo-480.png" in page

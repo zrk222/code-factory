@@ -1,15 +1,19 @@
-"""Dependency-aware planning for proof reuse.
+"""Dependency-aware proof planning and supervised pre-PR execution.
 
-The scheduler only plans. It never runs a gate and never turns a reused proof
-into publication or deployment authority.
+Proof reuse and execution receipts do not carry publication or deployment authority.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import hashlib
 import json
 from pathlib import Path, PureWindowsPath
+from threading import Lock
+from time import monotonic_ns
 from typing import Any
 
 from .proof_reuse import evaluate_proofs
@@ -549,33 +553,260 @@ def _pre_pr_oracle(root: Path, oracle: dict, contract_sha: str) -> dict:
     }
 
 
-def _pre_pr_gate_rows(
-    root: Path, plan: dict, live: dict, execute: bool, source: str, schedule: dict
-) -> list[dict]:
+def _resource_bound(value: object, maximum: int, label: str) -> int:
+    if type(value) is not int or not 1 <= value <= maximum:
+        raise SchedulerError("E_PRE_PR_BUDGET", f"{label} must be 1..{maximum}")
+    return value
+
+
+def _pre_pr_resource_claim(
+    claim: object, gate_id: str, side_effects: bool, cpu: int, memory: int
+) -> dict:
+    if not isinstance(claim, dict) or set(claim) != {
+        "nonmutating",
+        "cpu_slots",
+        "memory_mib",
+    }:
+        raise SchedulerError(
+            "E_PRE_PR_BUDGET", f"{gate_id} has an invalid resource claim"
+        )
+    nonmutating = claim["nonmutating"]
+    if type(nonmutating) is not bool or (nonmutating and side_effects):
+        raise SchedulerError(
+            "E_PRE_PR_BUDGET", f"{gate_id} has an unsafe mutation claim"
+        )
+    return {
+        "nonmutating": nonmutating,
+        "cpu_slots": _resource_bound(claim["cpu_slots"], cpu, f"{gate_id}.cpu_slots"),
+        "memory_mib": _resource_bound(
+            claim["memory_mib"], memory, f"{gate_id}.memory_mib"
+        ),
+    }
+
+
+def _pre_pr_execution_budget(value: object, schedule: dict) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {
+        "cpu_slots",
+        "memory_mib",
+        "gates",
+    }:
+        raise SchedulerError("E_PRE_PR_BUDGET", "expected CPU, memory and gate claims")
+    cpu = _resource_bound(value["cpu_slots"], 8, "cpu_slots")
+    memory = _resource_bound(value["memory_mib"], 2**31 - 1, "memory_mib")
+    effects = {gate["id"]: gate["side_effects"] for gate in schedule["gates"]}
+    claims = value["gates"]
+    if not isinstance(claims, dict) or set(claims).difference(effects):
+        raise SchedulerError(
+            "E_PRE_PR_BUDGET", "gate claims must name known obligations"
+        )
+    return {
+        "cpu_slots": cpu,
+        "memory_mib": memory,
+        "gates": {
+            key: _pre_pr_resource_claim(claim, key, effects[key], cpu, memory)
+            for key, claim in claims.items()
+        },
+    }
+
+
+def _pre_pr_dependencies_pass(item: dict, rows: dict[str, dict]) -> bool:
+    return all(
+        dep in rows and rows[dep]["state"] == "PASS" for dep in item["depends_on"]
+    )
+
+
+def _pre_pr_dependencies_current(
+    root: Path, item: dict, rows: dict, schedule: dict
+) -> bool:
+    pending = list(item["depends_on"])
+    seen = set()
+    while pending:
+        dep = pending.pop()
+        if dep in seen:
+            continue
+        seen.add(dep)
+        routing = rows[dep]["routing"]
+        if routing["disposition"] == "REUSE" and not _pre_pr_reuse_current(
+            root, routing, schedule
+        ):
+            return False
+        pending.extend(routing["depends_on"])
+    return True
+
+
+def _pre_pr_dispatch_check(
+    before_dispatch: Callable[[str], bool] | None,
+) -> Callable[[str], str | None]:
+    lock = Lock()
+
+    def check(gate_id: str) -> str | None:
+        if before_dispatch is None:
+            return None
+        with lock:
+            try:
+                return None if before_dispatch(gate_id) is True else "DISPATCH_REVOKED"
+            except Exception:
+                return "DISPATCH_CHECK_FAILED"
+
+    return check
+
+
+def _pre_pr_gate_row(
+    item: dict,
+    *,
+    root: Path,
+    checks: dict,
+    live: dict,
+    execute: bool,
+    source: str,
+    schedule: dict,
+    rows: dict[str, dict],
+    recheck_dependencies: bool,
+    dispatch_check: Callable[[str], str | None],
+) -> dict:
     from .senior_assurance import _source_digest
 
+    row = {"id": item["id"], "routing": item, "state": "BLOCKED"}
+    if not _pre_pr_dependencies_pass(item, rows):
+        return {**row, "reason": "DEPENDENCY_FAILED"}
+    if _source_digest(root)[0] != source:
+        return {**row, "reason": "SOURCE_CHANGED"}
+    if recheck_dependencies and not _pre_pr_dependencies_current(
+        root, item, rows, schedule
+    ):
+        return {**row, "reason": "DEPENDENCY_PROOF_CHANGED"}
+    if item["disposition"] == "REUSE" and not _pre_pr_reuse_current(
+        root, item, schedule
+    ):
+        item = {**item, "disposition": "BLOCK", "reason": "REUSE_CHANGED"}
+    if execute and item["disposition"] == "RUN":
+        denial = dispatch_check(item["id"])
+        if denial is not None:
+            return {**row, "reason": denial}
+    row.update(_pre_pr_gate(root, item, checks[item["id"]], live, execute, source))
+    return row
+
+
+def _pre_pr_wave(items: list[dict], rows: dict[str, dict], budget: dict) -> list[dict]:
+    """Take a contiguous ready wave, leaving all undeclared work serial."""
+    wave = []
+    cpu = memory = 0
+    for item in items:
+        claim = budget["gates"].get(item["id"])
+        if not claim or not claim["nonmutating"] or item["disposition"] != "RUN":
+            break
+        if not _pre_pr_dependencies_pass(item, rows):
+            break
+        cpu += claim["cpu_slots"]
+        memory += claim["memory_mib"]
+        if cpu > budget["cpu_slots"] or memory > budget["memory_mib"]:
+            break
+        wave.append(item)
+    return wave or items[:1]
+
+
+def _pre_pr_wave_evidence(
+    wave: list[dict], completed: list[dict], budget: dict, elapsed_ns: int
+) -> dict | None:
+    attempted = [row["id"] for row in completed if _pre_pr_attempted(row)]
+    if not attempted:
+        return None
+    claims = [budget["gates"].get(item["id"], {}) for item in wave]
+    return {
+        "mode": "parallel" if len(wave) > 1 else "serial",
+        "admitted_gates": [item["id"] for item in wave],
+        "attempted_gates": attempted,
+        "reserved_cpu_slots": sum(item.get("cpu_slots", 0) for item in claims),
+        "reserved_memory_mib": sum(item.get("memory_mib", 0) for item in claims),
+        "wall_ns": elapsed_ns,
+    }
+
+
+def _pre_pr_attempted(row: dict) -> bool:
+    return row.get("live_receipt", {}).get("mode") == "execute"
+
+
+def _pre_pr_gate_rows(
+    root: Path,
+    plan: dict,
+    live: dict,
+    execute: bool,
+    source: str,
+    schedule: dict,
+    *,
+    budget: dict | None = None,
+    before_dispatch: Callable[[str], bool] | None = None,
+) -> tuple[list[dict], list[dict]]:
     checks = {row["id"]: row for row in live["checks"]}
     rows: dict[str, dict] = {}
-    for item in plan["items"]:
-        row = {"id": item["id"], "routing": item, "state": "BLOCKED"}
-        dependencies_pass = all(
-            rows[dep]["state"] == "PASS" for dep in item["depends_on"]
+    waves: list[dict] = []
+    items = plan["items"]
+    run = partial(
+        _pre_pr_gate_row,
+        root=root,
+        checks=checks,
+        live=live,
+        execute=execute,
+        source=source,
+        schedule=schedule,
+        rows=rows,
+        recheck_dependencies=budget is not None,
+        dispatch_check=_pre_pr_dispatch_check(before_dispatch),
+    )
+    position = 0
+    while position < len(items):
+        started = monotonic_ns()
+        remaining = items[position:]
+        wave = (
+            _pre_pr_wave(remaining, rows, budget)
+            if execute and budget
+            else remaining[:1]
         )
-        stable = _source_digest(root)[0] == source
-        if dependencies_pass and stable:
-            if item["disposition"] == "REUSE" and not _pre_pr_reuse_current(
-                root, item, schedule
-            ):
-                item = {**item, "disposition": "BLOCK", "reason": "REUSE_CHANGED"}
-            row.update(
-                _pre_pr_gate(root, item, checks[item["id"]], live, execute, source)
-            )
+        if len(wave) == 1:
+            completed = [run(wave[0])]
         else:
-            row["reason"] = (
-                "DEPENDENCY_FAILED" if not dependencies_pass else "SOURCE_CHANGED"
+            with ThreadPoolExecutor(max_workers=len(wave)) as executor:
+                completed = list(executor.map(run, wave))
+        rows.update((row["id"], row) for row in completed)
+        if budget is not None:
+            evidence = _pre_pr_wave_evidence(
+                wave, completed, budget, monotonic_ns() - started
             )
-        rows[item["id"]] = row
-    return list(rows.values())
+            if evidence:
+                waves.append(evidence)
+        position += len(wave)
+    return list(rows.values()), waves
+
+
+def _pre_pr_execution_evidence(
+    rows: list[dict],
+    waves: list[dict],
+    budget: dict | None,
+    execute: bool,
+    wall_ns: int,
+    stable: bool,
+) -> dict:
+    mode = "resource_admitted" if budget is not None else "serial"
+    return {
+        "mode": mode if execute else "plan",
+        "budget": budget,
+        "wall_ns": wall_ns,
+        "waves": waves,
+        "runs_attempted": sum(_pre_pr_attempted(row) for row in rows),
+        "completed_checks": sum(row["state"] == "PASS" for row in rows),
+        "verified_reuse": sum(
+            stable and row["reason"] == "VERIFIED_REUSE" for row in rows
+        ),
+        "peak_reserved_cpu_slots": max(
+            (row["reserved_cpu_slots"] for row in waves), default=0
+        ),
+        "peak_reserved_memory_mib": max(
+            (row["reserved_memory_mib"] for row in waves), default=0
+        ),
+        "claim_boundary": "Gate wall time and per-invocation host reservations for declared checks only; no measured process resources or kernel isolation.",
+    }
 
 
 def _pre_pr_gate(
@@ -597,8 +828,21 @@ def _pre_pr_gate(
     return {"state": state, "reason": "SCHEDULED_EXECUTION", "live_receipt": receipt}
 
 
-def run_pre_pr(root: Path, manifest: dict, *, execute: bool = False) -> dict:
-    """Reconcile local evidence once; PASS never authorizes a merge or release."""
+def run_pre_pr(
+    root: Path,
+    manifest: dict,
+    *,
+    execute: bool = False,
+    execution_budget: dict | None = None,
+    before_dispatch: Callable[[str], bool] | None = None,
+) -> dict:
+    """Reconcile local evidence; only a trusted caller may opt into proof waves.
+
+    The budget is host-supplied, never part of the candidate manifest. Resource
+    claims reserve CPU slots and memory MiB; they are not process limits.
+    The optional trusted pre-dispatch guard is serialized but may run on worker
+    threads. Only an explicit true result authorizes the corresponding RUN.
+    """
     from .github_proof_review import render_github_proof_review
     from .change_review import _sha, review_change
     from .senior_assurance import _source_digest
@@ -606,13 +850,27 @@ def run_pre_pr(root: Path, manifest: dict, *, execute: bool = False) -> dict:
 
     root = Path(root).resolve()
     schedule, live, head = _pre_pr_inputs(root, manifest)
+    budget = _pre_pr_execution_budget(execution_budget, schedule)
+    if before_dispatch is not None and not callable(before_dispatch):
+        raise SchedulerError(
+            "E_PRE_PR_DISPATCH", "the trusted dispatch check must be callable"
+        )
     source = _source_digest(root)[0]
     oracle = _pre_pr_oracle(root, manifest["oracle"], live["contract_sha256"])
     plan = plan_incremental(root, schedule)
     _pre_pr_bind_reuse(plan, schedule, live)
-    rows = _pre_pr_gate_rows(
-        root, plan, live, execute and oracle["ok"], source, schedule
+    started = monotonic_ns()
+    rows, waves = _pre_pr_gate_rows(
+        root,
+        plan,
+        live,
+        execute and oracle["ok"],
+        source,
+        schedule,
+        budget=budget,
+        before_dispatch=before_dispatch,
     )
+    wall_ns = monotonic_ns() - started
     verification = verify_feature(root, manifest["feature"], strict_release=True)
     review = review_change(
         root, base=manifest["base"], changed=schedule["changed_paths"]
@@ -631,6 +889,9 @@ def run_pre_pr(root: Path, manifest: dict, *, execute: bool = False) -> dict:
         and oracle == final_oracle
         and reuse_stable
         and verification["release_contract"] == final_verification["release_contract"]
+    )
+    execution = _pre_pr_execution_evidence(
+        rows, waves, budget, execute, wall_ns, stable
     )
     conditions = {
         "stable": stable,
@@ -652,6 +913,7 @@ def run_pre_pr(root: Path, manifest: dict, *, execute: bool = False) -> dict:
         "mode": "execute" if execute else "plan",
         "plan": plan,
         "checks": rows,
+        "execution": execution,
         "oracle": oracle,
         "feature_verification": verification,
         "final_feature_verification": final_verification,

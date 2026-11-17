@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.5 - 2026-11-17 (candidate; publication gated)
+
+- Align the VS Code and Open VSX package version with the JetBrains plugin.
+  This release pairs with the separately installed Code Factory CLI 0.49.7.
+
 ## 1.3.3 - 2026-11-06 (candidate; publication gated)
 
 - Align release metadata with Code Factory core 0.49.6 while preserving local

@@ -44,10 +44,10 @@ jobs:
       - name: Verify native handoff and stale-evidence controls
         env:
           FACTORY_COORDINATED_SPEC_FIXTURES: .integration/spec/tests/conftest.py
-        run: python -m pytest -q -o addopts= -o junit_family=xunit2 --junitxml=coordinated-acceptance.xml .integration/spec/tests/test_acceptance_evidence.py .integration/spec/tests/test_acceptance_mutations.py tests/test_specforge_promotion.py::test_native_promotion_end_to_end
+        run: python -m pytest -q -o addopts= -o junit_family=xunit2 --junitxml=coordinated-acceptance.xml .integration/spec/tests/test_acceptance_evidence.py .integration/spec/tests/test_acceptance_mutations.py tests/test_specforge_promotion.py
       - name: Reject skipped or incomplete coordinated evidence
         run: |
-          python -c "import xml.etree.ElementTree as E; r=E.parse('coordinated-acceptance.xml'); s=list(r.iter('testsuite')); assert sum(int(x.get('tests','0')) for x in s)==20; assert not any(int(x.get(k,'0')) for x in s for k in ('skipped','failures','errors')); print('20 coordinated cases executed without skips')"
+          python -c "import xml.etree.ElementTree as E; r=E.parse('coordinated-acceptance.xml'); s=list(r.iter('testsuite')); assert sum(int(x.get('tests','0')) for x in s)==35; assert not any(int(x.get(k,'0')) for x in s for k in ('skipped','failures','errors')); print('35 coordinated cases executed without skips')"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
