@@ -333,10 +333,7 @@ def _cli_metadata_receiver(call, aliases, source, path, depth=0):
     from .credential_role_constructor_provider import (
         _scope_scope_bindings,
         binding_occurrences,
-        _presentation_provider_shadow,
     )
-    from . import review_audits as audit
-    from .security_configuration import _canonical
 
     func = call.func
     if (
@@ -367,15 +364,8 @@ def _cli_metadata_receiver(call, aliases, source, path, depth=0):
     if not _cli_receiver_uses_closed(scope, name, call.lineno, parents):
         return None
     constructor = declaration.value
-    factory = _canonical(constructor, aliases)
+    factory = _captured_call_provider(constructor, aliases, source, path)
     if factory == "argparse.ArgumentParser":
-        head = constructor.func
-        while isinstance(head, ast.Attribute):
-            head = head.value
-        if not isinstance(head, ast.Name) or _presentation_provider_shadow(
-            head, head.id, source, path, audit
-        ):
-            return None
         return _cli_metadata_factory(factory, constructor)
     parent = _cli_metadata_receiver(constructor, aliases, source, path, depth + 1)
     return (
@@ -411,29 +401,21 @@ def _environment_label_diagnostic(source, path, node):
     """An exact raised message uses a label as text; a lookup must separately prove it."""
     parents = source.parents[path]
     item = parents.get(id(node))
-    if (
-        not isinstance(item, ast.FormattedValue)
-        or item.value is not node
-        or item.format_spec is not None
-        or item.conversion != -1
-    ):
+    if not isinstance(item, ast.FormattedValue) or item.value is not node:
         return None
     message = parents.get(id(item))
     call = parents.get(id(message))
-    raised = parents.get(id(call))
-    if not (
-        isinstance(message, ast.JoinedStr)
-        and all(
-            part is item or isinstance(part, ast.Constant) for part in message.values
-        )
-        and isinstance(call, ast.Call)
-        and call.args == [message]
-        and not call.keywords
-        and isinstance(raised, ast.Raise)
-        and raised.exc is call
-        and isinstance(call.func, ast.Name)
-    ):
-        return None
+    match parents.get(id(call)):
+        case ast.Raise(
+            exc=ast.Call(func=ast.Name(), args=[argument], keywords=[]) as raised
+        ) if (
+            raised is call
+            and argument is message
+            and _registry_formatted_label(item, message)
+        ):
+            pass
+        case _:
+            return None
     from .credential_identity_audit import _app_builtin_annotation_inert
     from .credential_role_identity_effects import (
         source_symbol_index,
@@ -596,11 +578,21 @@ _CREDENTIAL_LOCATOR_PROVIDERS = frozenset(
 )
 
 
-def _registry_locator_use(keyword, call, aliases, source, path, audit):
-    """Check a documented lookup-name slot on a stable captured provider."""
+def _captured_call_provider(call, aliases, source, path):
+    """Resolve one imported callable only when its lexical root stays unshadowed."""
+    from . import review_audits as audit
     from .credential_role_constructor_provider import _presentation_provider_shadow
+    from .mock_fixture_provenance import _root_name
     from .security_configuration import _canonical
 
+    root = _root_name(call.func)
+    if not root or _presentation_provider_shadow(call.func, root, source, path, audit):
+        return None
+    return _canonical(call, aliases)
+
+
+def _registry_locator_use(keyword, call, aliases, source, path):
+    """Check a documented lookup-name slot on a stable captured provider."""
     if not (
         keyword.arg == "name"
         and isinstance(call, ast.Call)
@@ -612,48 +604,30 @@ def _registry_locator_use(keyword, call, aliases, source, path, audit):
         and len({item.arg for item in call.keywords}) == len(call.keywords)
     ):
         return None
-    canonical = _canonical(call, aliases)
-    if canonical not in _CREDENTIAL_LOCATOR_PROVIDERS:
-        return None
-    root = call.func
-    while isinstance(root, ast.Attribute):
-        root = root.value
-    return (
-        canonical
-        if isinstance(root, ast.Name)
-        and not _presentation_provider_shadow(call.func, root.id, source, path, audit)
-        else None
-    )
+    canonical = _captured_call_provider(call, aliases, source, path)
+    return canonical if canonical in _CREDENTIAL_LOCATOR_PROVIDERS else None
 
 
 def _public_registry_use(reference, aliases, source, path):
-    from . import review_audits as audit
-    from .credential_role_constructor_provider import _presentation_provider_shadow
-    from .security_configuration import _canonical
-
     parents = source.parents[path]
     parent = parents.get(id(reference))
-    if (
-        isinstance(parent, ast.Call)
-        and parent.args
-        and parent.args[0] is reference
-        and len(parent.args) <= 2
-        and all(isinstance(default, ast.Constant) for default in parent.args[1:])
-        and not parent.keywords
-    ):
-        root = parent.func
-        while isinstance(root, ast.Attribute):
-            root = root.value
-        return (
-            _canonical(parent, aliases) in {"os.environ.get", "os.getenv"}
-            and isinstance(root, ast.Name)
-            and not _presentation_provider_shadow(
-                parent.func, root.id, source, path, audit
-            )
-        )
+    match parent:
+        case ast.Call(args=[operand, *defaults], keywords=[]) if (
+            operand is reference
+            and len(defaults) <= 1
+            and all(isinstance(default, ast.Constant) for default in defaults)
+        ):
+            canonical = _captured_call_provider(parent, aliases, source, path)
+            if canonical == "sys.exit":
+                return (
+                    "exit_message"
+                    if not defaults and _exit_chain_closed(source, path, parent)
+                    else False
+                )
+            return canonical in {"os.environ.get", "os.getenv"}
     if isinstance(parent, ast.keyword):
         return _registry_locator_use(
-            parent, parents.get(id(parent)), aliases, source, path, audit
+            parent, parents.get(id(parent)), aliases, source, path
         )
     if isinstance(parent, ast.FormattedValue):
         message = parents.get(id(parent))
@@ -687,61 +661,26 @@ def _registry_formatted_label(item, message):
 
 
 def _registry_external_references(source, owner, origin):
-    """Gather closed direct imports of the same bound label including local aliases."""
+    """Use the same exact symbol inventory for copied strings and imported roles."""
     from . import review_audits as audit
-    from .credential_role_constructor_provider import (
-        _presentation_provider_shadow,
-        binding_occurrences,
-    )
     from .credential_role_identity_effects import source_symbol_index
 
     symbols = source_symbol_index(source)
     if symbols is None:
         return None
     identity = owner, source.parents[owner].get(id(origin))
-    result = []
-    for path, tree in source.snapshots.items():
-        if path == owner:
-            continue
-        if not source.validate(path):
-            return None
-        imported = _registry_imported_names(symbols, path, tree, identity)
-        if not imported:
-            continue
-        aliases = audit._module_security_aliases(tree)
-        for name, statement in imported.items():
-            if binding_occurrences(tree.body, name) != [statement]:
-                return None
-            for ref in _settings_names(tree, name):
-                if _presentation_provider_shadow(ref, name, source, path, audit):
-                    return None
-                result.append((ref, path, aliases))
-    return result
-
-
-def _registry_imported_names(symbols, path, tree, identity):
-    from .mock_fixture_provenance import _app_source_symbol
-
-    matched = {}
-    for statement in tree.body:
-        if not isinstance(statement, ast.ImportFrom):
-            continue
-        for alias in statement.names:
-            name = alias.asname or alias.name
-            if name == "*":
-                continue
-            if (
-                _app_source_symbol(symbols, path, ast.Name(id=name, ctx=ast.Load()))
-                == identity
-            ):
-                matched[name] = statement
-    return matched
+    reads = _text_binding_reads(source, symbols, identity, None)
+    if reads is None:
+        return None
+    return [
+        (ref, path, audit._module_security_aliases(source.snapshots[path]))
+        for ref, path in reads
+        if path != owner
+    ]
 
 
 def _registry_locator_namespace_closed(source, name, value):
     """Reject shadow providers and namespace reads that lack a tracked use edge."""
-    import re
-
     if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,127}", value) is None:
         return False
     paths = source.module_paths()
@@ -829,17 +768,17 @@ def captured_public_registry_label(node, target, aliases):
     """Recognize closed registry labels used only for lookup and public messages."""
     value = getattr(node.value, "value", None)
     registry_label = _registry_label_kind(value, aliases)
-    if registry_label is None:
+    if (
+        registry_label is None
+        and "sys" not in aliases.values()
+        and "sys.exit" not in aliases.values()
+    ):
         return False
     source = _captured_immutable_module_text(node, target.id)
     if source is None or source[2] is not target:
         return False
     index, owner, origin, _, references = source
     roles = [_public_registry_use(ref, aliases, index, owner) for ref in references]
-    if not registry_label and not all(
-        role in _CREDENTIAL_LOCATOR_PROVIDERS for role in roles
-    ):
-        return False
     foreign = _registry_external_references(index, owner, origin)
     if foreign is None:
         return False
@@ -849,7 +788,66 @@ def captured_public_registry_label(node, target, aliases):
     )
     readonly = set(references) | {ref for ref, _, _ in foreign}
     binding = index, owner, origin, readonly
+    if roles and set(roles) == {"exit_message"}:
+        from .context_efficiency import _SECRET_BYTES
+        from .pytest_collection_audit import _captured_pytest_inputs
+
+        module = index.snapshots[owner]
+        stage = getattr(
+            _captured_pytest_inputs(module)[1], "provisional_exclusions", None
+        )
+        if type(stage) is set and not any(
+            pattern.search(value.encode()) for pattern in _SECRET_BYTES
+        ):
+            if _captured_module_text_unchanged(*binding, providers=("sys.exit",)):
+                stage.add(
+                    (
+                        "SECURITY_HARDCODED_SECRET",
+                        index.relative(owner),
+                        *_native_span(node),
+                        "CRITICAL",
+                    )
+                )
+        return False
+    if registry_label is None:
+        return False
     return _registry_roles_closed(binding, value, registry_label, roles)
+
+
+def _exit_chain_closed(source, path, site, active=()):
+    """Follow exact source callers; catching or inspecting SystemExit keeps the origin live."""
+    tree, parents = source.snapshots[path], source.parents[path]
+    child = site
+    while (parent := parents.get(id(child))) is not None:
+        if isinstance(parent, (ast.Try, getattr(ast, "TryStar", ast.Try))) and (
+            parent.finalbody or child in parent.body
+        ):
+            return False
+        if (
+            isinstance(parent, (ast.With, ast.AsyncWith))
+            and child is not parent.items[0]
+        ):
+            return False
+        if isinstance(
+            parent, (ast.ClassDef, ast.Lambda, ast.AsyncFunctionDef, ast.GeneratorExp)
+        ):
+            return False
+        if isinstance(parent, ast.FunctionDef):
+            if (
+                parent in active
+                or len(active) >= 8
+                or any(
+                    isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(parent)
+                )
+            ):
+                return False
+            callers = _sql_batch_callers(source, path, tree, parent)
+            return bool(callers) and all(
+                _exit_chain_closed(source, path, ref, (*active, parent))
+                for ref, _ in callers
+            )
+        child = parent
+    return child is tree
 
 
 def _registry_roles_closed(binding, value, registry_label, roles):
@@ -869,16 +867,17 @@ def _registry_roles_closed(binding, value, registry_label, roles):
     namespace = partial(_registry_binding_namespace_closed, index, origin.id)
     if not (public or lookup_only and namespace(reject_reflection=True)):
         return False
-    providers = ["os.environ", "os.getenv", *(("os._Environ",) if lookup_only else ())]
-    if "help" in roles:
-        providers.extend(
-            (*_CLI_METADATA_FACTORIES, "argparse.ArgumentParser.add_argument")
-        )
-    if "stderr" in roles:
-        providers.extend(("builtins.print", "sys.stderr"))
+    providers = {
+        "help": (*_CLI_METADATA_FACTORIES, "argparse.ArgumentParser.add_argument"),
+        "stderr": ("builtins.print", "sys.stderr"),
+    }
+    selected = {provider for role in roles for provider in providers.get(role, ())}
+    selected.update(("os.environ", "os.getenv"))
+    if lookup_only:
+        selected.add("os._Environ")
     return _captured_module_text_unchanged(
         *binding,
-        providers=tuple(providers),
+        providers=tuple(sorted(selected)),
         scalar_reads=_environment_scalar_reads(index) if lookup_only else (),
     )
 
@@ -2430,7 +2429,9 @@ def _text_binding_reads(source, symbols, selected, name):
             candidate = (
                 ref.id if isinstance(ref, ast.Name) else getattr(ref, "attr", "")
             )
-            if candidate != name or not isinstance(getattr(ref, "ctx", None), ast.Load):
+            if (name is not None and candidate != name) or not isinstance(
+                getattr(ref, "ctx", None), ast.Load
+            ):
                 continue
             if (
                 _app_source_symbol(
@@ -2438,7 +2439,7 @@ def _text_binding_reads(source, symbols, selected, name):
                 )
                 == selected
             ):
-                reads.add(ref)
+                reads.add(ref if name is not None else (ref, path))
     return reads
 
 

@@ -106,6 +106,59 @@ def _observe_literal_proof(monkeypatch, helper, literal_name):
     return observed
 
 
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "presentation",
+        "mixed",
+        "rebound",
+        "caught",
+        "caller-caught",
+        "generator",
+        "unknown-context",
+        "finally-read",
+    ],
+)
+def test_exit_message_needs_closed_diagnostic_consumer(tmp_path, variant):
+    from factoryline.review_audits import security_scan
+
+    extra = "    authenticate(PASSWORD_MESSAGE)\n" if variant == "mixed" else ""
+    body = "    sys.exit(PASSWORD_MESSAGE)\n"
+    if variant == "caught":
+        body = "    try:\n        sys.exit(PASSWORD_MESSAGE)\n    except SystemExit as error:\n        authenticate(error.code)\n"
+    invocation = "report()\n"
+    if variant == "generator":
+        body = "    yield None\n" + body
+        invocation = "stream = report()\ntry:\n    list(stream)\nexcept SystemExit as error:\n    authenticate(error.code)\n"
+    if variant == "unknown-context":
+        body = "    with arbitrary_context():\n        sys.exit(PASSWORD_MESSAGE)\n"
+    if variant == "finally-read":
+        body = "    try:\n        sys.exit(PASSWORD_MESSAGE)\n    finally:\n        inspect_exception()\n"
+    if variant == "caller-caught":
+        invocation = "try:\n    report()\nexcept SystemExit as error:\n    authenticate(error.code)\n"
+    source = (
+        "import sys\nPASSWORD_MESSAGE = 'Server rejected the configured password.'\n"
+        + ("sys.exit = arbitrary\n" if variant == "rebound" else "")
+        + "def report():\n"
+        + extra
+        + body
+        + invocation
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf8")
+    report = security_scan(
+        tmp_path,
+        security_only=True,
+        defect_policy="source-role-v3",
+        cache_enabled=False,
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    refuted = report.get("refuted_security_observations", [])
+    assert (
+        sum(row["code"] == "SECURITY_HARDCODED_SECRET" for row in raw),
+        sum(row["code"] == "SECURITY_HARDCODED_SECRET" for row in refuted),
+    ) == ((0, 1) if variant == "presentation" else (1, 0))
+
+
 @pytest.mark.parametrize("extra", ["", "    enroll(SECRET_ENV)\n"])
 def test_captured_public_registry_label_requires_closed_uses(
     tmp_path, monkeypatch, extra
