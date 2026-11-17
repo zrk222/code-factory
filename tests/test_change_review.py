@@ -172,6 +172,315 @@ def test_pre_pr_failed_dependency_blocks_successor(tmp_path, monkeypatch):
     assert result["checks"][1]["reason"] == "DEPENDENCY_FAILED"
 
 
+def _add_pre_pr_gate(manifest, name, *, dependencies=()):
+    second = {**manifest["live"]["checks"][0], "id": name}
+    manifest["live"]["checks"].append(second)
+    manifest["schedule"]["gates"].append(
+        {
+            "id": name,
+            "depends_on": list(dependencies),
+            "side_effects": False,
+            "proof": None,
+        }
+    )
+    manifest["schedule"]["dependency_closure"][name] = ["app.py", "check.py"]
+
+
+def _pre_pr_test_budget(*gate_names, cpu_slots=2, memory_mib=96):
+    return {
+        "cpu_slots": cpu_slots,
+        "memory_mib": memory_mib,
+        "gates": {
+            name: {"nonmutating": True, "cpu_slots": 1, "memory_mib": 48}
+            for name in gate_names
+        },
+    }
+
+
+def test_pre_pr_resource_waves_run_independent_replays_before_dependents(
+    tmp_path, monkeypatch, record_property
+):
+    from threading import Barrier, Lock
+    import factoryline.live_feedback as live
+    from factoryline.incremental_scheduler import run_pre_pr
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    independent = ("unit", "unit-sibling")
+    dependent = "unit-successor"
+    _add_pre_pr_gate(manifest, independent[1])
+    _add_pre_pr_gate(manifest, dependent, dependencies=independent)
+    serial = run_pre_pr(tmp_path, manifest, execute=True)
+    original = live._run_check
+    barrier = Barrier(2, timeout=10)
+    lock = Lock()
+    completed = set()
+    authorized = set()
+
+    def authorize(gate_id):
+        with lock:
+            authorized.add(gate_id)
+        return True
+
+    def observe(root, check, source_sha256, contract_sha256):
+        gate_id = check["id"]
+        with lock:
+            assert gate_id in authorized
+        if gate_id in independent:
+            barrier.wait()
+        else:
+            with lock:
+                assert completed == set(independent)
+        result = original(root, check, source_sha256, contract_sha256)
+        with lock:
+            completed.add(gate_id)
+        return result
+
+    monkeypatch.setattr(live, "_run_check", observe)
+    result = run_pre_pr(
+        tmp_path,
+        manifest,
+        execute=True,
+        execution_budget=_pre_pr_test_budget(*independent, dependent),
+        before_dispatch=authorize,
+    )
+    serial_execution = serial["execution"]
+    parallel = result["execution"]
+    assert serial["state"] == result["state"] == "PASS"
+    assert serial_execution["mode"] == "serial"
+    assert parallel["mode"] == "resource_admitted"
+    assert serial_execution["completed_checks"] == parallel["completed_checks"] == 3
+    assert serial_execution["runs_attempted"] == parallel["runs_attempted"] == 3
+    assert serial_execution["verified_reuse"] == parallel["verified_reuse"] == 0
+    assert serial_execution["wall_ns"] > 0 and parallel["wall_ns"] > 0
+    record_property("serial_gate_wall_ns", serial_execution["wall_ns"])
+    record_property("parallel_gate_wall_ns", parallel["wall_ns"])
+    assert [wave["admitted_gates"] for wave in parallel["waves"]] == [
+        list(independent),
+        [dependent],
+    ]
+    assert parallel["peak_reserved_cpu_slots"] == 2
+    assert parallel["peak_reserved_memory_mib"] == 96
+    assert all(
+        row["live_receipt"]["checks"][0]["receipt_sha256"] for row in result["checks"]
+    )
+
+
+@pytest.mark.parametrize("constraint", ["cpu", "memory", "undeclared", "mutating"])
+def test_pre_pr_resource_limits_and_serial_barriers(tmp_path, monkeypatch, constraint):
+    from factoryline.incremental_scheduler import run_pre_pr
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    siblings = ("unit", "unit-sibling", "unit-tail")
+    for gate_id in siblings[1:]:
+        _add_pre_pr_gate(manifest, gate_id)
+    budget = _pre_pr_test_budget(*siblings)
+    claims = budget["gates"]
+    if constraint == "cpu":
+        budget["cpu_slots"] = 1
+    elif constraint == "memory":
+        budget["memory_mib"] = 70
+    elif constraint == "undeclared":
+        del claims["unit-sibling"]
+    else:
+        claims["unit-sibling"]["nonmutating"] = False
+    result = run_pre_pr(tmp_path, manifest, execute=True, execution_budget=budget)
+
+    assert result["state"] == "PASS"
+    waves = result["execution"]["waves"]
+    assert [wave["admitted_gates"] for wave in waves] == [[name] for name in siblings]
+    assert [wave["reserved_memory_mib"] for wave in waves] == [
+        48,
+        0 if constraint == "undeclared" else 48,
+        48,
+    ]
+
+
+@pytest.mark.parametrize(
+    "unsafe", ["unknown", "slot_limit", "memory", "mutating", "candidate"]
+)
+def test_pre_pr_resource_plan_rejects_unsafe_claims_before_execution(
+    tmp_path, monkeypatch, unsafe
+):
+    import factoryline.incremental_scheduler as review
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    budget = _pre_pr_test_budget("unit")
+    if unsafe == "unknown":
+        budget["gates"]["not-in-plan"] = budget["gates"]["unit"]
+    elif unsafe == "slot_limit":
+        budget["cpu_slots"] = 9
+    elif unsafe == "memory":
+        budget["gates"]["unit"]["memory_mib"] = budget["memory_mib"] + 1
+    elif unsafe == "mutating":
+        manifest["schedule"]["gates"][0]["side_effects"] = True
+    else:
+        manifest["execution_budget"] = budget
+    monkeypatch.setattr(
+        review, "_pre_pr_gate", lambda *a: pytest.fail("ran unsafe gate")
+    )
+    with pytest.raises(ValueError, match="E_PRE_PR_BUDGET|execution_budget"):
+        review.run_pre_pr(tmp_path, manifest, execute=True, execution_budget=budget)
+
+
+def test_pre_pr_parallel_failure_blocks_dependent_without_losing_other_check(
+    tmp_path, monkeypatch
+):
+    from factoryline.incremental_scheduler import run_pre_pr
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    _add_pre_pr_gate(manifest, "unit-sibling")
+    _add_pre_pr_gate(manifest, "unit-successor", dependencies=("unit",))
+    manifest["live"]["checks"][0]["expected_exit"] = 1
+    result = run_pre_pr(
+        tmp_path,
+        manifest,
+        execute=True,
+        execution_budget=_pre_pr_test_budget("unit", "unit-sibling", "unit-successor"),
+    )
+
+    assert result["state"] == "BLOCKED"
+    assert [row["state"] for row in result["checks"]] == ["FAIL", "PASS", "BLOCKED"]
+    assert result["checks"][2]["reason"] == "DEPENDENCY_FAILED"
+    assert result["execution"]["runs_attempted"] == 2
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_pre_pr_parallel_dependency_rechecks_current_reused_proof(
+    tmp_path, monkeypatch, stale
+):
+    import factoryline.incremental_scheduler as review
+    from factoryline.change_review import _sha
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    _add_pre_pr_gate(manifest, "cached")
+    schedule = manifest["schedule"]
+    schedule["gates"][0]["depends_on"] = ["cached"]
+    schedule["dependency_closure"]["cached"] = ["check.py"]
+    check = manifest["live"]["checks"][1]
+    check["paths"] = ["check.py"]
+    check["argv"] = [check["argv"][0], "-B", "-c", "assert open('check.py').read()"]
+    check["env"] = {}
+    check["description"] = None
+    output = tmp_path / ".factory" / "proof-result.txt"
+    output.parent.mkdir()
+    output.write_text("verified check result", encoding="utf-8")
+    proof = {
+        "name": "cached",
+        "command": check["argv"],
+        "environment": {},
+        "inputs": ["check.py"],
+        "outputs": [output.relative_to(tmp_path).as_posix()],
+        "read_only": True,
+        "safe_to_skip": False,
+        "toolchain": {
+            "pre_pr_check_sha256": _sha(
+                {
+                    "check": check,
+                    "contract_sha256": manifest["live"]["contract_sha256"],
+                    "assurance_level": schedule["assurance_level"],
+                }
+            )
+        },
+    }
+    schedule["gates"][1]["proof"] = proof
+    saved = record_proof(tmp_path, proof, elapsed_ms=10)
+    original = review._pre_pr_gate
+
+    def invalidate_reused_proof(root, item, check, live, execute, source):
+        result = original(root, item, check, live, execute, source)
+        if stale and result["reason"] == "VERIFIED_REUSE":
+            Path(saved["receipt"]).unlink()
+        return result
+
+    monkeypatch.setattr(review, "_pre_pr_gate", invalidate_reused_proof)
+    result = review.run_pre_pr(
+        tmp_path, manifest, execute=True, execution_budget=_pre_pr_test_budget("unit")
+    )
+    assert result["checks"][0]["reason"] == "VERIFIED_REUSE", result["checks"][0][
+        "routing"
+    ]
+    assert result["state"] == ("BLOCKED" if stale else "PASS")
+    assert result["execution"]["verified_reuse"] == (0 if stale else 1)
+    if stale:
+        assert result["checks"][1]["reason"] == "DEPENDENCY_PROOF_CHANGED"
+        assert result["execution"]["runs_attempted"] == 0
+    else:
+        assert result["execution"]["runs_attempted"] == 1
+
+
+@pytest.mark.parametrize(
+    ("guard_result", "reason"),
+    [
+        (False, "DISPATCH_REVOKED"),
+        (1, "DISPATCH_REVOKED"),
+        (None, "DISPATCH_CHECK_FAILED"),
+    ],
+)
+def test_pre_pr_trusted_dispatch_check_can_revoke_next_command(
+    tmp_path, monkeypatch, guard_result, reason
+):
+    import factoryline.live_feedback as live
+    from factoryline.incremental_scheduler import run_pre_pr
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    _add_pre_pr_gate(manifest, "unit-successor", dependencies=("unit",))
+    original = live._run_check
+    calls = []
+
+    def authorize(gate_id):
+        calls.append(gate_id)
+        if gate_id == "unit":
+            return True
+        if guard_result is None:
+            raise RuntimeError("dispatch dependency unavailable")
+        return guard_result
+
+    def run_unit_only(root, check, source_sha256, contract_sha256):
+        assert check["id"] == "unit"
+        return original(root, check, source_sha256, contract_sha256)
+
+    monkeypatch.setattr(live, "_run_check", run_unit_only)
+    result = run_pre_pr(tmp_path, manifest, execute=True, before_dispatch=authorize)
+    assert calls == ["unit", "unit-successor"]
+    assert [row["state"] for row in result["checks"]] == ["PASS", "BLOCKED"]
+    assert result["checks"][1]["reason"] == reason
+    assert result["execution"]["runs_attempted"] == 1
+    assert result["state"] == "BLOCKED"
+
+
+def test_pre_pr_parallel_source_drift_stops_successor(tmp_path, monkeypatch):
+    from threading import Barrier
+    import factoryline.live_feedback as live
+    from factoryline.incremental_scheduler import run_pre_pr
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    independent = ("unit", "unit-sibling")
+    _add_pre_pr_gate(manifest, independent[1])
+    _add_pre_pr_gate(manifest, "unit-successor", dependencies=independent)
+    original = live._run_check
+    barrier = Barrier(2, timeout=10)
+
+    def drift_after_wave(root, check, source_sha256, contract_sha256):
+        assert check["id"] in independent
+        result = original(root, check, source_sha256, contract_sha256)
+        if barrier.wait() == 0:
+            (tmp_path / "app.py").write_text("VALUE = 3\n")
+        return result
+
+    monkeypatch.setattr(live, "_run_check", drift_after_wave)
+    result = run_pre_pr(
+        tmp_path,
+        manifest,
+        execute=True,
+        execution_budget=_pre_pr_test_budget(*independent, "unit-successor"),
+    )
+
+    assert result["state"] == "BLOCKED"
+    assert result["source_stable"] is False
+    assert result["checks"][2]["reason"] == "SOURCE_CHANGED"
+    assert result["execution"]["runs_attempted"] == 2
+
+
 def test_pre_pr_detects_source_drift_after_live_check(tmp_path, monkeypatch):
     from factoryline.incremental_scheduler import run_pre_pr
     import factoryline.live_feedback as live

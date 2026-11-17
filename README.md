@@ -2,7 +2,7 @@
 
 ## Current release
 
-**Code Factory core 0.49.6 · VS Code and Open VSX 1.3.3 · JetBrains 1.3.4**
+**Code Factory core 0.49.7 · VS Code and Open VSX 1.3.5 · JetBrains 1.3.5**
 
 [Release and downloads](https://github.com/zrk222/code-factory/releases/tag/v0.49.6) · [Four annotated UI screenshots](#product-walkthrough)
 

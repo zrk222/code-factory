@@ -1242,7 +1242,7 @@ def _execute_assembly_stage(
         )
     )
     receipt.meter = stage_meter
-    receipt.write(root)
+    receipt_path = receipt.write(root)
     report["stages"].append(
         {
             "module": stage.module,
@@ -1250,6 +1250,11 @@ def _execute_assembly_stage(
             "status": "ok" if ok else "failed",
             "wall_ms": sw.wall_ms,
             "attribution": attribution_block,
+            **(
+                {"intent_receipt": receipt_path.relative_to(root).as_posix()}
+                if "intent_trace" in receipt.outputs
+                else {}
+            ),
         }
     )
     activity.stage_finished(

@@ -1,0 +1,39 @@
+name: p1-resumable-factory-mission
+modules:
+  - name: specforge_promotion
+    path: factoryline/specforge_promotion.py
+    functions:
+      - name: bind_factory_mission_job
+        args: ["root", "mission_path", "intent_path", "store", "owner", "repository", "source_commit", "phase_plan"]
+        returns: dict
+      - name: advance_factory_mission_job
+        args: ["root", "mission_path", "driver", "owner", "phase_evidence", "ttl"]
+        returns: dict
+      - name: run_factory_mission_proofs
+        args: ["root", "mission_path", "driver", "owner", "run_id", "intent", "manifest", "execution_budget"]
+        returns: dict
+      - name: complete_factory_mission_job
+        args: ["root", "mission_path", "store", "owner", "forge_path", "candidate_path", "completion_path"]
+        returns: dict
+  - name: incremental_scheduler
+    path: factoryline/incremental_scheduler.py
+    functions:
+      - name: run_pre_pr
+        args: ["root: Path", "manifest: dict", "execute: bool", "execution_budget", "before_dispatch"]
+        returns: dict
+dependencies:
+  - from: specforge_promotion
+    to: incremental_scheduler
+invariants:
+  - name: no_unregistered_process_or_release
+    forbid_pattern: "subprocess|import_module|\\b(?:exec|eval|publish|deploy|merge)\\s*\\("
+    scopes:
+      - module: specforge_promotion
+        symbol: advance_factory_mission_job
+        max_lines: 75
+      - module: specforge_promotion
+        symbol: run_factory_mission_proofs
+        max_lines: 95
+      - module: specforge_promotion
+        symbol: complete_factory_mission_job
+        max_lines: 115

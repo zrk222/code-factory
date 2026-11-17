@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import factoryline.release_candidate as candidate
+from scripts import prepare_release_contract
 from test_intake_admission import _intake
 
 
@@ -108,6 +110,75 @@ def _source(root: Path, *, version: str = "0.46.3") -> None:
     (root / "factoryline" / "__init__.py").write_text(
         f'__version__ = "{version}"\n', encoding="utf-8"
     )
+
+
+@pytest.mark.parametrize(
+    ("version", "explicit_source", "expected_source"),
+    [
+        ("0.49.6", None, "docs/RELEASE_NOTES_0.46.3.md"),
+        ("0.49.7", None, "CHANGELOG.md"),
+        ("0.50.0", None, "CHANGELOG.md"),
+        ("0.49.7", "docs/approved.md", "docs/approved.md"),
+    ],
+)
+def test_prepare_release_contract_captures_the_selected_intent(
+    tmp_path, monkeypatch, version, explicit_source, expected_source
+):
+    _source(tmp_path, version=version)
+    monkeypatch.setattr(candidate, "_git_head", lambda _root: "a" * 40)
+    (tmp_path / "docs").mkdir()
+    for source in (
+        "CHANGELOG.md",
+        "docs/RELEASE_NOTES_0.46.3.md",
+        "docs/approved.md",
+    ):
+        (tmp_path / source).write_text(f"Release intent: {source}", encoding="utf-8")
+    args = [
+        "prepare_release_contract.py",
+        "--root",
+        str(tmp_path),
+        "--feature",
+        f"release-v{version}",
+        "--out",
+        "contract.json",
+        "--approved-by",
+        "release-owner",
+    ]
+    if explicit_source:
+        args.extend(["--source", explicit_source])
+    monkeypatch.setattr("sys.argv", args)
+
+    assert prepare_release_contract.main() == 0
+    release = json.loads((tmp_path / "contract.json").read_text(encoding="utf-8"))
+    oracle = json.loads(
+        (tmp_path / release["oracle_contract"]).read_text(encoding="utf-8")
+    )
+    intent = oracle["handoff"]["original_intent"]
+    assert release["candidate"]["source_version"] == version
+    assert intent["provided_path"] == expected_source
+    assert (
+        intent["sha256"]
+        == hashlib.sha256((tmp_path / expected_source).read_bytes()).hexdigest()
+    )
+
+
+def test_prepare_release_contract_does_not_fall_back_to_legacy_notes_for_a_new_version(
+    tmp_path, monkeypatch
+):
+    _source(tmp_path, version="0.49.7")
+    monkeypatch.setattr(candidate, "_git_head", lambda _root: "a" * 40)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "RELEASE_NOTES_0.46.3.md").write_text(
+        "Historical release intent", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match=r"intent source is unavailable.*CHANGELOG"):
+        prepare_release_contract.prepare(
+            tmp_path,
+            feature="release-v0.49.7",
+            out=Path("contract.json"),
+            approved_by="release-owner",
+        )
+    assert not (tmp_path / ".factory").exists()
 
 
 def _contract(root: Path, *, version: str = "0.46.3", commit: str = "a" * 40) -> Path:

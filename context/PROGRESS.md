@@ -953,3 +953,6 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-11-07 02:40] GATE spec ops-evidence-integration approver=human strict=True sha=8575206ef3e77120
 - [2026-11-07 02:40] GATE plan ops-evidence-integration approver=human tasks=4 sha=8575206ef3e77120
 - [2026-11-11 03:31] GATE plan runtime-assurance-six-lanes-v1 approver=codex tasks=13 sha=a4ec7f3537427a84
+
+- [2026-11-17 12:46] GATE spec p1-resumable-factory-mission approver=codex strict=True sha=aa9967b991563221
+- [2026-11-17 12:46] GATE plan p1-resumable-factory-mission approver=codex tasks=5 sha=aa9967b991563221

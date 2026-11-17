@@ -1873,6 +1873,9 @@ def _build_parser(*, common_only: bool = False) -> argparse.ArgumentParser:
         parser.add_argument("mission")
         parser.add_argument("--root", default=".")
         parser.add_argument("--json", action="store_true")
+        if command == "history":
+            parser.add_argument("--factory-job", action="store_true")
+            parser.add_argument("--after", type=int, default=0)
     langgraph_event = langgraph_sub.add_parser(
         "event", help="append one guarded, idempotent mission event"
     )
