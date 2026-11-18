@@ -10,6 +10,134 @@ from factoryline import review_audits as audit
 from factoryline import semantic_credential_sensor as sensors
 
 
+_OAUTH_PLACEHOLDER_SOURCE = """\
+import tweepy as sdk
+consumer_key = "CONSUMER_KEY"
+consumer_secret = "CONSUMER_SECRET"
+access_token = "ACCESS_TOKEN"
+access_secret = "ACCESS_SECRET"
+auth = sdk.OAuthHandler(consumer_key, consumer_secret)
+auth.set_access_token(access_token, access_secret)
+client = sdk.API(auth)
+items = client.user_timeline()
+account = client.get_user("example")
+"""
+
+
+def _oauth_placeholder_snapshot(root, source, peers=None, *, relative="example.py"):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    target = root / relative
+    files = {target: source.encode()}
+    files.update({root / name: text.encode() for name, text in (peers or {}).items()})
+    snapshots, inventory = {}, {}
+    for path, raw in files.items():
+        tree = ast.parse(raw, filename=str(path))
+        digest = hashlib.sha256(raw).hexdigest()
+        tree._oracle_source_sha256 = digest
+        snapshots[path] = tree
+        inventory[path] = digest
+    index = SourceSnapshotIndex(root, snapshots, files, inventory)
+    return index, target, snapshots[target].body[4]
+
+
+def test_oauth_placeholders_require_complete_captured_setup(tmp_path):
+    from factoryline.provenance import captured_oauth_placeholder_proof
+
+    index, path, node = _oauth_placeholder_snapshot(tmp_path, _OAUTH_PLACEHOLDER_SOURCE)
+    proof = captured_oauth_placeholder_proof(index, path, node)
+    assert proof["literal_role"] == "COMPLETE_OAUTH_SETUP_FIELD_PLACEHOLDER"
+    assert proof["slot"] == "access_token_secret"
+    assert [row["provider"] for row in proof["transfers"]] == [
+        "tweepy.OAuthHandler",
+        "tweepy.OAuthHandler.set_access_token",
+    ]
+    assert proof["credential_literal_observation"] == "RETAINED"
+
+
+@pytest.mark.parametrize(
+    "original,replacement",
+    [
+        ('"ACCESS_SECRET"', '"synthetic-configured-value"'),
+        ('"CONSUMER_SECRET"', '"synthetic-other-slot"'),
+        ("consumer_key, consumer_secret", "consumer_secret, consumer_key"),
+        ("access_token, access_secret", "access_secret, access_token"),
+        ("import tweepy as sdk", "import unknown_provider as sdk"),
+        ("client = sdk.API(auth)", "client = sdk.API(other_auth)"),
+        ('account = client.get_user("example")', "publish(access_secret)"),
+        ('account = client.get_user("example")', "publish(auth)"),
+        ('account = client.get_user("example")', "sdk.OAuthHandler = other"),
+        ('account = client.get_user("example")', "access_secret = other"),
+    ],
+)
+def test_oauth_placeholder_proof_retains_unresolved_credential_use(
+    tmp_path, original, replacement
+):
+    from factoryline.provenance import captured_oauth_placeholder_proof
+
+    source = _OAUTH_PLACEHOLDER_SOURCE.replace(original, replacement)
+    index, path, node = _oauth_placeholder_snapshot(tmp_path, source)
+    assert captured_oauth_placeholder_proof(index, path, node) is None
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "from example import access_secret as marker\npublish(marker)\n",
+        "from .example import access_secret as marker\npublish(marker)\n",
+        "from . import example as owning_module\npublish(owning_module.access_secret)\n",
+    ],
+)
+def test_oauth_placeholder_retains_on_defining_module_reimport(tmp_path, tail):
+    from factoryline.provenance import captured_oauth_placeholder_proof
+
+    source = _OAUTH_PLACEHOLDER_SOURCE + tail
+    index, path, node = _oauth_placeholder_snapshot(tmp_path, source)
+    assert captured_oauth_placeholder_proof(index, path, node) is None
+
+
+@pytest.mark.parametrize("regular_package", [True, False])
+def test_oauth_placeholder_retains_on_parent_package_access(tmp_path, regular_package):
+    from factoryline.provenance import captured_oauth_placeholder_proof
+
+    peers = {"tutorial/__init__.py": ""} if regular_package else {}
+    args = (tmp_path, _OAUTH_PLACEHOLDER_SOURCE)
+    index, path, node = _oauth_placeholder_snapshot(
+        *args, peers, relative="tutorial/example.py"
+    )
+    assert captured_oauth_placeholder_proof(index, path, node)
+
+    peers["peer.py"] = (
+        "import tutorial as package\npublish(package.example.access_secret)"
+    )
+    index, path, node = _oauth_placeholder_snapshot(
+        *args, peers, relative="tutorial/example.py"
+    )
+    assert captured_oauth_placeholder_proof(index, path, node) is None
+
+
+@pytest.mark.parametrize(
+    "peers",
+    [
+        {"tweepy.py": "OAuthHandler = unknown"},
+        {"peer.py": "import example as client\nconsume(client.access_secret)"},
+        {"peer.py": "import tweepy\ntweepy.OAuthHandler = alternate"},
+        {"peer.py": "from unittest import mock\nchange = mock.patch"},
+        {
+            "peer.py": "from sys import modules as modules_registry\nmodules_registry['tweepy'].API = alternate"
+        },
+        {"peer.py": "from sys import modules as registry\nobserve(registry['sample'])"},
+    ],
+)
+def test_oauth_placeholder_retains_on_unclosed_captured_peer(tmp_path, peers):
+    from factoryline.provenance import captured_oauth_placeholder_proof
+
+    index, path, node = _oauth_placeholder_snapshot(
+        tmp_path, _OAUTH_PLACEHOLDER_SOURCE, peers
+    )
+    assert captured_oauth_placeholder_proof(index, path, node) is None
+
+
 def _scan(source):
     tree = ast.parse(source)
     return credential_findings(

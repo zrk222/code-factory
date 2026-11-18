@@ -907,7 +907,7 @@ class _CommandOperandProof:
             return node.name.rsplit(".", 1)[-1] not in _COMMAND_NAMESPACE_QUERIES
         return True
 
-    def providers_closed(self):
+    def providers_closed(self, *, readonly_argument=None):
         from . import review_audits as audit
         from .credential_role_constructor_provider import (
             _captured_terminal_provider_mutation,
@@ -920,6 +920,7 @@ class _CommandOperandProof:
             self.source,
             audit,
             canonical,
+            readonly_argument=readonly_argument,
             additional_bindings=(
                 *((name, None) for name in others),
                 *sorted(self.source_bindings),
@@ -2102,6 +2103,224 @@ def command_operand_proof_helpers():
         audit._scope_parameters,
         *binding.source_binding_helpers(),
         runtime._conditional_module_name,
+    )
+
+
+_INSTALLER_TABLE_NAME = re.compile(
+    r"[A-Za-z_][A-Za-z_0-9-]*(?:\.[A-Za-z_][A-Za-z_0-9-]*)*"
+)
+_INSTALLER_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z_0-9-]*")
+
+
+def captured_installer_prerequisite(index, path, node):
+    """Observe the captured manifest prerequisite without resolving the launch cwd."""
+    from hashlib import sha256
+
+    from .pytest_collection_audit import captured_pytest_documents
+    from .runtime_audit_integrity import _source_span
+
+    if not _command_call_shape(node, 1) or len(index.snapshots) > 128:
+        return None
+    module = index.snapshots.get(path)
+    parsed = _installer_manifest_gate(module, node)
+    if parsed is None or not index.validate(path):
+        return None
+    read, gate, search, flag, expected, failure = parsed
+    documents = captured_pytest_documents(module)
+    manifest = documents.get("pyproject.toml") if isinstance(documents, dict) else None
+    if not _installer_required_header_absent(manifest, expected):
+        return None
+    if not _installer_providers_closed(index, path, node, search, flag):
+        return None
+    return {
+        "hypothesis": "CAPTURED_ROOT_MANIFEST_PREREQUISITE",
+        "scope": "CAPTURED_ROOT_MANIFEST_UTF8",
+        "manifest": {"path": "pyproject.toml", "sha256": sha256(manifest).hexdigest()},
+        "required_header": expected,
+        "read_span": _source_span(read),
+        "guard_span": _source_span(gate),
+        "raise_span": _source_span(failure),
+        "manifest_encoding": "UTF-8",
+        "working_directory_selection": "UNASSESSED",
+        "failure": "REQUIRED_HEADER_ABSENT",
+        "shell_operation": "RETAINED",
+    }
+
+
+def _installer_manifest_gate(module, sink):
+    if not isinstance(module, ast.Module) or not any(
+        isinstance(stmt, ast.Expr) and stmt.value is sink for stmt in module.body
+    ):
+        return None
+    body = module.body[1:] if ast.get_docstring(module) is not None else module.body
+    pos = next(
+        (
+            i
+            for i, stmt in enumerate(body)
+            if not isinstance(stmt, (ast.Import, ast.ImportFrom))
+        ),
+        len(body),
+    )
+    match body[pos : pos + 2]:
+        case [read, ast.If() as gate]:
+            name = _installer_manifest_read_name(read)
+            selector = _installer_gate_search(gate, name)
+            if selector is not None:
+                search, flag, expected, failure = selector
+                return read, gate, search, flag, expected, failure
+    return None
+
+
+def _installer_manifest_read_name(statement):
+    match statement:
+        case ast.Assign(
+            targets=[ast.Name(id=name)],
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Call(
+                        func=ast.Name(id="open"),
+                        args=[
+                            ast.Constant(value="pyproject.toml" | "./pyproject.toml")
+                        ],
+                        keywords=[],
+                    ),
+                    attr="read",
+                ),
+                args=[],
+                keywords=[],
+            ),
+        ):
+            return name
+    return None
+
+
+def _installer_gate_search(gate, content):
+    match gate:
+        case ast.If(
+            test=ast.NamedExpr(
+                target=ast.Name(),
+                value=ast.Call(
+                    func=search,
+                    args=[
+                        ast.Constant(value=str() as pattern),
+                        ast.Name(id=name),
+                        flag,
+                    ],
+                    keywords=[],
+                ),
+            ),
+            orelse=[
+                ast.Raise(
+                    exc=ast.Call(
+                        func=ast.Name(id="ValueError"),
+                        args=[ast.Constant(value=str())],
+                        keywords=[],
+                    ),
+                    cause=None,
+                ) as failure
+            ],
+        ) if name == content:
+            header = _installer_required_header(pattern)
+            if header is not None:
+                return search, flag, header, failure
+    return None
+
+
+def _installer_required_header(pattern):
+    """Recognize the fixed-width table prefix of a bounded installer pattern."""
+    if len(pattern) > 256 or not pattern.startswith(r"\["):
+        return None
+    table, separator, tail = pattern[2:].partition(r"\]\n")
+    key, equals, values = tail.partition(" = ")
+    if (
+        separator
+        and equals
+        and _INSTALLER_TABLE_NAME.fullmatch(table)
+        and _INSTALLER_FIELD_NAME.fullmatch(key)
+        and values == r'"[^"]+"\n(.+?)\n\n'
+    ):
+        return f"[{table}]"
+    return None
+
+
+def _installer_required_header_absent(manifest, expected):
+    if not isinstance(manifest, bytes) or not 0 < len(manifest) <= 64_000:
+        return False
+    try:
+        text = manifest.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except UnicodeDecodeError:
+        return False
+    # Dots in the original header are single-character regex wildcards. The
+    # validated table-name alphabet admits no repetitions or other operators.
+    return re.search(r"\[" + expected[1:-1] + r"\]", text, re.DOTALL) is None
+
+
+def _installer_providers_closed(index, path, node, search, flag):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    module = index.snapshots[path]
+    if any(binding_occurrences(module.body, name) for name in ("open", "ValueError")):
+        return False
+    proof = _CommandOperandProof(index)
+    if not proof.inventory_closed() or not all(
+        _installer_provider_import_precedes(module, operand)
+        and proof.resolve(path, operand) == provider
+        for operand, provider in (
+            (node.func, "os.system"),
+            (search, "re.search"),
+            (flag, "re.DOTALL"),
+        )
+    ):
+        return False
+    proof.providers.update(
+        ("os.system", "re.search", "re.DOTALL", "builtins.open", "builtins.ValueError")
+    )
+    return proof.providers_closed(
+        readonly_argument=lambda operand, _aliases, _parents: operand is flag
+    )
+
+
+def _installer_provider_import_precedes(module, expression):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    root = expression
+    while isinstance(root, ast.Attribute):
+        root = root.value
+    if not isinstance(root, ast.Name):
+        return False
+    match binding_occurrences(module.body, root.id):
+        case [ast.Import() | ast.ImportFrom() as declaration]:
+            return declaration in module.body and declaration.lineno < expression.lineno
+    return False
+
+
+def installer_prerequisite_helpers():
+    """Declare the live prerequisite-analysis dependencies for replay caching."""
+    from hashlib import sha256
+
+    from .credential_role_constructor_provider import binding_occurrences
+    from .pytest_collection_audit import captured_pytest_documents
+    from .runtime_audit_integrity import _source_span
+
+    return (
+        captured_installer_prerequisite,
+        installer_prerequisite_helpers,
+        _installer_manifest_gate,
+        _installer_manifest_read_name,
+        _installer_gate_search,
+        _installer_required_header,
+        _installer_required_header_absent,
+        _installer_providers_closed,
+        _installer_provider_import_precedes,
+        _INSTALLER_TABLE_NAME,
+        _INSTALLER_FIELD_NAME,
+        re.search,
+        re.DOTALL,
+        sha256,
+        binding_occurrences,
+        captured_pytest_documents,
+        _source_span,
+        *command_operand_proof_helpers(),
     )
 
 

@@ -7170,3 +7170,121 @@ def test_source_bound_test_scope_cli_receipt_and_recompute(tmp_path, capsys):
         security_scan_status(tmp_path)["candidate_freshness"]
         != "CURRENT_SOURCE_HASHES_VERIFIED"
     )
+
+
+@pytest.mark.parametrize(
+    "variant", ["closed_statement", "extra_read", "wrong_handler", "provider_shadow"]
+)
+def test_retained_fastapi_validation_marker_context(tmp_path, variant):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.pytest_collection_audit import captured_validation_marker_context
+
+    test = """
+from adapter import install
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pydantic import BaseModel
+
+def test_redaction():
+    class Input(BaseModel):
+        username: str
+        password: str
+    app = FastAPI()
+    install(app)
+    @app.post('/check')
+    def check(body: Input):
+        return {}
+    password = 'generated-validation-marker'
+    response = TestClient(app).post('/check', json={'username': 7, 'password': password})
+    observed = response.text
+    assert response.status_code == 422
+    assert password not in observed
+"""
+    if variant == "extra_read":
+        test += "    send(password)\n"
+    if variant == "provider_shadow":
+        test += "    TestClient = other_provider\n"
+    installation = """
+from fastapi.exceptions import RequestValidationError
+from callback import on_error
+
+def install(app):
+    app.add_exception_handler(RequestValidationError, on_error)
+"""
+    if variant == "wrong_handler":
+        installation = installation.replace(
+            "RequestValidationError, on_error)", "OtherError, on_error)"
+        )
+    texts = {
+        "test_route.py": test,
+        "adapter.py": installation,
+        "callback.py": """
+from fastapi.exceptions import RequestValidationError
+from pipeline import handle
+
+async def on_error(request, exc: RequestValidationError):
+    return render(handle(exc, engine=engine_for(request), formatter=formatter()))
+""",
+        "pipeline.py": """
+from engine import Engine
+
+def handle(exc, *, engine: Engine, formatter):
+    value = engine.classify(exc)
+    return formatter(value)
+""",
+        "engine.py": """
+import registry
+
+class Engine:
+    def classify(self, exc):
+        for member in self.active():
+            value = member.classify(exc)
+            if value:
+                return value
+    def active(self):
+        return registry.registered_classifiers()
+""",
+        "registry.py": """
+_registered = []
+
+def registered_classifiers():
+    return list(_registered)
+""",
+    }
+    snapshots, raw, inventory = {}, {}, {}
+    for name, content in texts.items():
+        file = tmp_path / name
+        raw[file] = content.encode()
+        inventory[file] = hashlib.sha256(raw[file]).hexdigest()
+        snapshots[file] = ast.parse(raw[file])
+        snapshots[file]._oracle_source_sha256 = inventory[file]
+    path = tmp_path / "test_route.py"
+    tree = snapshots[path]
+    tree._security_oracle_context = {
+        "_security_launch_configs": {"pytest.ini": b"[pytest]\n"}
+    }
+    case = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+    )
+    index = SourceSnapshotIndex(tmp_path, snapshots, raw, inventory)
+    receipt = captured_validation_marker_context(index, path, case)
+    if variant != "closed_statement":
+        assert receipt is None
+        return
+    assert receipt["disposition"] == "RETAIN_REVIEW"
+    assert receipt["consumer_authority"] == "UNRESOLVED_SHARED_CLASSIFIER_REGISTRY"
+    assert receipt["runtime_execution"] == "UNASSESSED"
+    assert {row["path"] for row in receipt["unresolved_consumer"]} == {
+        "adapter.py",
+        "callback.py",
+        "pipeline.py",
+        "engine.py",
+        "registry.py",
+    }
+    assert all(
+        row["sha256"] == inventory[tmp_path / row["path"]]
+        for row in receipt["unresolved_consumer"]
+    )
+    assert ast.literal_eval(case.value) not in str(receipt)

@@ -449,7 +449,14 @@ def captured_scope(tmp_path, source, filename="test_scope.py"):
 
 
 def test_proof_inventory_binds_exact_scanner_consumers():
-    from factoryline import audit_log_flow, captured_operand_audit, pickle_model_audit
+    from factoryline import (
+        audit_log_flow,
+        captured_operand_audit,
+        fixture_scope_value_audit,
+        pickle_model_audit,
+        provenance,
+        pytest_collection_audit,
+    )
     from factoryline.captured_security_audit import argument_role_proof_helpers
     from factoryline.django_class_fixture_audit import (
         application_class_account_evidence,
@@ -474,6 +481,10 @@ def test_proof_inventory_binds_exact_scanner_consumers():
         for helpers in (
             captured_operand_audit.command_operand_proof_helpers(),
             captured_operand_audit.captured_local_representation_helpers(),
+            captured_operand_audit.installer_prerequisite_helpers(),
+            fixture_scope_value_audit.password_validation_proof_helpers(),
+            provenance.oauth_placeholder_proof_helpers(),
+            pytest_collection_audit.validation_marker_proof_helpers(),
         )
         for helper in helpers
     )
@@ -2691,3 +2702,183 @@ def test_unused_unittest_client_credential_is_refuted_by_cli(tmp_path, counterex
         )
     else:
         assert not refuted
+
+
+_PASSWORD_FORMAT_PROVIDER = """\
+import re
+
+class FormatPolicy:
+    @staticmethod
+    def check(value: str) -> str:
+        condition = (re.search(r"[a-z]", value) is None, "needs lowercase")
+        length = (len(value) < 8, f"length is {len(value)}")
+        errors = (condition, length)
+        for problem in errors:
+            if problem[0]:
+                raise ValueError(f"format error: {problem[1]}")
+        return value
+"""
+
+_PASSWORD_FORMAT_WRAPPER = """\
+import pytest
+from checks import FormatPolicy
+
+def test_format():
+    sample = "Static-Example-742"
+    assert FormatPolicy.check(sample) == sample
+"""
+
+
+def _password_validation_fixture(tmp_path, variant):
+    text = _PASSWORD_FORMAT_WRAPPER
+    provider = _PASSWORD_FORMAT_PROVIDER
+    documents = {}
+    if variant in {"raises", "raises_shadow", "fixture_pytest_rebinding"}:
+        receiver = "pytest" if variant == "raises_shadow" else "caught"
+        text = text.replace(
+            "    assert FormatPolicy.check(sample) == sample",
+            f"    expected = 'format error: needs lowercase'\n"
+            f"    with pytest.raises(ValueError) as {receiver}:\n"
+            f"        FormatPolicy.check(sample)\n"
+            f"    assert str({receiver}.value) == expected",
+        )
+    if variant == "escape":
+        text += "    route_elsewhere(sample)\n"
+    edits = {
+        "validator_effect": (
+            ("        return value", "        observe(value)\n        return value"),
+        ),
+        "regex_global": (
+            ("        return value", "        re = value\n        return value"),
+        ),
+        "raised_data": (
+            (
+                'raise ValueError(f"format error: {problem[1]}")',
+                "raise ValueError(value)",
+            ),
+        ),
+        "inert_guards": (
+            ('re.search(r"[a-z]", value) is None', "False"),
+            ("len(value) < 8", "1 < 8"),
+        ),
+    }
+    for original, replacement in edits.get(variant, ()):
+        provider = provider.replace(original, replacement)
+    if variant == "collection":
+        documents[tmp_path / "pytest.ini"] = b"[pytest]\npython_files = spec_*.py\n"
+    peer_source = {
+        "peer_rebinding": b"from checks import FormatPolicy as Local\nLocal.check = other\n",
+        "fixture_receiver_rebinding": b"import test_checks as Local\nLocal.FormatPolicy = other\n",
+        "nonpackage_receiver_rebinding": b"import test_checks as Local\nLocal.FormatPolicy = other\n",
+        "fixture_pytest_rebinding": b"import test_checks as Local\nLocal.pytest = other\n",
+        "validator_regex_rebinding": b"import checks as Local\nLocal.re = other\n",
+        "validator_builtin_rebinding": b"import checks as Local\nLocal.len = other\n",
+        "regex_internal_rebinding": b"import re\nre._compile = other\n",
+        "fixture_binding_escape": b"from test_checks import FormatPolicy as Local\nregister(Local)\n",
+    }.get(variant)
+    if peer_source is not None:
+        documents[tmp_path / "peer.py"] = peer_source
+    if variant == "duplicate":
+        documents[tmp_path / "peer.py"] = b'reused = "Static-Example-742"\n'
+    path = tmp_path / (
+        "tests/test_checks.py"
+        if variant == "nonpackage_receiver_rebinding"
+        else "test_checks.py"
+    )
+    documents[path] = text.encode()
+    documents[tmp_path / "checks.py"] = provider.encode()
+    return path, documents
+
+
+@pytest.mark.parametrize(
+    ("variant", "role"),
+    [
+        ("identity", "IDENTITY_ASSERTION"),
+        ("raises", "EXPECTED_FORMAT_ERROR"),
+        ("escape", None),
+        ("validator_effect", None),
+        ("peer_rebinding", None),
+        ("fixture_receiver_rebinding", None),
+        ("nonpackage_receiver_rebinding", None),
+        ("fixture_pytest_rebinding", None),
+        ("validator_regex_rebinding", None),
+        ("validator_builtin_rebinding", None),
+        ("regex_internal_rebinding", None),
+        ("fixture_binding_escape", None),
+        ("duplicate", None),
+        ("collection", None),
+        ("regex_global", None),
+        ("raised_data", None),
+        ("inert_guards", None),
+        ("raises_shadow", None),
+    ],
+)
+def test_captured_password_validation_proof(tmp_path, variant, role):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.fixture_scope_value_audit import (
+        captured_password_validation_proof,
+        password_validation_proof_helpers,
+    )
+
+    path, documents = _password_validation_fixture(tmp_path, variant)
+    python = {name: raw for name, raw in documents.items() if name.suffix == ".py"}
+    sources = {name: ast.parse(raw) for name, raw in python.items()}
+    inventory = {name: hashlib.sha256(raw).hexdigest() for name, raw in python.items()}
+    for peer, tree in sources.items():
+        tree._oracle_source_sha256 = inventory[peer]
+        tree._security_source_context = (tmp_path, documents)
+    index = SourceSnapshotIndex(tmp_path, sources, python, inventory)
+    node = sources[path].body[2].body[0]
+    proof = captured_password_validation_proof(index, path, node)
+    assert captured_password_validation_proof in password_validation_proof_helpers()
+    if role is None:
+        assert proof is None
+    else:
+        assert proof["test_consumer"]["role"] == role
+        assert proof["fixture"]["span"][0] == node.lineno - 1
+        assert proof["validator"]["path"] == "checks.py"
+        assert "Static-Example-742" not in repr(proof)
+
+
+@pytest.mark.parametrize("policy", ["source-role-v2", "source-role-v3"])
+def test_native_password_format_operand_refutation_is_policy_bound(tmp_path, policy):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    path, documents = _password_validation_fixture(tmp_path, "identity")
+    documents[path] = documents[path].replace(b"sample", b"password")
+    for peer, raw in documents.items():
+        peer.write_bytes(raw)
+    (tmp_path / "live_use.py").write_text(
+        'PASSWORD = "Sibling-Authority-43"\nlogin(PASSWORD)\n', encoding="utf-8"
+    )
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            policy,
+            "--json",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    raw = {
+        row["raw_finding"]["path"]
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    refuted = {
+        row["path"]
+        for row in report.get("refuted_security_observations", ())
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert "live_use.py" in raw and "live_use.py" not in refuted
+    assert (path.name in raw, path.name in refuted) == (
+        policy == "source-role-v2",
+        policy == "source-role-v3",
+    )

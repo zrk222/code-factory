@@ -4096,3 +4096,522 @@ def _manifest_scope_proof(path, raw, basis):
     if not isinstance(raw, bytes):
         return None
     return {"path": path, "sha256": hashlib.sha256(raw).hexdigest(), "basis": basis}
+
+
+def captured_validation_marker_context(index, path, node):
+    """Describe a captured validation-only test assertion and its unresolved consumer."""
+    if not _marker_literal_assignment(node) or len(index.snapshots) > 128:
+        return None
+    if not index.validate(path):
+        return None
+    tree = index.snapshots[path]
+    owner = index.parents[path].get(id(node))
+    if not _marker_selected_test(index, path, tree, owner):
+        return None
+    paths = index.module_paths()
+    if paths is None or any(
+        stem + suffix in paths
+        for stem in ("fastapi", "pydantic", "pytest", "starlette")
+        for suffix in (".py", "/__init__.py")
+    ):
+        return None
+    context = {"source": index, "module_paths": paths, "modules": index.snapshots}
+    request = _marker_request_context(context, path, owner, node)
+    if request is None:
+        return None
+    call, installation, route, status, no_echo = request
+    chain = _marker_unresolved_dispatch(context, path, owner, installation)
+    if chain is None:
+        return None
+    return {
+        "scope": "CAPTURED_IN_PROCESS_VALIDATION_TEST",
+        "operand_role": "INPUT_MARKER_IN_VALIDATION_ASSERTION",
+        "disposition": "RETAIN_REVIEW",
+        "consumer_authority": "UNRESOLVED_SHARED_CLASSIFIER_REGISTRY",
+        "consumer_resolution": "CAPTURED_REGISTRATION_AND_DECLARED_ENGINE_TYPE",
+        "test": _marker_evidence(index, path, owner),
+        "route": _marker_evidence(index, path, route),
+        "request": _marker_evidence(index, path, call),
+        "assertions": [
+            _marker_evidence(index, path, item) for item in (status, no_echo)
+        ],
+        "unresolved_consumer": [
+            _marker_evidence(index, origin, item) for origin, item in chain
+        ],
+        "runtime_execution": "UNASSESSED",
+    }
+
+
+def _marker_literal_assignment(node):
+    match node:
+        case ast.Assign(targets=[ast.Name()], value=ast.Constant(value=str() as text)):
+            return 0 < len(text) <= 1024
+    return False
+
+
+def _marker_selected_test(index, path, tree, owner):
+    if not isinstance(owner, ast.FunctionDef) or owner not in tree.body:
+        return False
+    a = owner.args
+    if any(
+        (a.args, a.posonlyargs, a.kwonlyargs, a.vararg, a.kwarg, owner.decorator_list)
+    ):
+        return False
+    return captured_pytest_function_selected(
+        index, path, owner, captured_pytest_documents(tree)
+    )
+
+
+def _marker_request_context(context, path, owner, node):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    marker = node.targets[0].id
+    if binding_occurrences(owner.body, marker) != [node.targets[0]]:
+        return None
+    position = owner.body.index(node)
+    following = owner.body[position + 1 : position + 5]
+    if len(following) != 4:
+        return None
+    match following[0]:
+        case ast.Assign(
+            targets=[ast.Name(id=response)],
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Call(func=client, args=[ast.Name(id=app)], keywords=[]),
+                    attr="post",
+                ),
+                args=[ast.Constant(value=str() as endpoint)],
+                keywords=[ast.keyword(arg="json", value=ast.Dict() as payload)],
+            ) as call,
+        ) if endpoint.startswith("/") and _app_expression_name(
+            context, path, client, owner
+        ) in {"fastapi.testclient.TestClient", "starlette.testclient.TestClient"}:
+            pass
+        case _:
+            return None
+    schema = _marker_inert_route(context, path, owner, app, endpoint, position)
+    checks = _marker_negative_assertions(following[1:], marker, response)
+    if schema is None or checks is None:
+        return None
+    install, route, fields, decorator = schema
+    status, no_echo = checks
+    if not _marker_invalid_payload(payload, fields, marker):
+        return None
+    if _marker_loads(owner, marker) != _marker_loads(call, marker) | _marker_loads(
+        no_echo, marker
+    ):
+        return None
+    if _marker_loads(owner, app) != {
+        install.args[0],
+        decorator.func.value,
+        call.func.value.args[0],
+    }:
+        return None
+    return call, install, route, status, no_echo
+
+
+def _marker_loads(node, name):
+    return {
+        item
+        for item in ast.walk(node)
+        if isinstance(item, ast.Name)
+        and item.id == name
+        and isinstance(item.ctx, ast.Load)
+    }
+
+
+def _marker_inert_route(context, path, owner, app, endpoint, marker_position):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if marker_position < 3:
+        return None
+    allocation, placement, route = owner.body[marker_position - 3 : marker_position]
+    match allocation, placement, route:
+        case (
+            ast.Assign(
+                targets=[ast.Name(id=allocated)],
+                value=ast.Call(func=factory, args=[], keywords=[]),
+            ),
+            ast.Expr(
+                value=ast.Call(args=[ast.Name(id=passed)], keywords=[]) as install
+            ),
+            ast.FunctionDef(
+                decorator_list=[
+                    ast.Call(
+                        func=ast.Attribute(value=ast.Name(id=receiver), attr="post"),
+                        args=[ast.Constant(value=route_path)],
+                        keywords=[],
+                    ) as decorator
+                ],
+                args=ast.arguments(
+                    posonlyargs=[],
+                    args=[ast.arg(annotation=ast.Name(id=model))],
+                    kwonlyargs=[],
+                    defaults=[],
+                    vararg=None,
+                    kwarg=None,
+                ),
+                body=[ast.Return(value=ast.Dict(keys=[], values=[]))],
+            ),
+        ) if app == allocated == passed == receiver and route_path == endpoint:
+            pass
+        case _:
+            return None
+    if (
+        _app_expression_name(context, path, factory, owner) != "fastapi.FastAPI"
+        or binding_occurrences(owner.body, app) != allocation.targets
+    ):
+        return None
+    fields = _marker_model_fields(context, path, owner, model, marker_position)
+    return (install, route, fields, decorator) if fields else None
+
+
+def _marker_model_fields(context, path, owner, model, marker_position):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if binding_occurrences(owner.body, "str") or binding_occurrences(
+        context["modules"][path].body, "str"
+    ):
+        return None
+    match binding_occurrences(owner.body, model):
+        case [ast.ClassDef(bases=[base], keywords=[], decorator_list=[]) as cls] if (
+            cls in owner.body[: marker_position - 3]
+            and _app_expression_name(context, path, base, owner) == "pydantic.BaseModel"
+            and not getattr(cls, "type_params", ())
+        ):
+            pass
+        case _:
+            return None
+    fields = set()
+    for member in cls.body:
+        match member:
+            case ast.AnnAssign(
+                target=ast.Name(id=name), annotation=ast.Name(id="str"), value=None
+            ) if name not in fields and not name.startswith("_"):
+                fields.add(name)
+            case _:
+                return None
+    return fields
+
+
+def _marker_invalid_payload(payload, fields, marker):
+    if any(
+        not isinstance(item, ast.Constant) or type(item.value) is not str
+        for item in payload.keys
+    ):
+        return False
+    names = [item.value for item in payload.keys]
+    if set(names) != fields or len(names) != len(fields):
+        return False
+    marker_values = [
+        item
+        for item in payload.values
+        if isinstance(item, ast.Name) and item.id == marker
+    ]
+    return (
+        len(marker_values) == 1
+        and all(
+            item is marker_values[0] or isinstance(item, ast.Constant)
+            for item in payload.values
+        )
+        and any(
+            isinstance(item, ast.Constant) and type(item.value) is int
+            for item in payload.values
+        )
+    )
+
+
+def _marker_negative_assertions(statements, marker, response):
+    match statements:
+        case [
+            ast.Assign(
+                targets=[ast.Name(id=text)],
+                value=ast.Attribute(value=ast.Name(id=body_source), attr="text"),
+            ),
+            ast.Assert(
+                test=ast.Compare(
+                    left=ast.Attribute(
+                        value=ast.Name(id=status_source), attr="status_code"
+                    ),
+                    ops=[ast.Eq()],
+                    comparators=[ast.Constant(value=422)],
+                ),
+                msg=None,
+            ) as status,
+            ast.Assert(
+                test=ast.Compare(
+                    left=ast.Name(id=found),
+                    ops=[ast.NotIn()],
+                    comparators=[ast.Name(id=observed)],
+                ),
+                msg=None,
+            ) as no_echo,
+        ] if (
+            body_source == status_source == response
+            and found == marker
+            and observed == text
+        ):
+            return status, no_echo
+    return None
+
+
+def _marker_source_export(context, name):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .fixture_scope_value_audit import _reference_local_export
+
+    if not isinstance(name, str) or "." not in name:
+        return None
+    module, member = name.rsplit(".", 1)
+    stem = module.replace(".", "/")
+    paths = context["module_paths"]
+    choices = [
+        paths[key] for key in (stem + ".py", stem + "/__init__.py") if key in paths
+    ]
+    if len(choices) != 1 or choices[0] is None:
+        return None
+    path = choices[0]
+    source = context["source"]
+    if not source.validate(path):
+        return None
+    tree = source.snapshots[path]
+    match binding_occurrences(tree.body, member):
+        case [ast.AsyncFunctionDef() as fn] if fn in tree.body:
+            return path, fn
+    return _reference_local_export(source, path, member)
+
+
+def _marker_unresolved_dispatch(context, path, owner, install):
+    from .mock_fixture_provenance import _app_expression_name
+
+    selected = _marker_source_export(
+        context, _app_expression_name(context, path, install.func, owner)
+    )
+    if selected is None or not isinstance(selected[1], ast.FunctionDef):
+        return None
+    install_path, installer = selected
+    handler = _marker_selected_handler(context, install_path, installer)
+    if handler is None:
+        return None
+    handler_path, callback = handler
+    pipeline = _marker_exception_forwarding(context, handler_path, callback)
+    if pipeline is None:
+        return None
+    pipeline_path, handler_fn = pipeline
+    dispatch = _marker_registry_dispatch(context, pipeline_path, handler_fn)
+    if dispatch is None:
+        return None
+    return (
+        (install_path, installer),
+        (handler_path, callback),
+        (pipeline_path, handler_fn),
+        *dispatch,
+    )
+
+
+def _marker_selected_handler(context, path, installer):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if not installer.args.args or installer.decorator_list:
+        return None
+    receiver = installer.args.args[0].arg
+    if binding_occurrences(installer.body, receiver):
+        return None
+    handlers = []
+    for row in installer.body:
+        match row:
+            case ast.Expr(
+                value=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id=app), attr="add_exception_handler"
+                    ),
+                    args=[error, function],
+                    keywords=[],
+                )
+            ) if app == receiver:
+                if (
+                    _app_expression_name(context, path, error, installer)
+                    == "fastapi.exceptions.RequestValidationError"
+                ):
+                    handlers.append(
+                        _marker_source_export(
+                            context,
+                            _app_expression_name(context, path, function, installer),
+                        )
+                    )
+    return handlers[0] if len(handlers) == 1 else None
+
+
+def _marker_exception_forwarding(context, path, callback):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if not isinstance(callback, ast.AsyncFunctionDef) or callback.decorator_list:
+        return None
+    kinds = [
+        arg.arg
+        for arg in callback.args.args
+        if _app_expression_name(context, path, arg.annotation, callback)
+        == "fastapi.exceptions.RequestValidationError"
+    ]
+    if len(kinds) != 1 or binding_occurrences(callback.body, kinds[0]):
+        return None
+    match callback.body[-1]:
+        case ast.Return(
+            value=ast.Call(
+                args=[
+                    ast.Call(
+                        func=forward, args=[ast.Name(id=original)], keywords=keywords
+                    )
+                ],
+                keywords=[],
+            )
+        ) if original == kinds[0] and {item.arg for item in keywords} >= {
+            "engine",
+            "formatter",
+        }:
+            return _marker_source_export(
+                context, _app_expression_name(context, path, forward, callback)
+            )
+    return None
+
+
+def _marker_registry_dispatch(context, path, pipeline):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if not isinstance(pipeline, ast.FunctionDef) or not pipeline.args.args:
+        return None
+    original = pipeline.args.args[0].arg
+    dispatches = [
+        item
+        for item in ast.walk(pipeline)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Attribute)
+        and item.func.attr == "classify"
+        and len(item.args) == 1
+        and isinstance(item.args[0], ast.Name)
+        and item.args[0].id == original
+    ]
+    if len(dispatches) != 1 or not isinstance(dispatches[0].func.value, ast.Name):
+        return None
+    name = dispatches[0].func.value.id
+    candidates = [arg.annotation for arg in pipeline.args.kwonlyargs if arg.arg == name]
+    if len(candidates) != 1 or binding_occurrences(pipeline.body, name):
+        return None
+    selected = _marker_source_export(
+        context, _app_expression_name(context, path, candidates[0], pipeline)
+    )
+    return (
+        _marker_selected_registry(context, selected) if selected is not None else None
+    )
+
+
+def _marker_selected_registry(context, selected):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    path, engine = selected
+    if not isinstance(engine, ast.ClassDef):
+        return None
+    match binding_occurrences(engine.body, "classify"):
+        case [ast.FunctionDef() as classify]:
+            pass
+        case _:
+            return None
+    match _marker_classifier_iteration(classify):
+        case str() as method:
+            pass
+        case _:
+            return None
+    match binding_occurrences(engine.body, method):
+        case [ast.FunctionDef() as active]:
+            pass
+        case _:
+            return None
+    reads = [
+        item
+        for item in ast.walk(active)
+        if isinstance(item, ast.Call)
+        and getattr(item.func, "attr", None) == "registered_classifiers"
+        and not item.args
+        and not item.keywords
+    ]
+    if len(reads) != 1:
+        return None
+    registry = _marker_source_export(
+        context, _app_expression_name(context, path, reads[0].func, active)
+    )
+    if registry is None or not isinstance(registry[1], ast.FunctionDef):
+        return None
+    match registry[1].body:
+        case [
+            ast.Return(
+                value=ast.Call(func=ast.Name(id="list"), args=[ast.Name()], keywords=[])
+            )
+        ]:
+            return ((path, classify), (path, reads[0]), registry)
+    return None
+
+
+def _marker_classifier_iteration(classify):
+    if len(classify.args.args) != 2:
+        return None
+    owner, exception = [item.arg for item in classify.args.args]
+    for row in classify.body:
+        match row:
+            case ast.For(
+                target=ast.Name(id=member),
+                iter=ast.Call(
+                    func=ast.Attribute(value=ast.Name(id=receiver), attr=method),
+                    args=[],
+                    keywords=[],
+                ),
+                body=[
+                    ast.Assign(
+                        value=ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id=classifier), attr="classify"
+                            ),
+                            args=[ast.Name(id=item)],
+                            keywords=[],
+                        )
+                    ),
+                    *_,
+                ],
+            ) if receiver == owner and member == classifier and item == exception:
+                return method
+    return None
+
+
+def _marker_evidence(index, path, item):
+    return {
+        "path": index.relative(path),
+        "sha256": index.inventory[path],
+        "span": [item.lineno, item.col_offset, item.end_lineno, item.end_col_offset],
+    }
+
+
+def validation_marker_proof_helpers():
+    """Bind callable lookup slots for the retained validation-context witness."""
+    from .credential_role_constructor_provider import binding_occurrences
+    from .fixture_scope_value_audit import _reference_local_export
+    from .mock_fixture_provenance import _app_expression_name
+
+    return (
+        captured_validation_marker_context,
+        *(globals()[name] for name in _MARKER_CONTEXT_HELPERS),
+        binding_occurrences,
+        captured_pytest_documents,
+        captured_pytest_function_selected,
+        _reference_local_export,
+        _app_expression_name,
+    )
+
+
+_MARKER_CONTEXT_HELPERS = tuple(
+    name for name in globals() if name.startswith("_marker_")
+)

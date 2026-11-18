@@ -895,3 +895,747 @@ _REFERENCE_FIXTURE_HELPERS = tuple(
 
 def _reference_fixture_cache_helpers():
     return tuple(globals()[name] for name in _REFERENCE_FIXTURE_HELPERS)
+
+
+_VALIDATION_BUILTINS = frozenset(
+    {"str", "int", "bool", "list", "dict", "tuple", "len", "ValueError", "staticmethod"}
+)
+_VALIDATION_NAMESPACE_NAMES = frozenset(
+    {
+        "__import__",
+        "__builtins__",
+        "eval",
+        "exec",
+        "globals",
+        "locals",
+        "vars",
+        "getattr",
+        "setattr",
+        "delattr",
+        "__dict__",
+        "__globals__",
+        "__closure__",
+        "__code__",
+        "f_globals",
+        "f_builtins",
+        "f_locals",
+        "modules",
+        "__class__",
+        "__bases__",
+        "__mro__",
+    }
+)
+_VALIDATION_OPAQUE_IMPORTS = frozenset(
+    {
+        "builtins",
+        "ctypes",
+        "importlib",
+        "inspect",
+        "mock",
+        "runpy",
+        "types",
+        "unittest",
+        "_pytest",
+    }
+)
+_VALIDATION_TEXT_OPERATIONS = frozenset(
+    {"text", "integer", "boolean", "operand_length", "operand_check"}
+)
+
+
+def captured_password_validation_proof(index, path, node):
+    """Show that one exact test-local literal reaches only inert format validation."""
+    from .runtime_audit_integrity import _source_span
+
+    finding = _validation_literal_caller(index, path, node)
+    if finding is None:
+        return None
+    function, call, assertion, role = finding
+    selected = _validation_resolve_receiver(index, path, call)
+    if selected is None:
+        return None
+    producer_path, owner, validator, canonical = selected
+    if not _validation_provider_closed(
+        index, (path, function), producer_path, owner, validator, canonical, node.value
+    ):
+        return None
+    return {
+        "hypothesis": "CAPTURED_HARDCODED_CREDENTIAL_AUTHORITY",
+        "scope": "CAPTURED_PYTHON_SOURCE",
+        "operand_role": "TEST_LOCAL_FORMAT_VALIDATION_SAMPLE",
+        "test_consumer": {"role": role, "span": _source_span(assertion)},
+        "declaration_span": _source_span(node),
+        "call_span": _source_span(call),
+        "fixture": {"span": _source_span(function)},
+        "validator": {
+            "path": index.relative(producer_path),
+            "span": _source_span(validator),
+        },
+        "runtime_effects": "UNASSESSED",
+    }
+
+
+def _validation_literal_caller(index, path, node):
+    if (
+        not isinstance(node, ast.Assign)
+        or not index.bounded
+        or len(index.snapshots) > 128
+    ):
+        return None
+    match node:
+        case ast.Assign(
+            targets=[ast.Name(id=name)], value=ast.Constant(value=str() as value)
+        ):
+            if not value or len(value) > 1024 or name in _VALIDATION_BUILTINS:
+                return None
+        case _:
+            return None
+    if not index.validate(path):
+        return None
+    tree = index.snapshots[path]
+    owner = index.parents[path].get(id(node))
+    if not _validation_test_owner(index, path, tree, owner, node):
+        return None
+    match _validation_body(owner, declaration=node):
+        case [
+            ast.Assert(
+                test=ast.Compare(
+                    left=ast.Call() as call,
+                    ops=[ast.Eq()],
+                    comparators=[ast.Name(id=observed)],
+                ),
+                msg=None,
+            ) as assertion
+        ] if observed == name:
+            if _validation_operand_call(call, name):
+                return owner, call, assertion, "IDENTITY_ASSERTION"
+        case rest:
+            observed = _validation_raises_call(tree, rest, name)
+            if observed is not None:
+                call, assertion = observed
+                return owner, call, assertion, "EXPECTED_FORMAT_ERROR"
+    return None
+
+
+def _validation_body(owner, *, declaration=None):
+    body = owner.body[1:] if ast.get_docstring(owner) is not None else owner.body
+    if declaration is None:
+        return body
+    return body[1:] if body and body[0] is declaration else []
+
+
+def _validation_test_owner(index, path, tree, owner, node):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .pytest_collection_audit import (
+        _pytest_collection_settings,
+        _pytest_file_matches,
+        _pytest_name_matches,
+        captured_pytest_configuration,
+        captured_pytest_documents,
+    )
+
+    if (
+        not isinstance(owner, ast.FunctionDef)
+        or owner not in tree.body
+        or owner.decorator_list
+    ):
+        return False
+    if not _validation_fixed_signature(owner, 0) or binding_occurrences(
+        tree.body, owner.name
+    ) != [owner]:
+        return False
+    if not _validation_body(
+        owner, declaration=node
+    ) or not _validation_module_definition_clear(tree):
+        return False
+    documents = captured_pytest_documents(tree)
+    selected = captured_pytest_configuration(
+        documents, complete_precedence=True, source_role_only=True
+    )
+    if selected is None:
+        return False
+    settings = _pytest_collection_settings(selected["identity"])
+    return _pytest_file_matches(
+        index.relative(path), settings["python_files"]
+    ) and _pytest_name_matches(owner.name, settings["python_functions"])
+
+
+def _validation_operand_call(call, name):
+    match call:
+        case ast.Call(
+            func=ast.Attribute(value=ast.Name(id=receiver)),
+            args=[ast.Name(id=argument)],
+            keywords=[],
+        ):
+            return argument == name and receiver != name
+        case _:
+            return False
+
+
+def _validation_raises_call(tree, body, name):
+    expected = None
+    if len(body) == 3:
+        match body[0]:
+            case ast.Assign(
+                targets=[ast.Name(id=identifier)], value=ast.Constant(value=str())
+            ):
+                expected = identifier
+                body = body[1:]
+    match body:
+        case [
+            ast.With(
+                items=[
+                    ast.withitem(
+                        context_expr=ast.Call(
+                            func=provider, args=[ast.Name(id="ValueError")], keywords=[]
+                        ),
+                        optional_vars=ast.Name(id=error),
+                    )
+                ],
+                body=[ast.Expr(value=ast.Call() as call)],
+            ) as terminal,
+            *rest,
+        ] if len(rest) <= 1:
+            if not _reference_imported_member(tree, provider, "pytest", "raises"):
+                return None
+            if not _validation_operand_call(call, name):
+                return None
+            provider_root = (
+                provider.value if isinstance(provider, ast.Attribute) else provider
+            )
+            if not isinstance(provider_root, ast.Name) or provider_root.id == name:
+                return None
+            names = {name, call.func.value.id, "str", "ValueError", provider_root.id}
+            if error in names or expected in names | {error}:
+                return None
+            if not rest:
+                return (call, terminal) if expected is None else None
+            return (
+                (call, rest[0])
+                if _validation_error_assertion(rest[0], error, expected)
+                else None
+            )
+        case _:
+            return None
+
+
+def _validation_error_assertion(node, error, expected):
+    match node:
+        case ast.Assert(
+            test=ast.Compare(
+                left=ast.Call(
+                    func=ast.Name(id="str"),
+                    args=[ast.Attribute(value=ast.Name(id=receiver), attr="value")],
+                    keywords=[],
+                ),
+                ops=[ast.Eq()],
+                comparators=[observed],
+            ),
+            msg=None,
+        ) if receiver == error:
+            if isinstance(observed, ast.Constant):
+                return expected is None and type(observed.value) is str
+            return (
+                expected is not None
+                and isinstance(observed, ast.Name)
+                and observed.id == expected
+            )
+        case _:
+            return False
+
+
+def _validation_resolve_receiver(index, path, call):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .runtime_audit_integrity import _conditional_module_name
+
+    tree = index.snapshots[path]
+    receiver = call.func.value.id
+    match binding_occurrences(tree.body, receiver):
+        case [ast.ImportFrom(module=module, level=0) as imported] if (
+            imported in tree.body and module
+        ):
+            pass
+        case _:
+            return None
+    resolved = _reference_local_export(index, path, receiver)
+    if resolved is None or not isinstance(resolved[1], ast.ClassDef):
+        return None
+    producer_path, owner = resolved
+    if _conditional_module_name(index.relative(producer_path)) != module:
+        return None
+    declarations = binding_occurrences(owner.body, call.func.attr)
+    if len(declarations) != 1 or not isinstance(declarations[0], ast.FunctionDef):
+        return None
+    validator = declarations[0]
+    return producer_path, owner, validator, f"{module}.{owner.name}"
+
+
+def _validation_signature_clear(function):
+    args = function.args
+    formals = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    formals.extend(item for item in (args.vararg, args.kwarg) if item is not None)
+    annotations = [function.returns, *(arg.annotation for arg in formals)]
+    return (
+        not getattr(function, "type_params", ())
+        and not args.defaults
+        and all(item is None for item in args.kw_defaults)
+        and all(_validation_annotation(item) for item in annotations)
+    )
+
+
+def _validation_annotation(node):
+    match node:
+        case None | ast.Constant(value=None):
+            return True
+        case ast.Name(id=name):
+            return name in _VALIDATION_BUILTINS
+        case ast.Subscript(value=ast.Name(id=name), slice=item) if name in {
+            "list",
+            "dict",
+            "tuple",
+        }:
+            return _validation_annotation(item)
+        case ast.Tuple(elts=items):
+            return all(_validation_annotation(item) for item in items)
+        case ast.BinOp(left=left, op=ast.BitOr(), right=right):
+            return _validation_annotation(left) and _validation_annotation(right)
+        case _:
+            return False
+
+
+def _validation_fixed_signature(function, count):
+    args = function.args
+    return (
+        _validation_signature_clear(function)
+        and len(args.args) == count
+        and not any((args.posonlyargs, args.kwonlyargs, args.vararg, args.kwarg))
+    )
+
+
+def _validation_class_definition_clear(cls):
+    if (
+        cls.bases
+        or cls.keywords
+        or cls.decorator_list
+        or getattr(cls, "type_params", ())
+    ):
+        return False
+    return all(
+        isinstance(stmt, ast.FunctionDef)
+        and not stmt.name.startswith("__")
+        and stmt.name not in _VALIDATION_BUILTINS
+        and (not stmt.decorator_list or _validation_staticmethod(stmt))
+        and _validation_signature_clear(stmt)
+        for stmt in _validation_body(cls)
+    )
+
+
+def _validation_staticmethod(function):
+    return (
+        len(function.decorator_list) == 1
+        and isinstance(function.decorator_list[0], ast.Name)
+        and function.decorator_list[0].id == "staticmethod"
+    )
+
+
+def _validation_module_definition_clear(tree):
+    if not _reference_builtin_bindings_clear(tree, _VALIDATION_BUILTINS):
+        return False
+    for stmt in _validation_body(tree):
+        match stmt:
+            case ast.Import() | ast.ImportFrom() if all(
+                item.name != "*" for item in stmt.names
+            ):
+                continue
+            case ast.FunctionDef(decorator_list=[]) if _validation_signature_clear(
+                stmt
+            ):
+                continue
+            case ast.ClassDef() if _validation_class_definition_clear(stmt):
+                continue
+            case _:
+                return False
+    return True
+
+
+def _validation_provider_closed(index, fixture, path, owner, method, canonical, sample):
+    tree = index.snapshots[path]
+    if not _validation_module_definition_clear(tree) or not _validation_staticmethod(
+        method
+    ):
+        return False
+    if not _validation_fixed_signature(method, 1) or not _validation_format_body(
+        tree, method
+    ):
+        return False
+    if not all(
+        _validation_package_initializers_clear(index, member)
+        for member in (fixture[0], path)
+    ):
+        return False
+    protected = _validation_lexical_slots(index, (fixture, (path, method)))
+    return bool(protected) and _validation_inventory_clear(
+        index, path, owner, canonical, sample, protected
+    )
+
+
+def _validation_lexical_slots(index, functions):
+    """Seal actual module lookups as well as their canonical providers."""
+    from .credential_role_constructor_provider import binding_occurrences
+    from .runtime_audit_integrity import _conditional_module_name
+
+    modules = index.module_paths()
+    if modules is None:
+        return ()
+    protected = []
+    for path, function in functions:
+        paths = {
+            _conditional_module_name(name)
+            for name, owner in modules.items()
+            if owner == path
+        }
+        if not paths or "" in paths:
+            return ()
+        # Pytest can import a non-package test by its basename.
+        paths.add(path.stem)
+        args = {arg.arg for arg in function.args.args}
+        reads = {
+            node.id
+            for node in ast.walk(function)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        }
+        globals_used = {
+            name
+            for name in reads - args
+            if not binding_occurrences(function.body, name)
+        }
+        protected.extend(
+            (
+                f"{module}.{name}",
+                (path, name) if name not in _VALIDATION_BUILTINS else None,
+            )
+            for module in sorted(paths)
+            for name in sorted(globals_used | _VALIDATION_BUILTINS)
+        )
+    return tuple(dict.fromkeys(protected))
+
+
+def _validation_package_initializers_clear(index, path):
+    for parent in path.parents:
+        if parent == index.root:
+            return True
+        initializer = parent / "__init__.py"
+        if initializer in index.snapshots and (
+            not index.validate(initializer)
+            or _validation_body(index.snapshots[initializer])
+        ):
+            return False
+    return False
+
+
+def _validation_inventory_clear(index, path, owner, canonical, sample, protected):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+
+    size = 0
+    for peer, module in index.snapshots.items():
+        if not index.validate(peer) or not _validation_no_provider_shadow(index, peer):
+            return False
+        nodes = tuple(ast.walk(module))
+        size += len(nodes)
+        if size > 100_000 or not all(
+            _validation_inventory_node_clear(item)
+            and (
+                not isinstance(item, ast.Constant)
+                or item is sample
+                or item.value != sample.value
+            )
+            for item in nodes
+        ):
+            return False
+    return not _captured_terminal_provider_mutation(
+        index,
+        audit,
+        canonical,
+        local_binding=(path, owner.name),
+        additional_bindings=(("re", None), ("pytest", None), *protected),
+    )
+
+
+def _validation_no_provider_shadow(index, path):
+    relative = index.relative(path)
+    if relative is None:
+        return False
+    parts = relative.split("/")
+    return not ({"pytest", "re"} & set(parts[:-1])) and parts[-1] not in {
+        "pytest.py",
+        "re.py",
+    }
+
+
+def _validation_inventory_node_clear(node):
+    match node:
+        case ast.Name(id=name):
+            return name not in _VALIDATION_NAMESPACE_NAMES and not (
+                name in {"__test__", "pytestmark", "pytest_plugins"}
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            )
+        case ast.Attribute(attr=name):
+            return name not in _VALIDATION_NAMESPACE_NAMES and not (
+                name in {"__test__", "pytestmark", "pytest_plugins"}
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            )
+        case ast.ImportFrom(module=name) | ast.alias(name=name) if name:
+            return name.split(".", 1)[
+                0
+            ] not in _VALIDATION_OPAQUE_IMPORTS and name.rpartition(".")[2] not in {
+                "patch",
+                "MonkeyPatch",
+                "mock",
+            }
+        case ast.Global() | ast.Nonlocal():
+            return False
+        case ast.FunctionDef(name=name) | ast.AsyncFunctionDef(name=name):
+            return not name.startswith("pytest_") and name not in {
+                "setup_module",
+                "setup_function",
+                "teardown_module",
+                "teardown_function",
+            }
+        case ast.keyword(arg="autouse", value=value):
+            return isinstance(value, ast.Constant) and value.value is False
+        case _:
+            return True
+
+
+def _validation_format_body(tree, method):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    operand = method.args.args[0].arg
+    if operand in _VALIDATION_BUILTINS or binding_occurrences(method.body, operand):
+        return False
+    if not _validation_regex_binding_clear(tree, method):
+        return False
+    body = _validation_body(method)
+    if len(body) < 2 or len(body) > 40:
+        return False
+    match body[-1]:
+        case ast.Return(value=ast.Name(id=name)) if name == operand:
+            pass
+        case _:
+            return False
+    state = {operand: "operand"}
+    checked = False
+    for stmt in body[:-1]:
+        match stmt:
+            case ast.Assign(targets=[ast.Name(id=name)], value=value) if (
+                name not in state and name not in _VALIDATION_BUILTINS
+            ):
+                kind = _validation_expression(value, state, tree)
+                if kind is None:
+                    return False
+                state[name] = kind
+            case ast.If() | ast.For():
+                if not _validation_guard(stmt, state, tree):
+                    return False
+                checked = True
+            case _:
+                return False
+    return checked
+
+
+def _validation_regex_binding_clear(tree, method):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    for call in ast.walk(method):
+        if not isinstance(call, ast.Call) or not _reference_imported_member(
+            tree, call.func, "re", "search"
+        ):
+            continue
+        root = call.func.value if isinstance(call.func, ast.Attribute) else call.func
+        if not isinstance(root, ast.Name) or binding_occurrences(method.body, root.id):
+            return False
+    return True
+
+
+def _validation_guard(node, state, tree):
+    match node:
+        case ast.If(
+            test=test,
+            body=[
+                ast.Raise(
+                    exc=ast.Call(
+                        func=ast.Name(id="ValueError"), args=[message], keywords=[]
+                    ),
+                    cause=None,
+                )
+            ],
+            orelse=[],
+        ):
+            return (
+                _validation_expression(test, state, tree) == "operand_check"
+                and _validation_expression(message, state, tree) == "text"
+            )
+        case ast.For(
+            target=ast.Name(id=name), iter=iterable, body=[ast.If() as guard], orelse=[]
+        ) if name not in state and name not in _VALIDATION_BUILTINS:
+            kinds = _validation_expression(iterable, state, tree)
+            return (
+                isinstance(kinds, tuple)
+                and bool(kinds)
+                and all(
+                    _validation_guard(guard, {**state, name: kind}, tree)
+                    for kind in kinds
+                )
+            )
+        case _:
+            return False
+
+
+def _validation_expression(node, state, tree):
+    match node:
+        case ast.Name(id=name):
+            return state.get(name)
+        case ast.Constant(value=None):
+            return "none"
+        case ast.Constant(value=value):
+            return _validation_literal_kind(value)
+        case ast.Tuple(elts=items) if 0 < len(items) <= 12:
+            kinds = tuple(_validation_expression(item, state, tree) for item in items)
+            return kinds if None not in kinds else None
+        case ast.Subscript(
+            value=ast.Name(id=name), slice=ast.Constant(value=position)
+        ) if type(position) is int:
+            kinds = state.get(name)
+            return (
+                kinds[position]
+                if isinstance(kinds, tuple) and 0 <= position < len(kinds)
+                else None
+            )
+        case _:
+            return _validation_computed_expression(node, state, tree)
+
+
+def _validation_computed_expression(node, state, tree):
+    match node:
+        case ast.JoinedStr(values=items) if 0 < len(items) <= 16:
+            return (
+                "text"
+                if all(_validation_format_part(item, state, tree) for item in items)
+                else None
+            )
+        case ast.BinOp(left=left, op=ast.Add(), right=right):
+            return (
+                "text"
+                if _validation_expression(left, state, tree)
+                == _validation_expression(right, state, tree)
+                == "text"
+                else None
+            )
+        case ast.UnaryOp(op=ast.Not(), operand=operand):
+            kind = _validation_expression(operand, state, tree)
+            return kind if kind in {"boolean", "operand_check"} else None
+        case ast.Compare(left=left, ops=[operator], comparators=[right]):
+            return _validation_comparison(
+                operator,
+                _validation_expression(left, state, tree),
+                _validation_expression(right, state, tree),
+            )
+        case ast.Call() as call:
+            return _validation_format_call(call, state, tree)
+        case _:
+            return None
+
+
+def _validation_literal_kind(value):
+    if type(value) is bool:
+        return "boolean"
+    if type(value) is int and value.bit_length() <= 32:
+        return "integer"
+    if type(value) is str and len(value) <= 1024:
+        return "text"
+    return None
+
+
+def _validation_format_part(part, state, tree):
+    match part:
+        case ast.Constant(value=literal):
+            return type(literal) is str and len(literal) <= 1024
+        case ast.FormattedValue(value=value, conversion=-1, format_spec=None):
+            return (
+                _validation_expression(value, state, tree)
+                in _VALIDATION_TEXT_OPERATIONS
+            )
+        case _:
+            return False
+
+
+def _validation_comparison(operator, left, right):
+    if isinstance(operator, (ast.Is, ast.IsNot)) and (left, right) in {
+        ("regex_result", "none"),
+        ("none", "regex_result"),
+    }:
+        return "operand_check"
+    if isinstance(operator, (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)) and (
+        left,
+        right,
+    ) in {("integer", "operand_length"), ("operand_length", "integer")}:
+        return "operand_check"
+    return None
+
+
+def _validation_format_call(call, state, tree):
+    match call:
+        case ast.Call(
+            func=ast.Name(id="len"), args=[ast.Name(id=name)], keywords=[]
+        ) if state.get(name) == "operand":
+            return "operand_length"
+        case ast.Call(
+            func=provider, args=[pattern, ast.Name(id=name)], keywords=[]
+        ) if state.get(name) == "operand":
+            root = provider.value if isinstance(provider, ast.Attribute) else provider
+            if not isinstance(root, ast.Name) or root.id in state:
+                return None
+            if (
+                _reference_imported_member(tree, provider, "re", "search")
+                and _validation_expression(pattern, state, tree) == "text"
+            ):
+                return "regex_result"
+    return None
+
+
+_PASSWORD_VALIDATION_HELPERS = tuple(
+    name
+    for name, value in globals().items()
+    if name.startswith("_validation_") and callable(value)
+)
+
+
+def password_validation_proof_helpers():
+    """Bind live source-role and mutation-check lookups to the scan cache."""
+    from . import credential_role_constructor_provider as provider
+    from . import pytest_collection_audit as collection
+    from . import runtime_audit_integrity as runtime
+
+    return (
+        captured_password_validation_proof,
+        *(globals()[name] for name in _PASSWORD_VALIDATION_HELPERS),
+        _VALIDATION_BUILTINS,
+        _VALIDATION_NAMESPACE_NAMES,
+        _VALIDATION_OPAQUE_IMPORTS,
+        _VALIDATION_TEXT_OPERATIONS,
+        _reference_local_export,
+        _reference_imported_member,
+        _reference_builtin_bindings_clear,
+        provider.binding_occurrences,
+        provider._captured_terminal_provider_mutation,
+        collection._pytest_collection_settings,
+        collection._pytest_file_matches,
+        collection._pytest_name_matches,
+        collection.captured_pytest_configuration,
+        collection.captured_pytest_documents,
+        runtime._conditional_module_name,
+        runtime._source_span,
+    )

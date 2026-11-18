@@ -3934,3 +3934,328 @@ def _bind_public_symbolic_evidence(
             **evidence,
             "consumer_evidence_sha256": digest,
         }
+
+
+_OAUTH_TEMPLATE_SLOTS = (
+    ("consumer_key", "CONSUMER_KEY"),
+    ("consumer_secret", "CONSUMER_SECRET"),
+    ("access_token", "ACCESS_TOKEN"),
+    ("access_token_secret", "ACCESS_SECRET"),
+)
+_OAUTH_TEMPLATE_NAMESPACE_NAMES = frozenset(
+    {
+        "__import__",
+        "__builtins__",
+        "__loader__",
+        "delattr",
+        "eval",
+        "exec",
+        "getattr",
+        "globals",
+        "locals",
+        "setattr",
+        "vars",
+    }
+)
+_OAUTH_TEMPLATE_NAMESPACE_MEMBERS = frozenset(
+    {
+        "__bases__",
+        "__class__",
+        "__dict__",
+        "__getattribute__",
+        "__globals__",
+        "__mro__",
+        "__subclasses__",
+        "delattr",
+        "exec_module",
+        "f_builtins",
+        "f_globals",
+        "f_locals",
+        "import_module",
+        "load_module",
+        "modules",
+        "patch",
+        "patch_object",
+        "setattr",
+    }
+)
+_OAUTH_TEMPLATE_UNMODELED_IMPORTS = frozenset(
+    {
+        "__main__",
+        "_pytest",
+        "builtins",
+        "ctypes",
+        "importlib",
+        "inspect",
+        "mock",
+        "pytest",
+        "runpy",
+        "types",
+        "unittest",
+    }
+)
+
+
+def captured_oauth_placeholder_proof(index, path, node):
+    """Bind a literal to a complete SDK setup template and its exact consumers."""
+    from .captured_security_audit import _native_span
+
+    if _oauth_template_assignment(node) is None or not index.validate(path):
+        return None
+    tree = index.snapshots[path]
+    frame = _oauth_template_frame(tree, node)
+    if frame is None or not _oauth_template_provider_closed(index, path, frame[0]):
+        return None
+    _, fields, consumers = frame
+    return {
+        "hypothesis": "CAPTURED_OPERATIVE_OAUTH_CREDENTIAL",
+        "scope": "CAPTURED_PYTHON_SOURCE",
+        "literal_role": "COMPLETE_OAUTH_SETUP_FIELD_PLACEHOLDER",
+        "provider": "tweepy.OAuthHandler",
+        "slot": next(
+            field for field, assignment in fields.items() if assignment is node
+        ),
+        "declaration_span": list(_native_span(node)),
+        "transfers": [
+            {"provider": owner, "span": list(_native_span(call)), "slots": list(slots)}
+            for owner, call, slots in consumers
+        ],
+        "credential_literal_observation": "RETAINED",
+        "external_runtime_authority": "UNASSESSED",
+    }
+
+
+def _oauth_template_assignment(node):
+    match node:
+        case ast.Assign(
+            targets=[ast.Name() as target], value=ast.Constant(value=str() as value)
+        ):
+            for field, marker in _OAUTH_TEMPLATE_SLOTS:
+                if value == marker:
+                    return field, target
+    return None
+
+
+def _oauth_template_frame(tree, selected):
+    statements = tree.body
+    if ast.get_docstring(tree, clean=False) is not None:
+        statements = statements[1:]
+    if len(statements) < 8 or selected not in statements[1:5]:
+        return None
+    provider_import, *declarations = statements[:5]
+    match provider_import:
+        case ast.Import(names=[ast.alias(name="tweepy", asname=alias)]):
+            provider = alias or "tweepy"
+        case _:
+            return None
+    fields = _oauth_template_fields(declarations)
+    if fields is None:
+        return None
+    consumer = _oauth_template_consumers(statements[5:8], provider, fields)
+    if consumer is None:
+        return None
+    targets, reads, api, transfers = consumer
+    declarations = {provider: provider_import, **{n.id: d for d, n in fields.values()}}
+    if not _oauth_template_uses_closed(tree, declarations, targets, reads, api):
+        return None
+    return provider_import, {field: row[0] for field, row in fields.items()}, transfers
+
+
+def _oauth_template_fields(declarations):
+    result = {}
+    for statement in declarations:
+        row = _oauth_template_assignment(statement)
+        if row is None or row[0] in result:
+            return None
+        field, target = row
+        result[field] = statement, target
+    if len({target.id for _, target in result.values()}) != len(_OAUTH_TEMPLATE_SLOTS):
+        return None
+    return result
+
+
+def _oauth_template_positional_call(call, owner, method, arguments):
+    match call:
+        case ast.Call(
+            func=ast.Attribute(value=ast.Name(id=receiver) as root, attr=member),
+            args=args,
+            keywords=[],
+        ) if receiver == owner and member == method:
+            if len(args) == len(arguments) and all(
+                isinstance(arg, ast.Name) and arg.id == name
+                for arg, name in zip(args, arguments)
+            ):
+                return root, *args
+    return None
+
+
+def _oauth_template_consumers(statements, provider, fields):
+    match statements:
+        case [
+            ast.Assign(targets=[ast.Name(id=auth) as auth_target], value=constructor),
+            ast.Expr(value=setter),
+            ast.Assign(targets=[ast.Name() as api_target], value=client),
+        ]:
+            pass
+        case _:
+            return None
+    constructor_slots = ("consumer_key", "consumer_secret")
+    setter_slots = ("access_token", "access_token_secret")
+    first = _oauth_template_positional_call(
+        constructor,
+        provider,
+        "OAuthHandler",
+        [fields[slot][1].id for slot in constructor_slots],
+    )
+    second = _oauth_template_positional_call(
+        setter, auth, "set_access_token", [fields[slot][1].id for slot in setter_slots]
+    )
+    third = _oauth_template_positional_call(client, provider, "API", (auth,))
+    if first is None or second is None or third is None:
+        return None
+    assignments = ((statements[0], auth_target), (statements[2], api_target))
+    transfers = (
+        ("tweepy.OAuthHandler", constructor, constructor_slots),
+        ("tweepy.OAuthHandler.set_access_token", setter, setter_slots),
+    )
+    return assignments, (*first, *second, *third), api_target, transfers
+
+
+def _oauth_template_uses_closed(tree, declarations, targets, reads, api):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    names = {**declarations, **{target.id: statement for statement, target in targets}}
+    if len(names) != len(_OAUTH_TEMPLATE_SLOTS) + 3:
+        return False
+    declared = {
+        name: _oauth_template_binding(statement, name)
+        for name, statement in names.items()
+    }
+    if any(
+        binding_occurrences(tree.body, name) != [node]
+        for name, node in declared.items()
+    ):
+        return False
+    allowed_names = set(declared.values()) | set(reads)
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    return all(
+        name in allowed_names or _oauth_template_api_read(name, api, parents)
+        for name in parents
+        if isinstance(name, ast.Name) and name.id in names
+    )
+
+
+def _oauth_template_binding(statement, name):
+    if isinstance(statement, ast.Assign):
+        return next(target for target in statement.targets if target.id == name)
+    return statement
+
+
+def _oauth_template_api_read(node, api, parents):
+    if node.id != api.id or not isinstance(node.ctx, ast.Load):
+        return False
+    member = parents[node]
+    call = parents.get(member)
+    if not isinstance(call, ast.Call) or call.func is not member or call.keywords:
+        return False
+    match member, call.args:
+        case ast.Attribute(attr="user_timeline"), []:
+            return True
+        case ast.Attribute(attr="get_user"), [ast.Constant(value=str())]:
+            return True
+    return False
+
+
+def _oauth_template_provider_closed(index, path, statement):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_module_shadows_terminal,
+        _captured_terminal_provider_mutation,
+    )
+
+    if _captured_module_shadows_terminal(index, path, statement, "tweepy.OAuthHandler"):
+        return False
+    # A loaded child can be read from a regular or implicit parent package.
+    protected_member = path.stem if path.parent != index.root else None
+    if path.stem == "__init__" or not all(
+        index.validate(peer)
+        and _oauth_template_namespace_closed(
+            index.snapshots[peer], path.stem, protected_member
+        )
+        for peer in index.snapshots
+    ):
+        return False
+    return not _captured_terminal_provider_mutation(index, audit, "tweepy")
+
+
+def _oauth_template_namespace_closed(tree, protected_module, protected_member):
+    nodes = tuple(ast.walk(tree))
+    parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
+    return not any(
+        _oauth_template_namespace_escape(
+            node, protected_module, protected_member, parents.get(node)
+        )
+        for node in nodes
+    )
+
+
+def _oauth_template_namespace_escape(node, protected_module, protected_member, parent):
+    match node:
+        case ast.Name(id=name):
+            return name in _OAUTH_TEMPLATE_NAMESPACE_NAMES
+        case ast.Attribute(attr=name) if name == protected_member:
+            return True
+        case ast.Attribute(attr="__class__", ctx=ast.Load()):
+            return not (
+                isinstance(parent, ast.Attribute)
+                and parent.attr in {"__name__", "__qualname__"}
+                and isinstance(parent.ctx, ast.Load)
+            )
+        case ast.Attribute(attr=name):
+            return name in _OAUTH_TEMPLATE_NAMESPACE_MEMBERS
+        case ast.alias(name=name) | ast.ImportFrom(module=name) if name:
+            parts = name.split(".")
+            return (
+                parts[0] in _OAUTH_TEMPLATE_UNMODELED_IMPORTS
+                or name in _OAUTH_TEMPLATE_NAMESPACE_MEMBERS
+                or protected_module in parts
+            )
+    return False
+
+
+_OAUTH_TEMPLATE_HELPER_NAMES = tuple(
+    name
+    for name, value in globals().items()
+    if name.startswith("_oauth_template_") and callable(value)
+)
+
+
+def oauth_placeholder_proof_helpers():
+    """Bind the exact live OAuth template proof and its checked policy slots."""
+    from . import review_audits as audit
+    from .captured_security_audit import _native_span
+    from .credential_role_constructor_provider import (
+        _captured_module_shadows_terminal,
+        _captured_terminal_provider_mutation,
+        binding_occurrences,
+    )
+
+    return (
+        captured_oauth_placeholder_proof,
+        oauth_placeholder_proof_helpers,
+        _OAUTH_TEMPLATE_SLOTS,
+        _OAUTH_TEMPLATE_NAMESPACE_NAMES,
+        _OAUTH_TEMPLATE_NAMESPACE_MEMBERS,
+        _OAUTH_TEMPLATE_UNMODELED_IMPORTS,
+        *[globals()[name] for name in _OAUTH_TEMPLATE_HELPER_NAMES],
+        binding_occurrences,
+        _captured_module_shadows_terminal,
+        _captured_terminal_provider_mutation,
+        audit._resolved_ast_name,
+        _native_span,
+        ast.get_docstring,
+    )

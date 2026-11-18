@@ -1604,8 +1604,22 @@ def _captured_operand_prover(code, node):
             from .pickle_model_audit import captured_local_serialization_proof
 
             return captured_local_serialization_proof
+        case "SECURITY_HARDCODED_SECRET", (
+            ast.Assign(value=ast.Constant(value=str()))
+            | ast.AnnAssign(value=ast.Constant(value=str()))
+        ):
+            return _captured_credential_operand_proof
         case _:
             return None
+
+
+def _captured_credential_operand_proof(index, path, node):
+    from .fixture_scope_value_audit import captured_password_validation_proof
+    from .provenance import captured_oauth_placeholder_proof
+
+    return captured_password_validation_proof(
+        index, path, node
+    ) or captured_oauth_placeholder_proof(index, path, node)
 
 
 def _with_captured_operand_proof(relative, node, row):
@@ -1625,12 +1639,55 @@ def _with_captured_operand_proof(relative, node, row):
     point = (row["code"], relative, *span, row["severity"])
     evidence = _bound_operand_refutation(index, path, node, point, prove)
     if evidence is None:
+        if row["code"] == "SECURITY_OS_COMMAND":
+            _attach_installer_prerequisite(index, path, node, point, row)
+        elif row["code"] == "SECURITY_HARDCODED_SECRET":
+            _attach_validation_marker_context(index, path, node, point, row)
         return row
     row["facts"]["captured_operand_role"] = evidence
     stage = getattr(_captured_pytest_inputs(module)[1], "provisional_exclusions", None)
     if type(stage) is set:
         stage.add((*point, evidence["source_authority_sha256"]))
     return row
+
+
+def _attach_installer_prerequisite(index, path, node, point, row):
+    """Record a conditional manifest guard while preserving the shell finding."""
+    from .captured_operand_audit import captured_installer_prerequisite
+    from .pytest_collection_audit import captured_pytest_documents
+
+    evidence = _bound_operand_refutation(
+        index, path, node, point, captured_installer_prerequisite
+    )
+    if evidence is None:
+        return
+    manifest = evidence["manifest"]
+    documents = captured_pytest_documents(index.snapshots[path]) or {}
+    raw = documents.get(manifest["path"])
+    if not isinstance(raw, bytes) or sha256(raw).hexdigest() != manifest["sha256"]:
+        return
+    row["facts"]["captured_installer_prerequisite"] = evidence
+    row["message"] = (
+        "The script raises before this shell call when the working directory selects "
+        "the captured root manifest. The actual invocation directory remains unresolved."
+    )
+
+
+def _attach_validation_marker_context(index, path, node, point, row):
+    """Record the local test use while keeping the unresolved credential review."""
+    from .pytest_collection_audit import captured_validation_marker_context
+
+    evidence = _bound_operand_refutation(
+        index, path, node, point, captured_validation_marker_context
+    )
+    if evidence is None:
+        return
+    row["facts"]["captured_validation_marker_context"] = evidence
+    row["message"] = (
+        "The captured in-process test uses this literal as a validation marker. "
+        "The declared classifier engine reads a shared registry. "
+        "Actual consumer selection remains unresolved."
+    )
 
 
 def _bound_operand_refutation(index, path, node, point, prove):

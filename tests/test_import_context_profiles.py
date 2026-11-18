@@ -2414,3 +2414,114 @@ def test_command_operand_proof_helpers_identify_live_methods(monkeypatch):
     assert operands._CommandOperandProof.command in helpers
     monkeypatch.setattr(operands._CommandOperandProof, "command", guarded_replacement)
     assert guarded_replacement in operands.command_operand_proof_helpers()
+
+
+_INSTALLER_PREREQUISITE = r"""
+from os import system
+from re import DOTALL, search
+
+content = open("./pyproject.toml").read()
+if match := search(r'\[tool.poetry.dependencies\]\npython = "[^"]+"\n(.+?)\n\n', content, DOTALL):
+    dependencies = match.group(1)
+else:
+    raise ValueError("Dependencies missing")
+system(install_command)
+"""
+
+
+def _installer_prerequisite_result(tmp_path, source, manifest, independent=False):
+    import hashlib
+
+    from factoryline.captured_operand_audit import captured_installer_prerequisite
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    path = tmp_path / "setup_runtime.py"
+    raw = source.encode()
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    documents = {} if manifest is None else {"pyproject.toml": manifest}
+    if independent:
+        tree._security_source_context = (
+            tmp_path,
+            {tmp_path / name: data for name, data in documents.items()},
+        )
+    else:
+        tree._security_oracle_context = {"_security_launch_configs": documents}
+    index = SourceSnapshotIndex(
+        tmp_path, {path: tree}, {path: raw}, {path: tree._oracle_source_sha256}
+    )
+    site = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "system"
+    )
+    return captured_installer_prerequisite(index, path, site)
+
+
+@pytest.mark.parametrize("independent", [False, True])
+def test_captured_installer_prerequisite_binds_manifest_and_retains_sink(
+    tmp_path, independent
+):
+    import hashlib
+
+    manifest = b'[project]\nname = "sample"\ndependencies = []\n'
+    result = _installer_prerequisite_result(
+        tmp_path, _INSTALLER_PREREQUISITE, manifest, independent
+    )
+
+    assert result["manifest"] == {
+        "path": "pyproject.toml",
+        "sha256": hashlib.sha256(manifest).hexdigest(),
+    }
+    assert result["required_header"] == "[tool.poetry.dependencies]"
+    assert result["guard_span"][0] == 6
+    assert result["raise_span"][0] == 9
+    assert result["working_directory_selection"] == "UNASSESSED"
+    assert result["shell_operation"] == "RETAINED"
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        None,
+        b"\xff",
+        b"# [tool.poetry.dependencies]\n",
+        b"[tool.poetry.dependencies]\n",
+        b"[toolXpoetryYdependencies]\n",
+        b"[tool\r\npoetry\rdependencies]\r\n",
+    ],
+)
+def test_installer_prerequisite_needs_readable_manifest_missing_the_pattern_header(
+    tmp_path, manifest
+):
+    assert (
+        _installer_prerequisite_result(tmp_path, _INSTALLER_PREREQUISITE, manifest)
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "original,replacement",
+    [
+        ("./pyproject.toml", "../pyproject.toml"),
+        ("from re import DOTALL, search", "from other import DOTALL, search"),
+        ("from os import system", "from other import system"),
+        ("raise ValueError", "report_problem"),
+        ("(.+?)", "(.+?)|valid"),
+        ("content = open", "open = other\ncontent = open"),
+        ("system(install_command)", "def run():\n    system(install_command)"),
+    ],
+)
+def test_installer_prerequisite_keeps_unknown_binding_or_flow(
+    tmp_path, original, replacement
+):
+    source = _INSTALLER_PREREQUISITE.replace(original, replacement)
+    assert _installer_prerequisite_result(tmp_path, source, b"[project]\n") is None
+
+
+def test_installer_prerequisite_requires_provider_import_before_its_use(tmp_path):
+    imported = "from re import DOTALL, search\n"
+    source = _INSTALLER_PREREQUISITE.replace(imported, "").replace(
+        "system(install_command)", imported + "system(install_command)"
+    )
+    assert _installer_prerequisite_result(tmp_path, source, b"[project]\n") is None
