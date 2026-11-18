@@ -6,6 +6,7 @@ import sys
 import io
 import re
 import ast
+from contextlib import nullcontext
 from .import_context import (
     _security_loop_block_findings as _security_loop_block_findings,
     _bound_names as _bound_names,
@@ -3503,6 +3504,14 @@ def security_call_name(node, aliases):
     return name
 
 
+def local_security_snapshot_batch(audit, tree, context):
+    """Validate queries together when a file falls back to its own capture."""
+    source = getattr(tree, "_security_source_model", None)
+    if source is not None and (context or {}).get("_security_source_model") is None:
+        return audit._security_snapshot_analysis_batch({"source": source})
+    return nullcontext()
+
+
 def security_source_sink_findings(relative, tree, nodes, aliases):
     """Return bounded static findings for proven request and parameter sink flows."""
     from . import intent_quality
@@ -4481,12 +4490,15 @@ def _security_flow_source_assignment(
     from .semantic_credential_sensor import request_payload_value_kind
 
     structural = _security_structural_expression(value, requests, aliases)
-    if structural is not None and not structural.unknown and structural.roots:
-        value_kind = structural.scalar_kind
-    else:
-        value_kind = request_payload_value_kind(
-            value, requests, aliases, _security_scope_request_aliases, scope, statement
-        )
+    value_kind = request_payload_value_kind(
+        value,
+        requests,
+        aliases,
+        _security_scope_request_aliases,
+        scope,
+        statement,
+        fact=structural,
+    )
     binary_decode = _security_request_binary_decode_kind(
         value, requests, aliases, scope, statement, audit=sys.modules[__name__]
     )

@@ -1621,7 +1621,7 @@ def _deep_audit_report(
         if unmeasured or review_required
         else "PASS"
     )
-    report = {
+    return {
         "schema": SCHEMA,
         "state": state,
         "scope": {
@@ -1648,10 +1648,6 @@ def _deep_audit_report(
             lane["next_action"] for lane in [*blocked, *unmeasured, *review_required]
         ],
     }
-    report["audit_sha256"] = _digest(
-        {key: value for key, value in report.items() if key != "audit_sha256"}
-    )
-    return report
 
 
 def _observed_native_lane(recorder, name, operation):
@@ -1661,7 +1657,8 @@ def _observed_native_lane(recorder, name, operation):
     try:
         with measured_span(recorder, name, attributes=attributes) as parent_id:
             result = operation()
-            attributes["result_sha256"] = _digest(result)
+            result_sha256 = _digest(result)
+            attributes["result_sha256"] = result_sha256
             rows = result if isinstance(result, list) else [result]
             for row in rows:
                 recorder.span(
@@ -1669,7 +1666,9 @@ def _observed_native_lane(recorder, name, operation):
                     parent_span_id=parent_id,
                     attributes={
                         "kind": "lane_result_observation",
-                        "result_sha256": _digest(row),
+                        "result_sha256": result_sha256
+                        if row is result
+                        else _digest(row),
                         "lane_state": row["state"],
                     },
                 )
@@ -1754,9 +1753,7 @@ def run_deep_repository_audit(
         "spans": recorder.spans,
         "scope": "Observed local orchestration; nested external worker internals are separate evidence.",
     }
-    report["audit_sha256"] = _digest(
-        {key: value for key, value in report.items() if key != "audit_sha256"}
-    )
+    report["audit_sha256"] = _digest(report)
     return report
 
 

@@ -10,6 +10,7 @@ import pytest
 
 from factoryline.adoption import (
     AdoptionError,
+    _digest,
     _sha,
     _scan_identity_projection,
     adoption_status,
@@ -605,8 +606,10 @@ def test_repo_scan_identity_is_stable_and_run_receipt_binds_telemetry(tmp_path):
             key: value for key, value in result.items() if key != "run_receipt_sha256"
         }
         assert result["run_receipt_sha256"] == _sha(receipt)
-        assert result["deep_audit"]["telemetry"]["trace_id"]
-        assert result["deep_audit"]["audit_sha256"]
+        deep_audit = result["deep_audit"].copy()
+        assert deep_audit["telemetry"]["trace_id"]
+        audit_sha256 = deep_audit.pop("audit_sha256")
+        assert audit_sha256 == _digest(deep_audit)
 
 
 def test_repo_scan_phase_telemetry_preserves_source_and_no_source_results(tmp_path):
