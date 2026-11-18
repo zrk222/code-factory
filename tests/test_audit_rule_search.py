@@ -2865,11 +2865,17 @@ def _rehash_forgeline_packet(packet, *, refresh_receipt=True):
 @pytest.mark.parametrize(
     "profile", ["requirements", "implementation", "test_evidence", "repair"]
 )
-def test_forgeline_review_reuses_shared_validator_and_keeps_failure_advisory(profile):
-    from factoryline.jev_classifier import review_forgeline_packet
+def test_forgeline_review_reuses_shared_validator_and_keeps_failure_advisory(
+    profile, monkeypatch
+):
+    from unittest.mock import Mock
+
+    from factoryline import jev_classifier
 
     packet = _forgeline_review_packet(profile)
     seen = []
+    build_request = Mock(wraps=jev_classifier.build_evidence_review_input)
+    monkeypatch.setattr(jev_classifier, "build_evidence_review_input", build_request)
 
     def transport(request):
         seen.append(request)
@@ -2890,7 +2896,8 @@ def test_forgeline_review_reuses_shared_validator_and_keeps_failure_advisory(pro
             ],
         }
 
-    result = review_forgeline_packet(packet, transport=transport)
+    result = jev_classifier.review_forgeline_packet(packet, transport=transport)
+    assert build_request.call_count == 1
     assert len(seen) == 1
     assert seen[0]["authority"] == "none"
     assert "untrusted data" in seen[0]["rubric"]

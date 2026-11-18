@@ -3,6 +3,8 @@
 import ast
 import hashlib
 from pathlib import Path
+from textwrap import dedent
+from unittest.mock import Mock
 
 import pytest
 
@@ -13,6 +15,7 @@ from factoryline.credential_role_identity_effects import (
 )
 from factoryline.review_integrity import bind_security_call_scopes
 from factoryline import review_audits as audit
+from factoryline import review_integrity
 
 
 def context(source):
@@ -25,6 +28,57 @@ def context(source):
     index = SourceSnapshotIndex(Path("."), {path: tree}, {path: raw}, {path: digest})
     assert index.validate(path)
     return path, tree, index
+
+
+@pytest.mark.parametrize("mutate", [False, True])
+def test_local_security_snapshot_batch_reuses_receiver_validation(
+    tmp_path, monkeypatch, mutate
+):
+    from factoryline import credential_role_constructor_provider as provider
+    from factoryline import credential_role_method_use_getter_audit as receiver
+
+    path = tmp_path / "record.py"
+    path.write_text(
+        dedent("""\
+        class Record:
+            def __init__(self, label):
+                self.label = label
+
+            def display(self):
+                left = self.label
+                right = self.label
+                return left, right
+
+        def ready():
+            return Record('sample').display()
+        """),
+        encoding="utf-8",
+    )
+    validate = Mock(wraps=provider._ast_matches_source)
+    select = Mock(wraps=receiver.selected_receiver_field_value)
+    batch = Mock(wraps=review_integrity.local_security_snapshot_batch)
+    monkeypatch.setattr(provider, "_ast_matches_source", validate)
+    monkeypatch.setattr(receiver, "selected_receiver_field_value", select)
+    monkeypatch.setattr(review_integrity, "local_security_snapshot_batch", batch)
+    scan_tree = audit._security_scan_tree
+
+    def scan_then_mutate(root, source_path, tree, *args):
+        rows = scan_tree(root, source_path, tree, *args)
+        tree.body[0].name = "Changed"
+        return rows
+
+    if mutate:
+        monkeypatch.setattr(audit, "_security_scan_tree", scan_then_mutate)
+        with pytest.raises(audit.RuntimeAuditError, match="Shared batch rejected"):
+            audit._security_scan_file(tmp_path, path)
+    else:
+        binding, findings, outcome = audit._security_scan_file(tmp_path, path)
+        assert binding["path"] == "record.py"
+        assert (findings, outcome) == ([], "audited")
+
+    assert select.call_count >= 2
+    assert validate.call_count == 2
+    batch.assert_called_once()
 
 
 @pytest.mark.parametrize(

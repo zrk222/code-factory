@@ -3935,14 +3935,14 @@ def _flask_request_body_kind(node, aliases, scope, statement, alias_reader):
 
 
 def request_payload_value_kind(
-    node, requests, aliases, alias_reader, scope=None, flow_statement=None
+    node, requests, aliases, alias_reader, scope=None, flow_statement=None, *, fact=None
 ):
     """Carry modeled request text/bytes through explicit codec operations only."""
-    from .review_integrity import _security_structural_expression
+    from .review_integrity import _security_structural_expression as project
 
-    value = _security_structural_expression(node, requests, aliases)
-    if value is not None and not value.unknown and value.roots:
-        return value.scalar_kind
+    fact = project(node, requests, aliases) if fact is None else fact
+    if fact is not None and not fact.unknown and fact.roots:
+        return fact.scalar_kind
     kind = _request_payload_name_kind(node, requests)
     if kind is not None:
         return kind

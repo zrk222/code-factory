@@ -3,7 +3,7 @@
 import ast
 from hashlib import sha256
 
-from .ops_telemetry import _measured_phase
+from .ops_telemetry import _measure_phase, _measured_phase
 
 
 def intentional_implementation_contract(node, parents, aliases):
@@ -517,15 +517,17 @@ def bind_project_contracts(root, snapshots, contexts, edges, resolved_imports=No
     """Resolve direct local imported bases from the already hash-bound snapshots."""
     from .review_audits import _oracle_imports
 
-    indexes = {path: _stable_import_index(tree) for path, tree in snapshots.items()}
-    eligible = {p.resolve(): p for p in snapshots}
+    eligible = {p.resolve(): p for p in snapshots} if not resolved_imports else {}
     resolved = resolved_imports or {
         path: _oracle_imports(root, path, tree, eligible)
         for path, tree in snapshots.items()
     }
+    with _measure_phase("source_index", enabled=bool(snapshots)):
+        candidates = [path for path in snapshots if resolved[path]]
+    indexes = {path: _stable_import_index(snapshots[path]) for path in candidates}
     blocked = _unsafe_project_bases(snapshots, resolved, indexes)
-    for path, tree in snapshots.items():
-        imports, index = resolved[path], indexes[path]
+    for path, index in indexes.items():
+        tree, imports = snapshots[path], resolved[path]
         _bind_file_contracts(
             root, path, tree, imports, snapshots, contexts, edges, blocked, index
         )
@@ -568,12 +570,10 @@ def _bind_imported_base(root, path, child, source, symbol, tree, contexts, edges
     if not _stable_base_contract(tree, bases[0]):
         return
     if any(
-        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == symbol
-        for n in ast.walk(tree)
-    ):
-        return
-    if any(
-        isinstance(n, ast.Name)
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == symbol
+        or isinstance(n, ast.Name)
         and isinstance(n.ctx, (ast.Store, ast.Del))
         and n.id == symbol
         for n in ast.walk(tree)
