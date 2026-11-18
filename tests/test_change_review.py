@@ -1369,6 +1369,7 @@ def test_emit_version_formats_json_and_human_output(
 
     assert emit_version(as_json=True) == 0
     assert json.loads(capsys.readouterr().out) == payload
+    monkeypatch.setattr("factoryline.__version__", payload["version"])
     assert emit_version(as_json=False) == 0
     assert capsys.readouterr().out.strip() == "factory 0.47.0"
 
