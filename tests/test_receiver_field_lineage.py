@@ -15,6 +15,7 @@ from factoryline.credential_role_identity_effects import (
 )
 from factoryline.review_integrity import bind_security_call_scopes
 from factoryline import review_audits as audit
+from factoryline import review_integrity
 
 
 def context(source):
@@ -30,7 +31,9 @@ def context(source):
 
 
 @pytest.mark.parametrize("mutate", [False, True])
-def test_local_capture_reuses_receiver_validation(tmp_path, monkeypatch, mutate):
+def test_local_security_snapshot_batch_reuses_receiver_validation(
+    tmp_path, monkeypatch, mutate
+):
     from factoryline import credential_role_constructor_provider as provider
     from factoryline import credential_role_method_use_getter_audit as receiver
 
@@ -53,8 +56,10 @@ def test_local_capture_reuses_receiver_validation(tmp_path, monkeypatch, mutate)
     )
     validate = Mock(wraps=provider._ast_matches_source)
     select = Mock(wraps=receiver.selected_receiver_field_value)
+    batch = Mock(wraps=review_integrity.local_security_snapshot_batch)
     monkeypatch.setattr(provider, "_ast_matches_source", validate)
     monkeypatch.setattr(receiver, "selected_receiver_field_value", select)
+    monkeypatch.setattr(review_integrity, "local_security_snapshot_batch", batch)
     scan_tree = audit._security_scan_tree
 
     def scan_then_mutate(root, source_path, tree, *args):
@@ -73,6 +78,7 @@ def test_local_capture_reuses_receiver_validation(tmp_path, monkeypatch, mutate)
 
     assert select.call_count >= 2
     assert validate.call_count == 2
+    batch.assert_called_once()
 
 
 @pytest.mark.parametrize(

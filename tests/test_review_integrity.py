@@ -3038,6 +3038,68 @@ def _audit(root):
     return audit_workflows(root, "contract.json", "observations.json")
 
 
+@pytest.mark.parametrize(
+    "changed",
+    ["contract.json", "observations.json", "applicability-review.txt", "source.txt"],
+)
+def test_capture_workflow_audit_rechecks_exact_snapshot(tmp_path, monkeypatch, changed):
+    from collections import Counter
+
+    _fixture(tmp_path)
+    paths = (tmp_path, "contract.json", "observations.json")
+    receipt, contract, observations, recheck = (
+        workflow_audit_module.capture_workflow_audit(*paths)
+    )
+    assert receipt["state"] == "PASS"
+    assert workflow_audit_module.audit_workflow_snapshot(*paths) == (
+        receipt,
+        contract,
+        observations,
+    )
+
+    original = workflow_audit_module._artifact_digest
+    reads = Counter()
+
+    def record_read(path, remaining, **limits):
+        reads[path.name] += 1
+        return original(path, remaining, **limits)
+
+    monkeypatch.setattr(workflow_audit_module, "_artifact_digest", record_read)
+    assert recheck()
+    assert reads == dict.fromkeys(
+        (
+            "contract.json",
+            "observations.json",
+            "applicability-review.txt",
+            "source.txt",
+        ),
+        1,
+    )
+    path = tmp_path / changed
+    path.write_bytes(path.read_bytes() + b"\n")
+    assert not recheck()
+
+
+def test_capture_workflow_audit_rejects_redirected_evidence(tmp_path):
+    _fixture(tmp_path)
+    review = tmp_path / "applicability-review.txt"
+    copy = tmp_path / "review-copy.txt"
+    copy.write_bytes(review.read_bytes())
+    original = review.rename(tmp_path / "original-review.txt")
+    try:
+        review.symlink_to(original.name)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+    receipt, _, _, recheck = workflow_audit_module.capture_workflow_audit(
+        tmp_path, "contract.json", "observations.json"
+    )
+    assert receipt["state"] == "PASS"
+    assert recheck()
+    review.unlink()
+    review.symlink_to(copy.name)
+    assert not recheck()
+
+
 @pytest.mark.parametrize("drift", [False, True])
 def test_workflow_audit_reuses_repeated_artifacts_with_fresh_recheck(
     tmp_path, monkeypatch, drift
