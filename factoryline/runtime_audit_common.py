@@ -1290,7 +1290,6 @@ def _challenge_source_files(root: Path, manifest: dict[str, str]) -> dict[str, b
     return _read_manifest_files(root, manifest)
 
 
-
 def _owned_scratch(scratch: Path, parent: Path) -> tuple[Path, tuple[int, int]]:
     """Require a dedicated direct child directory with no symlinked path components."""
     owner = parent.resolve(strict=True)

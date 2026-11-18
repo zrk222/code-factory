@@ -2233,7 +2233,6 @@ def _canary_environment_root_matches(env, aliases, env_key):
     )
 
 
-
 def _canary_record_contains_digest(tree, aliases, digest_name, input_name, record_name):
     """Link the raw-input digest mapping to the serialized record."""
     mappings = [

@@ -3854,7 +3854,6 @@ def logging_security_precondition(
     return log_security_precondition(module, call, witness, input_flow)
 
 
-
 def _hook_return(node):
     return bool(
         isinstance(node, ast.Call)
