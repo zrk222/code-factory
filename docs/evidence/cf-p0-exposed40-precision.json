@@ -1,0 +1,161 @@
+{
+  "baseline_commit": "f35f9f0",
+  "candidate_commit": "ced4fc63732d97e2b5b9271a070da0d7fb1fade5",
+  "coverage_with_controls": {
+    "baseline": {
+      "python_files": 1059,
+      "repositories": 42
+    },
+    "candidate": {
+      "python_files": 1059,
+      "repositories": 42
+    }
+  },
+  "exposed_alerts": 40,
+  "known_true_positive_losses": 0,
+  "known_unclear_losses": 0,
+  "metrics": {
+    "baseline": {
+      "admitted": {
+        "FP": 0,
+        "TP": 5,
+        "UNCLEAR": 0,
+        "decided": 5,
+        "emitted": 5,
+        "known_positive_cases_outside_population": 13,
+        "precision": 1.0,
+        "precision_label_bounds": [
+          1.0,
+          1.0
+        ],
+        "unclear_inclusive_rate": 1.0,
+        "wilson_95": [
+          0.565509,
+          1
+        ]
+      },
+      "raw": {
+        "FP": 6,
+        "TP": 18,
+        "UNCLEAR": 9,
+        "decided": 24,
+        "emitted": 33,
+        "known_positive_cases_outside_population": 0,
+        "precision": 0.75,
+        "precision_label_bounds": [
+          0.5454545454545454,
+          0.8181818181818182
+        ],
+        "unclear_inclusive_rate": 0.5454545454545454,
+        "wilson_95": [
+          0.551002,
+          0.880008
+        ]
+      }
+    },
+    "candidate": {
+      "admitted": {
+        "FP": 0,
+        "TP": 5,
+        "UNCLEAR": 0,
+        "decided": 5,
+        "emitted": 5,
+        "known_positive_cases_outside_population": 13,
+        "precision": 1.0,
+        "precision_label_bounds": [
+          1.0,
+          1.0
+        ],
+        "unclear_inclusive_rate": 1.0,
+        "wilson_95": [
+          0.565509,
+          1
+        ]
+      },
+      "raw": {
+        "FP": 2,
+        "TP": 18,
+        "UNCLEAR": 9,
+        "decided": 20,
+        "emitted": 29,
+        "known_positive_cases_outside_population": 0,
+        "precision": 0.9,
+        "precision_label_bounds": [
+          0.6206896551724138,
+          0.9310344827586207
+        ],
+        "unclear_inclusive_rate": 0.6206896551724138,
+        "wilson_95": [
+          0.698962,
+          0.972134
+        ]
+      }
+    }
+  },
+  "new_forensic_refutations": [
+    "CF-XP-031",
+    "CF-XP-032",
+    "CF-XP-035",
+    "CF-XP-036"
+  ],
+  "original_blind_heldout": {
+    "admitted": {
+      "FP": 0,
+      "TP": 5,
+      "UNCLEAR": 0,
+      "conservative_precision": 1.0,
+      "decided": 5,
+      "decided_precision": 1.0,
+      "selected": 5,
+      "uncertainty_bounds": [
+        1.0,
+        1.0
+      ],
+      "wilson_95_decided_descriptive": [
+        0.5655175352168251,
+        1
+      ]
+    },
+    "evidence_path": "docs/evidence/cf-p0-heldout40-precision.json",
+    "measurement_receipt_sha256": "4c352b5bdf09f06d202397bbb5c9d4606fa9f64db66c11606b865b5051415c6d",
+    "raw": {
+      "FP": 13,
+      "TP": 18,
+      "UNCLEAR": 9,
+      "conservative_precision": 0.45,
+      "decided": 31,
+      "decided_precision": 0.5806451612903226,
+      "selected": 40,
+      "uncertainty_bounds": [
+        0.45,
+        0.675
+      ],
+      "wilson_95_decided_descriptive": [
+        0.4076626249536972,
+        0.7358445693268778
+      ]
+    }
+  },
+  "original_control_alerts_replayed": 15,
+  "paired_gate_sha256": "de371352168cc90edc4768de91253a16552c9fa80cb384520bcdecd613aa2af1",
+  "raw_precision_gain_percentage_points": 15.0,
+  "retained_context_reviews": [
+    {
+      "id": "CF-HO-015",
+      "unresolved_premise": "Captured classifier registry selection and consumer closure."
+    },
+    {
+      "id": "CF-RP-029",
+      "unresolved_premise": "Caller working directory and the manifest it selects."
+    }
+  ],
+  "scanner_python_sha256": {
+    "baseline": "9d8bc1196a45732941dd31a2f9dd7af71862185075cf258425d5048df3d22c7c",
+    "candidate": "4ab2e540a180428bf36e419fe91ca07304ef08bf74c2edc2d1653ad55523261f"
+  },
+  "schema": "factory.precision.exposed40-paired-certification.v1",
+  "scope": "Paired CLI replay of the same 40 exposed alerts using their original blinded labels and captured sources. The separate 15-case development panel serves as a retention control outside the exposed score.",
+  "state": "PAIRED_EXPOSED_REPLAY_COMPLETE",
+  "verification": "Both builds passed exact source identity, full coverage and verified finding conservation on every paired capture. The original blind result remains the separate held-out measurement.",
+  "verified_scan_receipts": 84
+}
