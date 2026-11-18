@@ -23,6 +23,7 @@ _PROTECTED = frozenset(
 
 
 def application_class_account_evidence(index, path, assignment, secret):
+    """Return captured source evidence for a class-owned DRF test account."""
     source = index["source"]
     authority = _class_fixture_authority(index, path, assignment, secret)
     if authority is None:
