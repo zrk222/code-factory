@@ -2,7 +2,9 @@
 
 import ast
 from .fixture_scope_value_audit import _TEST_SCOPE_CONTRACT_EPOCH
-from .fixture_scope_value_audit import _TestScopeContractEpoch as _TestScopeContractEpoch
+from .fixture_scope_value_audit import (
+    _TestScopeContractEpoch as _TestScopeContractEpoch,
+)
 import hashlib
 from pathlib import Path
 
