@@ -544,7 +544,11 @@ def _security_fixture_snapshot_bindings(audit, core, verified):
 def _has_application_fixture_claim(core):
     return any(
         row.get("facts", {}).get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
-        for field in ("findings", "primitive_observations")
+        for field in (
+            "findings",
+            "primitive_observations",
+            "refuted_security_observations",
+        )
         for row in core.get(field, ())
     )
 
@@ -1594,18 +1598,44 @@ def _provisional_witnesses(points):
 
 def _negative_semantic_points(rows, core, captured, primitive):
     """Recompute a specific refuted hypothesis, never general runtime safety."""
-    bindings = {row["path"]: row["sha256"] for row in core.get("sources", [])}
+    if core.get("audit_coverage", {}).get("complete") is not True:
+        return set()
+    sources = core.get("sources", [])
+    bindings = {row["path"]: row["sha256"] for row in sources}
+    fixture_sources = [
+        *sources,
+        *core.get("oracle_context", {}).get("configuration_sources", []),
+    ]
+    fixture_bindings = {row["path"]: row["sha256"] for row in fixture_sources}
+    collection_known = not primitive._unknown_collection(core)
     points = set()
     for row in rows:
         facts = row.get("facts", {})
-        if (
+        shell = (
             facts.get("disposition") == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX"
             and facts.get("operation_role")
-            in {"empty_command_input", "terminal_display_reset"}
+            in {
+                "empty_command_input",
+                "terminal_display_reset",
+                "fixed_privileged_stop_syntax",
+            }
             and facts.get("hypothesis") == "SOURCE_COMMAND_INJECTION"
-            and core.get("audit_coverage", {}).get("complete") is True
-            and primitive.closed_shell_binding(row, core["sources"], bindings, captured)
-        ):
+            and primitive.closed_shell_binding(row, sources, bindings, captured)
+        )
+        fixture = (
+            collection_known
+            and facts.get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+            and isinstance(evidence := facts.get("fixture_evidence"), dict)
+            and (
+                evidence.get("source_hypothesis")
+                == "SOURCE_TEST_CLIENT_CREDENTIAL_UNUSED"
+                or evidence.get("fixture_contract") == "DRF_CLASS_ACCOUNT_LIFECYCLE"
+            )
+            and primitive.application_fixture_binding(
+                row, fixture_sources, fixture_bindings, captured
+            )
+        )
+        if shell or fixture:
             points.add(
                 tuple(row.get(key) for key in (*primitive._RULE_SPAN_KEYS, "severity"))
             )

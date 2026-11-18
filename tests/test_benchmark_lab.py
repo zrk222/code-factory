@@ -90,6 +90,23 @@ def test_precision_gate_recomputes_and_rejects_unchanged_aggregate_claim():
     ]
 
 
+def test_development_precision_gate_requires_raw_gain_and_completed_scans():
+    contract, before, after = _precision_pair()
+    evaluate = _gain["evaluate"]
+    assert (
+        evaluate(contract, before, after, development_gate=True)["state"] == "BLOCKED"
+    )
+    after["cases"][1].update(raw=False, active=False)
+    contract["expected_changes"] = {"b": {"before": ["raw", "active"], "after": []}}
+    passed = evaluate(contract, before, after, development_gate=True)
+    assert passed["state"] == "DEVELOPMENT_GATE_PASS"
+    assert passed["metrics"]["candidate"]["supported"]["precision"] is None
+    after["cases"][0]["scan_complete"] = False
+    assert (
+        evaluate(contract, before, after, development_gate=True)["state"] == "BLOCKED"
+    )
+
+
 def test_precision_gate_requires_registered_delta_and_keeps_abstentions_visible():
     contract, before, after = _precision_pair()
     after["cases"][1].update(active=False, review=True)

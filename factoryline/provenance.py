@@ -3777,6 +3777,8 @@ def _local_control_label_witness(audit, node, target, aliases):
 
 def credential_role_witness(audit, node, target, aliases):
     """Describe a symbolic declaration; it is not a non-credential exemption."""
+    if cookie_name := getattr(node, "_security_cookie_role_facts", None):
+        return cookie_name
     if label := _local_control_label_witness(audit, node, target, aliases):
         return label
     scope = getattr(node, "_security_lexical_scope", None)

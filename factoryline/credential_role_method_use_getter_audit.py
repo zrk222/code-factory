@@ -38,6 +38,13 @@ from .review_integrity import (
     _security_scope_body,
     _security_scope_initial,
 )
+from .fixture_scope_values import (
+    _closed_text_binary,
+    _scope_bind,
+    _scope_closed,
+    _scope_exact_text,
+    _scope_value_roots,
+)
 from .security_configuration import _canonical
 from .semantic_credential_sensor import (
     _canonical_http_call,
@@ -3486,23 +3493,33 @@ class _CredentialRoleFlow:
             if exact and type(exact[0]) in (int, float):
                 result = -exact[0] if isinstance(node.op, ast.USub) else +exact[0]
                 return _constant_identity_value(ast.Constant(value=result))
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-            left = self.expression(path, node.left, env)
-            right = self.expression(path, node.right, env)
-            if (
-                left.inert_kind == right.inert_kind == "scalar"
-                and left.scalar_kind == right.scalar_kind
-                and left.scalar_kind in {"text", "bytes"}
-                and not _has_unknown_content(left)
-                and not _has_unknown_content(right)
-            ):
-                return _Value(
-                    roots=frozenset(tracked_roots(left) | tracked_roots(right)),
-                    inert_kind="scalar",
-                    scalar_kind=left.scalar_kind,
-                )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+            result = self.scalar_binary(path, node, env)
+            if result is not None:
+                return result
         self.fail("unsupported scalar operation", path, node)
         return _Value(unknown=True)
+
+    def scalar_binary(self, path, node, env):
+        left = self.expression(path, node.left, env)
+        right = self.expression(path, node.right, env)
+        closed = _closed_text_binary(node.op, left, right)
+        if closed is not None:
+            return _constant_identity_value(ast.Constant(value=closed))
+        if (
+            isinstance(node.op, ast.Add)
+            and left.inert_kind == right.inert_kind == "scalar"
+            and left.scalar_kind == right.scalar_kind
+            and left.scalar_kind in {"text", "bytes"}
+            and not _has_unknown_content(left)
+            and not _has_unknown_content(right)
+        ):
+            return _Value(
+                roots=frozenset(tracked_roots(left) | tracked_roots(right)),
+                inert_kind="scalar",
+                scalar_kind=left.scalar_kind,
+            )
+        return None
 
     def scalar_compare(self, path, node, env):
         """Model supported scalar comparisons while retaining tracked origins."""
@@ -4647,44 +4664,6 @@ class CapturedOriginProjection:
 SCOPE_API_CONTRACT_EPOCH = "test-scope-pyjwt-2.10.1-settings-v2"
 
 
-def _scope_value_roots(value):
-    """Return all roots only for closed, non-escaping modeled values."""
-    if value.unknown or value.content_unknown or value.class_roots:
-        return None
-    roots = set(value.roots)
-    for _, item in value.items:
-        nested = _scope_value_roots(item)
-        if nested is None:
-            return None
-        roots.update(nested)
-    return roots
-
-
-def _scope_bind(arguments, keywords, names, required):
-    if len(arguments) > len(names) or set(keywords) - set(names):
-        return None
-    bound = dict(zip(names, arguments))
-    if set(bound) & set(keywords):
-        return None
-    bound.update(keywords)
-    return bound if set(required) <= set(bound) else None
-
-
-def _scope_closed(bound, tracked_roles):
-    for role, value in bound.items():
-        roots = _scope_value_roots(value)
-        if roots is None or (roots and role not in tracked_roles):
-            return False
-    return True
-
-
-def _scope_exact_text(value):
-    scalar = value._exact_scalar
-    if _scope_value_roots(value) == set() and len(scalar) == 1:
-        return scalar[0] if type(scalar[0]) is str else None
-    return None
-
-
 def credential_scope_api_contract(
     canonical, receiver, arguments, keywords, *, provider_stable
 ):
@@ -5308,7 +5287,11 @@ class _SourceTestScope:
         if selected is None or not isinstance(selected[1], ast.ClassDef):
             return None
         class_path, owner = selected
-        if owner.bases or owner.keywords or owner.decorator_list:
+        if (
+            not self.source_object_bases_closed(class_path, owner)
+            or owner.keywords
+            or owner.decorator_list
+        ):
             return None
         hooks = {
             "__new__",
@@ -5346,7 +5329,10 @@ class _SourceTestScope:
         flow.run(class_path, constructor[1], initial, nested=True)
         return obj
 
-    def class_source_closed(self, path, owner):
+    def source_object_bases_closed(self, path, owner):
+        return not owner.bases
+
+    def class_source_closed(self, path, owner, uninvoked_hooks=()):
         """Check captured class stability and reject unsupported definition effects."""
         if not self.audit._app_signing_captured_provider_stable(
             self.index, [(path, owner)]
@@ -5361,7 +5347,10 @@ class _SourceTestScope:
                 continue
             if not isinstance(node, ast.FunctionDef):
                 return False
-            if node.name.startswith("__") and node.name != "__init__":
+            if node.name.startswith("__") and node.name not in (
+                "__init__",
+                *uninvoked_hooks,
+            ):
                 return False
             allowed = tuple(
                 d
@@ -5960,11 +5949,14 @@ class _SourceTestScope:
 def _source_test_scope_evidence(index, path, assignment, secret):
     """Prove a modeled source-scope role; never infer runtime isolation."""
     from . import credential_identity_audit as audit
+    from .unittest_client_role import _StoredTestClientCredential
 
     try:
         proof = _SourceTestScope(index, path, assignment, secret)
         if not proof.exercise():
-            return None
+            proof = _StoredTestClientCredential(index, path, assignment, secret)
+            if not proof.exercise():
+                return None
     except (TypeError, ValueError, KeyError, AttributeError, RecursionError):
         return None
     witnesses = [proof.witnesses[key] for key in sorted(proof.witnesses)]
@@ -5981,6 +5973,11 @@ def _source_test_scope_evidence(index, path, assignment, secret):
         "isolation_assurance": "UNASSESSED",
         "provider_runtime_version": "UNASSESSED",
         "semantic_model": SCOPE_API_CONTRACT_EPOCH,
+        **(
+            {"source_hypothesis": "SOURCE_TEST_CLIENT_CREDENTIAL_UNUSED"}
+            if isinstance(proof, _StoredTestClientCredential)
+            else {}
+        ),
         **(
             {"settings_selection": proof.settings_selection}
             if hasattr(proof, "settings_selection")

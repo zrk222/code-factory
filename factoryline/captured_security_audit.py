@@ -9,6 +9,12 @@ import re
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
 
+from .captured_cookie_roles import (
+    _COOKIE_NAME_PROVIDERS,
+    _COOKIE_NAME_ROLE,
+    _registry_cookie_name_use,
+)
+
 
 def captured_django_startup_body(node):
     """Project only guards equivalent to the existing default-binding operation."""
@@ -611,6 +617,8 @@ def _registry_locator_use(keyword, call, aliases, source, path):
 def _public_registry_use(reference, aliases, source, path):
     parents = source.parents[path]
     parent = parents.get(id(reference))
+    if _registry_cookie_name_use(reference, parent, aliases, source, path):
+        return _COOKIE_NAME_ROLE
     match parent:
         case ast.Call(args=[operand, *defaults], keywords=[]) if (
             operand is reference
@@ -773,6 +781,7 @@ def _registry_label_kind(value, aliases):
 
 def captured_public_registry_label(node, target, aliases):
     """Recognize closed registry labels used only for lookup and public messages."""
+    node._security_cookie_role_facts = {}
     value = getattr(node.value, "value", None)
     registry_label = _registry_label_kind(value, aliases)
     if registry_label is None and {"sys", "sys.exit"}.isdisjoint(
@@ -783,35 +792,57 @@ def captured_public_registry_label(node, target, aliases):
     if source is None or source[2] is not target:
         return False
     index, owner, origin, _, references = source
-    roles = [_public_registry_use(ref, aliases, index, owner) for ref in references]
     foreign = _registry_external_references(index, owner, origin)
     if foreign is None:
         return False
-    roles.extend(
+    uses = [(ref, owner, aliases) for ref in references] + list(foreign)
+    roles = [
         _public_registry_use(ref, occurrence, index, path)
-        for ref, path, occurrence in foreign
-    )
+        for ref, path, occurrence in uses
+    ]
     readonly = set(references) | {ref for ref, _, _ in foreign}
     binding = index, owner, origin, readonly
     if set(roles) == {"exit_message"}:
-        from .pytest_collection_audit import _captured_pytest_inputs
-
-        module = index.snapshots[owner]
-        stage = getattr(
-            _captured_pytest_inputs(module)[1], "provisional_exclusions", None
-        )
-        if type(stage) is set and not _captured_text_may_be_secret(value):
-            if _captured_module_text_unchanged(*binding, providers=("sys.exit",)):
-                stage.add(
-                    (
-                        "SECURITY_HARDCODED_SECRET",
-                        index.relative(owner),
-                        *_native_span(node),
-                        "CRITICAL",
-                    )
-                )
+        if not _captured_text_may_be_secret(value) and _captured_module_text_unchanged(
+            *binding, providers=("sys.exit",)
+        ):
+            _stage_public_registry_exclusion(index, owner, node)
         return False
-    return _registry_roles_closed(binding, value, registry_label, roles)
+    proven = _registry_roles_closed(binding, value, registry_label, roles)
+    if proven and _COOKIE_NAME_ROLE in roles:
+        _stage_public_registry_exclusion(
+            index, owner, node, cookie_uses=zip(uses, roles)
+        )
+        return False
+    return proven
+
+
+def _stage_public_registry_exclusion(index, owner, node, *, cookie_uses=None):
+    from .captured_cookie_roles import cookie_name_trace
+    from .pytest_collection_audit import _captured_pytest_inputs
+
+    stage = getattr(
+        _captured_pytest_inputs(index.snapshots[owner])[1],
+        "provisional_exclusions",
+        None,
+    )
+    if type(stage) is set:
+        point = (
+            "SECURITY_HARDCODED_SECRET",
+            index.relative(owner),
+            *_native_span(node),
+            "CRITICAL",
+        )
+        if cookie_uses is not None:
+            trace = cookie_name_trace(index, cookie_uses)
+            if trace is None:
+                return
+            digest = sha256(
+                json.dumps(trace, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            node._security_cookie_role_facts = {"cookie_name_use_trace": trace}
+            point = (*point, digest)
+        stage.add(point)
 
 
 def _exit_chain_closed(source, path, site, active=()):
@@ -856,13 +887,25 @@ def _registry_roles_closed(binding, value, registry_label, roles):
     index, _, origin, readonly = binding
     if "stderr" in roles:
         readonly.update(_registry_stderr_operands(index))
-    if roles and all(role in _CREDENTIAL_LOCATOR_PROVIDERS for role in roles):
+    cookie_name = _COOKIE_NAME_ROLE in roles
+    if any(role in _CREDENTIAL_LOCATOR_PROVIDERS for role in roles) and all(
+        role in _CREDENTIAL_LOCATOR_PROVIDERS or role == _COOKIE_NAME_ROLE
+        for role in roles
+    ):
+        providers = ("fastapi.security", "sys.modules")
+        if cookie_name:
+            if not _registry_binding_namespace_closed(
+                index, origin.id, reject_reflection=True
+            ) or any(
+                {"starlette", "starlette.py"}.intersection(path.casefold().split("/"))
+                for path in index.module_paths() or ()
+            ):
+                return False
+            providers = (*providers, *sorted(_COOKIE_NAME_PROVIDERS))
         return _registry_locator_namespace_closed(
             index, origin.id, value
-        ) and _captured_module_text_unchanged(
-            *binding, ("fastapi.security", "sys.modules")
-        )
-    if not (registry_label and True in roles and all(roles)):
+        ) and _captured_module_text_unchanged(*binding, providers)
+    if cookie_name or not (registry_label and True in roles and all(roles)):
         return False
     lookup_only = all(role is True for role in roles)
     public = {"help", "stderr", "diagnostic"}.intersection(roles)
@@ -3183,8 +3226,206 @@ def _captured_closed_text_callers(
                 or not resolved.negative_binding_closed
             ):
                 return {}
-            callers[id(site)] = resolved.arguments
+            callers[id(site)] = {
+                formal: _captured_literal_argument_origin(actual, site, parents, tree)
+                for formal, actual in resolved.arguments.items()
+            }
     return callers
+
+
+def _captured_literal_argument_origin(argument, call, parents, module):
+    """Resolve a literal through a unique preceding assignment in this lexical scope."""
+    value = _captured_argument_definition(argument, call, parents, module)
+    return value if _CapturedTextDefinitions.literal(value) else argument
+
+
+def _captured_argument_definition(argument, call, parents, module):
+    """Find the assignment that reaches this argument on the captured branch."""
+    from .credential_role_constructor_provider import (
+        _binding_precedes_sibling,
+        _scope_scope_bindings,
+        binding_occurrences,
+    )
+
+    if not isinstance(argument, ast.Name):
+        return None
+    scope = _scope_scope_bindings(call, parents, module)
+    if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        from .review_audits import _scope_parameters
+
+        if argument.id in _scope_parameters(scope) or any(
+            isinstance(node, (ast.Global, ast.Nonlocal)) and argument.id in node.names
+            for node in ast.walk(scope)
+        ):
+            return None
+    writes = binding_occurrences(scope.body, argument.id)
+    current = call
+    while (owner := parents.get(id(current))) is not None:
+        if isinstance(
+            owner,
+            (
+                ast.ClassDef,
+                ast.comprehension,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+            ),
+        ):
+            return None
+        if isinstance(owner, ast.Try) and current in owner.body:
+            handler_nodes = {
+                node for handler in owner.handlers for node in ast.walk(handler)
+            }
+            writes = [node for node in writes if node not in handler_nodes]
+        if len(writes) == 1:
+            assignment = parents.get(id(writes[0]))
+            if (
+                isinstance(assignment, ast.Assign)
+                and assignment.targets == writes
+                and _binding_precedes_sibling(assignment, current, owner)
+            ):
+                return assignment.value
+        if owner is scope:
+            break
+        current = owner
+    return None
+
+
+def captured_log_field_text_closed(expression):
+    """Prove that the selected record slot can emit only closed scalar text."""
+    from .semantic_credential_sensor import _security_helper_source_context
+
+    selected = _captured_record_read(expression)
+    if selected is None:
+        return False
+    receiver, key = selected
+    module, index, path = _security_helper_source_context(expression, None)
+    if path is None or not index.validate(path):
+        return False
+    parents = index.parents[path]
+    value = _captured_argument_definition(receiver, expression, parents, module)
+    if not isinstance(value, (ast.Call, ast.Dict)):
+        return False
+    scope = getattr(expression, "_security_lexical_scope", None)
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    if any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id == receiver.id
+        and value.lineno <= node.lineno <= expression.end_lineno
+        and _captured_record_read(parents.get(id(node))) is None
+        and _captured_record_read(parents.get(id(parents.get(id(node))))) is None
+        for node in ast.walk(scope)
+    ):
+        return False
+    return _CapturedRecordText(index).field(value, path, key, {})
+
+
+def _captured_record_read(node):
+    match node:
+        case ast.Subscript(
+            value=ast.Name() as receiver,
+            slice=ast.Constant(value=str() as key),
+            ctx=ast.Load(),
+        ):
+            return receiver, key
+        case ast.Call(
+            func=ast.Attribute(value=ast.Name() as receiver, attr="get"),
+            args=[ast.Constant(value=str() as key), *defaults],
+            keywords=[],
+        ) if len(defaults) <= 1 and all(
+            map(_CapturedTextDefinitions.literal, defaults)
+        ):
+            return receiver, key
+        case _:
+            return None
+
+
+class _CapturedRecordText:
+    """Follow one record field through source-resolved returns and scalar definitions."""
+
+    def __init__(self, index):
+        self.index = index
+        self.remaining = 64
+
+    def field(self, expression, path, key, formals):
+        from .credential_role_identity_effects import resolve_source_identity_call
+        from .review_integrity import _lexical_nodes
+
+        self.remaining -= 1
+        if self.remaining < 0:
+            return False
+        if isinstance(expression, ast.Dict):
+            keys = [
+                item.value
+                for item in expression.keys
+                if isinstance(item, ast.Constant) and type(item.value) is str
+            ]
+            return (
+                len(keys) == len(set(keys)) == len(expression.keys)
+                and key in keys
+                and self.scalar(expression.values[keys.index(key)], path, formals)
+            )
+        if not isinstance(expression, ast.Call):
+            return False
+        resolved = resolve_source_identity_call(expression, path, self.index)
+        if (
+            resolved is None
+            or not resolved.negative_binding_closed
+            or not isinstance(resolved.function, ast.FunctionDef)
+            or resolved.function.decorator_list
+        ):
+            return False
+        nodes = tuple(_lexical_nodes(resolved.function))
+        if any(
+            isinstance(node, (ast.Yield, ast.YieldFrom, ast.Global, ast.Nonlocal))
+            for node in nodes
+        ):
+            return False
+        returns = [node.value for node in nodes if isinstance(node, ast.Return)]
+        actuals = {
+            formal: (actual, path, formals)
+            for formal, actual in resolved.arguments.items()
+        }
+        return bool(returns) and all(
+            self.field(value, resolved.path, key, actuals) for value in returns
+        )
+
+    def scalar(self, expression, path, formals):
+        from .credential_role_constructor_provider import (
+            _scope_scope_bindings,
+            binding_occurrences,
+        )
+
+        self.remaining -= 1
+        if self.remaining < 0:
+            return False
+        if _CapturedTextDefinitions.literal(expression):
+            return True
+        if isinstance(expression, ast.IfExp):
+            return self.scalar(expression.body, path, formals) and self.scalar(
+                expression.orelse, path, formals
+            )
+        if not isinstance(expression, ast.Name):
+            return False
+        module, parents = self.index.snapshots[path], self.index.parents[path]
+        scope = _scope_scope_bindings(expression, parents, module)
+        if not isinstance(scope, ast.FunctionDef):
+            return False
+        writes = binding_occurrences(scope.body, expression.id)
+        formal = formals.get(expression.id)
+        if formal is not None and not self.scalar(*formal):
+            return False
+        return (formal is not None or bool(writes)) and all(
+            isinstance(statement := parents.get(id(node)), ast.Assign)
+            and statement.targets == [node]
+            and self.scalar(statement.value, path, formals)
+            for node in writes
+        )
 
 
 class _CapturedTextDefinitions:
@@ -5995,3 +6236,38 @@ def _revalidate_scan_role_support(audit, core, captured, primitive, native_rows)
             partition_state="VALIDATED" if coverage_complete else "INCOMPLETE",
             _verifier_native_rows=native_rows,
         )
+
+
+def argument_role_proof_helpers():
+    """Bind the exact argument and HTTP name proofs to scanner cache generations."""
+    from . import audit_log_flow, captured_cookie_roles
+    from .intent_quality import bound_sink_argument
+    from .provenance import credential_role_witness
+
+    return (
+        bound_sink_argument,
+        _captured_argument_definition,
+        _captured_literal_argument_origin,
+        _captured_closed_text_callers,
+        captured_log_field_text_closed,
+        _captured_record_read,
+        _CapturedRecordText.__init__,
+        _CapturedRecordText.field,
+        _CapturedRecordText.scalar,
+        audit_log_flow._LogReader._flow,
+        audit_log_flow._LogReader._unsafe,
+        audit_log_flow.bound_sink_argument,
+        audit_log_flow.captured_log_field_text_closed,
+        captured_public_registry_label,
+        credential_role_witness,
+        _stage_public_registry_exclusion,
+        _registry_cookie_name_use,
+        captured_cookie_roles.cookie_name_trace,
+        _registry_roles_closed,
+        _COOKIE_NAME_PROVIDERS,
+        *(
+            value
+            for name, value in vars(captured_cookie_roles).items()
+            if name.startswith("_registry_") and callable(value)
+        ),
+    )

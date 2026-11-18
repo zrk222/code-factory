@@ -3411,6 +3411,57 @@ def test_imported_constant_helper375_shell_context_reseals_without_downgrade(tmp
     assert resealed["findings"] == report["findings"]
 
 
+@pytest.mark.parametrize(
+    "result,intervening_line,expected",
+    [
+        ("{'status': 'ready', 'data': value}", "", False),
+        ("{'status': value, 'data': 'ready'}", "", True),
+        ("{'status': 'ready', 'data': value}", "    process(record)\n", True),
+    ],
+)
+def test_logging_projects_the_selected_return_field(
+    tmp_path, result, intervening_line, expected
+):
+    report = _pickle_role_report(
+        tmp_path,
+        "import logging\n"
+        "def build(value):\n"
+        f"    return {result}\n"
+        "def report():\n"
+        "    record = build(input())\n"
+        + intervening_line
+        + "    logging.info(f'status={record[\"status\"]}')\n",
+        policy="source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert any(row["code"] == "SECURITY_LOG_INJECTION" for row in raw) is expected
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "entry,expected",
+    [
+        ("    query = 'SELECT 1'\n    read(query, ())\n", False),
+        ("    query = input()\n    read(query, ())\n", True),
+        ("    query = 'SELECT 1'\n    [read(query, ()) for query in source]\n", True),
+    ],
+)
+def test_sql_binds_the_statement_at_the_exact_caller(tmp_path, entry, expected):
+    report = _pickle_role_report(
+        tmp_path,
+        "import sqlite3\n"
+        "def read(query, params):\n"
+        "    conn = sqlite3.connect('sample.db')\n"
+        "    cursor = conn.cursor()\n"
+        "    cursor.execute(query, params)\n"
+        "if __name__ == '__main__':\n" + entry,
+        policy="source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert any(row["code"] == "SECURITY_SQL_INJECTION" for row in raw) is expected
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
 def test_shared_import375_provider_closure_does_not_rescan_whole_context(
     tmp_path, monkeypatch
 ):

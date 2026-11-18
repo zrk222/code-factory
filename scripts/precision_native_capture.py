@@ -7,6 +7,12 @@ import sys
 from pathlib import Path
 
 
+class NativeObservationError(ValueError):
+    def __init__(self, checks):
+        self.checks = checks
+        super().__init__("Native observation failed: " + ", ".join(checks))
+
+
 def project_paired_observation(report, inventory):
     """Keep complete native diagnostics even when policy admission is unavailable."""
     sources = {row["path"]: row["sha256"] for row in inventory}
@@ -17,26 +23,34 @@ def project_paired_observation(report, inventory):
     coverage = report["audit_coverage"]
     tiers = report["finding_tier_report"]
     decision = report["defect_policy_decision"]["state"]
-    if not all(
-        (
-            len(sources) == len(inventory),
-            len(observed) == len(report["sources"]),
-            observed == python,
-            coverage["complete"] is True,
-            coverage["inventory_complete"] is True,
-            tiers["validation"]["coverage_state"] is True,
-            tiers["validation"]["partition_state"] == "VALIDATED",
-            report["finding_conservation"]["state"] == "PASS",
-            report["selected_defect_policy"] == "source-role-v3",
-            decision
-            in {"BLOCKED", "DEFECTS_PRESENT", "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"},
-            all(
+    checks = {
+        "source_identity": (
+            len(sources) == len(inventory)
+            and len(observed) == len(report["sources"])
+            and observed == python
+            and all(
                 sources.get(row["path"]) == row["sha256"]
                 for row in report["oracle_context"]["configuration_sources"]
-            ),
-        )
-    ):
-        raise ValueError("Native observation is incomplete or source binding changed.")
+            )
+        ),
+        "coverage": (
+            coverage["complete"] is True
+            and coverage["inventory_complete"] is True
+            and tiers["validation"]["coverage_state"] is True
+        ),
+        "finding_conservation": (
+            tiers["validation"]["partition_state"] == "VALIDATED"
+            and report["finding_conservation"]["state"] == "PASS"
+        ),
+        "defect_policy": (
+            report["selected_defect_policy"] == "source-role-v3"
+            and decision
+            in {"BLOCKED", "DEFECTS_PRESENT", "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"}
+        ),
+    }
+    failures = [name for name, passed in checks.items() if not passed]
+    if failures:
+        raise NativeObservationError(failures)
     fields = ("code", "path", "line", "column", "end_line", "end_column")
     actions, findings = {}, {}
     security_actions = (
@@ -51,7 +65,7 @@ def project_paired_observation(report, inventory):
             identity in actions
             or action["candidate_sha256"] != report["candidate_sha256"]
         ):
-            raise ValueError("Native action binding changed.")
+            raise NativeObservationError(["finding_conservation"])
         actions[identity] = action
     security_entries = (
         row
@@ -83,18 +97,17 @@ def project_paired_observation(report, inventory):
             if action is not None
             else ()
         )
-        if not all(
-            (
-                identity not in findings,
-                source["path"] == raw["path"],
-                sources.get(raw["path"]) == source["source_sha256"],
-                (admitted is True) == (action is not None),
-                all(action_matches),
-            )
+        if (
+            source["path"] != raw["path"]
+            or sources.get(raw["path"]) != source["source_sha256"]
         ):
-            raise ValueError(
-                "Native finding identity, source, or action binding changed."
-            )
+            raise NativeObservationError(["source_identity"])
+        if (
+            identity in findings
+            or (admitted is True) != (action is not None)
+            or not all(action_matches)
+        ):
+            raise NativeObservationError(["finding_conservation"])
         findings[identity] = dict(
             identity=list(identity),
             source_sha256=source["source_sha256"],
@@ -103,7 +116,7 @@ def project_paired_observation(report, inventory):
             admitted=admitted,
         )
     if actions:
-        raise ValueError("Native observation contains unmapped actions.")
+        raise NativeObservationError(["finding_conservation"])
     return dict(
         schema="factory.precision.native-observation.v1",
         admission_available=decision != "BLOCKED",
@@ -163,10 +176,14 @@ def main(argv=None):
             json.dump(report, stream, indent=2, sort_keys=True)
             stream.write("\n")
     except (KeyError, TypeError, OSError, ValueError, ReviewAuditError) as error:
+        diagnostic = {
+            "state": "INVALID",
+            "message": _security_receipt_error_message(error),
+        }
+        if isinstance(error, NativeObservationError):
+            diagnostic["failed_checks"] = error.checks
         print(
-            json.dumps(
-                {"state": "INVALID", "message": _security_receipt_error_message(error)}
-            ),
+            json.dumps(diagnostic),
             file=sys.stderr,
         )
         return 2

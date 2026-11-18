@@ -5110,7 +5110,9 @@ def _sql_sink(
     )
 
 
-def _security_builtin_identity_closed(module, aliases, names):
+def _security_builtin_identity_closed(
+    module, aliases, names, *, readonly_reflection=None
+):
     from .review_integrity import _resolve
 
     protected = (
@@ -5164,7 +5166,9 @@ def _security_builtin_identity_closed(module, aliases, names):
                     and isinstance(parent, ast.Call)
                     and parent.func is node
                 )
-                if not direct_attribute_write:
+                if not direct_attribute_write and not (
+                    readonly_reflection and readonly_reflection(canonical, node, parent)
+                ):
                     return False
     return not _provider_identity_uncertain(module, aliases, roots=("builtins",))
 

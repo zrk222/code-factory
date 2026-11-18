@@ -189,6 +189,131 @@ def test_captured_public_registry_label_requires_closed_uses(
     assert report["finding_conservation"]["state"] == "PASS"
 
 
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "closed",
+        "legacy_policy",
+        "credential_value",
+        "request_escape",
+        "response_escape",
+        "provider_rebound",
+        "provider_alias_rebound",
+        "callback_called_from_source",
+        "definition_time_use",
+        "class_scope_use",
+        "reflective_reference",
+        "starlette_shadow",
+    ],
+)
+def test_cookie_names_require_captured_http_receivers(tmp_path, variant):
+    from factoryline.review_audits import security_scan
+
+    before_cookie_read = (
+        "    inspect_request(request)\n" if variant == "request_escape" else ""
+    )
+    if variant == "class_scope_use":
+        before_cookie_read = (
+            "    class Definition:\n"
+            "        observed = request.cookies.get(API_KEY_NAME)\n"
+        )
+    before_cookie_write = (
+        "    inspect_response(response)\n" if variant == "response_escape" else ""
+    )
+    credential = "API_KEY_NAME" if variant == "credential_value" else "token"
+    provider_rebind = (
+        "RedirectResponse = external_response\n"
+        if variant == "provider_rebound"
+        else ""
+    )
+    if variant == "provider_alias_rebound":
+        provider_rebind = (
+            "from fastapi.applications import FastAPI as Implementation\n"
+            "Implementation.middleware = external_registration\n"
+        )
+    annotation = (
+        " -> request.cookies.get(API_KEY_NAME)"
+        if variant == "definition_time_use"
+        else ""
+    )
+    external_request = (
+        "request = external_request\n" if variant == "definition_time_use" else ""
+    )
+    callback_call = (
+        "\nasync def custom_caller(value, consumer):\n"
+        "    return await check(value, consumer)\n"
+        if variant == "callback_called_from_source"
+        else ""
+    )
+    reflection = (
+        "\nread_key(globals()['API_KEY_NAME'])\n"
+        if variant == "reflective_reference"
+        else ""
+    )
+    (tmp_path / "app.py").write_text(
+        "from fastapi import FastAPI, Request\n"
+        "from fastapi.responses import RedirectResponse\n"
+        "from fastapi.security import APIKeyHeader\n"
+        + provider_rebind
+        + external_request
+        + "API_KEY_NAME = 'X-App-Token'\n"
+        "app = FastAPI()\n"
+        "header = APIKeyHeader(name=API_KEY_NAME)\n"
+        "@app.middleware('http')\n"
+        f"async def check(request: Request, call_next){annotation}:\n"
+        + before_cookie_read
+        + "    observed = request.cookies.get(API_KEY_NAME)\n"
+        "    if observed:\n"
+        "        return await call_next(request)\n"
+        "    return RedirectResponse('/login')\n"
+        "@app.post('/session')\n"
+        "async def session(token):\n"
+        "    response = RedirectResponse('/')\n"
+        + before_cookie_write
+        + f"    response.set_cookie(key=API_KEY_NAME, value={credential})\n"
+        "    return response\n"
+        "@app.post('/logout')\n"
+        "async def logout():\n"
+        "    response = RedirectResponse('/')\n"
+        "    response.delete_cookie(API_KEY_NAME)\n"
+        "    return response\n" + callback_call + reflection,
+        encoding="utf8",
+    )
+    if variant == "starlette_shadow":
+        (tmp_path / "starlette.py").write_text("local = True\n", encoding="utf8")
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v2"
+        if variant == "legacy_policy"
+        else "source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    findings = [row for row in raw if row["code"] == "SECURITY_HARDCODED_SECRET"]
+    assert [row["facts"]["name"] for row in findings] == (
+        [] if variant == "closed" else ["API_KEY_NAME"]
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["finding_conservation"]["native_rows"] == "VERIFIED"
+    refuted = report.get("refuted_security_observations", [])
+    if variant == "closed":
+        (row,) = refuted
+        trace = row["facts"]["cookie_name_use_trace"]
+        assert [(step["operation"], step["operand"]) for step in trace] == [
+            ("fastapi.security.APIKeyHeader", "name"),
+            ("get", 0),
+            ("set_cookie", "key"),
+            ("delete_cookie", 0),
+        ]
+        assert all(
+            step["source_sha256"] == report["sources"][0]["sha256"] for step in trace
+        )
+    else:
+        assert not refuted
+
+
 @pytest.mark.parametrize("directory", ["service", "../outside"])
 def test_capture_launch_configuration_binds_only_contained_build_files(
     tmp_path, directory
