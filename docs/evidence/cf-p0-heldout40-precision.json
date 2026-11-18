@@ -1,0 +1,381 @@
+{
+  "admitted": {
+    "FP": 0,
+    "TP": 5,
+    "UNCLEAR": 0,
+    "conservative_precision": 1.0,
+    "decided": 5,
+    "decided_precision": 1.0,
+    "selected": 5,
+    "uncertainty_bounds": [
+      1.0,
+      1.0
+    ],
+    "wilson_95_decided_descriptive": [
+      0.5655175352168251,
+      1
+    ]
+  },
+  "blind_ai_disagreements": 4,
+  "distinct_repositories": 31,
+  "measurement_receipt_sha256": "4c352b5bdf09f06d202397bbb5c9d4606fa9f64db66c11606b865b5051415c6d",
+  "method": "Counts pool the four sequential ten-alert tranches. Decided precision divides true positives by all decided labels. Conservative precision divides true positives by every selected alert. Admitted precision uses the subset admitted by scanner policy. Development replay results are excluded.",
+  "per_build": [
+    {
+      "admitted": {
+        "FP": 0,
+        "TP": 3,
+        "UNCLEAR": 0,
+        "conservative_precision": 1.0,
+        "decided": 3,
+        "decided_precision": 1.0,
+        "selected": 3,
+        "uncertainty_bounds": [
+          1.0,
+          1.0
+        ],
+        "wilson_95_decided_descriptive": [
+          0.4385029682449546,
+          1
+        ]
+      },
+      "checkpoint_receipts": [
+        {
+          "alerts": 10,
+          "sha256": "f45731722534916ce6bb9ab6e95379b029340893f2e92e2f87731f91deae1fe6"
+        },
+        {
+          "alerts": 20,
+          "sha256": "ca7f832e120bfc51dfad9691dff1412f97f980cacb5086b2c2ede5ffc4aaa757"
+        }
+      ],
+      "checkpoint_sha256": "ca7f832e120bfc51dfad9691dff1412f97f980cacb5086b2c2ede5ffc4aaa757",
+      "commit": "a695009794e5ad1b90f9ca8bb4e3b0dfc6850672",
+      "coverage": {
+        "attempts": 50,
+        "python_files_scanned": 901,
+        "states": {
+          "COMPLETE": 37,
+          "INELIGIBLE_OR_INVALID": 11,
+          "TECHNICAL_FAILURE": 2
+        },
+        "total_raw_security_alerts_in_complete_roots": 29,
+        "zero_alert_complete_roots": 22
+      },
+      "raw": {
+        "FP": 5,
+        "TP": 11,
+        "UNCLEAR": 4,
+        "conservative_precision": 0.55,
+        "decided": 16,
+        "decided_precision": 0.6875,
+        "selected": 20,
+        "uncertainty_bounds": [
+          0.55,
+          0.75
+        ],
+        "wilson_95_decided_descriptive": [
+          0.44404355834740666,
+          0.8583535614521796
+        ]
+      },
+      "scanner_python_sha256": "6f31f2d8e655bcf6632bd6e520017fdc7a2f084ef7cb7ac49b8327c5d1bd1b36",
+      "sequential_alerts": "1–20",
+      "strictly_above_55_percent": true
+    },
+    {
+      "admitted": {
+        "FP": 0,
+        "TP": 1,
+        "UNCLEAR": 0,
+        "conservative_precision": 1.0,
+        "decided": 1,
+        "decided_precision": 1.0,
+        "selected": 1,
+        "uncertainty_bounds": [
+          1.0,
+          1.0
+        ],
+        "wilson_95_decided_descriptive": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "checkpoint_receipts": [
+        {
+          "alerts": 10,
+          "sha256": "9bbf7dd29f8be0e0ebb75ba713c880843e06e5bc13eda652148dd773965cdd1d"
+        }
+      ],
+      "checkpoint_sha256": "9bbf7dd29f8be0e0ebb75ba713c880843e06e5bc13eda652148dd773965cdd1d",
+      "commit": "453c1b35e138a84102c487091d2ce8d07f66b4de",
+      "coverage": {
+        "attempts": 53,
+        "python_files_scanned": 683,
+        "states": {
+          "COMPLETE": 35,
+          "INELIGIBLE_OR_INVALID": 18
+        },
+        "total_raw_security_alerts_in_complete_roots": 17,
+        "zero_alert_complete_roots": 26
+      },
+      "raw": {
+        "FP": 4,
+        "TP": 4,
+        "UNCLEAR": 2,
+        "conservative_precision": 0.4,
+        "decided": 8,
+        "decided_precision": 0.5,
+        "selected": 10,
+        "uncertainty_bounds": [
+          0.4,
+          0.6
+        ],
+        "wilson_95_decided_descriptive": [
+          0.21521606221387757,
+          0.7847839377861224
+        ]
+      },
+      "scanner_python_sha256": "59d5b0889b4aa91c144ada7b0a2e56f911620d11bfcfd74b96205858b31a48a4",
+      "sequential_alerts": "21–30",
+      "strictly_above_55_percent": false
+    },
+    {
+      "admitted": {
+        "FP": 0,
+        "TP": 1,
+        "UNCLEAR": 0,
+        "conservative_precision": 1.0,
+        "decided": 1,
+        "decided_precision": 1.0,
+        "selected": 1,
+        "uncertainty_bounds": [
+          1.0,
+          1.0
+        ],
+        "wilson_95_decided_descriptive": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "checkpoint_receipts": [
+        {
+          "alerts": 10,
+          "sha256": "1d42c16fa1f7f34ccc6403c373f5adad565ee215a8919c5b5f0c3b5d437d8e03"
+        }
+      ],
+      "checkpoint_sha256": "1d42c16fa1f7f34ccc6403c373f5adad565ee215a8919c5b5f0c3b5d437d8e03",
+      "commit": "1a3f6bf4ffefd6f462c58e0cf28957195f78c211",
+      "coverage": {
+        "attempts": 30,
+        "python_files_scanned": 385,
+        "states": {
+          "COMPLETE": 18,
+          "INELIGIBLE_OR_INVALID": 10,
+          "TECHNICAL_FAILURE": 2
+        },
+        "total_raw_security_alerts_in_complete_roots": 11,
+        "zero_alert_complete_roots": 11
+      },
+      "raw": {
+        "FP": 4,
+        "TP": 3,
+        "UNCLEAR": 3,
+        "conservative_precision": 0.3,
+        "decided": 7,
+        "decided_precision": 0.42857142857142855,
+        "selected": 10,
+        "uncertainty_bounds": [
+          0.3,
+          0.6
+        ],
+        "wilson_95_decided_descriptive": [
+          0.15821985525146975,
+          0.7495416354723428
+        ]
+      },
+      "scanner_python_sha256": "9d8bc1196a45732941dd31a2f9dd7af71862185075cf258425d5048df3d22c7c",
+      "sequential_alerts": "31–40",
+      "strictly_above_55_percent": false
+    }
+  ],
+  "raw": {
+    "FP": 13,
+    "TP": 18,
+    "UNCLEAR": 9,
+    "conservative_precision": 0.45,
+    "decided": 31,
+    "decided_precision": 0.5806451612903226,
+    "selected": 40,
+    "uncertainty_bounds": [
+      0.45,
+      0.675
+    ],
+    "wilson_95_decided_descriptive": [
+      0.4076626249536972,
+      0.7358445693268778
+    ]
+  },
+  "schema": "factory.precision.blind-heldout-combined.v1",
+  "scope": "The pooled score describes three frozen scanner builds and disjoint repository samples. The per-build results report each scanner separately. Each alert receives two independent AI reviews using captured static source evidence.",
+  "state": "FINISHED_40",
+  "strictly_above_55_percent": true,
+  "tranches": [
+    {
+      "admitted": {
+        "FP": 0,
+        "TP": 2,
+        "UNCLEAR": 0,
+        "conservative_precision": 1.0,
+        "decided": 2,
+        "decided_precision": 1.0,
+        "selected": 2,
+        "uncertainty_bounds": [
+          1.0,
+          1.0
+        ],
+        "wilson_95_decided_descriptive": [
+          0.34238022750665303,
+          1
+        ]
+      },
+      "commit": "a695009794e5ad1b90f9ca8bb4e3b0dfc6850672",
+      "end": 10,
+      "raw": {
+        "FP": 0,
+        "TP": 6,
+        "UNCLEAR": 4,
+        "conservative_precision": 0.6,
+        "decided": 6,
+        "decided_precision": 1.0,
+        "selected": 10,
+        "uncertainty_bounds": [
+          0.6,
+          1.0
+        ],
+        "wilson_95_decided_descriptive": [
+          0.6096657120978346,
+          1
+        ]
+      },
+      "start": 1
+    },
+    {
+      "admitted": {
+        "FP": 0,
+        "TP": 1,
+        "UNCLEAR": 0,
+        "conservative_precision": 1.0,
+        "decided": 1,
+        "decided_precision": 1.0,
+        "selected": 1,
+        "uncertainty_bounds": [
+          1.0,
+          1.0
+        ],
+        "wilson_95_decided_descriptive": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "commit": "a695009794e5ad1b90f9ca8bb4e3b0dfc6850672",
+      "end": 20,
+      "raw": {
+        "FP": 5,
+        "TP": 5,
+        "UNCLEAR": 0,
+        "conservative_precision": 0.5,
+        "decided": 10,
+        "decided_precision": 0.5,
+        "selected": 10,
+        "uncertainty_bounds": [
+          0.5,
+          0.5
+        ],
+        "wilson_95_decided_descriptive": [
+          0.236593090512564,
+          0.7634069094874361
+        ]
+      },
+      "start": 11
+    },
+    {
+      "admitted": {
+        "FP": 0,
+        "TP": 1,
+        "UNCLEAR": 0,
+        "conservative_precision": 1.0,
+        "decided": 1,
+        "decided_precision": 1.0,
+        "selected": 1,
+        "uncertainty_bounds": [
+          1.0,
+          1.0
+        ],
+        "wilson_95_decided_descriptive": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "commit": "453c1b35e138a84102c487091d2ce8d07f66b4de",
+      "end": 30,
+      "raw": {
+        "FP": 4,
+        "TP": 4,
+        "UNCLEAR": 2,
+        "conservative_precision": 0.4,
+        "decided": 8,
+        "decided_precision": 0.5,
+        "selected": 10,
+        "uncertainty_bounds": [
+          0.4,
+          0.6
+        ],
+        "wilson_95_decided_descriptive": [
+          0.21521606221387757,
+          0.7847839377861224
+        ]
+      },
+      "start": 21
+    },
+    {
+      "admitted": {
+        "FP": 0,
+        "TP": 1,
+        "UNCLEAR": 0,
+        "conservative_precision": 1.0,
+        "decided": 1,
+        "decided_precision": 1.0,
+        "selected": 1,
+        "uncertainty_bounds": [
+          1.0,
+          1.0
+        ],
+        "wilson_95_decided_descriptive": [
+          0.20654931437723745,
+          1
+        ]
+      },
+      "commit": "1a3f6bf4ffefd6f462c58e0cf28957195f78c211",
+      "end": 40,
+      "raw": {
+        "FP": 4,
+        "TP": 3,
+        "UNCLEAR": 3,
+        "conservative_precision": 0.3,
+        "decided": 7,
+        "decided_precision": 0.42857142857142855,
+        "selected": 10,
+        "uncertainty_bounds": [
+          0.3,
+          0.6
+        ],
+        "wilson_95_decided_descriptive": [
+          0.15821985525146975,
+          0.7495416354723428
+        ]
+      },
+      "start": 31
+    }
+  ]
+}
