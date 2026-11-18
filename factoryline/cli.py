@@ -23,6 +23,11 @@ from pathlib import Path
 from typing import Any
 from functools import lru_cache
 from importlib import import_module
+from .cli_foundations import (
+    cli_command as _cli_command,
+    emit_version as _emit_version,
+    project_script_inventory as _project_typescript_inventory,
+)
 
 
 def _run_cli_bounded(cli: str, args: list[str], cwd: Path, *, timeout: float, env=None):
@@ -67,18 +72,6 @@ def _lazy_import(module: str, symbol: str):
     return getattr(import_module(relative, __package__), symbol)
 
 
-def _cli_command(name: str) -> str:
-    from .cli_foundations import cli_command
-
-    return cli_command(name)
-
-
-def _emit_version(as_json: bool) -> int:
-    from .cli_foundations import emit_version
-
-    return emit_version(as_json)
-
-
 def _canary_version(module) -> tuple[dict | None, dict | None]:
     if not module.installed:
         return None, {"ok": False, "reason": "cli not installed"}
@@ -116,13 +109,6 @@ def _canary_provenance(payload: dict) -> tuple[bool | None, dict | None]:
         }
     complete = bool(payload.get("identity_complete") and payload.get("source_commit"))
     return complete, None
-
-
-def _project_typescript_inventory(root: Path) -> tuple[set[str], list[Path], bool]:
-    """Compatibility wrapper for bounded supported-script capability discovery."""
-    from .cli_foundations import project_script_inventory
-
-    return project_script_inventory(root)
 
 
 def _typescript_node_path(search_roots: list[Path] | None = None) -> str | None:
@@ -175,6 +161,8 @@ def _run_feature_canary(
     provenance_ok: bool,
     suffix: str,
     typescript_roots: list[Path] | None = None,
+    *,
+    compiler_path=None,
 ) -> dict | None:
     source, args = _FEATURE_CANARY_FIXTURES[suffix]
     target = root / "services" / f"canary.{suffix}"
@@ -192,7 +180,7 @@ def _run_feature_canary(
     )
     env = os.environ.copy()
     typescript_node_path = (
-        _typescript_node_path(typescript_roots)
+        (compiler_path() if compiler_path else _typescript_node_path(typescript_roots))
         if suffix in {"mjs", "ts", "tsx"}
         else None
     )
@@ -261,12 +249,23 @@ def _forgeline_feature_canaries(module, payload: dict, provenance_ok: bool) -> d
         suffixes.append("ts")
     if ".tsx" in ts_suffixes:
         suffixes.append("tsx")
+
+    @lru_cache(maxsize=1)
+    def compiler_path():
+        return _typescript_node_path(ts_roots)
+
     with tempfile.TemporaryDirectory(prefix="factory-doctor-") as directory:
         root = Path(directory)
         (root / "services").mkdir()
         for suffix in suffixes:
             failure = _run_feature_canary(
-                module, root, payload, provenance_ok, suffix, ts_roots
+                module,
+                root,
+                payload,
+                provenance_ok,
+                suffix,
+                ts_roots,
+                compiler_path=compiler_path,
             )
             if failure is not None:
                 return failure

@@ -271,6 +271,38 @@ def test_quick_help_is_small_actionable_and_does_not_load_registry(monkeypatch, 
             assert term not in text
 
 
+def test_text_version_does_not_load_provenance_or_scan_source(monkeypatch, capsys):
+    from factoryline import __version__, cli_bootstrap, cli_foundations
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name in {"factoryline.provenance", "provenance", "factoryline.cli"}:
+            raise AssertionError("text version must not load scanner or provenance")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    assert cli_bootstrap.main(["--version"]) == 0
+    assert capsys.readouterr().out == f"factory {__version__}\n"
+    assert cli_foundations.emit_version(False) == 0
+    assert capsys.readouterr().out == f"factory {__version__}\n"
+
+
+def test_json_version_still_recomputes_provenance(monkeypatch, capsys):
+    from factoryline import cli_bootstrap, cli_foundations
+
+    values = iter(("first", "second"))
+    monkeypatch.setattr(
+        provenance_module,
+        "provenance",
+        lambda: {"build_hash": next(values), "version": "fixture"},
+    )
+    assert cli_bootstrap.main(["--version", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["build_hash"] == "first"
+    assert cli_foundations.emit_version(True) == 0
+    assert json.loads(capsys.readouterr().out)["build_hash"] == "second"
+
+
 def test_advanced_help_and_explicit_commands_keep_original_dispatch(monkeypatch):
     calls = []
 
