@@ -1101,6 +1101,30 @@ def test_release_integrity_rejects_unsealed_vscode_candidate_identity(
     assert result["failed_check_ids"] == ["VSCODE_MARKETPLACE_CANDIDATE_SEALED"]
 
 
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("npm ci --no-audit --ignore-scripts", "npm ci --omit=dev"),
+        ("npm run audit", "echo skipped"),
+        ("working-directory: editors/vscode", "working-directory: elsewhere"),
+        (
+            "./editors/vscode/node_modules/.bin/vsce publish",
+            "npx --yes @vscode/vsce publish",
+        ),
+    ],
+)
+def test_release_integrity_rejects_unaudited_locked_publisher(tmp_path, before, after):
+    root = _workflow_copy(tmp_path)
+    workflow = root / ".github/workflows/vscode-marketplace.yml"
+    text = workflow.read_text(encoding="utf-8")
+    start = text.index("  publish:")
+    workflow.write_text(
+        text[:start] + text[start:].replace(before, after), encoding="utf-8"
+    )
+    result = release_integrity(root)
+    assert result["failed_check_ids"] == ["VSCODE_MARKETPLACE_CANDIDATE_SEALED"]
+
+
 def test_release_integrity_rejects_java17_in_any_intellij_gradle_workflow(
     tmp_path: Path,
 ) -> None:

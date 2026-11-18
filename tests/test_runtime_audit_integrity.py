@@ -8874,3 +8874,274 @@ def test_empty_provider_aliases_do_not_walk_ast(monkeypatch):
 
     monkeypatch.setattr(capture.ast, "walk", forbidden)
     assert capture._fixed_eval_module_alias_escape(tree, set()) is False
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        None,
+        "replace_bytes",
+        "replace_references",
+        "escape_references",
+        "reassign_serializer",
+        "alternate_fixture",
+    ],
+)
+def test_local_reference_roundtrip_requires_the_exact_closed_input_edge(change):
+    from textwrap import dedent
+
+    from factoryline.fixture_scope_value_audit import _reference_roundtrip_frame
+
+    source = dedent("""
+        import pickle
+
+        def test_roundtrip(tmp_path):
+            store = Store(tmp_path, "example", codecs=("tensor.v1",))
+            values = {"local": torch.tensor(1.5)}
+            refs = publish(store, values, submission_id="one")
+            for ordinal in range(4):
+                publish(store, {"count": np.array(ordinal, dtype=np.int64)}, submission_id=str(ordinal))
+            store.close()
+            for item, value in zip(pickle.loads(pickle.dumps(refs)), values.values(), strict=True):
+                assert item.data == value
+    """)
+    edits = {
+        "replace_bytes": ("pickle.dumps(refs)", "read_bytes()"),
+        "replace_references": ("pickle.dumps(refs)", "pickle.dumps(read_reference())"),
+        "escape_references": (
+            "    store.close()",
+            "    remember(refs)\n    store.close()",
+        ),
+        "reassign_serializer": ("import pickle", "import pickle\npickle = serializer"),
+        "alternate_fixture": (
+            "test_roundtrip(tmp_path)",
+            "test_roundtrip(tmp_path, item)",
+        ),
+    }
+    if change is not None:
+        source = source.replace(*edits[change])
+    tree = ast.parse(source)
+    call = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "loads"
+    )
+    assert bool(_reference_roundtrip_frame(tree, call)) is (change is None)
+
+
+def test_captured_local_serialization_proof_binds_live_fixture_helpers(monkeypatch):
+    from factoryline import fixture_scope_value_audit, pickle_model_audit
+
+    prior = pickle_model_audit.cache_helpers()
+    assert pickle_model_audit.captured_local_serialization_proof in prior
+
+    def retest(*_args):
+        return None
+
+    monkeypatch.setattr(fixture_scope_value_audit, "_reference_roundtrip_flow", retest)
+    assert retest in pickle_model_audit.cache_helpers()
+    monkeypatch.setattr(pickle_model_audit, "_reference_roundtrip_frame", retest)
+    assert pickle_model_audit.cache_helpers().count(retest) == 2
+
+
+@pytest.mark.parametrize(
+    "formals, body, extra",
+    [
+        (
+            "self, rows",
+            "result = tuple(rows)\nreturn result",
+            "result = external_rows\n",
+        ),
+        (
+            "self, root",
+            "self.backend = Backend(root)\nself.run_id = 'local'",
+            "self.publish = external_receiver\n",
+        ),
+    ],
+)
+def test_local_serialization_rejects_extra_provider_effects(formals, body, extra):
+    from textwrap import indent
+
+    from factoryline.fixture_scope_value_audit import _reference_function_shape
+
+    def function(statements):
+        return ast.parse(
+            f"def provider({formals}):\n" + indent(statements, "    ")
+        ).body[0]
+
+    assert _reference_function_shape(function(body), formals, body)
+    first, rest = body.split("\n", 1)
+    assert not _reference_function_shape(
+        function(first + "\n" + extra + rest), formals, body
+    )
+
+
+def test_local_roundtrip_rejects_rebound_reference_factory():
+    from factoryline.fixture_scope_value_audit import _reference_imported_member
+
+    source = "from dataclasses import dataclass as record\n"
+    expression = ast.Name(id="record")
+    assert _reference_imported_member(
+        ast.parse(source), expression, "dataclasses", "dataclass"
+    )
+    source += "record = alternate_factory\n"
+    assert not _reference_imported_member(
+        ast.parse(source), expression, "dataclasses", "dataclass"
+    )
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "",
+        "    validate = alternate\n",
+        "    def validate(self):\n        return other_rows\n",
+    ],
+)
+def test_local_roundtrip_requires_the_inherited_method_to_remain_selected(override):
+    from factoryline.fixture_scope_value_audit import _reference_selected_store_method
+
+    base, store = ast.parse(
+        "class Reader:\n    def validate(self):\n        return []\n"
+        "class Store(Reader):\n    def close(self):\n        pass\n" + override
+    ).body
+    chosen = _reference_selected_store_method(store, "validate", inherited_from=base)
+    assert chosen is (base.body[0] if not override else None)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "",
+        '    records[0].metadata["dtype"] = another_value\n',
+        "    remember(records)\n",
+    ],
+)
+def test_local_roundtrip_requires_read_only_trace_projection(extra):
+    from textwrap import dedent
+
+    from factoryline.fixture_scope_value_audit import _reference_trace_projection
+
+    source = dedent("""
+        if records is not None:
+            event["records"] = [
+                {
+                    "bytes": r.payload.nbytes if isinstance(r.payload, memoryview) else len(r.payload),
+                    "codec": r.codec,
+                    "tokens": r.tokens,
+                    **{k: r.metadata[k] for k in ("shape", "dtype", "kind") if k in r.metadata},
+                }
+                for r in records
+            ]
+    """).lstrip()
+    first, rest = source.split("\n", 1)
+    assert _reference_trace_projection(
+        ast.parse(first + "\n" + extra + rest).body[0]
+    ) is (not extra)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import unittest.mock as operations\noperations.patch.object(pickle, 'dumps', other)",
+        "from unittest import mock\nmock.patch.object(pickle, 'dumps', other)",
+        "from unittest.mock import patch\npatch.object(pickle, 'dumps', other)",
+    ],
+)
+def test_reference_roundtrip_rejects_opaque_peer_mutation(source):
+    from factoryline import review_audits as audit
+    from factoryline.fixture_scope_value_audit import _reference_inventory_nodes
+
+    tree = ast.parse(source)
+    aliases = audit._security_aliases(ast.walk(tree))
+    assert not _reference_inventory_nodes(
+        None, None, tree, {"pickle", "dumps"}, aliases, "test_roundtrip", audit
+    )
+
+
+@pytest.mark.parametrize("default, eligible", [("1", True), ("other_default()", False)])
+def test_reference_dataclass_method_defaults_are_inert(default, eligible):
+    from factoryline import review_audits as audit
+    from factoryline.fixture_scope_value_audit import _reference_dataclass_member_clear
+
+    body = f"@property\ndef value(self, option={default}):\n    return option"
+    assert (
+        _reference_dataclass_member_clear(ast.parse(body).body[0], {}, audit)
+        is eligible
+    )
+
+
+def test_reference_roundtrip_peer_serializer_escape_is_rejected():
+    from factoryline import pickle_model_audit, review_audits as audit
+    from factoryline.runtime_audit_integrity import _conditional_v3_alias_closure
+
+    safe = "import pickle\npickle.dumps((1, 2))\n"
+    for extra in ("", "hand_off(pickle)\n", "hand_off(pickle.dumps)\n"):
+        tree = ast.parse(safe + extra)
+        aliases = audit._security_aliases(ast.walk(tree))
+        assert pickle_model_audit._pickle_serializer_provider_unmodified(
+            tree, aliases, audit, _conditional_v3_alias_closure
+        ) is (not extra)
+
+
+def test_local_roundtrip_publication_holder_requires_plain_data_fields():
+    from factoryline.fixture_scope_value_audit import (
+        _reference_publication_descriptor_clear,
+    )
+
+    source = (
+        "class Publication:\n    records: tuple[Record, ...]\n"
+        "    dependencies: tuple[RecordSetRef | int, ...] = ()\n"
+    )
+    assert _reference_publication_descriptor_clear(ast.parse(source).body[0])
+    source += "    def __post_init__(self):\n        observe(self.records)\n"
+    assert not _reference_publication_descriptor_clear(ast.parse(source).body[0])
+
+
+@pytest.mark.parametrize(
+    "field, extra",
+    [
+        ("metadata", ""),
+        (
+            "stored_metadata",
+            "    @property\n    def metadata(self):\n        return other_value\n",
+        ),
+        (
+            "metadata",
+            "    @property\n    def metadata(self):\n        return other_value\n",
+        ),
+    ],
+)
+def test_local_roundtrip_binds_constructor_field_and_unique_descriptor(field, extra):
+    from factoryline.fixture_scope_value_audit import _reference_dataclass_fields_clear
+
+    source = (
+        "class Record:\n    record_id: str\n    payload: bytes\n    codec: str = 'bytes.v1'\n"
+        f"    {field}: dict = field(default_factory=dict)\n    tokens: int = 0\n"
+    ) + extra
+    assert _reference_dataclass_fields_clear(ast.parse(source).body[0], "Record") is (
+        not extra
+    )
+
+
+def test_local_roundtrip_rejects_store_builtin_rebinding():
+    from factoryline.fixture_scope_value_audit import _reference_builtin_bindings_clear
+
+    names = {
+        "len",
+        "list",
+        "range",
+        "type",
+        "int",
+        "isinstance",
+        "bytes",
+        "bytearray",
+        "memoryview",
+    }
+    body = "def observe(records):\n    return len(records)\n"
+    assert _reference_builtin_bindings_clear(ast.parse(body), names)
+    assert not _reference_builtin_bindings_clear(
+        ast.parse("len = unknown_observer\n" + body), names
+    )

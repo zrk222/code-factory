@@ -271,6 +271,112 @@ def test_quick_help_is_small_actionable_and_does_not_load_registry(monkeypatch, 
             assert term not in text
 
 
+def test_text_version_does_not_load_provenance_or_scan_source(monkeypatch, capsys):
+    from factoryline import __version__, cli_bootstrap, cli_foundations
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name in {"factoryline.provenance", "provenance", "factoryline.cli"}:
+            raise AssertionError("text version must not load scanner or provenance")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    assert cli_bootstrap.main(["--version"]) == 0
+    assert capsys.readouterr().out == f"factory {__version__}\n"
+    assert cli_foundations.emit_version(False) == 0
+    assert capsys.readouterr().out == f"factory {__version__}\n"
+
+
+@pytest.mark.parametrize("command", ["scan", "first-lap", "first-proof"])
+def test_scan_family_help_matches_full_registry_without_advanced_imports(
+    command, monkeypatch, capsys
+):
+    from factoryline import cli
+
+    with pytest.raises(SystemExit) as full:
+        cli._build_parser().parse_args([command, "--help"])
+    expected = capsys.readouterr().out
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        leaf = name.rsplit(".", 1)[-1]
+        if leaf.startswith("cli_") and leaf not in {"cli_foundations", "cli_first_lap"}:
+            raise AssertionError(f"scan help imported unrelated registry: {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    with pytest.raises(SystemExit) as scoped:
+        cli._dispatch([command, "--help"])
+    assert full.value.code == scoped.value.code == 0
+    assert capsys.readouterr().out == expected
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["scan"],
+        ["scan", "--static-only", "--max-files", "17", "--root", "repo", "--json"],
+        ["scan", "--deep", "--require-complete", "--worker-config", "workers.json"],
+        ["first-proof", "--root", "repo", "--out-dir", "proof", "--json"],
+        ["first-lap", "init", "--mission", "Review code", "--force", "--json"],
+    ],
+)
+def test_scan_family_parser_preserves_full_registry_arguments(argv):
+    from factoryline import cli
+
+    assert vars(cli._build_parser(first_lap_only=True).parse_args(argv)) == vars(
+        cli._build_parser().parse_args(argv)
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["scan", "--bogus"],
+        ["scan", "--max-files", "nope"],
+        ["scan", "--wor", "workers.json"],
+        ["scan", "--oracle-trust", "x"],
+        ["first-lap", "bogus"],
+        ["first-lap", "status", "--help"],
+    ],
+)
+def test_scoped_parser_preserves_errors_abbreviations_and_nested_help(
+    argv, monkeypatch, capsys
+):
+    from factoryline import cli
+
+    monkeypatch.setattr(cli, "_dispatch_routes", lambda *args: 0)
+
+    def observe(call):
+        try:
+            call()
+            code = 0
+        except SystemExit as exc:
+            code = exc.code
+        captured = capsys.readouterr()
+        return code, captured.out, captured.err
+
+    assert observe(lambda: cli._dispatch(argv)) == observe(
+        lambda: cli._build_parser().parse_args(argv)
+    )
+
+
+def test_json_version_still_recomputes_provenance(monkeypatch, capsys):
+    from factoryline import cli_bootstrap, cli_foundations
+
+    values = iter(("first", "second"))
+    monkeypatch.setattr(
+        provenance_module,
+        "provenance",
+        lambda: {"build_hash": next(values), "version": "fixture"},
+    )
+    assert cli_bootstrap.main(["--version", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["build_hash"] == "first"
+    assert cli_foundations.emit_version(True) == 0
+    assert json.loads(capsys.readouterr().out)["build_hash"] == "second"
+
+
 def test_advanced_help_and_explicit_commands_keep_original_dispatch(monkeypatch):
     calls = []
 

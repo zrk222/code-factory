@@ -26,15 +26,26 @@ def _digest(value):
     return sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
-def test_native_observation_keeps_blocked_raw_without_admission(tmp_path, monkeypatch):
+def test_native_observation_keeps_blocked_raw_without_admission(
+    tmp_path, monkeypatch, capsys
+):
     from scripts import precision_native_capture
 
     projected = []
     original = precision_native_capture.project_paired_observation
 
     def project_checked(report, inventory):
-        with pytest.raises(ValueError, match="source binding changed"):
+        with pytest.raises(precision_native_capture.NativeObservationError) as error:
             original(report, [*inventory, inventory[0]])
+        assert error.value.checks == ["source_identity"]
+        invalid = {
+            **report,
+            "audit_coverage": {**report["audit_coverage"], "complete": False},
+            "finding_conservation": {"state": "FAIL"},
+        }
+        with pytest.raises(precision_native_capture.NativeObservationError) as error:
+            original(invalid, inventory)
+        assert error.value.checks == ["coverage", "finding_conservation"]
         result = original(report, inventory)
         projected.append(result)
         return result
@@ -66,10 +77,14 @@ def test_native_observation_keeps_blocked_raw_without_admission(tmp_path, monkey
     assert finding["admitted"] is None
     assert finding["source_sha256"] == _sha(source / "app.py")
     assert not (source / ".factory").exists()
+    monkeypatch.setattr(
+        precision_native_capture, "project_paired_observation", original
+    )
     (source / "app.py").write_text("changed = 1\n", encoding="utf-8")
     rejected = tmp_path / "rejected.json"
     assert capture_main([*args, str(rejected)]) == 2
     assert not rejected.exists()
+    assert json.loads(capsys.readouterr().err)["failed_checks"] == ["source_identity"]
 
 
 def _fixture(tmp_path, *, limit=2):
@@ -275,6 +290,19 @@ def test_preserves_attempt_if_command_defers_before_spawn(tmp_path, monkeypatch)
     [(_, receipt)] = list(_collect(study, controller, work[:1]))
     assert receipt["reason"] == ranked.DEFERRED
     assert study.attempted == 0
+
+
+def test_worker_timeout_records_the_failed_check(tmp_path, monkeypatch):
+    study, controller, work = _fixture(tmp_path)
+
+    def timeout(command, **_options):
+        raise ranked.subprocess.TimeoutExpired(command, 1)
+
+    monkeypatch.setattr(ranked, "run_native_command", timeout)
+    [(_, receipt)] = list(_collect(study, controller, work[:1]))
+    assert receipt["reason"] == ranked.WORKER_ERROR
+    assert receipt["failed_checks"] == ["timeout"]
+    assert study.attempted == 1
 
 
 def test_unconfirmed_lookahead_termination_prevents_seal(tmp_path, monkeypatch):

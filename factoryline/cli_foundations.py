@@ -99,16 +99,10 @@ def project_script_inventory(
 
 
 def emit_version(as_json: bool) -> int:
-    """Format the CLI's version response from the shared provenance receipt."""
-    from .provenance import provenance
+    """Use the installed entry point's version and provenance paths."""
+    from .cli_bootstrap import main
 
-    payload = provenance()
-    print(
-        json.dumps(payload, indent=2, sort_keys=True)
-        if as_json
-        else f"factory {payload['version']}"
-    )
-    return 0
+    return main(["--version", "--json"] if as_json else ["--version"])
 
 
 def cli_command(name: str) -> str:

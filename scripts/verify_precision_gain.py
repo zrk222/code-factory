@@ -21,6 +21,8 @@ from factoryline.run_metrics import _atomic_json
 
 SCHEMA = "factory.precision-gain.v1"
 FIELDS = ("raw", "active", "review", "supported")
+DEVELOPMENT_GATE_PASS = "DEVELOPMENT_GATE_PASS"
+MINIMUM_RAW_GAIN_PP = 5
 
 
 def digest(payload: bytes) -> str:
@@ -176,16 +178,8 @@ def _runtime_comparison(baseline, candidate):
     return {"baseline": before, "candidate": after, "delta": after - before}
 
 
-def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
-    """Reject omitted coverage, changed premises, lost TPs and unsupported gains."""
-    labels = _contract_labels(contract)
-    reasons, versions = [], []
-    for name, version in (("baseline", baseline), ("candidate", candidate)):
-        rows, incomplete = _version_rows(name, version, contract, labels)
-        reasons.extend(incomplete)
-        versions.append(rows)
-    before, after = versions
-    changed = {
+def _changed_memberships(before, after, labels):
+    return {
         key: {
             "before": [f for f in FIELDS if before[key][f]],
             "after": [f for f in FIELDS if after[key][f]],
@@ -193,30 +187,63 @@ def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
         for key in labels
         if any(before[key][f] != after[key][f] for f in FIELDS)
     }
+
+
+def _repair_reasons(contract, changed, lost, lost_unclear):
+    reasons = []
     if changed != contract.get("expected_changes"):
         reasons.append("observed changes differ from the registered repair impact")
-    lost = _lost_label_memberships(
-        before, after, labels, "TP", ("raw", "active", "supported", "active_or_review")
-    )
     if any(lost.values()):
         reasons.append("true-positive retention failed")
-    lost_unclear = _lost_label_memberships(
-        before, after, labels, "UNCLEAR", ("raw", "active_or_review")
-    )
     if any(lost_unclear.values()):
         reasons.append("unresolved claims were removed from review")
-    metrics = {
+    return reasons
+
+
+def _paired_metrics(before, after, labels):
+    return {
         name: {
             field: _metrics(rows, labels, field)
             for field in (*FIELDS, "active_or_review")
         }
         for name, rows in (("baseline", before), ("candidate", after))
     }
-    old, new = (
-        metrics[name]["active"]["precision"] for name in ("baseline", "candidate")
+
+
+def _precision_delta(metrics, population):
+    old = metrics["baseline"][population]["precision"]
+    new = metrics["candidate"][population]["precision"]
+    return new - old if old is not None and new is not None else None
+
+
+def _comparison_state(reasons, gain, raw_gain, development_gate):
+    if not development_gate:
+        return _measurement_state(reasons, gain)
+    if raw_gain is None or raw_gain * 100 + 1e-12 < MINIMUM_RAW_GAIN_PP:
+        reasons.append("raw precision gain is below five percentage points")
+    return "BLOCKED" if reasons else DEVELOPMENT_GATE_PASS
+
+
+def evaluate(
+    contract: dict, baseline: dict, candidate: dict, *, development_gate=False
+) -> dict:
+    """Reject omitted coverage, changed premises, lost TPs and unsupported gains."""
+    labels = _contract_labels(contract)
+    before, reasons = _version_rows("baseline", baseline, contract, labels)
+    after, incomplete = _version_rows("candidate", candidate, contract, labels)
+    reasons.extend(incomplete)
+    changed = _changed_memberships(before, after, labels)
+    lost = _lost_label_memberships(
+        before, after, labels, "TP", ("raw", "active", "supported", "active_or_review")
     )
-    gain = new - old if old is not None and new is not None else None
-    state = _measurement_state(reasons, gain)
+    lost_unclear = _lost_label_memberships(
+        before, after, labels, "UNCLEAR", ("raw", "active_or_review")
+    )
+    reasons.extend(_repair_reasons(contract, changed, lost, lost_unclear))
+    metrics = _paired_metrics(before, after, labels)
+    gain = _precision_delta(metrics, "active")
+    raw_gain = _precision_delta(metrics, "raw")
+    state = _comparison_state(reasons, gain, raw_gain, development_gate)
     selection = any(
         not before[key]["review"] and after[key]["review"] for key in labels
     )
@@ -226,6 +253,7 @@ def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
         "reasons": reasons,
         "metrics": metrics,
         "active_precision_delta": gain,
+        "raw_precision_delta": raw_gain,
         "changed_claims": changed,
         "changed_claim_labels": {key: labels[key]["label"] for key in changed},
         "lost_TPs": lost,
@@ -275,6 +303,14 @@ def _operator_summary(result, output):
             f"{active['known_positive_cases_outside_population']} known TPs outside active, "
             f"{metrics['review']['emitted']} for review"
         )
+        for population, label in (("raw", "raw"), ("supported", "admitted")):
+            row = metrics[population]
+            precision = row["precision"]
+            score = "undefined" if precision is None else f"{precision:.2%}"
+            lines.append(
+                f"{arm} {label}: {score} precision, "
+                f"{row['UNCLEAR']} unclear of {row['emitted']} emitted"
+            )
     if elapsed := result.get("elapsed_seconds"):
         lines.append(
             f"Recorded runtime: {elapsed['baseline']:.2f}s -> "
@@ -291,6 +327,7 @@ def _operator_summary(result, output):
         "INVALID": "Repair the evidence inputs and verify the pair again.",
         "NO_PRECISION_GAIN": "Keep the baseline for precision work.",
         "ACTIVE_PRECISION_GAIN_FIXED_PANEL": "Review the case transitions before accepting the candidate.",
+        DEVELOPMENT_GATE_PASS: "The fixed development panel meets the raw precision and retention thresholds.",
     }
     lines.append(action[result["state"]])
     lines.append(f"Case changes and evidence: {output}")
@@ -312,6 +349,11 @@ def main() -> int:
     parser.add_argument("contract", type=Path)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
+        "--development-gate",
+        action="store_true",
+        help="Require at least five points of raw precision gain on the exposed panel",
+    )
+    parser.add_argument(
         "--summary", action="store_true", help="Print an operator summary"
     )
     args = parser.parse_args()
@@ -330,6 +372,7 @@ def main() -> int:
             contract,
             _read_bound(args.contract.parent, contract["baseline"]),
             _read_bound(args.contract.parent, contract["candidate"]),
+            development_gate=args.development_gate,
         )
         result["contract_sha256"] = digest(payload)
         result["evidence"] = {key: contract[key] for key in ("baseline", "candidate")}
@@ -341,7 +384,12 @@ def main() -> int:
         if args.summary
         else json.dumps({"state": result["state"], "out": str(args.out)})
     )
-    return 0 if result["state"] == "ACTIVE_PRECISION_GAIN_FIXED_PANEL" else 2
+    return (
+        0
+        if result["state"]
+        in {"ACTIVE_PRECISION_GAIN_FIXED_PANEL", DEVELOPMENT_GATE_PASS}
+        else 2
+    )
 
 
 if __name__ == "__main__":

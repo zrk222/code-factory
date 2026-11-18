@@ -33,6 +33,11 @@ def main(argv=None) -> int:
     if values == ["--help-all"]:
         values = ["--help"]
     if values and values[0] == "--version":
+        if "--json" not in values:
+            from . import __version__
+
+            print(f"factory {__version__}")
+            return 0
         from .provenance import _emit_version
 
         return _emit_version("--json" in values)

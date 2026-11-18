@@ -5284,11 +5284,13 @@ def module_fixture_helper_epoch():
     from . import finite_capture
     from . import review_audits
     from . import credential_identity_audit as application_audit
+    from .django_class_fixture_audit import class_fixture_helpers
 
     return (
         *security_value_helper_epoch(),
         module_fixture_evidence_for_binding,
         module_fixture_credential_evidence,
+        *class_fixture_helpers(),
         _fixture_symbol,
         _fixture_constant,
         _fixture_scope,
@@ -5460,9 +5462,11 @@ def _app_crypto_methods(path, owner, source):
 
 
 def module_fixture_evidence_for_binding(index, path, assignment, secret):
-    """Resolve module-level credential evidence only for its captured module binding."""
+    """Resolve credential roles from captured module or test class bindings."""
     if index["source"].parents[path].get(id(assignment)) is not index["modules"][path]:
-        return None
+        from .django_class_fixture_audit import application_class_account_evidence
+
+        return application_class_account_evidence(index, path, assignment, secret)
     return module_fixture_credential_evidence(index, path, assignment, secret)
 
 

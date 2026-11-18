@@ -1,4 +1,6 @@
+from argparse import ArgumentTypeError
 from collections import deque
+from hashlib import sha256
 import json
 from pathlib import Path
 import queue
@@ -18,6 +20,38 @@ _NODE_STDOUT_QUEUE_SIZE = 8
 _NODE_STDERR_CHUNKS = 16
 _NODE_STDERR_CHUNK_BYTES = 1024
 _NODE_PROTOCOL_LINE_BYTES = 65536
+
+
+def _parse_ci_shard(value):
+    error = "expected a shard number and count such as 1/4"
+    try:
+        number, count = map(int, value.split("/"))
+    except ValueError as exc:
+        raise ArgumentTypeError(error) from exc
+    if count < 2 or not 1 <= number <= count:
+        raise ArgumentTypeError(error)
+    return number, count
+
+
+def pytest_addoption(parser):
+    """Register the opt-in partition used by the Windows CI workers."""
+    parser.addoption("--factory-ci-shard", type=_parse_ci_shard, default=None)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    """Assign every selected test to exactly one stable shard by node ID."""
+    shard = config.getoption("--factory-ci-shard")
+    if shard is None:
+        return
+    number, count = shard
+    selected, deselected = [], []
+    for item in items:
+        digest = sha256(item.nodeid.encode("utf-8")).digest()
+        bucket = int.from_bytes(digest[:8], "big") % count
+        (selected if bucket == number - 1 else deselected).append(item)
+    config.hook.pytest_deselected(items=deselected)
+    items[:] = selected
 
 
 class NodeIntakeWorkerError(RuntimeError):

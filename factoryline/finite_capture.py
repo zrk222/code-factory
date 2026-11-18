@@ -32,6 +32,10 @@ from .captured_security_audit import (
     _captured_sink_reflective_barrier as _captured_sink_reflective_barrier,
 )
 
+from .captured_operand_audit import (
+    _closed_shell_namespace,
+    _closed_shell_provider_mutated,
+)
 from .semantic_credential_sensor import (
     _SecurityFlowValue as _SecurityFlowValue,
     _captured_path_expression as _captured_path_expression,
@@ -1910,6 +1914,13 @@ def _closed_shell_operation(command):
     ):
         return None
     words = command.split()
+    if (
+        len(words) == 3
+        and words[0] == "sudo"
+        and words[2] == "stop"
+        and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", words[1])
+    ):
+        return "fixed_privileged_stop_syntax"
     if len(words) == 3 and words[:2] == ["brew", "--prefix"]:
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@+-]*", words[2]):
             return "package_prefix_query"
@@ -1925,6 +1936,8 @@ def _closed_shell_operation(command):
 
 def _closed_shell_call_role(call, call_name):
     """Close every immutable command alternative and explicit process option."""
+    from .intent_quality import bound_sink_argument
+
     if len(call.args) != 1 or any(kw.arg is None for kw in call.keywords):
         return None
     shell_enabled = any(
@@ -1942,7 +1955,7 @@ def _closed_shell_call_role(call, call_name):
         for kw in call.keywords
     ):
         return None
-    pending, commands = [call.args[0]], set()
+    pending, commands = [bound_sink_argument(call, 0)], set()
     for _ in range(64):
         if not pending:
             roles = {_closed_shell_operation(command) for command in commands}
@@ -1974,42 +1987,6 @@ def _closed_shell_call_role(call, call_name):
     return None
 
 
-def _closed_shell_provider_mutated(node, head, supported):
-    """Reject source-visible provider writes, reflection and monkey patches."""
-    if isinstance(node, ast.ImportFrom) and any(
-        alias.name == "*" for alias in node.names
-    ):
-        return True
-    if (
-        isinstance(node, ast.Name)
-        and node.id == head
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-    ):
-        return True
-    if isinstance(node, (ast.arg, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        if getattr(node, "arg", getattr(node, "name", None)) == head:
-            return True
-    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
-        base = node.value
-        while isinstance(base, ast.Attribute):
-            base = base.value
-        if (isinstance(base, ast.Name) and base.id == head) or node.attr in {
-            name.rsplit(".", 1)[-1] for name in supported
-        }:
-            return True
-    if (
-        isinstance(node, ast.Call)
-        and (
-            node.func.id
-            if isinstance(node.func, ast.Name)
-            else getattr(node.func, "attr", "")
-        )
-        in "eval exec globals locals vars setattr delattr __import__ patch".split()
-    ):
-        return True
-    return False
-
-
 def _closed_shell_provider(tree, call, call_name, supported):
     """Bind a simple process call to one stable module-level provider import."""
     name = ast.unparse(call.func)
@@ -2038,39 +2015,6 @@ def _closed_shell_provider(tree, call, call_name, supported):
     )
 
 
-def _closed_shell_namespace(tree, head):
-    """Reject capability escapes, namespace access and aliased reflection."""
-    parents = {
-        child: parent
-        for parent in ast.walk(tree)
-        for child in ast.iter_child_nodes(parent)
-    }
-    reflective = set(
-        "eval exec globals locals vars setattr delattr getattr __import__".split()
-    )
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Name)
-            and node.id == head
-            and isinstance(node.ctx, ast.Load)
-        ):
-            if not isinstance(parents.get(node), ast.Attribute):
-                return False
-        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
-            base = node.value
-            while isinstance(base, ast.Attribute):
-                base = base.value
-            if isinstance(base, ast.Name) and base.id == head:
-                return False
-        if isinstance(node, ast.ImportFrom) and node.module in {
-            "builtins",
-            "__builtin__",
-        }:
-            if any(alias.name in reflective for alias in node.names):
-                return False
-    return True
-
-
 def _shell_source_provider_clear(raw, provider):
     """Reuse provider mutation/escape indexing across captured helper modules."""
     from . import review_audits as audit
@@ -2087,7 +2031,14 @@ def _shell_source_provider_clear(raw, provider):
     } | {"getattr"}
     if aliases is None or (
         any(audit._name(node).rsplit(".", 1)[-1] in reflectors for node in nodes)
-        and not _security_builtin_identity_closed(tree, aliases, reflectors)
+        and not _security_builtin_identity_closed(
+            tree,
+            aliases,
+            reflectors,
+            readonly_reflection=lambda name, node, call: (
+                name == "vars" and _shell_explicit_vars_read(node, call, provider)
+            ),
+        )
     ):
         return False
     parents = {
@@ -2182,6 +2133,8 @@ def _shell_namespace_queries_closed(nodes, aliases, audit, parents, provider):
             continue
         call = parents.get(id(node))
         comparison = parents.get(id(call))
+        if canonical == "vars" and _shell_explicit_vars_read(node, call, provider):
+            continue
         if not (
             isinstance(call, ast.Call)
             and call.func is node
@@ -2197,6 +2150,18 @@ def _shell_namespace_queries_closed(nodes, aliases, audit, parents, provider):
         ):
             return False
     return True
+
+
+def _shell_explicit_vars_read(node, call, provider):
+    # Provider aliases and escapes are checked by the mutation index.
+    return (
+        isinstance(call, ast.Call)
+        and call.func is node
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Name)
+        and not call.keywords
+        and call.args[0].id != provider
+    )
 
 
 def closed_shell_workspace(sources, provider):
@@ -2271,6 +2236,7 @@ def closed_shell_operation_witness(raw, relative, span, call_name):
         "operational_effects": {
             "empty_command_input": "NO_COMMAND_PAYLOAD",
             "executable_packing": "LOCAL_ARTIFACT_MUTATION",
+            "fixed_privileged_stop_syntax": "PRIVILEGED_OPERATION_UNASSESSED",
             "terminal_display_reset": "TERMINAL_DISPLAY_MUTATION",
         }.get(role, "METADATA_QUERY"),
         "runtime_assurance": "INCOMPLETE",

@@ -23,6 +23,11 @@ from pathlib import Path
 from typing import Any
 from functools import lru_cache
 from importlib import import_module
+from .cli_foundations import (
+    cli_command as _cli_command,
+    emit_version as _emit_version,
+    project_script_inventory as _project_typescript_inventory,
+)
 
 
 def _run_cli_bounded(cli: str, args: list[str], cwd: Path, *, timeout: float, env=None):
@@ -67,18 +72,6 @@ def _lazy_import(module: str, symbol: str):
     return getattr(import_module(relative, __package__), symbol)
 
 
-def _cli_command(name: str) -> str:
-    from .cli_foundations import cli_command
-
-    return cli_command(name)
-
-
-def _emit_version(as_json: bool) -> int:
-    from .cli_foundations import emit_version
-
-    return emit_version(as_json)
-
-
 def _canary_version(module) -> tuple[dict | None, dict | None]:
     if not module.installed:
         return None, {"ok": False, "reason": "cli not installed"}
@@ -116,13 +109,6 @@ def _canary_provenance(payload: dict) -> tuple[bool | None, dict | None]:
         }
     complete = bool(payload.get("identity_complete") and payload.get("source_commit"))
     return complete, None
-
-
-def _project_typescript_inventory(root: Path) -> tuple[set[str], list[Path], bool]:
-    """Compatibility wrapper for bounded supported-script capability discovery."""
-    from .cli_foundations import project_script_inventory
-
-    return project_script_inventory(root)
 
 
 def _typescript_node_path(search_roots: list[Path] | None = None) -> str | None:
@@ -175,6 +161,8 @@ def _run_feature_canary(
     provenance_ok: bool,
     suffix: str,
     typescript_roots: list[Path] | None = None,
+    *,
+    compiler_path=None,
 ) -> dict | None:
     source, args = _FEATURE_CANARY_FIXTURES[suffix]
     target = root / "services" / f"canary.{suffix}"
@@ -192,7 +180,7 @@ def _run_feature_canary(
     )
     env = os.environ.copy()
     typescript_node_path = (
-        _typescript_node_path(typescript_roots)
+        (compiler_path() if compiler_path else _typescript_node_path(typescript_roots))
         if suffix in {"mjs", "ts", "tsx"}
         else None
     )
@@ -261,12 +249,23 @@ def _forgeline_feature_canaries(module, payload: dict, provenance_ok: bool) -> d
         suffixes.append("ts")
     if ".tsx" in ts_suffixes:
         suffixes.append("tsx")
+
+    @lru_cache(maxsize=1)
+    def compiler_path():
+        return _typescript_node_path(ts_roots)
+
     with tempfile.TemporaryDirectory(prefix="factory-doctor-") as directory:
         root = Path(directory)
         (root / "services").mkdir()
         for suffix in suffixes:
             failure = _run_feature_canary(
-                module, root, payload, provenance_ok, suffix, ts_roots
+                module,
+                root,
+                payload,
+                provenance_ok,
+                suffix,
+                ts_roots,
+                compiler_path=compiler_path,
             )
             if failure is not None:
                 return failure
@@ -490,7 +489,9 @@ def __getattr__(name: str):
     raise AttributeError(name)
 
 
-def _build_parser(*, common_only: bool = False) -> argparse.ArgumentParser:
+def _build_parser(
+    *, common_only: bool = False, first_lap_only: bool = False
+) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="factory",
         description="Snap SpecLine, ForgeLine, HSF and Prestige into one assembly line.",
@@ -539,6 +540,8 @@ def _build_parser(*, common_only: bool = False) -> argparse.ArgumentParser:
     from .cli_first_lap import add_parser as add_first_lap_parser
 
     add_first_lap_parser(sub)
+    if first_lap_only:
+        return p
 
     agui = sub.add_parser(
         "agui", help="emit controlled, deterministic AGUI-style review events"
@@ -2250,18 +2253,70 @@ def _build_parser(*, common_only: bool = False) -> argparse.ArgumentParser:
 _UNHANDLED = object()
 
 
+_DIRECT_ROUTES = {
+    command: (module, "run")
+    for module, commands in (
+        ("cli_ops", "ops"),
+        ("cli_foundations", "architecture external journey efficiency"),
+        ("cli_grill", "grill"),
+        ("cli_verifier", "verifier"),
+        ("cli_telemetry", "telemetry"),
+        ("cli_targets", "targets create mvp"),
+        ("cli_runtime_proof", "admission e2e reality"),
+        ("cli_authority", "proof-continuity oracle semantic-authority"),
+        (
+            "cli_coordination",
+            "operations-control lifecycle service-boundary repair-loop repo-coordinate",
+        ),
+        ("cli_domain", "ontology mission-control"),
+        ("cli_deep_audit", "deep-audit runtime-audit senior"),
+        ("cli_proofsearch", "worklog proofsearch"),
+        ("cli_pack", "pack"),
+        ("cli_studio", "studio"),
+        ("cli_audit", "audit"),
+        ("cli_first_lap", "first-lap first-proof scan"),
+        (
+            "cli_review_surfaces",
+            "proof-card adoption counterexample guardrail resilience",
+        ),
+        ("cli_governance_surfaces", "license combine"),
+        ("cli_wrap", "wrap"),
+        ("cli_governance", "memory intent judgment"),
+        ("cli_evidence_chain", "change proof-ops proof-review"),
+        ("cli_revenue", "revenue"),
+        ("cli_saas", "saas"),
+        ("cli_github", "github"),
+        ("cli_ide", "repair jetbrains"),
+        ("cli_release", "release"),
+        ("cli_integrations", "mcp junie issues"),
+        ("cli_artifacts", "attest passport verify-passport challenge coverage policy"),
+        ("cli_enterprise", "enterprise"),
+        ("cli_controls", "control controls"),
+        ("cli_assurance", "assurance"),
+        ("cli_pr", "pr-pack optimize-pr"),
+        ("cli_app", "app"),
+    )
+    for command in commands.split()
+}
+_DIRECT_ROUTES.update(
+    {
+        "evidence-audit": ("cli_quality", "run_evidence"),
+        "quality-harness": ("cli_quality", "run_quality"),
+    }
+)
+
+
 def _dispatch_routes(a, capture_command, p):
+    if a.cmd in _DIRECT_ROUTES:
+        module, symbol = _DIRECT_ROUTES[a.cmd]
+        return getattr(import_module("." + module, __package__), symbol)(a)
     for handler in (
         _dispatch_route_group_01,
-        _dispatch_route_group_02,
         _dispatch_route_group_03,
-        _dispatch_route_group_04,
         _dispatch_route_group_05,
         _dispatch_route_group_06,
-        _dispatch_route_group_07,
         _dispatch_route_group_08,
         _dispatch_route_group_09,
-        _dispatch_route_group_10,
         _dispatch_route_group_11,
         _dispatch_route_group_12,
         _dispatch_route_group_13,
@@ -2284,7 +2339,6 @@ def _dispatch_routes(a, capture_command, p):
         _dispatch_route_group_30,
         _dispatch_route_group_31,
         _dispatch_route_group_32,
-        _dispatch_route_group_33,
         _dispatch_route_group_34,
         _dispatch_route_group_35,
         _dispatch_route_group_36,
@@ -2293,7 +2347,6 @@ def _dispatch_routes(a, capture_command, p):
         _dispatch_route_group_39,
         _dispatch_route_group_40,
         _dispatch_route_group_41,
-        _dispatch_route_group_42,
     ):
         result = handler(a, capture_command, p)
         if result is not _UNHANDLED:
@@ -2302,11 +2355,6 @@ def _dispatch_routes(a, capture_command, p):
 
 
 def _dispatch_route_group_01(a, capture_command, p):
-    if a.cmd == "ops":
-        from .cli_ops import run as run_ops
-
-        return run_ops(a)
-
     if a.cmd is None:
         return _home()
     if a.cmd == "version":
@@ -2319,26 +2367,6 @@ def _dispatch_route_group_01(a, capture_command, p):
         return _home(Path(a.root), a.json, a.schedule)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
-    if a.cmd in {"architecture", "external", "journey", "efficiency"}:
-        from .cli_foundations import run as run_foundation
-
-        return run_foundation(a)
-    if a.cmd == "grill":
-        from .cli_grill import run as run_grill
-
-        return run_grill(a)
-    return _UNHANDLED
-
-
-def _dispatch_route_group_02(a, capture_command, p):
-    if a.cmd == "verifier":
-        from .cli_verifier import run as run_verifier
-
-        return run_verifier(a)
-    if a.cmd == "telemetry":
-        from .cli_telemetry import run as run_telemetry
-
-        return run_telemetry(a)
     return _UNHANDLED
 
 
@@ -2364,22 +2392,6 @@ def _dispatch_route_group_03(a, capture_command, p):
 
         result = run_workflow_family(a)
         return _UNHANDLED if result is domain_unhandled else result
-    return _UNHANDLED
-
-
-def _dispatch_route_group_04(a, capture_command, p):
-    if a.cmd in {"targets", "create", "mvp"}:
-        from .cli_targets import run as run_targets
-
-        return run_targets(a)
-    if a.cmd in {"admission", "e2e", "reality"}:
-        from .cli_runtime_proof import run as run_runtime_proof
-
-        return run_runtime_proof(a)
-    if a.cmd in {"proof-continuity", "oracle", "semantic-authority"}:
-        from .cli_authority import run as run_authority
-
-        return run_authority(a)
     return _UNHANDLED
 
 
@@ -2493,56 +2505,6 @@ def _dispatch_route_group_06(a, capture_command, p):
     return _UNHANDLED
 
 
-def _dispatch_route_group_07(a, capture_command, p):
-    if a.cmd in {
-        "operations-control",
-        "lifecycle",
-        "service-boundary",
-        "repair-loop",
-        "repo-coordinate",
-    }:
-        from .cli_coordination import run as run_coordination
-
-        return run_coordination(a)
-    if a.cmd in {"ontology", "mission-control"}:
-        from .cli_domain import run as run_domain
-
-        return run_domain(a)
-    if a.cmd in {"deep-audit", "runtime-audit", "senior"}:
-        from .cli_deep_audit import run as run_deep_audit
-
-        return run_deep_audit(a)
-    if a.cmd in {"worklog", "proofsearch"}:
-        from .cli_proofsearch import run as run_proofsearch
-
-        return run_proofsearch(a)
-    if a.cmd == "pack":
-        from .cli_pack import run as run_pack
-
-        return run_pack(a)
-    if a.cmd == "studio":
-        from .cli_studio import run as run_studio
-
-        return run_studio(a)
-    if a.cmd == "audit":
-        from .cli_audit import run as run_audit
-
-        return run_audit(a)
-    # Kept unreachable for one release so old tracebacks retain their source
-    # shape while the bounded command module becomes the only audit dispatch.
-
-    if a.cmd == "evidence-audit":
-        from .cli_quality import run_evidence
-
-        return run_evidence(a)
-
-    if a.cmd == "quality-harness":
-        from .cli_quality import run_quality
-
-        return run_quality(a)
-    return _UNHANDLED
-
-
 def _dispatch_route_group_08(a, capture_command, p):
     if a.cmd == "guide":
         try:
@@ -2581,10 +2543,6 @@ def _dispatch_route_group_08(a, capture_command, p):
                 "\nAdvanced modules stay hidden until their trigger applies. No action was executed."
             )
         return 0
-    if a.cmd in {"first-lap", "first-proof", "scan"}:
-        from .cli_first_lap import run as run_first_lap
-
-        return run_first_lap(a)
     return _UNHANDLED
 
 
@@ -2627,22 +2585,6 @@ def _dispatch_route_group_09(a, capture_command, p):
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return code
-    return _UNHANDLED
-
-
-def _dispatch_route_group_10(a, capture_command, p):
-    if a.cmd in {"proof-card", "adoption", "counterexample", "guardrail", "resilience"}:
-        from .cli_review_surfaces import run as run_review_surface
-
-        return run_review_surface(a)
-    if a.cmd in {"license", "combine"}:
-        from .cli_governance_surfaces import run as run_governance_surface
-
-        return run_governance_surface(a)
-    if a.cmd == "wrap":
-        from .cli_wrap import run as run_wrap
-
-        return run_wrap(a)
     return _UNHANDLED
 
 
@@ -4162,67 +4104,7 @@ def _dispatch_route_group_32(a, capture_command, p):
     return _graph_snapshot(a, graph_ops_snapshot)
 
 
-def _dispatch_route_group_33(a, capture_command, p):
-    if a.cmd == "memory":
-        from .cli_governance import run as run_governance
-
-        return run_governance(a)
-    if a.cmd == "change":
-        from .cli_evidence_chain import run as run_evidence_chain
-
-        return run_evidence_chain(a)
-    if a.cmd == "proof-ops":
-        from .cli_evidence_chain import run as run_evidence_chain
-
-        return run_evidence_chain(a)
-    if a.cmd == "proof-review":
-        from .cli_evidence_chain import run as run_evidence_chain
-
-        return run_evidence_chain(a)
-    if a.cmd == "revenue":
-        from .cli_revenue import run as run_revenue
-
-        return run_revenue(a)
-    if a.cmd == "saas":
-        from .cli_saas import run as run_saas
-
-        return run_saas(a)
-    if a.cmd == "intent":
-        from .cli_governance import run as run_governance
-
-        return run_governance(a)
-    if a.cmd == "judgment":
-        from .cli_governance import run as run_governance
-
-        return run_governance(a)
-    if a.cmd == "github":
-        from .cli_github import run as run_github
-
-        return run_github(a)
-    return _UNHANDLED
-
-
 def _dispatch_route_group_34(a, capture_command, p):
-    if a.cmd == "repair":
-        from .cli_ide import run as run_ide
-
-        return run_ide(a)
-    if a.cmd == "release":
-        from .cli_release import run as run_release
-
-        return run_release(a)
-    if a.cmd == "jetbrains":
-        from .cli_ide import run as run_ide
-
-        return run_ide(a)
-    if a.cmd in {"mcp", "junie", "issues"}:
-        from .cli_integrations import run as run_integrations
-
-        return run_integrations(a)
-    if a.cmd == "attest":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
     if a.cmd == "overhead":
         payload = _lazy_import("meter", "overhead")(Path(a.root))
         if a.json:
@@ -4325,14 +4207,6 @@ def _dispatch_route_group_36(a, capture_command, p):
                 f"{result['marker']}: {result['rejected']}/{result['attempted']} receipt mutations rejected; receipt={result['path']}"
             )
         return 0 if result["passed"] else 1
-    if a.cmd == "enterprise":
-        from .cli_enterprise import run as run_enterprise
-
-        return run_enterprise(a)
-    if a.cmd in {"control", "controls"}:
-        from .cli_controls import run as run_controls
-
-        return run_controls(a)
     return _UNHANDLED
 
 
@@ -4464,10 +4338,6 @@ def _dispatch_route_group_38(a, capture_command, p):
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
-    if a.cmd == "assurance":
-        from .cli_assurance import run as run_assurance
-
-        return run_assurance(a)
     return _UNHANDLED
 
 
@@ -4729,38 +4599,6 @@ def _dispatch_route_group_41(a, capture_command, p):
     return code
 
 
-def _dispatch_route_group_42(a, capture_command, p):
-    if a.cmd == "passport":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
-    if a.cmd == "verify-passport":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
-    if a.cmd == "challenge":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
-    if a.cmd == "coverage":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
-    if a.cmd == "policy":
-        from .cli_artifacts import run as run_artifacts
-
-        return run_artifacts(a)
-    if a.cmd in {"pr-pack", "optimize-pr"}:
-        from .cli_pr import run as run_pr
-
-        return run_pr(a)
-    if a.cmd == "app":
-        from .cli_app import run as run_app
-
-        return run_app(a)
-    return _UNHANDLED
-
-
 def _dispatch(argv=None) -> int:
     """Parse, route, and dispatch one FactoryLine command."""
     from .ops_telemetry import _measure_phase
@@ -4777,8 +4615,16 @@ def _dispatch(argv=None) -> int:
             capture_command = capture_command[1:]
         argv = argv[:capture_index]
     with _measure_phase("cli_parse"):
-        if argv and argv[0] in {"home", "doctor", "plan"}:
-            p = _build_parser(common_only=True)
+        if argv and argv[0] in {
+            "home",
+            "doctor",
+            "plan",
+            "scan",
+            "first-lap",
+            "first-proof",
+        }:
+            first_lap = argv[0] in {"scan", "first-lap", "first-proof"}
+            p = _build_parser(common_only=not first_lap, first_lap_only=first_lap)
             a, unknown = p.parse_known_args(argv)
             if unknown:
                 p = _build_parser()

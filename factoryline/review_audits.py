@@ -54,7 +54,6 @@ from .pytest_collection_audit import (
     _INVALID_PYTEST_CONFIG as _INVALID_PYTEST_CONFIG,
     _UNSUPPORTED_PYTEST_CONFIG as _UNSUPPORTED_PYTEST_CONFIG,
 )
-
 from .audit_action_refs import (
     _captured_application_source_bytes as _app_source_bytes,
     audit_remediation_packet as audit_remediation_packet,
@@ -66,6 +65,7 @@ from .audit_action_refs import (
     with_captured_declaration_proof as with_decl_proof,
 )
 from .finite_capture import closed_shell_finding, shell_execution_calls
+from .captured_security_audit import argument_role_proof_helpers
 from .deep_audit_io import local_file
 from .ops_telemetry import _measure_hash, _measure_parse
 from .runtime_audit_common import (
@@ -3755,10 +3755,10 @@ def _oracle_context_cache_key(
             "_structural_oracle_context",
         )
     )
+    from . import credential_endpoint_admission
     from .credential_role_identity_effects import security_value_helper_epoch
 
-    helpers += security_value_helper_epoch()
-    from . import credential_endpoint_admission
+    helpers += security_value_helper_epoch() + argument_role_proof_helpers()
 
     identity = {
         "credential_bindings": [

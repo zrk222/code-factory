@@ -1290,18 +1290,6 @@ def _challenge_source_files(root: Path, manifest: dict[str, str]) -> dict[str, b
     return _read_manifest_files(root, manifest)
 
 
-def _challenge_source(root: Path, relative: Path) -> bytes:
-    """Require the isolated scanner tree to contain only one signed v1 fixture."""
-    if relative.is_absolute() or ".." in relative.parts:
-        raise RuntimeAuditError("E_CHALLENGE_PATH", "fixture must be relative")
-    name = relative.as_posix()
-    if name in {"", "."} or "\\" in name or ":" in name:
-        raise RuntimeAuditError("E_CHALLENGE_PATH", "fixture path is not canonical")
-    expected = _bounded_file(relative, root=root)
-    files = _challenge_source_files(root, {name: sha256_bytes(expected)})
-    return files[name]
-
-
 def _owned_scratch(scratch: Path, parent: Path) -> tuple[Path, tuple[int, int]]:
     """Require a dedicated direct child directory with no symlinked path components."""
     owner = parent.resolve(strict=True)

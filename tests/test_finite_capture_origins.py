@@ -13,6 +13,7 @@ import json
 from factoryline.provenance import finite_template_binding, finite_template_witness
 from factoryline.review_integrity import _fixed_primitive_binding
 from datetime import datetime, timedelta, timezone
+from textwrap import dedent
 from factoryline.enterprise_receipts import generate_key_material, sign_payload
 from factoryline.independent_execution import (
     ExecutionAttestationError,
@@ -21,6 +22,140 @@ from factoryline.independent_execution import (
     validate_execution_attestation,
     verify_signed_execution_attestation,
 )
+
+
+_CLOSED_LOCAL_REPRESENTATION = dedent("""
+    from __future__ import annotations
+    from typing import List
+
+    class Item:
+        def __init__(self, label: str):
+            self.label = label
+
+        def __str__(self):
+            return self.label
+
+        def __repr__(self):
+            return f"Item('{self.label}')"
+
+    class Basket:
+        def __init__(self, members: List[Item] = None):
+            if members is None:
+                self.members = []
+            else:
+                self.members = members
+
+        def add(self, item):
+            self.members.append(item)
+            return self
+
+        def __str__(self):
+            print(f"{[item.label for item in self.members]}")
+            return f"{[str(item) for item in self.members]}"
+
+        def __repr__(self):
+            return f"Basket({self.members!r})"
+
+    first = Item("fixed")
+    second = Item("value")
+    assert str(Basket().add(first)) == "['fixed']"
+    ready = Basket().add(first).add(second)
+    assert ready == eval(repr(ready))
+""").lstrip()
+
+
+def _local_representation_snapshot(tmp_path, source, peers=None):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    target = tmp_path / "local_example.py"
+    snapshots, sources, inventory = {}, {}, {}
+    for name, text in {target.name: source, **(peers or {})}.items():
+        path = tmp_path / name
+        raw = text.encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = digest
+        snapshots[path], sources[path], inventory[path] = tree, raw, digest
+    call = next(
+        node
+        for node in ast.walk(snapshots[target])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "eval"
+    )
+    return SourceSnapshotIndex(tmp_path, snapshots, sources, inventory), target, call
+
+
+def test_closed_representation_is_bound_to_the_exact_eval_operand(tmp_path):
+    from factoryline.captured_operand_audit import captured_local_representation_proof
+
+    index, path, node = _local_representation_snapshot(
+        tmp_path, _CLOSED_LOCAL_REPRESENTATION
+    )
+    proof = captured_local_representation_proof(index, path, node)
+    assert proof["program_role"] == "CLOSED_LOCAL_CONSTRUCTOR_REPRESENTATION"
+    assert proof["operand_span"] == [
+        node.lineno,
+        node.col_offset + 5,
+        node.end_lineno,
+        node.end_col_offset - 1,
+    ]
+    tampered = ast.copy_location(ast.parse("eval(repr(other))", mode="eval").body, node)
+    assert captured_local_representation_proof(index, path, tampered) is None
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement"),
+    [
+        ('first = Item("fixed")', "first = Item(obtain_value())"),
+        ('first = Item("fixed")', 'repr = replacement\nfirst = Item("fixed")'),
+        (
+            'second = Item("value")',
+            'first.label = obtain_value()\nsecond = Item("value")',
+        ),
+        ("eval(repr(ready))", "eval(obtain_value())"),
+        ("Basket({self.members!r})", "Other({self.members!r})"),
+        ("Item('{self.label}')", "Item('different')"),
+        ("self.label = label", "register(self)\n        self.label = label"),
+        (
+            "self.members.append(item)",
+            "touch_registry()\n        self.members.append(item)",
+        ),
+        ('print(f"{[item.label for item in self.members]}")', "touch_registry()"),
+        ("class Basket:", "class Basket(Other):"),
+        (
+            "class Basket:",
+            "class Basket:\n    def __getattribute__(self, key): return select(self, key)",
+        ),
+    ],
+)
+def test_local_representation_proof_retains_unresolved_eval(
+    tmp_path, original, replacement
+):
+    from factoryline.captured_operand_audit import captured_local_representation_proof
+
+    source = _CLOSED_LOCAL_REPRESENTATION.replace(original, replacement)
+    index, path, node = _local_representation_snapshot(tmp_path, source)
+    assert captured_local_representation_proof(index, path, node) is None
+
+
+@pytest.mark.parametrize(
+    "peer",
+    [
+        "import builtins",
+        "from unittest.mock import patch",
+        "from unittest import mock",
+        "from _pytest.monkeypatch import MonkeyPatch",
+        "provider.setattr('provider_name', replacement)",
+    ],
+)
+def test_local_representation_proof_retains_opaque_workspace_providers(tmp_path, peer):
+    from factoryline.captured_operand_audit import captured_local_representation_proof
+
+    index, path, node = _local_representation_snapshot(
+        tmp_path, _CLOSED_LOCAL_REPRESENTATION, {"peer.py": peer}
+    )
+    assert captured_local_representation_proof(index, path, node) is None
 
 
 @pytest.mark.parametrize(
@@ -3406,6 +3541,57 @@ def test_imported_constant_helper375_shell_context_reseals_without_downgrade(tmp
     assert resealed["findings"] == report["findings"]
 
 
+@pytest.mark.parametrize(
+    "result,intervening_line,expected",
+    [
+        ("{'status': 'ready', 'data': value}", "", False),
+        ("{'status': value, 'data': 'ready'}", "", True),
+        ("{'status': 'ready', 'data': value}", "    process(record)\n", True),
+    ],
+)
+def test_logging_projects_the_selected_return_field(
+    tmp_path, result, intervening_line, expected
+):
+    report = _pickle_role_report(
+        tmp_path,
+        "import logging\n"
+        "def build(value):\n"
+        f"    return {result}\n"
+        "def report():\n"
+        "    record = build(input())\n"
+        + intervening_line
+        + "    logging.info(f'status={record[\"status\"]}')\n",
+        policy="source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert any(row["code"] == "SECURITY_LOG_INJECTION" for row in raw) is expected
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "entry,expected",
+    [
+        ("    query = 'SELECT 1'\n    read(query, ())\n", False),
+        ("    query = input()\n    read(query, ())\n", True),
+        ("    query = 'SELECT 1'\n    [read(query, ()) for query in source]\n", True),
+    ],
+)
+def test_sql_binds_the_statement_at_the_exact_caller(tmp_path, entry, expected):
+    report = _pickle_role_report(
+        tmp_path,
+        "import sqlite3\n"
+        "def read(query, params):\n"
+        "    conn = sqlite3.connect('sample.db')\n"
+        "    cursor = conn.cursor()\n"
+        "    cursor.execute(query, params)\n"
+        "if __name__ == '__main__':\n" + entry,
+        policy="source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert any(row["code"] == "SECURITY_SQL_INJECTION" for row in raw) is expected
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
 def test_shared_import375_provider_closure_does_not_rescan_whole_context(
     tmp_path, monkeypatch
 ):
@@ -3541,3 +3727,183 @@ def test_security_value_helper_epoch_tracks_actual_local_definition_binding(
         review_integrity, "_security_local_helper_definition", replacement
     )
     assert replacement in effects.security_value_helper_epoch()
+
+
+WORKER = """\
+from multiprocessing import Pool, cpu_count
+
+class Worker:
+    def __init__(self, program):
+        self.program = program
+
+    def render(self, item):
+        scope = {}
+        scope["text"] = item[0]
+        scope["index"] = item[1]
+        return eval(self.program, scope)
+
+    def __call__(self, item):
+        return self.render(item)
+
+    def run(self, records, output):
+        with Pool(cpu_count()) as pool:
+            results = pool.imap_unordered(self, records)
+            for result in results:
+                print(result, file=output)
+"""
+
+ENTRY = """\
+from xontrib.sample.worker import Worker
+
+def _render(options, stream, output):
+    records = []
+    count = 0
+    for text in stream.readlines():
+        records.append([text, count])
+        count += 1
+    if records:
+        selected = Worker(options[0])
+        selected.run(records, output)
+
+aliases["render"] = _render
+aliases["decorate"] = lambda args, source, out: aliases["render"](
+    [f"str({args[0]})"], source, out
+)
+
+def document_record(line):
+    return eval(line)
+"""
+
+
+NEIGHBOR_ENTRY = (
+    ENTRY
+    + """
+_PRESETS = {}
+
+def _line(options, stream, output):
+    presets = {**_PRESETS, **__xonsh__.env.get("XONTRIB_PIPELINER_PRESETS", {})}
+    if options[0] in presets:
+        template = presets[options[0]]
+        transform = eval("lambda line, num, args:" + template, __xonsh__.ctx)
+    else:
+        transform = eval("lambda line, num, args:" + options[0], __xonsh__.ctx)
+    return transform(None, 0, ())
+
+aliases["line"] = _line
+"""
+)
+
+GUARDED_WORKER = WORKER.replace(
+    "        scope = {}",
+    "        scope = {}\n        try:\n            scope = __xonsh__.ctx\n        except:\n            pass",
+)
+
+
+VALID_ENTRIES = {
+    None: ENTRY,
+    "host_boundaries": NEIGHBOR_ENTRY,
+    "forwarding_chain": ENTRY
+    + '\naliases["format"] = lambda args, source, out: aliases["decorate"]([args[0]], source, out)\n',
+}
+ALTERNATE_ENTRIES = {
+    "program_from_pipe": ENTRY.replace(
+        "Worker(options[0])", "Worker(stream.readline())"
+    ),
+    "direct_callback": ENTRY
+    + "\ndef alternate(options, stream, output):\n    return _render(options, stream, output)\n",
+    "hidden_registry": ENTRY + "\nalternate = __xonsh__.aliases\n",
+    "reflective_registry": ENTRY + '\nalternate = getattr(__xonsh__, "aliases")\n',
+    "aliased_host": ENTRY + "\nretained_host = __xonsh__\n",
+    "host_context_callback": NEIGHBOR_ENTRY + "\nrecord(__xonsh__.ctx)\n",
+    "host_context_rebind": NEIGHBOR_ENTRY + "\n__xonsh__.ctx = {}\n",
+    "host_context_escape": NEIGHBOR_ENTRY.replace(
+        "return transform(None, 0, ())", "return record(transform.__globals__)"
+    ),
+    "mixed_alias": ENTRY.replace('[f"str({args[0]})"]', "[source.readline()]"),
+    "forwarding_alias_direct_call": ENTRY
+    + '\ndef alternate(record, source, out):\n    return aliases["decorate"]([record], source, out)\n',
+    "forwarding_alias_mixed_registration": VALID_ENTRIES["forwarding_chain"]
+    + '\naliases["indirect"] = lambda args, source, out: aliases["format"]([source.readline()], source, out)\n',
+    "nested_worker_import": ENTRY
+    + "\ndef alternate(program):\n    from xontrib.sample.worker import Worker as LocalWorker\n    return LocalWorker(program)\n",
+    "nested_relative_worker_import": ENTRY
+    + "\ndef alternate(program):\n    from .worker import Worker as LocalWorker\n    return LocalWorker(program)\n",
+    "replacement_arguments": ENTRY.replace(
+        "    records = []", "    options[0] = stream.readline()\n    records = []"
+    ),
+    "missing_registration": ENTRY.replace('aliases["render"] = _render', ""),
+    "escaped_receiver": ENTRY.replace(
+        "        selected.run(records, output)",
+        "        selected.run(records, output)\n        inspect(selected)",
+    ),
+}
+ALTERNATE_WORKERS = {
+    "modified_worker": WORKER.replace(
+        'scope["text"] = item[0]', "self.program = item[0]"
+    ),
+    "worker_context_escape": GUARDED_WORKER.replace(
+        "        return eval(self.program, scope)",
+        "        try:\n            return eval(self.program, scope)\n        except:\n            return record(scope)",
+    ),
+    "worker_host_alias": GUARDED_WORKER.replace(
+        "            for result in results:",
+        "            retained_host = __xonsh__\n            for result in results:",
+    ),
+    "worker_class_escape": WORKER.replace(
+        "print(result, file=output)", "print(record(__class__), result, file=output)"
+    ),
+    "worker_super_escape": WORKER.replace(
+        "print(result, file=output)", "print(record(super()), result, file=output)"
+    ),
+}
+PEERS = {
+    "extra_importer": "import xontrib\n",
+    "opaque_importer": "from importlib import import_module\n",
+    "ambient_alias": 'selected = aliases["render"]\n',
+    "sibling_import": "import xontrib.sibling\n",
+    "host_import": "from xonsh.built_ins import XSH as selected_host\n",
+    "peer_host": "retained_host = __xonsh__\n",
+}
+
+
+@pytest.mark.parametrize(
+    "change", [*VALID_ENTRIES, *ALTERNATE_ENTRIES, *ALTERNATE_WORKERS, *PEERS]
+)
+def test_shell_operator_program_is_distinct_from_pipeline_data(tmp_path, change):
+    entry = VALID_ENTRIES.get(change) or ALTERNATE_ENTRIES.get(change, ENTRY)
+    worker = ALTERNATE_WORKERS.get(
+        change, GUARDED_WORKER if change == "host_boundaries" else WORKER
+    )
+    if change in PEERS:
+        (tmp_path / "other.py").write_text(PEERS[change], encoding="utf-8")
+
+    package = tmp_path / "xontrib" / "sample"
+    package.mkdir(parents=True)
+    (package / "worker.py").write_text(dedent(worker), encoding="utf-8")
+    (package / "__init__.py").write_text(dedent(entry), encoding="utf-8")
+    report = review_audits.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    visible = {
+        item["raw_finding"]["path"]
+        for item in report["finding_tier_report"]["ledger"]
+        if item["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    }
+    refuted = {
+        item["path"]: item
+        for item in report.get("refuted_security_observations", [])
+        if item["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    }
+    assert "xontrib/sample/__init__.py" in visible
+    assert ("xontrib/sample/worker.py" in visible) == (change not in VALID_ENTRIES)
+    assert ("xontrib/sample/worker.py" in refuted) == (change in VALID_ENTRIES)
+    if change in VALID_ENTRIES:
+        role = refuted["xontrib/sample/worker.py"]["facts"]["captured_program_role"]
+        assert role["hypothesis"] == "CAPTURED_SOURCE_INJECTION"
+        assert role["external_callers"] == role["runtime_effects"] == "UNASSESSED"
+        assert role["dynamic_execution_primitive"] == "RETAINED"
+        assert report["finding_conservation"]["native_rows"] == "VERIFIED"
+    assert report["finding_conservation"]["state"] == "PASS"
