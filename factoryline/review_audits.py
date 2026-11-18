@@ -5427,8 +5427,6 @@ def _security_scan_tree(
         if isinstance(node, ast.Call):
             node._security_supported_precondition = None
             node._security_structural_values = None
-        for child in ast.iter_child_nodes(node):
-            child._security_parent = node
         node._scan_bound_names = None
         node._oracle_layout = None
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -5446,12 +5444,11 @@ def _security_scan_tree(
         tree._oracle_mock_fixture_provenance = context.get(
             "mock_fixture_provenance", {}
         )
-        helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
-            context.get("helpers", ())
-        )
-        weak_helper_names = _local_weak_assertion_helpers(tree, oracle_aliases) | set(
-            context.get("weak_helpers", ())
-        )
+        local_helpers = _local_assertion_helpers(tree, oracle_aliases)
+        helper_names = local_helpers | set(context.get("helpers", ()))
+        weak_helper_names = _local_weak_assertion_helpers(
+            tree, oracle_aliases, strong_helpers=local_helpers
+        ) | set(context.get("weak_helpers", ()))
         unittest_methods = _unittest_test_methods(tree, oracle_aliases)
         for cls in tree.body:
             if isinstance(cls, ast.ClassDef) and cls.name in context.get("mixins", ()):

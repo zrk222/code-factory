@@ -169,21 +169,16 @@ def test_assignment_expression_never_reuses_stale_context(monkeypatch, change):
 
 def test_assignment_expression_unknown_keeps_payload_fallback(monkeypatch):
     from factoryline.credential_role_identity_effects import _Value
-    from factoryline import semantic_credential_sensor
 
     statement = ast.parse("result = payload").body[0]
-    requests = finite._SecurityFlowState()
-    monkeypatch.setattr(
-        review_integrity,
-        "_security_structural_expression",
-        lambda *_: _Value(unknown=True),
-    )
+    requests = finite._SecurityFlowState({("request-type:text", "payload")})
     calls = []
-    monkeypatch.setattr(
-        semantic_credential_sensor,
-        "request_payload_value_kind",
-        lambda *args: calls.append(args[0]) or "text",
-    )
+
+    def project(expression, *_):
+        calls.append(expression)
+        return _Value(unknown=True)
+
+    monkeypatch.setattr(review_integrity, "_security_structural_expression", project)
     review_integrity._security_flow_source_assignment(
         statement, {}, requests, set(), set(), set(), set(), {}
     )
