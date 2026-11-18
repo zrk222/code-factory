@@ -2959,50 +2959,6 @@ class _LiteralConsumers(_FiniteInputCapture):
             node = self.parents.get(id(node))
         return None
 
-    def _json_assertion_values(
-        self, path, function, expected, data_name, response_name
-    ):
-        names = [
-            node
-            for node in self._walk(function)
-            if isinstance(node, ast.Name) and node.id in {data_name, response_name}
-        ]
-        data_loads = [
-            node
-            for node in names
-            if node.id == data_name and isinstance(node.ctx, ast.Load)
-        ]
-        if len(data_loads) != 1:
-            return False
-        response_loads = [
-            node
-            for node in names
-            if node.id == response_name and isinstance(node.ctx, ast.Load)
-        ]
-        if not response_loads:
-            return False
-        for use in response_loads:
-            attribute = self.parents.get(id(use))
-            if not isinstance(attribute, ast.Attribute) or attribute.value is not use:
-                return False
-            parent = self.parents.get(id(attribute))
-            if attribute.attr == "json":
-                if (
-                    not isinstance(parent, ast.Call)
-                    or parent.func is not attribute
-                    or parent.args
-                    or parent.keywords
-                ):
-                    return False
-            elif attribute.attr != "status_code" or isinstance(parent, ast.Call):
-                return False
-        if isinstance(expected, ast.Attribute):
-            return self._json_expected_member(path, ast.Constant("detail"), expected)
-        return all(
-            self._json_expected_member(path, key, value)
-            for key, value in zip(expected.keys, expected.values)
-        )
-
     def _json_expected_member(self, path, key, value):
         if not isinstance(key, ast.Constant) or type(key.value) is not str:
             return False

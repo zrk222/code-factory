@@ -16,6 +16,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Callable
 
+from . import canonical_json_compat_bytes as _guided_canonical
 from .capability_packs import builtin_packs, validate_pack
 from .continuation import ContinuationError, continue_assembly, discover_features
 from .deep_audit import pause_deep_run
@@ -637,12 +638,6 @@ def _guided_digest(data: bytes) -> str:
 
 def _guided_is_digest(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
-
-
-def _guided_canonical(value: dict[str, Any]) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _guided_relative(relative: Any) -> Path:

@@ -175,12 +175,6 @@ def _artifact(
     }
 
 
-def _load_input(
-    workspace: Path, value: str, schema: str, fields: set[str]
-) -> tuple[dict, str]:
-    data, digest, _ = _load_audit_input(workspace, value, schema, fields)
-    return data, digest
-
 
 def _load_audit_input(
     workspace: Path, value: str, schema: str, fields: set[str]
