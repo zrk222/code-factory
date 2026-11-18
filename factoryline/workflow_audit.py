@@ -90,26 +90,64 @@ CATEGORIES = frozenset(
 )
 
 
-def _artifact(workspace: Path, value: object, label: str, budget: dict) -> dict:
-    item = _exact(value, {"path", "sha256", "kind"}, label)
-    path, relative = _contained(workspace, item["path"], f"{label}.path")
-    expected = _sha(item["sha256"], f"{label}.sha256")
-    kind = _string(item["kind"], f"{label}.kind")
-    budget["artifact_references"] += 1
-    if budget["artifact_references"] > MAX_AUDIT_ARTIFACTS:
-        raise JourneyProofError("audit exceeds maximum artifact reference count")
+def _artifact_digest(path: Path, remaining: int) -> tuple[str, int]:
     digest = sha256()
     size = 0
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             size += len(chunk)
-            budget["bytes_hashed"] += len(chunk)
             if size > MAX_ARTIFACT_BYTES:
                 raise JourneyProofError("artifact exceeds maximum size")
-            if budget["bytes_hashed"] > MAX_TOTAL_EVIDENCE_BYTES:
+            if size > remaining:
                 raise JourneyProofError("audit exceeds total evidence size limit")
             digest.update(chunk)
-    actual = digest.hexdigest()
+    return digest.hexdigest(), size
+
+
+class _ArtifactReads:
+    """Capture each file once per audit while charging every declared reference."""
+
+    def __init__(self):
+        self.usage = {"artifact_references": 0, "bytes_hashed": 0}
+        self.captured: dict[Path, tuple[str, int]] = {}
+        self.reused: set[Path] = set()
+
+    def digest(self, path: Path) -> str:
+        self.usage["artifact_references"] += 1
+        if self.usage["artifact_references"] > MAX_AUDIT_ARTIFACTS:
+            raise JourneyProofError("audit exceeds maximum artifact reference count")
+        remaining = MAX_TOTAL_EVIDENCE_BYTES - self.usage["bytes_hashed"]
+        if path in self.captured:
+            actual, size = self.captured[path]
+            self.reused.add(path)
+            if size > remaining:
+                raise JourneyProofError("audit exceeds total evidence size limit")
+        else:
+            actual, size = self.captured[path] = _artifact_digest(path, remaining)
+        self.usage["bytes_hashed"] += size
+        return actual
+
+    def reused_sources_current(self, workspace: Path) -> bool:
+        for path in sorted(self.reused):
+            current, _ = _contained(
+                workspace, path.relative_to(workspace).as_posix(), "reused artifact"
+            )
+            if (
+                current != path
+                or _artifact_digest(path, MAX_ARTIFACT_BYTES) != self.captured[path]
+            ):
+                return False
+        return True
+
+
+def _artifact(
+    workspace: Path, value: object, label: str, budget: _ArtifactReads
+) -> dict:
+    item = _exact(value, {"path", "sha256", "kind"}, label)
+    path, relative = _contained(workspace, item["path"], f"{label}.path")
+    expected = _sha(item["sha256"], f"{label}.sha256")
+    kind = _string(item["kind"], f"{label}.kind")
+    actual = budget.digest(path)
     return {
         "path": relative,
         "kind": kind,
@@ -142,7 +180,7 @@ def _load_input(
 
 
 def _applicability(
-    workspace: Path, items: object, budget: dict
+    workspace: Path, items: object, budget: _ArtifactReads
 ) -> tuple[dict, dict, list[str]]:
     rows = _list(items, "applicability")
     output = {}
@@ -215,7 +253,7 @@ def _observed_time(value: object) -> None:
 
 
 def _row_errors(
-    workspace: Path, row: dict, check: dict, applicability: dict, budget: dict
+    workspace: Path, row: dict, check: dict, applicability: dict, budget: _ArtifactReads
 ) -> list:
     _string(row["reason"], "observation reason")
     _string(row["execution_identity"], "execution identity")
@@ -239,7 +277,11 @@ def _row_errors(
 
 
 def _observations(
-    workspace: Path, rows: object, checks: dict, applicability: dict, budget: dict
+    workspace: Path,
+    rows: object,
+    checks: dict,
+    applicability: dict,
+    budget: _ArtifactReads,
 ) -> list:
     errors = []
     expected = {
@@ -285,6 +327,13 @@ def audit_workflows(root: Path, contract_path: str, observations_path: str) -> d
     A PASS proves completeness/hash integrity of supplied records only. It does
     not prove the recorded behavior or authorize any external action.
     """
+    return audit_workflow_snapshot(root, contract_path, observations_path)[0]
+
+
+def audit_workflow_snapshot(
+    root: Path, contract_path: str, observations_path: str
+) -> tuple[dict, dict, dict]:
+    """Return the receipt and the exact documents used to derive it."""
     workspace = _root(root)
     contract, contract_hash = _load_input(
         workspace,
@@ -296,7 +345,7 @@ def audit_workflows(root: Path, contract_path: str, observations_path: str) -> d
     candidates = _list(contract["candidate"], "candidate sources")
     if not candidates:
         raise JourneyProofError("candidate source bindings must not be empty")
-    budget = {"artifact_references": 0, "bytes_hashed": 0}
+    budget = _ArtifactReads()
     source_evidence = [
         _artifact(workspace, row, "candidate source", budget) for row in candidates
     ]
@@ -321,23 +370,26 @@ def audit_workflows(root: Path, contract_path: str, observations_path: str) -> d
     )
     if referenced_contract_hash != contract_hash:
         errors.append("observation contract hash mismatch")
-    if referenced_candidate_hash != _digest(contract["candidate"]):
+    candidate_hash = _digest(candidates)
+    if referenced_candidate_hash != candidate_hash:
         errors.append("observation candidate hash mismatch")
     if any(not row["current"] for row in source_evidence):
         errors.append("candidate source changed")
+    if not budget.reused_sources_current(workspace):
+        errors.append("reused workflow artifact changed during audit")
     receipt = {
         "schema": "factory.workflow-audit.receipt.v1",
         "project_id": project,
         "state": "PASS" if not errors else "INCOMPLETE",
         "contract_sha256": contract_hash,
         "observations_sha256": observations_hash,
-        "candidate_sha256": _digest(contract["candidate"]),
+        "candidate_sha256": candidate_hash,
         "checks": len(checks),
         "inapplicability_evidence": inapplicability_evidence,
-        "resource_usage": budget,
+        "resource_usage": budget.usage,
         "errors": errors,
         "agent_actions": _agent_actions(
-            errors, checks, receipt_candidate=_digest(contract["candidate"])
+            errors, checks, receipt_candidate=candidate_hash
         ),
         "authority": {**AUTHORITY, "execution": False},
         "limits": [
@@ -349,7 +401,7 @@ def audit_workflows(root: Path, contract_path: str, observations_path: str) -> d
         ],
     }
     receipt["receipt_sha256"] = _digest(receipt)
-    return receipt
+    return receipt, contract, observations
 
 
 def _agent_actions(

@@ -3038,6 +3038,38 @@ def _audit(root):
     return audit_workflows(root, "contract.json", "observations.json")
 
 
+@pytest.mark.parametrize("drift", [False, True])
+def test_workflow_audit_reuses_repeated_artifacts_with_fresh_recheck(
+    tmp_path, monkeypatch, drift
+):
+    from collections import Counter
+
+    from factoryline import workflow_audit
+
+    contract, _ = _fixture(tmp_path)
+    original = workflow_audit._artifact_digest
+    reads = Counter()
+    review = tmp_path / "applicability-review.txt"
+    review_size = review.stat().st_size
+
+    def observed(path, remaining):
+        result = original(path, remaining)
+        reads[path.name] += 1
+        if drift and path == review and reads[path.name] == 1:
+            path.write_text("Changed review evidence.", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(workflow_audit, "_artifact_digest", observed)
+    result = _audit(tmp_path)
+    assert reads[review.name] == 2
+    assert result["resource_usage"]["artifact_references"] == len(CATEGORIES) + 1
+    candidate_size = (tmp_path / contract["candidate"][0]["path"]).stat().st_size
+    assert (
+        result["resource_usage"]["bytes_hashed"] == 7 * review_size + 2 * candidate_size
+    )
+    assert result["state"] == ("INCOMPLETE" if drift else "PASS")
+
+
 @pytest.mark.parametrize(
     "project,profile",
     [
