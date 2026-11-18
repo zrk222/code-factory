@@ -5881,11 +5881,21 @@ def argument_role_proof_helpers():
         review_audits,
         review_integrity,
     )
-    from .fixture_scope_value_audit import password_validation_proof_helpers
+    from .fixture_scope_value_audit import (
+        hash_fixture_proof_helpers,
+        password_validation_proof_helpers,
+    )
     from .intent_quality import bound_sink_argument
     from .pickle_model_audit import captured_local_serialization_proof
-    from .provenance import credential_role_witness, oauth_placeholder_proof_helpers
-    from .pytest_collection_audit import validation_marker_proof_helpers
+    from .provenance import (
+        credential_role_witness,
+        oauth_placeholder_proof_helpers,
+        oauth_service_locator_proof_helpers,
+    )
+    from .pytest_collection_audit import (
+        http_fixture_token_proof_helpers,
+        validation_marker_proof_helpers,
+    )
     from .xonsh_program_audit import xonsh_program_role_helpers
 
     return (
@@ -5920,8 +5930,11 @@ def argument_role_proof_helpers():
         review_integrity.security_assignment_findings,
         review_audits.with_decl_proof,
         *password_validation_proof_helpers(),
+        *hash_fixture_proof_helpers(),
         *oauth_placeholder_proof_helpers(),
+        *oauth_service_locator_proof_helpers(),
         *validation_marker_proof_helpers(),
+        *http_fixture_token_proof_helpers(),
         *captured_operand_audit.command_operand_proof_helpers(),
         *captured_operand_audit.installer_prerequisite_helpers(),
         captured_local_serialization_proof,

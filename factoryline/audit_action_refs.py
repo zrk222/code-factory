@@ -1614,12 +1614,27 @@ def _captured_operand_prover(code, node):
 
 
 def _captured_credential_operand_proof(index, path, node):
-    from .fixture_scope_value_audit import captured_password_validation_proof
-    from .provenance import captured_oauth_placeholder_proof
+    from .fixture_scope_value_audit import (
+        captured_hash_fixture_proof,
+        captured_password_validation_proof,
+    )
+    from .provenance import (
+        captured_oauth_placeholder_proof,
+        captured_oauth_service_locator_proof,
+    )
+    from .pytest_collection_audit import captured_http_fixture_token_proof
 
-    return captured_password_validation_proof(
-        index, path, node
-    ) or captured_oauth_placeholder_proof(index, path, node)
+    if len(index.snapshots) > 128:
+        return captured_hash_fixture_proof(index, path, node)
+    if isinstance(index.parents[path].get(id(node)), ast.Module):
+        return captured_oauth_placeholder_proof(
+            index, path, node
+        ) or captured_oauth_service_locator_proof(index, path, node)
+    return (
+        captured_password_validation_proof(index, path, node)
+        or captured_hash_fixture_proof(index, path, node)
+        or captured_http_fixture_token_proof(index, path, node)
+    )
 
 
 def _with_captured_operand_proof(relative, node, row):
@@ -1629,6 +1644,7 @@ def _with_captured_operand_proof(relative, node, row):
         return row
 
     from .captured_security_audit import _native_span
+    from .fixture_scope_value_audit import HASH_FIXTURE_MAX_SNAPSHOTS
     from .pytest_collection_audit import _captured_pytest_inputs
     from .semantic_credential_sensor import _security_helper_source_context
 
@@ -1637,7 +1653,14 @@ def _with_captured_operand_proof(relative, node, row):
     if path is None or span is None or index.relative(path) != relative:
         return row
     point = (row["code"], relative, *span, row["severity"])
-    evidence = _bound_operand_refutation(index, path, node, point, prove)
+    max_snapshots = (
+        HASH_FIXTURE_MAX_SNAPSHOTS
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+        else 128
+    )
+    evidence = _bound_operand_refutation(
+        index, path, node, point, prove, max_snapshots=max_snapshots
+    )
     if evidence is None:
         if row["code"] == "SECURITY_OS_COMMAND":
             _attach_installer_prerequisite(index, path, node, point, row)
@@ -1690,10 +1713,14 @@ def _attach_validation_marker_context(index, path, node, point, row):
     )
 
 
-def _bound_operand_refutation(index, path, node, point, prove):
+def _bound_operand_refutation(index, path, node, point, prove, *, max_snapshots=128):
     from .credential_role_constructor_provider import SourceSnapshotIndex
 
-    if len(index.snapshots) > 128 or not index.validate(path):
+    if (
+        not index.bounded
+        or len(index.snapshots) > max_snapshots
+        or not index.validate(path)
+    ):
         return None
     try:
         proof = prove(index, path, node)

@@ -24,7 +24,9 @@ account = client.get_user("example")
 """
 
 
-def _oauth_placeholder_snapshot(root, source, peers=None, *, relative="example.py"):
+def _captured_credential_snapshot(
+    root, source, peers=None, *, relative="example.py", declaration=4
+):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 
     target = root / relative
@@ -38,13 +40,15 @@ def _oauth_placeholder_snapshot(root, source, peers=None, *, relative="example.p
         snapshots[path] = tree
         inventory[path] = digest
     index = SourceSnapshotIndex(root, snapshots, files, inventory)
-    return index, target, snapshots[target].body[4]
+    return index, target, snapshots[target].body[declaration]
 
 
 def test_oauth_placeholders_require_complete_captured_setup(tmp_path):
     from factoryline.provenance import captured_oauth_placeholder_proof
 
-    index, path, node = _oauth_placeholder_snapshot(tmp_path, _OAUTH_PLACEHOLDER_SOURCE)
+    index, path, node = _captured_credential_snapshot(
+        tmp_path, _OAUTH_PLACEHOLDER_SOURCE
+    )
     proof = captured_oauth_placeholder_proof(index, path, node)
     assert proof["literal_role"] == "COMPLETE_OAUTH_SETUP_FIELD_PLACEHOLDER"
     assert proof["slot"] == "access_token_secret"
@@ -76,7 +80,7 @@ def test_oauth_placeholder_proof_retains_unresolved_credential_use(
     from factoryline.provenance import captured_oauth_placeholder_proof
 
     source = _OAUTH_PLACEHOLDER_SOURCE.replace(original, replacement)
-    index, path, node = _oauth_placeholder_snapshot(tmp_path, source)
+    index, path, node = _captured_credential_snapshot(tmp_path, source)
     assert captured_oauth_placeholder_proof(index, path, node) is None
 
 
@@ -92,7 +96,7 @@ def test_oauth_placeholder_retains_on_defining_module_reimport(tmp_path, tail):
     from factoryline.provenance import captured_oauth_placeholder_proof
 
     source = _OAUTH_PLACEHOLDER_SOURCE + tail
-    index, path, node = _oauth_placeholder_snapshot(tmp_path, source)
+    index, path, node = _captured_credential_snapshot(tmp_path, source)
     assert captured_oauth_placeholder_proof(index, path, node) is None
 
 
@@ -102,7 +106,7 @@ def test_oauth_placeholder_retains_on_parent_package_access(tmp_path, regular_pa
 
     peers = {"tutorial/__init__.py": ""} if regular_package else {}
     args = (tmp_path, _OAUTH_PLACEHOLDER_SOURCE)
-    index, path, node = _oauth_placeholder_snapshot(
+    index, path, node = _captured_credential_snapshot(
         *args, peers, relative="tutorial/example.py"
     )
     assert captured_oauth_placeholder_proof(index, path, node)
@@ -110,7 +114,7 @@ def test_oauth_placeholder_retains_on_parent_package_access(tmp_path, regular_pa
     peers["peer.py"] = (
         "import tutorial as package\npublish(package.example.access_secret)"
     )
-    index, path, node = _oauth_placeholder_snapshot(
+    index, path, node = _captured_credential_snapshot(
         *args, peers, relative="tutorial/example.py"
     )
     assert captured_oauth_placeholder_proof(index, path, node) is None
@@ -132,10 +136,184 @@ def test_oauth_placeholder_retains_on_parent_package_access(tmp_path, regular_pa
 def test_oauth_placeholder_retains_on_unclosed_captured_peer(tmp_path, peers):
     from factoryline.provenance import captured_oauth_placeholder_proof
 
-    index, path, node = _oauth_placeholder_snapshot(
+    index, path, node = _captured_credential_snapshot(
         tmp_path, _OAUTH_PLACEHOLDER_SOURCE, peers
     )
     assert captured_oauth_placeholder_proof(index, path, node) is None
+
+
+_OAUTH_LOCATOR_SOURCE = """\
+import aiohttp as transport
+from application import settings
+endpoint = "https://github.com/login/oauth/access_token"
+
+async def exchange(code):
+    url = f"{endpoint}?client_id={settings.key}&client_secret={settings.secret}&code={code}"
+    async with transport.ClientSession() as client:
+        async with client.post(url) as response:
+            parsed = await response.json()
+            return parsed["access_token"]
+"""
+
+_OAUTH_LOCATOR_MOCK = """\
+from aioresponses import aioresponses as capture
+from application import settings
+from service import endpoint as route
+
+async def check_exchange():
+    with capture() as fake:
+        code = "test-code"
+        url = f"{route}?client_id={settings.key}&client_secret={settings.secret}&code={code}"
+        fake.post(url, status=200, payload={"access_token": "sample"})
+"""
+
+_METHOD_INSPECTION = """\
+import inspect as members
+import asgi_sitemaps as sitemaps
+
+class Example(sitemaps.Sitemap):
+    def __init__(self):
+        super().__init__()
+        self.prefix = "items"
+
+    async def items(self):
+        for name, method in members.getmembers(self, predicate=members.ismethod):
+            yield name
+
+sitemap = sitemaps.SitemapApp(Example(), domain="example.test")
+"""
+
+
+def _oauth_locator_snapshot(root, source, peers=None):
+    return _captured_credential_snapshot(
+        root, source, peers, relative="service.py", declaration=2
+    )
+
+
+def test_oauth_service_locator_proves_http_and_mock_url_slots(tmp_path):
+    from factoryline.provenance import (
+        captured_oauth_service_locator_proof,
+        oauth_service_locator_proof_helpers,
+    )
+
+    index, path, node = _oauth_locator_snapshot(
+        tmp_path,
+        _OAUTH_LOCATOR_SOURCE,
+        {"peer.py": _OAUTH_LOCATOR_MOCK, "introspection.py": _METHOD_INSPECTION},
+    )
+    proof = captured_oauth_service_locator_proof(index, path, node)
+    assert captured_oauth_service_locator_proof in oauth_service_locator_proof_helpers()
+    assert proof["literal_role"] == "PUBLIC_OAUTH_TOKEN_ENDPOINT"
+    transfers = {row["provider"]: row for row in proof["transfers"]}
+    assert set(transfers) == {
+        "aiohttp.ClientSession.post",
+        "aioresponses.aioresponses.post",
+    }
+    assert all(row["slot"] == "url" for row in transfers.values())
+    assert len(transfers["aiohttp.ClientSession.post"]["response_token_span"]) == 4
+    assert (
+        len(transfers["aiohttp.ClientSession.post"]["separate_query_operand_spans"])
+        == 3
+    )
+    assert proof["credential_literal_observation"] == "RETAINED"
+
+
+@pytest.mark.parametrize(
+    "original,replacement",
+    [
+        (
+            "https://github.com/login/oauth/access_token",
+            "https://unknown.test/oauth/token",
+        ),
+        ("client_secret={settings.secret}", "client_secret={endpoint}"),
+        ("client_secret={settings.secret}", "client_secret={settings.key}"),
+        ("&code={code}", "&code={unknown}"),
+        ("client.post(url)", "client.post(other, data=url)"),
+        ("client.post(url)", "client.get(url)"),
+        ("client.post(url)", "client.post(url, data=endpoint)"),
+        ('parsed["access_token"]', 'parsed["token_name"]'),
+        ("import aiohttp as transport", "import unrelated as transport"),
+        ("    url =", "    transport = foreign\n    url ="),
+        ("    url =", "    global client\n    url ="),
+        ("    url =", "    observe(endpoint)\n    url ="),
+        (
+            "async def exchange(code):",
+            "import service as owner\n\nasync def exchange(code):\n"
+            "    matches = owner.endpoint == expected",
+        ),
+        (
+            "async def exchange(code):",
+            "from service import endpoint as alternate\n\nasync def exchange(code):\n"
+            "    matches = alternate == expected",
+        ),
+    ],
+)
+def test_oauth_service_locator_retains_unproved_bindings(
+    tmp_path, original, replacement
+):
+    from factoryline.provenance import captured_oauth_service_locator_proof
+
+    source = _OAUTH_LOCATOR_SOURCE.replace(original, replacement)
+    index, path, node = _oauth_locator_snapshot(tmp_path, source)
+    assert captured_oauth_service_locator_proof(index, path, node) is None
+
+
+@pytest.mark.parametrize(
+    "peers",
+    [
+        {"aiohttp.py": "ClientSession = unknown"},
+        {"peer.py": "import aiohttp\naiohttp.ClientSession.post = other"},
+        {"peer.py": "import service as target\ntarget.transport = other"},
+        {"peer.py": "from service import endpoint as value\nconsume(value)"},
+        {"peer.py": "import service\nconsume(service.endpoint)"},
+        {"peer.py": "from service import exchange\nconsume(exchange.__globals__)"},
+        {"peer.py": _METHOD_INSPECTION + "\nmembers.ismethod = other"},
+        {"peer.py": _METHOD_INSPECTION + "\nmembers.getmembers = other"},
+        {
+            "inspection.py": _METHOD_INSPECTION,
+            "peer.py": "import inspection as target\ntarget.members = other",
+        },
+        {"peer.py": _METHOD_INSPECTION.replace("import inspect", "import unknown")},
+        {"peer.py": _METHOD_INSPECTION, "inspect.py": "ismethod = other"},
+        {"peer.py": _METHOD_INSPECTION, "asgi_sitemaps.py": "Sitemap = other"},
+        {"peer.py": _METHOD_INSPECTION + "\nsitemaps.SitemapApp = other"},
+        {"peer.py": _METHOD_INSPECTION + "\nconsume(Example)"},
+        {"peer.py": _METHOD_INSPECTION.replace("(sitemaps.Sitemap)", "(unknown)")},
+        {
+            "peer.py": _METHOD_INSPECTION.replace(
+                "items(self)", "items(self, target)"
+            ).replace("getmembers(self", "getmembers(target")
+        },
+        {
+            "peer.py": _METHOD_INSPECTION.replace(
+                "items(self)", "items(ignored, /, self)"
+            )
+        },
+        {
+            "peer.py": _METHOD_INSPECTION.replace(
+                "    async def items",
+                "    def __dir__(self):\n        return []\n\n    async def items",
+            )
+        },
+        {
+            "peer.py": _METHOD_INSPECTION.replace(
+                'self.prefix = "items"', "self.prefix = source()"
+            )
+        },
+        {"peer.py": _OAUTH_LOCATOR_MOCK.replace("fake.post(url", "fake.post(other")},
+        {"peer.py": _OAUTH_LOCATOR_MOCK.replace("aioresponses import", "other import")},
+        {"peer.py": _OAUTH_LOCATOR_MOCK, "aioresponses.py": "aioresponses = unknown"},
+        {
+            "fixture.py": _OAUTH_LOCATOR_MOCK,
+            "peer.py": "import fixture as target\ntarget.capture = other",
+        },
+    ],
+)
+def test_oauth_service_locator_retains_unresolved_peer_consumers(tmp_path, peers):
+    from factoryline.provenance import captured_oauth_service_locator_proof
+
+    index, path, node = _oauth_locator_snapshot(tmp_path, _OAUTH_LOCATOR_SOURCE, peers)
+    assert captured_oauth_service_locator_proof(index, path, node) is None
 
 
 def _scan(source):

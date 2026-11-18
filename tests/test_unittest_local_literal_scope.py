@@ -2882,3 +2882,315 @@ def test_native_password_format_operand_refutation_is_policy_bound(tmp_path, pol
         policy == "source-role-v2",
         policy == "source-role-v3",
     )
+
+
+_HASH_FIXTURE_TEST_SOURCE = """\
+from crypto_provider import compute, matches
+
+def test_cryptographic_roundtrip():
+    password = "Synthetic-hash-sample-727"
+    digest = compute(password)
+    assert matches(digest, password)
+"""
+
+_HASH_FIXTURE_PROVIDER_SOURCE = """\
+from passlib.context import CryptContext as Context
+from anyio.to_thread import run_sync
+
+shared = Context(schemes=["pbkdf2_sha256"])
+
+def compute(value: str) -> str:
+    return shared.hash(value)
+
+def matches(expected: str, value: str) -> bool:
+    return shared.verify(value, expected)
+
+async def async_compute(value: str) -> str:
+    return await run_sync(compute, value)
+"""
+
+_HASH_FIXTURE_MIGRATION_SOURCE = """\
+from passlib.context import CryptContext as Context
+
+def test_cryptographic_roundtrip():
+    password = "Synthetic-hash-sample-727"
+    engine = Context(schemes=["pbkdf2_sha512"])
+    legacy_digest = engine.hash(password)
+    engine = Context(schemes=["pbkdf2_sha256"])
+    current_digest = engine.hash(password)
+    engine = Context(schemes=["pbkdf2_sha256", "pbkdf2_sha512"])
+    assert engine.verify(password, legacy_digest)
+    assert engine.verify(password, current_digest)
+"""
+
+
+@pytest.mark.parametrize(
+    ("test_source", "provider", "related", "expected"),
+    [
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "app.py": "from crypto_provider import matches\n\ndef login(user, entered):\n    return matches(user.digest, entered)\n"
+            },
+            ["HASH", "VERIFICATION_ASSERTION"],
+        ),
+        (
+            _HASH_FIXTURE_MIGRATION_SOURCE,
+            "",
+            {},
+            ["HASH", "HASH", "VERIFICATION_ASSERTION", "VERIFICATION_ASSERTION"],
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE + "    store(digest)\n",
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE + "    return password\n",
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE.replace(
+                "assert matches(digest, password)", "assert matches(password, digest)"
+            ),
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE.replace(
+                "assert matches(digest, password)",
+                "assert matches(digest, password), password",
+            ),
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE.replace(
+                "return shared.hash(value)", "log(value)\n    return shared.hash(value)"
+            ),
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": "def pytest_collection_modifyitems(items):\n    items[:] = []\n"
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": "from helpers import remove_items as pytest_collection_modifyitems\n"
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {"conftest.py": "pytest_collection_modifyitems = remove_items\n"},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": 'setattr(harness, "pytest_collection_modifyitems", remove_items)\n'
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {"pytest.ini": "[pytest]\npython_functions = check_*\n"},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": "import crypto_provider as selected\nselected.compute = register\n"
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": 'from unittest import mock\n\ndef test_rebind():\n    with mock.patch("crypto_provider.matches"):\n        pass\n'
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {"passlib.py": "class CryptContext: pass\n"},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": 'import crypto_provider as selected\nselected.shared.update(schemes=["pbkdf2_sha512"])\n'
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_MIGRATION_SOURCE.replace(
+                '["pbkdf2_sha256", "pbkdf2_sha512"]', '["pbkdf2_sha256"]'
+            ),
+            "",
+            {},
+            None,
+        ),
+    ],
+)
+def test_captured_hash_fixture_proof(
+    tmp_path, test_source, provider, related, expected
+):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.fixture_scope_value_audit import (
+        captured_hash_fixture_proof,
+        hash_fixture_proof_helpers,
+    )
+
+    path = tmp_path / "test_roundtrip.py"
+    documents = {tmp_path / key: raw.encode() for key, raw in related.items()}
+    documents.update(
+        {path: test_source.encode(), tmp_path / "crypto_provider.py": provider.encode()}
+    )
+    python = {peer: raw for peer, raw in documents.items() if peer.suffix == ".py"}
+    sources = {peer: ast.parse(raw) for peer, raw in python.items()}
+    inventory = {peer: hashlib.sha256(raw).hexdigest() for peer, raw in python.items()}
+    for peer, tree in sources.items():
+        tree._oracle_source_sha256 = inventory[peer]
+        tree._security_source_context = (tmp_path, documents)
+    index = SourceSnapshotIndex(tmp_path, sources, python, inventory)
+    node = sources[path].body[1].body[0]
+    proof = captured_hash_fixture_proof(index, path, node)
+    assert captured_hash_fixture_proof in hash_fixture_proof_helpers()
+    if expected is None:
+        assert proof is None
+    else:
+        assert [row["role"] for row in proof["test_consumers"]] == expected
+        assert proof["fixture"]["span"][0] == node.lineno - 1
+        assert "Synthetic-hash-sample-727" not in repr(proof)
+
+
+@pytest.mark.parametrize(
+    ("tokens", "checks_provider"),
+    [("-q --strict-markers", False), ("--cov=src", True), ("--no-cov-on-fail", True)],
+)
+def test_hash_fixture_checks_coverage_provider_only_when_requested(
+    monkeypatch, tokens, checks_provider
+):
+    from factoryline import pytest_collection_audit
+    from factoryline.fixture_scope_value_audit import (
+        _hash_fixture_collection_options_clear,
+    )
+
+    checked = []
+
+    def provider(documents):
+        checked.append(documents)
+        return True
+
+    monkeypatch.setattr(pytest_collection_audit, "_pytest_cov_provider", provider)
+    documents = {"requirements.txt": b"pytest-cov"}
+    assert _hash_fixture_collection_options_clear(documents, {"addopts": tokens})
+    assert checked == ([documents] if checks_provider else [])
+
+
+@pytest.mark.parametrize(
+    ("relative", "options", "collects"),
+    [
+        ("tests/test_roundtrip.py", {}, True),
+        (".hidden/test_roundtrip.py", {}, False),
+        ("tests/build/test_roundtrip.py", {}, False),
+        ("dist/test_roundtrip.py", {}, False),
+        ("node_modules/test_roundtrip.py", {}, False),
+        ("tests/__pycache__/test_roundtrip.py", {"norecursedirs": ""}, False),
+        (
+            "tests/nested/vendor/build/test_roundtrip.py",
+            {"norecursedirs": "vendor/build"},
+            False,
+        ),
+        ("tests/build/test_roundtrip.py", {"norecursedirs": "legacy"}, True),
+    ],
+)
+def test_hash_fixture_uses_captured_pytest_directory_rules(
+    tmp_path, relative, options, collects
+):
+    from types import SimpleNamespace
+
+    from factoryline.fixture_scope_value_audit import _hash_fixture_selected
+
+    path = tmp_path / relative
+    source = ast.parse(_HASH_FIXTURE_TEST_SOURCE)
+    configuration = "[pytest]\n" + "\n".join(
+        f"{key} = {value}" for key, value in options.items()
+    )
+    source._security_source_context = (
+        tmp_path,
+        {tmp_path / "pytest.ini": configuration.encode()},
+    )
+    index = SimpleNamespace(
+        root=tmp_path,
+        snapshots={path: source},
+        relative=lambda name: name.relative_to(tmp_path).as_posix(),
+    )
+    assert _hash_fixture_selected(index, path, source.body[1]) is collects
+
+
+def test_hash_fixture_native_scan_preserves_authentication_consumer(tmp_path):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    sources = {
+        "test_roundtrip.py": _HASH_FIXTURE_TEST_SOURCE,
+        "crypto_provider.py": _HASH_FIXTURE_PROVIDER_SOURCE,
+        "authentication.py": (
+            "from crypto_provider import compute\n"
+            'PASSWORD = "Account-Authority-813"\n\n'
+            "def enroll(account):\n"
+            "    account.digest = compute(PASSWORD)\n"
+        ),
+    }
+    for relative, raw in sources.items():
+        (tmp_path / relative).write_text(raw, encoding="utf-8")
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    findings = {
+        row["raw_finding"]["path"]
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    refuted = {
+        row["path"]
+        for row in report["refuted_security_observations"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    assert findings == {"authentication.py"}
+    assert refuted == {"test_roundtrip.py"}
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
