@@ -30,6 +30,46 @@ from factoryline.workflow_audit import CATEGORIES, audit_workflows
 
 
 @pytest.mark.parametrize(
+    ("declaration", "closed"),
+    [("pass", True), ("nonlocal label", False), ("global label", False)],
+)
+def test_captured_record_field_requires_closed_nested_bindings(
+    tmp_path, monkeypatch, declaration, closed
+):
+    from types import SimpleNamespace
+
+    from factoryline import credential_role_identity_effects
+    from factoryline.captured_operand_audit import _CapturedRecordText
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    source = (
+        "def build():\n"
+        "    label = 'initial'\n"
+        "    def update():\n"
+        f"        {declaration}\n"
+        "        label = 'updated'\n"
+        "    update()\n"
+        "    return {'label': label}\n"
+    ).encode()
+    path = tmp_path / "example.py"
+    tree = ast.parse(source)
+    digest = sha256(source).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: source}, {path: digest})
+    assert index.validate(path)
+    resolved = SimpleNamespace(
+        function=tree.body[0], negative_binding_closed=True, arguments={}, path=path
+    )
+    monkeypatch.setattr(
+        credential_role_identity_effects,
+        "resolve_source_identity_call",
+        lambda *_args: resolved,
+    )
+    call = ast.parse("build()", mode="eval").body
+    assert _CapturedRecordText(index).field(call, path, "label", {}) is closed
+
+
+@pytest.mark.parametrize(
     ("module_level", "inventory_size", "expected"),
     [
         (True, 1, ["placeholder", "locator"]),

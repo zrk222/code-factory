@@ -498,9 +498,9 @@ class _CapturedRecordText:
             return False
         nodes = tuple(_lexical_nodes(resolved.function))
         if any(
-            isinstance(node, (ast.Yield, ast.YieldFrom, ast.Global, ast.Nonlocal))
-            for node in nodes
-        ):
+            isinstance(node, (ast.Global, ast.Nonlocal))
+            for node in ast.walk(resolved.function)
+        ) or any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in nodes):
             return False
         returns = [node.value for node in nodes if isinstance(node, ast.Return)]
         actuals = {
