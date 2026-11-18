@@ -24,6 +24,140 @@ from factoryline.independent_execution import (
 )
 
 
+_CLOSED_LOCAL_REPRESENTATION = dedent("""
+    from __future__ import annotations
+    from typing import List
+
+    class Item:
+        def __init__(self, label: str):
+            self.label = label
+
+        def __str__(self):
+            return self.label
+
+        def __repr__(self):
+            return f"Item('{self.label}')"
+
+    class Basket:
+        def __init__(self, members: List[Item] = None):
+            if members is None:
+                self.members = []
+            else:
+                self.members = members
+
+        def add(self, item):
+            self.members.append(item)
+            return self
+
+        def __str__(self):
+            print(f"{[item.label for item in self.members]}")
+            return f"{[str(item) for item in self.members]}"
+
+        def __repr__(self):
+            return f"Basket({self.members!r})"
+
+    first = Item("fixed")
+    second = Item("value")
+    assert str(Basket().add(first)) == "['fixed']"
+    ready = Basket().add(first).add(second)
+    assert ready == eval(repr(ready))
+""").lstrip()
+
+
+def _local_representation_snapshot(tmp_path, source, peers=None):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    target = tmp_path / "local_example.py"
+    snapshots, sources, inventory = {}, {}, {}
+    for name, text in {target.name: source, **(peers or {})}.items():
+        path = tmp_path / name
+        raw = text.encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = digest
+        snapshots[path], sources[path], inventory[path] = tree, raw, digest
+    call = next(
+        node
+        for node in ast.walk(snapshots[target])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "eval"
+    )
+    return SourceSnapshotIndex(tmp_path, snapshots, sources, inventory), target, call
+
+
+def test_closed_representation_is_bound_to_the_exact_eval_operand(tmp_path):
+    from factoryline.captured_operand_audit import captured_local_representation_proof
+
+    index, path, node = _local_representation_snapshot(
+        tmp_path, _CLOSED_LOCAL_REPRESENTATION
+    )
+    proof = captured_local_representation_proof(index, path, node)
+    assert proof["program_role"] == "CLOSED_LOCAL_CONSTRUCTOR_REPRESENTATION"
+    assert proof["operand_span"] == [
+        node.lineno,
+        node.col_offset + 5,
+        node.end_lineno,
+        node.end_col_offset - 1,
+    ]
+    tampered = ast.copy_location(ast.parse("eval(repr(other))", mode="eval").body, node)
+    assert captured_local_representation_proof(index, path, tampered) is None
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement"),
+    [
+        ('first = Item("fixed")', "first = Item(obtain_value())"),
+        ('first = Item("fixed")', 'repr = replacement\nfirst = Item("fixed")'),
+        (
+            'second = Item("value")',
+            'first.label = obtain_value()\nsecond = Item("value")',
+        ),
+        ("eval(repr(ready))", "eval(obtain_value())"),
+        ("Basket({self.members!r})", "Other({self.members!r})"),
+        ("Item('{self.label}')", "Item('different')"),
+        ("self.label = label", "register(self)\n        self.label = label"),
+        (
+            "self.members.append(item)",
+            "touch_registry()\n        self.members.append(item)",
+        ),
+        ('print(f"{[item.label for item in self.members]}")', "touch_registry()"),
+        ("class Basket:", "class Basket(Other):"),
+        (
+            "class Basket:",
+            "class Basket:\n    def __getattribute__(self, key): return select(self, key)",
+        ),
+    ],
+)
+def test_local_representation_proof_retains_unresolved_eval(
+    tmp_path, original, replacement
+):
+    from factoryline.captured_operand_audit import captured_local_representation_proof
+
+    source = _CLOSED_LOCAL_REPRESENTATION.replace(original, replacement)
+    index, path, node = _local_representation_snapshot(tmp_path, source)
+    assert captured_local_representation_proof(index, path, node) is None
+
+
+@pytest.mark.parametrize(
+    "peer",
+    [
+        "import builtins",
+        "from unittest.mock import patch",
+        "from unittest import mock",
+        "from _pytest.monkeypatch import MonkeyPatch",
+        "provider.setattr('provider_name', replacement)",
+    ],
+)
+def test_local_representation_proof_retains_opaque_workspace_providers(tmp_path, peer):
+    from factoryline.captured_operand_audit import captured_local_representation_proof
+
+    index, path, node = _local_representation_snapshot(
+        tmp_path, _CLOSED_LOCAL_REPRESENTATION, {"peer.py": peer}
+    )
+    assert captured_local_representation_proof(index, path, node) is None
+
+
 @pytest.mark.parametrize(
     "expression, expected",
     [

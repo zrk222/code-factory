@@ -5874,8 +5874,9 @@ def _revalidate_scan_role_support(audit, core, captured, primitive, native_rows)
 
 def argument_role_proof_helpers():
     """Bind the exact argument and HTTP name proofs to scanner cache generations."""
-    from . import audit_log_flow, captured_operand_audit
+    from . import audit_action_refs, audit_log_flow, captured_operand_audit
     from .intent_quality import bound_sink_argument
+    from .pickle_model_audit import captured_local_serialization_proof
     from .provenance import credential_role_witness
     from .xonsh_program_audit import xonsh_program_role_helpers
 
@@ -5902,6 +5903,12 @@ def argument_role_proof_helpers():
         _registry_cookie_name_use,
         _registry_formatted_use,
         captured_operand_audit.cookie_name_trace,
+        audit_action_refs._captured_operand_prover,
+        audit_action_refs._with_captured_operand_proof,
+        audit_action_refs._bound_operand_refutation,
+        *captured_operand_audit.command_operand_proof_helpers(),
+        captured_local_serialization_proof,
+        *captured_operand_audit.captured_local_representation_helpers(),
         *xonsh_program_role_helpers(),
         _registry_roles_closed,
         _COOKIE_NAME_PROVIDERS,

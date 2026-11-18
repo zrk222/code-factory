@@ -2149,3 +2149,268 @@ def test_captured_test_configuration_names_and_unmodeled_test_workflow_paths(tmp
     } <= names
     assert "unrelated.yml" not in names
     assert list(unmodeled_test_workflow_paths(tmp_path)) == [".gitlab-ci.yml"]
+
+
+_COMMAND_FILE_WORKER = """\
+import os
+DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
+
+def render(stem, body):
+    save_document(body)
+    return os.system('pdflatex ' + os.path.join(DIRECTORY, stem) + '.tex')
+"""
+_COMMAND_FILE_ROUTE = """\
+import time
+from random import sample
+from routing_support import *
+from adapter import render
+
+def handle(record, choose_name):
+    if choose_name:
+        token = record.label
+    else:
+        token = ''.join(sample('abcdefghij', 5)) + str(time.time()).split('.')[0]
+        return render(token, record)
+"""
+_COMMAND_STARTUP_WORKER = """\
+import os
+from tools import normalized
+
+class Renderer:
+    def __init__(self, options=None):
+        if options is not None:
+            self.requested = options.get('directory', None)
+            self.root_path = None
+            if self.requested is not None:
+                self.root_path = normalized(self.requested)
+                self.__render()
+
+    def __render(self):
+        output = os.path.join(self.root_path, 'docs')
+        return os.system('apidoc -i ' + self.root_path + ' -o ' + output)
+"""
+_COMMAND_PATH_REWRITER = """\
+import os
+
+def normalized(path):
+    result = ''
+    for part in path.split('/'):
+        try:
+            part.index(' ')
+            result += "'" + part + "'/"
+        except ValueError as error:
+            result += part + '/'
+    return os.path.normpath(result)
+"""
+
+
+def _generated_command_sources(change):
+    sources = {
+        "worker.py": _COMMAND_FILE_WORKER,
+        "adapter.py": "from worker import *\n",
+        "routing_support.py": "import os\n",
+        "route.py": _COMMAND_FILE_ROUTE,
+    }
+    if change == "published_callable":
+        sources["route.py"] += "\ncallback = render\n"
+    elif change == "second_source":
+        sources["route.py"] += (
+            "\ndef next_route(record):\n    return render(record.label, record)\n"
+        )
+    elif change == "source_path_rebound":
+        sources["worker.py"] += "\nDIRECTORY = source_directory()\n"
+    elif change == "clock_rebound":
+        sources["route.py"] += "\ntime.time = another_clock\n"
+    elif change == "unknown_command":
+        sources["worker.py"] = _COMMAND_FILE_WORKER.replace("pdflatex ", "process ")
+    return sources
+
+
+def _startup_command_sources(change):
+    sources = {
+        "worker.py": _COMMAND_STARTUP_WORKER,
+        "tools.py": _COMMAND_PATH_REWRITER,
+        "driver.py": "import os\nfrom worker import Renderer\nOPTIONS = {'directory': os.getcwd()}\napp = Renderer(OPTIONS)\n",
+    }
+    if change == "second_source":
+        sources["driver.py"] += (
+            "\ndef render_more(value):\n    return Renderer({'directory': value})\n"
+        )
+    elif change == "path_transform":
+        sources["tools.py"] = _COMMAND_PATH_REWRITER.replace(
+            "normpath(result)", "normpath(source_directory())"
+        )
+    elif change == "config_escape":
+        sources["driver.py"] = sources["driver.py"].replace(
+            "app =", "pass_to_callback(OPTIONS)\napp ="
+        )
+    elif change == "helper_rebound":
+        sources["driver.py"] += "\nimport tools\ntools.normalized = transform\n"
+    elif change == "receiver_rebound":
+        sources["worker.py"] = _COMMAND_STARTUP_WORKER.replace(
+            "        output =",
+            "        self.root_path = other_path()\n        output =",
+        )
+    return sources
+
+
+@pytest.mark.parametrize(
+    "kind,change",
+    [
+        ("generated", None),
+        ("generated", "published_callable"),
+        ("generated", "second_source"),
+        ("generated", "source_path_rebound"),
+        ("generated", "clock_rebound"),
+        ("generated", "unknown_command"),
+        ("startup", None),
+        ("startup", "second_source"),
+        ("startup", "path_transform"),
+        ("startup", "config_escape"),
+        ("startup", "helper_rebound"),
+        ("startup", "receiver_rebound"),
+    ],
+)
+def test_captured_command_operand_proof(tmp_path, kind, change):
+    builder = (
+        _generated_command_sources if kind == "generated" else _startup_command_sources
+    )
+    result = _captured_command_result(tmp_path, builder(change))
+    if change:
+        assert result is None
+    else:
+        assert result["operands"] == (
+            ["MODULE_LOCAL_DIRECTORY", "ALPHABET_AND_CLOCK_FILENAME"]
+            if kind == "generated"
+            else ["PROCESS_STARTUP_DIRECTORY", "FIXED_CHILD_DIRECTORY"]
+        )
+        assert result["deployment_path"] == "UNASSESSED"
+
+
+def _captured_command_result(tmp_path, sources):
+    import hashlib
+
+    from factoryline import captured_operand_audit as operands
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    raw = {tmp_path / path: text.encode() for path, text in sources.items()}
+    inventory = {path: hashlib.sha256(data).hexdigest() for path, data in raw.items()}
+    snapshots = {path: ast.parse(data) for path, data in raw.items()}
+    for path, tree in snapshots.items():
+        tree._oracle_source_sha256 = inventory[path]
+    index = SourceSnapshotIndex(tmp_path, snapshots, raw, inventory)
+    path = tmp_path / "worker.py"
+    site = next(
+        node
+        for node in ast.walk(snapshots[path])
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "os.system"
+    )
+    return operands.captured_command_operand_proof(index, path, site)
+
+
+@pytest.mark.parametrize(
+    "peer",
+    [
+        "import worker\nworker.DIRECTORY = other_directory()\n",
+        "import worker\nworker.__file__ = other_directory()\n",
+        "from exported import renamed as emit\nemit(record.label, record)\n",
+        "from worker import render\ndef outer(render):\n    def inner():\n        return render(record.label, record)\n",
+    ],
+)
+def test_command_retains_peer_writes_reexports_and_unmodeled_scope(tmp_path, peer):
+    sources = _generated_command_sources(None)
+    sources.update(
+        {"peer.py": peer, "exported.py": "from adapter import render as renamed\n"}
+    )
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("    if choose_name:", "    while choose_name:"),
+        ("    else:", "    try:"),
+    ],
+)
+def test_command_retains_operand_with_unmodeled_control_flow(tmp_path, before, after):
+    sources = _generated_command_sources(None)
+    route = sources["route.py"]
+    start = route.index("    if choose_name:")
+    generated = route[route.index("    else:", start) :]
+    if after == "    try:":
+        sources["route.py"] = (
+            route[:start]
+            + generated.replace(before, after)
+            + "    except LookupError:\n        pass\n"
+        )
+    else:
+        sources["route.py"] = route[:start] + generated.replace("    else:", after)
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+def test_command_retains_captured_cwd_change(tmp_path):
+    sources = _startup_command_sources(None)
+    sources["driver.py"] = sources["driver.py"].replace(
+        "OPTIONS =", "os.chdir(runtime_directory())\nOPTIONS ="
+    )
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+@pytest.mark.parametrize(
+    "site", ["        if options is not None:", "        output = os.path.join"]
+)
+def test_command_retains_reassigned_receiver(tmp_path, site):
+    sources = _startup_command_sources(None)
+    sources["worker.py"] = sources["worker.py"].replace(
+        site, "        self = an_unknown_receiver()\n" + site
+    )
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+@pytest.mark.parametrize(
+    "before,inserted",
+    [
+        ("    def __init__", "    __getattribute__ = other_lookup\n"),
+        ("    def __init__", "    from providers import creator as __new__\n"),
+        ("                self.__render()", "                pass_object(self)\n"),
+        (
+            "                self.__render()",
+            "                self.__class__ = other_class\n",
+        ),
+        ("        output = os.path.join", "        pass_object(self)\n"),
+    ],
+)
+def test_command_retains_receiver_hooks_and_escapes(tmp_path, before, inserted):
+    sources = _startup_command_sources(None)
+    sources["worker.py"] = sources["worker.py"].replace(before, inserted + before)
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+def test_command_retains_bound_constructor_access(tmp_path):
+    sources = _startup_command_sources(None)
+    sources["driver.py"] += "\napp.__init__(new_settings())\n"
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+def test_command_retains_generated_name_with_additional_formal(tmp_path):
+    sources = _generated_command_sources(None)
+    sources["worker.py"] = sources["worker.py"].replace(
+        "stem, body", "stem, body, extra"
+    )
+    sources["route.py"] = sources["route.py"].replace(
+        "token, record", "token, record, record.label"
+    )
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+def test_command_operand_proof_helpers_identify_live_methods(monkeypatch):
+    from factoryline import captured_operand_audit as operands
+
+    def guarded_replacement(*_args):
+        return None
+
+    helpers = operands.command_operand_proof_helpers()
+    assert operands.captured_command_operand_proof in helpers
+    assert operands._CommandOperandProof.command in helpers
+    monkeypatch.setattr(operands._CommandOperandProof, "command", guarded_replacement)
+    assert guarded_replacement in operands.command_operand_proof_helpers()

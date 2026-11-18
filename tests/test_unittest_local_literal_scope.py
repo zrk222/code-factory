@@ -449,7 +449,7 @@ def captured_scope(tmp_path, source, filename="test_scope.py"):
 
 
 def test_proof_inventory_binds_exact_scanner_consumers():
-    from factoryline import audit_log_flow, captured_operand_audit
+    from factoryline import audit_log_flow, captured_operand_audit, pickle_model_audit
     from factoryline.captured_security_audit import argument_role_proof_helpers
     from factoryline.django_class_fixture_audit import (
         application_class_account_evidence,
@@ -464,9 +464,57 @@ def test_proof_inventory_binds_exact_scanner_consumers():
     program_helpers = xonsh_program_role_helpers()
     assert audit_log_flow.captured_log_field_text_closed in argument_helpers
     assert captured_operand_audit.cookie_name_trace in argument_helpers
+    assert captured_operand_audit.captured_command_operand_proof in argument_helpers
+    assert (
+        captured_operand_audit.captured_local_representation_proof in argument_helpers
+    )
+    assert pickle_model_audit.captured_local_serialization_proof in argument_helpers
+    assert all(
+        helper in argument_helpers
+        for helpers in (
+            captured_operand_audit.command_operand_proof_helpers(),
+            captured_operand_audit.captured_local_representation_helpers(),
+        )
+        for helper in helpers
+    )
     assert stage_xonsh_program_refutation in program_helpers
     assert all(helper in argument_helpers for helper in program_helpers)
     assert application_class_account_evidence in class_fixture_helpers()
+
+
+def test_operand_refutation_rechecks_warm_source_snapshot(tmp_path):
+    from factoryline.audit_action_refs import _bound_operand_refutation
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    raw = b"value = 1\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    primary, peer = tmp_path / "primary.py", tmp_path / "peer.py"
+    trees = {path: ast.parse(raw) for path in (primary, peer)}
+    for tree in trees.values():
+        tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(
+        tmp_path, trees, dict.fromkeys(trees, raw), dict.fromkeys(trees, digest)
+    )
+    point = ("DEVELOPMENT_RULE", "primary.py", 1, 0, 1, 9, "HIGH")
+
+    def propose(_source, _path, _node):
+        return {"hypothesis": "CLOSED_OPERAND"}
+
+    node = trees[primary].body[0]
+    assert _bound_operand_refutation(index, primary, node, point, propose)
+    assert index.validate(peer)
+    trees[peer].body[0].value.value = 2
+    assert index.validate(peer)
+    assert _bound_operand_refutation(index, primary, node, point, propose) is None
+
+
+def test_representation_policy_changes_native_cache_key(tmp_path, monkeypatch):
+    from factoryline import captured_operand_audit
+    from factoryline.review_audits import _oracle_context_cache_key
+
+    before = _oracle_context_cache_key(tmp_path, [], {}, captured=True)
+    monkeypatch.setattr(captured_operand_audit, "_REPRESENTATION_METHODS", frozenset())
+    assert _oracle_context_cache_key(tmp_path, [], {}, captured=True) != before
 
 
 @pytest.mark.parametrize(
