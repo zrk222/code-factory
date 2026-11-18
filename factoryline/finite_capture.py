@@ -32,6 +32,10 @@ from .captured_security_audit import (
     _captured_sink_reflective_barrier as _captured_sink_reflective_barrier,
 )
 
+from .captured_operand_audit import (
+    _closed_shell_namespace,
+    _closed_shell_provider_mutated,
+)
 from .semantic_credential_sensor import (
     _SecurityFlowValue as _SecurityFlowValue,
     _captured_path_expression as _captured_path_expression,
@@ -1983,42 +1987,6 @@ def _closed_shell_call_role(call, call_name):
     return None
 
 
-def _closed_shell_provider_mutated(node, head, supported):
-    """Reject source-visible provider writes, reflection and monkey patches."""
-    if isinstance(node, ast.ImportFrom) and any(
-        alias.name == "*" for alias in node.names
-    ):
-        return True
-    if (
-        isinstance(node, ast.Name)
-        and node.id == head
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-    ):
-        return True
-    if isinstance(node, (ast.arg, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        if getattr(node, "arg", getattr(node, "name", None)) == head:
-            return True
-    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
-        base = node.value
-        while isinstance(base, ast.Attribute):
-            base = base.value
-        if (isinstance(base, ast.Name) and base.id == head) or node.attr in {
-            name.rsplit(".", 1)[-1] for name in supported
-        }:
-            return True
-    if (
-        isinstance(node, ast.Call)
-        and (
-            node.func.id
-            if isinstance(node.func, ast.Name)
-            else getattr(node.func, "attr", "")
-        )
-        in "eval exec globals locals setattr delattr __import__ patch".split()
-    ):
-        return True
-    return False
-
-
 def _closed_shell_provider(tree, call, call_name, supported):
     """Bind a simple process call to one stable module-level provider import."""
     name = ast.unparse(call.func)
@@ -2045,39 +2013,6 @@ def _closed_shell_provider(tree, call, call_name, supported):
     return not any(
         _closed_shell_provider_mutated(node, head, supported) for node in ast.walk(tree)
     )
-
-
-def _closed_shell_namespace(tree, head):
-    """Reject capability escapes, namespace access and aliased reflection."""
-    parents = {
-        child: parent
-        for parent in ast.walk(tree)
-        for child in ast.iter_child_nodes(parent)
-    }
-    reflective = set(
-        "eval exec globals locals vars setattr delattr getattr __import__".split()
-    )
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Name)
-            and node.id == head
-            and isinstance(node.ctx, ast.Load)
-        ):
-            if not isinstance(parents.get(node), ast.Attribute):
-                return False
-        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
-            base = node.value
-            while isinstance(base, ast.Attribute):
-                base = base.value
-            if isinstance(base, ast.Name) and base.id == head:
-                return False
-        if isinstance(node, ast.ImportFrom) and node.module in {
-            "builtins",
-            "__builtin__",
-        }:
-            if any(alias.name in reflective for alias in node.names):
-                return False
-    return True
 
 
 def _shell_source_provider_clear(raw, provider):

@@ -5,7 +5,7 @@ import ast
 from .credential_role_constructor_provider import binding_occurrences
 from .credential_role_identity_effects import _Value, _constant_identity_value
 from .credential_role_method_use_getter_audit import _SourceTestScope
-from .fixture_scope_values import _scope_exact_text
+from .fixture_scope_value_audit import _scope_exact_text
 
 
 class _StoredTestClientCredential(_SourceTestScope):

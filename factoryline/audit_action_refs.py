@@ -1550,8 +1550,15 @@ def _captured_declaration_authority(index, path, node):
 
 
 def with_captured_declaration_proof(relative, node, row):
-    """Attach proof without altering native raw data before replay."""
+    """Bind observed program roles to source and stage their proof for replay."""
     match row, node:
+        case {"code": "SECURITY_DYNAMIC_EXECUTION", "severity": "HIGH"}, ast.Call(
+            func=ast.Name(id="eval"), args=[ast.Attribute(), ast.Name()], keywords=[]
+        ):
+            from .xonsh_program_audit import stage_xonsh_program_refutation
+
+            stage_xonsh_program_refutation(relative, node, row)
+            return row
         case {"code": "SECURITY_DYNAMIC_EXECUTION", "severity": "HIGH"}, ast.Call(
             func=ast.Name(id="exec"), args=[ast.Subscript(), ast.Name()], keywords=[]
         ):

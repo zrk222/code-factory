@@ -1,7 +1,8 @@
 """Captured application credential evidence and source-bound audit helpers."""
 
 import ast
-from .fixture_scope_values import _TEST_SCOPE_CONTRACT_EPOCH
+from .fixture_scope_value_audit import _TEST_SCOPE_CONTRACT_EPOCH
+from .fixture_scope_value_audit import _TestScopeContractEpoch as _TestScopeContractEpoch
 import hashlib
 from pathlib import Path
 

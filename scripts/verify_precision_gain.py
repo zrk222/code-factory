@@ -178,18 +178,8 @@ def _runtime_comparison(baseline, candidate):
     return {"baseline": before, "candidate": after, "delta": after - before}
 
 
-def evaluate(
-    contract: dict, baseline: dict, candidate: dict, *, development_gate=False
-) -> dict:
-    """Reject omitted coverage, changed premises, lost TPs and unsupported gains."""
-    labels = _contract_labels(contract)
-    reasons, versions = [], []
-    for name, version in (("baseline", baseline), ("candidate", candidate)):
-        rows, incomplete = _version_rows(name, version, contract, labels)
-        reasons.extend(incomplete)
-        versions.append(rows)
-    before, after = versions
-    changed = {
+def _changed_memberships(before, after, labels):
+    return {
         key: {
             "before": [f for f in FIELDS if before[key][f]],
             "after": [f for f in FIELDS if after[key][f]],
@@ -197,40 +187,63 @@ def evaluate(
         for key in labels
         if any(before[key][f] != after[key][f] for f in FIELDS)
     }
+
+
+def _repair_reasons(contract, changed, lost, lost_unclear):
+    reasons = []
     if changed != contract.get("expected_changes"):
         reasons.append("observed changes differ from the registered repair impact")
-    lost = _lost_label_memberships(
-        before, after, labels, "TP", ("raw", "active", "supported", "active_or_review")
-    )
     if any(lost.values()):
         reasons.append("true-positive retention failed")
-    lost_unclear = _lost_label_memberships(
-        before, after, labels, "UNCLEAR", ("raw", "active_or_review")
-    )
     if any(lost_unclear.values()):
         reasons.append("unresolved claims were removed from review")
-    metrics = {
+    return reasons
+
+
+def _paired_metrics(before, after, labels):
+    return {
         name: {
             field: _metrics(rows, labels, field)
             for field in (*FIELDS, "active_or_review")
         }
         for name, rows in (("baseline", before), ("candidate", after))
     }
-    old, new = (
-        metrics[name]["active"]["precision"] for name in ("baseline", "candidate")
+
+
+def _precision_delta(metrics, population):
+    old = metrics["baseline"][population]["precision"]
+    new = metrics["candidate"][population]["precision"]
+    return new - old if old is not None and new is not None else None
+
+
+def _comparison_state(reasons, gain, raw_gain, development_gate):
+    if not development_gate:
+        return _measurement_state(reasons, gain)
+    if raw_gain is None or raw_gain * 100 + 1e-12 < MINIMUM_RAW_GAIN_PP:
+        reasons.append("raw precision gain is below five percentage points")
+    return "BLOCKED" if reasons else DEVELOPMENT_GATE_PASS
+
+
+def evaluate(
+    contract: dict, baseline: dict, candidate: dict, *, development_gate=False
+) -> dict:
+    """Reject omitted coverage, changed premises, lost TPs and unsupported gains."""
+    labels = _contract_labels(contract)
+    before, reasons = _version_rows("baseline", baseline, contract, labels)
+    after, incomplete = _version_rows("candidate", candidate, contract, labels)
+    reasons.extend(incomplete)
+    changed = _changed_memberships(before, after, labels)
+    lost = _lost_label_memberships(
+        before, after, labels, "TP", ("raw", "active", "supported", "active_or_review")
     )
-    gain = new - old if old is not None and new is not None else None
-    state = _measurement_state(reasons, gain)
-    old_raw, new_raw = (
-        metrics[name]["raw"]["precision"] for name in ("baseline", "candidate")
+    lost_unclear = _lost_label_memberships(
+        before, after, labels, "UNCLEAR", ("raw", "active_or_review")
     )
-    raw_gain = (
-        new_raw - old_raw if old_raw is not None and new_raw is not None else None
-    )
-    if development_gate:
-        if raw_gain is None or raw_gain * 100 + 1e-12 < MINIMUM_RAW_GAIN_PP:
-            reasons.append("raw precision gain is below five percentage points")
-        state = "BLOCKED" if reasons else DEVELOPMENT_GATE_PASS
+    reasons.extend(_repair_reasons(contract, changed, lost, lost_unclear))
+    metrics = _paired_metrics(before, after, labels)
+    gain = _precision_delta(metrics, "active")
+    raw_gain = _precision_delta(metrics, "raw")
+    state = _comparison_state(reasons, gain, raw_gain, development_gate)
     selection = any(
         not before[key]["review"] and after[key]["review"] for key in labels
     )

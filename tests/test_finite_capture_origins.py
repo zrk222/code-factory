@@ -13,6 +13,7 @@ import json
 from factoryline.provenance import finite_template_binding, finite_template_witness
 from factoryline.review_integrity import _fixed_primitive_binding
 from datetime import datetime, timedelta, timezone
+from textwrap import dedent
 from factoryline.enterprise_receipts import generate_key_material, sign_payload
 from factoryline.independent_execution import (
     ExecutionAttestationError,
@@ -3597,3 +3598,183 @@ def test_security_value_helper_epoch_tracks_actual_local_definition_binding(
         review_integrity, "_security_local_helper_definition", replacement
     )
     assert replacement in effects.security_value_helper_epoch()
+
+
+WORKER = """\
+from multiprocessing import Pool, cpu_count
+
+class Worker:
+    def __init__(self, program):
+        self.program = program
+
+    def render(self, item):
+        scope = {}
+        scope["text"] = item[0]
+        scope["index"] = item[1]
+        return eval(self.program, scope)
+
+    def __call__(self, item):
+        return self.render(item)
+
+    def run(self, records, output):
+        with Pool(cpu_count()) as pool:
+            results = pool.imap_unordered(self, records)
+            for result in results:
+                print(result, file=output)
+"""
+
+ENTRY = """\
+from xontrib.sample.worker import Worker
+
+def _render(options, stream, output):
+    records = []
+    count = 0
+    for text in stream.readlines():
+        records.append([text, count])
+        count += 1
+    if records:
+        selected = Worker(options[0])
+        selected.run(records, output)
+
+aliases["render"] = _render
+aliases["decorate"] = lambda args, source, out: aliases["render"](
+    [f"str({args[0]})"], source, out
+)
+
+def document_record(line):
+    return eval(line)
+"""
+
+
+NEIGHBOR_ENTRY = (
+    ENTRY
+    + """
+_PRESETS = {}
+
+def _line(options, stream, output):
+    presets = {**_PRESETS, **__xonsh__.env.get("XONTRIB_PIPELINER_PRESETS", {})}
+    if options[0] in presets:
+        template = presets[options[0]]
+        transform = eval("lambda line, num, args:" + template, __xonsh__.ctx)
+    else:
+        transform = eval("lambda line, num, args:" + options[0], __xonsh__.ctx)
+    return transform(None, 0, ())
+
+aliases["line"] = _line
+"""
+)
+
+GUARDED_WORKER = WORKER.replace(
+    "        scope = {}",
+    "        scope = {}\n        try:\n            scope = __xonsh__.ctx\n        except:\n            pass",
+)
+
+
+VALID_ENTRIES = {
+    None: ENTRY,
+    "host_boundaries": NEIGHBOR_ENTRY,
+    "forwarding_chain": ENTRY
+    + '\naliases["format"] = lambda args, source, out: aliases["decorate"]([args[0]], source, out)\n',
+}
+ALTERNATE_ENTRIES = {
+    "program_from_pipe": ENTRY.replace(
+        "Worker(options[0])", "Worker(stream.readline())"
+    ),
+    "direct_callback": ENTRY
+    + "\ndef alternate(options, stream, output):\n    return _render(options, stream, output)\n",
+    "hidden_registry": ENTRY + "\nalternate = __xonsh__.aliases\n",
+    "reflective_registry": ENTRY + '\nalternate = getattr(__xonsh__, "aliases")\n',
+    "aliased_host": ENTRY + "\nretained_host = __xonsh__\n",
+    "host_context_callback": NEIGHBOR_ENTRY + "\nrecord(__xonsh__.ctx)\n",
+    "host_context_rebind": NEIGHBOR_ENTRY + "\n__xonsh__.ctx = {}\n",
+    "host_context_escape": NEIGHBOR_ENTRY.replace(
+        "return transform(None, 0, ())", "return record(transform.__globals__)"
+    ),
+    "mixed_alias": ENTRY.replace('[f"str({args[0]})"]', "[source.readline()]"),
+    "forwarding_alias_direct_call": ENTRY
+    + '\ndef alternate(record, source, out):\n    return aliases["decorate"]([record], source, out)\n',
+    "forwarding_alias_mixed_registration": VALID_ENTRIES["forwarding_chain"]
+    + '\naliases["indirect"] = lambda args, source, out: aliases["format"]([source.readline()], source, out)\n',
+    "nested_worker_import": ENTRY
+    + "\ndef alternate(program):\n    from xontrib.sample.worker import Worker as LocalWorker\n    return LocalWorker(program)\n",
+    "nested_relative_worker_import": ENTRY
+    + "\ndef alternate(program):\n    from .worker import Worker as LocalWorker\n    return LocalWorker(program)\n",
+    "replacement_arguments": ENTRY.replace(
+        "    records = []", "    options[0] = stream.readline()\n    records = []"
+    ),
+    "missing_registration": ENTRY.replace('aliases["render"] = _render', ""),
+    "escaped_receiver": ENTRY.replace(
+        "        selected.run(records, output)",
+        "        selected.run(records, output)\n        inspect(selected)",
+    ),
+}
+ALTERNATE_WORKERS = {
+    "modified_worker": WORKER.replace(
+        'scope["text"] = item[0]', "self.program = item[0]"
+    ),
+    "worker_context_escape": GUARDED_WORKER.replace(
+        "        return eval(self.program, scope)",
+        "        try:\n            return eval(self.program, scope)\n        except:\n            return record(scope)",
+    ),
+    "worker_host_alias": GUARDED_WORKER.replace(
+        "            for result in results:",
+        "            retained_host = __xonsh__\n            for result in results:",
+    ),
+    "worker_class_escape": WORKER.replace(
+        "print(result, file=output)", "print(record(__class__), result, file=output)"
+    ),
+    "worker_super_escape": WORKER.replace(
+        "print(result, file=output)", "print(record(super()), result, file=output)"
+    ),
+}
+PEERS = {
+    "extra_importer": "import xontrib\n",
+    "opaque_importer": "from importlib import import_module\n",
+    "ambient_alias": 'selected = aliases["render"]\n',
+    "sibling_import": "import xontrib.sibling\n",
+    "host_import": "from xonsh.built_ins import XSH as selected_host\n",
+    "peer_host": "retained_host = __xonsh__\n",
+}
+
+
+@pytest.mark.parametrize(
+    "change", [*VALID_ENTRIES, *ALTERNATE_ENTRIES, *ALTERNATE_WORKERS, *PEERS]
+)
+def test_shell_operator_program_is_distinct_from_pipeline_data(tmp_path, change):
+    entry = VALID_ENTRIES.get(change) or ALTERNATE_ENTRIES.get(change, ENTRY)
+    worker = ALTERNATE_WORKERS.get(
+        change, GUARDED_WORKER if change == "host_boundaries" else WORKER
+    )
+    if change in PEERS:
+        (tmp_path / "other.py").write_text(PEERS[change], encoding="utf-8")
+
+    package = tmp_path / "xontrib" / "sample"
+    package.mkdir(parents=True)
+    (package / "worker.py").write_text(dedent(worker), encoding="utf-8")
+    (package / "__init__.py").write_text(dedent(entry), encoding="utf-8")
+    report = review_audits.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    visible = {
+        item["raw_finding"]["path"]
+        for item in report["finding_tier_report"]["ledger"]
+        if item["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    }
+    refuted = {
+        item["path"]: item
+        for item in report.get("refuted_security_observations", [])
+        if item["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    }
+    assert "xontrib/sample/__init__.py" in visible
+    assert ("xontrib/sample/worker.py" in visible) == (change not in VALID_ENTRIES)
+    assert ("xontrib/sample/worker.py" in refuted) == (change in VALID_ENTRIES)
+    if change in VALID_ENTRIES:
+        role = refuted["xontrib/sample/worker.py"]["facts"]["captured_program_role"]
+        assert role["hypothesis"] == "CAPTURED_SOURCE_INJECTION"
+        assert role["external_callers"] == role["runtime_effects"] == "UNASSESSED"
+        assert role["dynamic_execution_primitive"] == "RETAINED"
+        assert report["finding_conservation"]["native_rows"] == "VERIFIED"
+    assert report["finding_conservation"]["state"] == "PASS"

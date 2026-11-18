@@ -2,11 +2,18 @@
 
 import ast
 import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+from textwrap import dedent
 
 import pytest
 
 from factoryline import credential_role_identity_effects as effects
 from factoryline import credential_role_method_use_getter_audit as scope
+from factoryline.cli import _build_parser
+from factoryline.cli_audit import prepare_bounded_security_report
 from factoryline.mock_fixture_provenance import application_test_index
 
 
@@ -439,6 +446,44 @@ def captured_scope(tmp_path, source, filename="test_scope.py"):
         and isinstance(node.value.value, str)
     )
     return index, path, assignment
+
+
+def test_proof_inventory_binds_exact_scanner_consumers():
+    from factoryline import audit_log_flow, captured_operand_audit
+    from factoryline.captured_security_audit import argument_role_proof_helpers
+    from factoryline.django_class_fixture_audit import (
+        application_class_account_evidence,
+        class_fixture_helpers,
+    )
+    from factoryline.xonsh_program_audit import (
+        stage_xonsh_program_refutation,
+        xonsh_program_role_helpers,
+    )
+
+    argument_helpers = argument_role_proof_helpers()
+    program_helpers = xonsh_program_role_helpers()
+    assert audit_log_flow.captured_log_field_text_closed in argument_helpers
+    assert captured_operand_audit.cookie_name_trace in argument_helpers
+    assert stage_xonsh_program_refutation in program_helpers
+    assert all(helper in argument_helpers for helper in program_helpers)
+    assert application_class_account_evidence in class_fixture_helpers()
+
+
+@pytest.mark.parametrize(
+    "binding", ["_declaration_bindings", "_exact_source_call", "canonical_bytes"]
+)
+def test_program_proof_cache_changes_with_actual_import_binding(
+    tmp_path, monkeypatch, binding
+):
+    from factoryline import xonsh_program_audit
+    from factoryline.review_audits import _oracle_context_cache_key
+
+    original = _oracle_context_cache_key(tmp_path, [], {})
+    monkeypatch.setattr(xonsh_program_audit, binding, lambda *_args: None)
+    first = _oracle_context_cache_key(tmp_path, [], {})
+    monkeypatch.setattr(xonsh_program_audit, binding, lambda *_args: ())
+    second = _oracle_context_cache_key(tmp_path, [], {})
+    assert len({original, first, second}) == 3
 
 
 def evidence(tmp_path, source, filename="test_scope.py"):
@@ -2144,3 +2189,457 @@ def test_test_scope_disposition_does_not_depend_on_credential_identifier(
     ]
     assert len(rows) == 1 and rows[0]["tier"] == "PROVEN_PRIMITIVE"
     assert report["finding_conservation"]["state"] == "PASS"
+
+
+_DRF_FIXTURE_FILES = {
+    "manage.py": """
+        import os
+        import sys
+        from django.core.management import execute_from_command_line
+
+        def main():
+            os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+            execute_from_command_line(sys.argv)
+
+        if __name__ == '__main__':
+            main()
+    """,
+    "config/__init__.py": "",
+    "config/settings.py": """
+        import os
+        INSTALLED_APPS = ['django.contrib.auth', 'rest_framework']
+        MIDDLEWARE = []
+        ROOT_URLCONF = 'config.urls'
+        DATABASES = {'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'HOST': os.getenv('POSTGRES_HOST'),
+            'PORT': os.getenv('POSTGRES_PORT', '5432'),
+        }}
+    """,
+    "config/urls.py": """
+        from django.urls import path
+        from rest_framework_simplejwt.views import TokenObtainPairView
+        urlpatterns = [path('auth/token/', TokenObtainPairView.as_view())]
+    """,
+    "tests/__init__.py": "",
+    "tests/base.py": """
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APITestCase
+
+        class AccountFixture(APITestCase):
+            password = 'synthetic-test-account-value'
+
+            @classmethod
+            def setUpTestData(cls):
+                cls.user = get_user_model().objects.create_user(
+                    username='example', email='user@example.invalid', password=cls.password,
+                )
+
+            def setUp(self):
+                self.client.force_authenticate(self.user)
+    """,
+    "tests/test_authentication.py": """
+        from .base import AccountFixture
+
+        class AccountTests(AccountFixture):
+            def test_login(self):
+                self.client.force_authenticate(user=None)
+                response = self.client.post(
+                    '/auth/token/', {'username': self.user.username, 'password': self.password},
+                    format='json',
+                )
+                self.assertEqual(response.status_code, 200)
+    """,
+    ".github/workflows/ci.yml": """
+        name: CI
+        on: pull_request
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: example_test
+          POSTGRES_USER: example_test
+          POSTGRES_PASSWORD: synthetic-ci-only
+        jobs:
+          test:
+            runs-on: ubuntu-24.04
+            services:
+              postgres:
+                image: postgres:17-alpine
+                ports:
+                  - 5432:5432
+                env:
+                  POSTGRES_DB: example_test
+                  POSTGRES_USER: example_test
+                  POSTGRES_PASSWORD: synthetic-ci-only
+            steps:
+              - run: python manage.py test
+    """,
+}
+
+
+_DRF_FIXTURE_MUTATIONS = {
+    "runtime-import": (
+        ("runtime.py", lambda _source: "from tests.base import AccountFixture\n"),
+    ),
+    "external-request": (
+        (
+            "tests/test_authentication.py",
+            lambda source: source.replace(
+                "'/auth/token/'", "'https://example.invalid/auth/token/'"
+            ),
+        ),
+    ),
+    "database-route": (
+        (
+            "config/settings.py",
+            lambda source: source.replace(
+                "os.getenv('POSTGRES_HOST')", "'external-db.invalid'"
+            ),
+        ),
+    ),
+    "custom-signer": (
+        (
+            "config/settings.py",
+            lambda source: source + "TEST_RUNNER = 'config.custom.DiscoverRunner'\n",
+        ),
+    ),
+    "serializer-override": (
+        (
+            "config/settings.py",
+            lambda source: source
+            + "SIMPLE_JWT = {}\nSIMPLE_JWT['TOKEN_OBTAIN_SERIALIZER'] = 'config.custom.Serializer'\n",
+        ),
+    ),
+    "parser-override": (
+        (
+            "config/settings.py",
+            lambda source: source
+            + "REST_FRAMEWORK = {'DEFAULT_PARSER_CLASSES': ['config.custom.Parser']}\n",
+        ),
+    ),
+    "database-options": (
+        (
+            "config/settings.py",
+            lambda source: source.replace(
+                "'HOST':",
+                "'OPTIONS': {'hostaddr': 'external-db.invalid'},\n    'HOST':",
+            ),
+        ),
+    ),
+    "aliased-receiver": (
+        (
+            "tests/test_authentication.py",
+            lambda source: source
+            + "\n    def test_other(account):\n        receive(account)\n",
+        ),
+    ),
+    "route-list-mutation": (
+        ("config/urls.py", lambda source: source + "\nreplace_routes(urlpatterns)\n"),
+    ),
+    "alternate-runner": (
+        (
+            ".github/workflows/other.yml",
+            lambda _source: "jobs:\n  other:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: python manage.py test --keepdb\n",
+        ),
+    ),
+    "alternate-runner-same-job": (
+        (
+            ".github/workflows/ci.yml",
+            lambda source: source + "      - run: python manage.py test --keepdb\n",
+        ),
+    ),
+    "alternate-pytest": (
+        (
+            ".github/workflows/other.yml",
+            lambda _source: "jobs:\n  verification:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: python -m pytest\n",
+        ),
+    ),
+    "alternate-py-test": (
+        (".github/workflows/ci.yml", lambda source: source + "      - run: py.test\n"),
+    ),
+    "unproven-runner-script": (
+        (
+            ".github/workflows/ci.yml",
+            lambda source: source + "      - run: bash ./ci/verify.sh\n",
+        ),
+    ),
+    "quoted-runner-script": (
+        (
+            ".github/workflows/ci.yml",
+            lambda source: source + '      - run: bash "./ci/verify.sh"\n',
+        ),
+    ),
+    "uncaptured-reusable-job": (
+        (
+            ".github/workflows/other.yml",
+            lambda _source: "jobs:\n  verification:\n    uses: ./.github/workflows/missing.yml\n",
+        ),
+    ),
+    "root-include": (
+        (
+            "config/urls.py",
+            lambda source: source.replace(
+                "import path", "import include, path"
+            ).replace(
+                "urlpatterns = [", "urlpatterns = [path('', include('config.other')), "
+            ),
+        ),
+    ),
+    "definition-time-read": (
+        (
+            "tests/base.py",
+            lambda source: source.replace(
+                "    @classmethod",
+                "    observed = observe(password)\n\n    @classmethod",
+            ),
+        ),
+    ),
+    "definition-time-namespace": (
+        (
+            "tests/base.py",
+            lambda source: source.replace(
+                "    @classmethod", "    observe(locals())\n\n    @classmethod"
+            ),
+        ),
+    ),
+    "middleware-mutation": (
+        (
+            "config/settings.py",
+            lambda source: source
+            + "\nactive = MIDDLEWARE\nactive.append('config.other.Custom')\n",
+        ),
+    ),
+    "middleware-dispatch-hook": (
+        (
+            "config/settings.py",
+            lambda source: source.replace(
+                "MIDDLEWARE = []", "MIDDLEWARE = ['config.middleware.Logger']"
+            ),
+        ),
+        (
+            "config/middleware.py",
+            lambda _source: "class Logger:\n    def __init__(self, get_response):\n        self.get_response = get_response\n    def __call__(self, request):\n        return self.get_response(request)\n    def process_view(self, request, view, args, kwargs):\n        record(request.body)\n",
+        ),
+    ),
+    "assigned-setup": (
+        (
+            "tests/test_authentication.py",
+            lambda source: source + "\n    setUp = replacement\n",
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "closed",
+        "runtime-import",
+        "external-request",
+        "database-route",
+        "custom-signer",
+        "serializer-override",
+        "parser-override",
+        "database-options",
+        "aliased-receiver",
+        "route-list-mutation",
+        "alternate-runner",
+        "alternate-runner-same-job",
+        "alternate-pytest",
+        "alternate-py-test",
+        "unproven-runner-script",
+        "quoted-runner-script",
+        "uncaptured-reusable-job",
+        "root-include",
+        "definition-time-read",
+        "definition-time-namespace",
+        "middleware-mutation",
+        "middleware-dispatch-hook",
+        "assigned-setup",
+    ],
+)
+def test_drf_fixture_requires_replayed_account_and_consumer_closure(tmp_path, mutation):
+    files = {
+        name: dedent(source).lstrip() for name, source in _DRF_FIXTURE_FILES.items()
+    }
+    for name, update in _DRF_FIXTURE_MUTATIONS.get(mutation, ()):
+        files[name] = update(files.get(name, ""))
+
+    for relative, source in files.items():
+        path = tmp_path / Path(relative)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    ledger = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    raw = [
+        row
+        for row in ledger
+        if row["path"] == "tests/base.py" and row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if mutation == "closed":
+        assert not raw
+        [refuted] = [
+            row
+            for row in report["refuted_security_observations"]
+            if row["path"] == "tests/base.py"
+        ]
+        proof = refuted["facts"]["fixture_evidence"]
+        assert proof["fixture_contract"] == "DRF_CLASS_ACCOUNT_LIFECYCLE"
+        assert [row["role"] for row in proof["consumer_use_closure"]["uses"]] == [
+            "fresh_account_password",
+            "test_client_password",
+        ]
+    else:
+        assert len(raw) == 1
+
+
+def test_fixture_text_model_rejects_import_identity_as_runtime_text():
+    from factoryline.credential_role_identity_effects import _Value
+    from factoryline.fixture_scope_value_audit import _closed_text_binary
+
+    template = _Value(inert_kind="scalar", scalar_kind="text", _exact_scalar=("%s",))
+    provider = _Value(
+        inert_kind="scope_namespace", _exact_scalar=("unittest.TestCase",)
+    )
+    assert _closed_text_binary(ast.Mod(), template, provider) is None
+
+
+_RAC_CLIENT = """class Client(object):
+    def __init__(self, host, password):
+        self.host = host
+        self.password = password
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.open_session()
+
+    def read_marker(self, record):
+        return self._extract(record, "MARK")
+
+    def _extract(self, record, field):
+        if record is None:
+            return
+        try:
+            return record.split("<%s>" % field)[1].split("</%s>" % field)[0]
+        except KeyError:
+            raise Exception("missing %s" % field)
+
+    def open_session(self):
+        external_authentication(self.password)
+"""
+
+_RAC_TEST = """from unittest import TestCase
+from client import Client
+
+TEST_PASSWORD = "synthetic-fixture-marker-3927"
+
+class Checks(TestCase):
+    def setUp(self):
+        self.client = Client("127.0.0.1", TEST_PASSWORD)
+
+    def test_marker(self):
+        self.assertEqual(self.client.read_marker("<MARK>yes</MARK>"), "yes")
+"""
+
+
+@pytest.mark.parametrize(
+    "counterexample",
+    [
+        None,
+        "authentication",
+        "context_manager",
+        "receiver_escape",
+        "fixture_field_read",
+        "production_import",
+        "duplicate_literal",
+        "unmodeled_loader",
+        "custom_dispatch",
+        "descriptor",
+        "missing_host_proof",
+        "teardown",
+    ],
+)
+def test_unused_unittest_client_credential_is_refuted_by_cli(tmp_path, counterexample):
+    test_source = _RAC_TEST
+    extra = {
+        "authentication": "        self.client.open_session()\n",
+        "context_manager": "        with self.client:\n            pass\n",
+        "receiver_escape": "        outside_fixture(self.client)\n",
+        "fixture_field_read": "        self.assertTrue(self.client.password)\n",
+        "teardown": "\n    def tearDown(self):\n        self.client.open_session()\n",
+        "unmodeled_loader": "\ndef load_tests(loader, tests, pattern):\n    return tests\n",
+        "custom_dispatch": "\n    def doCleanups(self):\n        self.client.open_session()\n",
+    }
+    test_source += extra.get(counterexample, "")
+    if counterexample == "missing_host_proof":
+        test_source = test_source.replace("127.0.0.1", "fixture.invalid")
+    if counterexample == "production_import":
+        (tmp_path / "production.py").write_text(
+            "import test_client\n", encoding="utf-8"
+        )
+    if counterexample == "duplicate_literal":
+        (tmp_path / "production.py").write_text(
+            'VALUE = "synthetic-fixture-marker-3927"\n', encoding="utf-8"
+        )
+    client = _RAC_CLIENT
+    if counterexample == "descriptor":
+        client = (
+            "from functools import cached_property\n\n"
+            + client
+            + "\n    @cached_property\n    def marker(self):\n"
+            + '        captured = self.password\n        return "yes"\n'
+        )
+        test_source = test_source.replace(
+            'self.client.read_marker("<MARK>yes</MARK>")', "self.client.marker"
+        )
+    (tmp_path / "client.py").write_text(client, encoding="utf-8")
+    (tmp_path / "test_client.py").write_text(test_source, encoding="utf-8")
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "factoryline.cli",
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+    report = json.loads(process.stdout)
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["finding_conservation"]["native_rows"] == "VERIFIED"
+    assert report["audit_coverage"]["complete"] is True
+    assert bool(report["finding_tier_report"]["ledger"]) is bool(counterexample)
+    refuted = report.get("refuted_security_observations", [])
+    if counterexample is None:
+        assert refuted[0]["facts"]["fixture_evidence"]["source_hypothesis"] == (
+            "SOURCE_TEST_CLIENT_CREDENTIAL_UNUSED"
+        )
+    else:
+        assert not refuted

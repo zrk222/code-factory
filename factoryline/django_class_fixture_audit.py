@@ -24,22 +24,10 @@ _PROTECTED = frozenset(
 
 def application_class_account_evidence(index, path, assignment, secret):
     source = index["source"]
-    owner = source.parents[path].get(id(assignment))
-    if (
-        not isinstance(owner, ast.ClassDef)
-        or source.parents[path].get(id(owner)) is not index["modules"][path]
-    ):
+    authority = _class_fixture_authority(index, path, assignment, secret)
+    if authority is None:
         return None
-    target = roles._fixture_declaration_target_node(assignment)
-    if target is None or binding_occurrences(owner.body, secret) != [target]:
-        return None
-    runner = _ci_runner(index)
-    if runner is None:
-        return None
-    settings = _runner_settings(index, runner)
-    lifecycle = _owner_lifecycle(index, path, owner, secret)
-    if settings is None or lifecycle is None:
-        return None
+    owner, runner, settings, lifecycle = authority
     settings_path, settings_tree = settings
     setup_data, enrollment, password_use, setup, activate = lifecycle
     peers = _fixture_classes(index, path, owner, secret)
@@ -109,6 +97,28 @@ def application_class_account_evidence(index, path, assignment, secret):
     }
 
 
+def _class_fixture_authority(index, path, assignment, secret):
+    """Resolve the declaring class, CI runner, settings, and account lifecycle."""
+    source = index["source"]
+    owner = source.parents[path].get(id(assignment))
+    if (
+        not isinstance(owner, ast.ClassDef)
+        or source.parents[path].get(id(owner)) is not index["modules"][path]
+    ):
+        return None
+    target = roles._fixture_declaration_target_node(assignment)
+    if target is None or binding_occurrences(owner.body, secret) != [target]:
+        return None
+    runner = _ci_runner(index)
+    if runner is None:
+        return None
+    settings = _runner_settings(index, runner)
+    lifecycle = _owner_lifecycle(index, path, owner, secret)
+    if settings is None or lifecycle is None:
+        return None
+    return owner, runner, settings, lifecycle
+
+
 def _location(source, path, node, role):
     return {
         "path": source.relative(path),
@@ -120,54 +130,68 @@ def _location(source, path, node, role):
 
 def _ci_runner(index):
     """Bind literal workflow invocations and their job-owned database services."""
-    import yaml
-
-    from .full_stack_ux_spec import _UniqueKeyLoader
-
     runners = []
     for name, raw in sorted(index["configuration_bytes"].items()):
         if not name.startswith(".github/workflows/"):
             continue
-        try:
-            if any(
-                isinstance(token, (yaml.tokens.AliasToken, yaml.tokens.AnchorToken))
-                for token in yaml.scan(raw)
-            ):
-                return None
-            document = yaml.load(raw, Loader=_UniqueKeyLoader)
-            if not isinstance(document, dict) or not isinstance(
-                document.get("jobs"), dict
-            ):
-                return None
-        except (TypeError, ValueError, UnicodeError, RecursionError, yaml.YAMLError):
+        document = _ci_workflow_document(raw)
+        if document is None:
             return None
-        if not all(isinstance(name, str) for name in document["jobs"]):
+        jobs = _ci_workflow_runners(index, name, raw, document)
+        if jobs is None:
             return None
-        for job_name, job in sorted(document["jobs"].items()):
-            if not isinstance(job, dict):
-                return None
-            if "uses" in job:
-                if not _captured_reusable_job(index, name, job):
-                    return None
-                continue
-            evidence = _ci_test_job(document, job)
-            if evidence is None and _declares_test_command(job_name, job):
-                return None
-            if evidence is not None:
-                runners.append(
-                    {
-                        "path": name,
-                        "sha256": hashlib.sha256(raw).hexdigest(),
-                        "job": job_name,
-                        **evidence,
-                    }
-                )
+        runners.extend(jobs)
     settings = {runner["settings_module"] for runner in runners}
     return (
         {"settings_module": settings.pop(), "workflows": runners}
         if len(settings) == 1
         else None
     )
+
+
+def _ci_workflow_document(raw):
+    import yaml
+
+    from .full_stack_ux_spec import _UniqueKeyLoader
+
+    try:
+        if any(
+            isinstance(token, (yaml.tokens.AliasToken, yaml.tokens.AnchorToken))
+            for token in yaml.scan(raw)
+        ):
+            return None
+        document = yaml.load(raw, Loader=_UniqueKeyLoader)
+        if not isinstance(document, dict) or not isinstance(document.get("jobs"), dict):
+            return None
+    except (TypeError, ValueError, UnicodeError, RecursionError, yaml.YAMLError):
+        return None
+    if not all(isinstance(name, str) for name in document["jobs"]):
+        return None
+    return document
+
+
+def _ci_workflow_runners(index, name, raw, document):
+    runners = []
+    for job_name, job in sorted(document["jobs"].items()):
+        if not isinstance(job, dict):
+            return None
+        if "uses" in job:
+            if not _captured_reusable_job(index, name, job):
+                return None
+            continue
+        evidence = _ci_test_job(document, job)
+        if evidence is None and _declares_test_command(job_name, job):
+            return None
+        if evidence is not None:
+            runners.append(
+                {
+                    "path": name,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "job": job_name,
+                    **evidence,
+                }
+            )
+    return runners
 
 
 def _captured_reusable_job(index, path, job):
@@ -272,6 +296,10 @@ def _ci_test_job(document, job):
         or not isinstance(env.get("DJANGO_SETTINGS_MODULE"), str)
     ):
         return None
+    return _ci_database_job_evidence(job, env, match[0] + 1)
+
+
+def _ci_database_job_evidence(job, env, command_step):
     services = job.get("services", {})
     if not isinstance(services, dict) or len(services) != 1:
         return None
@@ -295,7 +323,7 @@ def _ci_test_job(document, job):
         return None
     return {
         "settings_module": env["DJANGO_SETTINGS_MODULE"],
-        "command_step": match[0] + 1,
+        "command_step": command_step,
         "database_service": service["image"],
     }
 
@@ -647,41 +675,47 @@ def _fixture_classes(index, path, owner, secret):
         if not source.validate(other):
             return None
         aliases = {owner.name} if other == path else set()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                rows = fixture._django_import_rows(
-                    node, fixture._django_package(index, other)
-                )
-                if rows is None:
-                    return None
-                for name, canonical in rows:
-                    if canonical == qualified:
-                        if node not in tree.body or binding_occurrences(
-                            tree.body, name
-                        ) != [node]:
-                            return None
-                        aliases.add(name)
-                    elif (
-                        canonical == origin
-                        or canonical.startswith(origin + ".")
-                        or canonical == origin.rpartition(".")[0]
-                        or canonical.endswith(".*")
-                    ):
-                        return None
-            elif isinstance(node, ast.Name) and node.id in {
-                "__builtins__",
-                "__globals__",
-                "__import__",
-                "globals",
-                "eval",
-                "exec",
-            }:
-                return None
+        if not _fixture_aliases_closed(index, other, tree, aliases, origin, qualified):
+            return None
         children = _fixture_subclasses(index, other, tree, aliases, secret)
         if children is None or (aliases and other != path and not children):
             return None
         peers.extend((child, other) for child in children)
     return peers if len(peers) > 1 else None
+
+
+def _fixture_aliases_closed(index, path, tree, aliases, origin, qualified):
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            rows = fixture._django_import_rows(
+                node, fixture._django_package(index, path)
+            )
+            if rows is None:
+                return False
+            for name, canonical in rows:
+                if canonical == qualified:
+                    if node not in tree.body or binding_occurrences(
+                        tree.body, name
+                    ) != [node]:
+                        return False
+                    aliases.add(name)
+                elif (
+                    canonical == origin
+                    or canonical.startswith(origin + ".")
+                    or canonical == origin.rpartition(".")[0]
+                    or canonical.endswith(".*")
+                ):
+                    return False
+        elif isinstance(node, ast.Name) and node.id in {
+            "__builtins__",
+            "__globals__",
+            "__import__",
+            "globals",
+            "eval",
+            "exec",
+        }:
+            return False
+    return True
 
 
 def _fixture_subclasses(index, path, tree, aliases, secret):
@@ -1000,7 +1034,11 @@ def _token_route(index, settings, request_path):
         or _binding_read(tree, "urlpatterns")
     ):
         return None
-    for item in rows[0][1].elts:
+    return _match_token_patterns(index, path, rows[0][1].elts, request_path)
+
+
+def _match_token_patterns(index, path, patterns, request_path):
+    for item in patterns:
         if not (
             isinstance(item, ast.Call)
             and len(item.args) == 2
@@ -1271,6 +1309,10 @@ def _metadata_middleware(index, name):
         arg.arg for arg in invoke.args.args
     ] != ["self", "request"]:
         return False
+    return _middleware_request_uses_closed(invoke, parents)
+
+
+def _middleware_request_uses_closed(invoke, parents):
     for node in ast.walk(invoke):
         if (
             isinstance(node, ast.Attribute)
@@ -1366,11 +1408,6 @@ def _providers_closed(index, peers, lifecycle):
 
 def class_fixture_helpers():
     """Bind producer and independent verifier cache epochs to the complete proof."""
-    helpers = tuple(
-        value
-        for value in globals().values()
-        if callable(value) and getattr(value, "__module__", None) == __name__
-    )
     policy = _fixture_policy_epoch(
         (
             tuple(
@@ -1384,13 +1421,23 @@ def class_fixture_helpers():
             ast.dump(_BOOTSTRAP),
         )
     )
-    return (*helpers, policy)
+    return (
+        *(globals()[name] for name in _FIXTURE_HELPER_NAMES),
+        binding_occurrences,
+        policy,
+    )
 
 
 @lru_cache(maxsize=16)
 def _fixture_policy_epoch(_contents):
     return object()
 
+
+_FIXTURE_HELPER_NAMES = tuple(
+    name
+    for name, value in globals().items()
+    if callable(value) and getattr(value, "__module__", None) == __name__
+)
 
 # Fixture provenance imports the verifier epoch during its own initialization.
 from . import mock_fixture_provenance as fixture  # noqa: E402

@@ -9,7 +9,16 @@ import re
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
 
-from .captured_cookie_roles import (
+from .captured_operand_audit import (
+    _CapturedRecordText,
+    _CapturedTextDefinitions,
+    _captured_argument_definition,
+    _captured_closed_text_callers,
+    _captured_literal_argument_origin,
+    _captured_record_read,
+    captured_log_field_text_closed,
+)
+from .captured_operand_audit import (
     _COOKIE_NAME_PROVIDERS,
     _COOKIE_NAME_ROLE,
     _registry_cookie_name_use,
@@ -638,16 +647,7 @@ def _public_registry_use(reference, aliases, source, path):
             parent, parents.get(id(parent)), aliases, source, path
         )
     if isinstance(parent, ast.FormattedValue):
-        message = parents.get(id(parent))
-        if not _registry_formatted_label(parent, message):
-            return False
-        if _registry_help_message(message, aliases, source, path):
-            return "help"
-        if _registry_stderr_message(
-            parents.get(id(message)), message, aliases, source, path
-        ):
-            return "stderr"
-        return _environment_label_diagnostic(source, path, reference)
+        return _registry_formatted_use(reference, parent, aliases, source, path)
     match parent:
         case ast.BinOp(left=ast.Constant(value=str()), op=ast.Mod(), right=right) if (
             right is reference
@@ -655,6 +655,20 @@ def _public_registry_use(reference, aliases, source, path):
             if _registry_help_message(parent, aliases, source, path):
                 return "help"
     return False
+
+
+def _registry_formatted_use(reference, item, aliases, source, path):
+    parents = source.parents[path]
+    message = parents.get(id(item))
+    if not _registry_formatted_label(item, message):
+        return False
+    if _registry_help_message(message, aliases, source, path):
+        return "help"
+    if _registry_stderr_message(
+        parents.get(id(message)), message, aliases, source, path
+    ):
+        return "stderr"
+    return _environment_label_diagnostic(source, path, reference)
 
 
 def _registry_formatted_label(item, message):
@@ -803,10 +817,7 @@ def captured_public_registry_label(node, target, aliases):
     readonly = set(references) | {ref for ref, _, _ in foreign}
     binding = index, owner, origin, readonly
     if set(roles) == {"exit_message"}:
-        if not _captured_text_may_be_secret(value) and _captured_module_text_unchanged(
-            *binding, providers=("sys.exit",)
-        ):
-            _stage_public_registry_exclusion(index, owner, node)
+        _stage_registry_exit_message(binding, value, node)
         return False
     proven = _registry_roles_closed(binding, value, registry_label, roles)
     if proven and _COOKIE_NAME_ROLE in roles:
@@ -817,8 +828,17 @@ def captured_public_registry_label(node, target, aliases):
     return proven
 
 
+def _stage_registry_exit_message(binding, value, node):
+    """Stage the exit-message witness only for an unchanged public provider."""
+    if not _captured_text_may_be_secret(value) and _captured_module_text_unchanged(
+        *binding, providers=("sys.exit",)
+    ):
+        index, owner, _, _ = binding
+        _stage_public_registry_exclusion(index, owner, node)
+
+
 def _stage_public_registry_exclusion(index, owner, node, *, cookie_uses=None):
-    from .captured_cookie_roles import cookie_name_trace
+    from .captured_operand_audit import cookie_name_trace
     from .pytest_collection_audit import _captured_pytest_inputs
 
     stage = getattr(
@@ -3194,392 +3214,6 @@ def _captured_statement_text_closed(call, query, driver):
     return _CapturedTextDefinitions(
         nodes, parents, tuple(callers.values()), owner, binding_occurrences
     ).prove(query)
-
-
-def _captured_closed_text_callers(
-    index, projection, owner_path, owner, resolve, scope, bind, dynamic
-):
-    callers, work = {}, 0
-    for path, tree in index.snapshots.items():
-        if not index.validate(path):
-            return {}
-        nodes = tuple(ast.walk(tree))
-        work += len(nodes)
-        if work > 16000 or dynamic(nodes):
-            return {}
-        parents = index.parents[path]
-        for expr in nodes:
-            if not isinstance(expr, (ast.Name, ast.Attribute)) or not isinstance(
-                expr.ctx, ast.Load
-            ):
-                continue
-            found = resolve(projection.symbols, path, expr, scope(expr, parents, None))
-            if found is None or found[0] != owner_path or found[1] is not owner:
-                continue
-            site = parents.get(id(expr))
-            if not isinstance(site, ast.Call) or site.func is not expr:
-                return {}
-            resolved = bind(site, path, index)
-            if (
-                resolved is None
-                or resolved.function is not owner
-                or not resolved.negative_binding_closed
-            ):
-                return {}
-            callers[id(site)] = {
-                formal: _captured_literal_argument_origin(actual, site, parents, tree)
-                for formal, actual in resolved.arguments.items()
-            }
-    return callers
-
-
-def _captured_literal_argument_origin(argument, call, parents, module):
-    """Resolve a literal through a unique preceding assignment in this lexical scope."""
-    value = _captured_argument_definition(argument, call, parents, module)
-    return value if _CapturedTextDefinitions.literal(value) else argument
-
-
-def _captured_argument_definition(argument, call, parents, module):
-    """Find the assignment that reaches this argument on the captured branch."""
-    from .credential_role_constructor_provider import (
-        _binding_precedes_sibling,
-        _scope_scope_bindings,
-        binding_occurrences,
-    )
-
-    if not isinstance(argument, ast.Name):
-        return None
-    scope = _scope_scope_bindings(call, parents, module)
-    if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
-        return None
-    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        from .review_audits import _scope_parameters
-
-        if argument.id in _scope_parameters(scope) or any(
-            isinstance(node, (ast.Global, ast.Nonlocal)) and argument.id in node.names
-            for node in ast.walk(scope)
-        ):
-            return None
-    writes = binding_occurrences(scope.body, argument.id)
-    current = call
-    while (owner := parents.get(id(current))) is not None:
-        if isinstance(
-            owner,
-            (
-                ast.ClassDef,
-                ast.comprehension,
-                ast.ListComp,
-                ast.SetComp,
-                ast.DictComp,
-                ast.GeneratorExp,
-            ),
-        ):
-            return None
-        if isinstance(owner, ast.Try) and current in owner.body:
-            handler_nodes = {
-                node for handler in owner.handlers for node in ast.walk(handler)
-            }
-            writes = [node for node in writes if node not in handler_nodes]
-        if len(writes) == 1:
-            assignment = parents.get(id(writes[0]))
-            if (
-                isinstance(assignment, ast.Assign)
-                and assignment.targets == writes
-                and _binding_precedes_sibling(assignment, current, owner)
-            ):
-                return assignment.value
-        if owner is scope:
-            break
-        current = owner
-    return None
-
-
-def captured_log_field_text_closed(expression):
-    """Prove that the selected record slot can emit only closed scalar text."""
-    from .semantic_credential_sensor import _security_helper_source_context
-
-    selected = _captured_record_read(expression)
-    if selected is None:
-        return False
-    receiver, key = selected
-    module, index, path = _security_helper_source_context(expression, None)
-    if path is None or not index.validate(path):
-        return False
-    parents = index.parents[path]
-    value = _captured_argument_definition(receiver, expression, parents, module)
-    if not isinstance(value, (ast.Call, ast.Dict)):
-        return False
-    scope = getattr(expression, "_security_lexical_scope", None)
-    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return False
-    if any(
-        isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
-        and node.id == receiver.id
-        and value.lineno <= node.lineno <= expression.end_lineno
-        and _captured_record_read(parents.get(id(node))) is None
-        and _captured_record_read(parents.get(id(parents.get(id(node))))) is None
-        for node in ast.walk(scope)
-    ):
-        return False
-    return _CapturedRecordText(index).field(value, path, key, {})
-
-
-def _captured_record_read(node):
-    match node:
-        case ast.Subscript(
-            value=ast.Name() as receiver,
-            slice=ast.Constant(value=str() as key),
-            ctx=ast.Load(),
-        ):
-            return receiver, key
-        case ast.Call(
-            func=ast.Attribute(value=ast.Name() as receiver, attr="get"),
-            args=[ast.Constant(value=str() as key), *defaults],
-            keywords=[],
-        ) if len(defaults) <= 1 and all(
-            map(_CapturedTextDefinitions.literal, defaults)
-        ):
-            return receiver, key
-        case _:
-            return None
-
-
-class _CapturedRecordText:
-    """Follow one record field through source-resolved returns and scalar definitions."""
-
-    def __init__(self, index):
-        self.index = index
-        self.remaining = 64
-
-    def field(self, expression, path, key, formals):
-        from .credential_role_identity_effects import resolve_source_identity_call
-        from .review_integrity import _lexical_nodes
-
-        self.remaining -= 1
-        if self.remaining < 0:
-            return False
-        if isinstance(expression, ast.Dict):
-            keys = [
-                item.value
-                for item in expression.keys
-                if isinstance(item, ast.Constant) and type(item.value) is str
-            ]
-            return (
-                len(keys) == len(set(keys)) == len(expression.keys)
-                and key in keys
-                and self.scalar(expression.values[keys.index(key)], path, formals)
-            )
-        if not isinstance(expression, ast.Call):
-            return False
-        resolved = resolve_source_identity_call(expression, path, self.index)
-        if (
-            resolved is None
-            or not resolved.negative_binding_closed
-            or not isinstance(resolved.function, ast.FunctionDef)
-            or resolved.function.decorator_list
-        ):
-            return False
-        nodes = tuple(_lexical_nodes(resolved.function))
-        if any(
-            isinstance(node, (ast.Yield, ast.YieldFrom, ast.Global, ast.Nonlocal))
-            for node in nodes
-        ):
-            return False
-        returns = [node.value for node in nodes if isinstance(node, ast.Return)]
-        actuals = {
-            formal: (actual, path, formals)
-            for formal, actual in resolved.arguments.items()
-        }
-        return bool(returns) and all(
-            self.field(value, resolved.path, key, actuals) for value in returns
-        )
-
-    def scalar(self, expression, path, formals):
-        from .credential_role_constructor_provider import (
-            _scope_scope_bindings,
-            binding_occurrences,
-        )
-
-        self.remaining -= 1
-        if self.remaining < 0:
-            return False
-        if _CapturedTextDefinitions.literal(expression):
-            return True
-        if isinstance(expression, ast.IfExp):
-            return self.scalar(expression.body, path, formals) and self.scalar(
-                expression.orelse, path, formals
-            )
-        if not isinstance(expression, ast.Name):
-            return False
-        module, parents = self.index.snapshots[path], self.index.parents[path]
-        scope = _scope_scope_bindings(expression, parents, module)
-        if not isinstance(scope, ast.FunctionDef):
-            return False
-        writes = binding_occurrences(scope.body, expression.id)
-        formal = formals.get(expression.id)
-        if formal is not None and not self.scalar(*formal):
-            return False
-        return (formal is not None or bool(writes)) and all(
-            isinstance(statement := parents.get(id(node)), ast.Assign)
-            and statement.targets == [node]
-            and self.scalar(statement.value, path, formals)
-            for node in writes
-        )
-
-
-class _CapturedTextDefinitions:
-    """Prove scalar text from bounded captured definitions and literal record fields."""
-
-    def __init__(self, nodes, parents, actuals, owner, binds):
-        self.parents, self.actuals = parents, actuals
-        self.owner, self.binds, self.cache = owner, binds, {}
-        self.refs, self.active, self.known, self.fields = {}, set(), {}, {}
-        for n in nodes:
-            if isinstance(n, ast.Name):
-                self.refs.setdefault(n.id, []).append(n)
-
-    @staticmethod
-    def literal(expr):
-        return isinstance(expr, ast.Constant) and type(expr.value) in {
-            str,
-            int,
-            bool,
-            type(None),
-        }
-
-    def formal(self, name):
-        return [row.get(name) for row in self.actuals]
-
-    def prove(self, expr):
-        match expr:
-            case ast.Constant():
-                return self.literal(expr)
-            case ast.Name(id=name):
-                return self.name(name)
-            case ast.BinOp(left=left, op=ast.Add(), right=right):
-                return self.prove(left) and self.prove(right)
-            case ast.IfExp(body=left, orelse=right):
-                return self.prove(left) and self.prove(right)
-            case ast.JoinedStr(values=parts):
-                return all(self.prove(part) for part in parts)
-            case ast.FormattedValue(value=value, conversion=-1, format_spec=None):
-                return self.prove(value)
-            case ast.Call(
-                func=ast.Attribute(value=ast.Name(id=row), attr="get"),
-                args=[ast.Constant(value=key), *defaults],
-                keywords=[],
-            ) if type(key) is str:
-                return (
-                    len(defaults) <= 1
-                    and all(map(self.literal, defaults))
-                    and self.row_field(row, key)
-                )
-            case _:
-                return False
-
-    def name(self, name):
-        if name in self.known:
-            return self.known[name]
-        if name in self.active or len(self.active) >= 24:
-            return False
-        self.active.add(name)
-        is_formal = any(name in row for row in self.actuals)
-        base = is_formal and all(map(self.literal, self.formal(name)))
-        if is_formal and not base:
-            self.active.remove(name)
-            return False
-        for node in self.binds(self.owner.body, name, per_pass_facts=self.cache):
-            statement = self.parents.get(id(node))
-            if not self.assignment(statement, node):
-                self.active.remove(name)
-                return False
-            base |= isinstance(statement, (ast.Assign, ast.AnnAssign))
-        self.active.remove(name)
-        self.known[name] = base
-        return base
-
-    def assignment(self, statement, node):
-        match statement:
-            case ast.Assign(targets=[target], value=value) if target is node:
-                return self.prove(value)
-            case ast.AnnAssign(target=target, value=value) if target is node:
-                return self.prove(value)
-            case ast.AugAssign(target=target, op=ast.Add(), value=value) if (
-                target is node
-            ):
-                return self.prove(value)
-            case _:
-                return False
-
-    def row_field(self, name, key):
-        if name not in self.fields:
-            self.fields[name] = self.row_fields(name)
-        return key in self.fields[name]
-
-    def row_fields(self, row):
-        refs = self.refs.get(row, ())
-        writes = self.binds(self.owner.body, row, per_pass_facts=self.cache)
-        if len(writes) != 1:
-            return set()
-        loop = self.parents.get(id(writes[0]))
-        if (
-            not isinstance(loop, ast.For)
-            or loop.target is not writes[0]
-            or not isinstance(loop.iter, ast.Name)
-        ):
-            return set()
-        if not all(self.row_read(n) for n in refs if isinstance(n.ctx, ast.Load)):
-            return set()
-        formal = loop.iter.id
-        if self.binds(self.owner.body, formal, per_pass_facts=self.cache) or not all(
-            self.collection_read(n, loop.iter) for n in self.refs.get(formal, ())
-        ):
-            return set()
-        fields = None
-        for incoming in self.formal(formal):
-            if isinstance(incoming, ast.Constant) and incoming.value is None:
-                continue
-            if (
-                not isinstance(incoming, (ast.List, ast.Tuple))
-                or len(incoming.elts) > 64
-            ):
-                return set()
-            for expr in incoming.elts:
-                known = self.record_fields(expr)
-                if known is None:
-                    return set()
-                fields = known if fields is None else fields & known
-        return fields or set()
-
-    def record_fields(self, expr):
-        if not isinstance(expr, ast.Dict) or not all(
-            isinstance(k, ast.Constant) and type(k.value) is str for k in expr.keys
-        ):
-            return None
-        keys = [k.value for k in expr.keys]
-        if len(keys) != len(set(keys)) or not all(
-            self.literal(v) or isinstance(v, ast.Name) for v in expr.values
-        ):
-            return None
-        return {k for k, v in zip(keys, expr.values) if self.literal(v)}
-
-    def row_read(self, node):
-        member = self.parents.get(id(node))
-        call = self.parents.get(id(member))
-        return (
-            isinstance(member, ast.Attribute)
-            and member.value is node
-            and member.attr == "get"
-            and isinstance(call, ast.Call)
-            and call.func is member
-        )
-
-    def collection_read(self, node, iterator):
-        parent = self.parents.get(id(node))
-        return isinstance(node.ctx, ast.Load) and (
-            node is iterator or isinstance(parent, ast.If) and parent.test is node
-        )
 
 
 def _captured_sql_binding(expr, use, lexical, parents, bind_names):
@@ -6240,17 +5874,20 @@ def _revalidate_scan_role_support(audit, core, captured, primitive, native_rows)
 
 def argument_role_proof_helpers():
     """Bind the exact argument and HTTP name proofs to scanner cache generations."""
-    from . import audit_log_flow, captured_cookie_roles
+    from . import audit_log_flow, captured_operand_audit
     from .intent_quality import bound_sink_argument
     from .provenance import credential_role_witness
+    from .xonsh_program_audit import xonsh_program_role_helpers
 
     return (
         bound_sink_argument,
         _captured_argument_definition,
+        captured_operand_audit._argument_binding_is_parameter_or_external,
         _captured_literal_argument_origin,
         _captured_closed_text_callers,
         captured_log_field_text_closed,
         _captured_record_read,
+        captured_operand_audit._captured_record_receiver_escapes,
         _CapturedRecordText.__init__,
         _CapturedRecordText.field,
         _CapturedRecordText.scalar,
@@ -6261,13 +5898,16 @@ def argument_role_proof_helpers():
         captured_public_registry_label,
         credential_role_witness,
         _stage_public_registry_exclusion,
+        _stage_registry_exit_message,
         _registry_cookie_name_use,
-        captured_cookie_roles.cookie_name_trace,
+        _registry_formatted_use,
+        captured_operand_audit.cookie_name_trace,
+        *xonsh_program_role_helpers(),
         _registry_roles_closed,
         _COOKIE_NAME_PROVIDERS,
         *(
             value
-            for name, value in vars(captured_cookie_roles).items()
+            for name, value in vars(captured_operand_audit).items()
             if name.startswith("_registry_") and callable(value)
         ),
     )

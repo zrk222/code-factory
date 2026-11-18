@@ -66,7 +66,7 @@ class _TestScopeContractEpoch:
     @property
     def __code__(self):
         from . import credential_role_method_use_getter_audit as getter
-        from .unittest_client_role import _StoredTestClientCredential
+        from .unittest_client_audit import _StoredTestClientCredential
 
         names = sorted(
             name

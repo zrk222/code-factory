@@ -38,7 +38,7 @@ from .review_integrity import (
     _security_scope_body,
     _security_scope_initial,
 )
-from .fixture_scope_values import (
+from .fixture_scope_value_audit import (
     _closed_text_binary,
     _scope_bind,
     _scope_closed,
@@ -5949,7 +5949,7 @@ class _SourceTestScope:
 def _source_test_scope_evidence(index, path, assignment, secret):
     """Prove a modeled source-scope role; never infer runtime isolation."""
     from . import credential_identity_audit as audit
-    from .unittest_client_role import _StoredTestClientCredential
+    from .unittest_client_audit import _StoredTestClientCredential
 
     try:
         proof = _SourceTestScope(index, path, assignment, secret)
