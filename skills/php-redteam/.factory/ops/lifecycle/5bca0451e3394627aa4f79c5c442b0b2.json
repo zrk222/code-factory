@@ -1,0 +1,24 @@
+{
+  "command_family": "audit",
+  "elapsed_ms": 1094,
+  "exit_code": 1,
+  "finished_at": "2026-11-19T19:21:24.330012+00:00",
+  "provenance": {
+    "build_hash": "6c8d535efc93eb8a31fbfb4f1af2bed1d074b78b9132f3db66963722fe454d8e",
+    "identity_complete": false,
+    "install_origin": "direct-url",
+    "package": "factoryline-code-factory",
+    "source_commit": null,
+    "version": "0.49.7"
+  },
+  "receipt_sha256": "4cc19db0c82a56ce0bd67c907e7b956d173a95958874fa39acd58a2fb879429d",
+  "run_id": "5bca0451e3394627aa4f79c5c442b0b2",
+  "schema": "factory.ops-lifecycle.v1",
+  "scope_limits": [
+    "local CLI lifecycle only",
+    "command arguments, prompts, paths, source, and logs are excluded",
+    "does not measure provider usage or prove productivity savings"
+  ],
+  "started_at": "2026-11-19T19:21:24.108028+00:00",
+  "status": "blocked"
+}

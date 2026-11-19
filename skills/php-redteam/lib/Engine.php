@@ -123,9 +123,26 @@ final class TokenWalker
         return in_array($this->text($i), ['->', '?->'], true);
     }
 
-    /** Exact literal text compare, case-insensitive for names. */
+    /**
+     * Exact literal text compare, case-insensitive for names.
+     *
+     * Forms: `T_STRING` token kind, `T_STRING:name` kind plus name, `->method`
+     * object/static member call, `$var` variable, or a bare word.
+     */
     public function matches(int $i, string $want): bool
     {
+        if (str_starts_with($want, '->')) {
+            $name = strtolower(substr($want, 2));
+            return $this->isArrow($i - 1) && strtolower($this->text($i)) === $name;
+        }
+        if (str_starts_with($want, '|')) {
+            $name = strtolower(substr($want, 1));
+            return $this->text($i - 1) === '|' && strtolower($this->text($i)) === $name;
+        }
+        if (str_starts_with($want, '::')) {
+            $name = strtolower(substr($want, 2));
+            return $this->text($i - 1) === '::' && strtolower($this->text($i)) === $name;
+        }
         if (str_contains($want, ':')) {
             [$kind, $name] = explode(':', $want, 2);
             return ($this->flat[$i][0] ?? null) === constant($kind)
@@ -140,6 +157,37 @@ final class TokenWalker
             return $this->isVar($i) && $tok === $want;
         }
         return $tok === $want;
+    }
+
+    /** True when the token is the name inside a member/static/filter call. */
+    public function isMember(int $i): bool
+    {
+        return ($this->isArrow($i - 1) || $this->text($i - 1) === '::' || $this->text($i - 1) === '|')
+            && ($this->flat[$i][0] ?? null) === T_STRING;
+    }
+
+    /**
+     * Framework request sources: WordPress, Laravel/Symfony request objects,
+     * and server vars. Treated as tainted the same way as superglobals, so a
+     * rule can pin the source without hardcoding each call shape.
+     */
+    public const FRAMEWORK_SOURCES = [
+        '->input', '->query', '->get', '->post', '->cookie', '->header', '->file',
+        '->all', '->param', '->request', '::input', '::query', '::get', '::post',
+        'get_option', 'get_post_meta', 'get_user_meta', 'update_option',
+        '$HTTP_RAW_POST_DATA', '$http_response_header',
+    ];
+
+    public function isFrameworkSource(int $i): bool
+    {
+        $text = strtolower($this->text($i));
+        if ($text === '$http_response_header' || $text === '$http_raw_post_data') {
+            return true;
+        }
+        if ($this->isMember($i) && in_array('->' . $text, self::FRAMEWORK_SOURCES, true)) {
+            return true;
+        }
+        return in_array($text, ['get_option', 'get_post_meta', 'get_user_meta'], true);
     }
 
     /** True when any token in [$i, $i+$span) matches. */
@@ -206,7 +254,7 @@ final class Scanner
                 if ($rule->skipIf !== [] && $this->matchesSequence($walker, $i, $rule->skipIf, $rule->window)) {
                     continue;
                 }
-                if ($rule->id === 'XSS-001' && $this->alreadyEscaped($walker, $i)) {
+                if ($rule->skipIf !== [] && $this->escapedNear($walker, $i, $rule->skipIf)) {
                     continue;
                 }
                 $line = $walker->line($i);
@@ -218,6 +266,25 @@ final class Scanner
         }
 
         return $findings;
+    }
+
+    /**
+     * True when an escaper from the rule's skipIf list wraps the value on
+     * either side of the sink: `echo esc_html($_GET[x])` and
+     * `echo $_GET[x]|raw` differ only in which side the name sits on.
+     */
+    private function escapedNear(TokenWalker $w, int $i, array $escapers): bool
+    {
+        $lo = max(0, $i - 6);
+        $hi = min($w->count(), $i + 6);
+        for ($j = $lo; $j < $hi; $j++) {
+            foreach ($escapers as $e) {
+                if (strtolower($w->text($j)) === strtolower($e)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** True when the superglobal under an echo is already wrapped by an escaper. */
@@ -260,6 +327,9 @@ final class Scanner
                 if ($w->matches($j, $want)) {
                     return true;
                 }
+            }
+            if ($w->isFrameworkSource($j)) {
+                return true;
             }
         }
         return false;
