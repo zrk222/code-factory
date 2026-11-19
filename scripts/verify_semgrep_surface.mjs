@@ -277,7 +277,7 @@ try {
   chmodSync(temp, 0o755);
   for (const name of readdirSync(temp)) chmodSync(join(temp, name), 0o644);
   const controls = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
-    '--entrypoint', profile.commands[0].argv[0], id, '--test', '--json', '--metrics=off', '--disable-version-check', '--disable-nosem', '/src']);
+    '--entrypoint', profile.commands[0].argv[0], id, '--test', '--json', '--disable-version-check', '--disable-nosem', '/src']);
   receipt.controls = JSON.parse(controls);
   const tested = Object.values(receipt.controls.results ?? {}).flatMap(result => Object.entries(result.checks ?? {}));
   if (tested.length !== expectedRules.length || tested.some(([, check]) => check.passed !== true || check.errors?.length)) {

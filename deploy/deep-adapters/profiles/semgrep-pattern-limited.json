@@ -9,7 +9,6 @@
       "argv": [
         "/usr/bin/opengrep",
         "scan",
-        "--metrics=off",
         "--disable-version-check",
         "--no-git-ignore",
         "--disable-nosem",

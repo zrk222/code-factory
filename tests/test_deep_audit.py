@@ -2175,6 +2175,8 @@ def semgrep_execution_evidence(
             f"/tmp/factory-native-test/semgrep-rule-{index}/report.json",
             "/src",
         ]
+        if version == "1.15.0":
+            argv.remove("--metrics=off")
         observations[-1].update(argv=argv, argv_sha256=digest(argv))
     evidence = {
         "schema": "factory.semgrep-rule-execution.v1",

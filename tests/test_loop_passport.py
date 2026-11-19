@@ -467,6 +467,7 @@ def test_hsf_admission_advice_routes_extraction_failure_to_human_review(tmp_path
         reason="HSF integration is exercised in the dedicated five-brick CI job",
     )
     from hsf.foundry.compiler import render_artifact
+    from hsf.registry import store_artifact
     from hsf.runtime import Orchestrator
     from hsf.runtime.extractor import FixtureExtractor
     from hsf.spec.loader import load_spec
@@ -475,12 +476,15 @@ def test_hsf_admission_advice_routes_extraction_failure_to_human_review(tmp_path
         Path(__file__).parents[1] / "specs" / "loop-runtime-budget-admission.yaml"
     )
     spec, spec_sha = load_spec(spec_path)
-    artifact = tmp_path / "admission_advice.py"
-    artifact.write_text(render_artifact(spec, spec_sha, "template"), encoding="utf-8")
+    artifact, _ = store_artifact(
+        render_artifact(spec, spec_sha, "template"), tmp_path, "admission_advice"
+    )
     status_contract = spec.outputs["AdmissionAdvice"]["status"]
     assert "HUMAN_REVIEW" in status_contract
 
-    result = Orchestrator(artifact, FixtureExtractor({})).run(
+    result = Orchestrator(
+        artifact, FixtureExtractor({}), audit_path=tmp_path / "audit.jsonl"
+    ).run(
         {"text": "No structured runtime evidence is available."}
     )
 
