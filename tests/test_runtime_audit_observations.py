@@ -4598,7 +4598,7 @@ def test_native_tool_context_is_closed_and_workflow_bound(tmp_path, damage):
     resources = bundle / "core"
     resources.mkdir()
     with tempfile.TemporaryDirectory(prefix="factory-native-") as temporary:
-        workflow = Path(temporary)
+        workflow = Path(temporary).resolve()
         scratch = workflow / "scan"
         scratch.mkdir()
         context = {
@@ -4683,7 +4683,7 @@ def test_native_context_environment_reaches_existing_bounded_runner(tmp_path):
 
     exe = Path(sys.executable).resolve()
     with tempfile.TemporaryDirectory(prefix="factory-native-") as temporary:
-        root = Path(temporary)
+        root = Path(temporary).resolve()
         scratch = root / "probe"
         scratch.mkdir()
         output = tmp_path / "environment.json"
@@ -4863,3 +4863,35 @@ def test_polyglot_dependency_walk_rejects_linked_entry(tmp_path, monkeypatch):
     )
     with pytest.raises(ValueError):
         process._polyglot_dependencies(tmp_path)
+
+
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+def test_polyglot_cargo_failure_coverage_profile_is_platform_scoped(
+    tmp_path, monkeypatch, platform
+):
+    """Windows continuous counters preserve failed-test reach without changing POSIX."""
+    from types import SimpleNamespace
+    from factoryline import runtime_audit_process as process
+
+    monkeypatch.setattr(process, "os", SimpleNamespace(name=platform))
+    argv = process._polyglot_argv(
+        "cargo",
+        tmp_path / "cargo",
+        None,
+        "tests/oracle.rs",
+        "selected",
+        tmp_path / "report.json",
+        tmp_path / "coverage",
+    )
+    flags = next(value for value in argv if value.startswith("build.rustflags="))
+    profile = next(
+        value for value in argv if value.startswith("env.LLVM_PROFILE_FILE.value=")
+    )
+    if platform == "nt":
+        assert "llvm-args=-runtime-counter-relocation" in flags
+        assert "%p-%m%c.profraw" in profile
+    else:
+        assert flags == 'build.rustflags=["-C","instrument-coverage"]'
+        assert "%p-%m.profraw" in profile
+        assert "runtime-counter-relocation" not in flags
+    assert argv[-4:] == ["--", "--exact", "--nocapture", "--test-threads=1"]

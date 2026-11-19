@@ -9229,14 +9229,9 @@ def test_polyglot_cargo_real_opt_in(tmp_path, attribute, after, expected):
         assert result["mutant"]["process"]["exit_code"] == (
             101 if expected == "KILLED" else 0
         ), result
-        if expected == "KILLED" and result["status"] == "INCOMPLETE":
-            assert result["baseline"]["observation"]["reached"] is True
-            assert (
-                "missing or excessive LLVM profiles"
-                in result["mutant"]["observation"]["reason"]
-            )
-        else:
-            assert result["status"] == expected, result
+        assert result["status"] == expected, result
+        assert result["baseline"]["observation"]["reached"] is True
+        assert result["mutant"]["observation"]["reached"] is True
 
 
 @pytest.mark.parametrize(

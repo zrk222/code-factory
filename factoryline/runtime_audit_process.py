@@ -923,14 +923,20 @@ def _polyglot_argv(framework, tool, launcher, test, selector, report, coverage):
     rustc = tool.with_name("rustc.exe" if os.name == "nt" else "rustc")
     profiles = report.parent / "profiles"
     profiles.mkdir()
+    flags = ["-C", "instrument-coverage"]
+    profile_name = "%p-%m.profraw"
+    if os.name == "nt":
+        # Windows libtest exits via ExitProcess on failure, bypassing CRT flush.
+        flags += ["-C", "llvm-args=-runtime-counter-relocation"]
+        profile_name = "%p-%m%c.profraw"
     return [
         str(tool),
         "--config",
         'build.rustc="' + rustc.as_posix() + '"',
         "--config",
-        'build.rustflags=["-C","instrument-coverage"]',
+        "build.rustflags=" + json.dumps(flags, separators=(",", ":")),
         "--config",
-        'env.LLVM_PROFILE_FILE.value="' + (profiles / "%p-%m.profraw").as_posix() + '"',
+        'env.LLVM_PROFILE_FILE.value="' + (profiles / profile_name).as_posix() + '"',
         "--config",
         "env.LLVM_PROFILE_FILE.force=true",
         "test",
