@@ -29,6 +29,167 @@ from factoryline.adoption import (
 from factoryline.cli import main
 
 
+@pytest.mark.parametrize(
+    "language,suffix",
+    [
+        ("typescript", "tsx"),
+        ("go", "go"),
+        ("rust", "rs"),
+        ("c_cpp", "c"),
+        ("c_cpp", "cpp"),
+        ("shell", "sh"),
+        ("shell", "ps1"),
+    ],
+)
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "stale",
+        "missing",
+        "path",
+        "gap",
+        "unobserved",
+        "digest",
+        "obligations",
+        "unsupported",
+    ],
+)
+def test_non_python_projects_trusted_engine_return_boundary(
+    tmp_path, language, suffix, defect
+):
+    """Synthetic parser controls; native transport/signature proof lives in deep-audit tests."""
+    from factoryline.adoption import _non_python_security_lane
+    from factoryline.deep_audit_io import inventory_candidate
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / f"app.{suffix}").write_text("// captured source\n", encoding="utf-8")
+    inventory = inventory_candidate(tmp_path)
+    finding = {
+        "id": "native-rule",
+        "severity": "high",
+        "path": f"app.{suffix}",
+        "line": 1,
+    }
+    worker = {
+        "family": "static",
+        "engine": "semgrep",
+        "state": "OBSERVED",
+        "gaps": [],
+        "report_sha256": "a" * 64,
+        "coverage_sha256": "b" * 64,
+        "challenge_sha256": "c" * 64,
+        "obligations": ["source-static"],
+        "covered_paths": [f"app.{suffix}"],
+        "findings": [finding],
+    }
+    execution = {
+        "candidate_sha256": inventory["candidate_sha256"],
+        "gaps": [],
+        "lanes": [worker],
+    }
+    if defect == "stale":
+        (tmp_path / f"app.{suffix}").write_text("// changed source\n", encoding="utf-8")
+    elif defect == "missing":
+        execution["lanes"] = []
+    elif defect == "unsupported":
+        language = "unsupported"
+    worker.update(
+        {
+            "path": {"covered_paths": ["elsewhere.tsx"]},
+            "gap": {"gaps": ["NATIVE_ARTIFACTS_UNVERIFIED"]},
+            "unobserved": {"state": "VERIFIED"},
+            "digest": {"challenge_sha256": None},
+            "obligations": {"obligations": []},
+        }.get(defect, {})
+    )
+    lane = _non_python_security_lane(tmp_path, [language], execution)
+    assert lane["state"] == ("REVIEW_REQUIRED" if defect is None else "INCOMPLETE")
+    assert lane["result"]["verification"] != "VERIFIED"
+    if defect is None:
+        assert lane["result"]["findings"] == [finding]
+        assert lane["result"]["languages"][0]["sources"] == inventory["files"]
+        assert _repo_scan_state(None, {"findings": [finding]}, True, {}) == (
+            "BLOCKED",
+            "BLOCKED",
+        )
+    if defect in {
+        "stale",
+        "gap",
+        "unobserved",
+        "digest",
+        "obligations",
+        "missing",
+        "path",
+    }:
+        assert lane["result"]["findings"] == []
+
+
+@pytest.mark.parametrize("suffixes", [("c", "cpp"), ("sh", "ps1")])
+@pytest.mark.parametrize("coverage", ["all", "first", "second", "none"])
+def test_native_language_group_coverage_keeps_every_member(
+    tmp_path, suffixes, coverage
+):
+    """Synthetic engine returns exercise real inventory grouping, not scanner accuracy."""
+    import subprocess
+    from factoryline.adoption import _non_python_security_lane
+    from factoryline.deep_audit_io import inventory_candidate
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    paths = [f"app.{suffix}" for suffix in suffixes]
+    for path in paths:
+        (tmp_path / path).write_text("// source\n", encoding="utf-8")
+    inventory = inventory_candidate(tmp_path)
+    selected = {"all": paths, "first": paths[:1], "second": paths[1:], "none": []}
+    worker = {
+        "family": "static",
+        "state": "OBSERVED",
+        "gaps": [],
+        "obligations": ["source-static"],
+        "covered_paths": selected[coverage],
+        "report_sha256": "a" * 64,
+        "coverage_sha256": "b" * 64,
+        "challenge_sha256": "c" * 64,
+        "findings": [],
+    }
+    execution = {"candidate_sha256": inventory["candidate_sha256"], "lanes": [worker]}
+    languages = [
+        key
+        for key, count in _workspace_inventory(tmp_path)["file_types"].items()
+        if count
+    ]
+    lane = _non_python_security_lane(tmp_path, languages, execution)
+    assert lane["state"] == ("REVIEW_REQUIRED" if coverage == "all" else "INCOMPLETE")
+    assert len(lane["result"]["languages"]) == 1
+    assert lane["result"]["languages"][0]["sources"] == inventory["files"]
+
+
+def test_non_python_receipt_flags_cannot_admit_native_evidence(tmp_path):
+    from factoryline.adoption import _non_python_security_lane
+
+    (tmp_path / "app.tsx").write_text("// source\n", encoding="utf-8")
+    (tmp_path / "semgrep.json").write_text(
+        json.dumps({"verification": "VERIFIED", "state": "OBSERVED"})
+    )
+    lane = _non_python_security_lane(tmp_path, ["typescript"])
+    assert lane["state"] == "NOT_MEASURED"
+    assert lane["result"]["verification"] == "UNVERIFIED"
+
+
+def test_python_only_security_lane_byte_parity_ignores_native_projection(tmp_path):
+    from factoryline.adoption import _non_python_security_lane
+    from factoryline import canonical_json_compat_bytes
+
+    baseline = _non_python_security_lane(tmp_path, ["python", "docs"])
+    candidate = _non_python_security_lane(
+        tmp_path, ["python", "docs"], {"candidate_sha256": "a" * 64}
+    )
+    assert canonical_json_compat_bytes(candidate) == canonical_json_compat_bytes(
+        baseline
+    )
+
+
 def _local_completion_fixture(root: Path):
     from factoryline.product_missions import close_mission
 
@@ -1639,6 +1800,50 @@ def test_native_worker_discovery_rejects_unsigned_or_malformed_configuration(tmp
     assert result["state"] == "BLOCKED"
 
 
+@pytest.mark.parametrize("linked", ["config", "manifest", "authorization", "trust"])
+def test_native_worker_discovery_rejects_linked_operator_controls(
+    tmp_path, monkeypatch, linked
+):
+    from factoryline import deep_audit
+    from factoryline.adoption import _native_worker_lane
+
+    (tmp_path / "app.ts").write_text("export const x = 1;", encoding="utf-8")
+    operator = tmp_path / ".factory/operator"
+    operator.mkdir(parents=True)
+    settings = {
+        "manifest": ".factory/operator/manifest.json",
+        "manifest_sha256": "a" * 64,
+        "authorization": ".factory/operator/authorization.json",
+        "trust_root": ".factory/operator/trust.json",
+        "trust_root_sha256": "b" * 64,
+    }
+    config = tmp_path / ".factory/native-worker-config.json"
+    config.write_text(json.dumps(settings))
+    for name in ("manifest", "authorization", "trust"):
+        (operator / f"{name}.json").write_text("{}")
+    calls = []
+
+    def accepted_transport(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"analysis_complete": True}
+
+    monkeypatch.setattr(deep_audit, "scan_deep_audit", accepted_transport)
+    assert _native_worker_lane(tmp_path, None, True)["state"] == "REVIEW_REQUIRED"
+    assert len(calls) == 1
+    calls.clear()
+    path = config if linked == "config" else operator / f"{linked}.json"
+    target = tmp_path / "target.json"
+    target.write_bytes(path.read_bytes())
+    path.unlink()
+    try:
+        path.symlink_to(target)
+    except OSError:
+        pytest.skip("Host does not grant symlink creation")
+    lane = _native_worker_lane(tmp_path, None, True)
+    assert lane["state"] == "BLOCKED"
+    assert calls == []
+
+
 def test_native_worker_configuration_rejects_unknown_fields(tmp_path: Path) -> None:
     (tmp_path / "app.ts").write_text("export const x = 1;", encoding="utf-8")
     (tmp_path / "worker.json").write_text('{"command":"arbitrary"}', encoding="utf-8")
@@ -1657,7 +1862,9 @@ def test_native_worker_executes_existing_engine_without_granting_approval(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, discover: bool
 ) -> None:
     from factoryline import deep_audit
+    import subprocess
 
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / "app.rs").write_text("fn main() {}", encoding="utf-8")
     for name in ("manifest.json", "auth.json", "trust.json"):
         (tmp_path / name).write_text("{}", encoding="utf-8")
@@ -1677,13 +1884,15 @@ def test_native_worker_executes_existing_engine_without_granting_approval(
     calls = []
 
     def observe(*args, **kwargs):
+        from factoryline.deep_audit_io import inventory_candidate
+
         calls.append((args, kwargs))
         return {
             "state": "INCOMPLETE",
             "analysis_complete": True,
             "review": "REQUIRED",
             "run_id": "sample",
-            "candidate_sha256": "c" * 64,
+            "candidate_sha256": inventory_candidate(tmp_path)["candidate_sha256"],
             "lanes": [
                 {
                     "family": family,
@@ -1691,6 +1900,11 @@ def test_native_worker_executes_existing_engine_without_granting_approval(
                     "state": "OBSERVED",
                     "gaps": [],
                     "findings": [],
+                    "covered_paths": ["app.rs"],
+                    "obligations": ["synthetic-return-boundary"],
+                    "report_sha256": "a" * 64,
+                    "coverage_sha256": "b" * 64,
+                    "challenge_sha256": "c" * 64,
                 }
                 for family in (
                     "static",
@@ -1718,10 +1932,20 @@ def test_native_worker_executes_existing_engine_without_granting_approval(
     assert lane["measurement_state"] == "REVIEW_REQUIRED"
     assert result["state"] != "PASS"
     assert result["assessment"]["file_types"]["rust"] == 1
+    static = next(
+        row
+        for row in result["deep_audit"]["lanes"]
+        if row["measurement_id"] == "non_python_security"
+    )
+    assert static["state"] == "REVIEW_REQUIRED"
+    assert static["result"]["languages"][0]["language"] == "rust"
     domains = result["deep_audit"]["native_domains"]["domains"]
     assert len(domains) == 6
     assert all(row["state"] == "REVIEW_REQUIRED" for row in domains)
-    assert all(row["result"]["candidate_sha256"] == "c" * 64 for row in domains)
+    assert all(
+        row["result"]["candidate_sha256"] == lane["result"]["candidate_sha256"]
+        for row in domains
+    )
 
 
 @pytest.mark.parametrize(
@@ -1819,3 +2043,109 @@ def test_native_domains_do_not_promote_stale_or_partial_workers(drift):
         {"family": "static", "state": "INCOMPLETE", "gaps": ["coverage"]}
     )
     assert _native_domain_projection(lanes)["domains"][0]["state"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("python_state", ["INVALID", "BLOCKED", "COMPLETE"])
+@pytest.mark.parametrize("mixed", [False, True])
+def test_mixed_language_projection_preserves_python_failure_states(
+    tmp_path, monkeypatch, python_state, mixed
+):
+    from factoryline import adoption
+    from copy import deepcopy
+
+    python_finding = {"id": "python-finding", "path": "app.py"}
+    native_finding = {"id": "native-finding", "path": "app.ts"}
+    python_result = {
+        "state": python_state,
+        "findings": [python_finding],
+        "message": "original Python diagnostic",
+        "audit_coverage": {"complete": False},
+    }
+    original = deepcopy(python_result)
+    report = {
+        "lanes": [
+            {"measurement_id": "python_ast_security", "result": python_result},
+            {
+                "measurement_id": "non_python_security",
+                "result": {
+                    "findings": [native_finding],
+                    "languages": [{"language": "typescript"}],
+                },
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        adoption, "run_deep_repository_audit", lambda *args, **kwargs: report
+    )
+    inventory = {"file_types": {"python": 1, "typescript": int(mixed)}}
+    result, deep, error = adoption._scan_security_and_deep_audit(
+        tmp_path, inventory, True, None
+    )
+    assert error is None and deep is report
+    assert result["state"] == (
+        "INCOMPLETE" if mixed and python_state == "COMPLETE" else python_state
+    )
+    assert result["message"] == original["message"]
+    assert result["findings"] == [python_finding] + ([native_finding] if mixed else [])
+    assert python_result == original
+    if not mixed:
+        assert result == original
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        [],
+        7,
+        "bad",
+        {"findings": None},
+        {"findings": "bad"},
+        {"findings": {}},
+        {"findings": [None]},
+        {"findings": ["bad"]},
+        {"languages": None},
+        {"languages": {}},
+        {"languages": "bad"},
+        {"languages": [None]},
+        {"languages": [{"language": []}]},
+    ],
+)
+@pytest.mark.parametrize("python_state", ["BLOCKED", "INVALID"])
+@pytest.mark.parametrize("mixed", [False, True])
+def test_invalid_native_projection_keeps_python_diagnostics(
+    tmp_path, monkeypatch, payload, python_state, mixed
+):
+    from factoryline import adoption
+    from copy import deepcopy
+
+    python_result = {
+        "state": python_state,
+        "findings": [{"id": "python-finding"}],
+        "message": "original Python failure",
+        "audit_coverage": {"complete": False},
+    }
+    original = deepcopy(python_result)
+    report = {
+        "diagnostic": "deep evidence retained",
+        "lanes": [
+            {"measurement_id": "python_ast_security", "result": python_result},
+            {"measurement_id": "non_python_security", "result": payload},
+        ],
+    }
+    monkeypatch.setattr(
+        adoption, "run_deep_repository_audit", lambda *args, **kwargs: report
+    )
+    result, deep, error = adoption._scan_security_and_deep_audit(
+        tmp_path, {"file_types": {"python": 1, "typescript": int(mixed)}}, True, None
+    )
+    assert deep is report
+    assert result["state"] == python_state
+    assert result["findings"] == original["findings"]
+    assert result["message"] == original["message"]
+    assert python_result == original
+    if mixed:
+        assert error.startswith("E_NATIVE_PROJECTION:")
+        assert result["languages"] == []
+    else:
+        assert error is None and result == original

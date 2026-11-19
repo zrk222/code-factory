@@ -28,6 +28,132 @@ def _workspace_policy319_request_pickle_fixture(root):
     )
 
 
+def _capture_scope_gap_control(
+    tmp_path, monkeypatch, *, gap=None, drift=False, denied=False
+):
+    from factoryline import deep_audit
+    from factoryline.deep_audit_io import inventory_candidate
+
+    root, output = tmp_path / "candidate", tmp_path / "evidence"
+    root.mkdir()
+    output.mkdir()
+    (root / "app.py").write_text("value = 1\n")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "app.py"], check=True)
+    inventory = inventory_candidate(root)
+    plan = {"candidate_sha256": inventory["candidate_sha256"]}
+    state = {
+        "run_id": "scope-control",
+        "gaps": [],
+        "lanes": [],
+        "analysis_complete": False,
+    }
+    counters = {"authorization": 0, "lanes": 0}
+    monkeypatch.setattr(deep_audit, "_scope_gaps", lambda *_: [gap] if gap else [])
+    monkeypatch.setattr(deep_audit, "_event", lambda *_: None)
+
+    def authorize(*_):
+        counters["authorization"] += 1
+        if denied:
+            raise RuntimeAuditError("E_AUTHORIZATION", "not authorized")
+
+    def lanes(*args):
+        counters["lanes"] += 1
+        args[2]["lanes"].append(
+            {
+                "id": "authorized-static",
+                "state": "OBSERVED",
+                "findings": [{"rule_id": "retained-static"}],
+            }
+        )
+
+    def capture(candidate, snapshot=None):
+        result = inventory_candidate(candidate, snapshot)
+        if drift and snapshot is None:
+            result["candidate_sha256"] = "0" * 64
+        return result
+
+    monkeypatch.setattr(deep_audit, "_run_lanes", lanes)
+    args = (
+        root,
+        output,
+        state,
+        plan,
+        "a" * 64,
+        output / "authorization",
+        output / "trust",
+        "b" * 64,
+        None,
+        authorize,
+        capture,
+        lambda *_: None,
+    )
+    return deep_audit, args, state, counters
+
+
+@pytest.mark.parametrize("code", ["UNCOVERED_SOURCE", "DEPENDENCY_DEPTH"])
+def test_capture_retains_authorized_static_observations_despite_other_scope_gaps(
+    tmp_path, monkeypatch, code
+):
+    module, args, state, counters = _capture_scope_gap_control(
+        tmp_path,
+        monkeypatch,
+        gap={
+            "code": code,
+            "path": "app.py",
+            "action": "Add unrelated family coverage.",
+        },
+    )
+    module._capture_and_execute(*args)
+    assert counters == {"authorization": 1, "lanes": 1}
+    assert state["lanes"][0]["findings"] == [{"rule_id": "retained-static"}]
+    assert [row["code"] for row in state["gaps"]] == [code]
+    assert state["analysis_complete"] is False
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "UNBOUND_OBLIGATION",
+        "UNBOUND_CHALLENGE",
+        "INVENTORY_INCOMPLETE",
+        "CANDIDATE_DRIFT",
+        "SNAPSHOT_DRIFT",
+    ],
+)
+def test_capture_fatal_binding_and_inventory_gaps_still_prevent_execution(
+    tmp_path, monkeypatch, code
+):
+    module, args, state, counters = _capture_scope_gap_control(
+        tmp_path,
+        monkeypatch,
+        gap={"code": code, "path": "app.py", "action": "Repair binding."},
+        drift=code == "SNAPSHOT_DRIFT",
+    )
+    module._capture_and_execute(*args)
+    assert counters == {"authorization": 0, "lanes": 0}
+    assert state["lanes"] == []
+
+
+def test_capture_clean_legacy_and_authorization_failure_remain_gated(
+    tmp_path, monkeypatch
+):
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    module, args, state, counters = _capture_scope_gap_control(clean, monkeypatch)
+    module._capture_and_execute(*args)
+    assert counters == {"authorization": 1, "lanes": 1}
+    assert state["gaps"] == []
+    rejected = tmp_path / "rejected"
+    rejected.mkdir()
+    module, args, state, counters = _capture_scope_gap_control(
+        rejected, monkeypatch, denied=True
+    )
+    with pytest.raises(RuntimeAuditError, match="E_AUTHORIZATION"):
+        module._capture_and_execute(*args)
+    assert counters == {"authorization": 1, "lanes": 0}
+
+
 def test_oracle_source_retention_budget_is_bounded_and_cache_keyed(
     tmp_path, monkeypatch
 ):
@@ -2346,8 +2472,31 @@ def _copy_worker_modules(root: Path, package_root: Path, sources: set[str]) -> N
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((root / source).read_bytes())
     resource = package_root / "factoryline/data/junie_pack.json"
-    resource.parent.mkdir(parents=True, exist_ok=True)
-    resource.write_bytes((root / "factoryline/data/junie_pack.json").read_bytes())
+    import shlex
+
+    dockerfile = (root / "deploy/deep-adapters/Dockerfile").read_text()
+    projection = next(
+        line
+        for line in dockerfile.splitlines()
+        if line.startswith(
+            "RUN --mount=type=bind,source=factoryline/data/junie_pack.json,"
+        )
+    )
+    command = shlex.split(projection)
+    assert command[1].endswith("target=/tmp/full-junie-pack.json,readonly")
+    assert command[2:4] == ["python", "-c"]
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            command[4],
+            str(root / "factoryline/data/junie_pack.json"),
+            str(resource),
+        ],
+        check=True,
+    )
 
 
 def _run_worker_import(
@@ -2405,19 +2554,57 @@ def _assert_worker_image_imports(
 ) -> None:
     copied = _worker_copy_sources(dockerfile, destination)
     assert _WORKER_IMPORT_MODULES <= copied
-    assert (
-        f"COPY factoryline/data/junie_pack.json {destination}data/junie_pack.json"
-        in dockerfile.splitlines()
-    )
-    closure_bytes = sum((Path.cwd() / source).stat().st_size for source in copied)
-    closure_bytes += Path("factoryline/data/junie_pack.json").stat().st_size
-    assert closure_bytes <= 1_250_000
+    assert "COPY factoryline/data/junie_pack.json " not in dockerfile
     _copy_worker_modules(Path.cwd(), package_root, copied)
+    closure_bytes = sum((Path.cwd() / source).stat().st_size for source in copied)
+    closure_bytes += (package_root / "factoryline/data/junie_pack.json").stat().st_size
+    assert closure_bytes <= 1_250_000
     result = _run_worker_import(package_root)
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout
     remediation = _run_worker_import(package_root, remediation=True)
     assert remediation.returncode == 0, remediation.stderr
+
+
+def test_worker_pack_projection_preserves_consumed_contract(tmp_path):
+    import ast
+
+    root = Path.cwd()
+    source = root / "factoryline/data/junie_pack.json"
+    full = source.read_bytes()
+    tree = ast.parse((root / "factoryline/audit_taxonomy.py").read_text())
+    consumed = {
+        node.slice.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "_AGENT_USAGE_PACK"
+    }
+    _copy_worker_modules(root, tmp_path, _WORKER_IMPORT_MODULES)
+    resource = tmp_path / "factoryline/data/junie_pack.json"
+    projected = resource.read_bytes()
+    assert set(json.loads(projected)) == consumed
+    assert json.loads(projected) == {key: json.loads(full)[key] for key in consumed}
+    code = (
+        "import sys,pathlib,hashlib; sys.path.insert(0,sys.argv[1]); "
+        "import factoryline.audit_taxonomy as t; "
+        "from factoryline import canonical_json_bytes; "
+        "assert pathlib.Path(t.__file__).resolve()==pathlib.Path(sys.argv[1]).resolve()/'factoryline/audit_taxonomy.py'; "
+        "print(hashlib.sha256(canonical_json_bytes(t._AGENT_USAGE_CONTRACT)).hexdigest())"
+    )
+    hashes = []
+    for payload in (full, projected):
+        resource.write_bytes(payload)
+        result = subprocess.run(
+            [sys.executable, "-I", "-S", "-c", code, str(tmp_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        hashes.append(result.stdout.strip())
+    assert hashes[0] == hashes[1]
+    assert source.read_bytes() == full
+    assert len(projected) < len(full)
 
 
 def _assert_missing_worker_module_fails(tmp_path: Path) -> None:
@@ -9674,3 +9861,266 @@ def test_polyglot_semgrep_rejects_unsupported_native_grammar(languages):
 
     with pytest.raises(RuntimeAuditError, match="unsupported pinned rule languages"):
         _semgrep_rule_sources({"languages": languages}, {"app.go": "a" * 64})
+
+
+def _local_activation_inputs(tmp_path):
+    import platform
+    from test_deep_audit_contract import _local_tool_bundle
+    from factoryline.deep_audit_io import canonical_bytes, sha256_bytes
+
+    lane, operator = _local_tool_bundle(tmp_path)
+    binding = lane["runner_binding"]
+    binding["platform"] = {
+        "os": platform.system().lower(),
+        "architecture": {"amd64": "x86_64", "arm64": "aarch64"}.get(
+            platform.machine().lower(), platform.machine().lower()
+        ),
+    }
+    rules = b'{"rules":[{"id":"test-rule","languages":["typescript"],"pattern":"eval($X)","message":"test","severity":"ERROR"}]}'
+    (operator / "rules").write_bytes(rules)
+    lane["ruleset_sha256"] = binding["ruleset_sha256"] = sha256_bytes(rules)
+    profile = {
+        "schema": "factory.native-profile.v1",
+        "engine": "semgrep",
+        "mode": "pattern-limited",
+        "tool_version": "1.15.0",
+        "ruleset_sha256": lane["ruleset_sha256"],
+        "report_format": "sarif",
+        "version_argv": [str(operator / "executable"), "--version"],
+        "commands": [
+            {
+                "argv": [
+                    str(operator / "executable"),
+                    "scan",
+                    "--disable-version-check",
+                    "--no-git-ignore",
+                    "--disable-nosem",
+                    "--dataflow-traces",
+                    "--config",
+                    str(operator / "rules"),
+                    "--sarif-output",
+                    "{report}",
+                    "{source}",
+                ],
+                "accepted_exit_codes": [0],
+            }
+        ],
+    }
+    (operator / "profile").write_bytes(canonical_bytes(profile))
+    binding["profile_sha256"] = sha256_bytes((operator / "profile").read_bytes())
+    lane["argv"] = ["factory-native-profile", binding["profile_sha256"]]
+    manifest = json.loads((operator / "manifest.json").read_text())
+    for row in manifest["files"]:
+        raw = (operator / row["path"]).read_bytes()
+        row.update(sha256=sha256_bytes(raw), bytes=len(raw))
+    (operator / "manifest.json").write_bytes(canonical_bytes(manifest))
+    binding["tool_manifest"]["sha256"] = sha256_bytes(
+        (operator / "manifest.json").read_bytes()
+    )
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "app.ts").write_bytes(b"eval(value)\n")
+    inventory = {
+        "candidate_sha256": "a" * 64,
+        "files": [
+            {
+                "path": "app.ts",
+                "sha256": sha256_bytes((snapshot / "app.ts").read_bytes()),
+                "language": "typescript",
+            }
+        ],
+    }
+    return lane, profile, candidate, snapshot, inventory
+
+
+def test_local_activation_dispatches_before_docker(tmp_path, monkeypatch):
+    import factoryline.deep_audit as module
+
+    marker = object()
+    monkeypatch.setattr(module, "_execute_local_lane", lambda *args: marker)
+    monkeypatch.setattr(module, "_docker_base", lambda: pytest.fail("Docker reached"))
+    assert (
+        module._execute_lane(
+            tmp_path, tmp_path, {}, tmp_path, {"runner_binding": {}}, {}, {}, None
+        )
+        is marker
+    )
+
+
+@pytest.mark.parametrize(
+    "damage", [None, "profile", "rules", "executable", "extra", "platform"]
+)
+def test_local_activation_resolves_only_verified_operator_roles(tmp_path, damage):
+    from factoryline.deep_audit import _local_profile_context
+
+    lane, profile, candidate, snapshot, _ = _local_activation_inputs(tmp_path)
+    operator = Path(lane["runner_binding"]["tool_manifest"]["path"]).parent
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    if damage == "platform":
+        lane["runner_binding"]["platform"]["os"] = "wrong"
+    elif damage:
+        (operator / damage).write_bytes(b"changed")
+    if damage:
+        with pytest.raises(RuntimeAuditError, match="E_LOCAL_(TOOL|PLATFORM)"):
+            _local_profile_context(candidate, snapshot, scratch, lane)
+    else:
+        actual, context = _local_profile_context(candidate, snapshot, scratch, lane)
+        assert actual == profile
+        assert context["source_root"] == str(snapshot)
+        assert context["tool_context"]["bundle_root"] == operator
+        assert context["tool_context"]["cache_root"] == scratch / "tool-cache"
+
+
+def test_local_activation_shared_version_and_baseline_receive_context(
+    tmp_path, monkeypatch
+):
+    import threading
+    from factoryline import deep_audit_contract as module
+    from factoryline import runtime_audit_process as process
+    from factoryline.deep_audit import _local_profile_context
+
+    lane, profile, candidate, snapshot, _ = _local_activation_inputs(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    _, context = _local_profile_context(candidate, snapshot, scratch, lane)
+    cancelled = threading.Event()
+    calls = []
+
+    def runner(argv, cwd, timeout, run_scratch, **options):
+        calls.append((argv, cwd, options))
+        if options.get("stdout_path"):
+            options["stdout_path"].write_text("1.15.0")
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "launch_error": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+        }
+
+    monkeypatch.setattr(process, "run_bounded_command", runner)
+    module._native_version(
+        profile, snapshot, scratch, 5, execution_context=context, cancelled=cancelled
+    )
+    module._adapter_commands(
+        profile["commands"],
+        lane,
+        snapshot,
+        scratch,
+        execution_context=context,
+        cancelled=cancelled,
+    )
+    assert len(calls) == 2
+    assert all(call[1] == context["tool_context"]["bundle_root"] for call in calls)
+    assert all(call[2]["tool_context"] is context["tool_context"] for call in calls)
+    assert all(call[2]["cancelled"] is cancelled for call in calls)
+
+
+@pytest.mark.parametrize("damage", [None, "tool", "source", "cancelled"])
+def test_local_activation_rechecks_after_shared_execution_and_retains_bundle(
+    tmp_path, monkeypatch, damage
+):
+    import factoryline.deep_audit as module
+    from factoryline import deep_audit_sarif as sarif
+
+    lane, profile, candidate, snapshot, inventory = _local_activation_inputs(tmp_path)
+    directory = tmp_path / "run"
+    directory.mkdir()
+    state = {"run_id": "a" * 32, "manifest_sha256": "b" * 64, "active_lane": lane["id"]}
+    bundle = {"retained_raw_transport": "unit-control"}
+    seen = []
+
+    def execute(
+        actual_profile, contract, source, output, *, execution_context, cancelled
+    ):
+        assert actual_profile == profile
+        assert source == snapshot
+        assert output.parent == Path(execution_context["scratch_root"])
+        assert output.parent.name.startswith("factory-native-")
+        if damage == "tool":
+            Path(execution_context["executable"]).write_bytes(b"changed")
+        elif damage == "source":
+            (snapshot / "app.ts").write_bytes(b"changed")
+        elif damage == "cancelled":
+            cancelled.set()
+        seen.append(execution_context)
+        return bundle
+
+    def normalize(actual, *args, execution_context):
+        assert actual == bundle
+        assert execution_context is seen[0]
+        assert Path(execution_context["scratch_root"]).is_dir()
+        return {"lane_id": lane["id"], "state": "INCOMPLETE"}
+
+    monkeypatch.setattr(module, "execute_native_profile", execute)
+    monkeypatch.setattr(sarif, "normalize_execution_bundle", normalize)
+    if damage:
+        with pytest.raises(
+            RuntimeAuditError, match="E_(LOCAL_TOOL|REPORT_DRIFT|LOCAL_CANCELLED)"
+        ):
+            module._execute_lane(
+                candidate,
+                directory,
+                state,
+                snapshot,
+                lane,
+                inventory,
+                {"obligations": []},
+                None,
+            )
+    else:
+        result = module._execute_lane(
+            candidate,
+            directory,
+            state,
+            snapshot,
+            lane,
+            inventory,
+            {"obligations": []},
+            None,
+        )
+        assert result["execution"]["provider"] == "local-native"
+        assert result["execution"]["isolation"] == "none"
+    retained = json.loads((directory / ("bundle-" + lane["id"] + ".json")).read_text())
+    assert retained.pop("sha256")
+    assert retained == bundle
+    assert not Path(seen[0]["scratch_root"]).exists()
+
+
+def test_local_activation_retains_partial_output_before_cleanup(tmp_path, monkeypatch):
+    import factoryline.deep_audit as module
+
+    lane, _, candidate, snapshot, inventory = _local_activation_inputs(tmp_path)
+    directory = tmp_path / "run"
+    directory.mkdir()
+    seen = []
+
+    def fail(profile, contract, source, output, **options):
+        (output / lane["report"]).write_bytes(b'{"native":"partial"}')
+        seen.append(output.parent)
+        raise RuntimeAuditError("E_ADAPTER_COMMAND", "unit failure")
+
+    monkeypatch.setattr(module, "execute_native_profile", fail)
+    state = {"run_id": "a" * 32, "manifest_sha256": "b" * 64, "active_lane": lane["id"]}
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_COMMAND"):
+        module._execute_lane(
+            candidate,
+            directory,
+            state,
+            snapshot,
+            lane,
+            inventory,
+            {"obligations": []},
+            None,
+        )
+    retained = json.loads((directory / ("failure-" + lane["id"] + ".json")).read_text())
+    assert retained["completion"] == "COMMAND_FAILED"
+    assert retained["diagnostic_code"] == "E_ADAPTER_COMMAND"
+    assert retained["execution_context"]["source_root"] == str(snapshot)
+    artifact = retained["retained_output"][0]
+    assert artifact["complete"]
+    assert (directory / artifact["path"]).read_bytes() == b'{"native":"partial"}'
+    assert not seen[0].exists()

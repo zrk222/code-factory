@@ -16,6 +16,8 @@ from typing import Any
 
 from .runtime_audit_process import (
     bounded_file_sha256,
+    _capture_polyglot_challenge,
+    _polyglot_result as _polyglot_result,
     create_bounded_temp_directory,
     new_output_path_inside,
     path_chain_has_no_links,
@@ -999,6 +1001,44 @@ def capture_local_production_mutation(
         _cleanup_mutation_capture(
             temp_root, temp_parent, evidence, cleanup, payload, root
         )
+
+
+def capture_polyglot_oracle_challenge(
+    workspace_root,
+    framework,
+    test_path,
+    selector,
+    assertion_line,
+    production_path,
+    before_text,
+    after_text,
+    evidence_path,
+    *,
+    execute=False,
+    tool_executable=None,
+    node_executable=None,
+    timeout_seconds=120,
+):
+    """Explicit opt-in, unsigned local observation; never runs from read-only scans.
+
+    Caller-supplied tools run fixed framework argv with measured source reach.
+    """
+    return _capture_polyglot_challenge(
+        Path(workspace_root).resolve(strict=True),
+        framework,
+        test_path,
+        selector,
+        assertion_line,
+        production_path,
+        before_text,
+        after_text,
+        evidence_path,
+        tool_executable,
+        node_executable,
+        timeout_seconds,
+        _MUTATION_COPY_IGNORES,
+        execute,
+    )
 
 
 def _verify_admission_sources(plan: dict[str, Any], workspace: Path) -> str:

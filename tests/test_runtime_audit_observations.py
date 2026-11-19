@@ -4337,3 +4337,695 @@ def test_finite_terminal_command_reflection_tracks_provider_receiver(operation, 
     assert (
         bool(closed_shell_operation_witness(raw, "app.py", span, "os.system")) is proven
     )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "baseline_failed",
+        "skip",
+        "unreached",
+        "timeout",
+        "unrelated_assertion",
+        "setup_failed",
+    ],
+)
+def test_polyglot_synthetic_result_refuses_incomplete_evidence(failure):
+    """Synthetic contract fixtures: these do not qualify a native framework."""
+    import copy
+    from factoryline.runtime_audit_runner import _polyglot_result
+
+    facts = {
+        "exit_code": 0,
+        "timed_out": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "launch_error": False,
+    }
+    baseline = {
+        "process": facts,
+        "observation": {"valid": True, "reached": True, "outcome": "passed"},
+    }
+    mutant = copy.deepcopy(baseline)
+    mutant["process"]["exit_code"] = 1
+    mutant["observation"].update(outcome="failed", assertion_failed=True)
+    if failure == "baseline_failed":
+        baseline["observation"]["outcome"] = "failed"
+    elif failure == "skip":
+        mutant["observation"]["outcome"] = "pending"
+    elif failure == "unreached":
+        mutant["observation"]["reached"] = False
+    elif failure == "timeout":
+        mutant["process"]["timed_out"] = True
+    elif failure == "setup_failed":
+        baseline["process"]["exit_code"] = 1
+    else:
+        mutant["observation"]["assertion_failed"] = False
+    assert _polyglot_result(baseline, mutant, True) == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("changed", ["app.js", "app.test.js", "package.json"])
+def test_polyglot_synthetic_capture_source_and_config_drift(
+    tmp_path, monkeypatch, changed
+):
+    """Synthetic process substitute verifies drift refusal, not native behavior."""
+    from factoryline import runtime_audit_process as process
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    (tmp_path / "app.js").write_text("exports.value = () => 1;\n")
+    (tmp_path / "app.test.js").write_text("test('selected', () => {});\n")
+    (tmp_path / "package.json").write_text("{}")
+    monkeypatch.setattr(process, "_polyglot_tools", lambda *args: [])
+
+    def drift(*args):
+        (args[3] / changed).write_text("changed")
+        return {}
+
+    monkeypatch.setattr(process, "_polyglot_trial", drift)
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "jest",
+        "app.test.js",
+        "selected",
+        1,
+        "app.js",
+        "() => 1",
+        "() => 2",
+        ".factory/proof",
+        execute=True,
+    )
+    assert result["status"] == "INCOMPLETE"
+    assert "baseline changed source/configuration" in result["error"]
+    assert result["cleanup"]["removed"] is True
+
+
+@pytest.mark.parametrize("production", ["../outside.js", "app.test.js"])
+def test_polyglot_malformed_production_paths_refused(tmp_path, production):
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    (tmp_path / "app.test.js").write_text("test('selected', () => 1);\n")
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "jest",
+        "app.test.js",
+        "selected",
+        1,
+        production,
+        "() => 1",
+        "() => 2",
+        ".factory/proof",
+        execute=True,
+    )
+    assert result["status"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("invalid", ["boolean", "string", "escape", "sibling", "link"])
+def test_polyglot_go_cache_synthetic_scope_refusal(tmp_path, monkeypatch, invalid):
+    from factoryline import runtime_audit_process as process
+
+    root = tmp_path / "cf-polyglot-oracle-owned"
+    root.mkdir()
+    monkeypatch.setattr(process.tempfile, "gettempdir", lambda: str(tmp_path))
+    cache = root / "go-cache"
+    if invalid == "boolean":
+        cache = True
+    elif invalid == "string":
+        cache = str(cache)
+    elif invalid == "escape":
+        cache = tmp_path / "go-cache"
+    elif invalid == "sibling":
+        cache = tmp_path / "cf-polyglot-oracle-sibling/go-cache"
+    else:
+        monkeypatch.setattr(process, "path_chain_has_no_links", lambda *args: False)
+    with pytest.raises(process.RuntimeAuditError, match="nonlinked child"):
+        process._validate_go_cache(cache, root / "candidate", root / "baseline-runtime")
+
+
+def test_polyglot_go_cache_keeps_fresh_home_and_private_cache(tmp_path, monkeypatch):
+    from factoryline import runtime_audit_process as process
+
+    root = tmp_path / "cf-polyglot-oracle-owned"
+    root.mkdir()
+    monkeypatch.setattr(process.tempfile, "gettempdir", lambda: str(tmp_path))
+    for name in ("baseline", "mutant"):
+        scratch = root / name
+        scratch.mkdir()
+        process._validate_go_cache(root / "go-cache", root / "candidate", scratch)
+        environment = process._environment(scratch)
+        assert environment["HOME"] == str((scratch / "runtime-home").resolve())
+        assert "LOCALAPPDATA" not in environment
+
+
+@pytest.mark.parametrize(
+    "covered",
+    [
+        "example.test/project/otherapp.go",
+        "example.test/project/other/app.go",
+        "example.test/project/app.go",
+    ],
+)
+def test_polyglot_synthetic_go_coverage_requires_exact_module_source(tmp_path, covered):
+    """Synthetic coverage parser identity tests, not native qualification."""
+    import json
+    from factoryline.runtime_audit_process import _polyglot_go_observation
+
+    (tmp_path / "go.mod").write_text("module example.test/project\n")
+    target = tmp_path / "app.go"
+    target.write_text("package app\n")
+    stdout, coverage = tmp_path / "stdout.json", tmp_path / "coverage"
+    stdout.write_text(json.dumps({"Action": "pass", "Test": "TestSelected"}) + "\n")
+    coverage.write_text(f"mode: set\n{covered}:1.1,1.20 1 1\n")
+    observed = _polyglot_go_observation(
+        stdout, coverage, target, "TestSelected", "app_test.go", 1, 1
+    )
+    assert observed["reached"] is (covered == "example.test/project/app.go")
+
+
+def test_polyglot_installed_dependency_bytes_invalidate_identity(tmp_path):
+    from factoryline.runtime_audit_process import _polyglot_tools
+
+    (tmp_path / "package-lock.json").write_text("{}")
+    package = tmp_path / "node_modules/jest/bin"
+    package.mkdir(parents=True)
+    tool = package / "jest.js"
+    tool.write_text("entry")
+    transitive = tmp_path / "node_modules/other/index.js"
+    transitive.parent.mkdir()
+    transitive.write_text("first")
+    launcher = tmp_path / "node.exe"
+    launcher.write_text("launcher")
+    before = _polyglot_tools("jest", tool, launcher)
+    transitive.write_text("second")
+    after = _polyglot_tools("jest", tool, launcher)
+    assert before != after
+    assert before[-1]["files"] != after[-1]["files"]
+
+
+def test_polyglot_artifact_quota_actual_burst_child_is_incomplete(tmp_path):
+    import sys
+    from factoryline.runtime_audit_process import (
+        run_bounded_command,
+        validate_production_mutation_process,
+    )
+
+    reports, scratch = tmp_path / "reports", tmp_path / "scratch"
+    reports.mkdir()
+    scratch.mkdir()
+    writer = "import pathlib,sys,time; pathlib.Path(sys.argv[1]).write_bytes(b'x'*(33*1024*1024)); time.sleep(30)"
+    code = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]); time.sleep(30)"
+    facts = run_bounded_command(
+        [sys.executable, "-c", code, writer, str(reports / "burst")],
+        tmp_path,
+        10,
+        scratch,
+        artifact_tree=reports,
+    )
+    assert facts["output_limit_exceeded"] is True
+    assert facts["cleanup_confirmed"] is True
+    assert validate_production_mutation_process(facts) is False
+    assert facts["duration_ms"] < 10000
+
+
+def test_polyglot_artifact_quota_checks_immediate_exit(tmp_path):
+    import sys
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    reports, scratch = tmp_path / "reports", tmp_path / "scratch"
+    reports.mkdir()
+    scratch.mkdir()
+    code = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); [(p/str(i)).touch() for i in range(201)]"
+    facts = run_bounded_command(
+        [sys.executable, "-c", code, str(reports)],
+        tmp_path,
+        10,
+        scratch,
+        artifact_tree=reports,
+    )
+    assert facts["output_limit_exceeded"] is True
+    assert facts["cleanup_confirmed"] is True
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        None,
+        "extra",
+        "missing",
+        "digest",
+        "relative",
+        "resource-escape",
+        "resource-missing",
+        "resource-duplicate",
+        "exe-escape",
+        "argv",
+        "cwd",
+        "cache-foreign",
+        "go-cache",
+    ],
+)
+def test_native_tool_context_is_closed_and_workflow_bound(tmp_path, damage):
+    import tempfile
+    from factoryline.runtime_audit_process import (
+        _native_tool_environment,
+        run_bounded_command,
+    )
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    exe = bundle / "tool.exe"
+    exe.write_bytes(b"unit-only-not-executable")
+    resources = bundle / "core"
+    resources.mkdir()
+    with tempfile.TemporaryDirectory(prefix="factory-native-") as temporary:
+        workflow = Path(temporary).resolve()
+        scratch = workflow / "scan"
+        scratch.mkdir()
+        context = {
+            "bundle_root": bundle,
+            "executable": exe,
+            "resource_dirs": [resources],
+            "cache_root": workflow / "tool-cache",
+            "manifest_sha256": "a" * 64,
+        }
+        argv, cwd = [str(exe)], bundle
+        changes = {
+            "extra": {"env": {}},
+            "digest": {"manifest_sha256": "bad"},
+            "relative": {"bundle_root": Path("bundle")},
+            "resource-escape": {"resource_dirs": [tmp_path]},
+            "resource-missing": {"resource_dirs": [bundle / "absent"]},
+            "resource-duplicate": {"resource_dirs": [resources, resources]},
+            "exe-escape": {"executable": tmp_path / "foreign.exe"},
+            "cache-foreign": {"cache_root": tmp_path / "cache"},
+        }
+        context.update(changes.get(damage, {}))
+        if damage == "missing":
+            context.pop("executable")
+        if damage == "argv":
+            argv = ["ambient-tool.exe"]
+        if damage == "cwd":
+            cwd = tmp_path
+        if damage == "go-cache":
+            with pytest.raises(RuntimeAuditError):
+                run_bounded_command(
+                    argv, cwd, 1, scratch, go_cache=tmp_path, tool_context=context
+                )
+        elif damage:
+            with pytest.raises(RuntimeAuditError):
+                _native_tool_environment(context, argv, cwd, scratch)
+        else:
+            import os
+
+            environment = _native_tool_environment(context, argv, cwd, scratch)
+            assert environment["PATH"].split(os.pathsep)[:2] == [
+                str(bundle),
+                str(resources),
+            ]
+            assert environment["LOCALAPPDATA"] == str(
+                workflow / "tool-cache" / "AppData" / "Local"
+            )
+            assert _native_tool_environment(context, argv, cwd, scratch) == environment
+
+
+def test_default_runner_environment_remains_native_context_free(tmp_path, monkeypatch):
+    import os
+    from factoryline.runtime_audit_process import _environment
+
+    monkeypatch.setenv("PATH", "original-path")
+    monkeypatch.setenv("LOCALAPPDATA", "untrusted-user-cache")
+    result = _environment(tmp_path)
+    home = str(tmp_path.resolve() / "runtime-home")
+    expected = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper()
+        in {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL"}
+    }
+    expected.update(
+        HOME=home,
+        USERPROFILE=home,
+        TMP=home,
+        TEMP=home,
+        TMPDIR=home,
+        PYTHONNOUSERSITE="1",
+        PYTHONHASHSEED="0",
+    )
+    assert result == expected
+    assert "LOCALAPPDATA" not in result
+
+
+def test_native_context_environment_reaches_existing_bounded_runner(tmp_path):
+    import os
+    import sys
+    import tempfile
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    exe = Path(sys.executable).resolve()
+    with tempfile.TemporaryDirectory(prefix="factory-native-") as temporary:
+        root = Path(temporary).resolve()
+        scratch = root / "probe"
+        scratch.mkdir()
+        output = tmp_path / "environment.json"
+        context = {
+            "bundle_root": exe.parent,
+            "executable": exe,
+            "resource_dirs": [exe.parent],
+            "cache_root": root / "tool-cache",
+            "manifest_sha256": "b" * 64,
+        }
+        facts = run_bounded_command(
+            [str(exe), "-c", "import os,json;print(json.dumps(dict(os.environ)))"],
+            exe.parent,
+            10,
+            scratch,
+            tool_context=context,
+            stdout_path=output,
+        )
+        assert facts["exit_code"] == 0 and facts["cleanup_confirmed"]
+        environment = json.loads(output.read_text())
+        assert environment["LOCALAPPDATA"] == str(
+            root / "tool-cache" / "AppData" / "Local"
+        )
+        paths = environment["PATH"].split(os.pathsep)
+        assert paths[0] == str(exe.parent)
+        assert len(paths) == (2 if os.name == "nt" else 1)
+        assert environment["HOME"] == str(root / "tool-cache")
+
+
+def test_native_artifact_quota_cannot_be_redirected(tmp_path):
+    from factoryline.runtime_audit_process import _native_artifact_tree
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    context = {"cache_root": tmp_path / "tool-cache"}
+    assert _native_artifact_tree(context, None) == {
+        "root": tmp_path,
+        "limits": {"max_files": 512, "max_bytes": 512 * 1024 * 1024},
+    }
+    with pytest.raises(RuntimeAuditError):
+        _native_artifact_tree(context, tmp_path / "elsewhere")
+
+
+def test_native_preflight_counts_toward_process_deadline(tmp_path, monkeypatch):
+    import sys
+    import time
+    from factoryline import runtime_audit_process as process
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    monkeypatch.setattr(process, "_native_tool_environment", lambda *args, **kwargs: {})
+    monkeypatch.setattr(process, "_native_artifact_tree", lambda *args: tmp_path)
+    ticks = iter([10.0, 11.1])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    with pytest.raises(RuntimeAuditError, match="E_NATIVE_BUDGET"):
+        process.run_bounded_command(
+            [sys.executable], tmp_path, 1, tmp_path, tool_context={}
+        )
+
+
+def test_native_tree_preflight_stops_at_deadline(tmp_path):
+    from factoryline.runtime_audit_process import tree_has_no_links_or_reparse_points
+
+    (tmp_path / "payload").write_text("x")
+    assert not tree_has_no_links_or_reparse_points(tmp_path, deadline=0)
+
+
+def test_shared_tree_validator_rejects_unreadable_subtrees(tmp_path, monkeypatch):
+    from factoryline import runtime_audit_process as process
+
+    def unreadable(root, *, onerror):
+        onerror(PermissionError("unit-only unreadable directory"))
+        return iter(())
+
+    monkeypatch.setattr(process.os, "walk", unreadable)
+    assert not process.tree_has_no_links_or_reparse_points(tmp_path)
+
+
+def test_shared_tree_validator_requires_directory_root(tmp_path):
+    from factoryline.runtime_audit_process import tree_has_no_links_or_reparse_points
+
+    root = tmp_path / "ordinary-file"
+    root.write_text("unit fixture")
+    assert not tree_has_no_links_or_reparse_points(root)
+
+
+def test_artifact_observation_deadline_is_timeout_not_overflow(tmp_path, monkeypatch):
+    import threading
+    from factoryline import runtime_audit_process as process
+
+    clock = [1.0]
+    calls = []
+
+    def slow_tree(root, **limits):
+        calls.append(limits["deadline"])
+        clock[0] = 3.0
+        return False
+
+    monkeypatch.setattr(process.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(process, "tree_has_no_links_or_reparse_points", slow_tree)
+    overflow = threading.Event()
+    process._observe_artifact_quota(tmp_path, overflow, deadline=2.0)
+    assert calls == [2.0] and not overflow.is_set()
+    process._observe_artifact_quota(tmp_path, overflow, deadline=2.0)
+    assert calls == [2.0]
+
+
+def test_wait_loop_skips_tree_walk_after_execution_deadline(monkeypatch):
+    import threading
+    from factoryline import runtime_audit_process as process
+
+    monkeypatch.setattr(process.time, "monotonic", lambda: 3.0)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("expired execution must not traverse artifacts")
+
+    monkeypatch.setattr(process, "_observe_artifact_quota", unexpected)
+    assert process._wait_for_exit_or_limit(None, 1, threading.Event(), deadline=2.0)
+
+
+@pytest.mark.parametrize(
+    "files,bytes_limit,expected", [(1, 3, True), (0, 3, False), (1, 2, False)]
+)
+def test_shared_tree_budget_boundary_after_entry_projection(
+    tmp_path, files, bytes_limit, expected
+):
+    from factoryline.runtime_audit_process import tree_has_no_links_or_reparse_points
+
+    (tmp_path / "data").write_bytes(b"abc")
+    assert (
+        tree_has_no_links_or_reparse_points(
+            tmp_path, max_files=files, max_bytes=bytes_limit
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize("limits", [(1, 10), (10, 1), (0, 10)])
+def test_polyglot_dependency_walk_preserves_small_bounds(tmp_path, limits):
+    from factoryline.runtime_audit_process import _polyglot_source_files
+
+    (tmp_path / "a.pyc").write_bytes(b"ab")
+    (tmp_path / "z.js").write_bytes(b"cd")
+    with pytest.raises(ValueError):
+        list(
+            _polyglot_source_files(
+                tmp_path, set(), include_bytecode=True, limits=limits
+            )
+        )
+
+
+def test_polyglot_dependency_walk_rejects_root_and_walk_errors(tmp_path, monkeypatch):
+    import factoryline.runtime_audit_process as process
+
+    root = tmp_path / "file"
+    root.write_bytes(b"x")
+    with pytest.raises(ValueError):
+        process._polyglot_dependencies(root)
+
+    def unreadable(root, *, onerror):
+        onerror(PermissionError("unreadable subtree"))
+        yield root, [], []
+
+    monkeypatch.setattr(process.os, "walk", unreadable)
+    with pytest.raises(PermissionError):
+        process._polyglot_dependencies(tmp_path)
+
+
+def test_polyglot_dependency_walk_rejects_linked_entry(tmp_path, monkeypatch):
+    import factoryline.runtime_audit_process as process
+
+    target = tmp_path / "target"
+    target.write_bytes(b"x")
+    original = process._tree_entry_info
+    monkeypatch.setattr(
+        process,
+        "_tree_entry_info",
+        lambda path: None if path == target else original(path),
+    )
+    with pytest.raises(ValueError):
+        process._polyglot_dependencies(tmp_path)
+
+
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+def test_polyglot_cargo_failure_coverage_profile_is_platform_scoped(
+    tmp_path, monkeypatch, platform
+):
+    """Windows continuous counters preserve failed-test reach without changing POSIX."""
+    from types import SimpleNamespace
+    from factoryline import runtime_audit_process as process
+
+    monkeypatch.setattr(process, "os", SimpleNamespace(name=platform))
+    argv = process._polyglot_argv(
+        "cargo",
+        tmp_path / "cargo",
+        None,
+        "tests/oracle.rs",
+        "selected",
+        tmp_path / "report.json",
+        tmp_path / "coverage",
+    )
+    flags = next(value for value in argv if value.startswith("build.rustflags="))
+    profile = next(
+        value for value in argv if value.startswith("env.LLVM_PROFILE_FILE.value=")
+    )
+    if platform == "nt":
+        assert "llvm-args=-runtime-counter-relocation" in flags
+        assert "%p-%m%c.profraw" in profile
+    else:
+        assert flags == 'build.rustflags=["-C","instrument-coverage"]'
+        assert "%p-%m.profraw" in profile
+        assert "runtime-counter-relocation" not in flags
+    assert argv[-4:] == ["--", "--exact", "--nocapture", "--test-threads=1"]
+
+
+def test_polyglot_owned_evidence_exclusion_preserves_same_basename_inputs(tmp_path):
+    from factoryline.runtime_audit_process import (
+        _polyglot_inventory,
+        _polyglot_copy_ignores,
+    )
+    import shutil
+
+    source, copied = tmp_path / "source", tmp_path / "copy"
+    (source / "proof").mkdir(parents=True)
+    (source / "other/proof").mkdir(parents=True)
+    (source / "proof/report.json").write_text("owned output")
+    retained = source / "other/proof/input.js"
+    retained.write_text("source")
+    first = _polyglot_inventory(source, set(), Path("proof"))
+    assert [row["path"] for row in first] == ["other/proof/input.js"]
+    shutil.copytree(
+        source, copied, ignore=_polyglot_copy_ignores(source, set(), Path("proof"))
+    )
+    assert not (copied / "proof").exists()
+    assert _polyglot_inventory(copied, set(), Path("proof")) == first
+    retained.write_text("changed source")
+    assert _polyglot_inventory(source, set(), Path("proof")) != first
+
+
+@pytest.mark.parametrize(
+    "changed", ["source", "copied", "new_dependency", "new_copied_dependency"]
+)
+def test_polyglot_application_dependencies_are_bound_before_and_after_trials(
+    tmp_path, changed
+):
+    from factoryline.runtime_audit_process import (
+        _polyglot_copy_application_dependencies,
+        _polyglot_application_dependencies_current,
+    )
+
+    source, temp = tmp_path / "source", tmp_path / "temp"
+    source.mkdir()
+    temp.mkdir()
+    if not changed.startswith("new_"):
+        package = source / "node_modules/dep"
+        package.mkdir(parents=True)
+        (package / "index.js").write_text("module.exports=1")
+    manifest = _polyglot_copy_application_dependencies(source, temp)
+    assert _polyglot_application_dependencies_current(source, temp, manifest)
+    if changed.startswith("new_"):
+        (
+            (temp if changed == "new_copied_dependency" else source) / "node_modules"
+        ).mkdir()
+    else:
+        target = source if changed == "source" else temp
+        (target / "node_modules/dep/index.js").write_text("module.exports=2")
+    assert not _polyglot_application_dependencies_current(source, temp, manifest)
+
+
+def test_polyglot_owned_report_tree_is_excluded_before_input_budget_check(
+    tmp_path, monkeypatch
+):
+    """Synthetic report-size metadata isolates the prewalk budget regression."""
+    from factoryline import runtime_audit_process as process
+    from types import SimpleNamespace
+
+    (tmp_path / "app.js").write_text("source")
+    evidence = tmp_path / "proof"
+    evidence.mkdir()
+    for index in range(201):
+        (evidence / str(index)).write_text("owned report")
+    original = process._tree_entry_info
+
+    def large_owned_report(path):
+        info = original(path)
+        if path == evidence / "0":
+            return SimpleNamespace(st_mode=info.st_mode, st_size=513 * 1024 * 1024)
+        return info
+
+    monkeypatch.setattr(process, "_tree_entry_info", large_owned_report)
+    assert [
+        row["path"]
+        for row in process._polyglot_inventory(tmp_path, set(), Path("proof"))
+    ] == ["app.js"]
+
+
+def test_polyglot_unrelated_same_basename_input_files_keep_original_budget(tmp_path):
+    from factoryline.runtime_audit_process import _polyglot_inventory
+
+    (tmp_path / "proof").mkdir()
+    unrelated = tmp_path / "other/proof"
+    unrelated.mkdir(parents=True)
+    for index in range(201):
+        (unrelated / str(index)).write_text("source")
+    with pytest.raises(ValueError):
+        _polyglot_inventory(tmp_path, set(), Path("proof"))
+
+
+def test_polyglot_source_walk_rejects_linked_or_unreadable_input_before_open(
+    tmp_path, monkeypatch
+):
+    from factoryline import runtime_audit_process as process
+
+    path = tmp_path / "app.js"
+    path.write_text("source")
+    original = process._tree_entry_info
+    monkeypatch.setattr(
+        process,
+        "_tree_entry_info",
+        lambda current: None if current == path else original(current),
+    )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("rejected input must not be opened")
+
+    monkeypatch.setattr(process, "bounded_file_sha256", forbidden)
+    with pytest.raises(ValueError, match="linked or unreadable"):
+        process._polyglot_inventory(tmp_path, set())
+
+
+@pytest.mark.parametrize("mode", ["fifo", "socket"])
+def test_polyglot_input_walk_rejects_special_files_before_read(
+    tmp_path, monkeypatch, mode
+):
+    import stat
+    from types import SimpleNamespace
+    from factoryline import runtime_audit_process as process
+
+    monkeypatch.setattr(
+        process,
+        "_tree_entry_info",
+        lambda _: SimpleNamespace(
+            st_mode=stat.S_IFIFO if mode == "fifo" else stat.S_IFSOCK, st_size=0
+        ),
+    )
+    with pytest.raises(ValueError, match="regular file or directory"):
+        process._polyglot_entry_size(tmp_path / "special")

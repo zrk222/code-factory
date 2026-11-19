@@ -163,7 +163,7 @@ jobs:
             semgrep-surface-verification.json.rule-execution.json
           if-no-files-found: error
   sdk-workers:
-    needs: plan-worker-targets
+    needs: [plan-worker-targets, selector-controls]
     if: needs.plan-worker-targets.outputs.sdk == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -178,8 +178,6 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
-      - name: Check regression verifier positive and fail-closed controls
-        run: node --test scripts/verify_worker_cves.test.mjs
       - name: Build SDK worker from reviewed recipe
         run: docker build --platform linux/amd64 --target "${{ matrix.target }}" -f deploy/deep-adapters/Dockerfile -t factory-worker:candidate .
       - name: Verify original fifteen CVEs and package imports using immutable image ID

@@ -195,13 +195,173 @@ def verify_execution_authorization(
             "execution authorization does not bind this manifest and candidate",
         )
     if payload.get("adapter_images") != {
-        lane["id"]: lane["image"] for lane in plan["lanes"]
+        lane["id"]: lane["image"] for lane in plan["lanes"] if "image" in lane
     }:
         raise RuntimeAuditError(
             "E_ADAPTER_AUTHORIZATION",
             "coordinator must approve every exact adapter image",
         )
+    local = {
+        lane["id"]: digest(lane["runner_binding"])
+        for lane in plan["lanes"]
+        if "runner_binding" in lane
+    }
+    if (local and payload.get("local_runner_bindings") != local) or (
+        not local and "local_runner_bindings" in payload
+    ):
+        raise RuntimeAuditError(
+            "E_ADAPTER_AUTHORIZATION", "exact local runner authorization required"
+        )
     return (payload, envelope_sha256) if return_envelope_sha256 else payload
+
+
+def _local_tool_file(root, row):
+    """Stream pinned executable/resource bytes without loading tool bundles into memory."""
+    from .deep_audit_contract import _keys
+
+    _keys(row, "path sha256 bytes role")
+    expected = require_digest(row["sha256"], "tool sha256")
+    size = require_int(row["bytes"], "tool bytes", minimum=0, maximum=512 * 1024 * 1024)
+    path = local_file(root, row["path"])
+    signature = _deep_audit_io._zap_file_signature
+    before = signature(path.stat())
+    hasher = _deep_audit_io.hashlib.sha256()
+    total = 0
+    with path.open("rb") as stream:
+        opened = signature(_deep_audit_io.os.fstat(stream.fileno()))
+        while chunk := stream.read(1024 * 1024):
+            total += len(chunk)
+            if total > size:
+                raise RuntimeAuditError("E_LOCAL_TOOL", "tool size differs")
+            hasher.update(chunk)
+        after = signature(_deep_audit_io.os.fstat(stream.fileno()))
+    if (
+        before != opened
+        or opened != after
+        or after != signature(path.stat())
+        or total != size
+        or hasher.hexdigest() != expected
+    ):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "tool bytes changed or differ")
+    return before
+
+
+def _local_tool_inventory(root, manifest_name, names):
+    def unreadable(error):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "tool inventory unreadable") from error
+
+    actual, entries = set(), 0
+    for directory, dirs, files in _deep_audit_io.os.walk(
+        root, followlinks=False, onerror=unreadable
+    ):
+        entries += len(dirs) + len(files)
+        if entries > 8193:
+            raise RuntimeAuditError("E_LOCAL_TOOL", "tool tree exceeds bound")
+        for name in [*dirs, *files]:
+            item = Path(directory) / name
+            info = item.lstat()
+            if (
+                _deep_audit_io.stat.S_ISLNK(info.st_mode)
+                or getattr(info, "st_file_attributes", 0) & 0x400
+            ):
+                raise RuntimeAuditError("E_LOCAL_TOOL", "linked tool bundle refused")
+        actual.update(
+            (Path(directory) / name).relative_to(root).as_posix() for name in files
+        )
+        if len(actual) > 4097:
+            raise RuntimeAuditError("E_LOCAL_TOOL", "tool inventory exceeds bound")
+    if actual != names | {manifest_name}:
+        raise RuntimeAuditError("E_LOCAL_TOOL", "tool inventory differs")
+
+
+def _local_tool_rows(root, rows):
+    """Validate bounded file roles while retaining each streamed identity."""
+    from .deep_audit_contract import _keys
+
+    names, roles, total, signatures = set(), {}, 0, {}
+    for row in rows:
+        _keys(row, "path sha256 bytes role")
+        total += require_int(
+            row["bytes"], "tool bytes", minimum=0, maximum=512 * 1024 * 1024
+        )
+        if total > 1024 * 1024 * 1024:
+            raise RuntimeAuditError("E_LOCAL_TOOL", "tool bytes exceed total budget")
+        signatures[row["path"]] = _local_tool_file(root, row)
+        name = row["path"]
+        role = require_str(row["role"], "tool role")
+        if name in names or role not in {
+            "executable",
+            "resource",
+            "profile",
+            "rules",
+            "provenance",
+        }:
+            raise RuntimeAuditError(
+                "E_LOCAL_TOOL", "duplicate file or unsupported role"
+            )
+        names.add(name)
+        roles.setdefault(role, []).append(row)
+    return names, roles, signatures
+
+
+def verify_local_tool_manifest(binding, *, candidate_root=None):
+    """Verify operator-pinned bytes, not upstream signer identity or execution isolation."""
+    from .deep_audit_contract import _keys
+
+    locator = binding["tool_manifest"]
+    path = Path(locator["path"])
+    # Start at the filesystem anchor so linked operator-root ancestors are refused too.
+    local_file(Path(path.anchor), path.relative_to(path.anchor).as_posix())
+    root = path.parent
+    signatures = {path.name: _deep_audit_io._zap_file_signature(path.stat())}
+    if (
+        candidate_root is None
+        or root.is_relative_to(Path(candidate_root).resolve())
+        or Path(candidate_root).resolve().is_relative_to(root)
+    ):
+        raise RuntimeAuditError(
+            "E_LOCAL_TOOL", "operator bundle must be outside candidate root"
+        )
+    manifest = strict_json(
+        _deep_audit_io.bound_bytes(
+            root, {"path": path.name, "sha256": locator["sha256"]}
+        )
+    )
+    _keys(manifest, "schema files")
+    if (
+        manifest["schema"] != "factory.local-tool-manifest.v1"
+        or not isinstance(manifest["files"], list)
+        or not 1 <= len(manifest["files"]) <= 4096
+    ):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "bounded tool manifest required")
+    rows = manifest["files"]
+    names, roles, file_signatures = _local_tool_rows(root, rows)
+    signatures.update(file_signatures)
+    if any(
+        len(roles.get(role, [])) != 1
+        for role in ("executable", "profile", "rules", "provenance")
+    ):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "complete bounded tool roles required")
+    _local_tool_inventory(root, path.name, names)
+    if any(
+        _deep_audit_io._zap_file_signature(local_file(root, name).stat()) != signature
+        for name, signature in signatures.items()
+    ):
+        raise RuntimeAuditError(
+            "E_LOCAL_TOOL", "tool bundle changed during verification"
+        )
+    expected_roles = {
+        "profile": binding["profile_sha256"],
+        "rules": binding["ruleset_sha256"],
+        "executable": binding["provenance"]["artifact_sha256"],
+        "provenance": binding["provenance"]["verification_receipt_sha256"],
+    }
+    if any(
+        roles[role][0]["sha256"] != expected
+        for role, expected in expected_roles.items()
+    ):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "tool role binding differs")
+    return manifest
 
 
 def _review_dispositions(review, coordinator, inventory):
@@ -1984,10 +2144,35 @@ def _semgrep_rule_inventory(config, lane):
     }
 
 
-def _semgrep_rule_runs(profile, lane, source, scratch, rules, started):
+def _semgrep_rule_runs(
+    profile,
+    lane,
+    source,
+    scratch,
+    rules,
+    started,
+    *,
+    execution_context=None,
+    cancelled=None,
+):
     import base64
     from .runtime_audit_process import run_bounded_command
 
+    from .deep_audit_sarif import _local_execution_context
+
+    execution_context = _local_execution_context(execution_context, lane)
+    if execution_context:
+        from .deep_audit_sarif import _local_absolute_path
+
+        flavor = execution_context["path_flavor"]
+        if _local_absolute_path(str(source), flavor) != _local_absolute_path(
+            execution_context["source_root"], flavor
+        ) or _local_absolute_path(str(scratch), flavor) != _local_absolute_path(
+            execution_context["scratch_root"], flavor
+        ):
+            raise RuntimeAuditError(
+                "E_LOCAL_CONTEXT", "actual source or scratch role differs"
+            )
     observations = []
     deadline = started + lane["timeout_seconds"]
     for index, rule in enumerate(rules):
@@ -2019,7 +2204,19 @@ def _semgrep_rule_runs(profile, lane, source, scratch, rules, started):
         ]
         if profile.get("tool_version") == "1.15.0":
             argv.remove("--metrics=off")
-        facts = run_bounded_command(argv, source, remaining, directory)
+        options = (
+            {"tool_context": execution_context["tool_context"]}
+            if execution_context
+            else {}
+        )
+        cwd = (
+            Path(execution_context["tool_context"]["bundle_root"])
+            if execution_context
+            else source
+        )
+        if cancelled is not None:
+            options["cancelled"] = cancelled
+        facts = run_bounded_command(argv, cwd, remaining, directory, **options)
         if _deep_audit_io._adapter_command_failed(facts, [0], deadline):
             raise _deep_audit_io.RuntimeAuditError(
                 "E_SEMGREP_EXECUTION", "native rule execution failed"
@@ -2044,16 +2241,23 @@ def _semgrep_rule_runs(profile, lane, source, scratch, rules, started):
     return {"schema": "factory.semgrep-rule-execution.v1", "observations": observations}
 
 
-def verify_semgrep_rule_execution(evidence, lane, sources, report):
+def verify_semgrep_rule_execution(
+    evidence, lane, sources, report, *, execution_context=None
+):
     """Re-derive execution and findings from exact pinned rules plus per-rule native JSON."""
     from .runtime_audit_common import _validate_runner_facts
 
+    from .deep_audit_sarif import _local_execution_context, _local_semgrep_report
+
+    execution_context = _local_execution_context(execution_context, lane)
     rules, observations = _deep_audit_io._semgrep_evidence_inputs(
         evidence, lane, sources
     )
     findings, dispositions = [], []
     for index, (rule, observation) in enumerate(zip(rules, observations)):
-        _deep_audit_io._semgrep_observation_identity(rule, observation, index)
+        _deep_audit_io._semgrep_observation_identity(
+            rule, observation, index, execution_context=execution_context
+        )
         facts = observation["execution"]
         _validate_runner_facts(facts, facts.get("timeout_seconds"))
         if facts["timeout_seconds"] > lane["timeout_seconds"]:
@@ -2065,6 +2269,8 @@ def verify_semgrep_rule_execution(evidence, lane, sources, report):
                 "E_SEMGREP_EXECUTION", "native rule did not complete"
             )
         native = observation["native_report"]
+        if execution_context:
+            native = _local_semgrep_report(native, sources, execution_context)
         expected = _deep_audit_io._semgrep_rule_sources(rule, sources)
         scanned = _deep_audit_io._semgrep_scanned_sources(native, sources, lane)
         if scanned != expected:
@@ -2082,6 +2288,8 @@ def verify_semgrep_rule_execution(evidence, lane, sources, report):
                 "native_report_sha256": observation["native_report_sha256"],
             }
         )
+    if execution_context:
+        report = _local_semgrep_report(report, sources, execution_context)
     baseline = _deep_audit_io._semgrep_sarif_findings(report, lane["rule_ids"], sources)
     if sorted(findings) != sorted(baseline):
         raise _deep_audit_io.RuntimeAuditError(
@@ -2120,7 +2328,7 @@ def _semgrep_evidence_inputs(evidence, lane, sources):
     return rules, observations
 
 
-def _semgrep_observation_identity(rule, observation, index):
+def _semgrep_observation_identity(rule, observation, index, *, execution_context=None):
     import base64
 
     fields = {
@@ -2160,10 +2368,12 @@ def _semgrep_observation_identity(rule, observation, index):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "native report digest differs"
         )
-    _deep_audit_io._semgrep_raw_bindings(observation, index)
+    _deep_audit_io._semgrep_raw_bindings(
+        observation, index, execution_context=execution_context
+    )
 
 
-def _semgrep_raw_bindings(observation, index):
+def _semgrep_raw_bindings(observation, index, *, execution_context=None):
     import base64
     from pathlib import PurePosixPath
 
@@ -2183,27 +2393,30 @@ def _semgrep_raw_bindings(observation, index):
     if observation["native_report"].get("version") == "1.15.0":
         prefix[0] = "/usr/bin/opengrep"
         prefix.remove("--metrics=off")
-    size = len(prefix)
-    if not isinstance(argv, list) or len(argv) != size + 4 or argv[:size] != prefix:
-        raise _deep_audit_io.RuntimeAuditError(
-            "E_SEMGREP_EXECUTION", "isolated command differs"
-        )
-    config, report = PurePosixPath(argv[size]), PurePosixPath(argv[size + 2])
-    if (
-        argv[size + 1] != "--json-output"
-        or argv[size + 3] != "/src"
-        or config.name != "rule.json"
-        or report.name != "report.json"
-        or config.parent != report.parent
-        or config.parent.name != f"semgrep-rule-{index}"
-        or not config.is_absolute()
-        or ".." in config.parts
-        or not str(config).startswith("/tmp/factory-native-")
-        or _deep_audit_io.digest(argv) != observation["argv_sha256"]
-    ):
-        raise _deep_audit_io.RuntimeAuditError(
-            "E_SEMGREP_EXECUTION", "native command binding differs"
-        )
+    if execution_context:
+        _local_semgrep_raw_argv(observation, index, execution_context, prefix)
+    else:
+        size = len(prefix)
+        if not isinstance(argv, list) or len(argv) != size + 4 or argv[:size] != prefix:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "isolated command differs"
+            )
+        config, report = PurePosixPath(argv[size]), PurePosixPath(argv[size + 2])
+        if (
+            argv[size + 1] != "--json-output"
+            or argv[size + 3] != "/src"
+            or config.name != "rule.json"
+            or report.name != "report.json"
+            or config.parent != report.parent
+            or config.parent.name != f"semgrep-rule-{index}"
+            or not config.is_absolute()
+            or ".." in config.parts
+            or not str(config).startswith("/tmp/factory-native-")
+            or _deep_audit_io.digest(argv) != observation["argv_sha256"]
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "native command binding differs"
+            )
     encoded = observation["raw_report_base64"]
     if (
         not isinstance(encoded, str)
@@ -2228,8 +2441,48 @@ def _semgrep_raw_bindings(observation, index):
         )
 
 
+def _local_semgrep_raw_argv(observation, index, context, prefix):
+    from .deep_audit_sarif import _local_absolute_path
+
+    prefix = list(prefix)
+    prefix[0] = context["executable"]
+    argv = observation["argv"]
+    size = len(prefix)
+    if not isinstance(argv, list) or len(argv) != size + 4 or argv[:size] != prefix:
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "local isolated command differs")
+    flavor = context["path_flavor"]
+    scratch = _local_absolute_path(context["scratch_root"], flavor)
+    expected = scratch / f"semgrep-rule-{index}"
+    if (
+        argv[size + 1] != "--json-output"
+        or argv[size + 3] != context["source_root"]
+        or _local_absolute_path(argv[size], flavor) != expected / "rule.json"
+        or _local_absolute_path(argv[size + 2], flavor) != expected / "report.json"
+        or digest(argv) != observation["argv_sha256"]
+    ):
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "local execution role binding differs"
+        )
+
+
+def _local_provider_coverage_identity(lane):
+    if "runner_binding" in lane:
+        return {"runner_binding_sha256": digest(lane["runner_binding"])}
+    return {
+        "image_binding_sha256": sha256_bytes(str(lane.get("image", "")).encode("utf-8"))
+    }
+
+
 def _native_profile_coverage(
-    execution, report, inventory, lane, profile, challenges, covered_obligations
+    execution,
+    report,
+    inventory,
+    lane,
+    profile,
+    challenges,
+    covered_obligations,
+    *,
+    execution_context=None,
 ):
     ledger = execution["ledger"]
     ledger_sha256 = execution["ledger_sha256"]
@@ -2271,7 +2524,9 @@ def _native_profile_coverage(
         )
         complete = not errors
     elif execution.get("semgrep_rule_execution") is not None:
-        _deep_audit_io._semgrep_source_accounting(execution, inventory, lane)
+        _deep_audit_io._semgrep_source_accounting(
+            execution, inventory, lane, execution_context=execution_context
+        )
         errors = (
             []
             if _deep_audit_io._gitleaks_challenges_complete(
@@ -2296,9 +2551,7 @@ def _native_profile_coverage(
         complete = not errors
     coverage = {
         "profile_sha256": _deep_audit_io.digest(profile),
-        "image_binding_sha256": _deep_audit_io.sha256_bytes(
-            str(lane.get("image", "")).encode("utf-8")
-        ),
+        **_local_provider_coverage_identity(lane),
         "schema": "factory.deep-coverage.v1",
         "complete": complete,
         "sources": {
@@ -2313,7 +2566,11 @@ def _native_profile_coverage(
         "report_sha256": _deep_audit_io.digest(report),
         "native_report_sha256": _deep_audit_io.digest(execution["raw_report"]),
         "source_accounting": _deep_audit_io._native_source_accounting(
-            execution, report, inventory, lane
+            execution,
+            report,
+            inventory,
+            lane,
+            **({"execution_context": execution_context} if execution_context else {}),
         ),
         "native_invocations": execution["invocations"],
         "invocation_sha256": _deep_audit_io.digest(execution["invocations"]),
@@ -2956,7 +3213,9 @@ def _codeql_steps_facts(invocations, streams, started, budget, expected_steps=3)
     )
 
 
-def _native_source_accounting(execution, report, inventory, lane):
+def _native_source_accounting(
+    execution, report, inventory, lane, *, execution_context=None
+):
     if lane.get("engine") == "osv":
         from .deep_audit_sarif import _osv_source_accounting
 
@@ -2968,7 +3227,9 @@ def _native_source_accounting(execution, report, inventory, lane):
             execution["codeql_source_execution"], inventory, lane
         )
     if execution.get("semgrep_rule_execution") is not None:
-        return _deep_audit_io._semgrep_source_accounting(execution, inventory, lane)
+        return _deep_audit_io._semgrep_source_accounting(
+            execution, inventory, lane, execution_context=execution_context
+        )
     if lane.get("engine") == "trivy":
         try:
             return _deep_audit_io.verify_trivy_rule_execution(
@@ -2982,10 +3243,14 @@ def _native_source_accounting(execution, report, inventory, lane):
     return _deep_audit_io._native_runtime_accounting(report, inventory, lane)
 
 
-def _semgrep_source_accounting(execution, inventory, lane):
+def _semgrep_source_accounting(execution, inventory, lane, *, execution_context=None):
     sources = {item["path"]: item["sha256"] for item in inventory["files"]}
     checked = _deep_audit_io.verify_semgrep_rule_execution(
-        execution["semgrep_rule_execution"], lane, sources, execution["raw_report"]
+        execution["semgrep_rule_execution"],
+        lane,
+        sources,
+        execution["raw_report"],
+        execution_context=execution_context,
     )
     measured = set().union(
         *(set(rule["executed_sources"]) for rule in checked["rules"])

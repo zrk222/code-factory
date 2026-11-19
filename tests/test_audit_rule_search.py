@@ -2663,9 +2663,16 @@ def test_search_inventory_includes_process_rejection_conditions():
     }
 
     assert process_markers == {
+        "E_ARTIFACT_QUOTA",
+        "E_EXECUTION_AUTHORIZATION",
+        "E_GO_CACHE",
+        "E_MUTATION_INPUT",
         "E_MUTATION_OUTPUT",
         "E_MUTATION_TEMP",
+        "E_NATIVE_BUDGET",
+        "E_NATIVE_CONTEXT",
         "E_OUTPUT_ESCAPE",
+        "E_POLYGLOT_CAPTURE",
     }
     assert process_markers <= codes
     assert "runtime_audit_process.py" in search_module._CROSSCUTTING_MODULES
