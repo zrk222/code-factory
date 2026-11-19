@@ -2208,6 +2208,148 @@ def test_framework_provider_relevance_native_cli(
     )
 
 
+def _normal_cohort_startup_fixture(root, native_only=False):
+    import subprocess
+    import platform
+
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    contents = {
+        "app.ts": "export const value = 1;\n",
+        "app.go": "package capture\n",
+        "app.rs": "fn main() {}\n",
+        "pytest.ini": "[pytest]\naddopts = -p never_import_capture_plugin\n",
+        ".factory/native-worker-config.json": "{}",
+        ".factory/operator/manifest.json": "{}",
+        ".factory/operator/authorization.json": "{}",
+        ".factory/operator/trust.json": "{}",
+    }
+    if not native_only:
+        contents["app.py"] = "raise RuntimeError('target source must not execute')\n"
+    bindings = []
+    for name, content in contents.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        bindings.append(
+            {"path": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        )
+    profile = {
+        "python": platform.python_version(),
+        "dependencies": {},
+        "security_only": False,
+        "endpoint": "factory.scan.normal.v1",
+    }
+    return profile, bindings
+
+
+@pytest.mark.parametrize("native_only", [False, True])
+def test_normal_cohort_preflight_binds_multilingual_inputs_without_execution(
+    tmp_path, native_only
+):
+    from scripts.precision_cohort_preflight import startup
+
+    profile, bindings = _normal_cohort_startup_fixture(tmp_path, native_only)
+    result = startup(Path(__file__).resolve().parents[1], tmp_path, profile, bindings)
+    assert result["state"] == "PASS"
+    assert result["endpoint"] == "factory.scan.normal.v1"
+    assert result["files"] == (4 if native_only else 5)
+    assert result["collection"]["collection_state"] == "UNKNOWN"
+    assert result["native_execution"] == "NOT_RUN"
+    assert result["measurement_complete"] is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "extra_source",
+        "extra_config",
+        "stale_source",
+        "stale_control",
+        "linked_native",
+        "linked_control",
+        "unknown_endpoint",
+        "security_only",
+        "identity",
+        "bad_hash",
+        "interpreter",
+        "dependency",
+    ],
+)
+def test_normal_cohort_preflight_rejects_namespace_binding_and_profile_drift(
+    tmp_path, mutation
+):
+    from scripts.precision_cohort_preflight import startup
+
+    profile, bindings = _normal_cohort_startup_fixture(tmp_path, native_only=True)
+    scanner = Path(__file__).resolve().parents[1]
+    assert startup(scanner, tmp_path, profile, bindings)["state"] == "PASS"
+    if mutation == "extra_source":
+        (tmp_path / "other.go").write_text("package other\n")
+    elif mutation == "extra_config":
+        (tmp_path / "Cargo.toml").write_text("[package]\nname='capture'\n")
+    elif mutation == "stale_source":
+        (tmp_path / "app.ts").write_text("export const value = 2;\n")
+    elif mutation == "stale_control":
+        (tmp_path / ".factory/operator/trust.json").write_text('{"changed":true}')
+    elif mutation in {"linked_native", "linked_control"}:
+        path = tmp_path / (
+            "app.go" if mutation == "linked_native" else ".factory/operator/trust.json"
+        )
+        target = tmp_path.parent / (tmp_path.name + "-linked-input")
+        target.write_bytes(path.read_bytes())
+        path.unlink()
+        try:
+            path.symlink_to(target)
+        except OSError:
+            pytest.skip("Host does not grant symlink creation")
+    elif mutation == "unknown_endpoint":
+        profile["endpoint"] = "factory.unknown.v1"
+    elif mutation == "security_only":
+        profile["security_only"] = True
+    elif mutation == "identity":
+        scanner = tmp_path
+    elif mutation == "bad_hash":
+        bindings[0]["sha256"] = "bad"
+    elif mutation == "dependency":
+        profile["dependencies"] = {"pytest": "0.0.0"}
+    else:
+        profile["python"] = "0.0.0"
+    with pytest.raises(ValueError):
+        startup(scanner, tmp_path, profile, bindings)
+
+
+@pytest.mark.parametrize(
+    "arms", [["candidate"], [], ["candidate", "candidate"], ["unknown"], "candidate"]
+)
+def test_cohort_preflight_explicit_single_arm_and_invalid_arms(tmp_path, arms):
+    from scripts.precision_cohort_preflight import scanner_bundles
+
+    bundle = tmp_path / "candidate"
+    (bundle / "scanner").mkdir(parents=True)
+    source = bundle / "scanner/sentinel.py"
+    source.write_text("raise RuntimeError('never execute frozen source')\n")
+    manifest = bundle / "manifest.json"
+    manifest.write_text(
+        json.dumps({"sentinel.py": hashlib.sha256(source.read_bytes()).hexdigest()})
+    )
+    protocol = {
+        "scanner": {
+            "arms": arms,
+            "candidate": "candidate",
+            "candidate_manifest_sha256": hashlib.sha256(
+                manifest.read_bytes()
+            ).hexdigest(),
+        }
+    }
+    if arms == ["candidate"]:
+        assert scanner_bundles(tmp_path, protocol, {}) == {
+            "candidate": bundle / "scanner"
+        }
+    else:
+        with pytest.raises(ValueError, match="arms"):
+            scanner_bundles(tmp_path, protocol, {})
+
+
 def test_preflight_bound_path_contains_capture_and_rejects_escape(tmp_path):
     from scripts.precision_cohort_preflight import bound_path
 
@@ -2222,6 +2364,219 @@ def test_preflight_bound_path_contains_capture_and_rejects_escape(tmp_path):
     ):
         with pytest.raises(ValueError, match="unsafe captured path"):
             bound_path(tmp_path, relative)
+
+
+@pytest.mark.parametrize("overflow", ["count", "aggregate"])
+def test_normal_cohort_capacity_fails_before_source_inventory_read(
+    tmp_path, monkeypatch, overflow
+):
+    from scripts.precision_cohort_preflight import startup
+    from factoryline import deep_audit_io
+
+    profile, bindings = _normal_cohort_startup_fixture(tmp_path)
+    if overflow == "count":
+        bindings = bindings * 23
+    else:
+        for name in ("app.ts", "app.go"):
+            path = tmp_path / name
+            path.write_bytes(b"x" * (9 * 1024 * 1024))
+            next(row for row in bindings if row["path"] == name)["sha256"] = (
+                hashlib.sha256(path.read_bytes()).hexdigest()
+            )
+
+    def forbidden_read(*args, **kwargs):
+        pytest.fail("native source inventory read before registered capacity check")
+
+    monkeypatch.setattr(deep_audit_io, "inventory_candidate", forbidden_read)
+    with pytest.raises(ValueError, match="capacity|aggregate input budget"):
+        startup(Path(__file__).resolve().parents[1], tmp_path, profile, bindings)
+
+
+def test_cohort_registration_link_is_rejected_before_json_read(tmp_path, monkeypatch):
+    from scripts.precision_cohort_preflight import inputs
+
+    study = tmp_path / ".factory/study"
+    study.mkdir(parents=True)
+    outside = tmp_path / "external-registration.json"
+    outside.write_text(
+        '{"scanner":{"profile":{"endpoint":"factory.scan.normal.v1","security_only":false}}}'
+    )
+    linked = study / "registration.json"
+    try:
+        linked.symlink_to(outside)
+    except OSError:
+        pytest.skip("Host does not grant symlink creation")
+    original = Path.read_text
+
+    def guarded_read(path, *args, **kwargs):
+        if path == linked:
+            pytest.fail("registration JSON read before regular/nonlinked validation")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read)
+    with pytest.raises(ValueError):
+        inputs(study)
+
+
+def _normal_cohort_registration_fixture(tmp_path):
+    from scripts.precision_cohort_preflight import digest
+
+    study = tmp_path / ".factory/study"
+    capture = study / "capture/project"
+    capture.mkdir(parents=True)
+    profile, registered = _normal_cohort_startup_fixture(capture)
+    bundle = tmp_path / ".factory/candidate"
+    (bundle / "scanner").mkdir(parents=True)
+    source = bundle / "scanner/sentinel.py"
+    source.write_text("raise RuntimeError('no scanner or controller execution')\n")
+    manifest = bundle / "manifest.json"
+    manifest.write_text(json.dumps({"sentinel.py": digest(source)}))
+    controller = study / "study.py"
+    controller.write_text("raise RuntimeError('never execute controller')\n")
+    protocol = {
+        "scanner": {
+            "arms": ["candidate"],
+            "candidate": ".factory/candidate",
+            "candidate_manifest_sha256": digest(manifest),
+            "profile": profile,
+        },
+        "controllers": {"study.py": digest(controller)},
+    }
+    registration = study / "registration.json"
+    registration.write_text(json.dumps(protocol))
+    (study / "registration.sha256").write_text(digest(registration))
+    (study / "source-capture.json").write_text(
+        json.dumps(
+            {
+                "repositories": [
+                    {
+                        "repository": "example/project",
+                        "state": "CAPTURED",
+                        "source_root": ".factory/study/capture/project",
+                        "sources": registered,
+                    }
+                ]
+            }
+        )
+    )
+    return study, capture, registered, controller
+
+
+def test_normal_cohort_inputs_register_one_arm_and_bind_generated_controls(tmp_path):
+    from scripts.precision_cohort_preflight import inputs
+
+    study, capture, registered, controller = _normal_cohort_registration_fixture(
+        tmp_path
+    )
+    jobs, bindings, selected = inputs(study)
+    assert selected == controller
+    assert len(jobs) == 1 and jobs[0]["arm"] == "candidate"
+    assert jobs[0]["expected_files"] == registered
+    assert all(
+        bindings[str(capture / row["path"])] == row["sha256"] for row in registered
+    )
+    assert str(study / "registration.sha256") in bindings
+    (capture / ".factory/operator/authorization.json").write_text('{"changed":true}')
+    with pytest.raises(ValueError, match="captured source/configuration changed"):
+        inputs(study)
+
+
+@pytest.mark.parametrize("entrypoint", ["inputs", "preflight"])
+@pytest.mark.parametrize("overflow", ["count", "aggregate"])
+def test_normal_capture_input_capacity_precedes_all_captured_hash_reads(
+    tmp_path, monkeypatch, entrypoint, overflow
+):
+    from scripts import precision_cohort_preflight as gate
+    from factoryline import deep_audit_io
+
+    study, capture, registered, _ = _normal_cohort_registration_fixture(tmp_path)
+    assert len(gate.inputs(study)[0]) == 1
+    source_capture = study / "source-capture.json"
+    document = json.loads(source_capture.read_text())
+    if overflow == "count":
+        document["repositories"][0]["sources"] = registered * 23
+    else:
+        for name in ("app.ts", "app.go"):
+            path = capture / name
+            path.write_bytes(b"x" * (9 * 1024 * 1024))
+            next(
+                row
+                for row in document["repositories"][0]["sources"]
+                if row["path"] == name
+            )["sha256"] = gate.digest(path)
+    source_capture.write_text(json.dumps(document))
+    digest = gate.digest
+
+    def guarded_digest(path):
+        if Path(path).is_relative_to(capture):
+            pytest.fail("captured input hash read before registered capacity guard")
+        return digest(path)
+
+    def forbidden_source_read(*args, **kwargs):
+        pytest.fail("captured source read or worker execution before capacity guard")
+
+    monkeypatch.setattr(gate, "digest", guarded_digest)
+    monkeypatch.setattr(deep_audit_io, "_source_bytes", forbidden_source_read)
+    monkeypatch.setattr(gate, "worker", forbidden_source_read)
+    if entrypoint == "inputs":
+        with pytest.raises(ValueError, match="capacity|aggregate input budget"):
+            gate.inputs(study)
+    else:
+        receipt = gate.preflight(study)
+        assert receipt["state"] == "BLOCKED" and receipt["checks"] == []
+        assert (
+            "capacity" in receipt["error"]
+            or "aggregate input budget" in receipt["error"]
+        )
+
+
+@pytest.mark.parametrize("ignored", [False, True])
+@pytest.mark.parametrize(
+    "control",
+    [
+        ".factory/native-worker-config.json",
+        ".factory/operator/manifest.json",
+        ".factory/operator/authorization.json",
+        ".factory/operator/trust.json",
+    ],
+)
+def test_normal_preflight_requires_each_present_operator_control_registration(
+    tmp_path, ignored, control
+):
+    from scripts.precision_cohort_preflight import startup
+
+    profile, registered = _normal_cohort_startup_fixture(tmp_path, native_only=True)
+    if ignored:
+        (tmp_path / ".git/info/exclude").write_text(".factory/\n")
+    scanner = Path(__file__).resolve().parents[1]
+    assert startup(scanner, tmp_path, profile, registered)["state"] == "PASS"
+    registered = [row for row in registered if row["path"] != control]
+    with pytest.raises(ValueError, match="unregistered normal operator control"):
+        startup(scanner, tmp_path, profile, registered)
+
+
+@pytest.mark.parametrize("tracked_control", [False, True])
+def test_normal_preflight_preserves_owned_outputs_but_rejects_tracked_controls(
+    tmp_path, tracked_control
+):
+    from scripts.precision_cohort_preflight import startup
+    import subprocess
+
+    profile, registered = _normal_cohort_startup_fixture(tmp_path)
+    scanner = Path(__file__).resolve().parents[1]
+    assert startup(scanner, tmp_path, profile, registered)["state"] == "PASS"
+    output = tmp_path / ".factory/deep-runs/owned/evidence.json"
+    output.parent.mkdir(parents=True)
+    output.write_text("{}")
+    if tracked_control:
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "add", ".factory/native-worker-config.json"],
+            check=True,
+        )
+        with pytest.raises(ValueError, match="inventory differs"):
+            startup(scanner, tmp_path, profile, registered)
+    else:
+        assert startup(scanner, tmp_path, profile, registered)["state"] == "PASS"
 
 
 @pytest.mark.parametrize("mutation", ["manifest", "source"])
