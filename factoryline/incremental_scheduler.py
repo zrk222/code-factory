@@ -813,6 +813,7 @@ def _pre_pr_gate(
     root: Path, item: dict, check: dict, live: dict, execute: bool, source: str
 ) -> dict:
     from .live_feedback import run_live_feedback
+    from .change_review import _sha
 
     if item["disposition"] == "REUSE":
         return {"state": "PASS", "reason": "VERIFIED_REUSE", "proof": item["proof"]}
@@ -820,10 +821,17 @@ def _pre_pr_gate(
         return {"state": "BLOCKED", "reason": item["reason"]}
     # A dependency can require execution even when this check's own paths did not
     # change. Force only this scheduled obligation through the existing runner.
-    forced = {**live, "checks": [check], "changed_paths": check["paths"]}
+    observed = _pre_pr_executable_observation(check)
+    executable = _sha(observed) if observed else None
+    pinned = (
+        {**check, "argv": [observed["path"], *check["argv"][1:]]} if observed else check
+    )
+    forced = {**live, "checks": [pinned], "changed_paths": check["paths"]}
     receipt = run_live_feedback(root, forced, execute=execute)
     state = receipt["checks"][0]["state"]
-    if receipt["source_sha256"] != source:
+    if receipt["source_sha256"] != source or executable != _pre_pr_executable_identity(
+        check
+    ):
         state = "BLOCKED"
     return {"state": state, "reason": "SCHEDULED_EXECUTION", "live_receipt": receipt}
 
@@ -850,6 +858,23 @@ def run_pre_pr(
 
     root = Path(root).resolve()
     schedule, live, head = _pre_pr_inputs(root, manifest)
+    # Host observations, never caller tool labels, participate in the existing
+    # content-addressed key. Copy nested declarations rather than mutate input.
+    checks = {row["id"]: row for row in live["checks"]}
+    schedule = {**schedule, "gates": [dict(row) for row in schedule["gates"]]}
+    for gate in schedule["gates"]:
+        if gate["proof"]:
+            proof = gate["proof"]
+            gate["proof"] = {
+                **proof,
+                "toolchain": {
+                    **proof.get("toolchain", {}),
+                    "pre_pr_executable_sha256": _pre_pr_executable_identity(
+                        checks[gate["id"]]
+                    )
+                    or "unverifiable",
+                },
+            }
     budget = _pre_pr_execution_budget(execution_budget, schedule)
     if before_dispatch is not None and not callable(before_dispatch):
         raise SchedulerError(
@@ -858,7 +883,28 @@ def run_pre_pr(
     source = _source_digest(root)[0]
     oracle = _pre_pr_oracle(root, manifest["oracle"], live["contract_sha256"])
     plan = plan_incremental(root, schedule)
+    # A Git diff is unchanged across invocations. Exact current receipts, not
+    # diff membership alone, decide whether that obligation needs execution.
+    gates = {row["id"]: row for row in schedule["gates"]}
+    for item in plan["items"]:
+        proof = gates[item["id"]]["proof"]
+        if item["reason"] != "DEPENDENCY_CLOSURE_CHANGED" or not proof:
+            continue
+        if proof.get("assurance_level") not in (None, schedule["assurance_level"]):
+            continue
+        checked = evaluate_proofs(
+            root,
+            {"schema": "factory.proof-request.v1", "gates": [proof]},
+            changed_paths=schedule["changed_paths"],
+        )["items"][0]
+        if checked["disposition"] == "REUSE":
+            item.update(
+                disposition="REUSE",
+                reason=checked["reason"],
+                proof={key: checked[key] for key in ("proof_key", "receipt_sha256")},
+            )
     _pre_pr_bind_reuse(plan, schedule, live)
+    proof_snapshots = _pre_pr_proof_snapshots(root, plan, schedule, live)
     started = monotonic_ns()
     rows, waves = _pre_pr_gate_rows(
         root,
@@ -902,6 +948,8 @@ def run_pre_pr(
         == live["contract_sha256"],
         "obligations_satisfied": all(row["state"] == "PASS" for row in rows),
     }
+    if execute and all(conditions.values()):
+        _pre_pr_record_proofs(root, rows, schedule, live, proof_snapshots)
     core = {
         "schema": "factory.pre-pr-receipt.v1",
         "state": "PASS" if all(conditions.values()) else "BLOCKED",
@@ -926,6 +974,94 @@ def run_pre_pr(
     return {**core, "receipt_sha256": _sha(core)}
 
 
+def _pre_pr_proof_snapshots(root: Path, plan: dict, schedule: dict, live: dict) -> dict:
+    """Capture exact declared facts before execution, including existing outputs."""
+    from .proof_reuse import ProofReuseError, proof_facts
+
+    snapshots = {}
+    gates = {row["id"]: row for row in schedule["gates"]}
+    checks = {row["id"]: row for row in live["checks"]}
+    for item in plan["items"]:
+        proof = gates[item["id"]]["proof"]
+        if (
+            item["disposition"] != "RUN"
+            or not proof
+            or proof.get("read_only") is not True
+        ):
+            continue
+        if not _pre_pr_proof_matches(item, proof, checks[item["id"]], schedule, live):
+            continue
+        try:
+            snapshots[item["id"]] = (
+                proof_facts(root, proof),
+                proof_facts(root, {**proof, "inputs": proof.get("outputs")}),
+                _pre_pr_executable_identity(checks[item["id"]]),
+            )
+            if snapshots[item["id"]][-1] is None or snapshots[item["id"]][
+                -1
+            ] != proof.get("toolchain", {}).get("pre_pr_executable_sha256"):
+                del snapshots[item["id"]]
+        except ProofReuseError:
+            # Incomplete declarations cannot manufacture a reusable observation.
+            continue
+    return snapshots
+
+
+def _pre_pr_record_proofs(
+    root: Path, rows: list[dict], schedule: dict, live: dict, snapshots: dict
+) -> None:
+    from .proof_reuse import ProofReuseError, record_proof
+
+    current = _pre_pr_proof_snapshots(
+        root, {"items": [row["routing"] for row in rows]}, schedule, live
+    )
+    gates = {row["id"]: row for row in schedule["gates"]}
+    for row in rows:
+        identifier = row["id"]
+        receipt = row.get("live_receipt", {})
+        if (
+            identifier not in snapshots
+            or current.get(identifier) != snapshots[identifier]
+            or row["state"] != "PASS"
+            or receipt.get("mode") != "execute"
+        ):
+            continue
+        observation = receipt["checks"][0]
+        duration = observation.get("duration_ms")
+        if observation.get("state") != "PASS" or not isinstance(duration, (int, float)):
+            continue
+        try:
+            record_proof(
+                root, gates[identifier]["proof"], elapsed_ms=max(1, int(duration))
+            )
+        except ProofReuseError:
+            # Never overwrite an existing (including corrupt) receipt implicitly.
+            continue
+
+
+def _pre_pr_proof_matches(
+    item: dict, proof: dict, check: dict, schedule: dict, live: dict
+) -> bool:
+    from .change_review import _sha
+
+    return (
+        bool(item["dependency_paths"])
+        and proof.get("assurance_level") in (None, schedule["assurance_level"])
+        and proof.get("command") == check["argv"]
+        and proof.get("environment") == check["env"]
+        and check["expected_exit"] == 0
+        and set(item["dependency_paths"]).issubset(proof.get("inputs", []))
+        and proof.get("toolchain", {}).get("pre_pr_check_sha256")
+        == _sha(
+            {
+                "check": check,
+                "contract_sha256": live["contract_sha256"],
+                "assurance_level": schedule["assurance_level"],
+            }
+        )
+    )
+
+
 def _pre_pr_bind_reuse(plan: dict, schedule: dict, live: dict) -> None:
     from .change_review import _sha
 
@@ -936,20 +1072,7 @@ def _pre_pr_bind_reuse(plan: dict, schedule: dict, live: dict) -> None:
             continue
         check = checks[item["id"]]
         proof = gates[item["id"]]["proof"]
-        matches = (
-            proof.get("command") == check["argv"]
-            and proof.get("environment") == check["env"]
-            and check["expected_exit"] == 0
-            and set(item["dependency_paths"]).issubset(proof.get("inputs", []))
-            and proof.get("toolchain", {}).get("pre_pr_check_sha256")
-            == _sha(
-                {
-                    "check": check,
-                    "contract_sha256": live["contract_sha256"],
-                    "assurance_level": schedule["assurance_level"],
-                }
-            )
-        )
+        matches = _pre_pr_proof_matches(item, proof, check, schedule, live)
         if not matches:
             item.update(disposition="RUN", reason="CHECK_PROOF_MISMATCH", proof=None)
     by_id = {row["id"]: row for row in plan["items"]}
@@ -976,6 +1099,15 @@ def _pre_pr_reuse_current(root: Path, item: dict, schedule: dict) -> bool:
     from .proof_reuse import evaluate_proofs
 
     gate = next(row for row in schedule["gates"] if row["id"] == item["id"])
+    proof = gate["proof"]
+    observed = _pre_pr_executable_identity(
+        {"argv": proof["command"], "env": proof.get("environment", {})}
+    )
+    if (
+        not observed
+        or proof.get("toolchain", {}).get("pre_pr_executable_sha256") != observed
+    ):
+        return False
     checked = evaluate_proofs(
         root,
         {
@@ -988,3 +1120,57 @@ def _pre_pr_reuse_current(root: Path, item: dict, schedule: dict) -> bool:
         checked.get(key) == item["proof"].get(key)
         for key in ("proof_key", "receipt_sha256")
     )
+
+
+def _pre_pr_executable_identity(check: dict) -> str | None:
+    from .change_review import _sha
+
+    observed = _pre_pr_executable_observation(check)
+    return _sha(observed) if observed else None
+
+
+def _pre_pr_executable_observation(check: dict) -> dict | None:
+    """Observe runner resolution and stable native executable bytes, without execution."""
+    import shutil
+    from .proof_reuse import ProofReuseError, _stable_file_read
+    from .senior_assurance import _process_environment
+
+    argv = check["argv"]
+    # Launchers/shells introduce another executable not established by argv[0].
+    if Path(argv[0]).stem.lower() in {
+        "py",
+        "env",
+        "cmd",
+        "powershell",
+        "pwsh",
+        "sh",
+        "bash",
+        "rtk",
+        "uv",
+    } or any(arg in {"&&", "||", ";", "|"} for arg in argv):
+        return None
+    try:
+        resolved = shutil.which(argv[0], path=_process_environment(check)["PATH"])
+        if not resolved or not Path(resolved).is_absolute():
+            return None
+        path = Path(resolved)
+        identity, digest = _stable_file_read(path, label="pre-PR executable")
+        # Script/shebang launch chains are not a single bound native executable.
+        with path.open("rb") as handle:
+            magic = handle.read(4)
+        if not (
+            magic.startswith(b"MZ")
+            or magic == b"\x7fELF"
+            or magic
+            in {
+                b"\xcf\xfa\xed\xfe",
+                b"\xfe\xed\xfa\xcf",
+                b"\xca\xfe\xba\xbe",
+            }
+        ):
+            return None
+        if (identity, digest) != _stable_file_read(path, label="pre-PR executable"):
+            return None
+        return {"path": str(path), "identity": identity, "sha256": digest}
+    except (OSError, ValueError, ProofReuseError):
+        return None
