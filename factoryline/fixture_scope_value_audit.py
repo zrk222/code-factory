@@ -9,6 +9,33 @@ from pathlib import Path
 _MAKE_DESCRIPTORS = frozenset({"GNUmakefile", "makefile", "Makefile"})
 
 
+def _fixture_test_invocation_closed(scope, path, function, fixture_name):
+    """Reject deferred bodies and parameter domains that do not inject the fixture."""
+    parents = scope.source.parents[path]
+    if any(
+        isinstance(node, (ast.Yield, ast.YieldFrom))
+        and scope.audit._legacy._enclosing_function(node, parents) is function
+        for node in ast.walk(function)
+    ):
+        return False
+    for mark in function.decorator_list:
+        if scope.canonical(path, mark) == "pytest.fixture":
+            continue
+        if not scope._pytest_parametrize_decorator(path, mark):
+            return False
+        match mark.args:
+            case [
+                ast.Constant(value=str(names)),
+                ast.List(elts=values) | ast.Tuple(elts=values),
+            ] if values and fixture_name not in {
+                name.strip() for name in names.split(",")
+            }:
+                pass
+            case _:
+                return False
+    return True
+
+
 def captured_makefile_names(root):
     """Record actual directory names, including on case-insensitive filesystems."""
     return (

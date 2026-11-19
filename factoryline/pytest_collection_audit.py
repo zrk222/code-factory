@@ -17,6 +17,7 @@ import yaml
 from .fixture_scope_value_audit import (
     _MAKE_DESCRIPTORS,
     _captured_make_pytest_argv,
+    _fixture_test_invocation_closed,
     captured_makefile_names as captured_makefile_names,
 )
 
@@ -1822,6 +1823,7 @@ def _fixture_config_class_closed(owner):
             and len(stmt.targets) == 1
             and isinstance(stmt.targets[0], ast.Name)
             and not stmt.targets[0].id.startswith("_")
+            and isinstance(stmt.value, ast.Constant)
             or isinstance(stmt, ast.Expr)
             and isinstance(stmt.value, ast.Constant)
             or isinstance(stmt, ast.Pass)
@@ -1921,7 +1923,7 @@ def _fixture_flask_factory(scope, factory, origin, fixture_path, invocation):
     args = function.args
     if (
         function.decorator_list
-        or len(function.body) < 2
+        or len(function.body) != 3
         or len(args.args) != 1
         or len(args.defaults) != 1
     ):
@@ -1980,6 +1982,9 @@ def _fixture_flask_load(scope, path, function):
         or len(load.args) != 1
         or tuple(_settings_names(function, formal)) != tuple(load.args)
         or binding_occurrences(function.body, formal)
+        or not isinstance(function.body[-1], ast.Return)
+        or not isinstance(function.body[-1].value, ast.Name)
+        or function.body[-1].value.id != receiver
     ):
         return None
     return load
@@ -2078,7 +2083,9 @@ def _fixture_module_owners(scope, path, tree, fixture_path, name, settings):
         positions = [i for i, arg in enumerate(function.args.args) if arg.arg == name]
         if not path.is_relative_to(fixture_path.parent) or len(positions) != 1:
             return None
-        if binding_occurrences(function.body, name):
+        if binding_occurrences(
+            function.body, name
+        ) or not _fixture_test_invocation_closed(scope, path, function, name):
             return None
         decorators = function.decorator_list
         fixture_owner = (
@@ -2090,7 +2097,6 @@ def _fixture_module_owners(scope, path, tree, fixture_path, name, settings):
             _pytest_file_matches(scope.source.relative(path), settings["python_files"])
             and _pytest_name_matches(function.name, settings["python_functions"])
             and not _pytest_test_disabled(function, {}, [tree])
-            and all(scope._pytest_parametrize_decorator(path, n) for n in decorators)
             and _app_test_function_external_uses_clear(scope.index, path, function)
         )
         functions[path, function] = (
@@ -2132,7 +2138,11 @@ def _fixture_material_operand(scope, functions, path, function, node):
         return None
     active = scope.fixture._app_active_call(scope.index, path, function, parent)
     if parent.func is node:
-        if parent.args or not _fixture_override_keys(parent, function):
+        if (
+            parent.args
+            or not _fixture_override_keys(parent, function)
+            or not isinstance(parents.get(id(parent)), ast.Expr)
+        ):
             return None
         return (
             None,

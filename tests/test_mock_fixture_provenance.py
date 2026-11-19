@@ -7040,6 +7040,15 @@ def test_captured_make_pytest_selection_requires_a_closed_recipe(tmp_path):
         "duplicate",
         "GNUmakefile",
         "makefile",
+        "class_effect",
+        "factory_escape",
+        "app_result_escape",
+        "param_direct",
+        "param_empty",
+        "generator",
+        "yield_from",
+        "parameterized",
+        "nested_generator",
     ],
 )
 def test_make_selected_flask_fixture_config_proves_only_closed_scope(tmp_path, case):
@@ -7091,6 +7100,38 @@ def test_make_selected_flask_fixture_config_proves_only_closed_scope(tmp_path, c
     }
     if case == "duplicate":
         files["entry.py"] += f"API_KEY = {sample!r}\n"
+    if case == "class_effect":
+        files["config.py"] += "    ACCOUNT = provision_admin(password=SECRET_KEY)\n"
+    if case == "factory_escape":
+        files["service.py"] = files["service.py"].replace(
+            "    return server", "    publish(server.secret_key)\n    return server"
+        )
+    if case == "app_result_escape":
+        files["tests/test_flow.py"] = test_code.replace(
+            "fixture_factory()",
+            "production.config['SECRET_KEY'] = fixture_factory().secret_key",
+        )
+    if case in {"param_direct", "param_empty", "parameterized"}:
+        parameter, values = {
+            "param_direct": ("fixture_factory", "[None]"),
+            "param_empty": ("request", "[]"),
+            "parameterized": ("marker", "['one', 'two']"),
+        }[case]
+        files["tests/test_flow.py"] = (
+            f"import pytest\n@pytest.mark.parametrize({parameter!r}, {values})\n"
+            + (
+                test_code.replace("request):", "request, marker):")
+                if case == "parameterized"
+                else test_code
+            )
+        )
+    if case in {"generator", "yield_from", "nested_generator"}:
+        files["tests/test_flow.py"] += {
+            "generator": "    yield None\n",
+            "yield_from": "    yield from ()\n",
+            "nested_generator": "    def deferred():\n        yield None\n",
+        }[case]
+    closed = case in {"closed", "parameterized", "nested_generator"}
     data, modules, hashes = {}, {}, {}
     for name, source in files.items():
         _write(tmp_path, name, source)
@@ -7105,7 +7146,7 @@ def test_make_selected_flask_fixture_config_proves_only_closed_scope(tmp_path, c
     index = application_test_index(tmp_path, modules, data, hashes, configs)
     path = tmp_path / "config.py"
     proof = _SourceTestScope(index, path, modules[path].body[0].body[1], "SECRET_KEY")
-    assert captured_flask_fixture_configuration(proof) is (case == "closed")
+    assert captured_flask_fixture_configuration(proof) is closed
 
     from factoryline.review_audits import security_scan
 
@@ -7135,7 +7176,7 @@ def test_make_selected_flask_fixture_config_proves_only_closed_scope(tmp_path, c
         if is_config_secret(row)
     ]
     assert report["finding_conservation"]["state"] == "PASS"
-    assert (len(active), len(refuted)) == ((0, 1) if case == "closed" else (1, 0))
+    assert (len(active), len(refuted)) == ((0, 1) if closed else (1, 0))
     if refuted:
         from factoryline.primitive_observation_binding import (
             application_fixture_binding,
