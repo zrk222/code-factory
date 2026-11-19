@@ -15,6 +15,8 @@ from typing import Any, Callable
 
 import pytest
 
+from factoryline.senior_assurance import evaluate_source_bound_recall
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from factoryline.benchmark_lab import (
@@ -422,6 +424,229 @@ def test_versioned_seeded_corpus_keeps_unresolved_calls_in_unknown_tier(tmp_path
         assert result["finding_counts"] == {case["expected_finding"]: 1}
         assert result["findings"][0]["severity"] == "INFO"
         assert result["state"] == "INCOMPLETE"
+
+
+def _recall_pair():
+    """Entirely synthetic source bindings; no external corpus is consulted."""
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    cases = []
+    rows = {}
+    for key, truth in (
+        ("positive", "POSITIVE"),
+        ("clean", "CLEAN"),
+        ("unclear", "UNCLEAR"),
+    ):
+        path = f"synthetic/{key}.py"
+        source_hash = _digest(f"synthetic source {key}")
+        cases.append(
+            {
+                "id": key,
+                "category": "stateful_invariant",
+                "path": path,
+                "source_sha256": source_hash,
+                "truth": truth,
+                "expected": {"rule": "synthetic-rule", "line": 3}
+                if truth == "POSITIVE"
+                else None,
+            }
+        )
+        finding = [{"rule": "synthetic-rule", "line": 3}] if truth == "POSITIVE" else []
+        rows[key] = {
+            "path": path,
+            "source_sha256": source_hash,
+            "report_sha256": _digest(f"synthetic report {key}"),
+            "raw": finding,
+            "admitted": copy.deepcopy(finding),
+        }
+    observations = {
+        "schema": "factory.defect-recall-observations.v1",
+        "scanner_sha256": _digest("scanner"),
+        "configuration_sha256": _digest("configuration"),
+        "cases": rows,
+    }
+    manifest = {
+        "schema": "factory.defect-recall.v1",
+        "benchmark_id": "synthetic-recall",
+        "version": "1",
+        "partition": "public",
+        "scanner_sha256": observations["scanner_sha256"],
+        "configuration_sha256": observations["configuration_sha256"],
+        "observations_sha256": hashlib.sha256(
+            canonical_bytes(observations)
+        ).hexdigest(),
+        "cases": cases,
+    }
+    return manifest, observations
+
+
+def _seal_recall(manifest, observations):
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    manifest["observations_sha256"] = hashlib.sha256(
+        canonical_bytes(observations)
+    ).hexdigest()
+
+
+def test_source_bound_recall_keeps_admission_denominator_and_deduplicates():
+    manifest, observations = _recall_pair()
+    observations["cases"]["positive"]["raw"] *= 2
+    observations["cases"]["positive"]["admitted"] = []
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    metric = result["metrics"]["overall"]
+    assert result["decision"] == "MEASURED"
+    assert metric["known_positives"] == 1
+    assert metric["unclear_truth"] == 1
+    assert metric["raw"]["denominator"] == metric["admitted"]["denominator"] == 1
+    assert metric["raw"]["detected"] == 1
+    assert metric["raw"]["recall"] == 1.0
+    assert metric["admitted"]["false_negatives"] == 1
+    assert metric["admitted"]["recall"] == 0.0
+    assert metric["raw"]["clean_controls"] == {
+        "denominator": 1,
+        "flagged": 0,
+        "clean": 1,
+        "unobserved": 0,
+    }
+    assert result["metrics"]["by_category"]["stateful_invariant"] == metric
+
+
+def test_source_bound_recall_preserves_unobserved_and_bounds():
+    manifest, observations = _recall_pair()
+    del observations["cases"]["positive"]
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    assert result["decision"] == "INCOMPLETE"
+    for arm in ("raw", "admitted"):
+        metric = result["metrics"]["overall"][arm]
+        assert metric["denominator"] == 1
+        assert metric["unobserved"] == 1
+        assert metric["false_negatives"] == 0
+        assert metric["recall"] is None
+        assert metric["recall_lower_bound"] == 0.0
+        assert metric["recall_upper_bound"] == 1.0
+        assert metric["recall_ci95_wilson"] is None
+
+
+def test_source_bound_recall_absent_admission_and_wrong_site():
+    manifest, observations = _recall_pair()
+    observations["cases"]["positive"].update(
+        raw=[{"rule": "synthetic-rule", "line": 4}],
+        admitted=None,
+    )
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    metric = result["metrics"]["overall"]
+    assert metric["raw"]["false_negatives"] == 1
+    assert metric["raw"]["recall"] == 0.0
+    assert metric["admitted"]["recall"] is None
+    assert metric["admitted"]["unobserved"] == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["seal", "scanner", "configuration", "source", "path", "extra", "subset"],
+)
+def test_source_bound_recall_rejects_drift_and_invalid_observations(mutation):
+    manifest, observations = _recall_pair()
+    if mutation == "seal":
+        manifest["observations_sha256"] = _digest("incorrect seal")
+    elif mutation in {"scanner", "configuration"}:
+        observations[f"{mutation}_sha256"] = _digest("drift")
+    elif mutation == "source":
+        observations["cases"]["positive"]["source_sha256"] = _digest("drift")
+    elif mutation == "path":
+        observations["cases"]["positive"]["path"] = "synthetic/other.py"
+    elif mutation == "extra":
+        observations["cases"]["extra"] = copy.deepcopy(
+            observations["cases"]["positive"]
+        )
+    else:
+        observations["cases"]["positive"]["admitted"] = [{"rule": "other", "line": 3}]
+    if mutation != "seal":
+        _seal_recall(manifest, observations)
+    with pytest.raises(BenchmarkError):
+        evaluate_source_bound_recall(manifest, observations)
+
+
+def test_source_bound_recall_zero_positive_is_not_measured():
+    manifest, observations = _recall_pair()
+    manifest["cases"] = manifest["cases"][1:]
+    del observations["cases"]["positive"]
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    assert result["decision"] == "INCOMPLETE"
+    for arm in ("raw", "admitted"):
+        metric = result["metrics"]["overall"][arm]
+        assert metric["denominator"] == 0
+        assert metric["recall"] is None
+        assert metric["recall_ci95_wilson"] is None
+
+
+def test_source_bound_recall_keeps_measured_misses_and_missing_captures_separate():
+    manifest, observations = _recall_pair()
+    positive = manifest["cases"][0]
+    capture = observations["cases"]["positive"]
+    for key in ("observed-miss", "unobserved"):
+        path, source = f"synthetic/{key}.py", _digest(key)
+        manifest["cases"].append(
+            {**positive, "id": key, "path": path, "source_sha256": source}
+        )
+        if key == "observed-miss":
+            observations["cases"][key] = {
+                **capture,
+                "path": path,
+                "source_sha256": source,
+                "report_sha256": _digest("empty report"),
+                "raw": [],
+                "admitted": [],
+            }
+    _seal_recall(manifest, observations)
+    metrics = evaluate_source_bound_recall(manifest, observations)["metrics"]["overall"]
+    for arm in ("raw", "admitted"):
+        row = metrics[arm]
+        assert row["denominator"] == 3
+        assert (row["detected"], row["false_negatives"], row["unobserved"]) == (1, 1, 1)
+        assert row["recall"] is None
+        assert row["recall_lower_bound"] == pytest.approx(1 / 3)
+        assert row["recall_upper_bound"] == pytest.approx(2 / 3)
+
+
+@pytest.mark.parametrize("missing,expected_exit", [(False, 0), (True, 1)])
+def test_senior_benchmark_routes_source_bound_recall(
+    tmp_path, capsys, missing, expected_exit
+):
+    from factoryline.cli import main
+
+    manifest, observations = _recall_pair()
+    if missing:
+        del observations["cases"]["positive"]
+        _seal_recall(manifest, observations)
+    contract_path = tmp_path / "manifest.json"
+    capture_path = tmp_path / "capture.json"
+    output_path = tmp_path / "receipt.json"
+    contract_path.write_text(json.dumps(manifest), encoding="utf-8")
+    capture_path.write_text(json.dumps(observations), encoding="utf-8")
+    assert (
+        main(
+            [
+                "senior",
+                "benchmark",
+                str(contract_path),
+                "--observations",
+                str(capture_path),
+                "--out",
+                str(output_path),
+                "--json",
+            ]
+        )
+        == expected_exit
+    )
+    receipt = json.loads(output_path.read_bytes())
+    assert receipt["schema"] == "factory.defect-recall-receipt.v1"
+    assert receipt["authority"] == "none" and receipt["release_approval"] is False
+    assert json.loads(capsys.readouterr().out)["decision"] == receipt["decision"]
 
 
 def _paired_context_observation():
