@@ -50,7 +50,10 @@ def test_native_semantic_version_cannot_be_overwritten_by_profile(version, seman
         ([], "security-check", True),
     ],
 )
-def test_security_handoff_retains_bound_primary_spans(tags, obligation, security):
+@pytest.mark.parametrize(
+    "path", ["app.py", "web/app.tsx", "server/app.go", "core/app.rs"]
+)
+def test_security_handoff_retains_bound_primary_spans(tags, obligation, security, path):
     from factoryline.deep_audit import _agent_actions
     from factoryline.deep_audit_sarif import _sarif_result_finding
 
@@ -59,7 +62,7 @@ def test_security_handoff_retains_bound_primary_spans(tags, obligation, security
         "locations": [
             {
                 "physicalLocation": {
-                    "artifactLocation": {"uri": "app.py"},
+                    "artifactLocation": {"uri": path},
                     "region": {
                         "startLine": 3,
                         "endLine": 4,
@@ -74,16 +77,19 @@ def test_security_handoff_retains_bound_primary_spans(tags, obligation, security
         result,
         {"py/example": {"properties": {"tags": tags}}},
         {"id": "native", "engine": "codeql"},
-        {"app.py": "a" * 64},
+        {path: "a" * 64},
     )
     if obligation:
         finding["obligation_id"] = obligation
     action = _agent_actions("b" * 64, [finding])[0]
+    assert action["finding_id"] == finding["finding_id"]
+    assert action["action"] == finding["remediation"]
+    assert action["priority"] == "P2"
     assert (action["agent_role"] == "specialty_ai_security_reviewer") is security
     packet = action["repair_packet"]
     assert packet["finding_context"]["locations"] == [
         {
-            "path": "app.py",
+            "path": path,
             "source_sha256": "a" * 64,
             "start_line": 3,
             "end_line": 4,
