@@ -484,9 +484,7 @@ def test_hsf_admission_advice_routes_extraction_failure_to_human_review(tmp_path
 
     result = Orchestrator(
         artifact, FixtureExtractor({}), audit_path=tmp_path / "audit.jsonl"
-    ).run(
-        {"text": "No structured runtime evidence is available."}
-    )
+    ).run({"text": "No structured runtime evidence is available."})
 
     assert result.status == "HUMAN_REVIEW"
 
