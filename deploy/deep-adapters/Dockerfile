@@ -17,7 +17,7 @@ RUN ldconfig && python -m pip uninstall -y setuptools wheel \
     && python -c 'import ssl,sqlite3,ctypes,bz2,lzma,readline,curses,uuid; print(ssl.OPENSSL_VERSION,sqlite3.sqlite_version)'
 # Keep the explicit worker entrypoint/import closure in sync with its contract test.
 COPY factoryline/__init__.py factoryline/repository_checkpoint_audit.py factoryline/deep_audit_io.py factoryline/deep_audit.py factoryline/deep_audit_sarif.py factoryline/deep_audit_contract.py factoryline/deep_audit_loop.py factoryline/deep_audit_attestation.py factoryline/audit_taxonomy.py factoryline/enterprise_receipts.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py factoryline/assembly_process.py /usr/local/lib/python3.11/site-packages/factoryline/
-COPY factoryline/data/junie_pack.json /usr/local/lib/python3.11/site-packages/factoryline/data/junie_pack.json
+RUN --mount=type=bind,source=factoryline/data/junie_pack.json,target=/tmp/full-junie-pack.json,readonly python -c 'import json,sys; from pathlib import Path; source=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")); target=Path(sys.argv[2]); target.parent.mkdir(parents=True,exist_ok=True); target.write_text(json.dumps({key:source[key] for key in ("agent_six_lane_review","native_harness","native_test_probes")},ensure_ascii=False,sort_keys=True,separators=(",",":"),allow_nan=False),encoding="utf-8")' /tmp/full-junie-pack.json /usr/local/lib/python3.11/site-packages/factoryline/data/junie_pack.json
 COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
 RUN mkdir -p /src /out /opt/factory/rules
 LABEL io.code-factory.protocol="factory.deep-worker.v1"
@@ -27,6 +27,7 @@ ENTRYPOINT ["/opt/factory/bin/audit-adapter"]
 
 FROM sdk AS semgrep-worker
 USER 0:0
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # Restore the existing CF YAML dependency previously supplied by the tool image.
 ADD --checksum=sha256:b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl /tmp/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
 RUN python -m pip install --no-cache-dir --no-index --no-deps /tmp/pyyaml-*.whl && rm /tmp/pyyaml-*.whl

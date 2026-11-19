@@ -71,16 +71,23 @@ def test_public_audit_condition_count_is_recomputed_from_source():
         if code.startswith(module.REJECTION_PREFIXES)
     }
     assert process_codes == {
+        "E_ARTIFACT_QUOTA",
+        "E_EXECUTION_AUTHORIZATION",
+        "E_GO_CACHE",
+        "E_MUTATION_INPUT",
         "E_MUTATION_OUTPUT",
         "E_MUTATION_TEMP",
+        "E_NATIVE_BUDGET",
+        "E_NATIVE_CONTEXT",
         "E_OUTPUT_ESCAPE",
+        "E_POLYGLOT_CAPTURE",
     }
     assert "runtime_audit_process.py" in module.CROSSCUT_MODULES
     assert not module.NON_CONDITION_MODULES
     assert process_codes <= set(result["crosscutting_condition_codes"])
     assert "E_CONTEXT_CONFIG" in result["crosscutting_condition_codes"]
-    assert result["crosscutting_rejection_conditions"] == 98
-    assert result["total_coded_rejection_conditions"] == 186
+    assert result["crosscutting_rejection_conditions"] == 104
+    assert result["total_coded_rejection_conditions"] == 192
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
     for relative in ("docs/LLM_PRODUCT_CARD.md", "docs/AUDIT_CONDITION_INVENTORY.md"):

@@ -2189,6 +2189,8 @@ def test_local_production_mutation_rejects_target_symlink_after_baseline(
 def test_supervisor_times_out_before_a_late_child_exit_is_polled(monkeypatch):
     from factoryline.runtime_audit_process import _wait_for_exit_or_limit
 
+    phase = [10.0]
+
     class Child:
         def __init__(self):
             self.wait_calls = 0
@@ -2196,15 +2198,15 @@ def test_supervisor_times_out_before_a_late_child_exit_is_polled(monkeypatch):
 
         def wait(self, timeout):
             self.wait_calls += 1
+            phase[0] = 10.99 if self.wait_calls == 1 else 11.01
             if self.wait_calls == 2:
                 # Exit races the deadline: the bounded wait reports timeout,
                 # then the supervisor observes the child's exit.
                 self.exit_code = 0
             raise __import__("subprocess").TimeoutExpired("late", timeout)
 
-    clock = iter((10.0, 10.5, 10.99, 11.01))
     monkeypatch.setattr(
-        "factoryline.runtime_audit_process.time.monotonic", lambda: next(clock)
+        "factoryline.runtime_audit_process.time.monotonic", lambda: phase[0]
     )
     child = Child()
 
@@ -2218,9 +2220,14 @@ def test_supervisor_deadline_includes_launch_and_stream_setup(monkeypatch, tmp_p
         returncode = 0
 
     monkeypatch.setattr("factoryline.runtime_audit_process._launch", lambda *a: Child())
+    phase = [10.0]
+
+    def start_streams(*args):
+        phase[0] = 11.02
+        return []
+
     monkeypatch.setattr(
-        "factoryline.runtime_audit_process._start_stream_readers",
-        lambda *a: [],
+        "factoryline.runtime_audit_process._start_stream_readers", start_streams
     )
     monkeypatch.setattr(
         "factoryline.runtime_audit_process._await_cleanup", lambda *a: (True, True)
@@ -2229,9 +2236,8 @@ def test_supervisor_deadline_includes_launch_and_stream_setup(monkeypatch, tmp_p
         "factoryline.runtime_audit_process._cleanup_is_confirmed",
         lambda *a: True,
     )
-    clock = iter((10.0, 10.0, 11.01, 11.02))
     monkeypatch.setattr(
-        "factoryline.runtime_audit_process.time.monotonic", lambda: next(clock)
+        "factoryline.runtime_audit_process.time.monotonic", lambda: phase[0]
     )
 
     result = run_bounded_command(
@@ -2548,3 +2554,27 @@ def test_mutation_trial_observed_rejects_context_drift_with_bound_phase_evidence
     assert not mutation_trial_observed(
         trial, prepared, root, target, manifest, "failed", True
     )
+
+
+def test_local_activation_profile_cannot_launch_arbitrary_pinned_script(tmp_path):
+    from factoryline.runtime_audit_common import RuntimeAuditError
+    from test_deep_audit import _local_activation_inputs
+    from factoryline.deep_audit import _local_profile_context
+    from factoryline.deep_audit_io import canonical_bytes, sha256_bytes
+
+    lane, profile, candidate, snapshot, _ = _local_activation_inputs(tmp_path)
+    operator = Path(lane["runner_binding"]["tool_manifest"]["path"]).parent
+    profile["version_argv"] += ["--unexpected"]
+    raw = canonical_bytes(profile)
+    (operator / "profile").write_bytes(raw)
+    binding = lane["runner_binding"]
+    binding["profile_sha256"] = sha256_bytes(raw)
+    manifest = json.loads((operator / "manifest.json").read_text())
+    row = next(row for row in manifest["files"] if row["role"] == "profile")
+    row.update(sha256=sha256_bytes(raw), bytes=len(raw))
+    (operator / "manifest.json").write_bytes(canonical_bytes(manifest))
+    binding["tool_manifest"]["sha256"] = sha256_bytes(
+        (operator / "manifest.json").read_bytes()
+    )
+    with pytest.raises(RuntimeAuditError, match="E_LOCAL_PROFILE"):
+        _local_profile_context(candidate, snapshot, tmp_path / "scratch", lane)
