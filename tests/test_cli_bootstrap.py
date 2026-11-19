@@ -261,12 +261,14 @@ def test_quick_help_is_small_actionable_and_does_not_load_registry(monkeypatch, 
         assert len(text.splitlines()) <= 22
         for command in (
             "factory scan --root .",
+            "factory scan --static-only --root .",
             "factory studio --root .",
             "factory guide",
             "factory --help-all",
         ):
             assert command in text
-        assert "INCOMPLETE" in text and "without running your project" in text
+        assert "INCOMPLETE" in text and "authorized configured workers" in text
+        assert "Python source checks without workers" in text
         for term in ("SSAT", "DAG", "Verifier Plane", "Survival Card", "Loop Passport"):
             assert term not in text
 
@@ -297,6 +299,11 @@ def test_scan_family_help_matches_full_registry_without_advanced_imports(
     with pytest.raises(SystemExit) as full:
         cli._build_parser().parse_args([command, "--help"])
     expected = capsys.readouterr().out
+    if command == "scan":
+        help_text = " ".join(expected.split())
+        assert "authorized configured workers" in help_text
+        assert "retained for compatibility" in help_text
+        assert "without configured workers" in help_text
     original_import = builtins.__import__
 
     def guarded_import(name, *args, **kwargs):

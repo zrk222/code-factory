@@ -1226,6 +1226,8 @@ def test_normal_scan_collection_gap_is_visible_in_human_output(tmp_path, capsys)
     assert "Python audited 1/1" in output
     assert "collection: UNKNOWN" in output
     assert "pyproject.toml" in output
+    assert "test behavior has not been verified" in output
+    assert "test-oracle authority" not in output
 
 
 @pytest.mark.parametrize("mode", ["importlib", "doctest"])
@@ -1502,6 +1504,37 @@ def test_daily_scan_human_output_exposes_analyzer_error(capsys):
         2,
     )
     assert "Analyzer failed: ReviewAuditError" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "check, label",
+    [
+        ("python_ast_security", "Python security checks"),
+        ("native_worker_execution", "Configured workers"),
+        ("runtime_coverage", "Runtime coverage"),
+        ("dependencies_and_supply_chain", "Dependencies and supply chain"),
+        ("custom_worker_check", "custom_worker_check"),
+    ],
+)
+def test_scan_human_blocking_check_labels_preserve_unknown_ids(capsys, check, label):
+    from factoryline.cli_first_lap import _print_repo_scan
+
+    report = {
+        "state": "BLOCKED",
+        "verdict": "BLOCKED",
+        "deep_audit": {
+            "lanes": [
+                {
+                    "measurement_id": check,
+                    "state": "BLOCKED",
+                    "next_action": "Review evidence.",
+                }
+            ]
+        },
+    }
+    _print_repo_scan(report, 2)
+    assert f"blocking : {label}: Review evidence." in capsys.readouterr().out
+    assert report["deep_audit"]["lanes"][0]["measurement_id"] == check
 
 
 @pytest.mark.parametrize(
