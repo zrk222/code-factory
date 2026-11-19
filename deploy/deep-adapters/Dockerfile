@@ -27,6 +27,7 @@ ENTRYPOINT ["/opt/factory/bin/audit-adapter"]
 
 FROM sdk AS semgrep-worker
 USER 0:0
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # Restore the existing CF YAML dependency previously supplied by the tool image.
 ADD --checksum=sha256:b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl /tmp/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
 RUN python -m pip install --no-cache-dir --no-index --no-deps /tmp/pyyaml-*.whl && rm /tmp/pyyaml-*.whl
