@@ -272,6 +272,212 @@ def test_precision_cli_cannot_overwrite_bound_observation(tmp_path, capsys):
     assert observation.read_bytes() == payload
 
 
+def _single_arm_precision_panel(admission=False):
+    scope = {
+        key: _digest(key)
+        for key in ("scanner_sha256", "registration_sha256", "configuration_sha256")
+    }
+    contract = {"schema": _gain["SINGLE_ARM_SCHEMA"], **scope, "sample_target": 3}
+    selection = {
+        **scope,
+        "collection": {"registered": 2, "complete": 2},
+        "observed_raw": 5,
+        "sample_target": 3,
+        "admission_available": admission,
+        "cases": [
+            {
+                "id": key,
+                "source_sha256": _digest(key + " source"),
+                "packet_sha256": _digest(key + " packet"),
+                "report_sha256": _digest("normal report"),
+                "finding_sha256": _digest(key + " finding"),
+                "admitted": key != "c" if admission else None,
+            }
+            for key in "abc"
+        ],
+    }
+    reviews = [
+        {
+            "reviewer_id": reviewer,
+            "cases": [
+                {
+                    **{
+                        key: row[key]
+                        for key in ("id", "source_sha256", "packet_sha256")
+                    },
+                    "label": label,
+                }
+                for row, label in zip(selection["cases"], labels)
+            ],
+        }
+        for reviewer, labels in (
+            ("one", ("TP", "FP", "FP")),
+            ("two", ("TP", "TP", "FP")),
+        )
+    ]
+    _seal_single_arm_selection(contract, selection, reviews)
+    return contract, selection, reviews
+
+
+def _seal_single_arm_selection(contract, selection, reviews):
+    seal = _gain["digest"](_gain["canonical_bytes"](selection))
+    contract["selection_sha256"] = seal
+    for review in reviews:
+        review["selection_sha256"] = seal
+
+
+@pytest.mark.parametrize("admission", [False, True])
+def test_single_arm_precision_uses_only_decided_raw_alerts(admission):
+    contract, selection, reviews = _single_arm_precision_panel(admission)
+    result = _gain["evaluate_single_arm"](contract, selection, reviews)
+    raw = result["metrics"]["raw"]
+    assert result["state"] == "SCORED_SINGLE_ARM"
+    assert result["consensus"] == {"a": "TP", "b": "UNCLEAR", "c": "FP"}
+    assert result["disagreements"] == ["b"]
+    assert (raw["TP"], raw["FP"], raw["UNCLEAR"]) == (1, 1, 1)
+    assert (raw["emitted"], raw["decided"], raw["precision"]) == (3, 2, 0.5)
+    assert raw["precision_label_bounds"] == pytest.approx([1 / 3, 2 / 3])
+    assert (result["observed_raw"], result["unselected_raw"]) == (5, 2)
+    assert result["publication_eligible"] is False
+    admitted = result["metrics"]["admitted"]
+    if admission:
+        assert (admitted["emitted"], admitted["decided"], admitted["precision"]) == (
+            2,
+            1,
+            1,
+        )
+    else:
+        assert admitted is None
+
+
+def test_single_arm_keeps_failed_captures_and_remaining_selection_visible():
+    contract, selection, reviews = _single_arm_precision_panel()
+    selection["collection"]["complete"] = 1
+    contract["sample_target"] = selection["sample_target"] = 4
+    _seal_single_arm_selection(contract, selection, reviews)
+    result = _gain["evaluate_single_arm"](contract, selection, reviews)
+    assert result["state"] == "INCOMPLETE"
+    assert result["collection"] == {"registered": 2, "complete": 1, "unobserved": 1}
+    assert (result["sample_target"], result["selected_raw"]) == (4, 3)
+    assert result["metrics"]["raw"]["decided"] == 2
+    assert result["metrics"]["admitted"] is None
+
+
+def test_single_arm_zero_observed_alerts_have_no_precision():
+    contract, selection, reviews = _single_arm_precision_panel(admission=True)
+    selection.update(observed_raw=0, cases=[])
+    for review in reviews:
+        review["cases"] = []
+    _seal_single_arm_selection(contract, selection, reviews)
+    result = _gain["evaluate_single_arm"](contract, selection, reviews)
+    assert result["state"] == "INCOMPLETE"
+    for metrics in result["metrics"].values():
+        assert metrics["emitted"] == metrics["decided"] == 0
+        assert metrics["precision"] is None
+        assert metrics["precision_label_bounds"] is None
+
+
+def test_single_arm_rejects_double_weighting_a_raw_observation():
+    contract, selection, reviews = _single_arm_precision_panel()
+    first, duplicate = selection["cases"][:2]
+    for field in ("finding_sha256", "report_sha256", "source_sha256"):
+        duplicate[field] = first[field]
+    for review in reviews:
+        review["cases"][1]["source_sha256"] = first["source_sha256"]
+    _seal_single_arm_selection(contract, selection, reviews)
+    with pytest.raises(ValueError, match="repeat one raw observation"):
+        _gain["evaluate_single_arm"](contract, selection, reviews)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        ("selection", "selection seal"),
+        ("configuration", "frozen candidate"),
+        ("duplicate_reviewer", "distinct reviewer"),
+        ("missing_packet", "omitted or added"),
+        ("packet_binding", "reviewer source/packet"),
+        ("admission", "contradicts availability"),
+        ("denominator", "selection denominator"),
+        ("target", "sample target differs"),
+    ],
+)
+def test_single_arm_precision_rejects_drift(mutation, reason):
+    contract, selection, reviews = _single_arm_precision_panel()
+    if mutation == "selection":
+        selection["observed_raw"] += 1
+    elif mutation == "configuration":
+        selection["configuration_sha256"] = _digest("changed profile")
+    elif mutation == "duplicate_reviewer":
+        reviews[1]["reviewer_id"] = reviews[0]["reviewer_id"].upper()
+    elif mutation == "missing_packet":
+        reviews[1]["cases"].pop()
+    elif mutation == "packet_binding":
+        reviews[1]["cases"][0]["packet_sha256"] = _digest("other packet")
+    elif mutation == "admission":
+        selection["cases"][0]["admitted"] = False
+    elif mutation == "target":
+        contract["sample_target"] += 1
+    else:
+        selection["observed_raw"] = 1
+    if mutation != "selection":
+        _seal_single_arm_selection(contract, selection, reviews)
+    with pytest.raises(ValueError, match=reason):
+        _gain["evaluate_single_arm"](contract, selection, reviews)
+
+
+def test_single_arm_cli_seals_receipt_and_protects_reviewer_input(tmp_path):
+    contract, selection, reviews = _single_arm_precision_panel()
+    refs = []
+    for name, value in zip(
+        ("selection", "reviewer-one", "reviewer-two"), [selection, *reviews]
+    ):
+        path = tmp_path / (name + ".json")
+        payload = _gain["canonical_bytes"](value)
+        path.write_bytes(payload)
+        refs.append({"path": path.name, "sha256": _gain["digest"](payload)})
+    contract.update(selection=refs[0], reviewers=refs[1:])
+    manifest = tmp_path / "contract.json"
+    contract_bytes = _gain["canonical_bytes"](contract)
+    manifest.write_bytes(contract_bytes)
+    receipt = tmp_path / "receipt.json"
+    script = Path(__file__).resolve().parents[1] / "scripts/verify_precision_gain.py"
+    command = [sys.executable, str(script), str(manifest), "--out"]
+    scored = subprocess.run(
+        [*command, str(receipt), "--summary"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert scored.returncode == 0, scored.stderr
+    assert "admitted: unavailable" in scored.stdout
+    assert json.loads(receipt.read_bytes())["evidence"] == {
+        "selection": refs[0],
+        "reviewers": refs[1:],
+    }
+    reviewer = tmp_path / refs[1]["path"]
+    before = reviewer.read_bytes()
+    rejected = subprocess.run(
+        [*command, str(reviewer)], capture_output=True, text=True, timeout=20
+    )
+    assert rejected.returncode == 2
+    assert "must not replace an observation" in rejected.stderr
+    assert reviewer.read_bytes() == before
+    ambiguous_manifests = (
+        b'{"sample_target": 3,' + contract_bytes[1:],
+        contract_bytes.rstrip()[:-1]
+        + b',"schema":"factory.precision-gain.v1","reviewers":[]}',
+    )
+    for ambiguous in ambiguous_manifests:
+        manifest.write_bytes(ambiguous)
+        rejected = subprocess.run(
+            [*command, str(reviewer)], capture_output=True, text=True, timeout=20
+        )
+        assert rejected.returncode == 2
+        assert "duplicate JSON key" in rejected.stderr
+        assert reviewer.read_bytes() == before
+
+
 @pytest.mark.parametrize("label", ["TP", "UNCLEAR"])
 def test_precision_gate_blocks_lost_reviewed_claim_even_when_active_precision_rises(
     label,
