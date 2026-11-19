@@ -1612,10 +1612,13 @@ def test_daily_scan_human_output_preserves_native_worker_findings(capsys, worker
 
     finding = {
         "finding_id": "worker-sink",
+        "lane_id": "native-static",
         "path": "app.ts",
         "line": 4,
         "remediation": "Repair the boundary",
     }
+    second_worker_finding = {**finding, "lane_id": "another-static-worker"}
+    projected = [finding, second_worker_finding] if worker_state == "OBSERVED" else []
     lanes = [
         {
             "measurement_id": "native_worker_execution",
@@ -1631,6 +1634,7 @@ def test_daily_scan_human_output_preserves_native_worker_findings(capsys, worker
                 ]
             },
         },
+        {"measurement_id": "non_python_security", "result": {"findings": projected}},
         {"measurement_id": "dependencies_and_supply_chain", "result": {}},
         {"measurement_id": "runtime_coverage", "result": {}},
     ]
@@ -1638,6 +1642,7 @@ def test_daily_scan_human_output_preserves_native_worker_findings(capsys, worker
         {
             "state": "INCOMPLETE",
             "verdict": "INCOMPLETE",
+            "static_security": {"findings": projected},
             "deep_audit": {
                 "lanes": lanes,
                 "native_domains": _native_domain_projection(lanes),
@@ -1646,8 +1651,9 @@ def test_daily_scan_human_output_preserves_native_worker_findings(capsys, worker
         0,
     )
     output = capsys.readouterr().out
-    assert "findings : 1" in output
-    assert output.count("worker-sink") == 1
+    count = 2 if worker_state == "OBSERVED" else 1
+    assert f"findings : {count}" in output
+    assert output.count("worker-sink") == count
     assert "app.ts:4:0 - Repair the boundary" in output
 
 
@@ -2052,9 +2058,21 @@ def test_mixed_language_projection_preserves_python_failure_states(
 ):
     from factoryline import adoption
     from copy import deepcopy
+    from factoryline.deep_audit_io import inventory_candidate
+    import subprocess
 
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "app.py").write_text("pass\n")
+    (tmp_path / "app.ts").write_text("// source\n")
+    captured = inventory_candidate(tmp_path)
     python_finding = {"id": "python-finding", "path": "app.py"}
-    native_finding = {"id": "native-finding", "path": "app.ts"}
+    native_finding = {
+        "id": "native-finding",
+        "path": "app.ts",
+        "source_sha256": next(
+            row["sha256"] for row in captured["files"] if row["path"] == "app.ts"
+        ),
+    }
     python_result = {
         "state": python_state,
         "findings": [python_finding],
@@ -2070,6 +2088,9 @@ def test_mixed_language_projection_preserves_python_failure_states(
                 "result": {
                     "findings": [native_finding],
                     "languages": [{"language": "typescript"}],
+                    "source_current": True,
+                    "sources": captured["files"],
+                    "candidate_sha256": captured["candidate_sha256"],
                 },
             },
         ]
@@ -2090,6 +2111,164 @@ def test_mixed_language_projection_preserves_python_failure_states(
     assert python_result == original
     if not mixed:
         assert result == original
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [None, "stale", "conflict", "duplicate", "unbound", "not_current", "other_lane"],
+)
+@pytest.mark.parametrize("python_present", [True, False])
+def test_mixed_security_aggregate_counts_sources_and_scoped_seals(
+    tmp_path, defect, python_present
+):
+    from factoryline import adoption
+    from factoryline.deep_audit_io import inventory_candidate
+    from copy import deepcopy
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    if python_present:
+        (tmp_path / "app.py").write_text("pass\n")
+    (tmp_path / "app.ts").write_text("// source\n")
+    captured = inventory_candidate(tmp_path)
+    bindings = {row["path"]: row["sha256"] for row in captured["files"]}
+    python_finding = {"code": "PYTHON_RULE", "path": "app.py", "line": 1}
+    python = {
+        "schema": "factory.security-audit.v1",
+        "state": "COMPLETE",
+        "findings": [python_finding],
+        "finding_counts": {"PYTHON_RULE": 1},
+        "sources": [{"path": "app.py", "sha256": bindings.get("app.py")}],
+        "finding_conservation": {"state": "PASS", "expected_raw_rows": 1},
+        "finding_tier_report": {"ledger": [{"raw_finding": python_finding}]},
+        "candidate_sha256": "b" * 64,
+    }
+    if python_present:
+        python["audit_sha256"] = adoption._digest(python)
+    else:
+        python = adoption._scan_static_security(tmp_path, {"file_types": {}})
+    original = deepcopy(python)
+    finding = {
+        "lane_id": "static-one",
+        "finding_id": "a" * 64,
+        "rule_id": "NATIVE_RULE",
+        "path": "app.ts",
+        "line": 1,
+        "source_sha256": bindings["app.ts"],
+        "flows": [{"path": "app.ts", "line": 1}],
+        "remediation": "Original native guidance",
+    }
+    native = {
+        "findings": [finding],
+        "sources": deepcopy(captured["files"]),
+        "candidate_sha256": captured["candidate_sha256"],
+        "source_current": True,
+        "verification": "INCOMPLETE",
+        "languages": [{"language": "typescript"}],
+    }
+    if defect == "stale":
+        (tmp_path / "app.ts").write_text("// changed\n")
+    elif defect == "conflict":
+        native["sources"].append({"path": "app.py", "sha256": "c" * 64})
+    elif defect == "duplicate":
+        native["findings"].append(deepcopy(finding))
+    elif defect == "unbound":
+        native["sources"] = [
+            row for row in native["sources"] if row["path"] != "app.ts"
+        ]
+    elif defect == "not_current":
+        native["source_current"] = False
+    elif defect == "other_lane":
+        native["findings"].append({**finding, "lane_id": "static-two"})
+    result, error = adoption._mixed_security_report(tmp_path, python, native)
+    assert python == original
+    assert result["schema"] == "factory.mixed-security-audit.v1"
+    assert result["python_ast_security"] == original
+    assert result["policy_scope"] == "python_ast_security"
+    assert result["audit_sha256"] == adoption._digest(
+        {key: value for key, value in result.items() if key != "audit_sha256"}
+    )
+    assert result["policy_scopes"]["native_static"]["admitted_rows"] is None
+    if defect not in {None, "other_lane"}:
+        assert error.startswith("E_NATIVE_PROJECTION:")
+        assert result["state"] == "INVALID"
+        assert result["findings"] == original["findings"]
+        assert result["finding_conservation"]["state"] == "FAILED"
+    else:
+        assert error is None
+        assert result["state"] == "INCOMPLETE"
+        assert result["findings"] == [*original["findings"], *native["findings"]]
+        assert result["finding_counts"] == {
+            **original.get("finding_counts", {}),
+            "NATIVE_RULE": len(native["findings"]),
+        }
+        assert result["sources"] == [
+            {"path": path, "sha256": value} for path, value in sorted(bindings.items())
+        ]
+        assert result["finding_conservation"]["state"] == "UNASSESSED"
+        assert result["finding_conservation"]["expected_raw_rows"] == len(
+            native["findings"]
+        ) + int(python_present)
+        assert result["finding_conservation"]["native_raw_rows"] == len(
+            native["findings"]
+        )
+        assert result["python_finding_conservation"] == original.get(
+            "finding_conservation", {}
+        )
+
+
+@pytest.mark.parametrize("python_state", ["COMPLETE", "INVALID", "BLOCKED"])
+@pytest.mark.parametrize("regressions", [False, True])
+def test_mixed_parent_keeps_python_coverage_and_fail_closed_controls(
+    tmp_path, python_state, regressions
+):
+    from factoryline import adoption
+    from copy import deepcopy
+
+    python = {
+        "state": python_state,
+        "findings": [],
+        "audit_coverage": {"limit": 2000, "files_attempted": 3},
+        "regressions": [{"code": "PYTHON_REGRESSION"}] if regressions else [],
+        "agent_actions": [{"id": "existing-python-action"}],
+    }
+    original = deepcopy(python)
+    mixed, error = adoption._mixed_security_report(tmp_path, python, {})
+    assert error is None
+    assert mixed["python_ast_security"] == original
+    assert mixed["audit_coverage"]["python_ast_security"] == original["audit_coverage"]
+    expected = "BLOCKED" if regressions or python_state != "COMPLETE" else "INCOMPLETE"
+    assert adoption._repo_scan_state({"state": "PASS"}, mixed, True, {}) == (
+        expected,
+        expected,
+    )
+    assert adoption._repo_scan_state(None, mixed, True, {}) == (expected, expected)
+
+
+@pytest.mark.parametrize("size", [10_000_001, 16 * 1024 * 1024, 16 * 1024 * 1024 + 1])
+def test_mixed_source_binding_uses_native_source_byte_budget(tmp_path, size):
+    from factoryline import adoption
+    from factoryline.deep_audit_io import inventory_candidate, SOURCE_LIMIT
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "large.ts").write_bytes(b"x" * size)
+    inventory = inventory_candidate(tmp_path)
+    python = adoption._scan_static_security(tmp_path, {"file_types": {}})
+    native = {
+        "sources": inventory["files"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "source_current": not inventory["gaps"],
+        "findings": [],
+    }
+    result, error = adoption._mixed_security_report(tmp_path, python, native)
+    if size <= SOURCE_LIMIT:
+        assert error is None
+        assert result["state"] == "INCOMPLETE"
+        assert result["sources"][0]["sha256"] == inventory["files"][0]["sha256"]
+    else:
+        assert error.startswith("E_NATIVE_PROJECTION:")
+        assert result["state"] == "INVALID"
 
 
 @pytest.mark.parametrize(

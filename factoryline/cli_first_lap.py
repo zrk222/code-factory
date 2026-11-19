@@ -349,8 +349,18 @@ def _print_scan_findings(result: dict) -> None:
     for lane in deep.get("lanes", []):
         if lane.get("measurement_id") != "python_ast_security":
             findings.extend((lane.get("result") or {}).get("findings", []))
-    print(f"findings : {len(findings)}")
+    # The scan and lane projections can contain the same native observation.
+    seen_native = set()
+    displayed = []
     for row in findings:
+        identity = (row.get("lane_id"), row.get("finding_id"))
+        if all(identity):
+            if identity in seen_native:
+                continue
+            seen_native.add(identity)
+        displayed.append(row)
+    print(f"findings : {len(displayed)}")
+    for row in displayed:
         print(
             f"  {row.get('severity', 'INFO')} {row.get('code', row.get('rule_id', row.get('finding_id', 'FINDING')))} {row.get('path', '.')}:{row.get('line', 1)}:{row.get('column', 0)} - {row.get('message', row.get('summary', row.get('remediation', 'Review finding evidence.')))}"
         )

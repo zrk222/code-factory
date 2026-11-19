@@ -2218,9 +2218,18 @@ def _semgrep_rule_runs(
             options["cancelled"] = cancelled
         facts = run_bounded_command(argv, cwd, remaining, directory, **options)
         if _deep_audit_io._adapter_command_failed(facts, [0], deadline):
-            raise _deep_audit_io.RuntimeAuditError(
+            error = _deep_audit_io.RuntimeAuditError(
                 "E_SEMGREP_EXECUTION", "native rule execution failed"
             )
+            error.native_diagnostic = {
+                "stage": "semgrep_rule_command",
+                "rule_index": index,
+                "rule_id": rule["id"],
+                "argv_sha256": _deep_audit_io.digest(argv),
+                "deadline_exhausted": _deep_audit_io.time.monotonic() > deadline,
+                "process": facts,
+            }
+            raise error
         with _deep_audit_io.local_file(directory, "report.json").open("rb") as stream:
             raw = stream.read(_deep_audit_io.LIMIT + 1)
         report = _deep_audit_io.strict_json(raw)

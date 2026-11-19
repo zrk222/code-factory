@@ -20,6 +20,139 @@ from factoryline.deep_audit_io import digest
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+@pytest.mark.parametrize("failure", ["timeout", "launch", "output", "cleanup", "exit"])
+def test_semgrep_failed_command_retains_only_controlled_diagnostic_facts(
+    tmp_path, monkeypatch, failure
+):
+    from factoryline import deep_audit, deep_audit_attestation, runtime_audit_process
+
+    scratch, output, retained = (
+        tmp_path / "scratch",
+        tmp_path / "output",
+        tmp_path / "retained",
+    )
+    for path in (scratch, output, retained):
+        path.mkdir()
+    facts = {
+        "exit_code": 0,
+        "timed_out": False,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "timeout_seconds": 30,
+        "duration_ms": 5,
+        "stdout_bytes": 0,
+        "stderr_bytes": 7,
+        "stdout_sha256": "a" * 64,
+        "stderr_sha256": "b" * 64,
+        "termination_reason": "process_exit",
+        "stderr": "DO_NOT_LEAK",
+        "environment": {"SECRET": "DO_NOT_LEAK"},
+        "argv": ["DO_NOT_LEAK"],
+    }
+    changes = {
+        "timeout": {"timed_out": True},
+        "launch": {"launch_error": True, "exit_code": None},
+        "output": {
+            "output_limit_exceeded": True,
+            "artifact_limit_reason": "byte_count",
+        },
+        "cleanup": {"cleanup_confirmed": False},
+        "exit": {"exit_code": 2},
+    }
+    facts.update(changes[failure])
+    monkeypatch.setattr(
+        runtime_audit_process, "run_bounded_command", lambda *_args, **_kwargs: facts
+    )
+    lane = {
+        "id": "local-opengrep",
+        "timeout_seconds": 30,
+        "report": "report.json",
+        "coverage": "coverage.json",
+        "challenge_report": "challenge.json",
+    }
+    rule = {"id": "rule.control", "pattern": "bad()"}
+    profile = {"commands": [{"argv": ["DO_NOT_LEAK"]}], "tool_version": "1.15.0"}
+    with pytest.raises(RuntimeAuditError, match="E_SEMGREP_EXECUTION") as captured:
+        deep_audit_attestation._semgrep_rule_runs(
+            profile, lane, tmp_path, scratch, [rule], time.monotonic()
+        )
+    (output / "report.json").write_text('{"partial":true}')
+    deep_audit._local_failure_transport(
+        retained,
+        output,
+        lane,
+        {"candidate_sha256": "c" * 64},
+        {"provider": "local-native", "tool_context": {"secret": "DO_NOT_LEAK"}},
+        captured.value,
+    )
+    result = json.loads((retained / "failure-local-opengrep.json").read_bytes())
+    assert result["completion"] == "COMMAND_FAILED"
+    assert result["diagnostic_code"] == "E_SEMGREP_EXECUTION"
+    diagnostic = result["command_diagnostic"]
+    assert diagnostic["stage"] == "semgrep_rule_command"
+    assert diagnostic["rule_index"] == 0 and diagnostic["rule_id"] == "rule.control"
+    assert len(diagnostic["argv_sha256"]) == 64
+    assert diagnostic["process"]["exit_code"] == facts["exit_code"]
+    assert all(diagnostic["process"][key] == facts[key] for key in changes[failure])
+    assert ("artifact_limit_reason" in diagnostic["process"]) is (failure == "output")
+    assert result["retained_output"][0]["complete"] is True
+    assert "DO_NOT_LEAK" not in json.dumps(result)
+    assert "findings" not in result
+
+
+def test_local_failure_diagnostic_rejects_unbounded_or_structured_facts():
+    from factoryline.deep_audit import _local_failure_diagnostic
+
+    error = RuntimeAuditError("E_SEMGREP_EXECUTION", "DO_NOT_LEAK")
+    error.native_diagnostic = {
+        "stage": "semgrep_rule_command",
+        "rule_index": True,
+        "rule_id": "DO_NOT_LEAK secret",
+        "argv_sha256": "not-a-hash",
+        "deadline_exhausted": "DO_NOT_LEAK",
+        "process": {
+            "exit_code": [],
+            "duration_ms": 2**100,
+            "timed_out": "DO_NOT_LEAK",
+            "termination_reason": "DO_NOT_LEAK",
+            "output_limit_exceeded": True,
+            "artifact_limit_reason": "DO_NOT_LEAK",
+            "stderr_sha256": "DO_NOT_LEAK",
+            "unknown": "DO_NOT_LEAK",
+        },
+    }
+    assert _local_failure_diagnostic(error) == {
+        "command_diagnostic": {
+            "stage": "semgrep_rule_command",
+            "process": {"output_limit_exceeded": True},
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "message,reason",
+    [
+        ("per-rule findings contradict baseline", "baseline_parity"),
+        ("native source execution differs", "source_execution"),
+        ("native command binding differs", "command_binding"),
+    ],
+)
+def test_local_failure_verification_reason_is_closed(message, reason):
+    from factoryline.deep_audit import _local_failure_diagnostic
+
+    assert _local_failure_diagnostic(
+        RuntimeAuditError("E_SEMGREP_EXECUTION", message)
+    ) == {"command_diagnostic": {"stage": "semgrep_verification", "reason": reason}}
+    assert (
+        _local_failure_diagnostic(
+            RuntimeAuditError("E_SEMGREP_EXECUTION", "DO_NOT_LEAK")
+        )
+        == {}
+    )
+    assert _local_failure_diagnostic(RuntimeAuditError("OTHER", message)) == {}
+
+
 def _workspace_policy319_request_pickle_fixture(root):
     (root / "app.py").write_text(
         "import pickle\nfrom flask import request\n"
