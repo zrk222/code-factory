@@ -47,6 +47,115 @@ from factoryline.runtime_audit_contract import verify_runtime_audit_plan
 from test_runtime_audit_contract import D, signed_plan
 
 
+def test_mutation_diff_inspection_historical_bytes(tmp_path):
+    import base64
+    from factoryline.runtime_attestation import inspect_local_mutation_diff
+
+    raw = b"--- source.py\r\n+\xff\x1b[31mno-final-newline"
+    capture = {
+        "schema": "factory.local-production-mutation-capture.v1",
+        "production_mutation": {
+            "path": "source.py",
+            "diff_path": "production.diff",
+            "diff_sha256": hashlib.sha256(raw).hexdigest(),
+        },
+        "selection": {"test_path": "tests/test_source.py"},
+        "baseline_observation": {"secret": "DO_NOT_DISPLAY"},
+    }
+    (tmp_path / "capture.json").write_text(json.dumps(capture), encoding="utf-8")
+    (tmp_path / "production.diff").write_bytes(raw)
+    result = inspect_local_mutation_diff(tmp_path, "capture.json")
+    assert base64.b64decode(result["diff_base64"]) == raw
+    assert result["status"] == "HISTORICAL"
+    assert result["integrity"] == "HASH_VERIFIED"
+    assert result["currentness"] == "NOT_CHECKED"
+    assert result["source_binding"] == "NOT_VALIDATED"
+    assert result["signature_status"] == "UNSIGNED" and result["authority"] == "none"
+    assert "DO_NOT_DISPLAY" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "digest",
+        "missing_digest",
+        "schema",
+        "duplicate",
+        "escape",
+        "url",
+        "source",
+        "test",
+        "oversize",
+        "missing",
+        "race",
+    ],
+)
+def test_mutation_diff_inspection_rejects_invalid(tmp_path, monkeypatch, damage):
+    from factoryline import runtime_audit_common as common
+    from factoryline.runtime_attestation import inspect_local_mutation_diff
+
+    raw = b"historical diff"
+    capture = {
+        "schema": "factory.local-production-mutation-capture.v1",
+        "production_mutation": {
+            "path": "source.py",
+            "diff_path": "production.diff",
+            "diff_sha256": hashlib.sha256(raw).hexdigest(),
+        },
+        "selection": {"test_path": "tests/test_source.py"},
+    }
+    _damage_mutation_diff_capture(capture, damage)
+    encoded = json.dumps(capture)
+    if damage == "duplicate":
+        encoded = encoded.replace(
+            '"production_mutation":', '"schema":"unknown","production_mutation":'
+        )
+    (tmp_path / "capture.json").write_text(encoded, encoding="utf-8")
+    if damage != "missing":
+        (tmp_path / "production.diff").write_bytes(
+            b"x" * (common.MAX_ARTIFACT_BYTES + 1) if damage == "oversize" else raw
+        )
+    if damage == "race":
+        monkeypatch.setattr(common, "_stable_read_identity", lambda *a, **kw: False)
+    with pytest.raises(common.RuntimeAuditError, match="E_MUTATION_DIFF_INPUT"):
+        inspect_local_mutation_diff(tmp_path, "capture.json")
+
+
+def _damage_mutation_diff_capture(capture, damage):
+    """Apply metadata corruption independently from on-disk failure fixtures."""
+    mutation = capture["production_mutation"]
+    if damage == "digest":
+        mutation["diff_sha256"] = "0" * 64
+    elif damage == "missing_digest":
+        mutation.pop("diff_sha256")
+    elif damage == "schema":
+        capture["schema"] = "unknown"
+    elif damage == "escape":
+        mutation["diff_path"] = "../production.diff"
+    elif damage == "url":
+        mutation["diff_path"] = "https://example.com/production.diff"
+    elif damage == "source":
+        mutation["path"] = "../source.py"
+    elif damage == "test":
+        capture["selection"]["test_path"] = "tests/\x1btest.py"
+
+
+def test_mutation_diff_inspection_rejects_link_parent(tmp_path):
+    from factoryline.runtime_audit_common import RuntimeAuditError
+    from factoryline.runtime_attestation import inspect_local_mutation_diff
+
+    actual = tmp_path / "actual"
+    actual.mkdir()
+    (actual / "capture.json").write_text("{}", encoding="utf-8")
+    link = tmp_path / "linked"
+    try:
+        link.symlink_to(actual, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    with pytest.raises(RuntimeAuditError, match="E_MUTATION_DIFF_INPUT"):
+        inspect_local_mutation_diff(tmp_path, "linked/capture.json")
+
+
 def _digest(seed: str) -> str:
     return hashlib.sha256(seed.encode()).hexdigest()
 
@@ -1641,6 +1750,15 @@ def test_local_production_mutation_capture_records_real_all_case_failure(
         in diff
     )
     assert hashlib.sha256(diff).hexdigest() == mutation["diff_sha256"]
+    from factoryline.runtime_attestation import inspect_local_mutation_diff
+    import base64
+
+    # The existing real producer fixture remains readable after source drift.
+    test.write_text("raise RuntimeError('must never execute during inspection')\n")
+    viewed = inspect_local_mutation_diff(tmp_path, ".factory/capture-one/capture.json")
+    assert base64.b64decode(viewed["diff_base64"]) == diff
+    assert viewed["status"] == "HISTORICAL"
+    assert viewed["currentness"] == "NOT_CHECKED"
 
 
 @pytest.mark.parametrize("explicit", [False, True])

@@ -281,6 +281,7 @@ def is_read_only_command(argv: Iterable[str]) -> bool:
         ("agent", "route"),
         ("agent", "route-audit"),
         ("workspace", "inspect"),
+        ("runtime-audit", "mutation-diff"),
     }
 
 

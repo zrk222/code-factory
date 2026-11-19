@@ -679,18 +679,10 @@ def _oracle_read(path: Path, field: str) -> bytes:
 
 
 def _oracle_json(raw: bytes, field: str) -> dict[str, Any]:
-    def unique_object(pairs):
-        value = {}
-        for key, item in pairs:
-            if key in value:
-                raise ValueError("duplicate JSON key")
-            value[key] = item
-        return value
-
     try:
         value = json.loads(
             raw.decode("utf-8"),
-            object_pairs_hook=unique_object,
+            object_pairs_hook=_unique_json_pairs,
             parse_constant=lambda _value: (_ for _ in ()).throw(
                 ValueError("non-finite JSON number")
             ),
@@ -1556,3 +1548,76 @@ def verify_signed_test_oracles(
         code = getattr(exc, "code", "E_ORACLE_INVALID")
         message = getattr(exc, "message", "invalid test-oracle attestation")
         raise RuntimeAttestationError(code, message) from exc
+
+
+def _unique_json_pairs(pairs):
+    """Reject ambiguous JSON objects, including nested duplicate keys."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _mutation_diff_capture(root: Path, capture_path: Path | str) -> tuple[Path, dict]:
+    """Read one bounded, unambiguous historical capture under its workspace."""
+    from .runtime_audit_common import _bounded_file
+
+    name = str(capture_path)
+    if any(ord(char) < 32 for char in name) or "://" in name:
+        raise ValueError("unsafe capture path")
+    path = Path(capture_path)
+    if ":" in name[len(path.drive) :] or "\\\\" in name:
+        raise ValueError("unsafe capture path")
+    path = path if path.is_absolute() else root / path
+    raw = _bounded_file(path, root=root)
+    capture = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_pairs)
+    if not isinstance(capture, dict) or capture.get("schema") != (
+        "factory.local-production-mutation-capture.v1"
+    ):
+        raise ValueError("unsupported capture schema")
+    return path, capture
+
+
+def inspect_local_mutation_diff(root: Path, capture_path: Path | str) -> dict:
+    """Inspect historical diff bytes, never source, execution or capture claims."""
+    from .runtime_audit_common import _bounded_file
+
+    try:
+        root = Path(root).resolve(strict=True)
+        path, capture = _mutation_diff_capture(root, capture_path)
+        mutation, selection = capture["production_mutation"], capture["selection"]
+        source = _oracle_relative_py(mutation["path"], "source", test_source=False)
+        test = _oracle_relative_py(selection["test_path"], "test", test_source=True)
+        if any(ord(char) < 32 or ord(char) == 127 for char in source + test):
+            raise ValueError("unsafe display path")
+        if ":" in source + test:
+            raise ValueError("unsafe display path")
+        digest = mutation["diff_sha256"]
+        if mutation["diff_path"] != "production.diff" or not isinstance(digest, str):
+            raise ValueError("invalid diff binding")
+        if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ValueError("invalid diff digest")
+        diff = _bounded_file(path.parent / "production.diff", root=root)
+        if hashlib.sha256(diff).hexdigest() != digest:
+            raise ValueError("diff digest mismatch")
+        return {
+            "schema": "factory.local-mutation-diff-inspection.v1",
+            "status": "HISTORICAL",
+            "integrity": "HASH_VERIFIED",
+            "currentness": "NOT_CHECKED",
+            "source_binding": "NOT_VALIDATED",
+            "signature_status": "UNSIGNED",
+            "authority": "none",
+            "production_path": source,
+            "test_path": test,
+            "diff_path": "production.diff",
+            "diff_sha256": digest,
+            "diff_size_bytes": len(diff),
+            "diff_base64": base64.b64encode(diff).decode("ascii"),
+        }
+    except (OSError, ValueError, TypeError, KeyError, RecursionError) as exc:
+        raise RuntimeAuditError(
+            "E_MUTATION_DIFF_INPUT", "invalid or unavailable bounded mutation diff"
+        ) from exc
