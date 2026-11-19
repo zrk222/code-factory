@@ -90,7 +90,8 @@ foreach ($regressions as [$rule, $source, $expected, $line]) {
     }
 }
 $unterminated = '<?php preg_replace(\'' . str_repeat('\\', 10000);
-$scanner->scanFile('unterminated.php', $unterminated);
+$patternScanner = new Scanner(array_values(array_filter($rules, fn (Rule $r): bool => $r->id === 'RCE-005')));
+$patternScanner->scanFile('unterminated.php', $unterminated);
 if (preg_last_error() !== PREG_NO_ERROR) {
     echo "REGRESSION unterminated escaped pattern exceeded regex limits\n";
     $fail++;
