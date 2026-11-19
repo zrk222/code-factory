@@ -249,6 +249,70 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
     assert not worker.is_alive()
 
 
+@pytest.mark.parametrize(
+    "method,path,body,override,status",
+    [
+        ("POST", "/mcp", None, {}, 200),
+        ("POST", "/mcp", None, {"Authorization": ""}, 401),
+        ("POST", "/mcp", None, {"Authorization": "Bearer " + "x" * 40}, 401),
+        ("POST", "/mcp", None, {"Host": "evil.example"}, 403),
+        ("POST", "/mcp", None, {"Origin": "http://evil.example"}, 403),
+        ("GET", "/mcp", None, {}, 405),
+        ("POST", "/other", None, {}, 404),
+        ("POST", "/mcp", "{", {}, 400),
+        ("POST", "/mcp", "[]", {}, 400),
+        ("POST", "/mcp", None, {"Content-Type": "text/plain"}, 415),
+        ("POST", "/mcp", None, {"Mcp-Method": "tools/list"}, 400),
+        ("POST", "/mcp", None, {"MCP-Protocol-Version": "2024-11-05"}, 400),
+    ],
+)
+def test_redteam_http_probe_guards(tmp_path, method, path, body, override, status):
+    """Keep the manual probe's unique framing controls in the existing test owner."""
+    token = "local-test-token-0123456789abcdef"
+    server = create_streamable_http_server(tmp_path, bearer_token=token, port=0)
+    worker = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+    worker.start()
+    port = server.server_address[1]
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": MCP_STREAMABLE_HTTP_VERSION,
+        "Mcp-Method": "initialize",
+        "Host": f"127.0.0.1:{port}",
+    }
+    headers.update(override)
+    payload = (
+        body
+        if body is not None
+        else json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": MCP_STREAMABLE_HTTP_VERSION,
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    }
+                },
+            }
+        )
+    )
+    connection = HTTPConnection("127.0.0.1", port, timeout=3)
+    try:
+        connection.request(method, path, payload, headers)
+        response = connection.getresponse()
+        assert response.status == status
+        response.read()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=3)
+    assert not worker.is_alive()
+
+
 def test_http_startup_prints_only_resolved_loopback_origins(
     tmp_path, monkeypatch, capsys
 ):
