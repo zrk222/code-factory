@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .assembly_process import run_cli_detailed
+from .benchmark_lab import BenchmarkError, _public_metrics
 from .runtime_audit_common import (
     MAX_ARTIFACT_BYTES,
     RuntimeAuditError,
@@ -46,6 +47,9 @@ INCIDENT_TRIAGE_SCHEMA = "factory.incident-triage.v1"
 INCIDENT_REGRESSION_INTAKE_SCHEMA = "factory.incident-regression-intake.v1"
 INCIDENT_REGRESSION_PACKET_SCHEMA = "factory.exposed-regression-packet.v1"
 ACTIVATION_EXPERIMENT_SCHEMA = "factory.activation-experiment-observation.v1"
+RECALL_SCHEMA = "factory.defect-recall.v1"
+RECALL_OBSERVATIONS_SCHEMA = "factory.defect-recall-observations.v1"
+RECALL_RECEIPT_SCHEMA = "factory.defect-recall-receipt.v1"
 
 _INCIDENT_LEVELS = {"debug": 0, "info": 1, "warning": 2, "error": 3, "critical": 4}
 _INCIDENT_LIMITS = {"event_id": 128, "source": 256, "message": 2048, "timestamp": 64}
@@ -1961,3 +1965,226 @@ def run_activation_experiment(
             "reason": safe_code,
             "execution_authority": "none",
         }
+
+
+def _recall_fields(value, keys, subject):
+    if not isinstance(value, dict) or set(value) != set(keys.split()):
+        raise BenchmarkError("E_RECALL_CONTRACT", f"Unexpected {subject} fields")
+
+
+def _recall_site(value):
+    _recall_fields(value, "rule line", "finding site")
+    line = value["line"]
+    if type(line) is not int or not 1 <= line <= 10_000_000:
+        raise BenchmarkError("E_RECALL_CONTRACT", "Finding line is out of bounds")
+    return require_str(value["rule"], "rule", maximum=512), line
+
+
+def _recall_binding(row):
+    from .deep_audit_io import relative_path
+
+    return relative_path(row["path"]), require_digest(row["source_sha256"], "source")
+
+
+def _recall_cases(value):
+    if not isinstance(value, list) or not 1 <= len(value) <= 500:
+        raise BenchmarkError("E_RECALL_CONTRACT", "Cases must contain 1..500 entries")
+    cases, positive_sites, known_sources = {}, set(), {}
+    for row in value:
+        _recall_fields(row, "id category path source_sha256 truth expected", "case")
+        case_id = require_str(row["id"], "case id", maximum=160)
+        category = require_str(row["category"], "category", maximum=80)
+        truth = row["truth"]
+        if case_id in cases or truth not in ("POSITIVE", "CLEAN", "UNCLEAR"):
+            raise BenchmarkError("E_RECALL_CONTRACT", "Duplicate case or invalid truth")
+        if truth != "POSITIVE" and row["expected"] is not None:
+            raise BenchmarkError(
+                "E_RECALL_CONTRACT", "Only positives have an expected site"
+            )
+        site = _recall_site(row["expected"]) if truth == "POSITIVE" else None
+        binding = _recall_binding(row)
+        if truth != "UNCLEAR":
+            previous = known_sources.get(binding)
+            if previous is not None and "CLEAN" in (previous, truth):
+                raise BenchmarkError(
+                    "E_RECALL_CONTRACT", "Duplicate or contradictory clean control"
+                )
+            known_sources[binding] = truth
+        if (binding, site) in positive_sites:
+            raise BenchmarkError(
+                "E_RECALL_CONTRACT", "Duplicate positive source and site"
+            )
+        if site is not None:
+            positive_sites.add((binding, site))
+        cases[case_id] = (category, truth, binding, site)
+    return cases
+
+
+def _recall_population(value):
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > 2048:
+        raise BenchmarkError(
+            "E_RECALL_CONTRACT", "Expected a bounded finding population"
+        )
+    return {_recall_site(site) for site in value}
+
+
+def _recall_capture(row, binding):
+    _recall_fields(row, "path source_sha256 report_sha256 raw admitted", "capture")
+    if _recall_binding(row) != binding:
+        raise BenchmarkError("E_RECALL_BINDING", "Capture path or source hash differs")
+    report = require_digest(row["report_sha256"], "report")
+    raw, admitted = (_recall_population(row[key]) for key in ("raw", "admitted"))
+    if admitted is not None and (raw is None or not admitted <= raw):
+        raise BenchmarkError(
+            "E_RECALL_BINDING", "Admitted findings must be in raw capture"
+        )
+    return report, raw, admitted
+
+
+def _recall_disposition(truth, site, findings):
+    if truth == "UNCLEAR":
+        return "UNCLEAR"
+    if findings is None:
+        return "UNOBSERVED"
+    if truth == "CLEAN":
+        return "FLAGGED" if findings else "CLEAN"
+    return "DETECTED" if site in findings else "MISSED"
+
+
+def _recall_case_row(case_id, case, captures, populations, report_sources):
+    category, truth, binding, site = case
+    report, raw, admitted = (None, None, None)
+    if case_id in captures:
+        report, raw, admitted = _recall_capture(captures[case_id], binding)
+        if report_sources.setdefault((report, binding[0]), binding[1]) != binding[1]:
+            raise BenchmarkError(
+                "E_RECALL_BINDING", "Report binds multiple source digests for one path"
+            )
+        if populations.setdefault(binding, (report, raw, admitted)) != (
+            report,
+            raw,
+            admitted,
+        ):
+            raise BenchmarkError(
+                "E_RECALL_BINDING",
+                "Conflicting populations or reports for the same source binding",
+            )
+    return {
+        "id": case_id,
+        "category": category,
+        "truth": truth,
+        "source_sha256": binding[1],
+        "report_sha256": report,
+        "raw": _recall_disposition(truth, site, raw),
+        "admitted": _recall_disposition(truth, site, admitted),
+    }
+
+
+def _recall_arm(positives, clean, arm):
+    detected = sum(row[arm] == "DETECTED" for row in positives)
+    missed = sum(row[arm] == "MISSED" for row in positives)
+    denominator = len(positives)
+    unobserved = denominator - detected - missed
+    observed = _public_metrics({"tp": detected, "fn": missed, "fp": 0, "tn": 0})
+    return {
+        "denominator": denominator,
+        "detected": detected,
+        "false_negatives": missed,
+        "unobserved": unobserved,
+        "recall": None if unobserved else observed["recall"],
+        "recall_ci95_wilson": None if unobserved else observed["recall_ci95_wilson"],
+        "recall_lower_bound": detected / denominator if denominator else None,
+        "recall_upper_bound": (detected + unobserved) / denominator
+        if denominator
+        else None,
+        "clean_controls": {
+            "denominator": len(clean),
+            "flagged": sum(row[arm] == "FLAGGED" for row in clean),
+            "clean": sum(row[arm] == "CLEAN" for row in clean),
+            "unobserved": sum(row[arm] == "UNOBSERVED" for row in clean),
+        },
+    }
+
+
+def _recall_metrics(rows):
+    positives = [row for row in rows if row["truth"] == "POSITIVE"]
+    clean = [row for row in rows if row["truth"] == "CLEAN"]
+    return {
+        "known_positives": len(positives),
+        "unclear_truth": len(rows) - len(positives) - len(clean),
+        **{arm: _recall_arm(positives, clean, arm) for arm in ("raw", "admitted")},
+    }
+
+
+def evaluate_source_bound_recall(manifest, observations, *, out=None):
+    """Measure a frozen truth panel against supplied, sealed captures."""
+    _recall_fields(
+        manifest,
+        "schema benchmark_id version partition scanner_sha256 configuration_sha256 observations_sha256 cases",
+        "recall manifest",
+    )
+    _recall_fields(
+        observations, "schema scanner_sha256 configuration_sha256 cases", "observations"
+    )
+    if (
+        manifest["schema"] != RECALL_SCHEMA
+        or observations["schema"] != RECALL_OBSERVATIONS_SCHEMA
+        or manifest["partition"] not in ("public", "holdout")
+    ):
+        raise BenchmarkError(
+            "E_RECALL_CONTRACT", "Unknown observation schema or partition"
+        )
+    bindings = {
+        name: require_digest(manifest[name], name)
+        for name in ("scanner_sha256", "configuration_sha256", "observations_sha256")
+    }
+    if any(
+        observations[key] != bindings[key]
+        for key in ("scanner_sha256", "configuration_sha256")
+    ):
+        raise BenchmarkError(
+            "E_RECALL_BINDING", "Frozen scanner or configuration differs"
+        )
+    cases = _recall_cases(manifest["cases"])
+    captures = observations["cases"]
+    if not isinstance(captures, dict) or not captures.keys() <= cases.keys():
+        raise BenchmarkError("E_RECALL_BINDING", "Capture contains unregistered cases")
+    populations, report_sources = {}, {}
+    rows = [
+        _recall_case_row(case_id, case, captures, populations, report_sources)
+        for case_id, case in cases.items()
+    ]
+    if _sha(observations) != bindings["observations_sha256"]:
+        raise BenchmarkError("E_RECALL_BINDING", "Frozen observations digest differs")
+    overall = _recall_metrics(rows)
+    groups = {row["category"] for row in rows}
+    receipt = {
+        "schema": RECALL_RECEIPT_SCHEMA,
+        "benchmark_id": require_str(
+            manifest["benchmark_id"], "benchmark id", maximum=160
+        ),
+        "version": require_str(manifest["version"], "version", maximum=40),
+        "partition": manifest["partition"],
+        "manifest_sha256": _sha(manifest),
+        **bindings,
+        "cases": rows,
+        "metrics": {
+            "overall": overall,
+            "by_category": {
+                group: _recall_metrics(
+                    [row for row in rows if row["category"] == group]
+                )
+                for group in sorted(groups)
+            },
+        },
+        "decision": "MEASURED"
+        if all(overall[arm]["recall"] is not None for arm in ("raw", "admitted"))
+        else "INCOMPLETE",
+        "authority": "none",
+        "release_approval": False,
+        "claim_boundary": "Evaluates bound supplied captures. Independent labels, blinded collection and execution provenance require separate evidence.",
+    }
+    receipt["receipt_sha256"] = _sha(receipt)
+    return _write_json(out, receipt)
