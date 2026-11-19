@@ -53,7 +53,10 @@ def test_semgrep_failed_command_retains_only_controlled_diagnostic_facts(
     changes = {
         "timeout": {"timed_out": True},
         "launch": {"launch_error": True, "exit_code": None},
-        "output": {"output_limit_exceeded": True},
+        "output": {
+            "output_limit_exceeded": True,
+            "artifact_limit_reason": "byte_count",
+        },
         "cleanup": {"cleanup_confirmed": False},
         "exit": {"exit_code": 2},
     }
@@ -92,6 +95,7 @@ def test_semgrep_failed_command_retains_only_controlled_diagnostic_facts(
     assert len(diagnostic["argv_sha256"]) == 64
     assert diagnostic["process"]["exit_code"] == facts["exit_code"]
     assert all(diagnostic["process"][key] == facts[key] for key in changes[failure])
+    assert ("artifact_limit_reason" in diagnostic["process"]) is (failure == "output")
     assert result["retained_output"][0]["complete"] is True
     assert "DO_NOT_LEAK" not in json.dumps(result)
     assert "findings" not in result
@@ -112,12 +116,17 @@ def test_local_failure_diagnostic_rejects_unbounded_or_structured_facts():
             "duration_ms": 2**100,
             "timed_out": "DO_NOT_LEAK",
             "termination_reason": "DO_NOT_LEAK",
+            "output_limit_exceeded": True,
+            "artifact_limit_reason": "DO_NOT_LEAK",
             "stderr_sha256": "DO_NOT_LEAK",
             "unknown": "DO_NOT_LEAK",
         },
     }
     assert _local_failure_diagnostic(error) == {
-        "command_diagnostic": {"stage": "semgrep_rule_command", "process": {}}
+        "command_diagnostic": {
+            "stage": "semgrep_rule_command",
+            "process": {"output_limit_exceeded": True},
+        }
     }
 
 

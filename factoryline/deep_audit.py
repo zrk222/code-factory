@@ -898,10 +898,10 @@ def _local_failure_process_facts(value):
         "stderr_bytes",
     ):
         number = value.get(key)
-        if type(number) is int and -(2**31) <= number < 2**63:
+        if (type(number) is int and -(2**31) <= number < 2**63) or (
+            key == "exit_code" and number is None
+        ):
             output[key] = number
-    if value.get("exit_code") is None:
-        output["exit_code"] = None
     for key in ("stdout_sha256", "stderr_sha256"):
         if isinstance(value.get(key), str) and re.fullmatch(
             r"[0-9a-f]{64}", value[key]
@@ -916,6 +916,22 @@ def _local_failure_process_facts(value):
         "cancelled",
     }:
         output["termination_reason"] = reason
+    artifact_reason = value.get("artifact_limit_reason")
+    if (
+        output.get("output_limit_exceeded") is True
+        and isinstance(artifact_reason, str)
+        and artifact_reason
+        in {
+            "invalid_root",
+            "entry_disappeared",
+            "entry_unreadable",
+            "linked_entry",
+            "file_count",
+            "byte_count",
+            "entry_count",
+        }
+    ):
+        output["artifact_limit_reason"] = artifact_reason
     return output
 
 
