@@ -30,6 +30,12 @@ USER 0:0
 # The Semgrep-compatible OSS fork emits native source/sink traces without login.
 # Reuse the shared Python/module closure instead of another interpreter image.
 ADD --checksum=sha256:f81fe0abd4379a729436aeeb1d4696eeb6cde8b6729c72a08543d1c476469656 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v1.15.0/opengrep_manylinux_x86 /usr/bin/opengrep
+# Materialize the signed-release payload at build time. Runtime scratch remains
+# non-executable; run the fixed, root-owned standalone payload from the image.
+RUN XDG_CACHE_HOME=/opt/factory/opengrep-cache /usr/bin/opengrep --version \
+    && test -x /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin \
+    && ln -sf /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin /usr/bin/opengrep \
+    && /usr/bin/opengrep --version
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-pattern-limited.json /opt/factory/adapter-profile.json
 COPY --chown=1000:1000 deploy/deep-adapters/rules/semgrep-pattern-limited.yml /opt/factory/rules/semgrep-pattern-limited.yml
 RUN mkdir -p /src /out /opt/factory/rules
