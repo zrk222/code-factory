@@ -706,9 +706,10 @@ def test_script_language_inventory_includes_module_and_declaration_variants(tmp_
     assert complete and roots == [tmp_path]
 
 
-def test_scan_identity_roundtrip_recomputes_producer_hash(tmp_path):
+@pytest.mark.parametrize("deep", [False, True])
+def test_scan_identity_roundtrip_recomputes_producer_hash(tmp_path, deep):
     (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
-    report = run_repo_scan(tmp_path)
+    report = run_repo_scan(tmp_path, deep=deep)
     serialized = json.dumps(report, sort_keys=True)
     restored = json.loads(serialized)
     assert restored["scan_sha256"] == _sha(_scan_identity_projection(restored))
