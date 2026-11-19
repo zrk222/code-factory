@@ -1,4 +1,5 @@
 import builtins
+import argparse
 import json
 import subprocess
 from pathlib import Path
@@ -8,6 +9,161 @@ import pytest
 
 from factoryline import provenance as bootstrap
 from factoryline import provenance as provenance_module
+
+
+def _quality_adapter_parser():
+    from factoryline.cli_quality import add_parser
+
+    parser = argparse.ArgumentParser(prog="factory")
+    add_parser(parser.add_subparsers(dest="cmd"))
+    return parser
+
+
+def _parser_subcommands(parser):
+    return next(
+        action.choices
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+
+
+def _parser_action_schema(parser):
+    result = []
+    for action in parser._actions:
+        row = {
+            field: getattr(action, field)
+            for field in (
+                "dest",
+                "option_strings",
+                "nargs",
+                "const",
+                "default",
+                "required",
+                "metavar",
+                "help",
+                "type",
+            )
+        }
+        row["action"] = type(action)
+        row["choices"] = (
+            {
+                name: _parser_action_schema(child)
+                for name, child in action.choices.items()
+            }
+            if isinstance(action, argparse._SubParsersAction)
+            else action.choices
+        )
+        result.append(row)
+    return parser.format_help(), result
+
+
+def test_quality_adapter_matches_root_action_schema_help_and_registration_order():
+    from factoryline import cli, cli_quality
+
+    root = _parser_subcommands(cli._build_parser())
+    adapter = _parser_subcommands(_quality_adapter_parser())
+    assert list(adapter) == ["quality-harness", "evidence-audit"]
+    assert list(root)[
+        list(root).index("guide") : list(root).index("evidence-audit") + 1
+    ] == ["guide", "quality-harness", "audit", "evidence-audit"]
+    for name in adapter:
+        assert _parser_action_schema(adapter[name]) == _parser_action_schema(root[name])
+    assert cli_quality.COMMAND_GROUP == "quality-harness"
+    assert cli_quality.OWNER == "quality-assurance"
+    assert cli._DIRECT_ROUTES["quality-harness"] == ("cli_quality", "run_quality")
+    assert cli._DIRECT_ROUTES["evidence-audit"] == ("cli_quality", "run_evidence")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["quality-harness", "template", "--out", "manifest.json"],
+        [
+            "quality-harness",
+            "template",
+            "--out",
+            "m.json",
+            "--root",
+            "repo",
+            "--ui",
+            "--json",
+        ],
+        ["quality-harness", "verify", "manifest.json"],
+        [
+            "quality-harness",
+            "verify",
+            "m.json",
+            "--root",
+            "repo",
+            "--out",
+            "o.json",
+            "--json",
+        ],
+        ["quality-harness", "spec-validate", "contract.yaml"],
+        [
+            "quality-harness",
+            "spec-validate",
+            "c.yaml",
+            "--root",
+            "repo",
+            "--out",
+            "o.json",
+            "--json",
+        ],
+        ["quality-harness", "spec-verify", "receipt.json"],
+        ["quality-harness", "spec-verify", "r.json", "--root", "repo", "--json"],
+        ["evidence-audit"],
+        ["evidence-audit", "m.json", "--root", "repo", "--execute", "--json"],
+    ],
+)
+def test_quality_adapter_preserves_root_namespaces(argv):
+    from factoryline import cli
+
+    assert vars(_quality_adapter_parser().parse_args(argv)) == vars(
+        cli._build_parser().parse_args(argv)
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["quality-harness"],
+        ["quality-harness", "template"],
+        ["quality-harness", "verify"],
+        ["quality-harness", "spec-validate"],
+        ["quality-harness", "spec-verify"],
+        ["evidence-audit", "--unknown"],
+    ],
+)
+def test_quality_adapter_preserves_root_argument_errors(argv, capsys):
+    from factoryline import cli
+
+    for parser in (_quality_adapter_parser(), cli._build_parser()):
+        with pytest.raises(SystemExit) as error:
+            parser.parse_args(argv)
+        assert error.value.code == 2
+        assert "error:" in capsys.readouterr().err
+
+
+def test_quality_registration_does_not_import_command_engines(monkeypatch):
+    from factoryline import cli
+
+    original = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name.rsplit(".", 1)[-1] in {
+            "capability_evidence",
+            "full_stack_ux_harness",
+            "full_stack_ux_spec",
+        }:
+            raise AssertionError("parser registration imported command engine")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    _quality_adapter_parser()
+    cli._build_parser()
+    cli._build_parser(common_only=True)
+    cli._build_parser(first_lap_only=True)
 
 
 def _actionability_args(root, **changes):
