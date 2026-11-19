@@ -4019,12 +4019,29 @@ def _runtime_challenges(profile, contract, source, lane, execution, started):
     }, [item["id"] for item in obligations]
 
 
-def _semgrep_challenges(profile, contract, source, lane, execution, started):
+def _semgrep_challenges(
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    started,
+    *,
+    execution_context=None,
+    cancelled=None,
+):
     from .runtime_audit_process import run_bounded_command
 
-    command = _deep_audit_io._semgrep_challenge_command(profile)
+    from .deep_audit_sarif import _local_execution_context
+
+    execution_context = _local_execution_context(execution_context, lane)
+    command = _deep_audit_io._semgrep_challenge_command(
+        profile, execution_context=execution_context
+    )
     baseline_path = _deep_audit_io.Path(
-        "/opt/factory/rules/semgrep-pattern-limited.yml"
+        execution_context["rules_path"]
+        if execution_context
+        else "/opt/factory/rules/semgrep-pattern-limited.yml"
     )
     baseline = baseline_path.read_bytes()
     _deep_audit_io._semgrep_rule_inventory(baseline, lane)
@@ -4048,7 +4065,8 @@ def _semgrep_challenges(profile, contract, source, lane, execution, started):
         }, [item["id"] for item in obligations]
     deadline = started + lane["timeout_seconds"]
     with _deep_audit_io.tempfile.TemporaryDirectory(
-        prefix="factory-semgrep-challenges-"
+        prefix="factory-semgrep-challenges-",
+        **({"dir": execution_context["scratch_root"]} if execution_context else {}),
     ) as root:
         for index, obligation in enumerate(obligations):
             for challenge in obligation["challenges"]:
@@ -4071,6 +4089,8 @@ def _semgrep_challenges(profile, contract, source, lane, execution, started):
                     deadline=deadline,
                     observations=observations,
                     gaps=gaps,
+                    execution_context=execution_context,
+                    cancelled=cancelled,
                 )
     return {
         "schema": "factory.deep-challenges.v1",
@@ -4106,6 +4126,8 @@ def _semgrep_challenge_result(
     deadline,
     observations,
     gaps,
+    execution_context=None,
+    cancelled=None,
 ):
     remaining = int(deadline - _deep_audit_io.time.monotonic())
     if remaining < 1:
@@ -4141,6 +4163,8 @@ def _semgrep_challenge_result(
                 challenge,
                 case,
                 remaining,
+                execution_context=execution_context,
+                cancelled=cancelled,
             )
         )
     except (
@@ -4157,7 +4181,7 @@ def _semgrep_challenge_result(
         )
 
 
-def _semgrep_challenge_command(profile):
+def _semgrep_challenge_command(profile, *, execution_context=None):
     if profile.get("engine") != "semgrep" or len(profile.get("commands", [])) != 1:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_PROFILE", "one pinned Semgrep command required"
@@ -4180,6 +4204,9 @@ def _semgrep_challenge_command(profile):
     if profile.get("tool_version") == "1.15.0":
         expected[0] = "/usr/bin/opengrep"
         expected.remove("--metrics=off")
+    if execution_context:
+        expected[0] = execution_context["executable"]
+        expected[expected.index("--config") + 1] = execution_context["rules_path"]
     if argv != expected:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_PROFILE", "pinned command differs"
@@ -4208,6 +4235,9 @@ def _run_semgrep_challenge(
     challenge,
     case,
     timeout,
+    *,
+    execution_context=None,
+    cancelled=None,
 ):
     from .runtime_audit_common import sha256_bytes as common_sha256
 
@@ -4254,23 +4284,42 @@ def _run_semgrep_challenge(
 
     def challenge_runner(argv, cwd, budget, run_scratch):
         inventory_path.write_bytes(inventory_bytes)
-        return runner(argv, cwd, budget, run_scratch)
+        options = (
+            {"tool_context": execution_context["tool_context"]}
+            if execution_context
+            else {}
+        )
+        if cancelled is not None:
+            options["cancelled"] = cancelled
+        if execution_context:
+            cwd = Path(execution_context["tool_context"]["bundle_root"])
+        return runner(argv, cwd, budget, run_scratch, **options)
 
     def report_parser(raw):
         return _deep_audit_io._semgrep_challenge_report(
-            raw, profile, challenge_root, fixture_manifest
+            raw,
+            profile,
+            challenge_root,
+            fixture_manifest,
+            execution_context=execution_context,
         )
 
-    image = lane["image"]
     execution_bindings = {
         "candidate_sha256": contract["inventory"]["candidate_sha256"],
         "challenge_source_sha256": challenge_sha,
         "profile_sha256": _deep_audit_io.digest(profile),
-        "image_sha256": common_sha256(image.encode("utf-8")),
         "tool_version": profile["tool_version"],
         "version_probe_sha256": _deep_audit_io.digest(execution["version_probe"]),
         "version_probe_facts": execution["version_probe"],
     }
+    if execution_context:
+        execution_bindings["runner_binding_sha256"] = execution_context[
+            "runner_binding_sha256"
+        ]
+    else:
+        execution_bindings["image_sha256"] = common_sha256(
+            lane["image"].encode("utf-8")
+        )
     return execute(
         challenge,
         obligation_id=obligation["id"],
@@ -4303,14 +4352,22 @@ def _run_semgrep_challenge(
     )
 
 
-def _semgrep_challenge_report(raw, profile, source_root, sources):
+def _semgrep_challenge_report(
+    raw, profile, source_root, sources, *, execution_context=None
+):
     report = _deep_audit_io.strict_json(raw)
     if not isinstance(report, dict):
         raise _deep_audit_io.RuntimeAuditError(
             "E_CHALLENGE_REPORT", "native SARIF object required"
         )
     report = _deep_audit_io._native_sarif_metadata(report, profile, [])
-    _deep_audit_io._normalize_challenge_sarif_paths(report, source_root)
+    if execution_context:
+        from .deep_audit_sarif import _local_semgrep_report
+
+        context = {**execution_context, "source_root": str(source_root)}
+        report = _local_semgrep_report(report, sources, context)
+    else:
+        _deep_audit_io._normalize_challenge_sarif_paths(report, source_root)
     return _deep_audit_io._native_sarif_paths(report, sources)
 
 

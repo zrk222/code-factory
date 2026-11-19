@@ -14,6 +14,393 @@ from factoryline.runtime_audit_common import (
 ANALYZER = {"id": "scanner", "driver": "Example", "version": "1"}
 
 
+def test_local_rule_runner_threads_scoped_cwd_and_cancellation(tmp_path, monkeypatch):
+    import base64
+    import threading
+    import time
+    from pathlib import Path
+    from factoryline.deep_audit_attestation import _semgrep_rule_runs
+    from factoryline import runtime_audit_process
+
+    evidence, lane, _, _, context = _local_semgrep_admission_fixture()
+    source, scratch, bundle = (
+        tmp_path / "source",
+        tmp_path / "run",
+        tmp_path / "operator",
+    )
+    for path in (source, scratch, bundle):
+        path.mkdir()
+    context.update(
+        source_root=str(source),
+        scratch_root=str(scratch),
+        executable=str(bundle / "opengrep.exe"),
+        rules_path=str(bundle / "rules.yml"),
+        tool_context={"bundle_root": str(bundle)},
+    )
+    cancelled = threading.Event()
+    calls = []
+
+    def runner(argv, cwd, timeout, run_scratch, **options):
+        calls.append((cwd, options))
+        Path(argv[argv.index("--json-output") + 1]).write_text(
+            '{"version":"1.15.0","errors":[],"paths":{"scanned":[]},"results":[]}'
+        )
+        return evidence["observations"][0]["execution"]
+
+    monkeypatch.setattr(runtime_audit_process, "run_bounded_command", runner)
+    config = json.loads(base64.b64decode(evidence["ruleset_base64"]))
+    profile = {
+        "tool_version": "1.15.0",
+        "commands": [{"argv": [context["executable"]]}],
+    }
+    result = _semgrep_rule_runs(
+        profile,
+        lane,
+        source,
+        scratch,
+        config["rules"],
+        time.monotonic(),
+        execution_context=context,
+        cancelled=cancelled,
+    )
+    assert len(result["observations"]) == 2
+    assert all(
+        cwd == bundle
+        and options["cancelled"] is cancelled
+        and options["tool_context"] == context["tool_context"]
+        for cwd, options in calls
+    )
+
+
+def _local_semgrep_admission_fixture():
+    import base64
+    from test_deep_audit import semgrep_execution_evidence
+
+    evidence, lane, sources, baseline = semgrep_execution_evidence(version="1.15.0")
+    binding = {"profile_sha256": "a" * 64, "tool_manifest": {"sha256": "b" * 64}}
+    lane["runner_binding"] = binding
+    context = {
+        "provider": "local-native",
+        "runner_binding_sha256": digest(binding),
+        "profile_sha256": binding["profile_sha256"],
+        "tool_manifest_sha256": "b" * 64,
+        "executable": "C:/operator/opengrep.exe",
+        "rules_path": "C:/operator/rules.yml",
+        "source_root": "C:/snap/source",
+        "scratch_root": "C:/owned/run",
+        "path_flavor": "windows",
+        "tool_context": {"bundle_root": "C:/operator"},
+    }
+    for index, row in enumerate(evidence["observations"]):
+        row["argv"][0] = context["executable"]
+        row["argv"][-4] = f"C:/owned/run/semgrep-rule-{index}/rule.json"
+        row["argv"][-2] = f"C:/owned/run/semgrep-rule-{index}/report.json"
+        row["argv"][-1] = context["source_root"]
+        row["argv_sha256"] = digest(row["argv"])
+        native = row["native_report"]
+        native["paths"]["scanned"] = [
+            path.replace("/src/", "C:/snap/source/")
+            for path in native["paths"]["scanned"]
+        ]
+        row["native_report_sha256"] = digest(native)
+        raw = canonical_bytes(native)
+        row["raw_report_sha256"] = sha256_bytes(raw)
+        row["raw_report_base64"] = base64.b64encode(raw).decode()
+    return evidence, lane, sources, baseline, context
+
+
+def test_local_semgrep_per_rule_admission_integrates_raw_paths_and_source_accounting():
+    """Synthetic native evidence proves admission contracts, not actual scanner execution."""
+    from copy import deepcopy
+    from factoryline.deep_audit_attestation import verify_semgrep_rule_execution
+
+    evidence, lane, sources, report, context = _local_semgrep_admission_fixture()
+    original = deepcopy(evidence)
+    checked = verify_semgrep_rule_execution(
+        evidence, lane, sources, report, execution_context=context
+    )
+    assert checked["state"] == "VERIFIED"
+    assert sorted(
+        path for rule in checked["rules"] for path in rule["executed_sources"]
+    ) == sorted(sources)
+    assert evidence == original
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_context",
+        "manifest",
+        "runner",
+        "executable",
+        "source",
+        "scratch",
+        "raw",
+        "image",
+        "unhashable",
+    ],
+)
+def test_local_semgrep_per_rule_admission_refuses_identity_drift(mutation):
+    from factoryline.deep_audit_attestation import verify_semgrep_rule_execution
+
+    evidence, lane, sources, report, context = _local_semgrep_admission_fixture()
+    if mutation == "missing_context":
+        context = None
+    elif mutation in {"manifest", "runner"}:
+        context[
+            {"manifest": "tool_manifest_sha256", "runner": "runner_binding_sha256"}[
+                mutation
+            ]
+        ] = "d" * 64
+    elif mutation in {"executable", "source", "scratch"}:
+        context[
+            {
+                "executable": "executable",
+                "source": "source_root",
+                "scratch": "scratch_root",
+            }[mutation]
+        ] += "-lookalike"
+    elif mutation == "raw":
+        evidence["observations"][0]["raw_report_sha256"] = "0" * 64
+    elif mutation == "image":
+        context["image_binding_sha256"] = context.pop("runner_binding_sha256")
+    else:
+        context["path_flavor"] = []
+    with pytest.raises(RuntimeAuditError):
+        verify_semgrep_rule_execution(
+            evidence, lane, sources, report, execution_context=context
+        )
+
+
+@pytest.mark.parametrize(
+    "path", ["C:/snap/source/app.js", "file:///C:/snap/source/app.js", "app.js"]
+)
+def test_local_semgrep_path_mapper_accepts_exact_bound_roles(path):
+    from factoryline.deep_audit_sarif import _local_source_path
+
+    _, _, sources, _, context = _local_semgrep_admission_fixture()
+    assert _local_source_path(path, sources, context) == "app.js"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "C:/snap/source-other/app.js",
+        "C:app.js",
+        "//server/share/app.js",
+        "file://server/share/app.js",
+        "file:///C:/snap/source/%2e%2e/app.js",
+        "file:///C:/snap/source/a%2fapp.js",
+        "C:/snap/source/../app.js",
+        "C:/snap/source/app.js:stream",
+        {},
+        [],
+    ],
+)
+def test_local_semgrep_path_mapper_refuses_escaping_and_malformed_paths(path):
+    from factoryline.deep_audit_sarif import _local_source_path
+
+    _, _, sources, _, context = _local_semgrep_admission_fixture()
+    with pytest.raises(RuntimeAuditError):
+        _local_source_path(path, sources, context)
+
+
+def test_local_normalization_cannot_take_trusted_context_from_worker_bundle():
+    from factoryline.deep_audit_sarif import _local_execution_context
+
+    _, lane, _, _, context = _local_semgrep_admission_fixture()
+    with pytest.raises(RuntimeAuditError):
+        _local_execution_context(None, lane)
+    with pytest.raises(RuntimeAuditError):
+        _local_execution_context(context, {"engine": "semgrep"})
+
+
+def test_local_semgrep_worker_normalizer_integrates_out_of_band_context():
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    evidence, lane, sources, _, context = _local_semgrep_admission_fixture()
+    lane.update(
+        id="local-semgrep",
+        family="sast",
+        mode="pattern-limited",
+        languages=["python", "javascript"],
+        report="report",
+        coverage="coverage",
+        challenge_report="challenges",
+    )
+    native = {
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {"name": "Opengrep OSS", "version": "1.15.0", "rules": []}
+                },
+                "invocations": [{"executionSuccessful": True}],
+                "results": [],
+            }
+        ],
+    }
+    coverage = {
+        "schema": "factory.deep-coverage.v1",
+        "complete": True,
+        "errors": [],
+        "sources": sources,
+        "mode": lane["mode"],
+        "fallback": False,
+        "report_sha256": digest(native),
+        "profile_sha256": context["profile_sha256"],
+        "runner_binding_sha256": context["runner_binding_sha256"],
+        "tool_version": lane["tool_version"],
+        "ruleset_sha256": lane["ruleset_sha256"],
+        "invocation_sha256": "c" * 64,
+        "obligations": [],
+        "semgrep_rule_execution": evidence,
+    }
+    inventory = {
+        "candidate_sha256": "d" * 64,
+        "files": [
+            {
+                "path": path,
+                "sha256": value,
+                "language": "python" if path.endswith(".py") else "javascript",
+            }
+            for path, value in sources.items()
+        ],
+    }
+    bundle = {
+        "schema": "factory.deep-worker.v1",
+        "run_id": "local-run",
+        "candidate_sha256": "d" * 64,
+        "artifacts": {
+            "report": native,
+            "coverage": coverage,
+            "challenges": {"schema": "factory.deep-challenges.v1", "observations": []},
+        },
+    }
+    admitted = normalize_execution_bundle(
+        bundle, lane, inventory, "local-run", [], execution_context=context
+    )
+    # Native rule admission succeeds; this fixture intentionally has no obligations.
+    assert admitted["gaps"] == ["OBLIGATION_COVERAGE_MISSING"]
+    with pytest.raises(RuntimeAuditError, match="trusted executor context"):
+        normalize_execution_bundle(bundle, lane, inventory, "local-run", [])
+    coverage["image_binding_sha256"] = coverage.pop("runner_binding_sha256")
+    rejected = normalize_execution_bundle(
+        bundle, lane, inventory, "local-run", [], execution_context=context
+    )
+    assert "LOCAL_PROVIDER_BINDING_DRIFT" in rejected["gaps"]
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("kind", ["positive", "negative", "mutation"])
+def test_local_challenge_consumers_accept_runner_identity_and_reject_image_substitution(
+    version, kind
+):
+    """Synthetic retained records exercise both actual challenge-consumer schemas."""
+    from factoryline.deep_audit_sarif import (
+        _challenge_execution_gap,
+        _challenge_execution_v2_fields,
+    )
+
+    _, lane, sources, _, context = _local_semgrep_admission_fixture()
+    lane["mutation_config_sha256"] = {"js-rule": "f" * 64}
+    manifest = {"app.js": sources["app.js"]}
+    bound = {
+        "fixture_path": "app.js",
+        "fixture_sha256": sources["app.js"],
+        "expected_exit_code": 0,
+    }
+    fields = _challenge_execution_v2_fields(lane)
+    if version == 1:
+        fields -= {"fixture_manifest_sha256", "native_artifacts"}
+    else:
+        bound.update(
+            fixture_manifest=manifest, fixture_manifest_sha256=digest(manifest)
+        )
+    execution = {key: "a" * 64 for key in fields}
+    effective = (
+        lane["mutation_config_sha256"]["js-rule"]
+        if kind == "mutation"
+        else lane["ruleset_sha256"]
+    )
+    mutation = (
+        {
+            "disabled_rule_id": "js-rule",
+            "remaining_rule_inventory_sha256": digest(["py-rule"]),
+        }
+        if kind == "mutation"
+        else None
+    )
+    execution.update(
+        schema=f"factory.native-challenge-execution.v{version}",
+        status="VERIFIED",
+        launched=True,
+        completed=True,
+        timed_out=False,
+        cleanup_confirmed=True,
+        scratch_cleanup_verified=True,
+        timeout_seconds=30,
+        duration_ms=1,
+        exit_code=0,
+        stdout_bytes=0,
+        stderr_bytes=0,
+        fixture_sha256=bound["fixture_sha256"],
+        candidate_binding_sha256="d" * 64,
+        challenge_source_sha256=digest(manifest),
+        profile_binding_sha256=context["profile_sha256"],
+        runner_binding_sha256=context["runner_binding_sha256"],
+        tool_version=lane["tool_version"],
+        version_probe_sha256=digest({"version": lane["tool_version"]}),
+        baseline_config_sha256=lane["ruleset_sha256"],
+        effective_config_sha256=effective,
+        mutation=mutation,
+    )
+    if version == 2:
+        remaining = [
+            rule for rule in lane["rule_ids"] if kind != "mutation" or rule != "js-rule"
+        ]
+        raw = canonical_bytes({"ruleset_sha256": effective, "rule_ids": remaining})
+        execution.update(
+            fixture_manifest_sha256=digest(manifest),
+            ledger_sha256=None,
+            native_artifacts=[
+                {
+                    "kind": "rule_inventory",
+                    "sha256": sha256_bytes(raw),
+                    "bytes": len(raw),
+                },
+                {
+                    "kind": "sarif_report",
+                    "sha256": execution["raw_report_sha256"],
+                    "bytes": 1,
+                },
+            ],
+        )
+    execution["execution_sha256"] = digest(
+        {key: value for key, value in execution.items() if key != "execution_sha256"}
+    )
+    challenge = {"execution": execution}
+    coverage = {
+        "profile_sha256": context["profile_sha256"],
+        "version_probe": {"version": lane["tool_version"]},
+    }
+    args = (
+        challenge,
+        bound,
+        {"detector_rule_id": "js-rule"},
+        ("obligation", kind),
+        lane,
+        coverage,
+        "d" * 64,
+    )
+    assert _challenge_execution_gap(*args) is False
+    execution["image_binding_sha256"] = execution.pop("runner_binding_sha256")
+    execution["execution_sha256"] = digest(
+        {key: value for key, value in execution.items() if key != "execution_sha256"}
+    )
+    assert _challenge_execution_gap(*args) is True
+
+
 @pytest.mark.parametrize("version,valid", [("1.15.0", True), ("1.141.0", False)])
 def test_opengrep_native_driver_requires_its_explicit_version_pin(version, valid):
     from factoryline.deep_audit_sarif import _sarif_analyzer

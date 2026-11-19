@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from . import deep_audit_io as _deep_audit_io
 from pathlib import Path
+from pathlib import PureWindowsPath, PurePosixPath
+from urllib.parse import urlsplit, unquote
 from copy import deepcopy
 import re
 
@@ -31,6 +33,202 @@ _NATIVE_REPORT_ROLES = {
     "jazzer": "fuzz_result",
     "zap": "zap_report",
 }
+
+
+def _local_execution_context(context, lane):
+    """Validate caller-supplied execution roles; never infer trust from tool reports."""
+    if "runner_binding" not in lane:
+        if context is not None:
+            raise RuntimeAuditError(
+                "E_LOCAL_CONTEXT", "local context on container lane"
+            )
+        return None
+    fields = {
+        "provider",
+        "runner_binding_sha256",
+        "profile_sha256",
+        "tool_manifest_sha256",
+        "executable",
+        "rules_path",
+        "source_root",
+        "scratch_root",
+        "path_flavor",
+        "tool_context",
+    }
+    if not isinstance(context, dict) or set(context) != fields:
+        raise RuntimeAuditError("E_LOCAL_CONTEXT", "trusted executor context required")
+    binding = lane["runner_binding"]
+    expected = {
+        "provider": "local-native",
+        "runner_binding_sha256": digest(binding),
+        "profile_sha256": binding["profile_sha256"],
+        "tool_manifest_sha256": binding["tool_manifest"]["sha256"],
+    }
+    if any(context.get(key) != value for key, value in expected.items()):
+        raise RuntimeAuditError("E_LOCAL_CONTEXT", "local provider identity differs")
+    if (
+        not isinstance(context["path_flavor"], str)
+        or context["path_flavor"] not in {"windows", "posix"}
+        or not isinstance(context["tool_context"], dict)
+    ):
+        raise RuntimeAuditError(
+            "E_LOCAL_CONTEXT", "path flavor and scoped tool context required"
+        )
+    for key in ("executable", "rules_path", "source_root", "scratch_root"):
+        _local_absolute_path(context[key], context["path_flavor"])
+    source = _local_absolute_path(context["source_root"], context["path_flavor"])
+    scratch = _local_absolute_path(context["scratch_root"], context["path_flavor"])
+    if source.is_relative_to(scratch) or scratch.is_relative_to(source):
+        raise RuntimeAuditError(
+            "E_LOCAL_CONTEXT", "disjoint source and scratch roots required"
+        )
+    return context
+
+
+def _local_absolute_path(value, flavor):
+    require_str(value, "local execution path", maximum=4096)
+    if value.startswith("file:"):
+        try:
+            parsed = urlsplit(value)
+        except ValueError as exc:
+            raise RuntimeAuditError("E_LOCAL_PATH", "malformed local file URI") from exc
+        if (
+            parsed.netloc
+            or parsed.query
+            or parsed.fragment
+            or re.search(r"%(?:2f|5c)", value, re.I)
+        ):
+            raise RuntimeAuditError("E_LOCAL_PATH", "ambiguous local file URI")
+        value = unquote(parsed.path)
+        if flavor == "windows" and re.match(r"^/[A-Za-z]:/", value):
+            value = value[1:]
+    path = PureWindowsPath(value) if flavor == "windows" else PurePosixPath(value)
+    if (
+        not path.is_absolute()
+        or ".." in path.parts
+        or value.startswith(("\\\\", "//"))
+        or "\x00" in value
+    ):
+        raise RuntimeAuditError(
+            "E_LOCAL_PATH", "absolute nonescaping local path required"
+        )
+    if flavor == "windows" and (
+        not re.fullmatch(r"[A-Za-z]:", path.drive)
+        or any(":" in part for part in path.parts[1:])
+    ):
+        raise RuntimeAuditError("E_LOCAL_PATH", "Windows drive path required")
+    return path
+
+
+def _local_source_path(value, sources, context):
+    require_str(value, "local source path", maximum=4096)
+    flavor = context["path_flavor"]
+    root = _local_absolute_path(context["source_root"], flavor)
+    windows = PureWindowsPath(value)
+    if value.startswith("file:") or windows.drive or value.startswith(("/", "\\")):
+        path = _local_absolute_path(value, flavor)
+        try:
+            value = path.relative_to(root).as_posix()
+        except ValueError as exc:
+            raise RuntimeAuditError(
+                "E_LOCAL_PATH", "source outside trusted snapshot"
+            ) from exc
+    value = relative_path(value)
+    if value not in sources:
+        raise RuntimeAuditError(
+            "E_TRACE_UNBOUND", "local source is not inventory-bound"
+        )
+    return value
+
+
+def _local_semgrep_report(report, sources, context):
+    """Normalize a copy after raw identity checks; preserve native bytes and argv."""
+    if context is None:
+        return report
+    _object(report)
+    result = deepcopy(report)
+    if "runs" in result:
+        for run in _list(result["runs"], 1, 16):
+            _object(run)
+            _local_semgrep_run(run, sources, context)
+    else:
+        scanned = result.get("paths", {}).get("scanned", [])
+        if isinstance(scanned, list):
+            result.setdefault("paths", {})["scanned"] = [
+                _local_source_path(path, sources, context) for path in scanned
+            ]
+        for finding in result.get("results", []):
+            finding["path"] = _local_source_path(finding["path"], sources, context)
+    return result
+
+
+def _local_semgrep_run(run, sources, context):
+    stack = [run]
+    count = 0
+    while stack:
+        item = stack.pop()
+        count += 1
+        if count > 200000:
+            raise RuntimeAuditError("E_REPORT_SIZE", "local SARIF tree exceeds budget")
+        if isinstance(item, list):
+            stack.extend(item)
+        elif isinstance(item, dict):
+            if "artifactLocation" in item:
+                artifact = item["artifactLocation"]
+                _object(artifact)
+                uri, indexed = _local_artifact_uri(artifact, run, context)
+                mapped = _local_source_path(uri, sources, context)
+                if (
+                    indexed is not None
+                    and _local_source_path(indexed, sources, context) != mapped
+                ):
+                    raise RuntimeAuditError(
+                        "E_SARIF_INDIRECTION", "local artifact identity differs"
+                    )
+                artifact.update(uri=mapped)
+                artifact.pop("index", None)
+                artifact.pop("uriBaseId", None)
+            stack.extend(item.values())
+
+
+def _local_artifact_uri(artifact, run, context):
+    indexed = _indexed_artifact_uri(artifact, run) if "index" in artifact else None
+    value = artifact if "uri" in artifact else indexed
+    if not isinstance(value, dict):
+        raise RuntimeAuditError("E_SARIF_INDIRECTION", "local artifact URI required")
+    uri = require_str(value.get("uri"), "local artifact URI", maximum=4096)
+    if "uriBaseId" in value:
+        key = require_str(value["uriBaseId"], "local URI base ID", maximum=256)
+        bases = _object(run.get("originalUriBaseIds", {}))
+        base = _object(bases.get(key, {})).get("uri")
+        if _local_absolute_path(base, context["path_flavor"]) != _local_absolute_path(
+            context["source_root"], context["path_flavor"]
+        ):
+            raise RuntimeAuditError(
+                "E_SARIF_INDIRECTION", "untrusted local source base"
+            )
+    return uri, indexed.get("uri") if indexed is not None else None
+
+
+def _provider_identity_field(lane):
+    return (
+        "runner_binding_sha256"
+        if lane is not None and "runner_binding" in lane
+        else "image_binding_sha256"
+    )
+
+
+def _local_context_options(context):
+    return {"execution_context": context} if context is not None else {}
+
+
+def _provider_identity_digest(lane):
+    return (
+        digest(lane["runner_binding"])
+        if "runner_binding" in lane
+        else sha256_bytes(lane["image"].encode("utf-8"))
+    )
+
 
 _ZAP_LEDGER_BYTES = 4 * 1024 * 1024
 _ZAP_LEDGER_RECORD_BYTES = 4096
@@ -1329,13 +1527,17 @@ def _native_counts_disposition(counts):
     return "not_run"
 
 
-def _rule_accounting_gaps(coverage, lane, required, report=None):
+def _rule_accounting_gaps(
+    coverage, lane, required, report=None, *, execution_context=None
+):
     if lane["engine"] == "zap":
         return ["ZAP_NATIVE_RULE_EXECUTION_REQUIRED"]
     if lane["engine"] == "codeql":
         return _codeql_retained_evidence_gaps(coverage, lane, required)
     if lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
-        return _semgrep_rule_execution_gaps(coverage, lane, required, report)
+        return _semgrep_rule_execution_gaps(
+            coverage, lane, required, report, execution_context=execution_context
+        )
     if lane["engine"] == "trivy" and "native_artifact_roles" in lane:
         return _trivy_rule_execution_gaps(coverage, lane, required, report)
     if lane["engine"] != "gitleaks":
@@ -1598,12 +1800,18 @@ def _fuzz_retained_evidence_gaps(report, lane, sources):
     return ["FUZZ_NATIVE_REPLAY_REQUIRED"]
 
 
-def _semgrep_rule_execution_gaps(coverage, lane, required, report):
+def _semgrep_rule_execution_gaps(
+    coverage, lane, required, report, *, execution_context=None
+):
     from .deep_audit_io import verify_semgrep_rule_execution
 
     try:
         verify_semgrep_rule_execution(
-            coverage.get("semgrep_rule_execution"), lane, required, report
+            coverage.get("semgrep_rule_execution"),
+            lane,
+            required,
+            report,
+            execution_context=execution_context,
         )
     except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
         return ["SEMGREP_NATIVE_RULE_EXECUTION_UNVERIFIED"]
@@ -1677,14 +1885,24 @@ def _coverage_tool_gaps(coverage, lane):
         or coverage["ruleset_sha256"] != lane["ruleset_sha256"]
     ):
         gaps.append("TOOLCHAIN_DRIFT")
+    if "runner_binding" in lane and (
+        coverage.get("runner_binding_sha256") != _provider_identity_digest(lane)
+        or "image_binding_sha256" in coverage
+        or coverage.get("profile_sha256") != lane["runner_binding"]["profile_sha256"]
+    ):
+        gaps.append("LOCAL_PROVIDER_BINDING_DRIFT")
     return gaps
 
 
-def _coverage_gaps(report, coverage, lane, required, obligations):
+def _coverage_gaps(
+    report, coverage, lane, required, obligations, *, execution_context=None
+):
     _native_accounting(report, lane, required)
     gaps = _coverage_source_gaps(report, coverage, lane, required)
     gaps.extend(_coverage_tool_gaps(coverage, lane))
-    accounting_gaps = _rule_accounting_gaps(coverage, lane, required, report)
+    accounting_gaps = _rule_accounting_gaps(
+        coverage, lane, required, report, execution_context=execution_context
+    )
     if lane["engine"] == "gitleaks" and accounting_gaps:
         gaps.append("SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE")
     gaps.extend(accounting_gaps)
@@ -1782,7 +2000,7 @@ def _challenge_execution_gap(
         "candidate_binding_sha256",
         "challenge_source_sha256",
         "profile_binding_sha256",
-        "image_binding_sha256",
+        _provider_identity_field(lane),
         "tool_version",
         "version_probe_sha256",
         "baseline_config_sha256",
@@ -1802,7 +2020,7 @@ def _challenge_execution_v2_gap(
     challenge, bound, obligation, identity, lane, coverage, candidate_sha
 ):
     execution = challenge.get("execution")
-    fields = _challenge_execution_v2_fields()
+    fields = _challenge_execution_v2_fields(lane)
     if not isinstance(execution, dict) or set(execution) != fields:
         return True
     return not _challenge_execution_v2_valid(
@@ -1810,7 +2028,7 @@ def _challenge_execution_v2_gap(
     )
 
 
-def _challenge_execution_v2_fields():
+def _challenge_execution_v2_fields(lane=None):
     return {
         "schema",
         "status",
@@ -1833,7 +2051,7 @@ def _challenge_execution_v2_fields():
         "candidate_binding_sha256",
         "challenge_source_sha256",
         "profile_binding_sha256",
-        "image_binding_sha256",
+        _provider_identity_field(lane),
         "tool_version",
         "version_probe_sha256",
         "baseline_config_sha256",
@@ -2053,12 +2271,12 @@ def _challenge_execution_v2_binding(
     execution, bound, obligation, identity, lane, coverage, candidate_sha
 ):
     expected_source = digest(bound["fixture_manifest"])
-    expected_image = sha256_bytes(lane["image"].encode("utf-8"))
+    expected_image = _provider_identity_digest(lane)
     return (
         execution.get("candidate_binding_sha256") == candidate_sha
         and execution.get("challenge_source_sha256") == expected_source
         and execution.get("profile_binding_sha256") == coverage.get("profile_sha256")
-        and execution.get("image_binding_sha256") == expected_image
+        and execution.get(_provider_identity_field(lane)) == expected_image
         and execution.get("tool_version") == lane["tool_version"]
         and execution.get("version_probe_sha256")
         == digest(coverage.get("version_probe"))
@@ -2147,7 +2365,7 @@ def _challenge_execution_budgets_valid_v2(execution, lane):
             "candidate_binding_sha256",
             "challenge_source_sha256",
             "profile_binding_sha256",
-            "image_binding_sha256",
+            _provider_identity_field(lane),
             "version_probe_sha256",
             "baseline_config_sha256",
             "effective_config_sha256",
@@ -2209,7 +2427,7 @@ def _challenge_execution_binding_valid(
     execution, bound, obligation, identity, lane, coverage, candidate_sha
 ):
     expected_source = digest({bound["fixture_path"]: bound["fixture_sha256"]})
-    expected_image = sha256_bytes(lane["image"].encode("utf-8"))
+    expected_image = _provider_identity_digest(lane)
     return _challenge_execution_identity_valid(
         execution, bound, lane, coverage, candidate_sha, expected_source, expected_image
     ) and _challenge_execution_config_valid(
@@ -2224,7 +2442,7 @@ def _challenge_execution_identity_valid(
         execution.get("candidate_binding_sha256") == candidate_sha
         and execution.get("challenge_source_sha256") == expected_source
         and execution.get("profile_binding_sha256") == coverage.get("profile_sha256")
-        and execution.get("image_binding_sha256") == expected_image
+        and execution.get(_provider_identity_field(lane)) == expected_image
         and execution.get("tool_version") == lane["tool_version"]
         and execution.get("version_probe_sha256")
         == digest(coverage.get("version_probe"))
@@ -2269,7 +2487,7 @@ def _challenge_execution_budgets_valid(execution, bound, lane, identity):
             "stderr_sha256",
             "challenge_source_sha256",
             "profile_binding_sha256",
-            "image_binding_sha256",
+            _provider_identity_field(lane),
             "version_probe_sha256",
             "baseline_config_sha256",
             "effective_config_sha256",
@@ -2319,7 +2537,9 @@ def _challenge_gaps(
         if _challenge_gap(challenge, identity, approved, lane, sources):
             gaps.append("CHALLENGE_FAILED")
         elif (
-            lane["engine"] == "gitleaks" or _is_v2_obligation(identity, approved)
+            lane["engine"] == "gitleaks"
+            or "runner_binding" in lane
+            or _is_v2_obligation(identity, approved)
         ) and _challenge_execution_gap(
             challenge,
             approved[identity][0],
@@ -2346,21 +2566,34 @@ def _is_v2_obligation(identity, approved):
 
 
 def normalize_execution_bundle(
-    bundle: dict, lane: dict, inventory: dict, run_id: str, obligations: list
+    bundle: dict,
+    lane: dict,
+    inventory: dict,
+    run_id: str,
+    obligations: list,
+    *,
+    execution_context=None,
 ) -> dict:
     """Check bounded worker evidence. Coverage remains an independently reviewed claim."""
     report, coverage, challenges, sources = _worker_artifacts(
         bundle, lane, inventory, run_id
     )
+    context = _local_execution_context(execution_context, lane)
     required = _required_sources(inventory, lane)
-    findings = _native_execution_report(report, lane, sources)
+    normalized_report = _local_semgrep_report(report, sources, context)
+    findings = _native_execution_report(normalized_report, lane, sources)
     dependency_accounting = (
         _osv_source_accounting(report, required, lane["mode"])
         if lane["engine"] == "osv" and lane["mode"] == "offline-pypi-snapshot"
         else None
     )
     gaps, expected, observed = _coverage_gaps(
-        report, coverage, lane, required, obligations
+        report,
+        coverage,
+        lane,
+        required,
+        obligations,
+        **_local_context_options(context),
     )
     gaps.extend(
         _challenge_gaps(
