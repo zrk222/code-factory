@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -27,6 +28,325 @@ from factoryline.adoption import (
     write_proof_card,
 )
 from factoryline.cli import main
+
+
+def test_scan_output_contract_required_shapes_are_frozen_v1():
+    import hashlib
+    from factoryline.cli_first_lap import scan_output_contract
+
+    schema = scan_output_contract()["output_schema"]
+    canonical = json.dumps(
+        schema, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    # Freeze the published envelope, not whitespace or platform line endings.
+    assert hashlib.sha256(canonical).hexdigest() == (
+        "d28527641b5367ed03f0e3316e570cd2b4812f252227e7844e6d276fcaca643e"
+    )
+    success, error = schema["oneOf"]
+    assert set(success["required"]) == {
+        "schema",
+        "state",
+        "verdict",
+        "assessment",
+        "static_security",
+        "deep_audit",
+        "evidence_limits",
+        "next_actions",
+        "scan_sha256",
+        "run_receipt_sha256",
+    }
+    assert set(error["required"]) == {"schema", "state", "verdict", "message"}
+    assert success["additionalProperties"] and error["additionalProperties"]
+
+
+def _scan_interface_result(state="PASS", findings=()):
+    return {
+        "schema": "factory.repo-scan.v1",
+        "state": state,
+        "verdict": state,
+        "assessment": {"files_discovered": 1},
+        "static_security": {
+            "state": state,
+            "findings": list(findings),
+            "audit_coverage": {"complete": state == "PASS"},
+        },
+        "deep_audit": None,
+        "evidence_limits": [],
+        "next_actions": [],
+        "scan_sha256": "a" * 64,
+        "run_receipt_sha256": "b" * 64,
+    }
+
+
+@pytest.mark.parametrize(
+    "other", ["--json", "--output-contract", "--pre-commit-config"]
+)
+def test_scan_interface_format_conflicts_precede_execution(monkeypatch, other):
+    import factoryline.adoption as adoption
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("format conflict invoked scanner")
+
+    monkeypatch.setattr(adoption, "run_repo_scan", forbidden)
+    with pytest.raises(SystemExit) as error:
+        main(["scan", "--sarif", other])
+    assert error.value.code == 2
+
+
+def test_scan_output_contract_is_bound_and_discovery_does_not_scan(
+    tmp_path, monkeypatch, capsys
+):
+    import hashlib
+    import factoryline.cli_first_lap as cli
+    import factoryline.adoption as adoption
+
+    monkeypatch.setattr(
+        adoption, "run_repo_scan", lambda *a, **k: pytest.fail("discovery scanned")
+    )
+    missing = tmp_path / "not created"
+    assert main(["scan", "--root", str(missing), "--output-contract"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result == cli.scan_output_contract()
+    assert result["schema"] == "factory.scan-interface-discovery.v1"
+    raw = (Path(cli.__file__).parent / "data" / "repo_scan.schema.json").read_bytes()
+    assert result["contract_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert result["output_schema"] == json.loads(raw)
+    assert not missing.exists()
+
+
+def test_scan_precommit_configuration_is_print_only(tmp_path, monkeypatch, capsys):
+    import yaml
+    import factoryline.adoption as adoption
+
+    monkeypatch.setattr(
+        adoption, "run_repo_scan", lambda *a, **k: pytest.fail("config scanned")
+    )
+    assert (
+        main(["scan", "--root", str(tmp_path / "missing"), "--pre-commit-config"]) == 0
+    )
+    text = capsys.readouterr().out
+    hook = yaml.safe_load(text)["repos"][0]["hooks"][0]
+    assert hook["entry"] == "factory scan --static-only --sarif --root ."
+    assert hook["language"] == "system"
+    assert hook["pass_filenames"] is False and hook["require_serial"] is True
+    assert "python" in hook["types_or"] and hook["stages"] == ["pre-commit"]
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "option", ["--sarif", "--output-contract", "--pre-commit-config"]
+)
+def test_scan_interface_machine_modes_disable_tty_update_check(option):
+    from factoryline.cli import _interactive_update_check_allowed
+
+    class Tty:
+        def isatty(self):
+            return True
+
+    assert not _interactive_update_check_allowed(
+        ["scan", option], stdin=Tty(), stderr=Tty(), environ={}
+    )
+
+
+def test_scan_output_contract_corruption_fails_without_scanning(
+    tmp_path, monkeypatch, capsys
+):
+    import importlib.resources
+    import factoryline.adoption as adoption
+
+    class CorruptResource:
+        def joinpath(self, *parts):
+            return self
+
+        def read_bytes(self):
+            return b"PRIVATE_CORRUPT_CONTRACT"
+
+    monkeypatch.setattr(importlib.resources, "files", lambda *a: CorruptResource())
+    monkeypatch.setattr(
+        adoption, "run_repo_scan", lambda *a, **k: pytest.fail("corruption scanned")
+    )
+    missing = tmp_path / "private missing root"
+    assert main(["scan", "--root", str(missing), "--output-contract"]) == 2
+    captured = capsys.readouterr()
+    error = json.loads(captured.err)
+    assert error["schema"] == "factory.scan-interface.error.v1"
+    assert not captured.out and not missing.exists()
+    assert "PRIVATE_CORRUPT" not in captured.err and str(missing) not in captured.err
+
+
+@pytest.mark.parametrize(
+    "state,require_complete,expected",
+    [
+        ("PASS", False, 0),
+        ("BLOCKED", False, 2),
+        ("INCOMPLETE", False, 0),
+        ("INCOMPLETE", True, 2),
+    ],
+)
+def test_scan_sarif_one_execution_and_original_exit(
+    tmp_path, monkeypatch, capsys, state, require_complete, expected
+):
+    import factoryline.adoption as adoption
+
+    calls = []
+    result = _scan_interface_result(state)
+    monkeypatch.setattr(
+        adoption, "run_repo_scan", lambda *a, **k: calls.append((a, k)) or result
+    )
+    argv = ["scan", "--root", str(tmp_path), "--sarif"]
+    assert main(argv + (["--require-complete"] if require_complete else [])) == expected
+    document = json.loads(capsys.readouterr().out)
+    assert len(calls) == 1 and document["version"] == "2.1.0"
+    run = document["runs"][0]
+    assert state in json.dumps(run["properties"])
+    if state != "PASS":
+        assert run["invocations"][0]["toolExecutionNotifications"]
+
+
+def test_scan_sarif_shared_selection_preserves_static_multiplicity():
+    import factoryline.cli_first_lap as cli
+
+    static = {
+        "code": "STATIC",
+        "message": "review",
+        "path": "file with space.py",
+        "line": 1,
+    }
+    native = {**static, "lane_id": "lane", "finding_id": "native"}
+    result = _scan_interface_result(findings=[static, static, native])
+    result["deep_audit"] = {
+        "lanes": [{"measurement_id": "other", "result": {"findings": [native]}}]
+    }
+    assert cli._scan_findings(result) == [static, static, native]
+    assert len(cli._scan_sarif(result, 0)["runs"][0]["results"]) == 3
+
+
+@pytest.mark.parametrize(
+    "path,line",
+    [
+        ("/absolute.py", 1),
+        ("../escape.py", 1),
+        ("folder\\file.py", 1),
+        ("bad\x00.py", 1),
+        ("safe.py", None),
+        ("safe.py", True),
+    ],
+)
+def test_scan_sarif_unsafe_or_unknown_locations_retain_findings(path, line):
+    import factoryline.cli_first_lap as cli
+
+    result = _scan_interface_result(
+        findings=[{"code": "RULE", "message": "review", "path": path, "line": line}]
+    )
+    run = cli._scan_sarif(result, 0)["runs"][0]
+    assert len(run["results"]) == 1
+    assert not run["results"][0].get("locations")
+    assert run["invocations"][0]["toolExecutionNotifications"]
+
+
+def test_scan_sarif_unicode_uri_and_private_payload_omission():
+    import factoryline.cli_first_lap as cli
+
+    row = {
+        "code": "RULE",
+        "path": "src/été file.py",
+        "line": 3,
+        "column": 17,
+        "message": "Review finding",
+        "facts": {"token": "PRIVATE_FACT"},
+        "snippet": "PRIVATE_SNIPPET",
+    }
+    run = cli._scan_sarif(_scan_interface_result(findings=[row]), 0)["runs"][0]
+    location = run["results"][0]["locations"][0]["physicalLocation"]
+    assert location["artifactLocation"]["uri"] == "src/%C3%A9t%C3%A9%20file.py"
+    assert location["region"] == {"startLine": 3}
+    assert "PRIVATE_" not in json.dumps(run)
+
+
+@pytest.mark.parametrize(
+    "private_path",
+    [
+        r"\\private-server\private-share\customer\app.py",
+        r"C:\private\app.py",
+        "/private/app.py",
+    ],
+)
+def test_scan_sarif_diagnostic_redacts_absolute_roots(private_path):
+    from factoryline.cli_first_lap import _sarif_message
+
+    assert _sarif_message({"message": f"Cannot inspect {private_path} safely"}) == (
+        "Cannot inspect [local path] safely"
+    )
+
+
+@pytest.mark.parametrize(
+    "error", [OSError("PRIVATE_PATH"), ValueError("PRIVATE_SCHEMA")]
+)
+def test_scan_sarif_unavailable_contract_is_structured_failure(
+    monkeypatch, capsys, error
+):
+    import factoryline.adoption as adoption
+    import factoryline.cli_first_lap as cli
+
+    calls = []
+    monkeypatch.setattr(
+        adoption,
+        "run_repo_scan",
+        lambda *a, **k: calls.append(1) or _scan_interface_result(),
+    )
+
+    def unavailable():
+        raise error
+
+    monkeypatch.setattr(cli, "scan_output_contract", unavailable)
+    assert main(["scan", "--sarif"]) == 2
+    captured = capsys.readouterr()
+    assert not captured.out and calls == [1]
+    assert json.loads(captured.err)["schema"] == "factory.scan-interface.error.v1"
+    assert "PRIVATE_" not in captured.err
+
+
+def test_scan_sarif_invalid_exception_is_unsuccessful(monkeypatch, capsys):
+    import factoryline.adoption as adoption
+
+    def invalid(*args, **kwargs):
+        raise ValueError("PRIVATE_EXCEPTION_DETAIL")
+
+    monkeypatch.setattr(adoption, "run_repo_scan", invalid)
+    assert main(["scan", "--sarif"]) == 2
+    run = json.loads(capsys.readouterr().out)["runs"][0]
+    assert run["invocations"][0]["executionSuccessful"] is False
+    assert run["invocations"][0]["toolExecutionNotifications"]
+    assert "PRIVATE_EXCEPTION_DETAIL" not in json.dumps(run)
+
+
+@pytest.mark.parametrize("unsafe", [False, True])
+def test_scan_output_contract_public_smoke_preserves_sources(tmp_path, capsys, unsafe):
+    import hashlib
+    import factoryline.cli_first_lap as cli
+
+    path = tmp_path / "file with space.py"
+    path.write_text(
+        "import yaml\ndef load(value):\n    return yaml.load(value, Loader=yaml.Loader)\n"
+        if unsafe
+        else "def identity(value):\n    return value\n",
+        encoding="utf-8",
+    )
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    code = main(["scan", "--root", str(tmp_path), "--static-only", "--json"])
+    result = json.loads(capsys.readouterr().out)
+    assert code == (2 if result["state"] == "BLOCKED" else 0)
+    contract = cli.scan_output_contract()["output_schema"]
+    success = contract["oneOf"][0]
+    assert set(success["required"]) <= result.keys()
+    assert result["schema"] == "factory.repo-scan.v1"
+    assert all(
+        result[name] in success["properties"][name]["enum"]
+        for name in ("state", "verdict")
+    )
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+    if unsafe:
+        assert result["static_security"]["findings"]
 
 
 @pytest.mark.parametrize(

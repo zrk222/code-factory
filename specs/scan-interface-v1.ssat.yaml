@@ -1,0 +1,97 @@
+schema: factory.ssat.v1
+spec_markdown: |
+  # Spec: scan-interface-v1
+  Status: draft
+  SpecFactor-target: 0.75-2.5
+
+  ## MUST - Functional core
+  ### Description
+  Add interoperable output and opt-in local hook configuration to the existing scan command without a second scanner, new dependency, increased budget or changed audit decision.
+  ### User roles
+  - Developer choosing a local output format.
+  - IDE or CI consumer reading machine output.
+  ### Requirements (EARS)
+  - The system shall enforce `output_selection` and accept exactly one of JSON, SARIF, output-contract discovery and pre-commit configuration discovery for the scan command.
+  - The system shall enforce `json_compatibility` and return the unchanged human and JSON outputs, execution options and exit rules when no new option is supplied.
+  - The system shall enforce `shared_finding_projection` and emit human and SARIF output from one shared finding collection with the current native lane/finding identity deduplication; static rows without that identity shall retain their multiplicity.
+  - The system shall enforce `sarif_export` and emit SARIF version 2.1.0 with deterministic rules and results, original severity and scan identity; the adapter shall not launch a second scan or claim release approval.
+  - The system shall enforce `safe_locations` and emit only safe workspace-relative percent-encoded artifact paths with positive integer lines; missing or unsafe locations shall omit the location, retain the finding, and remain visible as a coverage warning. The adapter shall omit columns because source offsets are UTF-8 bytes rather than known Unicode columns.
+  - The system shall enforce `incomplete_visibility` and retain scan state, verdict and coverage in SARIF properties; non-PASS states shall emit a notification and invalid execution shall remain unsuccessful rather than clean output.
+  - The system shall enforce `contract_discovery` and emit the bundled versioned JSON output schema plus its exact SHA-256 binding without scanning sources when output-contract discovery is selected.
+  - The system shall enforce `precommit_optin` and emit a repository-local pre-commit configuration using the installed scanner in static-only mode without scanning, installing hooks, adding a dependency or modifying source; the configuration shall pass no filenames and run serially so the scanner owns contextual source discovery.
+  ### Acceptance criteria (Gherkin)
+  ```gherkin
+  Scenario: Format conflicts are rejected
+    Given the obligation `output_selection`
+    When JSON and SARIF are both selected
+    Then argument validation rejects the request before a scan
+  Scenario: Legacy callers remain compatible
+    Given the obligation `json_compatibility`
+    When the existing human and JSON regression checks run
+    Then their output and exit behavior remain unchanged
+  Scenario: One observation appears once in both formats
+    Given the obligation `shared_finding_projection`
+    When native rows repeat the same lane and finding identity
+    Then human and SARIF output contain one native row while distinct static rows remain
+  Scenario: Export is an adapter not another scanner
+    Given the obligation `sarif_export`
+    When the scan returns a finding
+    Then one existing scan call produces a SARIF result and unchanged exit status
+  Scenario: Uncertain locations do not become invented source positions
+    Given the obligation `safe_locations`
+    When paths escape the workspace or line values are invalid
+    Then findings remain without fabricated locations or columns
+  Scenario: Missing evidence remains visible
+    Given the obligation `incomplete_visibility`
+    When a scan is incomplete or invalid
+    Then a SARIF notification and original state remain visible
+  Scenario: Contract discovery does not execute
+    Given the obligation `contract_discovery`
+    When the output contract is requested
+    Then the bundled schema and current digest print without scanning
+  Scenario: Configuration discovery does not install
+    Given the obligation `precommit_optin`
+    When the pre-commit configuration is requested
+    Then a local system-language serial hook prints without installing or scanning
+  ```
+  ## SHOULD - Technical/structural
+  - Data model: `factory.scan-interface.v1` (format_selected, scan_invalid, scan_complete, path_safe, native_identity_present). JSON retains `factory.repo-scan.v1` and `factory.repo-scan.error.v1`; SARIF is a separate opt-in representation with no new authority.
+  - Modify `factoryline/cli_first_lap.py`, the discovery-only read classification in `factoryline/ops_telemetry.py`, machine-output update suppression in `factoryline/cli.py`, and `tests/test_adoption.py`; add bundled `factoryline/data/repo_scan.schema.json`. Use the existing package data glob. Public options are `--sarif`, `--output-contract` and `--pre-commit-config`, mutually exclusive with `--json`. Discovery must not write lifecycle receipts or initiate update-network checks.
+  - The schema describes the top-level public success and error envelopes. Additional fields remain permitted for additive compatibility; existing required fields cannot disappear without a new schema version. Discovery returns schema plus raw-file digest, not a human-approved release token.
+  - SARIF finding messages retain bounded existing diagnostic text; snippets, facts, raw exceptions, absolute roots and tool credentials are not exported. Rule IDs are bounded identifiers. Location safety does not read files or infer source freshness.
+  - Pre-commit configuration is opt-in output only. Entry is `factory scan --static-only --sarif --root .`; language is system, pass_filenames is false, require_serial is true, types_or contains python, stages contains pre-commit. It scans the framework-provided working tree, not a separately reconstructed index. This is not the final full-stack release gate or an incremental-scan performance claim.
+  ## Decision logic
+  | # | if | then |
+  |---|---|---|
+  | 1 | `format_selected` is output-contract | Emit the bundled schema and digest without invoking scanner |
+  | 2 | `scan_invalid` is true | Emit unsuccessful invocation and preserve exit 2 |
+  | 3 | `scan_complete` is false | Retain state and emit non-clean notification |
+  | 4 | `path_safe` is false | Omit location but retain finding and warning |
+  | 5 | `native_identity_present` is true | Apply existing lane/finding deduplication |
+  | 6 | `format_selected` is pre-commit-config | Emit the local hook configuration without invoking scanner |
+plan_markdown: |
+  # Plan: scan-interface-v1
+  Spec: specs/scan-interface-v1.md
+  Architect verdict: PASS
+  ## Logical decomposition
+  1. Freeze one bundled public JSON boundary before adding output consumers.
+  2. Share the existing finding selection between human and SARIF rendering.
+  3. Add discovery-only configuration and retain normal audit execution/authority.
+  ## Tasks
+  - [ ] T1 | slice=factoryline/data | files=factoryline/data/repo_scan.schema.json | verify=`pytest tests/test_adoption.py -k scan_output_contract` | Define versioned success/error schema and raw-byte digest tests.
+  - [ ] T2 | slice=factoryline | files=factoryline/cli_first_lap.py,factoryline/ops_telemetry.py,factoryline/cli.py | verify=`pytest tests/test_adoption.py -k 'sarif or scan_output or precommit'` | Extract current finding projection; add compatible format and discovery adapters without changing scanner policy; classify discovery as read-only and suppress network notices for machine output.
+  - [ ] T3 | slice=tests | files=tests/test_adoption.py | verify=`pytest tests/test_adoption.py` | Prove legacy behavior, native deduplication, static multiplicity, invalid/incomplete visibility, safe source paths and nonexecuting discovery.
+system: scan-interface-v1
+version: 1
+governance: human_controlled
+components:
+  - name: scan_cli
+    path: factoryline/cli_first_lap.py
+    provides:
+      - name: _run_scan
+        inputs: [parsed_scan_options]
+        outputs: [human_json_or_sarif_output, original_exit_code]
+invariants:
+  - The existing scan engine and decision rules remain authoritative.
+  - Output and configuration discovery do not execute, approve, publish or install.
+  - No unsafe path or missing evidence is represented as a verified location or successful audit.
