@@ -9223,7 +9223,7 @@ def test_polyglot_cargo_real_opt_in(tmp_path, attribute, after, expected):
     )
     if attribute:
         assert result["status"] == "INCOMPLETE"
-        assert "cannot qualify" in result["error"]
+        assert result["baseline"]["observation"].get("outcome") in {None, "pending"}
     else:
         assert result["baseline"]["process"]["exit_code"] == 0, result
         assert result["mutant"]["process"]["exit_code"] == (
@@ -9364,3 +9364,104 @@ def test_polyglot_jest_real_opt_in(tmp_path, after, expected, framework):
     assert result["status"] == expected, result
     assert result["cleanup"]["removed"] is True
     assert result["source_unchanged"] is True
+
+
+@pytest.mark.parametrize("framework", ["jest", "vitest"])
+def test_polyglot_real_installed_application_dependency(tmp_path, framework):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in native dependency resolution qualification")
+    package = tmp_path / "node_modules/oracle-value"
+    package.mkdir(parents=True)
+    esm = framework == "vitest"
+    (package / "package.json").write_text(
+        '{"name":"oracle-value","version":"1.0.0","exports":"./index.js"'
+        + (',"type":"module"' if esm else "")
+        + "}"
+    )
+    (package / "index.js").write_text(
+        "export const one = 1;" if esm else "exports.one = 1;"
+    )
+    (tmp_path / "package.json").write_text(
+        '{"name":"oraclefixture"' + (',"type":"module"' if esm else "") + "}"
+    )
+    (tmp_path / "package-lock.json").write_text(
+        '{"name":"oraclefixture","lockfileVersion":3}'
+    )
+    (tmp_path / "app.js").write_text(
+        "import {one} from 'oracle-value';\nexport const value = () => one;\n"
+        if esm
+        else "const {one} = require('oracle-value');\nexports.value = () => one;\n"
+    )
+    (tmp_path / "app.test.js").write_text(
+        "import {value} from './app.js';\ntest('selected', () => { expect(value()).toBe(1); });\n"
+        if esm
+        else "const {value} = require('./app');\ntest('selected', () => { expect(value()).toBe(1); });\n"
+    )
+    tool = (
+        Path.home()
+        / ".cache/code-factory-tools/js-oracles/node_modules"
+        / {"jest": "jest/bin/jest.js", "vitest": "vitest/vitest.mjs"}[framework]
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        framework,
+        "app.test.js",
+        "selected",
+        2,
+        "app.js",
+        "() => one",
+        "() => 2",
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+        node_executable=Path("C:/nvm4w/nodejs/node.exe"),
+    )
+    assert result["status"] == "KILLED", result
+
+
+@pytest.mark.parametrize("mixed,output", [(True, ".factory/proof"), (False, "proof")])
+def test_polyglot_real_rust_mixed_attributes_and_custom_evidence(
+    tmp_path, mixed, output
+):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in native Rust selected identity/evidence qualification")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname="oraclefixture"\nversion="0.1.0"\nedition="2021"\n'
+    )
+    (tmp_path / "Cargo.lock").write_text(
+        'version = 4\n[[package]]\nname="oraclefixture"\nversion="0.1.0"\n'
+    )
+    (tmp_path / "src/lib.rs").write_text("pub fn value() -> i32 { 1 }\n")
+    other = (
+        '\n#[test]\n#[should_panic]\nfn unrelated() { panic!("expected"); }\n#[test]\n#[ignore]\nfn ignored_other() {}\n'
+        if mixed
+        else ""
+    )
+    (tmp_path / "tests/oracle.rs").write_text(
+        "#[test]\nfn selected() { assert_eq!(oraclefixture::value(), 1); }\n" + other
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "cargo",
+        "tests/oracle.rs",
+        "selected",
+        2,
+        "src/lib.rs",
+        "{ 1 }",
+        "{ 2 }",
+        output,
+        execute=True,
+        tool_executable=Path.home()
+        / ".rustup/toolchains/stable-x86_64-pc-windows-msvc/bin/cargo.exe",
+    )
+    assert result["status"] == "KILLED", result

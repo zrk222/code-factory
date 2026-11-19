@@ -4895,3 +4895,137 @@ def test_polyglot_cargo_failure_coverage_profile_is_platform_scoped(
         assert "%p-%m.profraw" in profile
         assert "runtime-counter-relocation" not in flags
     assert argv[-4:] == ["--", "--exact", "--nocapture", "--test-threads=1"]
+
+
+def test_polyglot_owned_evidence_exclusion_preserves_same_basename_inputs(tmp_path):
+    from factoryline.runtime_audit_process import (
+        _polyglot_inventory,
+        _polyglot_copy_ignores,
+    )
+    import shutil
+
+    source, copied = tmp_path / "source", tmp_path / "copy"
+    (source / "proof").mkdir(parents=True)
+    (source / "other/proof").mkdir(parents=True)
+    (source / "proof/report.json").write_text("owned output")
+    retained = source / "other/proof/input.js"
+    retained.write_text("source")
+    first = _polyglot_inventory(source, set(), Path("proof"))
+    assert [row["path"] for row in first] == ["other/proof/input.js"]
+    shutil.copytree(
+        source, copied, ignore=_polyglot_copy_ignores(source, set(), Path("proof"))
+    )
+    assert not (copied / "proof").exists()
+    assert _polyglot_inventory(copied, set(), Path("proof")) == first
+    retained.write_text("changed source")
+    assert _polyglot_inventory(source, set(), Path("proof")) != first
+
+
+@pytest.mark.parametrize(
+    "changed", ["source", "copied", "new_dependency", "new_copied_dependency"]
+)
+def test_polyglot_application_dependencies_are_bound_before_and_after_trials(
+    tmp_path, changed
+):
+    from factoryline.runtime_audit_process import (
+        _polyglot_copy_application_dependencies,
+        _polyglot_application_dependencies_current,
+    )
+
+    source, temp = tmp_path / "source", tmp_path / "temp"
+    source.mkdir()
+    temp.mkdir()
+    if not changed.startswith("new_"):
+        package = source / "node_modules/dep"
+        package.mkdir(parents=True)
+        (package / "index.js").write_text("module.exports=1")
+    manifest = _polyglot_copy_application_dependencies(source, temp)
+    assert _polyglot_application_dependencies_current(source, temp, manifest)
+    if changed.startswith("new_"):
+        (
+            (temp if changed == "new_copied_dependency" else source) / "node_modules"
+        ).mkdir()
+    else:
+        target = source if changed == "source" else temp
+        (target / "node_modules/dep/index.js").write_text("module.exports=2")
+    assert not _polyglot_application_dependencies_current(source, temp, manifest)
+
+
+def test_polyglot_owned_report_tree_is_excluded_before_input_budget_check(
+    tmp_path, monkeypatch
+):
+    """Synthetic report-size metadata isolates the prewalk budget regression."""
+    from factoryline import runtime_audit_process as process
+    from types import SimpleNamespace
+
+    (tmp_path / "app.js").write_text("source")
+    evidence = tmp_path / "proof"
+    evidence.mkdir()
+    for index in range(201):
+        (evidence / str(index)).write_text("owned report")
+    original = process._tree_entry_info
+
+    def large_owned_report(path):
+        info = original(path)
+        if path == evidence / "0":
+            return SimpleNamespace(st_mode=info.st_mode, st_size=513 * 1024 * 1024)
+        return info
+
+    monkeypatch.setattr(process, "_tree_entry_info", large_owned_report)
+    assert [
+        row["path"]
+        for row in process._polyglot_inventory(tmp_path, set(), Path("proof"))
+    ] == ["app.js"]
+
+
+def test_polyglot_unrelated_same_basename_input_files_keep_original_budget(tmp_path):
+    from factoryline.runtime_audit_process import _polyglot_inventory
+
+    (tmp_path / "proof").mkdir()
+    unrelated = tmp_path / "other/proof"
+    unrelated.mkdir(parents=True)
+    for index in range(201):
+        (unrelated / str(index)).write_text("source")
+    with pytest.raises(ValueError):
+        _polyglot_inventory(tmp_path, set(), Path("proof"))
+
+
+def test_polyglot_source_walk_rejects_linked_or_unreadable_input_before_open(
+    tmp_path, monkeypatch
+):
+    from factoryline import runtime_audit_process as process
+
+    path = tmp_path / "app.js"
+    path.write_text("source")
+    original = process._tree_entry_info
+    monkeypatch.setattr(
+        process,
+        "_tree_entry_info",
+        lambda current: None if current == path else original(current),
+    )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("rejected input must not be opened")
+
+    monkeypatch.setattr(process, "bounded_file_sha256", forbidden)
+    with pytest.raises(ValueError, match="linked or unreadable"):
+        process._polyglot_inventory(tmp_path, set())
+
+
+@pytest.mark.parametrize("mode", ["fifo", "socket"])
+def test_polyglot_input_walk_rejects_special_files_before_read(
+    tmp_path, monkeypatch, mode
+):
+    import stat
+    from types import SimpleNamespace
+    from factoryline import runtime_audit_process as process
+
+    monkeypatch.setattr(
+        process,
+        "_tree_entry_info",
+        lambda _: SimpleNamespace(
+            st_mode=stat.S_IFIFO if mode == "fifo" else stat.S_IFSOCK, st_size=0
+        ),
+    )
+    with pytest.raises(ValueError, match="regular file or directory"):
+        process._polyglot_entry_size(tmp_path / "special")

@@ -806,12 +806,12 @@ def _termination_reason(facts):
     return "process_exit"
 
 
-def _polyglot_inventory(root, ignored):
+def _polyglot_inventory(root, ignored, excluded=None):
     """Bound the complete copied input, including manifests and lock files."""
-    if not tree_has_no_links_or_reparse_points(root, ignored):
-        raise ValueError("linked or oversized workspace")
     rows, total, lines = [], 0, 0
-    for path in _polyglot_source_files(root, ignored):
+    for path in _polyglot_source_files(
+        root, ignored, limits=(200, 16 * 1024 * 1024), excluded=excluded
+    ):
         relative = path.relative_to(root)
         digest, data = bounded_file_sha256(path, 16 * 1024 * 1024, include_bytes=True)
         total += len(data)
@@ -828,7 +828,9 @@ def _polyglot_inventory(root, ignored):
     return rows
 
 
-def _polyglot_source_files(root, ignored, *, include_bytecode=False, limits=None):
+def _polyglot_source_files(
+    root, ignored, *, include_bytecode=False, limits=None, excluded=None
+):
     if limits is not None:
         info = _tree_entry_info(root)
         if info is None or not stat.S_ISDIR(info.st_mode):
@@ -836,7 +838,15 @@ def _polyglot_source_files(root, ignored, *, include_bytecode=False, limits=None
     files, total, entries = 0, 0, 0
     onerror = _polyglot_walk_error if limits is not None else None
     for directory, dirs, names in os.walk(root, onerror=onerror):
-        dirs[:] = sorted(name for name in dirs if name not in ignored)
+        dirs[:] = sorted(
+            name
+            for name in dirs
+            if name not in ignored
+            and (
+                excluded is None
+                or (Path(directory) / name).relative_to(root) != excluded
+            )
+        )
         if limits is not None:
             entries += len(dirs) + len(names)
             if entries > limits[0] * 2:
@@ -865,6 +875,8 @@ def _polyglot_entry_size(path):
     info = _tree_entry_info(path)
     if info is None:
         raise ValueError("tool dependency entry is linked or unreadable")
+    if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+        raise ValueError("input entry must be a regular file or directory")
     return info.st_size if stat.S_ISREG(info.st_mode) else None
 
 
@@ -1409,15 +1421,11 @@ def _capture_polyglot_challenge(
     }
     parent, temp = root, None
     try:
-        manifest = _polyglot_inventory(root, ignored)
+        excluded = evidence.relative_to(root)
+        manifest = _polyglot_inventory(root, ignored, excluded)
         source, old, new, target_line = _polyglot_bind_mutation(
             root, test, production, before, after
         )
-        if framework == "cargo" and re.search(
-            r"#\s*\[\s*(?:should_panic|ignore)\b",
-            (root / test).read_text(encoding="utf-8"),
-        ):
-            raise ValueError("ignored and should_panic tests cannot qualify an oracle")
         tool = Path(tool or "__missing_tool__").absolute()
         launcher = Path(
             launcher or shutil.which("node") or "__missing_node__"
@@ -1436,8 +1444,17 @@ def _capture_polyglot_challenge(
         payload["tools"] = _polyglot_tools(framework, tool, launcher)
         parent, temp = create_bounded_temp_directory("cf-polyglot-oracle-")
         trial = temp / "candidate"
-        shutil.copytree(root, trial, ignore=shutil.ignore_patterns(*ignored))
-        if _polyglot_inventory(trial, ignored) != manifest:
+        shutil.copytree(
+            root, trial, ignore=_polyglot_copy_ignores(root, ignored, excluded)
+        )
+        dependencies = (
+            _polyglot_copy_application_dependencies(root, temp)
+            if framework in {"jest", "vitest"}
+            else None
+        )
+        if dependencies is not None:
+            payload["application_dependencies"] = dependencies
+        if _polyglot_inventory(trial, ignored, excluded) != manifest:
             raise ValueError("copy source/configuration drift")
         copied = trial / production
         deadline = time.monotonic() + timeout
@@ -1454,14 +1471,19 @@ def _capture_polyglot_challenge(
             evidence,
         )
         payload["baseline"] = _polyglot_trial(*args, "baseline", deadline)
-        if _polyglot_inventory(trial, ignored) != manifest:
+        if _polyglot_inventory(
+            trial, ignored, excluded
+        ) != manifest or not _polyglot_application_dependencies_current(
+            root, temp, dependencies
+        ):
             raise ValueError("baseline changed source/configuration")
         copied.write_bytes(source.replace(old, new, 1))
-        mutated = _polyglot_inventory(trial, ignored)
+        mutated = _polyglot_inventory(trial, ignored, excluded)
         payload["mutant"] = _polyglot_trial(*args, "mutant", deadline)
         stable = (
-            _polyglot_inventory(trial, ignored) == mutated
-            and _polyglot_inventory(root, ignored) == manifest
+            _polyglot_inventory(trial, ignored, excluded) == mutated
+            and _polyglot_inventory(root, ignored, excluded) == manifest
+            and _polyglot_application_dependencies_current(root, temp, dependencies)
             and _polyglot_tools(framework, tool, launcher) == payload["tools"]
         )
         payload["source_unchanged"] = stable
@@ -1484,6 +1506,47 @@ def _capture_polyglot_challenge(
             json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
     return payload
+
+
+def _polyglot_copy_ignores(root, ignored, excluded):
+    patterns = shutil.ignore_patterns(*ignored)
+
+    def ignore(directory, names):
+        omitted = patterns(directory, names)
+        omitted.update(
+            name
+            for name in names
+            if (Path(directory) / name).relative_to(root) == excluded
+        )
+        return omitted
+
+    return ignore
+
+
+def _polyglot_copy_application_dependencies(root, temp):
+    source = root / "node_modules"
+    if not source.exists() and not source.is_symlink():
+        return {"path": str(source), "state": "ABSENT"}
+    manifest = _polyglot_dependencies(source)
+    copied = temp / "node_modules"
+    shutil.copytree(source, copied, symlinks=True)
+    if _polyglot_dependencies(copied)["files"] != manifest["files"]:
+        raise ValueError("copied application dependencies differ")
+    return manifest
+
+
+def _polyglot_application_dependencies_current(root, temp, manifest):
+    if manifest is None:
+        return True
+    if manifest.get("state") == "ABSENT":
+        return not any(
+            path.exists() or path.is_symlink()
+            for path in (root / "node_modules", temp / "node_modules")
+        )
+    return (
+        _polyglot_dependencies(root / "node_modules") == manifest
+        and _polyglot_dependencies(temp / "node_modules")["files"] == manifest["files"]
+    )
 
 
 def _validate_polyglot_request(
