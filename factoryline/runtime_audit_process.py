@@ -841,11 +841,15 @@ def _polyglot_source_files(root, ignored, *, include_bytecode=False, limits=None
             entries += len(dirs) + len(names)
             if entries > limits[0] * 2:
                 raise ValueError("tool dependency entry limit exceeded")
-            sizes = [_polyglot_entry_size(Path(directory) / name) for name in dirs + names]
+            sizes = [
+                _polyglot_entry_size(Path(directory) / name) for name in dirs + names
+            ]
             files += sum(size is not None for size in sizes)
             total += sum(size for size in sizes if size is not None)
             if _tree_budget_exceeded(files, total, entries, *limits, float("inf")):
-                raise ValueError("tool dependencies exceed bounded regular-file inventory")
+                raise ValueError(
+                    "tool dependencies exceed bounded regular-file inventory"
+                )
         for name in sorted(names):
             if name not in ignored and (
                 include_bytecode or not name.endswith((".pyc", ".pyo"))

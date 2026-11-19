@@ -4826,7 +4826,11 @@ def test_polyglot_dependency_walk_preserves_small_bounds(tmp_path, limits):
     (tmp_path / "a.pyc").write_bytes(b"ab")
     (tmp_path / "z.js").write_bytes(b"cd")
     with pytest.raises(ValueError):
-        list(_polyglot_source_files(tmp_path, set(), include_bytecode=True, limits=limits))
+        list(
+            _polyglot_source_files(
+                tmp_path, set(), include_bytecode=True, limits=limits
+            )
+        )
 
 
 def test_polyglot_dependency_walk_rejects_root_and_walk_errors(tmp_path, monkeypatch):
@@ -4852,6 +4856,10 @@ def test_polyglot_dependency_walk_rejects_linked_entry(tmp_path, monkeypatch):
     target = tmp_path / "target"
     target.write_bytes(b"x")
     original = process._tree_entry_info
-    monkeypatch.setattr(process, "_tree_entry_info", lambda path: None if path == target else original(path))
+    monkeypatch.setattr(
+        process,
+        "_tree_entry_info",
+        lambda path: None if path == target else original(path),
+    )
     with pytest.raises(ValueError):
         process._polyglot_dependencies(tmp_path)
