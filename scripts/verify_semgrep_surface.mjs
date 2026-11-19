@@ -3,7 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, copyFileSync, readFileSync, writeFileSync, mkdirSync, chmodSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname } from 'node:path';
-import { verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix } from './semgrep_mutation_controls.mjs';
+import { verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix,
+  javascriptControlManifest, verifyJavascriptControlMatrix, tsxQualificationSuffix } from './semgrep_mutation_controls.mjs';
 
 const [image, output = '.factory/semgrep-surface-verification.json'] = process.argv.slice(2);
 if (!image) throw new Error('Usage: node scripts/verify_semgrep_surface.mjs IMAGE OUTPUT');
@@ -247,6 +248,8 @@ try {
   copyFileSync(rulesPath, join(temp, 'semgrep-pattern-limited.yml'));
   copyFileSync('deploy/deep-adapters/rules/tests/python-controls.txt', join(temp, 'semgrep-pattern-limited.py'));
   for (const extension of ['js', 'ts']) copyFileSync('deploy/deep-adapters/rules/tests/javascript-controls.js', join(temp, `semgrep-pattern-limited.${extension}`));
+  writeFileSync(join(temp, 'semgrep-pattern-limited.tsx'),
+    readFileSync('deploy/deep-adapters/rules/tests/javascript-controls.js', 'utf8') + tsxQualificationSuffix);
   copyFileSync('deploy/deep-adapters/rules/tests/php-controls.php', join(temp, 'semgrep-pattern-limited.php'));
   for (const [extension, [, content]] of Object.entries(polyglotControls)) {
     writeFileSync(join(temp, `semgrep-pattern-limited.${extension}`), `${content}\n`);
@@ -259,6 +262,15 @@ try {
   }
   fixtureManifest = readdirSync(temp).filter(name => !name.endsWith('.yml')).flatMap(name =>
     fixtureExpectations(name.split('.').at(-1), readFileSync(join(temp, name), 'utf8')));
+  const javascriptExpected = javascriptControlManifest();
+  fixtureManifest = fixtureManifest.map(item => {
+    if (!/\.(?:js|ts|tsx)$/.test(item.path)) return item;
+    const fixed = javascriptExpected.find(expected => expected.path === item.path &&
+      expected.rule === item.rule && expected.line === item.line);
+    if (!fixed) throw new Error('Unreviewed JavaScript fixture expectation');
+    return fixed;
+  });
+  verifyJavascriptControlMatrix(fixtureManifest);
   const expectedRules = [...new Set(fixtureManifest.map(item => item.rule))].sort();
   const configuredRules = [...readFileSync(rulesPath, 'utf8').matchAll(/^  - id: (.+)$/gm)].map(match => `opt.factory.rules.${match[1]}`).sort();
   const safeCounts = {};
@@ -290,7 +302,7 @@ try {
   // Exercise suppression only after annotation testing: Semgrep's test runner
   // interprets nosemgrep comments differently from production scan output.
   const annotated = [];
-  for (const extension of ['py', 'js', 'ts', 'php']) {
+  for (const extension of ['py', 'js', 'ts', 'tsx', 'php']) {
     const fixture = join(temp, `semgrep-pattern-limited.${extension}`);
     const content = readFileSync(fixture, 'utf8');
     const vulnerableCall = ['child_process.', 'exec', '(alias);'].join('');
@@ -343,7 +355,7 @@ try {
   const enabledKeys = keys(active(enabledFindings));
   const expectedKeys = disabledKeys.filter(key => !annotated.includes(key));
   if (JSON.stringify(enabledKeys) !== JSON.stringify(expectedKeys)) {
-    throw new Error('Enabled suppression did not remove exactly the four annotated findings');
+    throw new Error('Enabled suppression did not remove exactly the five annotated findings');
   }
   const manifestKey = item => `${item.rule}|${item.path}|${item.line}`;
   const expectedFindingKeys = fixtureManifest.map(manifestKey).sort();
@@ -355,6 +367,9 @@ try {
   const sourceHashes = Object.fromEntries(readdirSync(temp).filter(name => !name.endsWith('.yml'))
     .map(name => [name, hash(readFileSync(join(temp, name)))]));
   receipt.source_sink_controls = verifySourceSinkFlows(sarif, fixtureManifest, sourceHashes);
+  receipt.tsx_qualification = { state: 'PASS', baseline_javascript_findings_per_extension: 7,
+    expected_tsx_findings: 9, source_sha256: sourceHashes['semgrep-pattern-limited.tsx'],
+    expected: javascriptExpected.filter(item => item.path.endsWith('.tsx')) };
   // Use the existing production normalizer against retained native bytes and actual
   // fixture hashes. Python rechecks source/report bytes before and after ingestion.
   const roundtrip = spawnSync('python', ['-c', `
@@ -372,7 +387,7 @@ path.write_text(json.dumps(report), encoding='utf-8')
 analyzer={"id":"semgrep-surface", "driver":"Opengrep OSS", "version":profile["tool_version"]}
 normalized=normalize_sarif(root, {"path":path.name,"sha256":sha256_bytes(path.read_bytes())}, analyzer, hashes)
 binding={"path":path.name,"sha256":sha256_bytes(path.read_bytes())}
-for bad in ({**hashes, next(iter(hashes)): "0"*64}, {key:value for key,value in hashes.items() if not key.endswith('.go')}):
+for bad in ({**hashes, next(iter(hashes)): "0"*64}, {key:value for key,value in hashes.items() if not key.endswith('.go')}, {key:value for key,value in hashes.items() if not key.endswith('.tsx')}):
  try:
   normalize_sarif(root, binding, analyzer, bad)
  except RuntimeAuditError:

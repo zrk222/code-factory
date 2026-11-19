@@ -97,8 +97,60 @@ function matchesEndpoints(steps, expected) {
     steps.at(-1).line === expected.line;
 }
 
+// Fixed reviewed line identities; never generated from candidate annotations.
+export const javascriptControlEndpoints = [
+  ['command', 4, 9], ['sql', 23, 26], ['html', 36, 38],
+  ['path', 55, 59], ['path', 63, 66], ['path', 70, 73], ['path', 99, 101],
+];
+export const tsxQualificationSuffix = `import * as processAlias from "child_process";
+import * as fileAlias from "fs";
+export function QualifiedView(req, res) {
+  const value = req.query.command;
+  const alias = "echo " + value;
+  // ruleid: javascript.request-command-injection
+  processAlias.exec(alias);
+  const path = req.body.path;
+  // ruleid: javascript.request-path-traversal
+  fileAlias.readFileSync(path);
+  let safe = req.query.command;
+  safe = "echo fixed";
+  // ok: javascript.request-command-injection
+  processAlias.exec(safe);
+  // ok: javascript.request-command-injection
+  processAlias.execFile("echo", [value]);
+  return <section title="é漢字">{value}</section>;
+}
+function shadowed(processAlias, req) {
+  // ok: javascript.request-command-injection
+  processAlias.exec(req.query.command);
+}
+`;
+
+export function javascriptControlManifest() {
+  const family = javascriptControlEndpoints.map(([family, source_line, line]) => ({
+    rule: `opt.factory.rules.javascript.request-${family === 'path' ? 'path-traversal' : family + '-injection'}`,
+    source_line, line,
+  }));
+  return ['js', 'ts', 'tsx'].flatMap(extension => {
+    const path = `semgrep-pattern-limited.${extension}`;
+    const additional = extension === 'tsx' ? [
+      { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 106, line: 109 },
+      { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 110, line: 112 },
+    ] : [];
+    return [...family, ...additional].map(item => ({ ...item, path }));
+  });
+}
+
+export function verifyJavascriptControlMatrix(manifest) {
+  const identity = item => `${item.rule}|${item.path}|${item.source_line}|${item.line}`;
+  const observed = manifest.filter(item => /\.(?:js|ts|tsx)$/.test(item.path ?? '')).map(identity).sort();
+  if (JSON.stringify(observed) !== JSON.stringify(javascriptControlManifest().map(identity).sort())) {
+    throw new Error('JavaScript/TypeScript/TSX fixed source/finding matrix differs');
+  }
+}
+
 export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
-  if (manifest.length !== 97 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30) {
+  if (manifest.length !== 106 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30) {
     throw new Error('Registered rule/finding control matrix differs');
   }
   for (const language of ['go', 'java', 'csharp', 'ruby']) {
