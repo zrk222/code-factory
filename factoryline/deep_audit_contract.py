@@ -361,7 +361,7 @@ def _validate_lane_image(lane: dict) -> None:
 def _validate_local_runner(lane: dict) -> None:
     binding = _keys(
         lane["runner_binding"],
-        "kind platform profile_sha256 tool_manifest_sha256 ruleset_sha256 provenance grants",
+        "kind platform profile_sha256 tool_manifest ruleset_sha256 provenance grants",
     )
     if (
         binding["kind"],
@@ -373,8 +373,13 @@ def _validate_local_runner(lane: dict) -> None:
         raise RuntimeAuditError(
             "E_LOCAL_RUNNER", "only pinned static OpenGrep is admitted"
         )
-    for field in ("profile_sha256", "tool_manifest_sha256", "ruleset_sha256"):
+    for field in ("profile_sha256", "ruleset_sha256"):
         require_digest(binding[field], field)
+    locator = _keys(binding["tool_manifest"], "path sha256")
+    require_digest(locator["sha256"], "tool_manifest.sha256")
+    path = Path(require_str(locator["path"], "tool_manifest.path", maximum=4096))
+    if not path.is_absolute() or ".." in path.parts:
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "absolute operator manifest required")
     if binding["ruleset_sha256"] != lane["ruleset_sha256"]:
         raise RuntimeAuditError("E_LOCAL_RUNNER", "local rules identity differs")
     platform = _keys(binding["platform"], "os architecture")
@@ -1217,7 +1222,11 @@ def _execution_obligations(value: object, lanes: list[dict], version: int) -> No
 
 
 def load_execution_manifest(
-    path: Path, expected_sha256: str, inventory: dict | None = None
+    path: Path,
+    expected_sha256: str,
+    inventory: dict | None = None,
+    *,
+    candidate_root: Path | None = None,
 ) -> dict:
     """Validate the exact operator-selected execution plan; never discover it implicitly."""
     raw = _read(Path(path))
@@ -1237,6 +1246,13 @@ def load_execution_manifest(
     _validate_execution_identity(plan)
     lanes = _execution_lanes(plan["lanes"], version, inventory)
     _execution_obligations(plan["obligations"], lanes, version)
+    for lane in lanes:
+        if "runner_binding" in lane:
+            from .deep_audit_attestation import verify_local_tool_manifest
+
+            verify_local_tool_manifest(
+                lane["runner_binding"], candidate_root=candidate_root
+            )
     return plan
 
 

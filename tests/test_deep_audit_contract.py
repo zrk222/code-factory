@@ -2984,7 +2984,10 @@ def _local_runner_lane():
         "kind": "local-native",
         "platform": {"os": "windows", "architecture": "x86_64"},
         "profile_sha256": "a" * 64,
-        "tool_manifest_sha256": "b" * 64,
+        "tool_manifest": {
+            "path": str(Path.cwd().anchor + "operator-tools/manifest.json"),
+            "sha256": "b" * 64,
+        },
         "ruleset_sha256": "c" * 64,
         "provenance": {
             "release_url": "https://github.com/opengrep/opengrep/releases/download/v1.15.0/opengrep_windows_x86.exe",
@@ -3019,6 +3022,195 @@ def _local_runner_lane():
         "rule_ids": ["test-rule"],
         "mutation_config_sha256": {"test-rule": "f" * 64},
     }
+
+
+def test_local_manifest_loader_receives_resolved_candidate_root(tmp_path, monkeypatch):
+    from factoryline import deep_audit, deep_audit_contract
+
+    class LoaderReached(Exception):
+        pass
+
+    def loader(*args, candidate_root=None, **kwargs):
+        assert candidate_root == tmp_path.resolve()
+        raise LoaderReached
+
+    monkeypatch.setattr(deep_audit_contract, "load_execution_manifest", loader)
+    with pytest.raises(LoaderReached):
+        deep_audit.scan_deep_audit(
+            tmp_path,
+            tmp_path / "manifest.json",
+            "a" * 64,
+            authorization=tmp_path / "auth.json",
+            trust_root=tmp_path / "trust.json",
+            trust_root_sha256="b" * 64,
+        )
+
+
+@pytest.mark.parametrize("failure", ["walk", "early-file", "manifest"])
+def test_operator_tool_manifest_rejects_incomplete_or_changed_tree(
+    tmp_path, monkeypatch, failure
+):
+    from factoryline import deep_audit_attestation as attestation
+
+    lane, root = _local_tool_bundle(tmp_path)
+    if failure == "walk":
+
+        def unreadable(*args, onerror=None, **kwargs):
+            assert onerror is not None
+            onerror(PermissionError("inaccessible subtree"))
+            return iter(())
+
+        monkeypatch.setattr(attestation._deep_audit_io.os, "walk", unreadable)
+    else:
+        original = attestation._local_tool_file
+
+        def change_earlier(bundle, row):
+            result = original(bundle, row)
+            if row["role"] == "provenance":
+                target = "executable" if failure == "early-file" else "manifest.json"
+                (bundle / target).write_bytes(b"changed after prior verification")
+            return result
+
+        monkeypatch.setattr(attestation, "_local_tool_file", change_earlier)
+    with pytest.raises(
+        RuntimeAuditError, match="tool inventory unreadable|tool bundle changed"
+    ):
+        attestation.verify_local_tool_manifest(
+            lane["runner_binding"], candidate_root=tmp_path / "candidate"
+        )
+
+
+def _local_tool_bundle(tmp_path):
+    lane = _local_runner_lane()
+    binding = lane["runner_binding"]
+    root = tmp_path / "operator"
+    root.mkdir()
+    rows = []
+    for role in ("executable", "resource", "profile", "rules", "provenance"):
+        raw = (role + "\n").encode()
+        (root / role).write_bytes(raw)
+        rows.append(
+            {"path": role, "sha256": sha256_bytes(raw), "bytes": len(raw), "role": role}
+        )
+    manifest = root / "manifest.json"
+    manifest.write_text(
+        json.dumps({"schema": "factory.local-tool-manifest.v1", "files": rows})
+    )
+    binding["tool_manifest"] = {
+        "path": str(manifest),
+        "sha256": sha256_bytes(manifest.read_bytes()),
+    }
+    binding["profile_sha256"] = rows[2]["sha256"]
+    binding["ruleset_sha256"] = lane["ruleset_sha256"] = rows[3]["sha256"]
+    binding["provenance"]["artifact_sha256"] = rows[0]["sha256"]
+    binding["provenance"]["verification_receipt_sha256"] = rows[4]["sha256"]
+    return lane, root
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [None, "drift", "extra", "missing", "inside", "no-root", "profile", "manifest"],
+)
+def test_operator_tool_manifest_binds_actual_complete_bundle(tmp_path, damage):
+    from factoryline.deep_audit_attestation import verify_local_tool_manifest
+
+    lane, root = _local_tool_bundle(tmp_path)
+    binding = lane["runner_binding"]
+    candidate = tmp_path / "candidate"
+    mutations = {
+        "drift": lambda: (root / "resource").write_bytes(b"changed"),
+        "extra": lambda: (root / "extra.dll").write_bytes(b"unbound"),
+        "missing": lambda: (root / "resource").unlink(),
+        "profile": lambda: binding.update(profile_sha256="a" * 64),
+        "manifest": lambda: binding["tool_manifest"].update(sha256="a" * 64),
+    }
+    if damage in mutations:
+        mutations[damage]()
+    if damage == "inside":
+        candidate = root.parent
+    if damage == "no-root":
+        candidate = None
+    if damage is None:
+        assert (
+            len(verify_local_tool_manifest(binding, candidate_root=candidate)["files"])
+            == 5
+        )
+    else:
+        with pytest.raises(RuntimeAuditError):
+            verify_local_tool_manifest(binding, candidate_root=candidate)
+
+
+@pytest.mark.parametrize("link", ["file", "directory", "ancestor"])
+def test_operator_tool_manifest_rejects_linked_bundle(tmp_path, link):
+    from factoryline.deep_audit_attestation import verify_local_tool_manifest
+
+    lane, root = _local_tool_bundle(tmp_path)
+    try:
+        if link == "ancestor":
+            alias = tmp_path / "alias"
+            alias.symlink_to(root, target_is_directory=True)
+            lane["runner_binding"]["tool_manifest"]["path"] = str(
+                alias / "manifest.json"
+            )
+        elif link == "directory":
+            (root / "linked").symlink_to(tmp_path, target_is_directory=True)
+        else:
+            (root / "linked").symlink_to(root / "resource")
+    except OSError:
+        pytest.skip("Host does not grant symlink creation")
+    with pytest.raises(RuntimeAuditError):
+        verify_local_tool_manifest(
+            lane["runner_binding"], candidate_root=tmp_path / "candidate"
+        )
+
+
+@pytest.mark.parametrize(
+    "damage", [None, "missing", "extra", "stale", "image-substitution"]
+)
+def test_local_runner_requires_exact_signed_provider_map(tmp_path, damage):
+    from factoryline.deep_audit_attestation import verify_execution_authorization
+
+    _, _, _, _, trust, plan, _, material = execution_fixture(tmp_path)
+    lane = _local_runner_lane()
+    plan["lanes"].append(lane)
+    pin = "f" * 64
+    now = datetime.now(timezone.utc)
+    payload = {
+        "schema": "factory.deep-execution-authorization.v1",
+        "manifest_sha256": pin,
+        "candidate_sha256": plan["candidate_sha256"],
+        "manifest_content_sha256": digest(plan),
+        "adapter_images": {
+            item["id"]: item["image"] for item in plan["lanes"] if "image" in item
+        },
+        "local_runner_bindings": {lane["id"]: digest(lane["runner_binding"])},
+        "issued_at": (now - timedelta(seconds=5)).isoformat(),
+        "expires_at": (now + timedelta(minutes=5)).isoformat(),
+        "authority": "none",
+    }
+    if damage == "missing":
+        payload.pop("local_runner_bindings")
+    elif damage == "extra":
+        payload["local_runner_bindings"]["unapproved"] = "a" * 64
+    elif damage == "stale":
+        payload["local_runner_bindings"][lane["id"]] = "a" * 64
+    elif damage == "image-substitution":
+        payload["adapter_images"][lane["id"]] = digest(lane["runner_binding"])
+    authorization = execution_sign(
+        tmp_path / "local-auth.json", payload, material["coordinator"]
+    )
+    if damage is None:
+        assert (
+            verify_execution_authorization(
+                plan, pin, authorization, trust, plan["trust_root_sha256"]
+            )
+            == payload
+        )
+    else:
+        with pytest.raises(RuntimeAuditError, match="E_ADAPTER_AUTHORIZATION"):
+            verify_execution_authorization(
+                plan, pin, authorization, trust, plan["trust_root_sha256"]
+            )
 
 
 @pytest.mark.parametrize("field", ["os", "architecture"])
@@ -3067,38 +3259,29 @@ def test_local_runner_rejects_ambiguous_or_unbound_contract(damage):
 
     lane = _local_runner_lane()
     binding = lane["runner_binding"]
-    if damage == "image":
-        lane["image"] = "sha256:" + "a" * 64
-    elif damage == "neither":
-        lane.pop("runner_binding")
-    elif damage == "extra":
-        binding["self_verified"] = True
-    elif damage == "manifest":
-        binding["tool_manifest_sha256"] = "bad"
-    elif damage == "rules":
-        binding["ruleset_sha256"] = "a" * 64
-    elif damage == "profile":
-        binding["profile_sha256"] = "b" * 64
-    elif damage == "platform":
-        binding["platform"]["os"] = "macos"
-    elif damage == "grant-extra":
-        binding["grants"]["execute"] = True
-    elif damage == "grant-missing":
-        binding["grants"].pop("write")
-    elif damage == "network":
-        binding["grants"]["network"] = True
-    elif damage == "bool-alias":
-        binding["grants"]["network"] = 0
-    elif damage == "provenance-missing":
-        binding["provenance"].pop("artifact_sha256")
-    elif damage == "provenance-extra":
-        binding["provenance"]["verified"] = True
-    elif damage == "release-platform":
-        binding["platform"]["os"] = "linux"
-    elif damage == "receipt":
-        binding["provenance"]["verification_receipt_sha256"] = "bad"
-    elif damage == "runtime":
-        lane["engine"] = "runtime"
+    mutations = {
+        "image": (lane, "image", "sha256:" + "a" * 64),
+        "neither": (lane, "runner_binding", None),
+        "extra": (binding, "self_verified", True),
+        "manifest": (binding["tool_manifest"], "sha256", "bad"),
+        "rules": (binding, "ruleset_sha256", "a" * 64),
+        "profile": (binding, "profile_sha256", "b" * 64),
+        "platform": (binding["platform"], "os", "macos"),
+        "grant-extra": (binding["grants"], "execute", True),
+        "grant-missing": (binding["grants"], "write", None),
+        "network": (binding["grants"], "network", True),
+        "bool-alias": (binding["grants"], "network", 0),
+        "provenance-missing": (binding["provenance"], "artifact_sha256", None),
+        "provenance-extra": (binding["provenance"], "verified", True),
+        "release-platform": (binding["platform"], "os", "linux"),
+        "receipt": (binding["provenance"], "verification_receipt_sha256", "bad"),
+        "runtime": (lane, "engine", "runtime"),
+    }
+    target, key, value = mutations[damage]
+    if value is None:
+        target.pop(key)
+    else:
+        target[key] = value
     with pytest.raises(RuntimeAuditError):
         _execution_lane(lane, 2)
 

@@ -2546,7 +2546,7 @@ def scan_deep_audit(
 
     root = Path(root).resolve()
     request_reference = _request_file_reference(root, request_file)
-    plan = load_execution_manifest(manifest, manifest_sha256)
+    plan = load_execution_manifest(manifest, manifest_sha256, candidate_root=root)
     _authorized, verified_authorization_sha256 = verify_execution_authorization(
         plan,
         manifest_sha256,

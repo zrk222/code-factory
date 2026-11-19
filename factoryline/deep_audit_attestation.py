@@ -195,13 +195,161 @@ def verify_execution_authorization(
             "execution authorization does not bind this manifest and candidate",
         )
     if payload.get("adapter_images") != {
-        lane["id"]: lane["image"] for lane in plan["lanes"]
+        lane["id"]: lane["image"] for lane in plan["lanes"] if "image" in lane
     }:
         raise RuntimeAuditError(
             "E_ADAPTER_AUTHORIZATION",
             "coordinator must approve every exact adapter image",
         )
+    local = {
+        lane["id"]: digest(lane["runner_binding"])
+        for lane in plan["lanes"]
+        if "runner_binding" in lane
+    }
+    if (local and payload.get("local_runner_bindings") != local) or (
+        not local and "local_runner_bindings" in payload
+    ):
+        raise RuntimeAuditError(
+            "E_ADAPTER_AUTHORIZATION", "exact local runner authorization required"
+        )
     return (payload, envelope_sha256) if return_envelope_sha256 else payload
+
+
+def _local_tool_file(root, row):
+    """Stream pinned executable/resource bytes without loading tool bundles into memory."""
+    from .deep_audit_contract import _keys
+
+    _keys(row, "path sha256 bytes role")
+    expected = require_digest(row["sha256"], "tool sha256")
+    size = require_int(row["bytes"], "tool bytes", minimum=0, maximum=512 * 1024 * 1024)
+    path = local_file(root, row["path"])
+    signature = _deep_audit_io._zap_file_signature
+    before = signature(path.stat())
+    hasher = _deep_audit_io.hashlib.sha256()
+    total = 0
+    with path.open("rb") as stream:
+        opened = signature(_deep_audit_io.os.fstat(stream.fileno()))
+        while chunk := stream.read(1024 * 1024):
+            total += len(chunk)
+            if total > size:
+                raise RuntimeAuditError("E_LOCAL_TOOL", "tool size differs")
+            hasher.update(chunk)
+        after = signature(_deep_audit_io.os.fstat(stream.fileno()))
+    if (
+        before != opened
+        or opened != after
+        or after != signature(path.stat())
+        or total != size
+        or hasher.hexdigest() != expected
+    ):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "tool bytes changed or differ")
+    return before
+
+
+def _local_tool_inventory(root, manifest_name, names):
+    def unreadable(error):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "tool inventory unreadable") from error
+
+    actual, entries = set(), 0
+    for directory, dirs, files in _deep_audit_io.os.walk(
+        root, followlinks=False, onerror=unreadable
+    ):
+        entries += len(dirs) + len(files)
+        if entries > 8193:
+            raise RuntimeAuditError("E_LOCAL_TOOL", "tool tree exceeds bound")
+        for name in [*dirs, *files]:
+            item = Path(directory) / name
+            info = item.lstat()
+            if (
+                _deep_audit_io.stat.S_ISLNK(info.st_mode)
+                or getattr(info, "st_file_attributes", 0) & 0x400
+            ):
+                raise RuntimeAuditError("E_LOCAL_TOOL", "linked tool bundle refused")
+        actual.update(
+            (Path(directory) / name).relative_to(root).as_posix() for name in files
+        )
+        if len(actual) > 4097:
+            raise RuntimeAuditError("E_LOCAL_TOOL", "tool inventory exceeds bound")
+    if actual != names | {manifest_name}:
+        raise RuntimeAuditError("E_LOCAL_TOOL", "tool inventory differs")
+
+
+def verify_local_tool_manifest(binding, *, candidate_root=None):
+    """Verify operator-pinned bytes, not upstream signer identity or execution isolation."""
+    from .deep_audit_contract import _keys
+
+    locator = binding["tool_manifest"]
+    path = Path(locator["path"])
+    # Start at the filesystem anchor so linked operator-root ancestors are refused too.
+    local_file(Path(path.anchor), path.relative_to(path.anchor).as_posix())
+    root = path.parent
+    signatures = {path.name: _deep_audit_io._zap_file_signature(path.stat())}
+    if (
+        candidate_root is None
+        or root.is_relative_to(Path(candidate_root).resolve())
+        or Path(candidate_root).resolve().is_relative_to(root)
+    ):
+        raise RuntimeAuditError(
+            "E_LOCAL_TOOL", "operator bundle must be outside candidate root"
+        )
+    manifest = strict_json(
+        _deep_audit_io.bound_bytes(
+            root, {"path": path.name, "sha256": locator["sha256"]}
+        )
+    )
+    _keys(manifest, "schema files")
+    if (
+        manifest["schema"] != "factory.local-tool-manifest.v1"
+        or not isinstance(manifest["files"], list)
+        or not 1 <= len(manifest["files"]) <= 4096
+    ):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "bounded tool manifest required")
+    rows = manifest["files"]
+    names, roles, total = set(), {}, 0
+    for row in rows:
+        _keys(row, "path sha256 bytes role")
+        total += require_int(
+            row["bytes"], "tool bytes", minimum=0, maximum=512 * 1024 * 1024
+        )
+        if total > 1024 * 1024 * 1024:
+            raise RuntimeAuditError("E_LOCAL_TOOL", "tool bytes exceed total budget")
+        signatures[row["path"]] = _local_tool_file(root, row)
+        name = row["path"]
+        role = require_str(row["role"], "tool role")
+        if name in names or role not in {
+            "executable",
+            "resource",
+            "profile",
+            "rules",
+            "provenance",
+        }:
+            raise RuntimeAuditError(
+                "E_LOCAL_TOOL", "duplicate file or unsupported role"
+            )
+        names.add(name)
+        roles.setdefault(role, []).append(row)
+    if any(
+        len(roles.get(role, [])) != 1
+        for role in ("executable", "profile", "rules", "provenance")
+    ):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "complete bounded tool roles required")
+    _local_tool_inventory(root, path.name, names)
+    if any(
+        _deep_audit_io._zap_file_signature(local_file(root, name).stat()) != signature
+        for name, signature in signatures.items()
+    ):
+        raise RuntimeAuditError(
+            "E_LOCAL_TOOL", "tool bundle changed during verification"
+        )
+    for role, expected in {
+        "profile": binding["profile_sha256"],
+        "rules": binding["ruleset_sha256"],
+        "executable": binding["provenance"]["artifact_sha256"],
+        "provenance": binding["provenance"]["verification_receipt_sha256"],
+    }.items():
+        if roles[role][0]["sha256"] != expected:
+            raise RuntimeAuditError("E_LOCAL_TOOL", "tool role binding differs")
+    return manifest
 
 
 def _review_dispositions(review, coordinator, inventory):
