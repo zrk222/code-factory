@@ -111,41 +111,57 @@ def tree_has_no_links_or_reparse_points(
     *,
     max_files=20000,
     max_bytes=512 * 1024 * 1024,
+    deadline=float("inf"),
 ) -> bool:
     """Check a bounded copy tree for symbolic links and Windows reparse points."""
-    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    try:
-        if (
-            root.is_symlink()
-            or getattr(root.lstat(), "st_file_attributes", 0) & reparse
-        ):
-            return False
-    except OSError:
+    info = _tree_entry_info(root)
+    if info is None or not stat.S_ISDIR(info.st_mode):
         return False
     ignored = ignored or set()
     files, total_bytes, entries = 0, 0, 0
-    for directory, dirs, names in os.walk(root):
+    errors = []
+    for directory, dirs, names in os.walk(root, onerror=errors.append):
         dirs[:] = [name for name in dirs if name not in ignored]
         for name in dirs + names:
             entries += 1
-            if entries > max_files * 2:
+            if _tree_budget_exceeded(
+                files, total_bytes, entries, max_files, max_bytes, deadline
+            ):
                 return False
-            path = Path(directory) / name
-            try:
-                info = path.stat()
-                if (
-                    path.is_symlink()
-                    or getattr(info, "st_file_attributes", 0) & reparse
-                ):
-                    return False
-                if path.is_file():
-                    files += 1
-                    total_bytes += info.st_size
-            except OSError:
+            info = _tree_entry_info(Path(directory) / name)
+            if info is None:
                 return False
-            if files > max_files or total_bytes > max_bytes:
+            if stat.S_ISREG(info.st_mode):
+                files += 1
+                total_bytes += info.st_size
+            if _tree_budget_exceeded(
+                files, total_bytes, entries, max_files, max_bytes, deadline
+            ):
                 return False
-    return True
+    return not errors
+
+
+def _tree_entry_info(path):
+    """Inspect each entry once without following links or Windows reparse points."""
+    try:
+        info = path.lstat()
+    except OSError:
+        return None
+    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(
+        stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0
+    ):
+        return None
+    return info
+
+
+def _tree_budget_exceeded(files, total_bytes, entries, max_files, max_bytes, deadline):
+    """Apply the same file, entry, byte and deadline limits throughout one walk."""
+    return (
+        files > max_files
+        or total_bytes > max_bytes
+        or entries > max_files * 2
+        or time.monotonic() >= deadline
+    )
 
 
 def regular_target_within(root: Path, target: Path) -> bool:
@@ -373,7 +389,9 @@ def _wait_for_exit_or_limit(
 ) -> bool:
     deadline = deadline if deadline is not None else time.monotonic() + timeout_seconds
     while not overflow.is_set() and not (cancelled is not None and cancelled.is_set()):
-        _observe_artifact_quota(artifact_tree, overflow)
+        if time.monotonic() >= deadline:
+            return True
+        _observe_artifact_quota(artifact_tree, overflow, deadline)
         if overflow.is_set():
             break
         if unit is not None:
@@ -383,7 +401,7 @@ def _wait_for_exit_or_limit(
             return True
         try:
             child.wait(timeout=min(0.01, remaining))
-            _observe_artifact_quota(artifact_tree, overflow)
+            _observe_artifact_quota(artifact_tree, overflow, deadline)
             # A process may become observable as exited just after wait's
             # timeout boundary. Keep the signed deadline authoritative.
             return time.monotonic() > deadline
@@ -392,12 +410,18 @@ def _wait_for_exit_or_limit(
     return False
 
 
-def _observe_artifact_quota(root, overflow):
+def _observe_artifact_quota(root, overflow, deadline=float("inf")):
     """Cooperative observed quota, not a kernel filesystem quota or sandbox."""
+    if time.monotonic() >= deadline:
+        return
+    limits = {"max_files": 200, "max_bytes": 32 * 1024 * 1024}
+    if isinstance(root, dict):
+        root, limits = root["root"], root["limits"]
     if root is not None and not tree_has_no_links_or_reparse_points(
-        root, max_files=200, max_bytes=32 * 1024 * 1024
+        root, **limits, deadline=deadline
     ):
-        overflow.set()
+        if time.monotonic() < deadline:
+            overflow.set()
 
 
 def _join_stream_readers(
@@ -475,31 +499,42 @@ def run_bounded_command(
     cancelled: threading.Event | None = None,
     go_cache: Path | None = None,
     artifact_tree: Path | None = None,
+    tool_context: dict | None = None,
 ) -> dict:
     """Hash streams without retaining logs; terminate on timeout/output overflow."""
     facts = _facts()
     started = time.monotonic()
     facts["timeout_seconds"] = timeout_seconds
-    if artifact_tree is not None and (
-        not isinstance(artifact_tree, Path)
-        or not artifact_tree.is_absolute()
-        or not artifact_tree.is_dir()
-    ):
-        raise RuntimeAuditError(
-            "E_ARTIFACT_QUOTA", "existing absolute artifact directory required"
-        )
+    _validate_artifact_directory(artifact_tree)
     if go_cache is not None:
         _validate_go_cache(go_cache, cwd, scratch)
+    native_environment = None
+    if tool_context is not None:
+        if go_cache is not None:
+            raise RuntimeAuditError(
+                "E_NATIVE_CONTEXT", "native and Go contexts are exclusive"
+            )
+        native_environment = _native_tool_environment(
+            tool_context, argv, cwd, scratch, deadline=started + timeout_seconds
+        )
+        artifact_tree = _native_artifact_tree(tool_context, artifact_tree)
     capture, stderr_capture = _open_capture_files(stdout_path, stderr_path)
     # Start the budget before process creation and stream setup. Those steps
     # must not create unmeasured runtime outside the signed timeout.
-    execution_started = time.monotonic()
+    execution_started = started if tool_context is not None else time.monotonic()
     deadline = execution_started + timeout_seconds
+    if tool_context is not None and time.monotonic() >= deadline:
+        _close_capture_files(capture, stderr_capture)
+        raise RuntimeAuditError(
+            "E_NATIVE_BUDGET", "native preflight exhausted deadline"
+        )
     try:
         environment = _environment(scratch)
         if go_cache is not None:
             environment["GOCACHE"] = str(go_cache)
             environment["LOCALAPPDATA"] = environment["HOME"]
+        if native_environment is not None:
+            environment.update(native_environment)
         child = _launch(argv, cwd, environment)
     except OSError:
         _close_capture_files(capture, stderr_capture)
@@ -515,6 +550,129 @@ def run_bounded_command(
         cancelled,
         artifact_tree,
     )
+
+
+def _validate_artifact_directory(artifact_tree):
+    """Require an optional quota tree to name an existing absolute directory."""
+    if artifact_tree is not None and (
+        not isinstance(artifact_tree, Path)
+        or not artifact_tree.is_absolute()
+        or not artifact_tree.is_dir()
+    ):
+        raise RuntimeAuditError(
+            "E_ARTIFACT_QUOTA", "existing absolute artifact directory required"
+        )
+
+
+def _native_tool_environment(context, argv, cwd, scratch, *, deadline=None):
+    """Bind native lookup paths; authenticity is separately checked by the operator caller."""
+    fields = {
+        "bundle_root",
+        "executable",
+        "resource_dirs",
+        "cache_root",
+        "manifest_sha256",
+    }
+    if not isinstance(context, dict) or set(context) != fields:
+        raise RuntimeAuditError(
+            "E_NATIVE_CONTEXT", "exact native tool context required"
+        )
+    from .runtime_audit_common import require_digest
+
+    require_digest(context["manifest_sha256"], "native manifest")
+    root, executable = context["bundle_root"], context["executable"]
+    _native_tool_paths(root, executable, context["resource_dirs"])
+    if not argv or argv[0] != str(executable) or Path(cwd) != root:
+        raise RuntimeAuditError("E_NATIVE_CONTEXT", "native executable or cwd differs")
+    cache = context["cache_root"]
+    _native_workflow_cache(cache, scratch, deadline)
+    paths = [root, *context["resource_dirs"]]
+    if os.name == "nt":
+        system_root = os.environ.get("SYSTEMROOT")
+        if not system_root or not Path(system_root).is_absolute():
+            raise RuntimeAuditError(
+                "E_NATIVE_CONTEXT", "absolute Windows system root required"
+            )
+        paths.append(Path(system_root) / "System32")
+    local = cache / "AppData" / "Local"
+    local.mkdir(parents=True, exist_ok=True)
+    return {
+        "PATH": os.pathsep.join(dict.fromkeys(map(str, paths))),
+        "HOME": str(cache),
+        "USERPROFILE": str(cache),
+        "LOCALAPPDATA": str(local),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
+
+
+def _native_artifact_tree(context, supplied):
+    root = context["cache_root"].parent
+    if supplied is not None and supplied != root:
+        raise RuntimeAuditError(
+            "E_NATIVE_CONTEXT", "native artifacts must use workflow quota"
+        )
+    return {"root": root, "limits": {"max_files": 512, "max_bytes": 512 * 1024 * 1024}}
+
+
+def _native_tool_paths(root, executable, resources):
+    paths = [root, executable]
+    if not isinstance(resources, list) or not 1 <= len(resources) <= 16:
+        raise RuntimeAuditError(
+            "E_NATIVE_CONTEXT", "bounded resource directory list required"
+        )
+    paths.extend(resources)
+    if any(not isinstance(path, Path) or not path.is_absolute() for path in paths):
+        raise RuntimeAuditError("E_NATIVE_CONTEXT", "absolute native paths required")
+    if not root.is_dir() or not executable.is_file():
+        raise RuntimeAuditError("E_NATIVE_CONTEXT", "native root or executable missing")
+    if any(path.resolve() != path for path in paths):
+        raise RuntimeAuditError("E_NATIVE_CONTEXT", "canonical native paths required")
+    if not path_chain_has_no_links(Path(root.anchor), root):
+        raise RuntimeAuditError("E_NATIVE_CONTEXT", "native bundle ancestor is linked")
+    if any(not path_chain_has_no_links(root, path) for path in paths[1:]):
+        raise RuntimeAuditError("E_NATIVE_CONTEXT", "native path escapes or is linked")
+    if len(set(resources)) != len(resources) or any(
+        not path.is_dir() for path in resources
+    ):
+        raise RuntimeAuditError(
+            "E_NATIVE_CONTEXT", "distinct existing native resource directories required"
+        )
+
+
+def _native_workflow_cache(cache, scratch, deadline=None):
+    scratch = Path(scratch)
+    temporary = Path(tempfile.gettempdir()).resolve()
+    roots = [
+        path
+        for path in scratch.parents
+        if path.parent == temporary and path.name.startswith("factory-native-")
+    ]
+    if not roots or not isinstance(cache, Path) or not cache.is_absolute():
+        raise RuntimeAuditError(
+            "E_NATIVE_CONTEXT", "native workflow temp root required"
+        )
+    root = roots[0]
+    if cache != root / "tool-cache" or not scratch.is_dir():
+        raise RuntimeAuditError(
+            "E_NATIVE_CONTEXT", "cache must belong to the current workflow"
+        )
+    if not path_chain_has_no_links(temporary, root) or not path_chain_has_no_links(
+        root, scratch
+    ):
+        raise RuntimeAuditError("E_NATIVE_CONTEXT", "native workflow is linked")
+    if not path_chain_has_no_links(root, cache):
+        raise RuntimeAuditError("E_NATIVE_CONTEXT", "native cache is linked")
+    cache.mkdir(exist_ok=True)
+    if not tree_has_no_links_or_reparse_points(
+        cache,
+        max_files=512,
+        max_bytes=512 * 1024 * 1024,
+        deadline=deadline or float("inf"),
+    ):
+        raise RuntimeAuditError(
+            "E_NATIVE_CONTEXT", "native cache contains linked entries"
+        )
 
 
 def _validate_go_cache(cache, cwd, scratch):
@@ -596,7 +754,7 @@ def _run_child_bounded(
         )
         facts["output_limit_exceeded"] = overflow.is_set()
         cleanup_confirmed, streams_closed = _await_cleanup(child, threads)
-        _observe_artifact_quota(artifact_tree, overflow)
+        _observe_artifact_quota(artifact_tree, overflow, deadline)
     except BaseException:
         _stop(child)
         _await_cleanup(child, threads)

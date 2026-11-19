@@ -4563,3 +4563,257 @@ def test_polyglot_artifact_quota_checks_immediate_exit(tmp_path):
     )
     assert facts["output_limit_exceeded"] is True
     assert facts["cleanup_confirmed"] is True
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        None,
+        "extra",
+        "missing",
+        "digest",
+        "relative",
+        "resource-escape",
+        "resource-missing",
+        "resource-duplicate",
+        "exe-escape",
+        "argv",
+        "cwd",
+        "cache-foreign",
+        "go-cache",
+    ],
+)
+def test_native_tool_context_is_closed_and_workflow_bound(tmp_path, damage):
+    import tempfile
+    from factoryline.runtime_audit_process import (
+        _native_tool_environment,
+        run_bounded_command,
+    )
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    exe = bundle / "tool.exe"
+    exe.write_bytes(b"unit-only-not-executable")
+    resources = bundle / "core"
+    resources.mkdir()
+    with tempfile.TemporaryDirectory(prefix="factory-native-") as temporary:
+        workflow = Path(temporary)
+        scratch = workflow / "scan"
+        scratch.mkdir()
+        context = {
+            "bundle_root": bundle,
+            "executable": exe,
+            "resource_dirs": [resources],
+            "cache_root": workflow / "tool-cache",
+            "manifest_sha256": "a" * 64,
+        }
+        argv, cwd = [str(exe)], bundle
+        changes = {
+            "extra": {"env": {}},
+            "digest": {"manifest_sha256": "bad"},
+            "relative": {"bundle_root": Path("bundle")},
+            "resource-escape": {"resource_dirs": [tmp_path]},
+            "resource-missing": {"resource_dirs": [bundle / "absent"]},
+            "resource-duplicate": {"resource_dirs": [resources, resources]},
+            "exe-escape": {"executable": tmp_path / "foreign.exe"},
+            "cache-foreign": {"cache_root": tmp_path / "cache"},
+        }
+        context.update(changes.get(damage, {}))
+        if damage == "missing":
+            context.pop("executable")
+        if damage == "argv":
+            argv = ["ambient-tool.exe"]
+        if damage == "cwd":
+            cwd = tmp_path
+        if damage == "go-cache":
+            with pytest.raises(RuntimeAuditError):
+                run_bounded_command(
+                    argv, cwd, 1, scratch, go_cache=tmp_path, tool_context=context
+                )
+        elif damage:
+            with pytest.raises(RuntimeAuditError):
+                _native_tool_environment(context, argv, cwd, scratch)
+        else:
+            import os
+
+            environment = _native_tool_environment(context, argv, cwd, scratch)
+            assert environment["PATH"].split(os.pathsep)[:2] == [
+                str(bundle),
+                str(resources),
+            ]
+            assert environment["LOCALAPPDATA"] == str(
+                workflow / "tool-cache" / "AppData" / "Local"
+            )
+            assert _native_tool_environment(context, argv, cwd, scratch) == environment
+
+
+def test_default_runner_environment_remains_native_context_free(tmp_path, monkeypatch):
+    import os
+    from factoryline.runtime_audit_process import _environment
+
+    monkeypatch.setenv("PATH", "original-path")
+    monkeypatch.setenv("LOCALAPPDATA", "untrusted-user-cache")
+    result = _environment(tmp_path)
+    home = str(tmp_path.resolve() / "runtime-home")
+    expected = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper()
+        in {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL"}
+    }
+    expected.update(
+        HOME=home,
+        USERPROFILE=home,
+        TMP=home,
+        TEMP=home,
+        TMPDIR=home,
+        PYTHONNOUSERSITE="1",
+        PYTHONHASHSEED="0",
+    )
+    assert result == expected
+    assert "LOCALAPPDATA" not in result
+
+
+def test_native_context_environment_reaches_existing_bounded_runner(tmp_path):
+    import os
+    import sys
+    import tempfile
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    exe = Path(sys.executable).resolve()
+    with tempfile.TemporaryDirectory(prefix="factory-native-") as temporary:
+        root = Path(temporary)
+        scratch = root / "probe"
+        scratch.mkdir()
+        output = tmp_path / "environment.json"
+        context = {
+            "bundle_root": exe.parent,
+            "executable": exe,
+            "resource_dirs": [exe.parent],
+            "cache_root": root / "tool-cache",
+            "manifest_sha256": "b" * 64,
+        }
+        facts = run_bounded_command(
+            [str(exe), "-c", "import os,json;print(json.dumps(dict(os.environ)))"],
+            exe.parent,
+            10,
+            scratch,
+            tool_context=context,
+            stdout_path=output,
+        )
+        assert facts["exit_code"] == 0 and facts["cleanup_confirmed"]
+        environment = json.loads(output.read_text())
+        assert environment["LOCALAPPDATA"] == str(
+            root / "tool-cache" / "AppData" / "Local"
+        )
+        paths = environment["PATH"].split(os.pathsep)
+        assert paths[0] == str(exe.parent)
+        assert len(paths) == (2 if os.name == "nt" else 1)
+        assert environment["HOME"] == str(root / "tool-cache")
+
+
+def test_native_artifact_quota_cannot_be_redirected(tmp_path):
+    from factoryline.runtime_audit_process import _native_artifact_tree
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    context = {"cache_root": tmp_path / "tool-cache"}
+    assert _native_artifact_tree(context, None) == {
+        "root": tmp_path,
+        "limits": {"max_files": 512, "max_bytes": 512 * 1024 * 1024},
+    }
+    with pytest.raises(RuntimeAuditError):
+        _native_artifact_tree(context, tmp_path / "elsewhere")
+
+
+def test_native_preflight_counts_toward_process_deadline(tmp_path, monkeypatch):
+    import sys
+    import time
+    from factoryline import runtime_audit_process as process
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    monkeypatch.setattr(process, "_native_tool_environment", lambda *args, **kwargs: {})
+    monkeypatch.setattr(process, "_native_artifact_tree", lambda *args: tmp_path)
+    ticks = iter([10.0, 11.1])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    with pytest.raises(RuntimeAuditError, match="E_NATIVE_BUDGET"):
+        process.run_bounded_command(
+            [sys.executable], tmp_path, 1, tmp_path, tool_context={}
+        )
+
+
+def test_native_tree_preflight_stops_at_deadline(tmp_path):
+    from factoryline.runtime_audit_process import tree_has_no_links_or_reparse_points
+
+    (tmp_path / "payload").write_text("x")
+    assert not tree_has_no_links_or_reparse_points(tmp_path, deadline=0)
+
+
+def test_shared_tree_validator_rejects_unreadable_subtrees(tmp_path, monkeypatch):
+    from factoryline import runtime_audit_process as process
+
+    def unreadable(root, *, onerror):
+        onerror(PermissionError("unit-only unreadable directory"))
+        return iter(())
+
+    monkeypatch.setattr(process.os, "walk", unreadable)
+    assert not process.tree_has_no_links_or_reparse_points(tmp_path)
+
+
+def test_shared_tree_validator_requires_directory_root(tmp_path):
+    from factoryline.runtime_audit_process import tree_has_no_links_or_reparse_points
+
+    root = tmp_path / "ordinary-file"
+    root.write_text("unit fixture")
+    assert not tree_has_no_links_or_reparse_points(root)
+
+
+def test_artifact_observation_deadline_is_timeout_not_overflow(tmp_path, monkeypatch):
+    import threading
+    from factoryline import runtime_audit_process as process
+
+    clock = [1.0]
+    calls = []
+
+    def slow_tree(root, **limits):
+        calls.append(limits["deadline"])
+        clock[0] = 3.0
+        return False
+
+    monkeypatch.setattr(process.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(process, "tree_has_no_links_or_reparse_points", slow_tree)
+    overflow = threading.Event()
+    process._observe_artifact_quota(tmp_path, overflow, deadline=2.0)
+    assert calls == [2.0] and not overflow.is_set()
+    process._observe_artifact_quota(tmp_path, overflow, deadline=2.0)
+    assert calls == [2.0]
+
+
+def test_wait_loop_skips_tree_walk_after_execution_deadline(monkeypatch):
+    import threading
+    from factoryline import runtime_audit_process as process
+
+    monkeypatch.setattr(process.time, "monotonic", lambda: 3.0)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("expired execution must not traverse artifacts")
+
+    monkeypatch.setattr(process, "_observe_artifact_quota", unexpected)
+    assert process._wait_for_exit_or_limit(None, 1, threading.Event(), deadline=2.0)
+
+
+@pytest.mark.parametrize(
+    "files,bytes_limit,expected", [(1, 3, True), (0, 3, False), (1, 2, False)]
+)
+def test_shared_tree_budget_boundary_after_entry_projection(
+    tmp_path, files, bytes_limit, expected
+):
+    from factoryline.runtime_audit_process import tree_has_no_links_or_reparse_points
+
+    (tmp_path / "data").write_bytes(b"abc")
+    assert (
+        tree_has_no_links_or_reparse_points(
+            tmp_path, max_files=files, max_bytes=bytes_limit
+        )
+        is expected
+    )
