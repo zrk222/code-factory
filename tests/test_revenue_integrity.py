@@ -34,6 +34,35 @@ from factoryline.revenue_evidence import (
 )
 
 
+@pytest.mark.parametrize("schema", [None, "contract"])
+@pytest.mark.parametrize("extra_byte", [0, 1])
+def test_shared_appforge_reader_keeps_exact_size_boundary(tmp_path, schema, extra_byte):
+    from factoryline.appforge_device_reality import _read
+
+    source = tmp_path / "evidence.json"
+    raw = json.dumps({"schema": schema}).encode("utf-8")
+    source.write_bytes(raw + b" " * (1_048_576 + extra_byte - len(raw)))
+    if extra_byte:
+        with pytest.raises(
+            RevenueForgeError, match="JSON input exceeds 1 MiB"
+        ) as error:
+            _read(tmp_path, source, schema)
+        assert error.value.code == "APPFORGE_DEVICE_REALITY_INPUT_TOO_LARGE"
+    else:
+        assert _read(tmp_path, source, schema) == ({"schema": schema}, source.resolve())
+
+
+@pytest.mark.parametrize("raw", ["[]", '{"schema":"different"}'])
+def test_explicit_none_schema_still_checks_shape_and_value(tmp_path, raw):
+    from factoryline.appforge_device_reality import _read
+
+    source = tmp_path / "evidence.json"
+    source.write_text(raw, encoding="utf-8")
+    with pytest.raises(RevenueForgeError, match="expected None") as error:
+        _read(tmp_path, source, None)
+    assert error.value.code == "APPFORGE_DEVICE_REALITY_SCHEMA_REJECTED"
+
+
 def _manifest() -> dict:
     """Return a valid monetization manifest."""
     return {
