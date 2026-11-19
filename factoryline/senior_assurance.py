@@ -1989,7 +1989,7 @@ def _recall_binding(row):
 def _recall_cases(value):
     if not isinstance(value, list) or not 1 <= len(value) <= 500:
         raise BenchmarkError("E_RECALL_CONTRACT", "Cases must contain 1..500 entries")
-    cases, positive_sites = {}, set()
+    cases, positive_sites, known_sources = {}, set(), {}
     for row in value:
         _recall_fields(row, "id category path source_sha256 truth expected", "case")
         case_id = require_str(row["id"], "case id", maximum=160)
@@ -2003,6 +2003,13 @@ def _recall_cases(value):
             )
         site = _recall_site(row["expected"]) if truth == "POSITIVE" else None
         binding = _recall_binding(row)
+        if truth != "UNCLEAR":
+            previous = known_sources.get(binding)
+            if previous is not None and "CLEAN" in (previous, truth):
+                raise BenchmarkError(
+                    "E_RECALL_CONTRACT", "Duplicate or contradictory clean control"
+                )
+            known_sources[binding] = truth
         if (binding, site) in positive_sites:
             raise BenchmarkError(
                 "E_RECALL_CONTRACT", "Duplicate positive source and site"
@@ -2046,11 +2053,19 @@ def _recall_disposition(truth, site, findings):
     return "DETECTED" if site in findings else "MISSED"
 
 
-def _recall_case_row(case_id, case, captures):
+def _recall_case_row(case_id, case, captures, populations):
     category, truth, binding, site = case
     report, raw, admitted = (None, None, None)
     if case_id in captures:
         report, raw, admitted = _recall_capture(captures[case_id], binding)
+        if populations.setdefault((report, binding), (raw, admitted)) != (
+            raw,
+            admitted,
+        ):
+            raise BenchmarkError(
+                "E_RECALL_BINDING",
+                "Conflicting populations for the same report and source",
+            )
     return {
         "id": case_id,
         "category": category,
@@ -2131,8 +2146,10 @@ def evaluate_source_bound_recall(manifest, observations, *, out=None):
     captures = observations["cases"]
     if not isinstance(captures, dict) or not captures.keys() <= cases.keys():
         raise BenchmarkError("E_RECALL_BINDING", "Capture contains unregistered cases")
+    populations = {}
     rows = [
-        _recall_case_row(case_id, case, captures) for case_id, case in cases.items()
+        _recall_case_row(case_id, case, captures, populations)
+        for case_id, case in cases.items()
     ]
     if _sha(observations) != bindings["observations_sha256"]:
         raise BenchmarkError("E_RECALL_BINDING", "Frozen observations digest differs")
@@ -2158,7 +2175,7 @@ def evaluate_source_bound_recall(manifest, observations, *, out=None):
             },
         },
         "decision": "MEASURED"
-        if overall["raw"]["recall"] is not None
+        if all(overall[arm]["recall"] is not None for arm in ("raw", "admitted"))
         else "INCOMPLETE",
         "authority": "none",
         "release_approval": False,

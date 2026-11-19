@@ -538,10 +538,55 @@ def test_source_bound_recall_absent_admission_and_wrong_site():
     _seal_recall(manifest, observations)
     result = evaluate_source_bound_recall(manifest, observations)
     metric = result["metrics"]["overall"]
+    assert result["decision"] == "INCOMPLETE"
     assert metric["raw"]["false_negatives"] == 1
     assert metric["raw"]["recall"] == 0.0
     assert metric["admitted"]["recall"] is None
     assert metric["admitted"]["unobserved"] == 1
+
+
+@pytest.mark.parametrize("conflict", ["raw", "admitted"])
+def test_source_bound_recall_rejects_conflicting_populations_for_one_report(conflict):
+    manifest, observations = _recall_pair()
+    positive = manifest["cases"][0]
+    manifest["cases"].append(
+        {
+            **positive,
+            "id": "second",
+            "expected": {"rule": "synthetic-rule", "line": 4},
+        }
+    )
+    capture = observations["cases"]["positive"]
+    capture["raw"].append({"rule": "synthetic-rule", "line": 4})
+    capture["admitted"] = copy.deepcopy(capture["raw"])
+    observations["cases"]["second"] = copy.deepcopy(capture)
+    observations["cases"]["second"][conflict] = None
+    if conflict == "raw":
+        observations["cases"]["second"]["admitted"] = None
+    _seal_recall(manifest, observations)
+    with pytest.raises(BenchmarkError, match="Conflicting populations"):
+        evaluate_source_bound_recall(manifest, observations)
+    observations["cases"]["second"] = copy.deepcopy(capture)
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    assert result["metrics"]["overall"]["raw"]["detected"] == 2
+
+
+@pytest.mark.parametrize("existing", [0, 1])
+def test_source_bound_recall_rejects_reused_clean_control_scope(existing):
+    manifest, observations = _recall_pair()
+    manifest["cases"].append(
+        {
+            **manifest["cases"][existing],
+            "id": "second",
+            "truth": "CLEAN",
+            "expected": None,
+        }
+    )
+    with pytest.raises(
+        BenchmarkError, match="Duplicate or contradictory clean control"
+    ):
+        evaluate_source_bound_recall(manifest, observations)
 
 
 @pytest.mark.parametrize(
