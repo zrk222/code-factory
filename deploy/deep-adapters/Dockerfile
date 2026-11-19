@@ -35,7 +35,7 @@ ADD --checksum=sha256:f81fe0abd4379a729436aeeb1d4696eeb6cde8b6729c72a08543d1c476
 RUN XDG_CACHE_HOME=/opt/factory/opengrep-cache /usr/bin/opengrep --version \
     && chmod -R a+rX /opt/factory/opengrep-cache \
     && test -x /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin \
-    && ln -sf /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin /usr/bin/opengrep \
+    && printf '#!/bin/sh\nexec /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin --legacy "$@"\n' > /usr/bin/opengrep \
     && /usr/bin/opengrep --version
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-pattern-limited.json /opt/factory/adapter-profile.json
 COPY --chown=1000:1000 deploy/deep-adapters/rules/semgrep-pattern-limited.yml /opt/factory/rules/semgrep-pattern-limited.yml
