@@ -33,6 +33,7 @@ ADD --checksum=sha256:f81fe0abd4379a729436aeeb1d4696eeb6cde8b6729c72a08543d1c476
 # Materialize the signed-release payload at build time. Runtime scratch remains
 # non-executable; run the fixed, root-owned standalone payload from the image.
 RUN XDG_CACHE_HOME=/opt/factory/opengrep-cache /usr/bin/opengrep --version \
+    && chmod -R a+rX /opt/factory/opengrep-cache \
     && test -x /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin \
     && ln -sf /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin /usr/bin/opengrep \
     && /usr/bin/opengrep --version
@@ -42,6 +43,7 @@ RUN mkdir -p /src /out /opt/factory/rules
 WORKDIR /src
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="pattern-limited"
+RUN HOME=/tmp /usr/bin/opengrep --version
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM sdk AS codeql-python-worker
