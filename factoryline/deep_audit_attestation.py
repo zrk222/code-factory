@@ -2178,6 +2178,8 @@ def _semgrep_raw_bindings(observation, index):
         "--no-rewrite-rule-ids",
         "--config",
     ]
+    if observation["native_report"].get("version") == "1.15.0":
+        prefix[0] = "/usr/bin/opengrep"
     if not isinstance(argv, list) or len(argv) != 14 or argv[:10] != prefix:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "isolated command differs"

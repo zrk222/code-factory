@@ -4177,6 +4177,8 @@ def _semgrep_challenge_command(profile):
         "{report}",
         "{source}",
     ]
+    if profile.get("tool_version") == "1.15.0":
+        expected[0] = "/usr/bin/opengrep"
     if argv != expected:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_PROFILE", "pinned command differs"

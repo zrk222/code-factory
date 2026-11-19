@@ -2092,7 +2092,9 @@ def test_runtime_junit_profile_normalizes_native_junit_and_coverage(tmp_path):
     assert report["source_coverage"]["app.py"]["sha256"] == "a" * 64
 
 
-def semgrep_execution_evidence(language="javascript", source="app.js"):
+def semgrep_execution_evidence(
+    language="javascript", source="app.js", version="1.141.0"
+):
     import base64
     from factoryline.deep_audit_io import canonical_bytes, sha256_bytes
 
@@ -2115,7 +2117,7 @@ def semgrep_execution_evidence(language="javascript", source="app.js"):
     config = canonical_bytes({"rules": rules})
     lane = {
         "engine": "semgrep",
-        "tool_version": "1.141.0",
+        "tool_version": version,
         "ruleset_sha256": sha256_bytes(config),
         "rule_ids": ["js-rule", "py-rule"],
         "native_artifact_roles": ["rule_inventory", "sarif_report"],
@@ -2158,7 +2160,7 @@ def semgrep_execution_evidence(language="javascript", source="app.js"):
             }
         )
         argv = [
-            "/usr/bin/semgrep",
+            "/usr/bin/opengrep" if version == "1.15.0" else "/usr/bin/semgrep",
             "scan",
             "--json",
             "--strict",
@@ -2431,23 +2433,18 @@ def _assert_missing_worker_module_fails(tmp_path: Path) -> None:
 def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_path):
     dockerfile = Path("deploy/deep-adapters/Dockerfile").read_text()
     _assert_worker_base_images_pinned(dockerfile)
-    destinations = (
+    _assert_worker_image_imports(
+        dockerfile,
         "/usr/local/lib/python3.11/site-packages/factoryline/",
-        "/usr/lib/python3.12/site-packages/factoryline/",
+        tmp_path / "worker-sdk",
     )
-    for index, destination in enumerate(destinations):
-        _assert_worker_image_imports(
-            dockerfile, destination, tmp_path / f"worker-{index}"
-        )
-    sdk_stage = dockerfile.split("FROM semgrep/semgrep:", 1)[0]
-    semgrep_stage = dockerfile.split("FROM semgrep-tool AS semgrep-worker", 1)[1].split(
-        "FROM sdk AS codeql-python-worker", 1
-    )[0]
+    sdk_stage, semgrep_stage = dockerfile.split("FROM sdk AS semgrep-worker", 1)
+    semgrep_stage = semgrep_stage.split("FROM sdk AS codeql-python-worker", 1)[0]
     assert "USER 1000:1000" in sdk_stage
     assert 'ENTRYPOINT ["/opt/factory/bin/audit-adapter"]' in sdk_stage
     assert "USER 1000:1000" in semgrep_stage
     assert (
-        'ENTRYPOINT ["/usr/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
+        'ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
         in semgrep_stage
     )
     _assert_missing_worker_module_fails(tmp_path)
@@ -3195,15 +3192,18 @@ def test_semgrep_native_rejects_resealed_wrong_rule_config_path():
         ("swift", "app.swift"),
     ],
 )
+@pytest.mark.parametrize("version", ["1.141.0", "1.15.0"])
 def test_semgrep_native_rules_account_for_applicable_and_other_languages(
-    language, source
+    language, source, version
 ):
     from factoryline.deep_audit_io import (
         _semgrep_source_accounting,
         verify_semgrep_rule_execution,
     )
 
-    evidence, lane, sources, baseline = semgrep_execution_evidence(language, source)
+    evidence, lane, sources, baseline = semgrep_execution_evidence(
+        language, source, version
+    )
     checked = verify_semgrep_rule_execution(evidence, lane, sources, baseline)
     assert checked["state"] == "VERIFIED"
     assert checked["rules"][0]["executed_sources"] == [source]
@@ -3261,12 +3261,15 @@ def test_semgrep_native_rules_account_for_applicable_and_other_languages(
         ("swift", "app.swift"),
     ],
 )
+@pytest.mark.parametrize("version", ["1.141.0", "1.15.0"])
 def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(
-    invalid, language, source
+    invalid, language, source, version
 ):
     from factoryline.deep_audit_io import verify_semgrep_rule_execution
 
-    evidence, lane, sources, baseline = semgrep_execution_evidence(language, source)
+    evidence, lane, sources, baseline = semgrep_execution_evidence(
+        language, source, version
+    )
     observed = evidence["observations"][0]
     native = observed["native_report"]
     mutations = {

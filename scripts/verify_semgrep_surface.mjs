@@ -226,7 +226,9 @@ function docker(args) {
 try {
   for (const path of [rulesPath, 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json',
     'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js', 'deploy/deep-adapters/rules/tests/php-controls.php',
-    'scripts/verify_semgrep_surface.mjs', 'scripts/semgrep_mutation_controls.mjs']) {
+    'scripts/verify_semgrep_surface.mjs', 'scripts/semgrep_mutation_controls.mjs',
+    'deploy/deep-adapters/Dockerfile', 'factoryline/deep_audit_attestation.py',
+    'factoryline/deep_audit_loop.py', 'factoryline/deep_audit_sarif.py']) {
     receipt.source[path] = hash(readFileSync(path));
   }
   if (receipt.source[rulesPath] !== profile.ruleset_sha256) throw new Error('Ruleset hash differs from profile');
@@ -237,6 +239,8 @@ try {
     '--security-opt=no-new-privileges=true', '--pids-limit=128', '--memory=2g', '--cpus=2',
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m,mode=1777', '-e', 'HOME=/tmp', '-e', 'SEMGREP_SETTINGS_FILE=/tmp/settings.yml'];
   const bundled = JSON.parse(docker([...base, '--entrypoint', '/bin/cat', id, '/opt/factory/adapter-profile.json']));
+  receipt.tool_version = docker([...base, '--entrypoint', profile.version_argv[0], id, ...profile.version_argv.slice(1)]).trim();
+  if (receipt.tool_version !== profile.tool_version) throw new Error('Native executable version differs from profile');
   if (JSON.stringify(bundled) !== JSON.stringify(profile)) throw new Error('Image profile differs from candidate');
   const bundledRules = docker([...base, '--entrypoint', '/bin/cat', id, '/opt/factory/rules/semgrep-pattern-limited.yml']);
   if (hash(Buffer.from(bundledRules)) !== profile.ruleset_sha256) throw new Error('Image rules differ from candidate');
@@ -273,7 +277,7 @@ try {
   chmodSync(temp, 0o755);
   for (const name of readdirSync(temp)) chmodSync(join(temp, name), 0o644);
   const controls = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
-    '--entrypoint', '/usr/bin/semgrep', id, '--test', '--json', '--metrics=off', '--disable-version-check', '--disable-nosem', '/src']);
+    '--entrypoint', profile.commands[0].argv[0], id, '--test', '--json', '--metrics=off', '--disable-version-check', '--disable-nosem', '/src']);
   receipt.controls = JSON.parse(controls);
   const tested = Object.values(receipt.controls.results ?? {}).flatMap(result => Object.entries(result.checks ?? {}));
   if (tested.length !== expectedRules.length || tested.some(([, check]) => check.passed !== true || check.errors?.length)) {
@@ -308,6 +312,10 @@ try {
   const native = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
     '--entrypoint', profile.commands[0].argv[0], id, ...argv.map(value => value === '{source}' ? '/src' : value)]);
   const sarif = JSON.parse(native);
+  const driver = sarif.runs?.[0]?.tool?.driver;
+  if (sarif.runs?.length !== 1 || driver?.name !== 'Opengrep OSS' ||
+      driver.semanticVersion !== receipt.tool_version) throw new Error('Native report driver/version differs from pinned OpenGrep');
+  receipt.native_driver = driver.name;
   mkdirSync(dirname(resolve(root, output)), { recursive: true });
   writeFileSync(`${output}.sarif`, native);
   const findings = (sarif.runs ?? []).flatMap(run => run.results ?? []);
@@ -361,7 +369,7 @@ raw=json.loads(sys.stdin.read())
 report=_native_sarif_paths(_native_sarif_metadata(raw, profile, [{"executionSuccessful": True}]), hashes)
 path=root/'native-control.sarif'
 path.write_text(json.dumps(report), encoding='utf-8')
-analyzer={"id":"semgrep-surface", "driver":report["runs"][0]["tool"]["driver"]["name"], "version":profile["tool_version"]}
+analyzer={"id":"semgrep-surface", "driver":"Opengrep OSS", "version":profile["tool_version"]}
 normalized=normalize_sarif(root, {"path":path.name,"sha256":sha256_bytes(path.read_bytes())}, analyzer, hashes)
 binding={"path":path.name,"sha256":sha256_bytes(path.read_bytes())}
 for bad in ({**hashes, next(iter(hashes)): "0"*64}, {key:value for key,value in hashes.items() if not key.endswith('.go')}):

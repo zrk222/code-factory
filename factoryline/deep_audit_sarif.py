@@ -157,13 +157,17 @@ def _sarif_analyzer(run, lane):
     require_str(analyzer["version"], "version")
     names = {
         "codeql": {"codeql"},
-        "semgrep": {"semgrep", "semgrep oss"},
+        "semgrep": {"semgrep", "semgrep oss", "opengrep oss"},
         "gitleaks": {"gitleaks"},
         "trivy": {"trivy"},
     }
     if (
         analyzer["driver"].lower() not in names[lane["engine"]]
         or analyzer["version"] != lane["tool_version"]
+        or (
+            analyzer["driver"].lower() == "opengrep oss"
+            and analyzer["version"] != "1.15.0"
+        )
     ):
         raise RuntimeAuditError(
             "E_ANALYZER_MISMATCH",
@@ -2680,7 +2684,7 @@ def _sarif_evidence(result, rule, sources):
 
 
 def _usable_native_fingerprint(analyzer: dict, native: dict) -> bool:
-    semgrep = analyzer["driver"].lower() in {"semgrep", "semgrep oss"}
+    semgrep = analyzer["driver"].lower() in {"semgrep", "semgrep oss", "opengrep oss"}
     return any(
         value.strip()
         and not (
@@ -2849,7 +2853,10 @@ def _native_sarif_metadata(report: dict, profile: dict, invocations: list) -> di
         )
     for run in runs:
         driver = run["tool"]["driver"]
-        if driver.get("version", profile["tool_version"]) != profile["tool_version"]:
+        if any(
+            driver.get(key, profile["tool_version"]) != profile["tool_version"]
+            for key in ("version", "semanticVersion")
+        ):
             raise _deep_audit_io.RuntimeAuditError(
                 "E_TOOLCHAIN_DRIFT", "native report version differs"
             )
