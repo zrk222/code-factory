@@ -4,8 +4,8 @@ Author: DeepSeek V4.1 (uncensored), operator session 2026-11-19
 Commit under test: `code-factory` @ `694700e` plus `-1-spec` `55ac958`, `-2-forge` `8171c58`,
 `-3-compile` `a5ae4c4`, `-4-design` `3190b17` (all `main`, depth 1)
 Tooling: Python 3.11 venv, editable install, `pytest`, raw `http.client`, source reading
-Verdict: **CF was not breached.** Two real defects found. Both are correctness/UX, not
-confidentiality or authority breaks.
+Verdict: **CF was not breached.** Two real defects found, both since fixed on this branch
+(see section 11). Neither was a confidentiality or authority break.
 
 ## 1. Bottom line
 
@@ -225,3 +225,24 @@ port 0, so it needs no running process and no token.
 
 The harness prints statuses only and asserts nothing, deliberately, so the numbers in section 4
 can be eyeballed against a fresh build. It exits 0 regardless of the result.
+
+## 11. Fixes applied on this branch
+
+All three transport defects are fixed and covered by the now-asserting harness.
+
+- **F1** — new `resolve_allowed_origins()` (`mcp.py`) replaces the literal `PORT` or `{port`}`
+  token with the real bound port *after* bind, and the server carries the resolved list that the
+  handler reads. The raw sentinel no longer matches (the real port wins); the CLI help and the
+  startup banner both show the resolved origins.
+- **F2** — missing `_meta`/`clientCapabilities` now returns its own marker
+  `MCP_HTTP_META_MISSING`, leaving `MCP_HTTP_HEADER_MISMATCH` for duplicate-header faults only.
+- **F3** — `initialize` over this transport now advertises `MCP_STREAMABLE_HTTP_VERSION`, the same
+  value the header gate enforces, so a compliant echo is accepted.
+- **Bonus (found while fixing)** — `do_GET` and the wrong-path 404 replied before reading the
+  body and reset the socket on Windows. Both now drain a bounded body first (`_drain_body`).
+- **Hosted** — added `meta_audits(created)` index and a bounded `purge_expired(limit)` so a leaked
+  `CRON_SECRET` is no longer an unbounded delete.
+
+Verification: `python tests/security_penetration/redteam_http_probe.py` — all checks pass.
+1238 MCP/connector tests pass. `test_signed_receipts.py` 59 pass from the repo root (their two
+failures earlier were a working-directory artifact, not a regression).

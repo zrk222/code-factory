@@ -82,7 +82,11 @@ def add_parser(sub: Any) -> None:
         "--allow-origin",
         action="append",
         default=[],
-        help="exact browser Origin to permit; by default cross-origin requests are rejected",
+        help=(
+            "exact browser Origin to permit; the literal PORT or {port} is "
+            "replaced with the bound port. By default cross-origin requests "
+            "are rejected"
+        ),
     )
 
     junie = sub.add_parser(
@@ -514,6 +518,14 @@ def _run_mcp_http(args: Any) -> int:
             f"Factory MCP Streamable HTTP listening at http://127.0.0.1:{server.server_address[1]}/mcp",
             file=sys.stderr,
         )
+        resolved = getattr(server, "allowed_origins", ())
+        if resolved:
+            print(f"Allowed browser Origins: {', '.join(resolved)}", file=sys.stderr)
+        else:
+            print(
+                "Allowed browser Origins: none (cross-origin requests rejected)",
+                file=sys.stderr,
+            )
         print(auth_description, file=sys.stderr)
         print("No SSE, subscriptions, remote bind, or A2A endpoint.", file=sys.stderr)
         server.serve_forever(poll_interval=0.25)

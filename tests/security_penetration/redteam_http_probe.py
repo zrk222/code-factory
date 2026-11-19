@@ -1,28 +1,43 @@
-import json, sys, threading, http.client
+"""Red team HTTP probe for the local MCP transport (DeepSeek 4.1 report F1-F3).
+
+Self-contained: starts its own server on port 0. Exits non-zero on regression.
+"""
+
+import json
+import sys
+import threading
+import http.client
 from pathlib import Path
 
-ROOT = r"C:\Users\rkatz\AppData\Local\Temp\opencode\cf\code-factory"
+ROOT = str(Path(__file__).resolve().parents[2])
 sys.path.insert(0, ROOT)
-from factoryline.mcp import create_streamable_http_server
+from factoryline.mcp import create_streamable_http_server  # noqa: E402
 
 TOKEN = "B" * 40
 PV = "2026-07-28"
+_FAILS = []
 
-def boot(origins):
-    srv = create_streamable_http_server(Path(ROOT), bearer_token=TOKEN, port=0,
-                                        allowed_origins=origins)
+
+def boot(origins, port=0):
+    srv = create_streamable_http_server(
+        Path(ROOT), bearer_token=TOKEN, port=port, allowed_origins=origins
+    )
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, srv.server_address[1]
+
 
 def post(port, body, hdr=None, origin=None, method="POST", path="/mcp"):
     try:
         m = json.loads(body)["method"]
     except Exception:
         m = "initialize"
-    h = {"Content-Type": "application/json", "Mcp-Method": m,
-         "MCP-Protocol-Version": PV,
-         "Accept": "application/json, text/event-stream",
-         "Authorization": f"Bearer {TOKEN}"}
+    h = {
+        "Content-Type": "application/json",
+        "Mcp-Method": m,
+        "MCP-Protocol-Version": PV,
+        "Accept": "application/json, text/event-stream",
+        "Authorization": f"Bearer {TOKEN}",
+    }
     if origin:
         h["Origin"] = origin
     h.update(hdr or {})
@@ -34,40 +49,120 @@ def post(port, body, hdr=None, origin=None, method="POST", path="/mcp"):
     finally:
         c.close()
 
+
 def init_body(method="initialize", params=None):
     p = dict(params or {})
-    p["_meta"] = {"io.modelcontextprotocol/protocolVersion": PV, "io.modelcontextprotocol/clientCapabilities": {}}
+    p["_meta"] = {
+        "io.modelcontextprotocol/protocolVersion": PV,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
     return json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": p})
 
+
+def check(name, got, want):
+    ok = got == want
+    print(f"  {'PASS' if ok else 'FAIL'} {name}: {got} (want {want})")
+    if not ok:
+        _FAILS.append(name)
+
+
 def main():
-    # Bugged server (literal sentinel origin)
-    srv1, p1 = boot(("http://127.0.0.1:PORT",))
-    print("== origin allowlist sentinel ==")
-    for o in (None, "http://127.0.0.1:PORT", f"http://127.0.0.1:{p1}", "http://evil.example"):
-        print(f"  origin={o!r:38} -> {post(p1, init_body(), origin=o)[0]}")
-    srv1.shutdown()
+    print("== F1: allow-origin placeholder resolves to the bound port ==")
+    srv, port = boot(("http://127.0.0.1:PORT",))
+    check(
+        "real origin allowed",
+        post(port, init_body(), origin=f"http://127.0.0.1:{port}")[0],
+        200,
+    )
+    check(
+        "raw sentinel no longer matches",
+        post(port, init_body(), origin="http://127.0.0.1:PORT")[0],
+        403,
+    )
+    check(
+        "foreign origin refused",
+        post(port, init_body(), origin="http://evil.example")[0],
+        403,
+    )
+    check("no origin allowed", post(port, init_body())[0], 200)
+    srv.shutdown()
 
+    print("== F1b: {port} placeholder form ==")
+    srv, port = boot(("http://127.0.0.1:{port}",))
+    check(
+        "{port} resolves",
+        post(port, init_body(), origin=f"http://127.0.0.1:{port}")[0],
+        200,
+    )
+    srv.shutdown()
 
-    srv3, p3 = boot(())
-    print("\n== with empty allowlist (default) ==")
-    print(f"  no origin            -> {post(p3, init_body())[0]}")
-    print(f"  any origin           -> {post(p3, init_body(), origin='http://evil.example')[0]}")
-    print("\n== real MCP surface (no origin) ==")
-    print(f"  tools/list           -> {post(p3, init_body('tools/list'))[0]}")
-    st, b = post(p3, init_body("tools/call", {"name": "factory.audit_taxonomy", "arguments": {}}),
-                 hdr={"Mcp-Name": "factory.audit_taxonomy"})
-    print(f"  tools/call taxonomy  -> {st} ({len(b)} bytes)")
-    print("\n== auth / framing ==")
-    print(f"  no token             -> {post(p3, init_body(), hdr={'Authorization': ''})[0]}")
-    print(f"  wrong token          -> {post(p3, init_body(), hdr={'Authorization': 'Bearer x'*20})[0]}")
-    print(f"  GET                  -> {post(p3, None, method='GET')[0]}")
-    print(f"  bad path             -> {post(p3, init_body(), path='/other')[0]}")
-    print(f"  bad json             -> {post(p3, '{')[0]}")
-    print(f"  array body           -> {post(p3, '[]')[0]}")
-    print(f"  wrong ctype          -> {post(p3, init_body(), hdr={'Content-Type': 'text/plain'})[0]}")
-    print(f"  wrong mcp-method     -> {post(p3, init_body(), hdr={'Mcp-Method': 'tools/list'})[0]}")
-    print(f"  wrong proto          -> {post(p3, init_body(), hdr={'MCP-Protocol-Version': '2024-11-05'})[0]}")
-    srv3.shutdown()
+    print("== F1c: empty allowlist still fail-closes on any origin ==")
+    srv, port = boot(())
+    check(
+        "foreign origin refused",
+        post(port, init_body(), origin="http://evil.example")[0],
+        403,
+    )
+    srv.shutdown()
+
+    print("== F2: missing metadata has its own marker ==")
+    srv, port = boot(())
+    st, b = post(
+        port,
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+    )
+    check("status", st, 400)
+    check("marker", json.loads(b)["error"]["data"]["marker"], "MCP_HTTP_META_MISSING")
+    srv.shutdown()
+
+    print("== F3: initialize advertises the enforced version ==")
+    srv, port = boot(())
+    st, b = post(port, init_body())
+    check("status", st, 200)
+    check("advertised version", json.loads(b)["result"]["protocolVersion"], PV)
+    check(
+        "echoed version accepted",
+        post(port, init_body(), hdr={"MCP-Protocol-Version": PV})[0],
+        200,
+    )
+    srv.shutdown()
+
+    print("== unchanged guards ==")
+    srv, port = boot(())
+    check("no token", post(port, init_body(), hdr={"Authorization": ""})[0], 401)
+    check(
+        "wrong token",
+        post(port, init_body(), hdr={"Authorization": "Bearer " + "x" * 40})[0],
+        401,
+    )
+    check(
+        "rebinding host", post(port, init_body(), hdr={"Host": "evil.example"})[0], 403
+    )
+    check("GET", post(port, None, method="GET")[0], 405)
+    check("bad path", post(port, init_body(), path="/other")[0], 404)
+    check("bad json", post(port, "{")[0], 400)
+    check("array body", post(port, "[]")[0], 400)
+    check(
+        "wrong ctype",
+        post(port, init_body(), hdr={"Content-Type": "text/plain"})[0],
+        415,
+    )
+    check(
+        "wrong mcp-method",
+        post(port, init_body(), hdr={"Mcp-Method": "tools/list"})[0],
+        400,
+    )
+    check(
+        "wrong proto",
+        post(port, init_body(), hdr={"MCP-Protocol-Version": "2024-11-05"})[0],
+        400,
+    )
+    check("tools/list", post(port, init_body("tools/list"))[0], 200)
+    srv.shutdown()
+
+    print(f"\n{'FAILED: ' + ', '.join(_FAILS) if _FAILS else 'all checks passed'}")
+    return 1 if _FAILS else 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

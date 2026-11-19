@@ -4000,9 +4000,12 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
             f"127.0.0.1:{server_port}",
             f"localhost:{server_port}",
         }
+        # Prefer the port-resolved list bound to the server; fall back to the
+        # handler value for any caller that constructs the handler directly.
+        allowed_origins = getattr(self.server, "allowed_origins", self.allowed_origins)
         host_valid = len(host_values) == 1 and host_values[0].lower() in allowed_hosts
         origin_valid = len(origin_values) <= 1 and (
-            not origin_values or origin_values[0] in self.allowed_origins
+            not origin_values or origin_values[0] in allowed_origins
         )
         if not host_valid or not origin_valid:
             self._send_json(403, None)
@@ -4069,8 +4072,32 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
             return None
         return int(token, 16)
 
+    def _drain_body(self) -> None:
+        """Read a bounded Content-Length body so the reply is not reset.
+
+        Called on paths that answer before normal request parsing.  Windows
+        TCP stacks reset the socket when a response is written while request
+        bytes are still unread, which hides the intended status from the
+        client.  A missing, malformed or oversized body is simply not drained.
+        """
+        values = self.headers.get_all("Content-Length", [])
+        if len(values) != 1:
+            return
+        try:
+            length = int(values[0])
+        except ValueError:
+            return
+        if not 0 < length <= _HTTP_MAX_BODY_BYTES:
+            return
+        self.connection.settimeout(2.0)
+        try:
+            self.rfile.read(length)
+        except (OSError, TimeoutError):
+            self.close_connection = True
+
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         """Reject GET requests after validating the local request origin."""
+        self._drain_body()
         if not self._source_checks_pass():
             return
         self.send_response(405)
@@ -4083,6 +4110,7 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
         """Validate bounded framing and identity before dispatching a read-only MCP request."""
         if self.path != "/mcp":
+            self._drain_body()
             self._send_json(404, None)
             return
         if not self._framing_valid():
@@ -4225,6 +4253,25 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 },
             }
             response: object = _result(request_id, result)
+        elif method == "initialize":
+            # Advertise the version this transport actually enforces, not the
+            # stdio version, so a client that echoes it is never rejected.
+            try:
+                result = dispatch(clean_request, self.workspace)
+            except Exception:
+                response = _error(
+                    request_id,
+                    -32603,
+                    "internal MCP handler error",
+                    "MCP_HTTP_INTERNAL_ERROR",
+                )
+            else:
+                if isinstance(result, dict) and isinstance(result.get("result"), dict):
+                    result["result"] = {
+                        **result["result"],
+                        "protocolVersion": MCP_STREAMABLE_HTTP_VERSION,
+                    }
+                response = result
         else:
             try:
                 response = dispatch(clean_request, self.workspace)
@@ -4328,8 +4375,8 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 400,
                 request_id,
                 -32020,
-                "request metadata and clientCapabilities are required",
-                "MCP_HTTP_HEADER_MISMATCH",
+                "params._meta with clientCapabilities is required",
+                "MCP_HTTP_META_MISSING",
             )
             return False
         requested_version = meta.get(_HTTP_META_PROTOCOL_VERSION)
@@ -4474,6 +4521,25 @@ def _validate_http_address(port, allowed_origins):
         )
 
 
+def resolve_allowed_origins(allowed_origins, port):
+    """Substitute the bound port into allowed-origin placeholders.
+
+    Callers often cannot know the port before bind (``port=0``), so an origin
+    may carry the literal token ``PORT`` or ``{port}``.  Resolution is exact:
+    only those tokens are replaced, and an origin is left untouched when it
+    contains neither.  The result still fail-closes because the handler keeps
+    comparing whole origin strings.
+    """
+    resolved = []
+    for origin in allowed_origins:
+        for token in ("{port}", "PORT"):
+            if token in origin:
+                origin = origin.replace(token, str(port))
+                break
+        resolved.append(origin)
+    return tuple(resolved)
+
+
 def create_streamable_http_server(
     root: Path | str,
     *,
@@ -4499,8 +4565,14 @@ def create_streamable_http_server(
             bearer_validator=bearer_validator,
             allowed_origins=allowed_origins,
         )
-        return HTTPServer(("127.0.0.1", port), handler)
+        server = HTTPServer(("127.0.0.1", port), handler)
     except OSError as exc:
         raise McpError(
             f"could not bind local MCP HTTP server: {exc}", "MCP_HTTP_BIND_FAILED"
         ) from exc
+    # Resolve placeholders only after a real port exists; a static origin list
+    # can never match a port=0 bind otherwise.
+    server.allowed_origins = resolve_allowed_origins(
+        allowed_origins, server.server_address[1]
+    )
+    return server
