@@ -8,6 +8,7 @@ canonicalized and hash-bound before a runtime may consume it.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -52,13 +53,7 @@ class AgentContractError(ValueError):
 
 def _canonical(value: object) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError) as exc:
         raise AgentContractError(
             "AGENT_CONTRACT_INVALID", f"contract is not canonical JSON: {exc}"

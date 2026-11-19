@@ -10,6 +10,7 @@ Atomic, executes a command, resumes a checkpoint, or grants authority.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from datetime import datetime, timezone
 from contextlib import contextmanager
 import hashlib
@@ -77,13 +78,7 @@ class AtomicProofAdapterError(ValueError):
 
 def _canonical(value: object) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError, RecursionError) as exc:
         raise AtomicProofAdapterError(
             "E_ATOMIC_ENVELOPE_SCHEMA", "input must be canonical JSON"

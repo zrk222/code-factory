@@ -4177,13 +4177,16 @@ def _semgrep_challenge_command(profile):
         "{report}",
         "{source}",
     ]
+    if profile.get("tool_version") == "1.15.0":
+        expected[0] = "/usr/bin/opengrep"
+        expected.remove("--metrics=off")
     if argv != expected:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_PROFILE", "pinned command differs"
         )
     result = list(argv)
-    result[8] = "{config}"
-    result.insert(7, "--no-rewrite-rule-ids")
+    result[result.index("--config") + 1] = "{config}"
+    result.insert(result.index("--config"), "--no-rewrite-rule-ids")
     return {
         "argv": result,
         "accepted_exit_codes": profile["commands"][0]["accepted_exit_codes"],

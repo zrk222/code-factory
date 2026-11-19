@@ -133,21 +133,25 @@ function trustedWorkflowProgram() {
   return program.replace(/^          /gm, '');
 }
 
-test('manual OSV selection is explicit and cannot narrow a PR or push matrix', () => {
+for (const target of ['osv-worker', 'semgrep-worker']) {
+test(`manual ${target} selection cannot narrow a PR or push matrix`, () => {
   for (const name of ['workflow_dispatch', 'pull_request', 'push']) {
     const directory = mkdtempSync(join(tmpdir(), 'factory-manual-osv-'));
     const output = join(directory, 'output.txt');
     try {
       const result = spawnSync(process.execPath, ['--input-type=module', '-e', trustedWorkflowProgram()], {
         cwd: directory, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: directory, GITHUB_OUTPUT: output,
-          GITHUB_EVENT_NAME: name, GITHUB_EVENT_JSON: JSON.stringify({ inputs: { target: 'osv-worker' } }) },
+          GITHUB_EVENT_NAME: name, GITHUB_EVENT_JSON: JSON.stringify({ inputs: { target } }) },
       });
       assert.equal(result.status, 0, result.stderr);
-      const expected = name === 'workflow_dispatch' ? ['osv-worker'] : sdkTargets;
+      const expected = name === 'workflow_dispatch' && target === 'osv-worker' ? ['osv-worker'] : sdkTargets;
       assert.ok(readFileSync(output, 'utf8').includes(`matrix=${JSON.stringify(expected)}\n`));
+      const sdk = name === 'workflow_dispatch' && target === 'semgrep-worker' ? 'false' : 'true';
+      assert.ok(readFileSync(output, 'utf8').includes(`sdk=${sdk}\n`));
     } finally { rmSync(directory, { recursive: true, force: true }); }
   }
 });
+}
 
 for (const scenario of ['candidate sabotage', 'missing baseline', 'manual']) {
   test(`trusted workflow selector: ${scenario} runs all SDK workers`, () => {

@@ -14,6 +14,33 @@ from factoryline.runtime_audit_common import (
 ANALYZER = {"id": "scanner", "driver": "Example", "version": "1"}
 
 
+@pytest.mark.parametrize("version,valid", [("1.15.0", True), ("1.141.0", False)])
+def test_opengrep_native_driver_requires_its_explicit_version_pin(version, valid):
+    from factoryline.deep_audit_sarif import _sarif_analyzer
+
+    run = {"tool": {"driver": {"name": "Opengrep OSS", "version": version}}}
+    lane = {"engine": "semgrep", "tool_version": version}
+    if valid:
+        assert _sarif_analyzer(run, lane)[1]["driver"] == "Opengrep OSS"
+    else:
+        with pytest.raises(RuntimeAuditError, match="E_ANALYZER_MISMATCH"):
+            _sarif_analyzer(run, lane)
+
+
+@pytest.mark.parametrize(
+    "version,semantic", [("1.15.0", "old"), ("old", "1.15.0"), (None, "old")]
+)
+def test_native_semantic_version_cannot_be_overwritten_by_profile(version, semantic):
+    from factoryline.deep_audit_sarif import _native_sarif_metadata
+
+    driver = {"name": "Opengrep OSS", "semanticVersion": semantic}
+    if version is not None:
+        driver["version"] = version
+    raw = {"runs": [{"tool": {"driver": driver}}]}
+    with pytest.raises(RuntimeAuditError, match="E_TOOLCHAIN_DRIFT"):
+        _native_sarif_metadata(raw, {"tool_version": "1.15.0"}, [])
+
+
 @pytest.mark.parametrize(
     "tags,obligation,security",
     [

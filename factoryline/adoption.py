@@ -1973,7 +1973,8 @@ def run_repo_scan(
     }
     if security_error:
         result["static_security_error"] = security_error
-    result["scan_sha256"] = _sha(_scan_identity_projection(result))
+    identity = result if deep_audit is None else _scan_identity_projection(result)
+    result["scan_sha256"] = _sha(identity)
     result["run_receipt_sha256"] = _sha(result)
     return result
 

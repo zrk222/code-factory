@@ -52,3 +52,67 @@ export function verifyRuleMutation(baseline, mutated, ruleId) {
   return { state: 'PASS', disabled_rule_id: ruleId, removed_findings: target.length,
     retained_findings: after.length, target_finding_keys: target };
 }
+
+// Verify native trace endpoints against reviewed synthetic fixture expectations.
+// This validates transport evidence; it does not infer a flow from source text.
+export function verifySourceSinkFlows(report, manifest, sourceHashes) {
+  const run = validatedRun(report);
+  const required = manifest.filter(item => item.source_line !== undefined);
+  if (!required.length) throw new Error('Missing source-to-sink fixture expectations');
+  return required.map(expected => verifyExpectedFlow(run, expected, sourceHashes));
+}
+
+function verifyExpectedFlow(run, expected, sourceHashes) {
+  const matches = run.results.filter(result => matchesExpectedFinding(result, expected));
+  if (matches.length !== 1) throw new Error('Missing or duplicate traced finding');
+  const flows = (matches[0].codeFlows ?? []).flatMap(flow => flow.threadFlows ?? []);
+  const paths = flows.map(thread => (thread.locations ?? []).map(step => boundFlowStep(step, sourceHashes)));
+  if (!paths.some(steps => matchesEndpoints(steps, expected))) {
+    throw new Error('Native source/sink endpoints differ');
+  }
+  return { rule: expected.rule, path: expected.path, source_line: expected.source_line,
+    sink_line: expected.line, flows: paths };
+}
+
+function matchesExpectedFinding(result, expected) {
+  const place = result.locations?.[0]?.physicalLocation;
+  return result.ruleId === expected.rule && sourcePath(place?.artifactLocation?.uri) === expected.path &&
+    place.region?.startLine === expected.line;
+}
+
+function boundFlowStep(step, sourceHashes) {
+  const place = step.location?.physicalLocation;
+  const path = sourcePath(place?.artifactLocation?.uri);
+  const line = place?.region?.startLine;
+  if (!Object.hasOwn(sourceHashes, path) || !/^[a-f0-9]{64}$/.test(sourceHashes[path]) ||
+      !Number.isInteger(line) || line < 1 || step.index !== undefined) {
+    throw new Error('Unbound native flow step');
+  }
+  return { path, source_sha256: sourceHashes[path], line };
+}
+
+function matchesEndpoints(steps, expected) {
+  return steps.length >= 2 && steps[0].path === expected.path &&
+    steps[0].line === expected.source_line && steps.at(-1).path === expected.path &&
+    steps.at(-1).line === expected.line;
+}
+
+export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
+  if (manifest.length !== 97 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30) {
+    throw new Error('Registered rule/finding control matrix differs');
+  }
+  for (const language of ['go', 'java', 'csharp', 'ruby']) {
+    for (const family of ['command', 'sql']) {
+      const rule = `opt.factory.rules.${language}.request-${family}-injection`;
+      if (!ruleIds.includes(rule) || manifest.filter(item => item.rule === rule &&
+          Number.isInteger(item.source_line)).length !== 2 || safeCounts[rule] !== 3) {
+        throw new Error('Missing direct, alias, safe or provider-mismatch flow control');
+      }
+    }
+  }
+}
+
+function sourcePath(uri) {
+  if (typeof uri !== 'string') return undefined;
+  return uri.replace(/^(?:file:\/\/)?\/src\//, '');
+}

@@ -25,21 +25,30 @@ USER 1000:1000
 WORKDIR /src
 ENTRYPOINT ["/opt/factory/bin/audit-adapter"]
 
-FROM semgrep/semgrep:1.141.0@sha256:64102d27111415eb3d51a313bf69739030a069716d7ba4827c2f8842c02b481e AS semgrep-tool
-FROM semgrep-tool AS semgrep-worker
+FROM sdk AS semgrep-worker
 USER 0:0
-# Semgrep has its own Python interpreter, so copy the same tested closure here.
-COPY factoryline/__init__.py factoryline/repository_checkpoint_audit.py factoryline/deep_audit_io.py factoryline/deep_audit.py factoryline/deep_audit_sarif.py factoryline/deep_audit_contract.py factoryline/deep_audit_loop.py factoryline/deep_audit_attestation.py factoryline/audit_taxonomy.py factoryline/enterprise_receipts.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py factoryline/assembly_process.py /usr/lib/python3.12/site-packages/factoryline/
-COPY factoryline/data/junie_pack.json /usr/lib/python3.12/site-packages/factoryline/data/junie_pack.json
-COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
+# Restore the existing CF YAML dependency previously supplied by the tool image.
+ADD --checksum=sha256:b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl /tmp/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+RUN python -m pip install --no-cache-dir --no-index --no-deps /tmp/pyyaml-*.whl && rm /tmp/pyyaml-*.whl
+# The Semgrep-compatible OSS fork emits native source/sink traces without login.
+# Reuse the shared Python/module closure instead of another interpreter image.
+ADD --checksum=sha256:f81fe0abd4379a729436aeeb1d4696eeb6cde8b6729c72a08543d1c476469656 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v1.15.0/opengrep_manylinux_x86 /usr/bin/opengrep
+# Materialize the signed-release payload at build time. Runtime scratch remains
+# non-executable; run the fixed, root-owned standalone payload from the image.
+RUN XDG_CACHE_HOME=/opt/factory/opengrep-cache /usr/bin/opengrep --version \
+    && chmod -R a+rX /opt/factory/opengrep-cache \
+    && test -x /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin \
+    && printf '#!/bin/sh\nexec /opt/factory/opengrep-cache/opengrep/v1.15.0/opengrep.bin --legacy "$@"\n' > /usr/bin/opengrep \
+    && /usr/bin/opengrep --version
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-pattern-limited.json /opt/factory/adapter-profile.json
 COPY --chown=1000:1000 deploy/deep-adapters/rules/semgrep-pattern-limited.yml /opt/factory/rules/semgrep-pattern-limited.yml
 RUN mkdir -p /src /out /opt/factory/rules
 WORKDIR /src
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="pattern-limited"
+RUN HOME=/tmp /usr/bin/opengrep --version
 
-ENTRYPOINT ["/usr/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
+ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM sdk AS codeql-python-worker
 USER 0:0
 ADD --checksum=sha256:1ec99cfa9420f04c2330784b4ddb8363a0dd67c3e4471cd93963c50e6c433717 https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.1/codeql-bundle-linux64.tar.zst /tmp/codeql-bundle.tar.zst

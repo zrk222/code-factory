@@ -8,6 +8,7 @@ _QUICK_HELP = """Code Factory - review your code with less setup.
 
 Start here:
   Scan my code       factory scan --root .
+  Python checks only factory scan --static-only --root .
   Open dashboard     factory studio --root .
   Get guidance       factory guide
 
@@ -16,7 +17,8 @@ Next steps:
   Check setup        factory doctor --strict --json
   All commands       factory --help-all
 
-Scan reads eligible Python source without running your project.
+Default scan includes applicable checks and authorized configured workers.
+Use --static-only for Python source checks without workers.
 Review findings, verify repairs with your tests, then rerun affected checks.
 Keep pytest, mutation testing, CodeQL and Semgrep in your existing CI.
 Missing evidence means INCOMPLETE; a scan is not release approval.

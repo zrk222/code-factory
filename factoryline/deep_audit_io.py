@@ -192,6 +192,25 @@ LANGUAGES = {
 }
 
 
+# Exact native grammar to inventory identities; these are pattern-limited capabilities.
+SEMGREP_SOURCE_LANGUAGES = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "php",
+        "go",
+        "rust",
+        "java",
+        "c",
+        "cpp",
+        "csharp",
+        "ruby",
+        "swift",
+    }
+)
+
+
 def _git_names(root: Path, tracked: bool, *, ignored: bool = False) -> set[str]:
     from .runtime_audit_process import run_bounded_command
 

@@ -398,7 +398,7 @@ jobs:
         run: |
           git init ../code-factory-1-spec && git -C ../code-factory-1-spec fetch --depth 1 https://github.com/zrk222/code-factory-1-spec.git 6da88be2e99bd8082e950673ee5151db84c43f2d && git -C ../code-factory-1-spec checkout --detach FETCH_HEAD
           git init ../code-factory-2-forge && git -C ../code-factory-2-forge fetch --depth 1 https://github.com/zrk222/code-factory-2-forge.git 77eea36a7b7762b834997e0fa1be9132070af928 && git -C ../code-factory-2-forge checkout --detach FETCH_HEAD
-          git init ../code-factory-3-compile && git -C ../code-factory-3-compile fetch --depth 1 https://github.com/zrk222/code-factory-3-compile.git 2f09e463f6f4bb896691a39807a664878f9e62f4 && git -C ../code-factory-3-compile checkout --detach FETCH_HEAD
+          git init ../code-factory-3-compile && git -C ../code-factory-3-compile fetch --depth 1 https://github.com/zrk222/code-factory-3-compile.git a5ae4c431ec029a801c1ef1b7594d38a273025cf && git -C ../code-factory-3-compile checkout --detach FETCH_HEAD
           git init ../code-factory-4-design && git -C ../code-factory-4-design fetch --depth 1 https://github.com/zrk222/code-factory-4-design.git 3190b17d4c242fd18c13306309d33ccb2b24ba04 && git -C ../code-factory-4-design checkout --detach FETCH_HEAD
       - name: Install source train
         run: >-

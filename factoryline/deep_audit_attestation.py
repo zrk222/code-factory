@@ -2017,6 +2017,8 @@ def _semgrep_rule_runs(profile, lane, source, scratch, rules, started):
             str(report_path),
             str(source),
         ]
+        if profile.get("tool_version") == "1.15.0":
+            argv.remove("--metrics=off")
         facts = run_bounded_command(argv, source, remaining, directory)
         if _deep_audit_io._adapter_command_failed(facts, [0], deadline):
             raise _deep_audit_io.RuntimeAuditError(
@@ -2178,14 +2180,18 @@ def _semgrep_raw_bindings(observation, index):
         "--no-rewrite-rule-ids",
         "--config",
     ]
-    if not isinstance(argv, list) or len(argv) != 14 or argv[:10] != prefix:
+    if observation["native_report"].get("version") == "1.15.0":
+        prefix[0] = "/usr/bin/opengrep"
+        prefix.remove("--metrics=off")
+    size = len(prefix)
+    if not isinstance(argv, list) or len(argv) != size + 4 or argv[:size] != prefix:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "isolated command differs"
         )
-    config, report = PurePosixPath(argv[10]), PurePosixPath(argv[12])
+    config, report = PurePosixPath(argv[size]), PurePosixPath(argv[size + 2])
     if (
-        argv[11] != "--json-output"
-        or argv[13] != "/src"
+        argv[size + 1] != "--json-output"
+        or argv[size + 3] != "/src"
         or config.name != "rule.json"
         or report.name != "report.json"
         or config.parent != report.parent
