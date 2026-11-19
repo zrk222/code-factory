@@ -2053,18 +2053,23 @@ def _recall_disposition(truth, site, findings):
     return "DETECTED" if site in findings else "MISSED"
 
 
-def _recall_case_row(case_id, case, captures, populations):
+def _recall_case_row(case_id, case, captures, populations, report_sources):
     category, truth, binding, site = case
     report, raw, admitted = (None, None, None)
     if case_id in captures:
         report, raw, admitted = _recall_capture(captures[case_id], binding)
-        if populations.setdefault((report, binding), (raw, admitted)) != (
+        if report_sources.setdefault((report, binding[0]), binding[1]) != binding[1]:
+            raise BenchmarkError(
+                "E_RECALL_BINDING", "Report binds multiple source digests for one path"
+            )
+        if populations.setdefault(binding, (report, raw, admitted)) != (
+            report,
             raw,
             admitted,
         ):
             raise BenchmarkError(
                 "E_RECALL_BINDING",
-                "Conflicting populations for the same report and source",
+                "Conflicting populations or reports for the same source binding",
             )
     return {
         "id": case_id,
@@ -2146,9 +2151,9 @@ def evaluate_source_bound_recall(manifest, observations, *, out=None):
     captures = observations["cases"]
     if not isinstance(captures, dict) or not captures.keys() <= cases.keys():
         raise BenchmarkError("E_RECALL_BINDING", "Capture contains unregistered cases")
-    populations = {}
+    populations, report_sources = {}, {}
     rows = [
-        _recall_case_row(case_id, case, captures, populations)
+        _recall_case_row(case_id, case, captures, populations, report_sources)
         for case_id, case in cases.items()
     ]
     if _sha(observations) != bindings["observations_sha256"]:

@@ -589,6 +589,31 @@ def test_source_bound_recall_rejects_reused_clean_control_scope(existing):
         evaluate_source_bound_recall(manifest, observations)
 
 
+def test_source_bound_recall_requires_consistent_report_and_source_identity():
+    manifest, observations = _recall_pair()
+    positive = manifest["cases"][0]
+    capture = observations["cases"]["positive"]
+    second = {**positive, "id": "second", "expected": {"rule": "other", "line": 4}}
+    second_capture = copy.deepcopy(capture)
+    manifest["cases"].append(second)
+    observations["cases"]["second"] = second_capture
+
+    second_capture["report_sha256"] = _digest("alternate report for the same source")
+    _seal_recall(manifest, observations)
+    with pytest.raises(BenchmarkError, match="Conflicting populations or reports"):
+        evaluate_source_bound_recall(manifest, observations)
+
+    second["source_sha256"] = second_capture["source_sha256"] = _digest("variant")
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    assert result["metrics"]["overall"]["raw"]["denominator"] == 2
+
+    second_capture["report_sha256"] = capture["report_sha256"]
+    _seal_recall(manifest, observations)
+    with pytest.raises(BenchmarkError, match="multiple source digests for one path"):
+        evaluate_source_bound_recall(manifest, observations)
+
+
 @pytest.mark.parametrize(
     "mutation",
     ["seal", "scanner", "configuration", "source", "path", "extra", "subset"],
