@@ -615,7 +615,7 @@ def agent_taxonomy_context(specialist_role: str | None = None) -> dict[str, Any]
         "taxonomy_sha256": taxonomy["taxonomy_sha256"],
         "requested_specialist_role": specialist_role,
         "role_resolution_state": "RESOLVED_FROM_CANONICAL_REGISTRY",
-        "identity_scope": "Role routing does not authenticate the calling agent.",
+        "identity_scope": "Role routing is not an authentication claim.",
         "specialist_roles": selected_roles,
         "domains": [
             row for row in taxonomy["domains"] if row["measurement_id"] in selected_ids
