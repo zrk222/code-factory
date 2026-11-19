@@ -1595,10 +1595,23 @@ def test_capture_diagnostic_summary_reports_bound_gate_facts():
     assert summary["capture_cleanup_removed"] is True
 
 
-def test_local_production_mutation_capture_records_real_all_case_failure(tmp_path):
+@pytest.mark.parametrize(
+    ("line_end", "final_end"),
+    [(b"\n", b"\n"), (b"\r\n", b"\r\n"), (b"\n", b"")],
+    ids=["lf", "crlf", "no-final-newline"],
+)
+def test_local_production_mutation_capture_records_real_all_case_failure(
+    tmp_path, line_end, final_end
+):
     test, assertion_line = _mutation_project(tmp_path, parameterized=True)
     original_test = test.read_bytes()
-    original_source = (tmp_path / "app.py").read_bytes()
+    original_source = (
+        line_end.join(
+            (b"# coding: latin-1", b"# caf\xe9", b"def value():", b"    return 1")
+        )
+        + final_end
+    )
+    (tmp_path / "app.py").write_bytes(original_source)
     result = capture_local_production_mutation(
         tmp_path,
         "test_app.py::test_value",
@@ -1619,6 +1632,15 @@ def test_local_production_mutation_capture_records_real_all_case_failure(tmp_pat
     _assert_local_capture_observations(result, tmp_path)
     _assert_saved_local_candidate(result, tmp_path)
     _assert_local_candidate_negative_controls(result)
+    mutation = result["production_mutation"]
+    diff = (tmp_path / ".factory/capture-one" / mutation["diff_path"]).read_bytes()
+    changed_line_end = final_end or b"\n\\ No newline at end of file\n"
+    assert b" # caf\xe9" + line_end in diff
+    assert (
+        b"-    return 1" + changed_line_end + b"+    return 0" + changed_line_end
+        in diff
+    )
+    assert hashlib.sha256(diff).hexdigest() == mutation["diff_sha256"]
 
 
 @pytest.mark.parametrize("explicit", [False, True])
