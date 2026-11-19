@@ -2976,3 +2976,228 @@ def test_osv_fixed_versions_do_not_cross_package_boundaries():
         ]
     }
     assert _osv_fixed_versions(vulnerability, identity) == ["2"]
+
+
+def _local_runner_lane():
+    # Supplied unit-test digests do not establish upstream signature verification.
+    binding = {
+        "kind": "local-native",
+        "platform": {"os": "windows", "architecture": "x86_64"},
+        "profile_sha256": "a" * 64,
+        "tool_manifest_sha256": "b" * 64,
+        "ruleset_sha256": "c" * 64,
+        "provenance": {
+            "release_url": "https://github.com/opengrep/opengrep/releases/download/v1.15.0/opengrep_windows_x86.exe",
+            "artifact_sha256": "d" * 64,
+            "verification_receipt_sha256": "e" * 64,
+        },
+        "grants": {
+            "read": ["captured-source", "rules", "tool-bundle"],
+            "write": ["scratch", "output"],
+            "network": False,
+            "candidate_execution": False,
+        },
+    }
+    from factoryline.deep_audit_contract import V2_NATIVE_ROLES
+
+    return {
+        "id": "local-opengrep",
+        "engine": "semgrep",
+        "family": "static",
+        "runner_binding": binding,
+        "argv": ["factory-native-profile", "a" * 64],
+        "report": "report.json",
+        "coverage": "coverage.json",
+        "challenge_report": "challenge.json",
+        "languages": ["typescript"],
+        "mode": "pattern-limited",
+        "timeout_seconds": 10,
+        "memory_mib": 128,
+        "tool_version": "1.15.0",
+        "ruleset_sha256": "c" * 64,
+        "native_artifact_roles": sorted(V2_NATIVE_ROLES["semgrep"]),
+        "rule_ids": ["test-rule"],
+        "mutation_config_sha256": {"test-rule": "f" * 64},
+    }
+
+
+@pytest.mark.parametrize("field", ["os", "architecture"])
+@pytest.mark.parametrize("value", [[], {}, None, False, True, 0, 1, 1.5])
+def test_local_runner_platform_types_fail_with_contract_error(field, value):
+    from factoryline.deep_audit_contract import _execution_lane
+
+    lane = _local_runner_lane()
+    lane["runner_binding"]["platform"][field] = value
+    with pytest.raises(RuntimeAuditError):
+        _execution_lane(lane, 2)
+
+
+def test_local_runner_closed_v2_lane_and_legacy_rejection():
+    from factoryline.deep_audit_contract import _execution_lane
+
+    lane = _local_runner_lane()
+    _execution_lane(lane, 2)
+    with pytest.raises(RuntimeAuditError):
+        _execution_lane(lane, 1)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "image",
+        "neither",
+        "extra",
+        "manifest",
+        "rules",
+        "profile",
+        "platform",
+        "grant-extra",
+        "grant-missing",
+        "network",
+        "bool-alias",
+        "provenance-missing",
+        "provenance-extra",
+        "release-platform",
+        "receipt",
+        "runtime",
+    ],
+)
+def test_local_runner_rejects_ambiguous_or_unbound_contract(damage):
+    from factoryline.deep_audit_contract import _execution_lane
+
+    lane = _local_runner_lane()
+    binding = lane["runner_binding"]
+    if damage == "image":
+        lane["image"] = "sha256:" + "a" * 64
+    elif damage == "neither":
+        lane.pop("runner_binding")
+    elif damage == "extra":
+        binding["self_verified"] = True
+    elif damage == "manifest":
+        binding["tool_manifest_sha256"] = "bad"
+    elif damage == "rules":
+        binding["ruleset_sha256"] = "a" * 64
+    elif damage == "profile":
+        binding["profile_sha256"] = "b" * 64
+    elif damage == "platform":
+        binding["platform"]["os"] = "macos"
+    elif damage == "grant-extra":
+        binding["grants"]["execute"] = True
+    elif damage == "grant-missing":
+        binding["grants"].pop("write")
+    elif damage == "network":
+        binding["grants"]["network"] = True
+    elif damage == "bool-alias":
+        binding["grants"]["network"] = 0
+    elif damage == "provenance-missing":
+        binding["provenance"].pop("artifact_sha256")
+    elif damage == "provenance-extra":
+        binding["provenance"]["verified"] = True
+    elif damage == "release-platform":
+        binding["platform"]["os"] = "linux"
+    elif damage == "receipt":
+        binding["provenance"]["verification_receipt_sha256"] = "bad"
+    elif damage == "runtime":
+        lane["engine"] = "runtime"
+    with pytest.raises(RuntimeAuditError):
+        _execution_lane(lane, 2)
+
+
+@pytest.mark.parametrize(
+    "field,output",
+    [
+        ("image_sha256", "image_binding_sha256"),
+        ("runner_binding_sha256", "runner_binding_sha256"),
+    ],
+)
+def test_native_challenge_provider_identity_preserves_container_and_local(
+    field, output
+):
+    from factoryline.runtime_audit_common import _execution_provider_identity
+
+    assert _execution_provider_identity({field: "a" * 64}) == {output: "a" * 64}
+
+
+@pytest.mark.parametrize(
+    "bindings",
+    [
+        {},
+        {"image_sha256": "a" * 64, "runner_binding_sha256": "b" * 64},
+        {"runner_binding_sha256": "bad"},
+    ],
+)
+def test_native_challenge_rejects_missing_dual_or_invalid_identity(bindings):
+    from factoryline.runtime_audit_common import _execution_provider_identity
+
+    with pytest.raises(RuntimeAuditError):
+        _execution_provider_identity(bindings)
+
+
+@pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize("version", [1, 2])
+def test_native_challenge_facts_use_actual_provider_binding(local, version):
+    from factoryline.runtime_audit_common import (
+        _native_execution,
+        _native_execution_v2,
+        _validate_execution_bindings,
+        canonical_bytes,
+    )
+
+    facts = {
+        "exit_code": 0,
+        "timed_out": False,
+        "timeout_seconds": 10,
+        "duration_ms": 1,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "stdout_sha256": "a" * 64,
+        "stderr_sha256": "b" * 64,
+        "stdout_bytes": 0,
+        "stderr_bytes": 0,
+    }
+    data = {
+        "fixture_manifest": {"a.ts": "c" * 64},
+        "fixture_sha": "c" * 64,
+        "fixture_manifest_sha": "c" * 64,
+        "baseline_sha": "d" * 64,
+        "effective_sha": "d" * 64,
+    }
+    identity = "runner_binding_sha256" if local else "image_sha256"
+    bindings = {
+        "candidate_sha256": "e" * 64,
+        "challenge_source_sha256": sha256_bytes(
+            canonical_bytes(data["fixture_manifest"])
+        ),
+        "profile_sha256": "f" * 64,
+        identity: "a" * 64,
+        "tool_version": "1.15.0",
+        "version_probe_sha256": sha256_bytes(canonical_bytes(facts)),
+        "version_probe_facts": facts,
+    }
+    _validate_execution_bindings({}, data, bindings)
+    args = (
+        "PASS",
+        facts,
+        0,
+        "b" * 64,
+        data,
+        bindings,
+        "c" * 64,
+        True,
+        True,
+        "positive",
+        "rule",
+        10,
+    )
+    result = (
+        _native_execution(*args) if version == 1 else _native_execution_v2(*args, [])
+    )
+    key = "runner_binding_sha256" if local else "image_binding_sha256"
+    assert result[key] == "a" * 64
+    assert ("image_binding_sha256" if local else "runner_binding_sha256") not in result
+    seal = result.pop("execution_sha256")
+    assert seal == sha256_bytes(canonical_bytes(result))
+    bindings["image_sha256" if local else "runner_binding_sha256"] = "b" * 64
+    with pytest.raises(RuntimeAuditError):
+        _validate_execution_bindings({}, data, bindings)

@@ -1532,7 +1532,7 @@ def _native_execution(
         "candidate_binding_sha256": execution_bindings["candidate_sha256"],
         "challenge_source_sha256": execution_bindings["challenge_source_sha256"],
         "profile_binding_sha256": execution_bindings["profile_sha256"],
-        "image_binding_sha256": execution_bindings["image_sha256"],
+        **_execution_provider_identity(execution_bindings),
         "tool_version": execution_bindings["tool_version"],
         "version_probe_sha256": execution_bindings["version_probe_sha256"],
         "baseline_config_sha256": data["baseline_sha"],
@@ -1598,7 +1598,7 @@ def _native_execution_v2(
         "candidate_binding_sha256": bindings["candidate_sha256"],
         "challenge_source_sha256": bindings["challenge_source_sha256"],
         "profile_binding_sha256": bindings["profile_sha256"],
-        "image_binding_sha256": bindings["image_sha256"],
+        **_execution_provider_identity(bindings),
         "tool_version": bindings["tool_version"],
         "version_probe_sha256": bindings["version_probe_sha256"],
         "baseline_config_sha256": data["baseline_sha"],
@@ -1627,24 +1627,26 @@ def _validate_execution_bindings(
     challenge: dict[str, Any], data: dict[str, Any], bindings: dict[str, Any]
 ) -> None:
     """Verify copied identity bindings and a completed, hash-bound tool version probe."""
+    identity_field = (
+        "runner_binding_sha256"
+        if "runner_binding_sha256" in bindings
+        else "image_sha256"
+    )
     exact_keys(
         bindings,
         {
             "candidate_sha256",
             "challenge_source_sha256",
             "profile_sha256",
-            "image_sha256",
+            identity_field,
             "tool_version",
             "version_probe_sha256",
             "version_probe_facts",
         },
     )
-    for field in (
-        "candidate_sha256",
-        "challenge_source_sha256",
-        "profile_sha256",
-        "image_sha256",
-    ):
+    for field in "candidate_sha256 challenge_source_sha256 profile_sha256".split() + [
+        identity_field
+    ]:
         require_digest(bindings[field], field)
     require_str(bindings["tool_version"], "tool_version", maximum=128)
     version_facts = bindings["version_probe_facts"]
@@ -1985,3 +1987,14 @@ def execute_native_challenge(
         mutation_ruleset_sha256,
     )
     return _finish_native_challenge(context, runner=runner, report_parser=report_parser)
+
+
+def _execution_provider_identity(bindings):
+    fields = set(bindings) & {"image_sha256", "runner_binding_sha256"}
+    if len(fields) != 1:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_BINDING", "one execution provider required"
+        )
+    field = fields.pop()
+    value = require_digest(bindings[field], field)
+    return {"image_binding_sha256" if field == "image_sha256" else field: value}

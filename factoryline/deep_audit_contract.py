@@ -358,6 +358,65 @@ def _validate_lane_image(lane: dict) -> None:
         )
 
 
+def _validate_local_runner(lane: dict) -> None:
+    binding = _keys(
+        lane["runner_binding"],
+        "kind platform profile_sha256 tool_manifest_sha256 ruleset_sha256 provenance grants",
+    )
+    if (
+        binding["kind"],
+        lane["engine"],
+        lane["family"],
+        lane["mode"],
+        lane["tool_version"],
+    ) != ("local-native", "semgrep", "static", "pattern-limited", "1.15.0"):
+        raise RuntimeAuditError(
+            "E_LOCAL_RUNNER", "only pinned static OpenGrep is admitted"
+        )
+    for field in ("profile_sha256", "tool_manifest_sha256", "ruleset_sha256"):
+        require_digest(binding[field], field)
+    if binding["ruleset_sha256"] != lane["ruleset_sha256"]:
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "local rules identity differs")
+    platform = _keys(binding["platform"], "os architecture")
+    for field in platform:
+        require_str(platform[field], f"platform.{field}", maximum=40)
+    if (platform["os"], platform["architecture"]) not in {
+        ("windows", "x86_64"),
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+    }:
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "unsupported native platform")
+    _validate_local_runner_policy(binding)
+
+
+def _validate_local_runner_policy(binding: dict) -> None:
+    grants = _keys(binding["grants"], "read write network candidate_execution")
+    if grants != {
+        "read": ["captured-source", "rules", "tool-bundle"],
+        "write": ["scratch", "output"],
+        "network": False,
+        "candidate_execution": False,
+    } or any(
+        type(grants[field]) is not bool for field in ("network", "candidate_execution")
+    ):
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "exact static grants required")
+    provenance = _keys(
+        binding["provenance"], "release_url artifact_sha256 verification_receipt_sha256"
+    )
+    for field in ("artifact_sha256", "verification_receipt_sha256"):
+        require_digest(provenance[field], field)
+    url = require_str(provenance["release_url"], "release_url", maximum=512)
+    asset = {
+        ("windows", "x86_64"): "opengrep_windows_x86.exe",
+        ("linux", "x86_64"): "opengrep_manylinux_x86",
+        ("linux", "aarch64"): "opengrep_manylinux_aarch64",
+    }
+    platform = binding["platform"]
+    expected = "https://github.com/opengrep/opengrep/releases/download/v1.15.0/"
+    if url != expected + asset[(platform["os"], platform["architecture"])]:
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "release asset platform differs")
+
+
 def _validate_lane_argv(lane: dict) -> None:
     argv = lane["argv"]
     if not isinstance(argv, list) or not 1 <= len(argv) <= 128:
@@ -398,6 +457,15 @@ def _validate_lane_mode(lane: dict) -> None:
             "E_ANALYSIS_MODE",
             "full-depth static analysis requires interprocedural full scan",
         )
+    if "runner_binding" in lane:
+        if lane["argv"] != [
+            "factory-native-profile",
+            lane["runner_binding"]["profile_sha256"],
+        ]:
+            raise RuntimeAuditError(
+                "E_ADAPTER_TEMPLATE", "local profile selector differs"
+            )
+        return
     if lane["argv"] != [
         "/opt/factory/bin/audit-adapter",
         lane["engine"],
@@ -427,7 +495,10 @@ def _execution_lane(
         raise RuntimeAuditError("E_EXECUTION_LANE", "missing or unknown lane fields")
     _keys(lane, " ".join(sorted(lane_fields)))
     _validate_lane_identity(lane)
-    _validate_lane_image(lane)
+    if "runner_binding" in lane:
+        _validate_local_runner(lane)
+    else:
+        _validate_lane_image(lane)
     _validate_lane_argv(lane)
     _validate_lane_reports(lane)
     _validate_lane_languages(lane)
@@ -461,6 +532,9 @@ def _execution_lane_fields(lane: dict, version: int) -> set[str]:
         "id engine family image argv report coverage challenge_report languages mode timeout_seconds memory_mib tool_version ruleset_sha256".split()
     )
     if version == 2:
+        if "runner_binding" in lane:
+            fields.remove("image")
+            fields.add("runner_binding")
         fields.add("native_artifact_roles")
         if lane.get("engine") != "syft":
             fields.update({"rule_ids", "mutation_config_sha256"})
