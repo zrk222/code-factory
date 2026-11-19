@@ -6,9 +6,11 @@ import hashlib
 import json
 import re
 from collections import Counter, defaultdict
-from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from contextvars import ContextVar
+from contextlib import nullcontext
+
+from . import canonical_json_compat_bytes
 
 from .audit_action_refs import _primitive_source_capture
 
@@ -1031,11 +1033,7 @@ def _finding_tier_defect_gate(tiers, ledger, coverage_state, partition_state):
 
 
 def _tier_sha256(value):
-    return hashlib.sha256(
-        json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-    ).hexdigest()
+    return hashlib.sha256(canonical_json_compat_bytes(value)).hexdigest()
 
 
 def _regenerate_native_findings(
@@ -1068,17 +1066,24 @@ def _regenerate_native_findings(
             ) != source_bytes or not model.validate(source_path):
                 return []
             tree = model.snapshots[source_path]
-        return audit._security_scan_tree(
-            root,
-            source_path,
-            tree,
-            oracle_context={
-                "_security_source_model": model,
-                "_security_source_context": (root, model.source_bytes),
-                "_security_provider_mutation_cache": provider_mutation_cache,
-            },
-            security_only=True,
-        )
+        memo = getattr(model, "class_chain_memo", None)
+        with (
+            nullcontext()
+            if memo is not None and memo._analysis_batch is not None
+            else audit._security_snapshot_analysis_batch({"source": model})
+        ):
+            rows = audit._security_scan_tree(
+                root,
+                source_path,
+                tree,
+                oracle_context={
+                    "_security_source_model": model,
+                    "_security_source_context": (root, model.source_bytes),
+                    "_security_provider_mutation_cache": provider_mutation_cache,
+                },
+                security_only=True,
+            )
+        return rows
     except Exception:
         return []
 

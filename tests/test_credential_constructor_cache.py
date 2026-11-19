@@ -3784,3 +3784,139 @@ def test_query_facts_inner_helpers_invalidate_native_context(
             )
         assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
     assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
+@pytest.fixture
+def verifier_native_source(tmp_path):
+    from factoryline.credential_role_constructor_provider import security_snapshot_model
+
+    path = tmp_path / "client.py"
+    raw = (
+        b"import requests\nclass Client:\n"
+        b"    def __init__(self):\n        self.endpoint = 'https://example.test/api'\n"
+        b"    def fetch(self):\n        return requests.get(self.endpoint, verify=False)\n"
+    )
+    path.write_bytes(raw)
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    model = security_snapshot_model(
+        tmp_path,
+        {path: tree},
+        {path: raw},
+        {path: audit._oracle_tree_fingerprint(tree)},
+    )
+    return path, raw, model
+
+
+def test_verifier_native_batch_reuses_guard_and_keeps_native_rows(
+    verifier_native_source, monkeypatch
+):
+    from factoryline import primitive_observation_binding as binding
+    from contextlib import contextmanager
+
+    path, raw, model = verifier_native_source
+    checks, original = [], ClassChainMemo.valid
+
+    def checked(memo):
+        checks.append(memo)
+        return original(memo)
+
+    monkeypatch.setattr(ClassChainMemo, "valid", checked)
+    rows = binding._regenerate_native_findings(path.name, raw, source_model=model)
+    assert any(row["code"] == "SECURITY_TLS_VERIFY_DISABLED" for row in rows)
+    assert len(checks) == 2
+    assert model.class_chain_memo._analysis_batch is None
+
+    @contextmanager
+    def forbidden(_):
+        raise AssertionError("an already active batch must not be nested")
+        yield
+
+    with model.class_chain_memo.analysis_batch() as batch:
+        monkeypatch.setattr(audit, "_security_snapshot_analysis_batch", forbidden)
+        assert (
+            binding._regenerate_native_findings(path.name, raw, source_model=model)
+            == rows
+        )
+    assert batch.accepted
+
+
+@pytest.mark.parametrize("mutation", ["source", "ast", "helper"])
+def test_verifier_native_batch_discards_late_mutation(
+    verifier_native_source, monkeypatch, mutation
+):
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    path, raw, model = verifier_native_source
+    scan = audit._security_scan_tree
+
+    def changed(*args, **kwargs):
+        rows = scan(*args, **kwargs)
+        assert rows
+        if mutation == "source":
+            model.source_bytes[path] = raw + b"# drift\n"
+        elif mutation == "ast":
+            model.snapshots[path].body.append(ast.Pass())
+        else:
+            monkeypatch.setattr(
+                getter._SelectedReceiverState, "derive", lambda self: None
+            )
+        return rows
+
+    monkeypatch.setattr(audit, "_security_scan_tree", changed)
+    assert binding._regenerate_native_findings(path.name, raw, source_model=model) == []
+    assert model.class_chain_memo._analysis_batch is None
+
+
+def test_verifier_native_failed_batch_does_not_publish(
+    verifier_native_source, monkeypatch
+):
+    from contextlib import contextmanager
+    from factoryline import primitive_observation_binding as binding
+
+    path, raw, model = verifier_native_source
+
+    @contextmanager
+    def rejected(_):
+        yield
+        raise audit.RuntimeAuditError("E_INPUT_CHANGED", "rejected at exit")
+
+    monkeypatch.setattr(audit, "_security_snapshot_analysis_batch", rejected)
+    assert binding._regenerate_native_findings(path.name, raw, source_model=model) == []
+
+
+def test_verifier_native_scan_cache_modes_preserve_report(verifier_native_source):
+    from factoryline.pytest_collection_audit import advisory_collection_context
+
+    path, _, _ = verifier_native_source
+    audit._oracle_context_cache_clear()
+    try:
+        with advisory_collection_context(True):
+            cold = audit.security_scan(path.parent, cache_enabled=False)
+            warm = audit.security_scan(path.parent, cache_enabled=True)
+            hit = audit.security_scan(path.parent, cache_enabled=True)
+        assert cold == warm == hit
+        assert cold["findings"]
+    finally:
+        audit._oracle_context_cache_clear()
+
+
+@pytest.mark.parametrize(
+    "value", [{"label": "é", "z": [float("nan"), float("inf")]}, None, [1, True]]
+)
+def test_tier_hash_shared_encoding_preserves_legacy_bytes(value):
+    import json
+    from factoryline.primitive_observation_binding import _tier_sha256
+
+    raw = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    assert _tier_sha256(value) == hashlib.sha256(raw).hexdigest()
+
+
+def test_tier_hash_shared_encoding_preserves_invalid_input_error():
+    from factoryline.primitive_observation_binding import _tier_sha256
+
+    with pytest.raises(TypeError):
+        _tier_sha256({"unsupported": object()})
