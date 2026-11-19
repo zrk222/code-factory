@@ -226,7 +226,8 @@ function docker(args) {
 }
 try {
   for (const path of [rulesPath, 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json',
-    'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js', 'deploy/deep-adapters/rules/tests/php-controls.php',
+    'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js',
+    'deploy/deep-adapters/rules/tests/tsx-controls.txt', 'deploy/deep-adapters/rules/tests/php-controls.php',
     'scripts/verify_semgrep_surface.mjs', 'scripts/semgrep_mutation_controls.mjs',
     'deploy/deep-adapters/Dockerfile', 'factoryline/deep_audit_attestation.py',
     'factoryline/deep_audit_loop.py', 'factoryline/deep_audit_sarif.py', 'factoryline/audit_taxonomy.py']) {

@@ -274,6 +274,36 @@ def _local_tool_inventory(root, manifest_name, names):
         raise RuntimeAuditError("E_LOCAL_TOOL", "tool inventory differs")
 
 
+def _local_tool_rows(root, rows):
+    """Validate bounded file roles while retaining each streamed identity."""
+    from .deep_audit_contract import _keys
+
+    names, roles, total, signatures = set(), {}, 0, {}
+    for row in rows:
+        _keys(row, "path sha256 bytes role")
+        total += require_int(
+            row["bytes"], "tool bytes", minimum=0, maximum=512 * 1024 * 1024
+        )
+        if total > 1024 * 1024 * 1024:
+            raise RuntimeAuditError("E_LOCAL_TOOL", "tool bytes exceed total budget")
+        signatures[row["path"]] = _local_tool_file(root, row)
+        name = row["path"]
+        role = require_str(row["role"], "tool role")
+        if name in names or role not in {
+            "executable",
+            "resource",
+            "profile",
+            "rules",
+            "provenance",
+        }:
+            raise RuntimeAuditError(
+                "E_LOCAL_TOOL", "duplicate file or unsupported role"
+            )
+        names.add(name)
+        roles.setdefault(role, []).append(row)
+    return names, roles, signatures
+
+
 def verify_local_tool_manifest(binding, *, candidate_root=None):
     """Verify operator-pinned bytes, not upstream signer identity or execution isolation."""
     from .deep_audit_contract import _keys
@@ -305,29 +335,8 @@ def verify_local_tool_manifest(binding, *, candidate_root=None):
     ):
         raise RuntimeAuditError("E_LOCAL_TOOL", "bounded tool manifest required")
     rows = manifest["files"]
-    names, roles, total = set(), {}, 0
-    for row in rows:
-        _keys(row, "path sha256 bytes role")
-        total += require_int(
-            row["bytes"], "tool bytes", minimum=0, maximum=512 * 1024 * 1024
-        )
-        if total > 1024 * 1024 * 1024:
-            raise RuntimeAuditError("E_LOCAL_TOOL", "tool bytes exceed total budget")
-        signatures[row["path"]] = _local_tool_file(root, row)
-        name = row["path"]
-        role = require_str(row["role"], "tool role")
-        if name in names or role not in {
-            "executable",
-            "resource",
-            "profile",
-            "rules",
-            "provenance",
-        }:
-            raise RuntimeAuditError(
-                "E_LOCAL_TOOL", "duplicate file or unsupported role"
-            )
-        names.add(name)
-        roles.setdefault(role, []).append(row)
+    names, roles, file_signatures = _local_tool_rows(root, rows)
+    signatures.update(file_signatures)
     if any(
         len(roles.get(role, [])) != 1
         for role in ("executable", "profile", "rules", "provenance")
@@ -341,14 +350,17 @@ def verify_local_tool_manifest(binding, *, candidate_root=None):
         raise RuntimeAuditError(
             "E_LOCAL_TOOL", "tool bundle changed during verification"
         )
-    for role, expected in {
+    expected_roles = {
         "profile": binding["profile_sha256"],
         "rules": binding["ruleset_sha256"],
         "executable": binding["provenance"]["artifact_sha256"],
         "provenance": binding["provenance"]["verification_receipt_sha256"],
-    }.items():
-        if roles[role][0]["sha256"] != expected:
-            raise RuntimeAuditError("E_LOCAL_TOOL", "tool role binding differs")
+    }
+    if any(
+        roles[role][0]["sha256"] != expected
+        for role, expected in expected_roles.items()
+    ):
+        raise RuntimeAuditError("E_LOCAL_TOOL", "tool role binding differs")
     return manifest
 
 

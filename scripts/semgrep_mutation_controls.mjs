@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 export function findingKeys(report) {
   const run = validatedRun(report);
   const keys = run.results.map(findingKey).sort();
@@ -102,29 +104,8 @@ export const javascriptControlEndpoints = [
   ['command', 4, 9], ['sql', 23, 26], ['html', 36, 38],
   ['path', 55, 59], ['path', 63, 66], ['path', 70, 73], ['path', 99, 101],
 ];
-export const tsxQualificationSuffix = `import * as processAlias from "child_process";
-import * as fileAlias from "fs";
-export function QualifiedView(req, res) {
-  const value = req.query.command;
-  const alias = "echo " + value;
-  // ruleid: javascript.request-command-injection
-  processAlias.exec(alias);
-  const path = req.body.path;
-  // ruleid: javascript.request-path-traversal
-  fileAlias.readFileSync(path);
-  let safe = req.query.command;
-  safe = "echo fixed";
-  // ok: javascript.request-command-injection
-  processAlias.exec(safe);
-  // ok: javascript.request-command-injection
-  processAlias.execFile("echo", [value]);
-  return <section title="é漢字">{value}</section>;
-}
-function shadowed(processAlias, req) {
-  // ok: javascript.request-command-injection
-  processAlias.exec(req.query.command);
-}
-`;
+export const tsxQualificationSuffix = readFileSync(
+  new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
 
 export function javascriptControlManifest() {
   const family = javascriptControlEndpoints.map(([family, source_line, line]) => ({
