@@ -2026,6 +2026,128 @@ def test_pre_pr_reuse_binds_live_obligation_and_rechecks_real_proof(tmp_path, mu
     )
 
 
+def _pre_pr_seed_owned_tool(tmp_path, monkeypatch, manifest, mutation):
+    import os
+    import shutil
+
+    if mutation not in {
+        "executable_bytes",
+        "executable_resolution",
+        "executable_drift",
+    }:
+        return None, []
+    executable = shutil.which("where.exe" if os.name == "nt" else "true")
+    tool_dirs = [tmp_path / ".factory" / name for name in ("tools-a", "tools-b")]
+    for directory in tool_dirs:
+        directory.mkdir(parents=True)
+        shutil.copy2(executable, directory / Path(executable).name)
+    tool = tool_dirs[0] / Path(executable).name
+    manifest["live"]["checks"][0]["argv"] = [
+        tool.name if mutation == "executable_resolution" else str(tool),
+        *(["/?"] if os.name == "nt" else []),
+    ]
+    monkeypatch.setenv("PATH", str(tool_dirs[0]) + os.pathsep + os.environ["PATH"])
+    return tool, tool_dirs
+
+
+def _pre_pr_seed_setup(tmp_path, monkeypatch, mutation):
+    from factoryline.change_review import _sha
+    from factoryline.live_feedback import validate_live_manifest
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    tool, tool_dirs = _pre_pr_seed_owned_tool(tmp_path, monkeypatch, manifest, mutation)
+    check = validate_live_manifest(tmp_path, manifest["live"])["checks"][0]
+    (tmp_path / ".factory").mkdir(exist_ok=True)
+    config = tmp_path / ".factory" / "check-config.json"
+    output = tmp_path / ".factory" / "check-output.json"
+    config.write_text('{"mode": "strict"}')
+    output.write_text('{"passed": true}')
+    proof = {
+        "name": "unit",
+        "command": check["argv"],
+        "environment": check["env"],
+        "inputs": ["app.py", "check.py", ".factory/check-config.json"],
+        "outputs": [".factory/check-output.json"],
+        "read_only": True,
+        "safe_to_skip": False,
+        "toolchain": {
+            "pre_pr_check_sha256": _sha(
+                {
+                    "check": check,
+                    "contract_sha256": manifest["live"]["contract_sha256"],
+                    "assurance_level": manifest["schedule"]["assurance_level"],
+                }
+            )
+        },
+    }
+    manifest["schedule"]["gates"][0]["proof"] = proof
+    _pre_pr_seed_initial_controls(tmp_path, monkeypatch, proof, mutation)
+    return manifest, config, output, tool, tool_dirs
+
+
+def _pre_pr_seed_initial_controls(tmp_path, monkeypatch, proof, mutation):
+    if mutation == "identity":
+        proof["toolchain"]["pre_pr_check_sha256"] = "b" * 64
+    if mutation == "failure":
+        (tmp_path / "app.py").write_text("VALUE = 3\n")
+    if mutation == "oracle":
+        monkeypatch.setattr(
+            "factoryline.incremental_scheduler._pre_pr_oracle",
+            lambda *args: {"ok": False},
+        )
+    elif mutation == "release":
+        monkeypatch.setattr(
+            "factoryline.verification.verify_feature",
+            lambda *args, **kwargs: {
+                "shippable": False,
+                "release_contract": {"oracle_contract_sha256": "a" * 64},
+            },
+        )
+
+
+def _pre_pr_seed_assert_receipts(receipts, mutation):
+    if mutation in {
+        "plan",
+        "failure",
+        "drift",
+        "identity",
+        "input_drift",
+        "output_drift",
+        "executable_drift",
+        "oracle",
+        "release",
+    }:
+        assert not receipts
+    else:
+        assert len(receipts) == 1
+
+
+def _pre_pr_seed_mutate(
+    tmp_path, monkeypatch, manifest, mutation, config, output, tool, tool_dirs, receipts
+):
+    import os
+
+    proof = manifest["schedule"]["gates"][0]["proof"]
+    if mutation == "source":
+        (tmp_path / "app.py").write_text("VALUE = 2\n# changed\n")
+    elif mutation == "tool":
+        proof["toolchain"]["runtime"] = "changed"
+    elif mutation == "executable_bytes":
+        tool.write_bytes(tool.read_bytes() + b"changed executable bytes")
+    elif mutation == "executable_resolution":
+        monkeypatch.setenv("PATH", str(tool_dirs[1]) + os.pathsep + os.environ["PATH"])
+    elif mutation == "config":
+        config.write_text('{"mode": "changed"}')
+    elif mutation == "environment":
+        manifest["live"]["checks"][0]["env"] = {"MODE": "changed"}
+    elif mutation == "output":
+        output.write_text('{"passed": false}')
+    elif mutation == "missing":
+        receipts[0].unlink()
+    elif mutation == "corrupt":
+        receipts[0].write_text("{corrupt")
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -2053,68 +2175,11 @@ def test_pre_pr_reuse_binds_live_obligation_and_rechecks_real_proof(tmp_path, mu
 def test_pre_pr_cli_execution_seeds_exact_proof(
     tmp_path, monkeypatch, capsys, mutation
 ):
-    from factoryline.change_review import _sha
-    from factoryline.live_feedback import validate_live_manifest
     import factoryline.live_feedback as feedback
 
-    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
-    if mutation in {"executable_bytes", "executable_resolution", "executable_drift"}:
-        import os
-        import shutil
-
-        executable = shutil.which("where.exe" if os.name == "nt" else "true")
-        tool_dirs = [tmp_path / ".factory" / name for name in ("tools-a", "tools-b")]
-        for directory in tool_dirs:
-            directory.mkdir(parents=True)
-            shutil.copy2(executable, directory / Path(executable).name)
-        tool = tool_dirs[0] / Path(executable).name
-        manifest["live"]["checks"][0]["argv"] = [
-            tool.name if mutation == "executable_resolution" else str(tool),
-            *(["/?"] if os.name == "nt" else []),
-        ]
-        monkeypatch.setenv("PATH", str(tool_dirs[0]) + os.pathsep + os.environ["PATH"])
-    check = validate_live_manifest(tmp_path, manifest["live"])["checks"][0]
-    (tmp_path / ".factory").mkdir(exist_ok=True)
-    config = tmp_path / ".factory" / "check-config.json"
-    output = tmp_path / ".factory" / "check-output.json"
-    config.write_text('{"mode": "strict"}')
-    output.write_text('{"passed": true}')
-    proof = {
-        "name": "unit",
-        "command": check["argv"],
-        "environment": check["env"],
-        "inputs": ["app.py", "check.py", ".factory/check-config.json"],
-        "outputs": [".factory/check-output.json"],
-        "read_only": True,
-        "safe_to_skip": False,
-        "toolchain": {
-            "pre_pr_check_sha256": _sha(
-                {
-                    "check": check,
-                    "contract_sha256": manifest["live"]["contract_sha256"],
-                    "assurance_level": manifest["schedule"]["assurance_level"],
-                }
-            )
-        },
-    }
-    manifest["schedule"]["gates"][0]["proof"] = proof
-    if mutation == "identity":
-        proof["toolchain"]["pre_pr_check_sha256"] = "b" * 64
-    if mutation == "failure":
-        (tmp_path / "app.py").write_text("VALUE = 3\n")
-    if mutation == "oracle":
-        monkeypatch.setattr(
-            "factoryline.incremental_scheduler._pre_pr_oracle",
-            lambda *args: {"ok": False},
-        )
-    elif mutation == "release":
-        monkeypatch.setattr(
-            "factoryline.verification.verify_feature",
-            lambda *args, **kwargs: {
-                "shippable": False,
-                "release_contract": {"oracle_contract_sha256": "a" * 64},
-            },
-        )
+    manifest, config, output, tool, tool_dirs = _pre_pr_seed_setup(
+        tmp_path, monkeypatch, mutation
+    )
     calls = []
     original = feedback._run_check
 
@@ -2146,38 +2211,18 @@ def test_pre_pr_cli_execution_seeds_exact_proof(
     first = invoke(mutation != "plan")
     assert len(calls) == (0 if mutation in {"plan", "oracle"} else 1)
     receipts = list((tmp_path / ".factory" / "proofs").glob("*.json"))
-    if mutation in {
-        "plan",
-        "failure",
-        "drift",
-        "identity",
-        "input_drift",
-        "output_drift",
-        "executable_drift",
-        "oracle",
-        "release",
-    }:
-        assert not receipts
-    else:
-        assert len(receipts) == 1
-    if mutation == "source":
-        (tmp_path / "app.py").write_text("VALUE = 2\n# changed\n")
-    elif mutation == "tool":
-        proof["toolchain"]["runtime"] = "changed"
-    elif mutation == "executable_bytes":
-        tool.write_bytes(tool.read_bytes() + b"changed executable bytes")
-    elif mutation == "executable_resolution":
-        monkeypatch.setenv("PATH", str(tool_dirs[1]) + os.pathsep + os.environ["PATH"])
-    elif mutation == "config":
-        config.write_text('{"mode": "changed"}')
-    elif mutation == "environment":
-        manifest["live"]["checks"][0]["env"] = {"MODE": "changed"}
-    elif mutation == "output":
-        output.write_text('{"passed": false}')
-    elif mutation == "missing":
-        receipts[0].unlink()
-    elif mutation == "corrupt":
-        receipts[0].write_text("{corrupt")
+    _pre_pr_seed_assert_receipts(receipts, mutation)
+    _pre_pr_seed_mutate(
+        tmp_path,
+        monkeypatch,
+        manifest,
+        mutation,
+        config,
+        output,
+        tool,
+        tool_dirs,
+        receipts,
+    )
     before = len(calls)
     second = invoke()
     assert len(calls) - before == (0 if mutation in {"none", "oracle"} else 1)
