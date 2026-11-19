@@ -30,7 +30,7 @@ without login. Native source/sink evidence is required by the polyglot upgrade.
 
 Replace that worker's binary with the official LGPL-2.1 OpenGrep release,
 verified by its release SHA256. Reuse the existing SDK image and Python import
-closure. Preserve the adapter family, rule schema, isolation and per-rule
+closure and the existing CF YAML parser dependency. Preserve the adapter family, rule schema, isolation and per-rule
 execution receipts; validate the actual `Opengrep OSS` identity and version.
 Existing Semgrep receipts retain their original identity and validators.
 

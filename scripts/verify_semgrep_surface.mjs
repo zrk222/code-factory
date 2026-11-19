@@ -397,6 +397,29 @@ print(json.dumps(normalized))
   }
   writeFileSync(`${output}.normalized.json`, `${JSON.stringify(normalized, null, 2)}\n`);
   receipt.normalized_trace_sha256 = hash(Buffer.from(roundtrip.stdout));
+  // Exercise the shipped Python/per-rule transport, not just the tool's SARIF.
+  const execution = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
+    '--entrypoint', '/usr/local/bin/python', id, '-I', '-c', `
+import base64, json, tempfile, time
+from pathlib import Path
+from factoryline.deep_audit_io import _semgrep_rule_inventory, _semgrep_rule_runs, verify_semgrep_rule_execution
+profile=json.loads(Path('/opt/factory/adapter-profile.json').read_text())
+config=Path('/opt/factory/rules/semgrep-pattern-limited.yml').read_bytes()
+sources=json.loads(__import__('sys').argv[1])
+lane={**profile, 'rule_ids':json.loads(__import__('sys').argv[2]), 'timeout_seconds':90}
+rules, inventory=_semgrep_rule_inventory(config, lane)
+with tempfile.TemporaryDirectory(prefix='factory-native-') as scratch:
+ evidence=_semgrep_rule_runs(profile, lane, Path('/src'), Path(scratch), rules, time.monotonic())
+ evidence['ruleset_base64']=base64.b64encode(config).decode('ascii')
+ checked=verify_semgrep_rule_execution(evidence, lane, sources, json.loads(Path('/src/native-control.sarif').read_text()))
+ print(json.dumps({'verified':checked, 'evidence':evidence}))
+`, JSON.stringify(sourceHashes), JSON.stringify(receipt.native_rule_ids ?? configuredRules.map(rule => rule.replace('opt.factory.rules.', '')))]);
+  const nativeExecution = JSON.parse(execution);
+  if (nativeExecution.verified.state !== 'VERIFIED' || nativeExecution.verified.findings !== findings.length ||
+      nativeExecution.verified.rules.length !== expectedRules.length) throw new Error('Native per-rule transport differs');
+  receipt.native_rule_execution_sha256 = hash(Buffer.from(execution));
+  receipt.native_rule_execution = nativeExecution.verified;
+  writeFileSync(`${output}.rule-execution.json`, execution);
   receipt.native_findings = findings.length;
   receipt.inline_suppression_control = 'PASS';
   receipt.suppression_control = { annotated_findings: annotated.sort(), disabled_report_findings: disabledKeys.length,
