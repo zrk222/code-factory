@@ -7023,6 +7023,42 @@ def test_captured_make_pytest_selection_requires_a_closed_recipe(tmp_path):
         assert _captured_make_pytest_argv(variant) is None
 
 
+def _flask_fixture_review_variants(files, test_code, case):
+    """Keep adversarial source construction separate from proof assertions."""
+    if case == "class_effect":
+        files["config.py"] += "    ACCOUNT = provision_admin(password=SECRET_KEY)\n"
+    if case == "factory_escape":
+        files["service.py"] = files["service.py"].replace(
+            "    return server", "    publish(server.secret_key)\n    return server"
+        )
+    if case == "app_result_escape":
+        files["tests/test_flow.py"] = test_code.replace(
+            "fixture_factory()",
+            "production.config['SECRET_KEY'] = fixture_factory().secret_key",
+        )
+    if case in {"param_direct", "param_empty", "parameterized"}:
+        parameter, values = {
+            "param_direct": ("fixture_factory", "[None]"),
+            "param_empty": ("request", "[]"),
+            "parameterized": ("marker", "['one', 'two']"),
+        }[case]
+        files["tests/test_flow.py"] = (
+            f"import pytest\n@pytest.mark.parametrize({parameter!r}, {values})\n"
+            + (
+                test_code.replace("request):", "request, marker):")
+                if case == "parameterized"
+                else test_code
+            )
+        )
+    if case in {"generator", "yield_from", "nested_generator"}:
+        files["tests/test_flow.py"] += {
+            "generator": "    yield None\n",
+            "yield_from": "    yield from ()\n",
+            "nested_generator": "    def deferred():\n        yield None\n",
+        }[case]
+    return case in {"closed", "parameterized", "nested_generator"}
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -7100,38 +7136,7 @@ def test_make_selected_flask_fixture_config_proves_only_closed_scope(tmp_path, c
     }
     if case == "duplicate":
         files["entry.py"] += f"API_KEY = {sample!r}\n"
-    if case == "class_effect":
-        files["config.py"] += "    ACCOUNT = provision_admin(password=SECRET_KEY)\n"
-    if case == "factory_escape":
-        files["service.py"] = files["service.py"].replace(
-            "    return server", "    publish(server.secret_key)\n    return server"
-        )
-    if case == "app_result_escape":
-        files["tests/test_flow.py"] = test_code.replace(
-            "fixture_factory()",
-            "production.config['SECRET_KEY'] = fixture_factory().secret_key",
-        )
-    if case in {"param_direct", "param_empty", "parameterized"}:
-        parameter, values = {
-            "param_direct": ("fixture_factory", "[None]"),
-            "param_empty": ("request", "[]"),
-            "parameterized": ("marker", "['one', 'two']"),
-        }[case]
-        files["tests/test_flow.py"] = (
-            f"import pytest\n@pytest.mark.parametrize({parameter!r}, {values})\n"
-            + (
-                test_code.replace("request):", "request, marker):")
-                if case == "parameterized"
-                else test_code
-            )
-        )
-    if case in {"generator", "yield_from", "nested_generator"}:
-        files["tests/test_flow.py"] += {
-            "generator": "    yield None\n",
-            "yield_from": "    yield from ()\n",
-            "nested_generator": "    def deferred():\n        yield None\n",
-        }[case]
-    closed = case in {"closed", "parameterized", "nested_generator"}
+    closed = _flask_fixture_review_variants(files, test_code, case)
     data, modules, hashes = {}, {}, {}
     for name, source in files.items():
         _write(tmp_path, name, source)
