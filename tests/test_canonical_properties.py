@@ -248,6 +248,10 @@ def test_shared_canonical_preserves_bytes_errors_and_deletes_duplicate_bodies(
         ("session_recorder", "unicode", "value"),
         ("signal_loop", "ascii", "value"),
         ("team_pilot", "unicode", "value"),
+        ("atomic_review_audit", "unicode", "value"),
+        ("app_builder:_studio_json", "ascii", "value"),
+        ("hosted_api:_json_bytes", "unicode", "value"),
+        ("studio:_guided_canonical", "unicode", "value"),
     ],
 )
 def test_remaining_shared_encoder_keeps_byte_error_and_keyword_contract(
@@ -258,7 +262,10 @@ def test_remaining_shared_encoder_keeps_byte_error_and_keyword_contract(
     import inspect
     import factoryline
 
+    module_name, _, symbol = module_name.partition(":")
+    symbol = symbol or "_canonical"
     module = importlib.import_module("factoryline." + module_name)
+    encoder = getattr(module, symbol)
     helpers = {
         "strict": factoryline.canonical_json_bytes,
         "unicode": factoryline.canonical_json_compat_bytes,
@@ -267,10 +274,10 @@ def test_remaining_shared_encoder_keeps_byte_error_and_keyword_contract(
     encoders = [
         n
         for n in ast.parse(inspect.getsource(module)).body
-        if isinstance(n, ast.FunctionDef) and n.name == "_canonical"
+        if isinstance(n, ast.FunctionDef) and n.name == symbol
     ]
     if parameter == "value":
-        assert module._canonical is helpers[profile]
+        assert encoder is helpers[profile]
         assert encoders == []
     else:
         assert module._canonical_encode is helpers[profile]
@@ -301,9 +308,9 @@ def test_remaining_shared_encoder_keeps_byte_error_and_keyword_contract(
             expected = json.dumps(value, **options).encode("utf-8")
         except (ValueError, TypeError, UnicodeError) as original:
             with pytest.raises(type(original)):
-                module._canonical(value)
+                encoder(value)
             with pytest.raises(type(original)):
-                module._canonical(**{parameter: value})
+                encoder(**{parameter: value})
         else:
-            assert module._canonical(value) == expected
-            assert module._canonical(**{parameter: value}) == expected
+            assert encoder(value) == expected
+            assert encoder(**{parameter: value}) == expected

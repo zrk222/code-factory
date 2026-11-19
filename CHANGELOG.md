@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.49.7
+## 0.49.7 — 2026-11-17
 
 - Bind approved SpecLine intent, registered ForgeLine actions, and FactoryLine proof to one resumable local mission.
 - Reconcile a recorded action before retry. The mission history links approvals, recovery, proof, and the next action.

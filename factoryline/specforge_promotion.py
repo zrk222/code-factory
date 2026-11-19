@@ -691,8 +691,13 @@ def _job_checkpoints_current(item, binding, count):
     from .agentic_control import INCIDENT_PHASES, _sha as hash_record
 
     checkpoints = item.get("incident", {}).get("checkpoints", [])
-    if len(checkpoints) != count or count > len(INCIDENT_PHASES):
+    if (
+        len(checkpoints) != count
+        or count > len(INCIDENT_PHASES)
+        or (checkpoints and "source" not in item)
+    ):
         return False
+    source_sha = hash_record(item["source"]) if checkpoints else None
     for name, record in zip(INCIDENT_PHASES, checkpoints):
         action = binding["phase_plan"][name]
         core = {
@@ -701,7 +706,7 @@ def _job_checkpoints_current(item, binding, count):
         if (
             record.get("phase") != name
             or record.get("checkpoint_sha256") != hash_record(core)
-            or record.get("source_sha256") != hash_record(item["source"])
+            or record.get("source_sha256") != source_sha
             or any(record.get(key) != value for key, value in action.items())
         ):
             return False

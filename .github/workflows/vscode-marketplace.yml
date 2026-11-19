@@ -373,6 +373,15 @@ jobs:
           PY
           echo "VSCODE_VSIX_PATH=vscode-marketplace-candidate/${vsix#./}" >> "$GITHUB_ENV"
 
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "22"
+      - name: Install and audit locked publisher
+        working-directory: editors/vscode
+        run: |
+          npm install --global npm@10.9.4
+          npm ci --no-audit --ignore-scripts
+          npm run audit
       - name: Publish verified VSIX to Visual Studio Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
@@ -382,6 +391,6 @@ jobs:
           test -n "$VSCODE_VSIX_PATH"
           test -f "$VSCODE_VSIX_PATH"
           (cd vscode-marketplace-candidate && sha256sum --check SHA256SUMS.txt)
-          npx --yes @vscode/vsce@4.0.0 publish \
+          ./editors/vscode/node_modules/.bin/vsce publish \
             --packagePath "$VSCODE_VSIX_PATH" \
             --skip-duplicate

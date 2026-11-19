@@ -26,9 +26,9 @@ ADOPTION_JOURNEYS = (
             "tests/test_e2e_proof.py",
             "tests/test_adoption_guide.py",
         ],
-        "expected_local_evidence": "A bounded repository inventory, static scan state, and explicit next actions; the separate first-proof demo remains available for the proof harness.",
-        "next_safe_action": "Resolve any static finding, add project test and tenant-scope evidence, then run the disposable first-proof demonstration.",
-        "authority_boundary": "The scan reads bounded local metadata and Python syntax only; it does not execute, modify, certify, or upload the project.",
+        "expected_local_evidence": "Local code findings, missing checks, and next steps. Configured workers may add checks for other languages.",
+        "next_safe_action": "Review findings, verify repairs with project tests, and rerun affected checks.",
+        "authority_boundary": "Default scan runs applicable local checks and authorized configured workers. Use --static-only for Python source checks without workers; neither mode grants release approval.",
     },
     {
         "id": "team",

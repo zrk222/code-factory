@@ -2959,50 +2959,6 @@ class _LiteralConsumers(_FiniteInputCapture):
             node = self.parents.get(id(node))
         return None
 
-    def _json_assertion_values(
-        self, path, function, expected, data_name, response_name
-    ):
-        names = [
-            node
-            for node in self._walk(function)
-            if isinstance(node, ast.Name) and node.id in {data_name, response_name}
-        ]
-        data_loads = [
-            node
-            for node in names
-            if node.id == data_name and isinstance(node.ctx, ast.Load)
-        ]
-        if len(data_loads) != 1:
-            return False
-        response_loads = [
-            node
-            for node in names
-            if node.id == response_name and isinstance(node.ctx, ast.Load)
-        ]
-        if not response_loads:
-            return False
-        for use in response_loads:
-            attribute = self.parents.get(id(use))
-            if not isinstance(attribute, ast.Attribute) or attribute.value is not use:
-                return False
-            parent = self.parents.get(id(attribute))
-            if attribute.attr == "json":
-                if (
-                    not isinstance(parent, ast.Call)
-                    or parent.func is not attribute
-                    or parent.args
-                    or parent.keywords
-                ):
-                    return False
-            elif attribute.attr != "status_code" or isinstance(parent, ast.Call):
-                return False
-        if isinstance(expected, ast.Attribute):
-            return self._json_expected_member(path, ast.Constant("detail"), expected)
-        return all(
-            self._json_expected_member(path, key, value)
-            for key, value in zip(expected.keys, expected.values)
-        )
-
     def _json_expected_member(self, path, key, value):
         if not isinstance(key, ast.Constant) or type(key.value) is not str:
             return False
@@ -3777,6 +3733,8 @@ def _local_control_label_witness(audit, node, target, aliases):
 
 def credential_role_witness(audit, node, target, aliases):
     """Describe a symbolic declaration; it is not a non-credential exemption."""
+    if cookie_name := getattr(node, "_security_cookie_role_facts", None):
+        return cookie_name
     if label := _local_control_label_witness(audit, node, target, aliases):
         return label
     scope = getattr(node, "_security_lexical_scope", None)
@@ -3932,3 +3890,1062 @@ def _bind_public_symbolic_evidence(
             **evidence,
             "consumer_evidence_sha256": digest,
         }
+
+
+_OAUTH_TEMPLATE_SLOTS = (
+    ("consumer_key", "CONSUMER_KEY"),
+    ("consumer_secret", "CONSUMER_SECRET"),
+    ("access_token", "ACCESS_TOKEN"),
+    ("access_token_secret", "ACCESS_SECRET"),
+)
+_OAUTH_TEMPLATE_NAMESPACE_NAMES = frozenset(
+    {
+        "__import__",
+        "__builtins__",
+        "__loader__",
+        "delattr",
+        "eval",
+        "exec",
+        "getattr",
+        "globals",
+        "locals",
+        "setattr",
+        "vars",
+    }
+)
+_OAUTH_TEMPLATE_NAMESPACE_MEMBERS = frozenset(
+    {
+        "__bases__",
+        "__class__",
+        "__dict__",
+        "__getattribute__",
+        "__globals__",
+        "__mro__",
+        "__subclasses__",
+        "delattr",
+        "exec_module",
+        "f_builtins",
+        "f_globals",
+        "f_locals",
+        "import_module",
+        "load_module",
+        "modules",
+        "patch",
+        "patch_object",
+        "setattr",
+    }
+)
+_OAUTH_TEMPLATE_UNMODELED_IMPORTS = frozenset(
+    {
+        "__main__",
+        "_pytest",
+        "builtins",
+        "ctypes",
+        "importlib",
+        "inspect",
+        "mock",
+        "pytest",
+        "runpy",
+        "types",
+        "unittest",
+    }
+)
+
+
+def captured_oauth_placeholder_proof(index, path, node):
+    """Bind a literal to a complete SDK setup template and its exact consumers."""
+    from .captured_security_audit import _native_span
+
+    if _oauth_template_assignment(node) is None or not index.validate(path):
+        return None
+    tree = index.snapshots[path]
+    frame = _oauth_template_frame(tree, node)
+    if frame is None or not _oauth_template_provider_closed(index, path, frame[0]):
+        return None
+    _, fields, consumers = frame
+    return {
+        "hypothesis": "CAPTURED_OPERATIVE_OAUTH_CREDENTIAL",
+        "scope": "CAPTURED_PYTHON_SOURCE",
+        "literal_role": "COMPLETE_OAUTH_SETUP_FIELD_PLACEHOLDER",
+        "provider": "tweepy.OAuthHandler",
+        "slot": next(
+            field for field, assignment in fields.items() if assignment is node
+        ),
+        "declaration_span": list(_native_span(node)),
+        "transfers": [
+            {"provider": owner, "span": list(_native_span(call)), "slots": list(slots)}
+            for owner, call, slots in consumers
+        ],
+        "credential_literal_observation": "RETAINED",
+        "external_runtime_authority": "UNASSESSED",
+    }
+
+
+def _oauth_template_assignment(node):
+    match node:
+        case ast.Assign(
+            targets=[ast.Name() as target], value=ast.Constant(value=str() as value)
+        ):
+            for field, marker in _OAUTH_TEMPLATE_SLOTS:
+                if value == marker:
+                    return field, target
+    return None
+
+
+def _oauth_template_frame(tree, selected):
+    statements = tree.body
+    if ast.get_docstring(tree, clean=False) is not None:
+        statements = statements[1:]
+    if len(statements) < 8 or selected not in statements[1:5]:
+        return None
+    provider_import, *declarations = statements[:5]
+    match provider_import:
+        case ast.Import(names=[ast.alias(name="tweepy", asname=alias)]):
+            provider = alias or "tweepy"
+        case _:
+            return None
+    fields = _oauth_template_fields(declarations)
+    if fields is None:
+        return None
+    consumer = _oauth_template_consumers(statements[5:8], provider, fields)
+    if consumer is None:
+        return None
+    targets, reads, api, transfers = consumer
+    declarations = {provider: provider_import, **{n.id: d for d, n in fields.values()}}
+    if not _oauth_template_uses_closed(tree, declarations, targets, reads, api):
+        return None
+    return provider_import, {field: row[0] for field, row in fields.items()}, transfers
+
+
+def _oauth_template_fields(declarations):
+    result = {}
+    for statement in declarations:
+        row = _oauth_template_assignment(statement)
+        if row is None or row[0] in result:
+            return None
+        field, target = row
+        result[field] = statement, target
+    if len({target.id for _, target in result.values()}) != len(_OAUTH_TEMPLATE_SLOTS):
+        return None
+    return result
+
+
+def _oauth_template_positional_call(call, owner, method, arguments):
+    match call:
+        case ast.Call(
+            func=ast.Attribute(value=ast.Name(id=receiver) as root, attr=member),
+            args=args,
+            keywords=[],
+        ) if receiver == owner and member == method:
+            if len(args) == len(arguments) and all(
+                isinstance(arg, ast.Name) and arg.id == name
+                for arg, name in zip(args, arguments)
+            ):
+                return root, *args
+    return None
+
+
+def _oauth_template_consumers(statements, provider, fields):
+    match statements:
+        case [
+            ast.Assign(targets=[ast.Name(id=auth) as auth_target], value=constructor),
+            ast.Expr(value=setter),
+            ast.Assign(targets=[ast.Name() as api_target], value=client),
+        ]:
+            pass
+        case _:
+            return None
+    constructor_slots = ("consumer_key", "consumer_secret")
+    setter_slots = ("access_token", "access_token_secret")
+    first = _oauth_template_positional_call(
+        constructor,
+        provider,
+        "OAuthHandler",
+        [fields[slot][1].id for slot in constructor_slots],
+    )
+    second = _oauth_template_positional_call(
+        setter, auth, "set_access_token", [fields[slot][1].id for slot in setter_slots]
+    )
+    third = _oauth_template_positional_call(client, provider, "API", (auth,))
+    if first is None or second is None or third is None:
+        return None
+    assignments = ((statements[0], auth_target), (statements[2], api_target))
+    transfers = (
+        ("tweepy.OAuthHandler", constructor, constructor_slots),
+        ("tweepy.OAuthHandler.set_access_token", setter, setter_slots),
+    )
+    return assignments, (*first, *second, *third), api_target, transfers
+
+
+def _oauth_template_uses_closed(tree, declarations, targets, reads, api):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    names = {**declarations, **{target.id: statement for statement, target in targets}}
+    if len(names) != len(_OAUTH_TEMPLATE_SLOTS) + 3:
+        return False
+    declared = {
+        name: _oauth_template_binding(statement, name)
+        for name, statement in names.items()
+    }
+    if any(
+        binding_occurrences(tree.body, name) != [node]
+        for name, node in declared.items()
+    ):
+        return False
+    allowed_names = set(declared.values()) | set(reads)
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    return all(
+        name in allowed_names or _oauth_template_api_read(name, api, parents)
+        for name in parents
+        if isinstance(name, ast.Name) and name.id in names
+    )
+
+
+def _oauth_template_binding(statement, name):
+    if isinstance(statement, ast.Assign):
+        return next(target for target in statement.targets if target.id == name)
+    return statement
+
+
+def _oauth_template_api_read(node, api, parents):
+    if node.id != api.id or not isinstance(node.ctx, ast.Load):
+        return False
+    member = parents[node]
+    call = parents.get(member)
+    if not isinstance(call, ast.Call) or call.func is not member or call.keywords:
+        return False
+    match member, call.args:
+        case ast.Attribute(attr="user_timeline"), []:
+            return True
+        case ast.Attribute(attr="get_user"), [ast.Constant(value=str())]:
+            return True
+    return False
+
+
+def _oauth_template_provider_closed(index, path, statement):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_module_shadows_terminal,
+        _captured_terminal_provider_mutation,
+    )
+
+    if _captured_module_shadows_terminal(index, path, statement, "tweepy.OAuthHandler"):
+        return False
+    # A loaded child can be read from a regular or implicit parent package.
+    protected_member = path.stem if path.parent != index.root else None
+    if path.stem == "__init__" or not all(
+        index.validate(peer)
+        and _oauth_template_namespace_closed(
+            index.snapshots[peer], path.stem, protected_member
+        )
+        for peer in index.snapshots
+    ):
+        return False
+    return not _captured_terminal_provider_mutation(index, audit, "tweepy")
+
+
+def _oauth_template_namespace_closed(tree, protected_module, protected_member):
+    nodes = tuple(ast.walk(tree))
+    parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
+    return not any(
+        _oauth_template_namespace_escape(
+            node, protected_module, protected_member, parents.get(node)
+        )
+        for node in nodes
+    )
+
+
+def _oauth_template_namespace_escape(node, protected_module, protected_member, parent):
+    match node:
+        case ast.Name(id=name):
+            return name in _OAUTH_TEMPLATE_NAMESPACE_NAMES
+        case ast.Attribute(attr=name) if name == protected_member:
+            return True
+        case ast.Attribute(attr="__class__", ctx=ast.Load()):
+            return not (
+                isinstance(parent, ast.Attribute)
+                and parent.attr in {"__name__", "__qualname__"}
+                and isinstance(parent.ctx, ast.Load)
+            )
+        case ast.Attribute(attr=name):
+            return name in _OAUTH_TEMPLATE_NAMESPACE_MEMBERS
+        case ast.alias(name=name) | ast.ImportFrom(module=name) if name:
+            parts = name.split(".")
+            return (
+                parts[0] in _OAUTH_TEMPLATE_UNMODELED_IMPORTS
+                or name in _OAUTH_TEMPLATE_NAMESPACE_MEMBERS
+                or protected_module in parts
+            )
+    return False
+
+
+_OAUTH_TEMPLATE_HELPER_NAMES = tuple(
+    name
+    for name, value in globals().items()
+    if name.startswith("_oauth_template_") and callable(value)
+)
+
+
+def oauth_placeholder_proof_helpers():
+    """Bind the exact live OAuth template proof and its checked policy slots."""
+    from . import review_audits as audit
+    from .captured_security_audit import _native_span
+    from .credential_role_constructor_provider import (
+        _captured_module_shadows_terminal,
+        _captured_terminal_provider_mutation,
+        binding_occurrences,
+    )
+
+    return (
+        captured_oauth_placeholder_proof,
+        oauth_placeholder_proof_helpers,
+        _OAUTH_TEMPLATE_SLOTS,
+        _OAUTH_TEMPLATE_NAMESPACE_NAMES,
+        _OAUTH_TEMPLATE_NAMESPACE_MEMBERS,
+        _OAUTH_TEMPLATE_UNMODELED_IMPORTS,
+        *[globals()[name] for name in _OAUTH_TEMPLATE_HELPER_NAMES],
+        binding_occurrences,
+        _captured_module_shadows_terminal,
+        _captured_terminal_provider_mutation,
+        audit._resolved_ast_name,
+        _native_span,
+        ast.get_docstring,
+    )
+
+
+_PUBLIC_OAUTH_TOKEN_ENDPOINTS = frozenset(
+    {"https://github.com/login/oauth/access_token"}
+)
+_OAUTH_SERVICE_HTTP_PROVIDER = "aiohttp.ClientSession"
+_OAUTH_SERVICE_MOCK_PROVIDER = "aioresponses.aioresponses"
+_OAUTH_SERVICE_REFLECTION_NAMES = _OAUTH_TEMPLATE_NAMESPACE_NAMES | frozenset(
+    {"attrgetter", "getmembers", "getmembers_static", "import_module", "methodcaller"}
+)
+_OAUTH_SERVICE_REFLECTION_ATTRIBUTES = _OAUTH_TEMPLATE_NAMESPACE_MEMBERS | frozenset(
+    {"attrgetter", "getattr", "getmembers_static", "methodcaller"}
+)
+
+
+def captured_oauth_service_locator_proof(index, path, node):
+    """Prove a documented OAuth address is used exclusively in request URL slots."""
+    from .captured_security_audit import _captured_module_text_unchanged, _native_span
+
+    binding = _oauth_service_binding(index, path, node)
+    if binding is None:
+        return None
+    target, uses = binding
+    transfers, providers = [], set()
+    for ref, owner, aliases in uses:
+        transfer = _oauth_service_transfer(index, owner, ref, aliases)
+        if transfer is None:
+            return None
+        facts, provider = transfer
+        transfers.append(facts)
+        providers.add(provider)
+    if _OAUTH_SERVICE_HTTP_PROVIDER not in providers:
+        return None
+    readonly = {ref for ref, _, _ in uses}
+    if not _captured_module_text_unchanged(
+        index, path, target, readonly, ("sys.modules",)
+    ):
+        return None
+    return {
+        "hypothesis": "CAPTURED_OAUTH_SERVICE_LOCATOR",
+        "scope": "CAPTURED_PYTHON_SOURCE",
+        "literal_role": "PUBLIC_OAUTH_TOKEN_ENDPOINT",
+        "declaration_span": list(_native_span(node)),
+        "transfers": transfers,
+        "credential_literal_observation": "RETAINED",
+        "external_runtime_authority": "UNASSESSED",
+    }
+
+
+def _oauth_service_binding(index, path, node):
+    from . import review_audits as audit
+    from .captured_security_audit import _text_binding_reads
+    from .credential_role_constructor_provider import binding_occurrences
+    from .credential_role_identity_effects import source_symbol_index
+
+    match node:
+        case ast.Assign(
+            targets=[ast.Name() as target], value=ast.Constant(value=str() as value)
+        ) if value in _PUBLIC_OAUTH_TOKEN_ENDPOINTS:
+            pass
+        case _:
+            return None
+    if not index.validate(path):
+        return None
+    tree = index.snapshots[path]
+    if node not in tree.body or binding_occurrences(tree.body, target.id) != [target]:
+        return None
+    symbols = source_symbol_index(index)
+    resolved = (
+        _text_binding_reads(index, symbols, (path, node), None)
+        if symbols is not None
+        else None
+    )
+    if resolved is None or not _oauth_service_namespace_closed(index):
+        return None
+    local = {
+        (ref, path)
+        for ref in ast.walk(tree)
+        if _oauth_service_local_candidate_read(ref, target)
+    }
+    references = local | resolved
+    aliases = {
+        owner: audit._module_security_aliases(index.snapshots[owner])
+        for owner in {owner for _, owner in references}
+    }
+    uses = sorted(
+        ((ref, owner, aliases[owner]) for ref, owner in references),
+        key=lambda use: (use[1], use[0].lineno, use[0].col_offset),
+    )
+    return target, uses
+
+
+def _oauth_service_local_candidate_read(node, target):
+    match node:
+        case ast.Name(id=name) if node is not target:
+            return name == target.id
+        case ast.Attribute(attr=member):
+            return member == target.id
+    return False
+
+
+def _oauth_service_namespace_closed(index):
+    for path, tree in index.snapshots.items():
+        if not index.validate(path):
+            return False
+        for node in ast.walk(tree):
+            match node:
+                case ast.Attribute(attr="getmembers"):
+                    if not _oauth_service_known_method_inspection(index, path, node):
+                        return False
+                case _ if _oauth_service_namespace_escape(index, path, node):
+                    return False
+    return True
+
+
+def _oauth_service_namespace_escape(index, path, node):
+    match node:
+        case ast.Name(id=name) | ast.alias(name=name):
+            return name in _OAUTH_SERVICE_REFLECTION_NAMES
+        case ast.Attribute(attr="__class__", ctx=ast.Load()):
+            parent = index.parents[path].get(id(node))
+            return not (
+                isinstance(parent, ast.Attribute)
+                and parent.attr in {"__name__", "__qualname__"}
+                and isinstance(parent.ctx, ast.Load)
+            )
+        case ast.Attribute(attr=name):
+            return name in _OAUTH_SERVICE_REFLECTION_ATTRIBUTES
+    return False
+
+
+def _oauth_service_known_method_inspection(index, path, node):
+    from . import review_audits as audit
+    from .captured_security_audit import _captured_call_provider
+    from .credential_role_constructor_provider import (
+        _captured_module_shadows_terminal,
+        binding_occurrences,
+    )
+    from .credential_role_identity_effects import _enclosing_function
+
+    parents = index.parents[path]
+    match parents.get(id(node)):
+        case (
+            ast.Call(
+                func=ast.Attribute(value=ast.Name(id=inspect_alias)) as func,
+                args=[ast.Name(id=instance)],
+                keywords=[
+                    ast.keyword(
+                        arg="predicate",
+                        value=ast.Attribute(
+                            value=ast.Name(id=namespace), attr="ismethod"
+                        ) as predicate,
+                    )
+                ],
+            ) as call
+        ) if func is node and inspect_alias == namespace:
+            function = _enclosing_function(call, parents)
+            aliases = audit._module_security_aliases(index.snapshots[path])
+            provider = "inspect.getmembers"
+            statement = _oauth_service_import(index, path, namespace, node)
+            return (
+                isinstance(statement, ast.Import)
+                and any(item.name == "inspect" for item in statement.names)
+                and _captured_call_provider(call, aliases, index, path) == provider
+                and not _captured_module_shadows_terminal(
+                    index, path, statement, provider
+                )
+                and _oauth_service_sitemap_receiver(
+                    index, path, function, call, instance, aliases
+                )
+                and not binding_occurrences(function.body, instance)
+                and _oauth_service_import_slot_unchanged(
+                    index,
+                    path,
+                    namespace,
+                    (provider, "inspect.ismethod"),
+                    readonly=(predicate,),
+                )
+            )
+    return False
+
+
+def _oauth_service_import_slot_unchanged(index, path, name, providers, *, readonly=()):
+    from .captured_security_audit import _captured_named_provider_unchanged
+
+    return _captured_named_provider_unchanged(
+        index,
+        path,
+        name,
+        providers,
+        readonly_argument=lambda ref, _aliases, _parents: ref in readonly,
+    )
+
+
+def _oauth_service_sitemap_receiver(index, path, function, call, receiver, aliases):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _captured_module_shadows_terminal,
+        binding_occurrences,
+    )
+
+    parents = index.parents[path]
+    owner = parents.get(id(function))
+    match function, parents.get(id(call)), owner:
+        case (
+            ast.AsyncFunctionDef(
+                name="items",
+                args=ast.arguments(
+                    posonlyargs=[],
+                    args=[ast.arg(arg=method_receiver)],
+                    vararg=None,
+                    kwonlyargs=[],
+                    kwarg=None,
+                    defaults=[],
+                ),
+            ),
+            ast.For(iter=iterable) as loop,
+            ast.ClassDef(
+                bases=[ast.Attribute(value=ast.Name(id=namespace)) as base],
+                keywords=[],
+                decorator_list=[],
+            ),
+        ) if iterable is call and receiver == method_receiver:
+            pass
+        case _:
+            return False
+    if loop not in function.body or owner not in index.snapshots[path].body:
+        return False
+    if binding_occurrences(owner.body, "items") != [function]:
+        return False
+    if not _oauth_service_sitemap_class_body(owner, index.snapshots[path]):
+        return False
+    provider = "asgi_sitemaps.Sitemap"
+    statement = _oauth_service_import(index, path, namespace, base)
+    return (
+        statement is not None
+        and audit._resolved_ast_name(base, aliases) == provider
+        and not _captured_module_shadows_terminal(index, path, statement, provider)
+        and _oauth_service_import_slot_unchanged(index, path, namespace, (provider,))
+        and _oauth_service_sitemap_application(index, path, owner, namespace, aliases)
+    )
+
+
+def _oauth_service_sitemap_class_body(owner, module):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    for member in owner.body:
+        if getattr(member, "name", None) == "__init__":
+            if binding_occurrences(
+                module.body, "super"
+            ) or not _oauth_service_sitemap_initializer(member):
+                return False
+        elif not _oauth_service_sitemap_member_supported(member):
+            return False
+    return True
+
+
+def _oauth_service_sitemap_initializer(member):
+    match member:
+        case ast.FunctionDef(
+            args=ast.arguments(
+                posonlyargs=[],
+                args=[ast.arg(arg=receiver)],
+                vararg=None,
+                kwonlyargs=[],
+                kwarg=None,
+                defaults=[],
+            ),
+            decorator_list=[],
+            body=[
+                ast.Expr(
+                    value=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Call(
+                                func=ast.Name(id="super"), args=[], keywords=[]
+                            ),
+                            attr="__init__",
+                        ),
+                        args=[],
+                        keywords=[],
+                    )
+                ),
+                *initializers,
+            ],
+        ):
+            return all(
+                _oauth_service_sitemap_instance_field(statement, receiver)
+                for statement in initializers
+            )
+    return False
+
+
+def _oauth_service_sitemap_instance_field(statement, receiver):
+    match statement:
+        case (
+            ast.Assign(
+                targets=[ast.Attribute(value=ast.Name(id=owner), attr=field)],
+                value=ast.Constant(),
+            )
+            | ast.AnnAssign(
+                target=ast.Attribute(value=ast.Name(id=owner), attr=field), value=None
+            )
+        ):
+            return owner == receiver and not field.startswith("__")
+    return False
+
+
+def _oauth_service_sitemap_member_supported(member):
+    match member:
+        case (
+            ast.FunctionDef(name=name, decorator_list=[])
+            | ast.AsyncFunctionDef(name=name, decorator_list=[])
+        ):
+            return not name.startswith("__")
+        case ast.Expr(value=ast.Constant(value=str())):
+            return True
+    return False
+
+
+def _oauth_service_sitemap_application(index, path, owner, namespace, aliases):
+    from .captured_security_audit import (
+        _captured_call_provider,
+        _captured_named_provider_unchanged,
+        _text_binding_reads,
+    )
+    from .credential_role_constructor_provider import binding_occurrences
+    from .credential_role_identity_effects import source_symbol_index
+
+    tree, parents = index.snapshots[path], index.parents[path]
+    if binding_occurrences(tree.body, owner.name) != [owner]:
+        return False
+    symbols = source_symbol_index(index)
+    reads = (
+        _text_binding_reads(index, symbols, (path, owner), None)
+        if symbols is not None
+        else None
+    )
+    match tuple(reads or ()):
+        case [(ast.Name() as ref, use_path)] if use_path == path:
+            constructor = parents.get(id(ref))
+            application = parents.get(id(constructor))
+        case _:
+            return False
+    return _oauth_service_sitemap_constructor(
+        application, constructor, ref, namespace, tree, parents
+    ) and (
+        _captured_call_provider(application, aliases, index, path)
+        == "asgi_sitemaps.SitemapApp"
+        and _captured_named_provider_unchanged(
+            index,
+            path,
+            owner.name,
+            ("asgi_sitemaps.Sitemap", "asgi_sitemaps.SitemapApp", "builtins.super"),
+        )
+    )
+
+
+def _oauth_service_sitemap_constructor(
+    application, constructor, ref, namespace, tree, parents
+):
+    match constructor, application, parents.get(id(application)):
+        case (
+            ast.Call(func=callee, args=[], keywords=[]),
+            ast.Call(
+                func=ast.Attribute(value=ast.Name(id=provider), attr="SitemapApp"),
+                args=[site],
+                keywords=[ast.keyword(arg="domain")],
+            ),
+            ast.Assign(targets=[ast.Name()], value=value) as declaration,
+        ) if (
+            callee is ref
+            and site is constructor
+            and value is application
+            and provider == namespace
+        ):
+            return declaration in tree.body
+    return False
+
+
+def _oauth_service_transfer(index, path, ref, aliases):
+    from .captured_security_audit import _native_span
+    from .credential_role_constructor_provider import function_bindings
+    from .credential_role_identity_effects import _enclosing_function
+    from . import review_audits as audit
+
+    parents = index.parents[path]
+    function = _enclosing_function(ref, parents)
+    if not (
+        isinstance(function, ast.AsyncFunctionDef)
+        and function in index.snapshots[path].body
+        and isinstance(ref, ast.Name)
+        and isinstance(ref.ctx, ast.Load)
+        and function_bindings(function, ref.id, audit) == []
+    ):
+        return None
+    formatted = parents.get(id(ref))
+    url = parents.get(id(formatted))
+    query_values = _oauth_service_query_values(url, formatted, ref)
+    if query_values is None or not _oauth_service_import(
+        index, path, query_values[0].value.id, query_values[0]
+    ):
+        return None
+    assignment = parents.get(id(url))
+    match assignment:
+        case ast.Assign(targets=[ast.Name() as target], value=expression) if (
+            expression is url
+        ):
+            operand = _oauth_service_single_local_read(function, target)
+        case _:
+            return None
+    if not _oauth_service_authorization_code(
+        function, assignment, parents, query_values[-1]
+    ):
+        return None
+    post = parents.get(id(operand))
+    match post:
+        case ast.Call(
+            func=ast.Attribute(value=ast.Name() as receiver, attr="post"), args=[arg]
+        ) if arg is operand:
+            use = _oauth_service_post(
+                index, path, assignment, post, function, receiver, aliases
+            )
+        case _:
+            return None
+    if use is None:
+        return None
+    provider, result = use
+    return {
+        "source_path": index.relative(path),
+        "provider": provider + ".post",
+        "slot": "url",
+        "span": list(_native_span(post)),
+        "url_span": list(_native_span(url)),
+        "separate_query_operand_spans": [
+            list(_native_span(value)) for value in query_values
+        ],
+        **result,
+    }, provider
+
+
+def _oauth_service_query_values(expression, formatted, reference):
+    match expression:
+        case ast.JoinedStr(
+            values=[
+                ast.FormattedValue(
+                    value=base, conversion=-1, format_spec=None
+                ) as endpoint,
+                ast.Constant(value="?client_id="),
+                ast.FormattedValue(
+                    value=ast.Attribute(value=ast.Name(id=config)) as client_id,
+                    conversion=-1,
+                    format_spec=None,
+                ),
+                ast.Constant(value="&client_secret="),
+                ast.FormattedValue(
+                    value=ast.Attribute(value=ast.Name(id=source)) as client_secret,
+                    conversion=-1,
+                    format_spec=None,
+                ),
+                ast.Constant(value="&code="),
+                ast.FormattedValue(
+                    value=ast.Name() as code, conversion=-1, format_spec=None
+                ),
+            ]
+        ) if (
+            endpoint is formatted
+            and base is reference
+            and config == source
+            and client_id.attr != client_secret.attr
+            and code.id != reference.id
+        ):
+            return client_id, client_secret, code
+    return None
+
+
+def _oauth_service_import(index, path, name, expression):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import (
+        _presentation_provider_shadow,
+        binding_occurrences,
+    )
+
+    tree = index.snapshots[path]
+    match binding_occurrences(tree.body, name):
+        case [ast.Import() | ast.ImportFrom() as statement] if statement in tree.body:
+            if (
+                statement.lineno < expression.lineno
+                and not _presentation_provider_shadow(
+                    expression, name, index, path, audit
+                )
+            ):
+                return statement
+    return None
+
+
+def _oauth_service_single_local_read(function, target):
+    if not _oauth_service_local_binding(function, target):
+        return None
+    match [
+        item
+        for item in ast.walk(function)
+        if isinstance(item, ast.Name) and item.id == target.id and item is not target
+    ]:
+        case [ast.Name(ctx=ast.Load()) as read] if read.lineno > target.lineno:
+            return read
+    return None
+
+
+def _oauth_service_local_binding(function, target):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .credential_role_identity_effects import _argument_names
+
+    return (
+        target.id not in _argument_names(function)
+        and binding_occurrences(function.body, target.id) == [target]
+        and not any(
+            isinstance(item, (ast.Global, ast.Nonlocal)) and target.id in item.names
+            for item in ast.walk(function)
+        )
+    )
+
+
+def _oauth_service_authorization_code(function, assignment, parents, ref):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .credential_role_identity_effects import _argument_names
+
+    bindings = binding_occurrences(function.body, ref.id)
+    if ref.id in _argument_names(function):
+        return not bindings
+    match bindings:
+        case [ast.Name() as target] if _oauth_service_local_binding(function, target):
+            declaration = parents.get(id(target))
+            match declaration:
+                case ast.Assign(targets=[item], value=ast.Constant(value=str())) if (
+                    item is target
+                ):
+                    return (
+                        parents.get(id(declaration)) is parents.get(id(assignment))
+                        and declaration.lineno < assignment.lineno
+                    )
+    return False
+
+
+def _oauth_service_post(index, path, assignment, post, function, receiver, aliases):
+    parents = index.parents[path]
+    parent = parents.get(id(post))
+    match parent, parents.get(id(parent)):
+        case ast.withitem(
+            context_expr=call, optional_vars=ast.Name() as response
+        ), ast.AsyncWith(items=[item], body=body) as request if (
+            call is post and item is parent
+        ):
+            session = parents.get(id(request))
+            if (
+                isinstance(session, ast.AsyncWith)
+                and session in function.body
+                and assignment in function.body
+            ):
+                return _oauth_service_http(
+                    index,
+                    path,
+                    post,
+                    function,
+                    receiver,
+                    aliases,
+                    session,
+                    body,
+                    response,
+                )
+        case ast.Expr(value=call), ast.With(body=body) as mock if call is post:
+            fields = [keyword.arg for keyword in post.keywords]
+            if (
+                mock in function.body
+                and assignment in body
+                and sorted(field or "" for field in fields) == ["payload", "status"]
+            ):
+                if _oauth_service_context(
+                    index,
+                    path,
+                    mock,
+                    function,
+                    receiver,
+                    aliases,
+                    _OAUTH_SERVICE_MOCK_PROVIDER,
+                ):
+                    return _OAUTH_SERVICE_MOCK_PROVIDER, {
+                        "context": "MOCK_ROUTE_REGISTRATION"
+                    }
+    return None
+
+
+def _oauth_service_context(index, path, block, function, receiver, aliases, provider):
+    from .captured_security_audit import _captured_call_provider
+    from .credential_role_constructor_provider import _captured_module_shadows_terminal
+    from .mock_fixture_provenance import _root_name
+
+    match block.items:
+        case [
+            ast.withitem(
+                context_expr=ast.Call(args=[], keywords=[]) as call,
+                optional_vars=ast.Name() as target,
+            )
+        ]:
+            pass
+        case _:
+            return False
+    if _oauth_service_single_local_read(function, target) is not receiver:
+        return False
+    namespace = _root_name(call.func)
+    statement = _oauth_service_import(index, path, namespace, call)
+    return (
+        statement is not None
+        and _captured_call_provider(call, aliases, index, path) == provider
+        and not _captured_module_shadows_terminal(index, path, statement, provider)
+        and _oauth_service_import_slot_unchanged(index, path, namespace, (provider,))
+    )
+
+
+def _oauth_service_http(
+    index, path, post, function, receiver, aliases, session, body, response
+):
+    from .captured_security_audit import _native_span
+
+    if [kw.arg for kw in post.keywords] not in ([], ["headers"]):
+        return None
+    if not _oauth_service_context(
+        index, path, session, function, receiver, aliases, _OAUTH_SERVICE_HTTP_PROVIDER
+    ):
+        return None
+    parsed = _oauth_service_response_binding(
+        function, body, response, index.parents[path]
+    )
+    return (
+        (
+            _OAUTH_SERVICE_HTTP_PROVIDER,
+            {
+                "context": "HTTP_REQUEST",
+                "response_token_span": list(_native_span(parsed)),
+            },
+        )
+        if parsed is not None
+        else None
+    )
+
+
+def _oauth_service_response_binding(function, body, response, parents):
+    from .credential_role_identity_effects import _enclosing_function, _has_nested_scope
+
+    read = _oauth_service_single_local_read(function, response)
+    match body:
+        case [
+            ast.Assign(
+                targets=[ast.Name() as target],
+                value=ast.Await(
+                    value=ast.Call(
+                        func=ast.Attribute(value=receiver, attr="json"),
+                        args=[],
+                        keywords=[],
+                    )
+                ),
+            ),
+            *remaining,
+        ] if receiver is read:
+            if _oauth_service_local_binding(function, target):
+                return next(
+                    (
+                        node
+                        for part in remaining
+                        for node in ast.walk(part)
+                        if isinstance(node, ast.Subscript)
+                        and isinstance(node.ctx, ast.Load)
+                        and isinstance(node.value, ast.Name)
+                        and node.value.id == target.id
+                        and isinstance(node.slice, ast.Constant)
+                        and node.slice.value == "access_token"
+                        and not _has_nested_scope(node, function, parents)
+                        and _enclosing_function(node, parents) is function
+                    ),
+                    None,
+                )
+    return None
+
+
+_OAUTH_SERVICE_HELPER_NAMES = tuple(
+    name
+    for name, value in globals().items()
+    if name.startswith("_oauth_service_") and callable(value)
+)
+
+
+def oauth_service_locator_proof_helpers():
+    """Bind the live locator proof and its source-role dependencies to the cache."""
+    from . import review_audits as audit
+    from . import captured_security_audit as capture
+    from .credential_role_constructor_provider import (
+        _captured_module_shadows_terminal,
+        _presentation_provider_shadow,
+        binding_occurrences,
+        function_bindings,
+    )
+    from .credential_role_identity_effects import (
+        _argument_names,
+        _enclosing_function,
+        _has_nested_scope,
+        source_symbol_index,
+    )
+    from .mock_fixture_provenance import _root_name
+
+    return (
+        captured_oauth_service_locator_proof,
+        oauth_service_locator_proof_helpers,
+        _PUBLIC_OAUTH_TOKEN_ENDPOINTS,
+        _OAUTH_SERVICE_HTTP_PROVIDER,
+        _OAUTH_SERVICE_MOCK_PROVIDER,
+        _OAUTH_SERVICE_REFLECTION_NAMES,
+        _OAUTH_SERVICE_REFLECTION_ATTRIBUTES,
+        *[globals()[name] for name in _OAUTH_SERVICE_HELPER_NAMES],
+        capture._captured_call_provider,
+        capture._captured_module_text_unchanged,
+        capture._captured_named_provider_unchanged,
+        capture._text_binding_reads,
+        capture._native_span,
+        audit._module_security_aliases,
+        audit._resolved_ast_name,
+        _captured_module_shadows_terminal,
+        _presentation_provider_shadow,
+        binding_occurrences,
+        function_bindings,
+        _argument_names,
+        _enclosing_function,
+        _has_nested_scope,
+        source_symbol_index,
+        _root_name,
+    )

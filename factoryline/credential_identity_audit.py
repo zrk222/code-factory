@@ -1,6 +1,10 @@
 """Captured application credential evidence and source-bound audit helpers."""
 
 import ast
+from .fixture_scope_value_audit import _TEST_SCOPE_CONTRACT_EPOCH
+from .fixture_scope_value_audit import (
+    _TestScopeContractEpoch as _TestScopeContractEpoch,
+)
 import hashlib
 from pathlib import Path
 
@@ -601,32 +605,6 @@ def _django_test_bootstrap(index, path, operation, setting):
             for n, name in zip(calls, names)
         )
     )
-
-
-class _TestScopeContractEpoch:
-    """Retain actual immutable model bindings for role-cache generations."""
-
-    __name__ = "test_scope_contract_epoch"
-
-    @property
-    def __code__(self):
-        from . import credential_role_method_use_getter_audit as getter
-
-        names = sorted(
-            name
-            for name in vars(getter)
-            if name.startswith("_SCOPE_") or name == "SCOPE_API_CONTRACT_EPOCH"
-        )
-        values = tuple(getattr(getter, name) for name in names)
-        key = tuple((name, id(value)) for name, value in zip(names, values))
-        current = getattr(self, "current", None)
-        if current is None or current[0] != key:
-            current = (key, object(), values)
-            self.current = current
-        return current[1]
-
-
-_TEST_SCOPE_CONTRACT_EPOCH = _TestScopeContractEpoch()
 
 
 def _app_digest_provider_binding(index, path, owner, call):

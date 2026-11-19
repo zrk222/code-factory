@@ -161,7 +161,11 @@ _GENERATED_FACTORY_PREFIXES = (
 
 def _generated_factory_path(name: str) -> bool:
     return (
-        name == ".factory/candidate.diff"
+        name in {".factory/candidate.diff", ".factory/native-worker-config.json"}
+        or re.fullmatch(
+            r"\.factory/operator/(manifest|authorization|trust)\.json", name
+        )
+        is not None
         or name.startswith(_GENERATED_FACTORY_PREFIXES)
         or re.fullmatch(r"\.factory/ops/lifecycle/[0-9a-f]{32}\.json", name) is not None
     )
@@ -190,6 +194,25 @@ LANGUAGES = {
     "data": ".md .rst .txt .adoc .csv .tsv .png .jpg .jpeg .gif .ico .webp .pdf .woff .woff2 .ttf .mp4 .wav .mp3",
     "document-code": ".svg",
 }
+
+
+# Exact native grammar to inventory identities; these are pattern-limited capabilities.
+SEMGREP_SOURCE_LANGUAGES = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "php",
+        "go",
+        "rust",
+        "java",
+        "c",
+        "cpp",
+        "csharp",
+        "ruby",
+        "swift",
+    }
+)
 
 
 def _git_names(root: Path, tracked: bool, *, ignored: bool = False) -> set[str]:
@@ -312,11 +335,7 @@ def _prepare_snapshot(root: Path, snapshot: Path | None) -> Path | None:
 def _candidate_paths(root: Path, gaps: list[dict]) -> tuple[list[str], list[str]]:
     try:
         paths = _git_paths(root)
-        ignored = sorted(
-            name
-            for name in _git_names(root, False, ignored=True)
-            if not _generated_factory_path(name)
-        )
+        ignored = _ignored_names(root)
     except (OSError, subprocess.SubprocessError, UnicodeError, RuntimeAuditError):
         paths, ignored = [], []
         gaps.append(

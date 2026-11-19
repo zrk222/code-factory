@@ -8874,3 +8874,594 @@ def test_empty_provider_aliases_do_not_walk_ast(monkeypatch):
 
     monkeypatch.setattr(capture.ast, "walk", forbidden)
     assert capture._fixed_eval_module_alias_escape(tree, set()) is False
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        None,
+        "replace_bytes",
+        "replace_references",
+        "escape_references",
+        "reassign_serializer",
+        "alternate_fixture",
+    ],
+)
+def test_local_reference_roundtrip_requires_the_exact_closed_input_edge(change):
+    from textwrap import dedent
+
+    from factoryline.fixture_scope_value_audit import _reference_roundtrip_frame
+
+    source = dedent("""
+        import pickle
+
+        def test_roundtrip(tmp_path):
+            store = Store(tmp_path, "example", codecs=("tensor.v1",))
+            values = {"local": torch.tensor(1.5)}
+            refs = publish(store, values, submission_id="one")
+            for ordinal in range(4):
+                publish(store, {"count": np.array(ordinal, dtype=np.int64)}, submission_id=str(ordinal))
+            store.close()
+            for item, value in zip(pickle.loads(pickle.dumps(refs)), values.values(), strict=True):
+                assert item.data == value
+    """)
+    edits = {
+        "replace_bytes": ("pickle.dumps(refs)", "read_bytes()"),
+        "replace_references": ("pickle.dumps(refs)", "pickle.dumps(read_reference())"),
+        "escape_references": (
+            "    store.close()",
+            "    remember(refs)\n    store.close()",
+        ),
+        "reassign_serializer": ("import pickle", "import pickle\npickle = serializer"),
+        "alternate_fixture": (
+            "test_roundtrip(tmp_path)",
+            "test_roundtrip(tmp_path, item)",
+        ),
+    }
+    if change is not None:
+        source = source.replace(*edits[change])
+    tree = ast.parse(source)
+    call = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "loads"
+    )
+    assert bool(_reference_roundtrip_frame(tree, call)) is (change is None)
+
+
+def test_captured_local_serialization_proof_binds_live_fixture_helpers(monkeypatch):
+    from factoryline import fixture_scope_value_audit, pickle_model_audit
+
+    prior = pickle_model_audit.cache_helpers()
+    assert pickle_model_audit.captured_local_serialization_proof in prior
+
+    def retest(*_args):
+        return None
+
+    monkeypatch.setattr(fixture_scope_value_audit, "_reference_roundtrip_flow", retest)
+    assert retest in pickle_model_audit.cache_helpers()
+    monkeypatch.setattr(pickle_model_audit, "_reference_roundtrip_frame", retest)
+    assert pickle_model_audit.cache_helpers().count(retest) == 2
+
+
+@pytest.mark.parametrize(
+    "formals, body, extra",
+    [
+        (
+            "self, rows",
+            "result = tuple(rows)\nreturn result",
+            "result = external_rows\n",
+        ),
+        (
+            "self, root",
+            "self.backend = Backend(root)\nself.run_id = 'local'",
+            "self.publish = external_receiver\n",
+        ),
+    ],
+)
+def test_local_serialization_rejects_extra_provider_effects(formals, body, extra):
+    from textwrap import indent
+
+    from factoryline.fixture_scope_value_audit import _reference_function_shape
+
+    def function(statements):
+        return ast.parse(
+            f"def provider({formals}):\n" + indent(statements, "    ")
+        ).body[0]
+
+    assert _reference_function_shape(function(body), formals, body)
+    first, rest = body.split("\n", 1)
+    assert not _reference_function_shape(
+        function(first + "\n" + extra + rest), formals, body
+    )
+
+
+def test_local_roundtrip_rejects_rebound_reference_factory():
+    from factoryline.fixture_scope_value_audit import _reference_imported_member
+
+    source = "from dataclasses import dataclass as record\n"
+    expression = ast.Name(id="record")
+    assert _reference_imported_member(
+        ast.parse(source), expression, "dataclasses", "dataclass"
+    )
+    source += "record = alternate_factory\n"
+    assert not _reference_imported_member(
+        ast.parse(source), expression, "dataclasses", "dataclass"
+    )
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "",
+        "    validate = alternate\n",
+        "    def validate(self):\n        return other_rows\n",
+    ],
+)
+def test_local_roundtrip_requires_the_inherited_method_to_remain_selected(override):
+    from factoryline.fixture_scope_value_audit import _reference_selected_store_method
+
+    base, store = ast.parse(
+        "class Reader:\n    def validate(self):\n        return []\n"
+        "class Store(Reader):\n    def close(self):\n        pass\n" + override
+    ).body
+    chosen = _reference_selected_store_method(store, "validate", inherited_from=base)
+    assert chosen is (base.body[0] if not override else None)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "",
+        '    records[0].metadata["dtype"] = another_value\n',
+        "    remember(records)\n",
+    ],
+)
+def test_local_roundtrip_requires_read_only_trace_projection(extra):
+    from textwrap import dedent
+
+    from factoryline.fixture_scope_value_audit import _reference_trace_projection
+
+    source = dedent("""
+        if records is not None:
+            event["records"] = [
+                {
+                    "bytes": r.payload.nbytes if isinstance(r.payload, memoryview) else len(r.payload),
+                    "codec": r.codec,
+                    "tokens": r.tokens,
+                    **{k: r.metadata[k] for k in ("shape", "dtype", "kind") if k in r.metadata},
+                }
+                for r in records
+            ]
+    """).lstrip()
+    first, rest = source.split("\n", 1)
+    assert _reference_trace_projection(
+        ast.parse(first + "\n" + extra + rest).body[0]
+    ) is (not extra)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import unittest.mock as operations\noperations.patch.object(pickle, 'dumps', other)",
+        "from unittest import mock\nmock.patch.object(pickle, 'dumps', other)",
+        "from unittest.mock import patch\npatch.object(pickle, 'dumps', other)",
+    ],
+)
+def test_reference_roundtrip_rejects_opaque_peer_mutation(source):
+    from factoryline import review_audits as audit
+    from factoryline.fixture_scope_value_audit import _reference_inventory_nodes
+
+    tree = ast.parse(source)
+    aliases = audit._security_aliases(ast.walk(tree))
+    assert not _reference_inventory_nodes(
+        None, None, tree, {"pickle", "dumps"}, aliases, "test_roundtrip", audit
+    )
+
+
+@pytest.mark.parametrize("default, eligible", [("1", True), ("other_default()", False)])
+def test_reference_dataclass_method_defaults_are_inert(default, eligible):
+    from factoryline import review_audits as audit
+    from factoryline.fixture_scope_value_audit import _reference_dataclass_member_clear
+
+    body = f"@property\ndef value(self, option={default}):\n    return option"
+    assert (
+        _reference_dataclass_member_clear(ast.parse(body).body[0], {}, audit)
+        is eligible
+    )
+
+
+def test_reference_roundtrip_peer_serializer_escape_is_rejected():
+    from factoryline import pickle_model_audit, review_audits as audit
+    from factoryline.runtime_audit_integrity import _conditional_v3_alias_closure
+
+    safe = "import pickle\npickle.dumps((1, 2))\n"
+    for extra in ("", "hand_off(pickle)\n", "hand_off(pickle.dumps)\n"):
+        tree = ast.parse(safe + extra)
+        aliases = audit._security_aliases(ast.walk(tree))
+        assert pickle_model_audit._pickle_serializer_provider_unmodified(
+            tree, aliases, audit, _conditional_v3_alias_closure
+        ) is (not extra)
+
+
+def test_local_roundtrip_publication_holder_requires_plain_data_fields():
+    from factoryline.fixture_scope_value_audit import (
+        _reference_publication_descriptor_clear,
+    )
+
+    source = (
+        "class Publication:\n    records: tuple[Record, ...]\n"
+        "    dependencies: tuple[RecordSetRef | int, ...] = ()\n"
+    )
+    assert _reference_publication_descriptor_clear(ast.parse(source).body[0])
+    source += "    def __post_init__(self):\n        observe(self.records)\n"
+    assert not _reference_publication_descriptor_clear(ast.parse(source).body[0])
+
+
+@pytest.mark.parametrize(
+    "field, extra",
+    [
+        ("metadata", ""),
+        (
+            "stored_metadata",
+            "    @property\n    def metadata(self):\n        return other_value\n",
+        ),
+        (
+            "metadata",
+            "    @property\n    def metadata(self):\n        return other_value\n",
+        ),
+    ],
+)
+def test_local_roundtrip_binds_constructor_field_and_unique_descriptor(field, extra):
+    from factoryline.fixture_scope_value_audit import _reference_dataclass_fields_clear
+
+    source = (
+        "class Record:\n    record_id: str\n    payload: bytes\n    codec: str = 'bytes.v1'\n"
+        f"    {field}: dict = field(default_factory=dict)\n    tokens: int = 0\n"
+    ) + extra
+    assert _reference_dataclass_fields_clear(ast.parse(source).body[0], "Record") is (
+        not extra
+    )
+
+
+def test_local_roundtrip_rejects_store_builtin_rebinding():
+    from factoryline.fixture_scope_value_audit import _reference_builtin_bindings_clear
+
+    names = {
+        "len",
+        "list",
+        "range",
+        "type",
+        "int",
+        "isinstance",
+        "bytes",
+        "bytearray",
+        "memoryview",
+    }
+    body = "def observe(records):\n    return len(records)\n"
+    assert _reference_builtin_bindings_clear(ast.parse(body), names)
+    assert not _reference_builtin_bindings_clear(
+        ast.parse("len = unknown_observer\n" + body), names
+    )
+
+
+@pytest.mark.parametrize(
+    "after,expected", [("return 2", "KILLED"), ("return (1)", "SURVIVED")]
+)
+def test_polyglot_go_real_opt_in(tmp_path, after, expected):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in actual Go subprocess qualification")
+    (tmp_path / "go.mod").write_text("module oraclefixture\n\ngo 1.23\n")
+    (tmp_path / "app.go").write_text(
+        "package oraclefixture\nfunc Value() int { return 1 }\n"
+    )
+    (tmp_path / "app_test.go").write_text(
+        'package oraclefixture\nimport "testing"\nfunc TestSelected(t *testing.T) { if Value() != 1 { t.Errorf("wrong value") } }\n'
+    )
+    tool = Path.home() / ".cache/code-factory-tools/go1.27.4/go/bin/go.exe"
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "go",
+        "app_test.go",
+        "TestSelected",
+        3,
+        "app.go",
+        "return 1",
+        after,
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+    )
+    assert result["status"] == expected, result
+
+
+@pytest.mark.parametrize("attribute", ["", "#[should_panic]\n", "#[ignore]\n"])
+@pytest.mark.parametrize(
+    "after,expected", [("{ 2 }", "KILLED"), ("{ (1) }", "SURVIVED")]
+)
+def test_polyglot_cargo_real_opt_in(tmp_path, attribute, after, expected):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in actual Cargo subprocess qualification")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname="oraclefixture"\nversion="0.1.0"\nedition="2021"\n'
+    )
+    (tmp_path / "Cargo.lock").write_text(
+        'version = 4\n[[package]]\nname = "oraclefixture"\nversion = "0.1.0"\n'
+    )
+    (tmp_path / "src/lib.rs").write_text("pub fn value() -> i32 { 1 }\n")
+    (tmp_path / "tests/oracle.rs").write_text(
+        attribute
+        + "#[test]\nfn selected() { assert_eq!(oraclefixture::value(), 1); }\n"
+    )
+    tool = (
+        Path.home() / ".rustup/toolchains/stable-x86_64-pc-windows-msvc/bin/cargo.exe"
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "cargo",
+        "tests/oracle.rs",
+        "selected",
+        2,
+        "src/lib.rs",
+        "{ 1 }",
+        after,
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+    )
+    if attribute:
+        assert result["status"] == "INCOMPLETE"
+        assert result["baseline"]["observation"].get("outcome") in {None, "pending"}
+    else:
+        assert result["baseline"]["process"]["exit_code"] == 0, result
+        assert result["mutant"]["process"]["exit_code"] == (
+            101 if expected == "KILLED" else 0
+        ), result
+        assert result["status"] == expected, result
+        assert result["baseline"]["observation"]["reached"] is True
+        assert result["mutant"]["observation"]["reached"] is True
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["baseline_false", "skip", "zero", "setup", "compile", "unrelated", "timeout"],
+)
+def test_polyglot_jest_negative_real_opt_in(tmp_path, case):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in native negative subprocess qualification")
+    (tmp_path / "package.json").write_text('{"name":"oracle-fixture"}')
+    (tmp_path / "app.js").write_text("exports.value = () => 1;\n")
+    bodies = {
+        "baseline_false": "test('selected', () => { expect(value()).toBe(9); });",
+        "skip": "test.skip('selected', () => { expect(value()).toBe(1); });",
+        "zero": "test('different', () => { expect(value()).toBe(1); });",
+        "setup": "throw new Error('setup'); test('selected', () => {});",
+        "compile": "test('selected', () => { expect(value()).toBe(1); });",
+        "unrelated": "test('selected', () => { expect(value()).toBe(1);\n expect(true).toBe(true); });",
+        "timeout": "test('selected', () => { while (true) {} });",
+    }
+    (tmp_path / "app.test.js").write_text(
+        "const {value} = require('./app');\n" + bodies[case] + "\n"
+    )
+    tool = (
+        Path.home()
+        / ".cache/code-factory-tools/js-oracles/node_modules/jest/bin/jest.js"
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "jest",
+        "app.test.js",
+        "selected",
+        3 if case == "unrelated" else 2,
+        "app.js",
+        "() => 1",
+        "() => (" if case == "compile" else "() => 2",
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+        node_executable=Path("C:/nvm4w/nodejs/node.exe"),
+        timeout_seconds=2 if case == "timeout" else 120,
+    )
+    assert result["status"] == "INCOMPLETE", result
+    assert result["cleanup"]["removed"] is True
+
+
+def test_polyglot_capture_requires_explicit_execution(tmp_path):
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    with pytest.raises(RuntimeAuditError, match="execute=True"):
+        capture_polyglot_oracle_challenge(
+            tmp_path,
+            "jest",
+            "x.test.js",
+            "selected",
+            2,
+            "x.js",
+            "return 1",
+            "return 2",
+            ".factory/proof",
+        )
+
+
+def test_polyglot_capture_missing_tool_is_incomplete(tmp_path):
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    (tmp_path / "app.js").write_text("exports.value = () => 1;\n")
+    (tmp_path / "app.test.js").write_text("test('selected', () => {});\n")
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "jest",
+        "app.test.js",
+        "selected",
+        1,
+        "app.js",
+        "() => 1",
+        "() => 2",
+        ".factory/proof",
+        execute=True,
+        tool_executable=tmp_path / "missing.js",
+    )
+    assert result["status"] == "INCOMPLETE"
+    assert result["error_code"] == "E_POLYGLOT_CAPTURE"
+
+
+@pytest.mark.parametrize(
+    "after,expected", [("() => 2", "KILLED"), ("() => (1)", "SURVIVED")]
+)
+@pytest.mark.parametrize("framework", ["jest", "vitest"])
+def test_polyglot_jest_real_opt_in(tmp_path, after, expected, framework):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip(
+            "opt-in actual subprocess qualification; synthetic fixtures are separate"
+        )
+    (tmp_path / "package.json").write_text(
+        '{"name":"oracle-fixture","jest":{"testEnvironment":"node"}}'
+    )
+    (tmp_path / "app.js").write_text("exports.value = () => 1;\n")
+    (tmp_path / "app.test.js").write_text(
+        "const {value} = require('./app');\ntest('selected', () => { expect(value()).toBe(1); });\n"
+    )
+    tool = (
+        Path.home()
+        / ".cache/code-factory-tools/js-oracles/node_modules"
+        / {"jest": "jest/bin/jest.js", "vitest": "vitest/vitest.mjs"}[framework]
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        framework,
+        "app.test.js",
+        "selected",
+        2,
+        "app.js",
+        "() => 1",
+        after,
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+        node_executable=Path("C:/nvm4w/nodejs/node.exe"),
+    )
+    assert result["status"] == expected, result
+    assert result["cleanup"]["removed"] is True
+    assert result["source_unchanged"] is True
+
+
+@pytest.mark.parametrize("framework", ["jest", "vitest"])
+def test_polyglot_real_installed_application_dependency(tmp_path, framework):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in native dependency resolution qualification")
+    package = tmp_path / "node_modules/oracle-value"
+    package.mkdir(parents=True)
+    esm = framework == "vitest"
+    (package / "package.json").write_text(
+        '{"name":"oracle-value","version":"1.0.0","exports":"./index.js"'
+        + (',"type":"module"' if esm else "")
+        + "}"
+    )
+    (package / "index.js").write_text(
+        "export const one = 1;" if esm else "exports.one = 1;"
+    )
+    (tmp_path / "package.json").write_text(
+        '{"name":"oraclefixture"' + (',"type":"module"' if esm else "") + "}"
+    )
+    (tmp_path / "package-lock.json").write_text(
+        '{"name":"oraclefixture","lockfileVersion":3}'
+    )
+    (tmp_path / "app.js").write_text(
+        "import {one} from 'oracle-value';\nexport const value = () => one;\n"
+        if esm
+        else "const {one} = require('oracle-value');\nexports.value = () => one;\n"
+    )
+    (tmp_path / "app.test.js").write_text(
+        "import {value} from './app.js';\ntest('selected', () => { expect(value()).toBe(1); });\n"
+        if esm
+        else "const {value} = require('./app');\ntest('selected', () => { expect(value()).toBe(1); });\n"
+    )
+    tool = (
+        Path.home()
+        / ".cache/code-factory-tools/js-oracles/node_modules"
+        / {"jest": "jest/bin/jest.js", "vitest": "vitest/vitest.mjs"}[framework]
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        framework,
+        "app.test.js",
+        "selected",
+        2,
+        "app.js",
+        "() => one",
+        "() => 2",
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+        node_executable=Path("C:/nvm4w/nodejs/node.exe"),
+    )
+    assert result["status"] == "KILLED", result
+
+
+@pytest.mark.parametrize("mixed,output", [(True, ".factory/proof"), (False, "proof")])
+def test_polyglot_real_rust_mixed_attributes_and_custom_evidence(
+    tmp_path, mixed, output
+):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in native Rust selected identity/evidence qualification")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname="oraclefixture"\nversion="0.1.0"\nedition="2021"\n'
+    )
+    (tmp_path / "Cargo.lock").write_text(
+        'version = 4\n[[package]]\nname="oraclefixture"\nversion="0.1.0"\n'
+    )
+    (tmp_path / "src/lib.rs").write_text("pub fn value() -> i32 { 1 }\n")
+    other = (
+        '\n#[test]\n#[should_panic]\nfn unrelated() { panic!("expected"); }\n#[test]\n#[ignore]\nfn ignored_other() {}\n'
+        if mixed
+        else ""
+    )
+    (tmp_path / "tests/oracle.rs").write_text(
+        "#[test]\nfn selected() { assert_eq!(oraclefixture::value(), 1); }\n" + other
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "cargo",
+        "tests/oracle.rs",
+        "selected",
+        2,
+        "src/lib.rs",
+        "{ 1 }",
+        "{ 2 }",
+        output,
+        execute=True,
+        tool_executable=Path.home()
+        / ".rustup/toolchains/stable-x86_64-pc-windows-msvc/bin/cargo.exe",
+    )
+    assert result["status"] == "KILLED", result

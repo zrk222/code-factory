@@ -637,7 +637,7 @@ def test_forgeline_doctor_only_runs_typescript_canaries_for_project_sources(
     monkeypatch.setattr(
         cli,
         "_run_feature_canary",
-        lambda _module, _root, _payload, _provenance, suffix, roots: calls.append(
+        lambda _module, _root, _payload, _provenance, suffix, roots, **kw: calls.append(
             (suffix, roots)
         ),
     )
@@ -660,7 +660,9 @@ def test_doctor_python_only_does_not_require_script_canary(tmp_path, monkeypatch
     (tmp_path / ".factory" / "generated.tsx").write_text("ignored")
     monkeypatch.chdir(tmp_path)
     calls = []
-    monkeypatch.setattr(cli, "_run_feature_canary", lambda *args: calls.append(args[4]))
+    monkeypatch.setattr(
+        cli, "_run_feature_canary", lambda *args, **kw: calls.append(args[4])
+    )
     result = cli._forgeline_feature_canaries(SimpleNamespace(cli="forge"), {}, True)
     assert result["ok"] is True
     assert calls == ["py"]
@@ -715,7 +717,7 @@ def test_doctor_javascript_project_preserves_required_canary_failure(
     monkeypatch.chdir(tmp_path)
     calls = []
 
-    def run(*args):
+    def run(*args, **kwargs):
         calls.append(args[4])
         return {"ok": False, "reason": "compiler missing"} if args[4] == "mjs" else None
 
@@ -724,6 +726,40 @@ def test_doctor_javascript_project_preserves_required_canary_failure(
     assert result["ok"] is False
     assert result["reason"] == "compiler missing"
     assert calls == ["py", "mjs"]
+
+
+@pytest.mark.parametrize("compiler", [None, "compiler-node-modules"])
+def test_doctor_resolves_compiler_once_per_invocation(tmp_path, monkeypatch, compiler):
+    from types import SimpleNamespace
+    import factoryline.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "_project_typescript_inventory",
+        lambda root: ({".ts", ".tsx"}, [root], True),
+    )
+    resolutions, calls = [], []
+
+    def resolve(roots):
+        resolutions.append(roots)
+        return compiler
+
+    def canary(*args, compiler_path):
+        calls.append(args[4])
+        if args[4] != "py":
+            assert compiler_path() == compiler
+            assert compiler_path() == compiler
+
+    monkeypatch.setattr(cli, "_typescript_node_path", resolve)
+    monkeypatch.setattr(cli, "_run_feature_canary", canary)
+    module = SimpleNamespace(cli="forge")
+    for _ in range(2):
+        result = cli._forgeline_feature_canaries(module, {}, True)
+        assert result["ok"]
+        assert result["tested_capabilities"] == ["py", "mjs", "ts", "tsx"]
+    assert calls == ["py", "mjs", "ts", "tsx"] * 2
+    assert resolutions == [[tmp_path], [tmp_path]]
 
 
 @pytest.mark.parametrize(

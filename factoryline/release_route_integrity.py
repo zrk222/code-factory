@@ -111,7 +111,34 @@ def _vscode_candidate_publish(publish: str) -> bool:
         in publish
         and "VSCODE_VSIX_PATH=vscode-marketplace-candidate/${vsix#./}" in publish
         and '--packagePath "$VSCODE_VSIX_PATH"' in publish
-        and "@vscode/vsce@4.0.0 publish" in publish
+        and _vscode_locked_publisher(publish)
+    )
+
+
+def _vscode_locked_publisher(publish: str) -> bool:
+    try:
+        steps = yaml.safe_load(publish)["steps"]
+        install, command = next(
+            (left, right)
+            for left, right in zip(steps, steps[1:])
+            if left.get("name") == "Install and audit locked publisher"
+        )
+    except (yaml.YAMLError, KeyError, TypeError, AttributeError, StopIteration):
+        return False
+    return install == {
+        "name": "Install and audit locked publisher",
+        "working-directory": "editors/vscode",
+        "run": (
+            "npm install --global npm@10.9.4\n"
+            "npm ci --no-audit --ignore-scripts\n"
+            "npm run audit\n"
+        ),
+    } and (
+        isinstance(command, dict)
+        and command.get("name") == "Publish verified VSIX to Visual Studio Marketplace"
+        and isinstance(command.get("run"), str)
+        and "./editors/vscode/node_modules/.bin/vsce publish" in command.get("run", "")
+        and command.get("continue-on-error", False) is False
     )
 
 

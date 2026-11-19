@@ -534,6 +534,128 @@ def _manifest(**overrides):
     return value
 
 
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("edit", {"tsx"}),
+        ("silent-edit", {"tsx"}),
+        ("shared", {"tsx", "go", "rust"}),
+        ("crosspackage", {"go", "rust"}),
+        ("delete", {"tsx"}),
+        ("rename", {"tsx"}),
+        ("lock", {"tsx", "go", "rust"}),
+        ("tool", {"tsx", "go", "rust"}),
+    ],
+)
+def test_polyglot_content_proof_routing_and_fixture_execution_shadow(
+    tmp_path, change, expected
+):
+    """Execute a content-report fixture; this does not qualify any native scanner."""
+    import json
+    import subprocess
+    import sys
+    import time
+
+    sources = {"tsx": "web/app.tsx", "go": "server/app.go", "rust": "core/app.rs"}
+    shared = ["rules.json", "deps.lock"]
+    for name in [*sources.values(), *shared]:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("safe\n", encoding="utf-8")
+    script = (
+        "import pathlib,sys,json,hashlib; "
+        "rows={p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() "
+        "if pathlib.Path(p).exists() else 'MISSING' for p in sys.argv[2:]}; "
+        "print(json.dumps({'state':'INCOMPLETE' if 'MISSING' in rows.values() else 'OBSERVED',"
+        "'inputs':rows,'tool':sys.argv[1]},sort_keys=True))"
+    )
+    proofs, closures = {}, {}
+    for package, source in sources.items():
+        inputs = [source, *shared, *([sources["go"]] if package == "rust" else [])]
+        proofs[package] = {
+            "name": package,
+            "command": [sys.executable, "-B", "-c", script, "1", *inputs],
+            "inputs": inputs,
+            "outputs": [f"{package}.json"],
+            "relevant_paths": inputs,
+            "read_only": True,
+            "safe_to_skip": False,
+            "toolchain": {"fixture": "1"},
+            "environment": {"mode": "offline"},
+        }
+        closures[package] = [
+            source.split("/")[0],
+            *shared,
+            *([sources["go"]] if package == "rust" else []),
+        ]
+
+    def plan(changed):
+        return plan_incremental(
+            tmp_path,
+            _manifest(
+                changed_paths=changed or ["docs/readme.md"],
+                gates=[
+                    {"id": key, "depends_on": [], "side_effects": False, "proof": proof}
+                    for key, proof in proofs.items()
+                ],
+                dependency_closure=closures,
+            ),
+        )
+
+    def execute(proof):
+        raw = subprocess.check_output(proof["command"], cwd=tmp_path)
+        (tmp_path / proof["outputs"][0]).write_bytes(raw)
+        return json.loads(raw)
+
+    assert {row["disposition"] for row in plan([])["items"]} == {"RUN"}
+    for proof in proofs.values():
+        started = time.perf_counter()
+        execute(proof)
+        record_proof(
+            tmp_path,
+            proof,
+            elapsed_ms=max(1, round((time.perf_counter() - started) * 1000)),
+        )
+    assert {row["disposition"] for row in plan([])["items"]} == {"REUSE"}
+    target = {
+        "shared": shared[0],
+        "lock": shared[1],
+        "crosspackage": sources["go"],
+    }.get(change, sources["tsx"])
+    changed = [] if change == "silent-edit" else [target]
+    if change == "delete":
+        (tmp_path / target).unlink()
+    elif change == "rename":
+        renamed = "web/renamed.tsx"
+        (tmp_path / target).rename(tmp_path / renamed)
+        changed.append(renamed)
+        proofs["tsx"]["inputs"][0] = renamed
+        proofs["tsx"]["command"][-3] = renamed
+    elif change == "tool":
+        changed = []
+        for proof in proofs.values():
+            proof["toolchain"]["fixture"] = "2"
+            proof["command"][4] = "2"
+    else:
+        (tmp_path / target).write_text("changed\n", encoding="utf-8")
+    routed = plan(changed)
+    assert {
+        row["id"] for row in routed["items"] if row["disposition"] == "RUN"
+    } == expected
+    incremental = {
+        row["id"]: execute(proofs[row["id"]])
+        if row["disposition"] == "RUN"
+        else json.loads((tmp_path / proofs[row["id"]]["outputs"][0]).read_bytes())
+        for row in routed["items"]
+    }
+    full = {key: execute(proof) for key, proof in proofs.items()}
+    assert full["tsx"]["state"] == ("INCOMPLETE" if change == "delete" else "OBSERVED")
+    envelope = {"assurance_level": "isolated_worker", "obligations": list(proofs)}
+    assert compare_shadow(
+        {**envelope, "findings": incremental}, {**envelope, "findings": full}
+    )["shadow_equivalent"]
+
+
 def test_unknown_closure_fails_closed_to_run_and_preserves_topological_order():
     result = plan_incremental(
         __import__("pathlib").Path.cwd(),
@@ -2149,3 +2271,379 @@ def test_captured_test_configuration_names_and_unmodeled_test_workflow_paths(tmp
     } <= names
     assert "unrelated.yml" not in names
     assert list(unmodeled_test_workflow_paths(tmp_path)) == [".gitlab-ci.yml"]
+
+
+_COMMAND_FILE_WORKER = """\
+import os
+DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
+
+def render(stem, body):
+    save_document(body)
+    return os.system('pdflatex ' + os.path.join(DIRECTORY, stem) + '.tex')
+"""
+_COMMAND_FILE_ROUTE = """\
+import time
+from random import sample
+from routing_support import *
+from adapter import render
+
+def handle(record, choose_name):
+    if choose_name:
+        token = record.label
+    else:
+        token = ''.join(sample('abcdefghij', 5)) + str(time.time()).split('.')[0]
+        return render(token, record)
+"""
+_COMMAND_STARTUP_WORKER = """\
+import os
+from tools import normalized
+
+class Renderer:
+    def __init__(self, options=None):
+        if options is not None:
+            self.requested = options.get('directory', None)
+            self.root_path = None
+            if self.requested is not None:
+                self.root_path = normalized(self.requested)
+                self.__render()
+
+    def __render(self):
+        output = os.path.join(self.root_path, 'docs')
+        return os.system('apidoc -i ' + self.root_path + ' -o ' + output)
+"""
+_COMMAND_PATH_REWRITER = """\
+import os
+
+def normalized(path):
+    result = ''
+    for part in path.split('/'):
+        try:
+            part.index(' ')
+            result += "'" + part + "'/"
+        except ValueError as error:
+            result += part + '/'
+    return os.path.normpath(result)
+"""
+
+
+def _generated_command_sources(change):
+    sources = {
+        "worker.py": _COMMAND_FILE_WORKER,
+        "adapter.py": "from worker import *\n",
+        "routing_support.py": "import os\n",
+        "route.py": _COMMAND_FILE_ROUTE,
+    }
+    if change == "published_callable":
+        sources["route.py"] += "\ncallback = render\n"
+    elif change == "second_source":
+        sources["route.py"] += (
+            "\ndef next_route(record):\n    return render(record.label, record)\n"
+        )
+    elif change == "source_path_rebound":
+        sources["worker.py"] += "\nDIRECTORY = source_directory()\n"
+    elif change == "clock_rebound":
+        sources["route.py"] += "\ntime.time = another_clock\n"
+    elif change == "unknown_command":
+        sources["worker.py"] = _COMMAND_FILE_WORKER.replace("pdflatex ", "process ")
+    return sources
+
+
+def _startup_command_sources(change):
+    sources = {
+        "worker.py": _COMMAND_STARTUP_WORKER,
+        "tools.py": _COMMAND_PATH_REWRITER,
+        "driver.py": "import os\nfrom worker import Renderer\nOPTIONS = {'directory': os.getcwd()}\napp = Renderer(OPTIONS)\n",
+    }
+    if change == "second_source":
+        sources["driver.py"] += (
+            "\ndef render_more(value):\n    return Renderer({'directory': value})\n"
+        )
+    elif change == "path_transform":
+        sources["tools.py"] = _COMMAND_PATH_REWRITER.replace(
+            "normpath(result)", "normpath(source_directory())"
+        )
+    elif change == "config_escape":
+        sources["driver.py"] = sources["driver.py"].replace(
+            "app =", "pass_to_callback(OPTIONS)\napp ="
+        )
+    elif change == "helper_rebound":
+        sources["driver.py"] += "\nimport tools\ntools.normalized = transform\n"
+    elif change == "receiver_rebound":
+        sources["worker.py"] = _COMMAND_STARTUP_WORKER.replace(
+            "        output =",
+            "        self.root_path = other_path()\n        output =",
+        )
+    return sources
+
+
+@pytest.mark.parametrize(
+    "kind,change",
+    [
+        ("generated", None),
+        ("generated", "published_callable"),
+        ("generated", "second_source"),
+        ("generated", "source_path_rebound"),
+        ("generated", "clock_rebound"),
+        ("generated", "unknown_command"),
+        ("startup", None),
+        ("startup", "second_source"),
+        ("startup", "path_transform"),
+        ("startup", "config_escape"),
+        ("startup", "helper_rebound"),
+        ("startup", "receiver_rebound"),
+    ],
+)
+def test_captured_command_operand_proof(tmp_path, kind, change):
+    builder = (
+        _generated_command_sources if kind == "generated" else _startup_command_sources
+    )
+    result = _captured_command_result(tmp_path, builder(change))
+    if change:
+        assert result is None
+    else:
+        assert result["operands"] == (
+            ["MODULE_LOCAL_DIRECTORY", "ALPHABET_AND_CLOCK_FILENAME"]
+            if kind == "generated"
+            else ["PROCESS_STARTUP_DIRECTORY", "FIXED_CHILD_DIRECTORY"]
+        )
+        assert result["deployment_path"] == "UNASSESSED"
+
+
+def _captured_command_result(tmp_path, sources):
+    import hashlib
+
+    from factoryline import captured_operand_audit as operands
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    raw = {tmp_path / path: text.encode() for path, text in sources.items()}
+    inventory = {path: hashlib.sha256(data).hexdigest() for path, data in raw.items()}
+    snapshots = {path: ast.parse(data) for path, data in raw.items()}
+    for path, tree in snapshots.items():
+        tree._oracle_source_sha256 = inventory[path]
+    index = SourceSnapshotIndex(tmp_path, snapshots, raw, inventory)
+    path = tmp_path / "worker.py"
+    site = next(
+        node
+        for node in ast.walk(snapshots[path])
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "os.system"
+    )
+    return operands.captured_command_operand_proof(index, path, site)
+
+
+@pytest.mark.parametrize(
+    "peer",
+    [
+        "import worker\nworker.DIRECTORY = other_directory()\n",
+        "import worker\nworker.__file__ = other_directory()\n",
+        "from exported import renamed as emit\nemit(record.label, record)\n",
+        "from worker import render\ndef outer(render):\n    def inner():\n        return render(record.label, record)\n",
+    ],
+)
+def test_command_retains_peer_writes_reexports_and_unmodeled_scope(tmp_path, peer):
+    sources = _generated_command_sources(None)
+    sources.update(
+        {"peer.py": peer, "exported.py": "from adapter import render as renamed\n"}
+    )
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("    if choose_name:", "    while choose_name:"),
+        ("    else:", "    try:"),
+    ],
+)
+def test_command_retains_operand_with_unmodeled_control_flow(tmp_path, before, after):
+    sources = _generated_command_sources(None)
+    route = sources["route.py"]
+    start = route.index("    if choose_name:")
+    generated = route[route.index("    else:", start) :]
+    if after == "    try:":
+        sources["route.py"] = (
+            route[:start]
+            + generated.replace(before, after)
+            + "    except LookupError:\n        pass\n"
+        )
+    else:
+        sources["route.py"] = route[:start] + generated.replace("    else:", after)
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+def test_command_retains_captured_cwd_change(tmp_path):
+    sources = _startup_command_sources(None)
+    sources["driver.py"] = sources["driver.py"].replace(
+        "OPTIONS =", "os.chdir(runtime_directory())\nOPTIONS ="
+    )
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+@pytest.mark.parametrize(
+    "site", ["        if options is not None:", "        output = os.path.join"]
+)
+def test_command_retains_reassigned_receiver(tmp_path, site):
+    sources = _startup_command_sources(None)
+    sources["worker.py"] = sources["worker.py"].replace(
+        site, "        self = an_unknown_receiver()\n" + site
+    )
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+@pytest.mark.parametrize(
+    "before,inserted",
+    [
+        ("    def __init__", "    __getattribute__ = other_lookup\n"),
+        ("    def __init__", "    from providers import creator as __new__\n"),
+        ("                self.__render()", "                pass_object(self)\n"),
+        (
+            "                self.__render()",
+            "                self.__class__ = other_class\n",
+        ),
+        ("        output = os.path.join", "        pass_object(self)\n"),
+    ],
+)
+def test_command_retains_receiver_hooks_and_escapes(tmp_path, before, inserted):
+    sources = _startup_command_sources(None)
+    sources["worker.py"] = sources["worker.py"].replace(before, inserted + before)
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+def test_command_retains_bound_constructor_access(tmp_path):
+    sources = _startup_command_sources(None)
+    sources["driver.py"] += "\napp.__init__(new_settings())\n"
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+def test_command_retains_generated_name_with_additional_formal(tmp_path):
+    sources = _generated_command_sources(None)
+    sources["worker.py"] = sources["worker.py"].replace(
+        "stem, body", "stem, body, extra"
+    )
+    sources["route.py"] = sources["route.py"].replace(
+        "token, record", "token, record, record.label"
+    )
+    assert _captured_command_result(tmp_path, sources) is None
+
+
+def test_command_operand_proof_helpers_identify_live_methods(monkeypatch):
+    from factoryline import captured_operand_audit as operands
+
+    def guarded_replacement(*_args):
+        return None
+
+    helpers = operands.command_operand_proof_helpers()
+    assert operands.captured_command_operand_proof in helpers
+    assert operands._CommandOperandProof.command in helpers
+    monkeypatch.setattr(operands._CommandOperandProof, "command", guarded_replacement)
+    assert guarded_replacement in operands.command_operand_proof_helpers()
+
+
+_INSTALLER_PREREQUISITE = r"""
+from os import system
+from re import DOTALL, search
+
+content = open("./pyproject.toml").read()
+if match := search(r'\[tool.poetry.dependencies\]\npython = "[^"]+"\n(.+?)\n\n', content, DOTALL):
+    dependencies = match.group(1)
+else:
+    raise ValueError("Dependencies missing")
+system(install_command)
+"""
+
+
+def _installer_prerequisite_result(tmp_path, source, manifest, independent=False):
+    import hashlib
+
+    from factoryline.captured_operand_audit import captured_installer_prerequisite
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    path = tmp_path / "setup_runtime.py"
+    raw = source.encode()
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    documents = {} if manifest is None else {"pyproject.toml": manifest}
+    if independent:
+        tree._security_source_context = (
+            tmp_path,
+            {tmp_path / name: data for name, data in documents.items()},
+        )
+    else:
+        tree._security_oracle_context = {"_security_launch_configs": documents}
+    index = SourceSnapshotIndex(
+        tmp_path, {path: tree}, {path: raw}, {path: tree._oracle_source_sha256}
+    )
+    site = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "system"
+    )
+    return captured_installer_prerequisite(index, path, site)
+
+
+@pytest.mark.parametrize("independent", [False, True])
+def test_captured_installer_prerequisite_binds_manifest_and_retains_sink(
+    tmp_path, independent
+):
+    import hashlib
+
+    manifest = b'[project]\nname = "sample"\ndependencies = []\n'
+    result = _installer_prerequisite_result(
+        tmp_path, _INSTALLER_PREREQUISITE, manifest, independent
+    )
+
+    assert result["manifest"] == {
+        "path": "pyproject.toml",
+        "sha256": hashlib.sha256(manifest).hexdigest(),
+    }
+    assert result["required_header"] == "[tool.poetry.dependencies]"
+    assert result["guard_span"][0] == 6
+    assert result["raise_span"][0] == 9
+    assert result["working_directory_selection"] == "UNASSESSED"
+    assert result["shell_operation"] == "RETAINED"
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        None,
+        b"\xff",
+        b"# [tool.poetry.dependencies]\n",
+        b"[tool.poetry.dependencies]\n",
+        b"[toolXpoetryYdependencies]\n",
+        b"[tool\r\npoetry\rdependencies]\r\n",
+    ],
+)
+def test_installer_prerequisite_needs_readable_manifest_missing_the_pattern_header(
+    tmp_path, manifest
+):
+    assert (
+        _installer_prerequisite_result(tmp_path, _INSTALLER_PREREQUISITE, manifest)
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "original,replacement",
+    [
+        ("./pyproject.toml", "../pyproject.toml"),
+        ("from re import DOTALL, search", "from other import DOTALL, search"),
+        ("from os import system", "from other import system"),
+        ("raise ValueError", "report_problem"),
+        ("(.+?)", "(.+?)|valid"),
+        ("content = open", "open = other\ncontent = open"),
+        ("system(install_command)", "def run():\n    system(install_command)"),
+    ],
+)
+def test_installer_prerequisite_keeps_unknown_binding_or_flow(
+    tmp_path, original, replacement
+):
+    source = _INSTALLER_PREREQUISITE.replace(original, replacement)
+    assert _installer_prerequisite_result(tmp_path, source, b"[project]\n") is None
+
+
+def test_installer_prerequisite_requires_provider_import_before_its_use(tmp_path):
+    imported = "from re import DOTALL, search\n"
+    source = _INSTALLER_PREREQUISITE.replace(imported, "").replace(
+        "system(install_command)", imported + "system(install_command)"
+    )
+    assert _installer_prerequisite_result(tmp_path, source, b"[project]\n") is None

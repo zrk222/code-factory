@@ -158,21 +158,23 @@
   },
   "scripts": {
     "compile": "tsc -p . && node scripts/bundle.mjs",
-    "test": "node --test scripts/audit-lockfile.test.mjs && node --test ../proof-client/test/client.test.cjs && npm run compile && node ./dist/test/receipt.test.js",
+    "test": "node --test scripts/audit-lockfile.test.mjs scripts/packaging-glob.test.cjs && node --test ../proof-client/test/client.test.cjs && npm run compile && node ./dist/test/receipt.test.js",
     "audit": "node scripts/audit-lockfile.mjs",
     "package": "npm run test && vsce package --no-dependencies"
   },
   "overrides": {
     "brace-expansion": "5.0.12",
     "minimatch": "11.0.1",
-    "@azure/msal-node": "7.1.1"
+    "@azure/msal-node": "7.1.1",
+    "tinyglobby": "$tinyglobby"
   },
   "devDependencies": {
     "@factoryline/proof-client": "file:../proof-client",
     "@types/node": "^20.17.30",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^4.0.0",
+    "@vscode/vsce": "4.1.1",
     "esbuild": "0.28.2",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "tinyglobby": "file:../packaging-glob"
   }
 }

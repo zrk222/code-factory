@@ -19,7 +19,8 @@ def add_parser(sub: Any) -> None:
     first_proof.add_argument("--json", action="store_true")
     scan = sub.add_parser(
         "scan",
-        help="run every applicable local audit lane with explicit evidence gaps",
+        help="check your code and show findings, missing checks, and next steps",
+        description="Default scan runs applicable local checks and authorized configured workers. Use --static-only for Python source checks without workers.",
         epilog="Exit 0: no blocking findings/checks (advisories may remain). Exit 2: blocked or invalid analysis. INCOMPLETE means evidence gaps remain; it is not release approval. Base static analysis covers Python; other languages require workers.",
     )
     scan.add_argument("--root", default=".")
@@ -33,13 +34,13 @@ def add_parser(sub: Any) -> None:
         "--deep",
         action="store_true",
         default=True,
-        help="run every applicable local audit lane and expose unmeasured coverage",
+        help="use the default full local scan (retained for compatibility)",
     )
     scan_scope.add_argument(
         "--static-only",
         action="store_false",
         dest="deep",
-        help="explicitly limit this run to bounded Python static checks",
+        help="check Python source only, without configured workers",
     )
     scan.add_argument(
         "--worker-config",
@@ -301,16 +302,16 @@ def _print_repo_scan(result: dict, code: int) -> None:
     collection = security.get("oracle_context", {}).get("static_pytest_collection", {})
     if collection.get("collection_state") == "UNKNOWN":
         print(
-            f"collection: UNKNOWN ({collection.get('path') or 'collection hooks'}; {collection.get('reason', 'unmodeled collection')}); static findings retained, test-oracle authority unavailable."
+            f"collection: UNKNOWN ({collection.get('path') or 'collection hooks'}; {collection.get('reason', 'unmodeled collection')}); source findings retained; test behavior has not been verified."
         )
     elif collection.get("collection_state") == "DISCOVERY_ONLY":
         print(
             f"collection: {len(collection['static_test_sources'])} test modules and "
             f"{len(collection['static_doctest_sources'])} Python doctest modules matched static discovery; "
-            "imports and test-oracle authority unverified."
+            "imports and test behavior have not been verified."
         )
     print(
-        "scope    : Python AST static checks; JS/shell and other languages require external workers."
+        "scope    : Python source checks; JS/shell and other languages require configured workers."
     )
     print(
         f"exit     : {code}; 0=no blocking findings/checks (advisories may remain), 2=blocked/invalid."
@@ -321,8 +322,14 @@ def _print_repo_scan(result: dict, code: int) -> None:
     _print_scan_findings(result)
     for lane in (result.get("deep_audit") or {}).get("lanes", []):
         if lane.get("state") == "BLOCKED":
+            label = {
+                "python_ast_security": "Python security checks",
+                "native_worker_execution": "Configured workers",
+                "runtime_coverage": "Runtime coverage",
+                "dependencies_and_supply_chain": "Dependencies and supply chain",
+            }.get(lane["measurement_id"], lane["measurement_id"])
             print(
-                f"blocking : {lane['measurement_id']}: {lane.get('next_action', 'Review this lane.')}"
+                f"blocking : {label}: {lane.get('next_action', 'Review this check.')}"
             )
     for action in result.get("next_actions", []):
         print(f"next     : {action}")
@@ -342,8 +349,18 @@ def _print_scan_findings(result: dict) -> None:
     for lane in deep.get("lanes", []):
         if lane.get("measurement_id") != "python_ast_security":
             findings.extend((lane.get("result") or {}).get("findings", []))
-    print(f"findings : {len(findings)}")
+    # The scan and lane projections can contain the same native observation.
+    seen_native = set()
+    displayed = []
     for row in findings:
+        identity = (row.get("lane_id"), row.get("finding_id"))
+        if all(identity):
+            if identity in seen_native:
+                continue
+            seen_native.add(identity)
+        displayed.append(row)
+    print(f"findings : {len(displayed)}")
+    for row in displayed:
         print(
             f"  {row.get('severity', 'INFO')} {row.get('code', row.get('rule_id', row.get('finding_id', 'FINDING')))} {row.get('path', '.')}:{row.get('line', 1)}:{row.get('column', 0)} - {row.get('message', row.get('summary', row.get('remediation', 'Review finding evidence.')))}"
         )
