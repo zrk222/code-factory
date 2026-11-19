@@ -80,9 +80,11 @@ literals and crypto/TLS shapes. These heuristics do not prove general dataflow,
 reachability, exploitability, authorization or the absence of vulnerabilities.
 Escaped-output contexts suppress selected findings, not every possible XSS case.
 
-The fixer rewrites `display_errors`, `0777` permissions and simple reflected
-superglobal output, and annotates `mcrypt_encrypt`. Review every proposed change;
-PHP lint checks syntax, not semantic correctness. Other findings need manual repair.
+The fixer replaces lexer-verified `display_errors`/`chmod` literal arguments and
+standalone reflected-superglobal output. It preserves adjacent code and literals,
+PHP-lints every candidate before writes, and refuses stale or linked targets.
+Ambiguous cases and crypto migrations remain manual advice; PHP lint proves
+syntax, not application semantics. Review every proposed change.
 
 `lib/Engine.php` owns scanning, `lib/php-rules.php` the rule catalogue,
 `phprt.php` CLI/fixes, `report.php` Markdown output. `tests.php` checks the seeded

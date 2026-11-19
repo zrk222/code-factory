@@ -126,15 +126,19 @@ final class TokenWalker
     /** Exact literal text compare, case-insensitive for names. */
     public function matches(int $i, string $want): bool
     {
+        $id = $this->flat[$i][0] ?? null;
+        $tok = strtolower($this->text($i));
+        if ($id === T_NAME_FULLY_QUALIFIED && substr_count($tok, '\\') === 1) {
+            $tok = substr($tok, 1);
+            $id = T_STRING;
+        }
         if (str_contains($want, ':')) {
             [$kind, $name] = explode(':', $want, 2);
-            return ($this->flat[$i][0] ?? null) === constant($kind)
-                && strtolower($this->text($i)) === strtolower($name);
+            return $id === constant($kind) && $tok === strtolower($name);
         }
         if (str_starts_with($want, 'T_')) {
-            return ($this->flat[$i][0] ?? null) === constant($want);
+            return $id === constant($want);
         }
-        $tok = strtolower($this->text($i));
         $want = strtolower($want);
         if (str_starts_with($want, '$')) {
             return $this->isVar($i) && $tok === $want;
@@ -182,7 +186,17 @@ final class Scanner
                     if (!preg_match_all($needle, $source, $m, PREG_OFFSET_CAPTURE)) {
                         continue;
                     }
-                    foreach ($m[0] as $hit) {
+                    foreach ($m[0] as $index => $hit) {
+                        if ($rule->id === 'RCE-005') {
+                            $pattern = $m[2][$index][0];
+                            $delimiter = $pattern[0] ?? '';
+                            $close = ['(' => ')', '[' => ']', '{' => '}', '<' => '>'][$delimiter] ?? $delimiter;
+                            $last = $close === '' ? false : strrpos($pattern, $close);
+                            if ($last === false || $last === 0 || ctype_alnum($delimiter)
+                                || !preg_match('/^[a-zA-Z]*e[a-zA-Z]*$/', substr($pattern, $last + 1))) {
+                                continue;
+                            }
+                        }
                         $line = substr_count(substr($source, 0, $hit[1]), "\n") + 1;
                         $findings[] = new Finding(
                             $rule->id, $rule->severity, $rule->title, $path, $line,

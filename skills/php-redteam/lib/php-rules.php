@@ -43,8 +43,7 @@ return [
     $rule('RCE-003', 'high', 'call_user_func with user-controlled callback',
         ['call_user_func', 'call_user_func_array'], 10,
         'The callback name comes from the request. An attacker can invoke any function, including system/exec/passthru.',
-        "\$fn = \$_GET['action']; if (function_exists(\$fn)) { call_user_func(\$fn, ...); }"
-        . ' Or map to an allowlist array.',
+        'Map the requested action to a fixed allowlist of approved callables. Reject unknown actions; function_exists is not authorization.',
         'CWE-470'),
 
     $rule('RCE-004', 'high', 'command execution on user input',
@@ -55,7 +54,7 @@ return [
         'CWE-78'),
 
     $src('RCE-005', 'high', 'preg_replace /e modifier',
-        ['/preg_replace\(\s*[\'"][^\'"]*[a-zA-Z]e[\'"]/'],
+        ['~\bpreg_replace\s*\(\s*([\'"])((?:\\\\.|(?!\1).)*)\1~s'],
         'The /e modifier evaluates the replacement as PHP. Removed in PHP 7, but legacy code still relies on it.',
         'Move to preg_replace_callback().',
         'CWE-95'),
@@ -87,8 +86,8 @@ return [
 
     // ------------------------------------------------------------- SQL
     $src('SQL-001', 'high', 'query built by concatenation',
-        ['/(?:mysql_(?:query|real_escape_string)|mysqli_query|->query|->exec|pg_query)\s*\(\s*[\'"][^\'"]*\.\s*\$/',
-         '/[\'"][^\'"]*(?:SELECT|INSERT|UPDATE|DELETE)[^\'"]*[\'"]\s*\.\s*\$_/i'],
+        ['/(?:mysql_(?:query|real_escape_string)|mysqli_query|->query|->exec|pg_query)\s*\(\s*[\'"][^\'"]*[\'"]\s*\.\s*\$/',
+         '/[\'"][^\'"]*(?:SELECT|INSERT|UPDATE|DELETE)[^\'"]*[\'"]\s*\.\s*\$[A-Za-z_]/i'],
         'String interpolation into SQL. A quote in the value breaks out of the literal.',
         'Prepared statements (PDO with bound params, or mysqli_stmt). If concatenating, cast to int or run real_escape_string.',
         'CWE-89'),
