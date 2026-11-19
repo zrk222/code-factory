@@ -52,6 +52,11 @@ def _tracked_files(root: Path) -> list[Path]:
     ]
 
 
+def _relative_tracked_paths(root: Path, files: list[Path] | None = None) -> list[str]:
+    files = _tracked_files(root) if files is None else files
+    return [path.relative_to(root).as_posix() for path in files if path.exists()]
+
+
 def _version(root: Path) -> str | None:
     for relative in ("pyproject.toml", "factoryline/__init__.py"):
         path = root / relative
@@ -692,6 +697,19 @@ def release_cadence_status(
     channel: str = "core",
 ) -> dict[str, Any]:
     """Return release-train validity and its tag-derived admission projection."""
+    return _release_cadence_status(
+        root, now, candidate_tag=candidate_tag, channel=channel
+    )
+
+
+def _release_cadence_status(
+    root: Path,
+    now: datetime | None = None,
+    *,
+    candidate_tag: str | None = None,
+    channel: str = "core",
+    tracked_paths: list[Path] | None = None,
+) -> dict[str, Any]:
     root = Path(root).resolve()
     tag_prefixes = {"core": "v", "vscode": "vscode-v", "jetbrains": "jetbrains-v"}
     if channel not in tag_prefixes:
@@ -716,11 +734,7 @@ def release_cadence_status(
 
         if commit(f"refs/tags/{candidate_tag}^{{commit}}") != commit("HEAD"):
             raise ValueError("candidate tag must identify the checked-out commit")
-    relative = [
-        path.relative_to(root).as_posix()
-        for path in _tracked_files(root)
-        if path.exists()
-    ]
+    relative = _relative_tracked_paths(root, tracked_paths)
     train = _release_train(root, relative)
     cadence = train.get("cadence", {})
     if train.get("status") != "valid":
@@ -784,8 +798,11 @@ def release_cadence_status(
 def collect_architecture_health(root: Path) -> dict[str, Any]:
     """Collect stable, explainable architecture metrics for ``root``."""
     root = root.resolve()
-    files = _tracked_files(root)
-    relative = [path.relative_to(root).as_posix() for path in files if path.exists()]
+    return _collect_architecture_health(root, _tracked_files(root))
+
+
+def _collect_architecture_health(root: Path, files: list[Path]) -> dict[str, Any]:
+    relative = _relative_tracked_paths(root, files)
     markdown = [name for name in relative if name.lower().endswith(".md")]
     python = [name for name in relative if name.lower().endswith(".py")]
     implementation_modules = [
@@ -813,7 +830,7 @@ def collect_architecture_health(root: Path) -> dict[str, Any]:
         )
     ratio = round(len(markdown) / len(python), 4) if python else None
     release_train = _release_train(root, relative)
-    cadence = release_cadence_status(root)
+    cadence = _release_cadence_status(root, tracked_paths=files)
     return {
         "schema": "factory.architecture-health.v1",
         "root": str(root),
@@ -1240,11 +1257,12 @@ def evaluate_architecture_health(
     root = root.resolve()
     policy_path = (policy_path or (root / DEFAULT_POLICY_NAME)).resolve()
     policy_bytes, policy = _load_architecture_policy(policy_path)
-    snapshot = collect_architecture_health(root)
+    tracked_paths = _tracked_files(root)
+    snapshot = _collect_architecture_health(root, tracked_paths)
     metrics = snapshot["metrics"]
     budgets = policy.get("budgets", {})
     file_size_report, file_size_findings = evaluate_file_size_guard(
-        root, policy, tracked_paths=_tracked_files(root), finding=_finding
+        root, policy, tracked_paths=tracked_paths, finding=_finding
     )
     metrics["file_size_guard"] = file_size_report
     regressions = _budget_regressions(metrics, budgets)
