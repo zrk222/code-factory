@@ -124,6 +124,23 @@ def test_quality_adapter_preserves_root_namespaces(argv):
     )
 
 
+def test_quality_split_registrars_preserve_each_domain_and_wrapper_schema():
+    from factoryline.cli_quality import add_evidence_parser, add_quality_parser
+
+    combined = _parser_subcommands(_quality_adapter_parser())
+    for register, group in (
+        (add_quality_parser, "quality-harness"),
+        (add_evidence_parser, "evidence-audit"),
+    ):
+        parser = argparse.ArgumentParser(prog="factory")
+        register(parser.add_subparsers(dest="cmd"))
+        commands = _parser_subcommands(parser)
+        assert list(commands) == [group]
+        assert _parser_action_schema(commands[group]) == _parser_action_schema(
+            combined[group]
+        )
+
+
 @pytest.mark.parametrize(
     "argv",
     [
