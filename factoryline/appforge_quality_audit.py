@@ -17,6 +17,7 @@ from typing import Any
 import hashlib
 import json
 
+from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
 
 
@@ -101,38 +102,18 @@ def _timestamp(value: object, field: str) -> str:
 
 
 def _local(root: Path, path: Path, *, exists: bool = True) -> Path:
-    workspace = root.resolve()
-    resolved = path.resolve() if path.is_absolute() else (workspace / path).resolve()
-    try:
-        resolved.relative_to(workspace)
-    except ValueError as exc:
-        raise RevenueForgeError(
-            "APPFORGE_QUALITY_PATH_REJECTED", "paths must remain inside the workspace"
-        ) from exc
-    if exists and not resolved.is_file():
-        raise RevenueForgeError(
-            "APPFORGE_QUALITY_INPUT_UNAVAILABLE",
-            "input must be a regular workspace file",
-        )
-    return resolved
+    return _artifact_local(root, path, "APPFORGE_QUALITY", exists)
 
 
 def _read_json(root: Path, path: Path, schema: str) -> tuple[dict[str, Any], Path]:
     source = _local(root, path)
-    if source.stat().st_size > MAX_BYTES:
-        raise RevenueForgeError(
-            "APPFORGE_QUALITY_INPUT_TOO_LARGE", "input exceeds 1 MiB"
-        )
-    try:
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RevenueForgeError(
-            "APPFORGE_QUALITY_INPUT_INVALID", "input must be valid JSON"
-        ) from exc
-    if not isinstance(value, dict) or value.get("schema") != schema:
-        raise RevenueForgeError(
-            "APPFORGE_QUALITY_SCHEMA_REJECTED", f"expected {schema}"
-        )
+    value = _artifact_json(
+        source,
+        "APPFORGE_QUALITY",
+        MAX_BYTES,
+        schema=schema,
+        large_message="input exceeds 1 MiB",
+    )
     return value, source
 
 

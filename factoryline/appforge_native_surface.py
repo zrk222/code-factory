@@ -19,6 +19,7 @@ import re
 from typing import Any
 
 from .appforge_evidence_kit import _read_candidate
+from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
 
 
@@ -77,39 +78,12 @@ def _timestamp(value: object, field: str) -> str:
 
 
 def _local(root: Path, path: Path, *, exists: bool = True) -> Path:
-    workspace = Path(root).resolve()
-    target = path.resolve() if path.is_absolute() else (workspace / path).resolve()
-    try:
-        target.relative_to(workspace)
-    except ValueError as exc:
-        raise RevenueForgeError(
-            "APPFORGE_NATIVE_SURFACE_PATH_REJECTED",
-            "paths must remain inside the workspace",
-        ) from exc
-    if exists and not target.is_file():
-        raise RevenueForgeError(
-            "APPFORGE_NATIVE_SURFACE_INPUT_UNAVAILABLE",
-            "input must be a regular workspace file",
-        )
-    return target
+    return _artifact_local(Path(root), path, "APPFORGE_NATIVE_SURFACE", exists)
 
 
 def _read_json(root: Path, path: Path, schema: str) -> tuple[dict[str, Any], Path]:
     source = _local(root, path)
-    if source.stat().st_size > MAX_BYTES:
-        raise RevenueForgeError(
-            "APPFORGE_NATIVE_SURFACE_INPUT_TOO_LARGE", "JSON input exceeds 1 MiB"
-        )
-    try:
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RevenueForgeError(
-            "APPFORGE_NATIVE_SURFACE_INPUT_INVALID", "input must be valid JSON"
-        ) from exc
-    if not isinstance(value, dict) or value.get("schema") != schema:
-        raise RevenueForgeError(
-            "APPFORGE_NATIVE_SURFACE_SCHEMA_REJECTED", f"expected {schema}"
-        )
+    value = _artifact_json(source, "APPFORGE_NATIVE_SURFACE", MAX_BYTES, schema=schema)
     return value, source
 
 

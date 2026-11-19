@@ -15,6 +15,7 @@ import json
 from .app_review_gate import RULES
 from .appforge_quality_audit import CONDITIONAL_CHECKS, DESIGN_CHECKS, STACK_CHECKS
 from .revenue_evidence import _atomic_json
+from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
 
 
@@ -38,21 +39,7 @@ IPAD_JOURNEYS = ("landing", "core_workspace", "result")
 
 
 def _local(root: Path, path: Path, *, must_exist: bool = True) -> Path:
-    workspace = Path(root).resolve()
-    resolved = path.resolve() if path.is_absolute() else (workspace / path).resolve()
-    try:
-        resolved.relative_to(workspace)
-    except ValueError as exc:
-        raise RevenueForgeError(
-            "APPFORGE_EVIDENCE_KIT_PATH_REJECTED",
-            "paths must remain inside the workspace",
-        ) from exc
-    if must_exist and not resolved.is_file():
-        raise RevenueForgeError(
-            "APPFORGE_EVIDENCE_KIT_INPUT_UNAVAILABLE",
-            "input must be a regular workspace file",
-        )
-    return resolved
+    return _artifact_local(Path(root), path, "APPFORGE_EVIDENCE_KIT", must_exist)
 
 
 def _text(value: object, field: str) -> str:
@@ -67,16 +54,13 @@ def _text(value: object, field: str) -> str:
 
 def _read_candidate(root: Path, path: Path) -> tuple[dict[str, str], Path]:
     source = _local(root, path)
-    if source.stat().st_size > MAX_INPUT_BYTES:
-        raise RevenueForgeError(
-            "APPFORGE_EVIDENCE_KIT_INPUT_TOO_LARGE", "candidate input exceeds 1 MiB"
-        )
-    try:
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RevenueForgeError(
-            "APPFORGE_EVIDENCE_KIT_INPUT_INVALID", "candidate input must be valid JSON"
-        ) from exc
+    value = _artifact_json(
+        source,
+        "APPFORGE_EVIDENCE_KIT",
+        MAX_INPUT_BYTES,
+        large_message="candidate input exceeds 1 MiB",
+        invalid_message="candidate input must be valid JSON",
+    )
     if (
         not isinstance(value, dict)
         or value.get("schema") != CANDIDATE_SCHEMA
