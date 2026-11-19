@@ -1612,10 +1612,13 @@ def test_daily_scan_human_output_preserves_native_worker_findings(capsys, worker
 
     finding = {
         "finding_id": "worker-sink",
+        "lane_id": "native-static",
         "path": "app.ts",
         "line": 4,
         "remediation": "Repair the boundary",
     }
+    second_worker_finding = {**finding, "lane_id": "another-static-worker"}
+    projected = [finding, second_worker_finding] if worker_state == "OBSERVED" else []
     lanes = [
         {
             "measurement_id": "native_worker_execution",
@@ -1631,6 +1634,7 @@ def test_daily_scan_human_output_preserves_native_worker_findings(capsys, worker
                 ]
             },
         },
+        {"measurement_id": "non_python_security", "result": {"findings": projected}},
         {"measurement_id": "dependencies_and_supply_chain", "result": {}},
         {"measurement_id": "runtime_coverage", "result": {}},
     ]
@@ -1638,6 +1642,7 @@ def test_daily_scan_human_output_preserves_native_worker_findings(capsys, worker
         {
             "state": "INCOMPLETE",
             "verdict": "INCOMPLETE",
+            "static_security": {"findings": projected},
             "deep_audit": {
                 "lanes": lanes,
                 "native_domains": _native_domain_projection(lanes),
@@ -1646,8 +1651,9 @@ def test_daily_scan_human_output_preserves_native_worker_findings(capsys, worker
         0,
     )
     output = capsys.readouterr().out
-    assert "findings : 1" in output
-    assert output.count("worker-sink") == 1
+    count = 2 if worker_state == "OBSERVED" else 1
+    assert f"findings : {count}" in output
+    assert output.count("worker-sink") == count
     assert "app.ts:4:0 - Repair the boundary" in output
 
 
