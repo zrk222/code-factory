@@ -214,7 +214,7 @@ def _normal_native_bindings_present(lane):
 
 def _normal_native_lanes(report):
     workers = [
-        row["result"]
+        row["result"] or {}
         for row in report["deep_audit"]["lanes"]
         if row.get("measurement_id") == "native_worker_execution"
     ]
@@ -306,7 +306,7 @@ def _normal_measurement(report):
             }
         )
     static = report["static_security"]
-    python = static["python_ast_security"]
+    python = _normal_python_producer(static)
     coverage = {
         "static_security": static.get("audit_coverage"),
         "python_ast_security": python.get("audit_coverage"),
@@ -412,7 +412,7 @@ def _normal_rows(report, sources):
 
 
 def _normal_python_entries(static, sources):
-    python = static["python_ast_security"]
+    python = _normal_python_producer(static)
     if python.get("state") == "NO_SOURCES":
         if (
             python.get("findings") != []
@@ -425,12 +425,21 @@ def _normal_python_entries(static, sources):
     entries = python["finding_tier_report"]["ledger"]
     if (
         static.get("finding_tier_report") != python["finding_tier_report"]
-        or static["python_finding_conservation"] != python["finding_conservation"]
+        or (
+            static is not python
+            and static["python_finding_conservation"] != python["finding_conservation"]
+        )
         or sorted(_normal_digest(row["raw_finding"]) for row in entries)
         != sorted(map(_normal_digest, python["findings"]))
     ):
         raise NativeObservationError(["python_producer"])
     return entries
+
+
+def _normal_python_producer(static):
+    if static.get("schema") == "factory.security-audit.v1":
+        return static
+    return static["python_ast_security"]
 
 
 def _normal_python_seals(python):
@@ -491,10 +500,14 @@ def project_normal_observation(raw_report, inventory, *, root, report_sha256):
 def _normal_report_seals(static):
     from factoryline.adoption import _digest
 
+    python_only = static.get("schema") == "factory.security-audit.v1"
+    if python_only:
+        _normal_python_seals(static)
     body = {key: value for key, value in static.items() if key != "audit_sha256"}
-    if static.get("audit_sha256") != _digest(body) or static.get(
-        "source_manifest_sha256"
-    ) != _digest(static["sources"]):
+    if not python_only and (
+        static.get("audit_sha256") != _digest(body)
+        or static.get("source_manifest_sha256") != _digest(static["sources"])
+    ):
         raise NativeObservationError(["report_conservation_binding"])
     counts = Counter(
         row.get("code") or row.get("rule_id") or row.get("id") or "UNCLASSIFIED"
@@ -505,8 +518,13 @@ def _normal_report_seals(static):
         not isinstance(declared, dict)
         or any(type(value) is not int for value in declared.values())
         or declared != dict(counts)
-        or type(static.get("source_binding_count")) is not int
-        or static["source_binding_count"] != len(static["sources"])
+        or (
+            not python_only
+            and (
+                type(static.get("source_binding_count")) is not int
+                or static["source_binding_count"] != len(static["sources"])
+            )
+        )
     ):
         raise NativeObservationError(["finding_conservation"])
 
@@ -515,6 +533,19 @@ def _normal_conservation(static, rows):
     native = sum(
         row["tier"] == "UNASSESSED" and "native_bindings" in row for row in rows
     )
+    if static.get("schema") == "factory.security-audit.v1":
+        conservation = static["finding_conservation"]
+        if (
+            native
+            or conservation.get("state") != "PASS"
+            or conservation.get("scope") != "diagnostic_identity_multiplicity"
+            or any(
+                type(conservation.get(key)) is not int or conservation[key] != len(rows)
+                for key in ("expected_raw_rows", "physical_raw_rows", "ledger_raw_rows")
+            )
+        ):
+            raise NativeObservationError(["finding_conservation"])
+        return
     expected = {
         "state": "UNASSESSED",
         "scope": "mixed_diagnostic_identity_multiplicity",

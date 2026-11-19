@@ -240,6 +240,65 @@ def _seal_normal_fixture(report):
     )
 
 
+@pytest.mark.parametrize("damage", [None, "source", "seal", "missing_row", "count"])
+def test_normal_projection_accepts_original_python_producer_and_rejects_drift(
+    tmp_path, damage
+):
+    from scripts.precision_native_capture import (
+        NativeObservationError,
+        _normal_digest,
+        project_normal_observation,
+    )
+
+    root, sources, report = _normal_projection_fixture(tmp_path)
+    sources = [row for row in sources if row["kind"] == "python"]
+    python = report["static_security"]["python_ast_security"]
+    python["finding_counts"] = {"SECURITY_CONTROL": 1}
+    python["finding_conservation"].update(
+        scope="diagnostic_identity_multiplicity",
+        expected_raw_rows=1,
+        physical_raw_rows=1,
+        ledger_raw_rows=1,
+    )
+    if damage == "missing_row":
+        python["finding_tier_report"]["ledger"] = []
+    if damage == "count":
+        python["finding_counts"] = {"SECURITY_CONTROL": 2}
+    python["audit_sha256"] = _normal_digest(
+        {key: value for key, value in python.items() if key != "audit_sha256"}
+    )
+    if damage == "seal":
+        python["audit_sha256"] = "0" * 64
+    if damage == "source":
+        (root / "app.py").write_text("changed = True\n")
+    report["static_security"] = python
+    report["deep_audit"]["lanes"] = [
+        {
+            "measurement_id": "native_worker_execution",
+            "state": "NOT_RUN",
+            "result": None,
+        }
+    ]
+    raw = json.dumps(report).encode()
+    if damage is not None:
+        with pytest.raises(NativeObservationError):
+            project_normal_observation(
+                raw, sources, root=root, report_sha256=sha256(raw).hexdigest()
+            )
+        return
+    projected = project_normal_observation(
+        raw, sources, root=root, report_sha256=sha256(raw).hexdigest()
+    )
+    assert projected["raw_count"] == 1
+    assert projected["raw"][0]["raw_finding"] == python["findings"][0]
+    assert projected["raw"][0]["tier"] == "NEEDS_CONTEXT"
+    assert projected["authority"] == "none" and projected["execution_verified"] is False
+    assert projected["measurement_complete"] is False
+    assert projected["score_eligible"] is False and projected["admitted_count"] is None
+    assert "python_ast_security" not in python and "source_binding_count" not in python
+    assert json.dumps(report).encode() == raw
+
+
 def test_normal_projection_preserves_mixed_rows_without_claiming_policy_or_execution(
     tmp_path,
 ):
