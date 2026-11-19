@@ -503,9 +503,10 @@ def _shell_import_aliases(nodes, audit, provider, *, package=None):
 
 def application_configuration_names(paths=()):
     """Select the same canonical configuration inputs at every proof boundary."""
-    from .pytest_collection_audit import captured_test_configuration_names
+    from . import pytest_collection_audit as collection
 
-    names = {"requirements.txt", *captured_test_configuration_names(paths)}
+    names = {"requirements.txt", *collection.captured_test_configuration_names(paths)}
+    names.update(collection._MAKE_DESCRIPTORS.intersection(paths))
     if isinstance(paths, (dict, list, tuple, set, frozenset)):
         names.update(
             name
@@ -544,9 +545,10 @@ def application_profile_configuration(root, read_source, limit):
     except (OSError, ValueError) as exc:
         return [], {"workflow_inventory": {"state": str(exc)}}, False
     from .captured_security_audit import capture_launch_configuration
-    from .pytest_collection_audit import unmodeled_test_workflow_paths
+    from . import pytest_collection_audit as collection
 
-    paths.extend(unmodeled_test_workflow_paths(root))
+    paths.extend(collection.unmodeled_test_workflow_paths(root))
+    paths.extend(collection.captured_makefile_names(root))
     paths, read_source = capture_launch_configuration(root, read_source, limit, paths)
     for name in sorted(application_configuration_names(paths), key=read_source.order):
         identity = {"path": name}

@@ -634,6 +634,8 @@ def _security_scan_verification_state(audit, core, captured, primitive):
                 _has_application_fixture_claim,
                 rebuild_application_fixture_context,
                 _negative_semantic_points,
+                _bound_test_configuration_refutation,
+                primitive.application_fixture_binding,
                 primitive.closed_shell_binding,
                 *(
                     value
@@ -1767,7 +1769,38 @@ def _provisional_witnesses(points):
     return witnesses
 
 
-def _negative_semantic_points(rows, core, captured, primitive):
+def _bound_test_configuration_refutation(
+    row, facts, core, captured, primitive, *, verify
+):
+    """Collect a fixture claim; rebuild it only when validating native replay."""
+    match facts:
+        case {
+            "disposition": "TEST_OWNED_APPLICATION_CREDENTIAL",
+            "fixture_evidence": {
+                "profile": "SOURCE_BOUND_TEST_SCOPE_ONLY",
+                "settings_selection": {
+                    "authority_role": "SOURCE_BOUND_TEST_CONFIGURATION",
+                },
+            },
+        }:
+            if facts.get("security_precondition") is not None:
+                return None
+        case _:
+            return None
+    digest = facts.get("proof_facts_sha256")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return None
+    if not verify:
+        return digest
+    configs = core.get("oracle_context", {}).get("configuration_sources", [])
+    sources = [*core["sources"], *configs]
+    bindings = {source["path"]: source["sha256"] for source in sources}
+    if primitive.application_fixture_binding(row, sources, bindings, captured):
+        return digest
+    return None
+
+
+def _negative_semantic_points(rows, core, captured, primitive, *, verify_fixture=True):
     """Recompute a specific refuted hypothesis, never general runtime safety."""
     if core.get("audit_coverage", {}).get("complete") is not True:
         return set()
@@ -1810,6 +1843,13 @@ def _negative_semantic_points(rows, core, captured, primitive):
             points.add(
                 tuple(row.get(key) for key in (*primitive._RULE_SPAN_KEYS, "severity"))
             )
+        elif digest := _bound_test_configuration_refutation(
+            row, facts, core, captured, primitive, verify=verify_fixture
+        ):
+            identity = tuple(
+                row.get(key) for key in (*primitive._RULE_SPAN_KEYS, "severity")
+            )
+            points.add((*identity, digest))
     return points
 
 
@@ -1936,7 +1976,9 @@ def _security_scan_partition_native_rows(
     ):
         claims.update(capture.get("provisional_exclusions", ()))
         claims.update(
-            _negative_semantic_points(input_physical, core, captured, primitive)
+            _negative_semantic_points(
+                input_physical, core, captured, primitive, verify_fixture=False
+            )
         )
     proof = set() if claims else None
     verified, native_rows, native_expected_rows, native_surface_mismatch = (

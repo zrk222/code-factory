@@ -2,6 +2,86 @@
 
 import ast
 import fnmatch
+import re
+from pathlib import Path
+
+
+_MAKE_DESCRIPTORS = frozenset({"GNUmakefile", "makefile", "Makefile"})
+
+
+def captured_makefile_names(root):
+    """Record actual directory names, including on case-insensitive filesystems."""
+    return (
+        p.name for p in Path(root).glob("*[Mm]akefile") if p.name in _MAKE_DESCRIPTORS
+    )
+
+
+def _captured_make_pytest_argv(raw):
+    """Project one literal test recipe without evaluating Make or its shell."""
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except (AttributeError, UnicodeError):
+        return None
+    parsed = _captured_make_test_recipe(lines)
+    if parsed is None:
+        return None
+    recipe, variables = parsed
+    if recipe == "pytest":
+        return ("pytest",)
+    match = re.fullmatch(r"(uv|\$\(([A-Za-z_][A-Za-z_0-9]*)\))\s+run\s+pytest", recipe)
+    if match and (match[1] == "uv" or variables.get(match[2]) == "uv"):
+        return ("uv", "run", "pytest")
+    return None
+
+
+def _captured_make_test_recipe(lines):
+    """Collect one non-continued test recipe and its literal variable bindings."""
+    variables, targets, recipes = {}, set(), []
+    target, continued = None, False
+    for line in lines:
+        if (
+            not line
+            or not continued
+            and not line.startswith("\t")
+            and (not line.strip() or line.lstrip().startswith("#"))
+        ):
+            continue
+        if line.startswith("\t") or continued:
+            if target is None:
+                return None
+            continued = line.endswith("\\")
+            if target == "test":
+                if continued:
+                    return None
+                recipes.append(line.strip())
+            continue
+        target = _captured_make_header(line, variables, targets)
+        if target is False:
+            return None
+    return (recipes[0], variables) if len(recipes) == 1 and not continued else None
+
+
+def _captured_make_header(line, variables, targets):
+    if match := re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)\s*=\s*([^$]+)", line):
+        name, value = match.groups()
+        if (
+            name in variables
+            or name in {"SHELL", "PATH", "MAKEFLAGS", "MAKEFILES", "BASH_ENV", "ENV"}
+            or name.startswith(("PYTEST_", "UV_"))
+        ):
+            return False
+        variables[name] = value.strip()
+        return None
+    if match := re.fullmatch(r"([A-Za-z_][\w.-]*|\.PHONY):\s*([\w. -]*)", line):
+        target, dependencies = match.groups()
+        if (
+            target not in targets
+            and target not in _MAKE_DESCRIPTORS
+            and not (target == "test" and dependencies)
+        ):
+            targets.add(target)
+            return target
+    return False
 
 
 def _scope_value_roots(value):
