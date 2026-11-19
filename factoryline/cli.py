@@ -4665,7 +4665,8 @@ def main(argv=None) -> int:
             except Exception:
                 pass
         raise
-    _notify_interactive_update(values, code)
+    if values[:2] != ["runtime-audit", "mutation-diff"]:
+        _notify_interactive_update(values, code)
     if not read_only:
         try:
             record_lifecycle(

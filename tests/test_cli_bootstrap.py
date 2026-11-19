@@ -10,6 +10,92 @@ from factoryline import provenance as bootstrap
 from factoryline import provenance as provenance_module
 
 
+@pytest.mark.parametrize("raw", [b"+line\n" * 100, b"+" + b"x" * 9000])
+def test_mutation_diff_cli_preview_truncation(tmp_path, capsys, raw):
+    import base64
+    import hashlib
+    from factoryline import cli
+
+    capture = {
+        "schema": "factory.local-production-mutation-capture.v1",
+        "production_mutation": {
+            "path": "app.py",
+            "diff_path": "production.diff",
+            "diff_sha256": hashlib.sha256(raw).hexdigest(),
+        },
+        "selection": {"test_path": "test_app.py"},
+    }
+    (tmp_path / "capture.json").write_text(json.dumps(capture), encoding="utf-8")
+    (tmp_path / "production.diff").write_bytes(raw)
+    argv = ["runtime-audit", "mutation-diff", "capture.json", "--root", str(tmp_path)]
+    assert cli.main(argv) == 0
+    human = capsys.readouterr().out
+    assert "PREVIEW TRUNCATED" in human and "HISTORICAL" in human
+    assert len(human.splitlines()) <= 86
+    assert len(human) < 50000
+    assert cli.main(argv + ["--json"]) == 0
+    assert base64.b64decode(json.loads(capsys.readouterr().out)["diff_base64"]) == raw
+
+
+@pytest.mark.parametrize("machine", [False, True])
+def test_mutation_diff_cli_read_only_dispatch(tmp_path, monkeypatch, capsys, machine):
+    import base64
+    import hashlib
+    import socket
+    from factoryline import cli, ops_telemetry
+
+    raw = b"--- old\r\n+changed-line\xff\x1bsecret-no-final-newline"
+    capture = {
+        "schema": "factory.local-production-mutation-capture.v1",
+        "production_mutation": {
+            "path": "source.py",
+            "diff_path": "production.diff",
+            "diff_sha256": hashlib.sha256(raw).hexdigest(),
+        },
+        "selection": {"test_path": "tests/test_source.py"},
+    }
+    (tmp_path / "capture.json").write_text(json.dumps(capture), encoding="utf-8")
+    (tmp_path / "production.diff").write_bytes(raw)
+    before = sorted(p.name for p in tmp_path.iterdir())
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("viewer must not execute, network or write ledger")
+
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(socket, "socket", forbidden)
+    monkeypatch.setattr(ops_telemetry, "record_lifecycle", forbidden)
+    monkeypatch.setattr(cli, "_notify_interactive_update", forbidden)
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.rsplit(".", 1)[-1] in {
+            "runtime_audit",
+            "runtime_audit_runner",
+            "runtime_audit_contract",
+        }:
+            forbidden()
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    argv = ["runtime-audit", "mutation-diff", "capture.json", "--root", str(tmp_path)]
+    if machine:
+        argv.append("--json")
+    assert ops_telemetry.is_read_only_command(argv)
+    assert cli.main(argv) == 0
+    output = capsys.readouterr().out
+    if machine:
+        result = json.loads(output)
+        assert base64.b64decode(result["diff_base64"]) == raw
+    else:
+        assert "HISTORICAL" in output and "HASH_VERIFIED" in output
+        assert "+changed-line" in output
+        assert "\x1b" not in output and "\\u001b" in output
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+    (tmp_path / "production.diff").write_bytes(b"tampered")
+    assert cli.main(argv + ([] if machine else ["--json"])) == 2
+    assert json.loads(capsys.readouterr().err)["code"] == "E_MUTATION_DIFF_INPUT"
+
+
 def _actionability_args(root, **changes):
     values = dict(
         root=str(root),

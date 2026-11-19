@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import sys
 from pathlib import Path
@@ -46,6 +47,12 @@ def add_parser(sub: Any) -> None:
         "runtime-audit", help="run or inspect six signed senior-engineering audit lanes"
     )
     runtime_sub = runtime.add_subparsers(required=True, dest="runtime_audit_cmd")
+    diff = runtime_sub.add_parser(
+        "mutation-diff", help="inspect unsigned historical local diff bytes"
+    )
+    diff.add_argument("capture")
+    diff.add_argument("--root", default=".")
+    diff.add_argument("--json", action="store_true")
     for action in ("inspect", "run"):
         command = runtime_sub.add_parser(
             action, help=f"{action} one signed runtime audit plan"
@@ -459,6 +466,8 @@ def _run_deep(args: Any) -> int:
 
 
 def _run_runtime(args: Any) -> int:
+    if args.runtime_audit_cmd == "mutation-diff":
+        return _run_mutation_diff(args)
     from .runtime_audit import execute_runtime_audit, runtime_audit_status
     from .runtime_audit_common import RuntimeAuditError
     from .runtime_audit_contract import verify_runtime_audit_plan
@@ -510,6 +519,39 @@ def _run_runtime(args: Any) -> int:
             2,
         )
     return _emit(result, code)
+
+
+def _run_mutation_diff(args: Any) -> int:
+    from .runtime_audit_common import RuntimeAuditError
+    from .runtime_attestation import inspect_local_mutation_diff
+
+    try:
+        result = inspect_local_mutation_diff(Path(args.root), args.capture)
+    except RuntimeAuditError as exc:
+        return _emit(
+            {
+                "schema": "factory.runtime-audit.error.v1",
+                "code": exc.code,
+                "message": exc.message,
+                "authority": "none",
+            },
+            2,
+        )
+    if args.json:
+        return _emit(result, 0)
+    # Paths are JSON escaped; diff bytes are never rendered as terminal controls.
+    print("HISTORICAL HASH_VERIFIED UNSIGNED; currentness NOT_CHECKED; authority none")
+    print("production=" + json.dumps(result["production_path"], ensure_ascii=True))
+    print("test=" + json.dumps(result["test_path"], ensure_ascii=True))
+    print("production.diff sha256=" + result["diff_sha256"])
+    raw = base64.b64decode(result["diff_base64"])
+    lines = raw[:8192].splitlines(keepends=True)
+    print("diff preview (JSON-escaped byte values, not decoded Unicode):")
+    for line in lines[:80]:
+        print(json.dumps(line.decode("latin-1"), ensure_ascii=True))
+    if len(raw) > 8192 or len(lines) > 80:
+        print("[PREVIEW TRUNCATED: use --json for full base64 bytes]")
+    return 0
 
 
 def _senior_action(
