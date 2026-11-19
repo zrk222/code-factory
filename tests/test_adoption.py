@@ -1752,6 +1752,50 @@ def test_native_worker_discovery_rejects_unsigned_or_malformed_configuration(tmp
     assert result["state"] == "BLOCKED"
 
 
+@pytest.mark.parametrize("linked", ["config", "manifest", "authorization", "trust"])
+def test_native_worker_discovery_rejects_linked_operator_controls(
+    tmp_path, monkeypatch, linked
+):
+    from factoryline import deep_audit
+    from factoryline.adoption import _native_worker_lane
+
+    (tmp_path / "app.ts").write_text("export const x = 1;", encoding="utf-8")
+    operator = tmp_path / ".factory/operator"
+    operator.mkdir(parents=True)
+    settings = {
+        "manifest": ".factory/operator/manifest.json",
+        "manifest_sha256": "a" * 64,
+        "authorization": ".factory/operator/authorization.json",
+        "trust_root": ".factory/operator/trust.json",
+        "trust_root_sha256": "b" * 64,
+    }
+    config = tmp_path / ".factory/native-worker-config.json"
+    config.write_text(json.dumps(settings))
+    for name in ("manifest", "authorization", "trust"):
+        (operator / f"{name}.json").write_text("{}")
+    calls = []
+
+    def accepted_transport(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"analysis_complete": True}
+
+    monkeypatch.setattr(deep_audit, "scan_deep_audit", accepted_transport)
+    assert _native_worker_lane(tmp_path, None, True)["state"] == "REVIEW_REQUIRED"
+    assert len(calls) == 1
+    calls.clear()
+    path = config if linked == "config" else operator / f"{linked}.json"
+    target = tmp_path / "target.json"
+    target.write_bytes(path.read_bytes())
+    path.unlink()
+    try:
+        path.symlink_to(target)
+    except OSError:
+        pytest.skip("Host does not grant symlink creation")
+    lane = _native_worker_lane(tmp_path, None, True)
+    assert lane["state"] == "BLOCKED"
+    assert calls == []
+
+
 def test_native_worker_configuration_rejects_unknown_fields(tmp_path: Path) -> None:
     (tmp_path / "app.ts").write_text("export const x = 1;", encoding="utf-8")
     (tmp_path / "worker.json").write_text('{"command":"arbitrary"}', encoding="utf-8")

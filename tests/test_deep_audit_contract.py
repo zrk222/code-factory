@@ -1688,6 +1688,72 @@ def test_scan_rejects_authorization_changed_after_signature_verification(
         )
 
 
+@pytest.mark.parametrize("ignored", [False, True])
+def test_operator_controls_do_not_change_candidate_inventory(tmp_path, ignored):
+    import subprocess
+    from factoryline.deep_audit_io import inventory_candidate
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "app.py").write_text("print(1)\n", encoding="utf-8")
+    if ignored:
+        (tmp_path / ".git/info/exclude").write_text(".factory/\n")
+    original = inventory_candidate(tmp_path)
+    controls = [
+        ".factory/native-worker-config.json",
+        ".factory/operator/manifest.json",
+        ".factory/operator/authorization.json",
+        ".factory/operator/trust.json",
+    ]
+    for revision in (1, 2):
+        for name in controls:
+            path = tmp_path / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"revision": revision}))
+        observed = inventory_candidate(tmp_path)
+        assert observed["candidate_sha256"] == original["candidate_sha256"]
+        assert observed["files"] == original["files"]
+        assert observed["gaps"] == []
+    hidden = tmp_path / ".factory/operator/source.py"
+    hidden.write_text("print('must remain visible')\n")
+    observed = inventory_candidate(tmp_path)
+    if ignored:
+        assert any(
+            gap["code"] == "IGNORED_INPUT_SCOPE"
+            and gap["path"] == ".factory/operator/source.py"
+            for gap in observed["gaps"]
+        )
+    else:
+        assert ".factory/operator/source.py" in {
+            row["path"] for row in observed["files"]
+        }
+        assert observed["candidate_sha256"] != original["candidate_sha256"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".factory/native-worker-config.json",
+        ".factory/operator/manifest.json",
+        ".factory/operator/authorization.json",
+        ".factory/operator/trust.json",
+    ],
+)
+def test_tracked_operator_control_collision_is_rejected(tmp_path, name):
+    import subprocess
+    from factoryline.deep_audit_io import inventory_candidate
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}")
+    subprocess.run(["git", "-C", str(tmp_path), "add", name], check=True)
+    observed = inventory_candidate(tmp_path)
+    assert any(
+        gap["code"] == "E_RESERVED_SOURCE" and gap["path"] == name
+        for gap in observed["gaps"]
+    )
+
+
 def test_inventory_accounts_ignored_deleted_unknown_and_dirty_inputs(tmp_path):
     from factoryline.deep_audit_io import inventory_candidate
 
