@@ -92,16 +92,15 @@ _NATIVE_WORKERS = {
     },
 }
 _NATIVE_WORKER_CONTRACT = {
-    "discovery": "deploy/deep-adapters/README.md and profiles; build final targets on Linux/amd64.",
-    "inventory": "Worker profiles describe capabilities, not installed readiness, executed analysis, measured coverage or passing evidence. Preserve unsupported, incomplete and unavailable states.",
+    "discovery": "deploy/deep-adapters/README.md and profiles; Linux/amd64 targets. Profiles are inventory, not readiness, execution, coverage or PASS. Preserve unsupported, incomplete and unavailable states.",
     "execution": "Explicit authorized CLI execution; MCP status tools are read-only and never launch workers.",
     "isolation": "Image-owned Python -I startup; network none for ordinary workers, private internal network for signed ZAP app/worker targets; read-only source, non-root, bounded memory/time/output and cleanup.",
     "evidence": "Candidate and source hashes, exact image digest, tool/rules versions, invocation facts, native report digest, source-bound normalized findings and runtime counts.",
     "admission": "Successful native execution is INCOMPLETE until source accounting, applicable obligations and independent challenges are validated; never infer complete=true.",
-    "agent_action": "Return path, rule, severity, source binding, native and normalized evidence digests, failures, coverage gaps, concrete repair and exact rerun when available; mark unavailable fields and route missing accounting/challenge evidence as an actionable gap.",
+    "agent_action": "Return path, rule, severity, source binding, native/normalized hashes, failures, coverage gaps, repair and exact rerun when available; mark missing fields, accounting and challenges as gaps.",
     "tracing": "Preserve native and normalized digests separately, source binding, deadlines, output exhaustion and cleanup failures. Discover signed optional Python HTTP request-associated tracing in agent_usage_contract.six_lane_review.zap_source_trace; declared routes alone do not prove line execution.",
     "unified_cli": "factory scan --root PATH --deep --worker-config .factory/worker-config.json --json; configure signed manifest, authorization and SHA-pinned trust root before execution.",
-    "selection": "Use Python CodeQL for Python, JavaScript CodeQL for JS/TS and Actions CodeQL for GitHub workflows; reuse exact image and candidate-bound evidence only. Do not launch all workers for every edit.",
+    "selection": "CodeQL: Python for Python, JavaScript for JS/TS, Actions for workflows. Reuse only exact image/candidate-bound evidence; select relevant workers per edit.",
 }
 
 
@@ -598,16 +597,14 @@ def audit_domain_ids() -> tuple[str, ...]:
 
 
 def agent_taxonomy_context(specialist_role: str | None = None) -> dict[str, Any]:
-    """Return a role-routed, host-neutral context pack for any coding agent."""
+    """Return detached, role-routed context for any agent."""
     taxonomy = audit_taxonomy()
     role_index = {row["specialist_role"]: row for row in taxonomy["specialist_roles"]}
     if specialist_role is not None and specialist_role not in role_index:
         raise ValueError(f"unknown CF/ForgeLine specialist role: {specialist_role}")
-    selected_roles = (
-        [role_index[specialist_role]]
-        if specialist_role is not None
-        else taxonomy["specialist_roles"]
-    )
+    selected_roles = taxonomy["specialist_roles"]
+    if specialist_role is not None:
+        selected_roles = [role_index[specialist_role]]
     selected_ids = {
         measurement_id
         for role in selected_roles
@@ -618,7 +615,7 @@ def agent_taxonomy_context(specialist_role: str | None = None) -> dict[str, Any]
         "taxonomy_sha256": taxonomy["taxonomy_sha256"],
         "requested_specialist_role": specialist_role,
         "role_resolution_state": "RESOLVED_FROM_CANONICAL_REGISTRY",
-        "identity_scope": "The selected role is a routing label, not an authentication claim about the calling agent.",
+        "identity_scope": "Role routing does not authenticate the calling agent.",
         "specialist_roles": selected_roles,
         "domains": [
             row for row in taxonomy["domains"] if row["measurement_id"] in selected_ids

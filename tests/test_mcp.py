@@ -1931,14 +1931,17 @@ def test_shared_agent_context_discovers_detached_canonical_workers():
     assert context["native_workers"] == taxonomy["native_workers"]
     assert context["native_worker_contract"] == taxonomy["native_worker_contract"]
     assert context["taxonomy_sha256"] == taxonomy["taxonomy_sha256"]
-    assert "not installed readiness" in context["native_worker_contract"]["inventory"]
+    assert (
+        "not readiness, execution, coverage or PASS"
+        in context["native_worker_contract"]["discovery"]
+    )
     assert "never launch workers" in context["native_worker_contract"]["execution"]
     assert all(value is False for value in context["authority"].values())
     role = taxonomy["specialist_roles"][0]["specialist_role"]
     routed = agent_taxonomy_context(role)
     assert routed["native_workers"] == taxonomy["native_workers"]
     context["native_workers"]["semgrep"]["version"] = "mutated"
-    context["native_worker_contract"]["inventory"] = "mutated"
+    context["native_worker_contract"]["discovery"] = "mutated"
     context["agent_usage_contract"]["operations_reference"]["path"] = "mutated"
     refreshed = agent_taxonomy_context()
     assert refreshed["native_workers"] == taxonomy["native_workers"]
