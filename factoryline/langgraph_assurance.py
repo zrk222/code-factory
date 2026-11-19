@@ -8,6 +8,7 @@ bounded proof artifact, not a claim about production resilience.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from collections.abc import Iterable, Mapping
 from hashlib import sha256
 import json
@@ -58,13 +59,7 @@ class LangGraphAssuranceError(ValueError):
 
 def _canonical(value: object) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError) as exc:
         raise LangGraphAssuranceError(
             INPUT_MARKER, "state values must be canonical JSON"

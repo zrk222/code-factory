@@ -6,15 +6,23 @@ import time
 
 _QUICK_HELP = """Code Factory - review your code and its evidence.
 
-  Quick Python scan   factory scan --root . --static-only
-  Deep review         factory scan --root .
-  Visual workspace    factory studio --root .
-  Scan options        factory scan --help
-  Guidance            factory guide
-  All commands        factory --help-all
+Start here:
+  Scan my code       factory scan --root .
+  Python checks only factory scan --static-only --root .
+  Open dashboard     factory studio --root .
+  Get guidance       factory guide
 
-Quick scan reads Python source without running your project.
-Deep review shows applicable evidence and which checks remain INCOMPLETE.
+Next steps:
+  More scan options  factory scan --help
+  Check setup        factory doctor --strict --json
+  All commands       factory --help-all
+
+Default scan includes applicable checks and authorized configured workers.
+Use --static-only for Python source checks without workers.
+Review findings, verify repairs with your tests, then rerun affected checks.
+Keep pytest, mutation testing, CodeQL and Semgrep in your existing CI.
+Missing evidence means INCOMPLETE; a scan is not release approval.
+No adoption, signing keys or tenant configuration needed for a basic scan.
 """
 
 
@@ -27,6 +35,11 @@ def main(argv=None) -> int:
     if values == ["--help-all"]:
         values = ["--help"]
     if values and values[0] == "--version":
+        if "--json" not in values:
+            from . import __version__
+
+            print(f"factory {__version__}")
+            return 0
         from .provenance import _emit_version
 
         return _emit_version("--json" in values)

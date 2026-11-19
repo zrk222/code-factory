@@ -7,6 +7,7 @@ Ed25519 plus an explicit local trust root for offline enterprise checks.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from datetime import datetime, timezone
 import base64
 import binascii
@@ -64,13 +65,7 @@ def _require_crypto() -> None:
 
 def _canonical(value: Any) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError, UnicodeEncodeError) as exc:
         raise EnterpriseReceiptError("E_INVALID_PAYLOAD", str(exc)) from exc
 

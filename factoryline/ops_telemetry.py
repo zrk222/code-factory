@@ -200,9 +200,9 @@ def _phase_telemetry(started_monotonic: float):
 
 
 @contextmanager
-def _measure_phase(name: str):
+def _measure_phase(name: str, *, enabled: bool = True):
     telemetry = _ACTIVE_PHASE_TELEMETRY.get()
-    if telemetry is None or name not in _PHASE_NAMES:
+    if not enabled or telemetry is None or name not in _PHASE_NAMES:
         yield
         return
     started = time.monotonic_ns()

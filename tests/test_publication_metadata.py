@@ -71,16 +71,23 @@ def test_public_audit_condition_count_is_recomputed_from_source():
         if code.startswith(module.REJECTION_PREFIXES)
     }
     assert process_codes == {
+        "E_ARTIFACT_QUOTA",
+        "E_EXECUTION_AUTHORIZATION",
+        "E_GO_CACHE",
+        "E_MUTATION_INPUT",
         "E_MUTATION_OUTPUT",
         "E_MUTATION_TEMP",
+        "E_NATIVE_BUDGET",
+        "E_NATIVE_CONTEXT",
         "E_OUTPUT_ESCAPE",
+        "E_POLYGLOT_CAPTURE",
     }
     assert "runtime_audit_process.py" in module.CROSSCUT_MODULES
     assert not module.NON_CONDITION_MODULES
     assert process_codes <= set(result["crosscutting_condition_codes"])
     assert "E_CONTEXT_CONFIG" in result["crosscutting_condition_codes"]
-    assert result["crosscutting_rejection_conditions"] == 98
-    assert result["total_coded_rejection_conditions"] == 186
+    assert result["crosscutting_rejection_conditions"] == 104
+    assert result["total_coded_rejection_conditions"] == 192
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
     for relative in ("docs/LLM_PRODUCT_CARD.md", "docs/AUDIT_CONDITION_INVENTORY.md"):
@@ -401,6 +408,7 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
         "brace-expansion": "5.0.12",
         "minimatch": "11.0.1",
         "@azure/msal-node": "7.1.1",
+        "tinyglobby": "$tinyglobby",
     }
     assert lock["packages"]["node_modules/minimatch"]["version"] == "11.0.1"
     assert all(
@@ -410,7 +418,14 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     )
     assert lock["packages"]["node_modules/@azure/msal-node"]["version"] == "7.1.1"
     assert lock["packages"]["node_modules/brace-expansion"]["version"] == "5.0.12"
-    assert lock["packages"]["node_modules/@vscode/vsce"]["version"] == "4.0.0"
+    assert lock["packages"]["node_modules/@vscode/vsce"]["version"] == "4.1.1"
+    assert package["devDependencies"]["tinyglobby"] == "file:../packaging-glob"
+    assert (
+        lock["packages"]["node_modules/tinyglobby"]["name"] == "@factoryline/vsce-glob"
+    )
+    assert lock["packages"]["node_modules/glob"]["version"] == "14.0.2"
+    assert not any(path.endswith("/picomatch") for path in lock["packages"])
+    assert (ROOT / "editors/vscode/.npmrc").read_text().strip() == "install-links=true"
     assert "node_modules/braces" not in lock["packages"]
     assert "dependencies" not in package
 
@@ -577,8 +592,14 @@ def test_vscode_marketplace_workflow_seals_the_candidate_and_requires_a_scoped_s
     package = json.loads(
         (ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8")
     )
-    assert package["devDependencies"]["@vscode/vsce"] == "^4.0.0"
-    assert "@vscode/vsce@4.0.0 publish" in workflow
+    assert package["devDependencies"]["@vscode/vsce"] == "4.1.1"
+    assert "./editors/vscode/node_modules/.bin/vsce publish" in workflow
+    publisher_install = workflow.index("Install and audit locked publisher")
+    publish = workflow.index("Publish verified VSIX to Visual Studio Marketplace")
+    assert publisher_install < publish
+    assert "npm ci --no-audit --ignore-scripts" in workflow[publisher_install:publish]
+    assert "npm run audit" in workflow[publisher_install:publish]
+    assert "npx --yes @vscode/vsce" not in workflow
 
 
 def test_vscode_release_workflows_pin_the_audited_npm_client():

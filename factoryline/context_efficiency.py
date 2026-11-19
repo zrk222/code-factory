@@ -986,6 +986,7 @@ def _scan_security_source(
 ):
     """Scan one bounded source, consuming only an internal producer-owned AST."""
     from . import review_audits as audit
+    from .review_integrity import local_security_snapshot_batch
 
     relative = path.relative_to(workspace).as_posix()
     binding = None
@@ -1066,8 +1067,8 @@ def _scan_security_source(
             relative, tree, data, oracle_context
         )
     )
-    findings.extend(
-        audit._security_scan_tree(
+    with local_security_snapshot_batch(audit, tree, oracle_context):
+        findings += audit._security_scan_tree(
             workspace,
             path,
             tree,
@@ -1077,7 +1078,6 @@ def _scan_security_source(
             test_file_patterns,
             (oracle_context or {}).get("_tenant_policy_applies", False),
         )
-    )
     return binding, findings, "audited"
 
 

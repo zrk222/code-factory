@@ -11,11 +11,14 @@ import shutil
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from .runtime_audit_process import (
     bounded_file_sha256,
+    _capture_polyglot_challenge,
+    _polyglot_result as _polyglot_result,
     create_bounded_temp_directory,
     new_output_path_inside,
     path_chain_has_no_links,
@@ -824,20 +827,20 @@ def _write_mutation_capture(prepared, cleanup, baseline, mutation, mutation_ok, 
         raise RuntimeAuditError(
             "E_MUTATION_OUTPUT", "evidence path changed during capture"
         )
-    diff_text = "".join(
-        difflib.unified_diff(
-            prepared["source"]
-            .decode("utf-8", errors="replace")
-            .splitlines(keepends=True),
-            prepared["mutant"]
-            .decode("utf-8", errors="replace")
-            .splitlines(keepends=True),
-            fromfile=prepared["target_relative"],
-            tofile=prepared["target_relative"] + " (mutant)",
-        )
+    path_bytes = prepared["target_relative"].encode("utf-8")
+    diff_lines = difflib.diff_bytes(
+        difflib.unified_diff,
+        list(BytesIO(prepared["source"])),
+        list(BytesIO(prepared["mutant"])),
+        fromfile=path_bytes,
+        tofile=path_bytes + b" (mutant)",
+    )
+    diff_bytes = b"".join(
+        line if line.endswith(b"\n") else line + b"\n\\ No newline at end of file\n"
+        for line in diff_lines
     )
     diff_path = new_output_path_inside(prepared["root"], evidence / "production.diff")
-    diff_path.write_text(diff_text, encoding="utf-8")
+    diff_path.write_bytes(diff_bytes)
     payload = _mutation_base_payload(prepared)
     payload.update(
         {
@@ -999,6 +1002,44 @@ def capture_local_production_mutation(
         _cleanup_mutation_capture(
             temp_root, temp_parent, evidence, cleanup, payload, root
         )
+
+
+def capture_polyglot_oracle_challenge(
+    workspace_root,
+    framework,
+    test_path,
+    selector,
+    assertion_line,
+    production_path,
+    before_text,
+    after_text,
+    evidence_path,
+    *,
+    execute=False,
+    tool_executable=None,
+    node_executable=None,
+    timeout_seconds=120,
+):
+    """Explicit opt-in, unsigned local observation; never runs from read-only scans.
+
+    Caller-supplied tools run fixed framework argv with measured source reach.
+    """
+    return _capture_polyglot_challenge(
+        Path(workspace_root).resolve(strict=True),
+        framework,
+        test_path,
+        selector,
+        assertion_line,
+        production_path,
+        before_text,
+        after_text,
+        evidence_path,
+        tool_executable,
+        node_executable,
+        timeout_seconds,
+        _MUTATION_COPY_IGNORES,
+        execute,
+    )
 
 
 def _verify_admission_sources(plan: dict[str, Any], workspace: Path) -> str:

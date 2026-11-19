@@ -9,6 +9,21 @@ import re
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
 
+from .captured_operand_audit import (
+    _CapturedRecordText,
+    _CapturedTextDefinitions,
+    _captured_argument_definition,
+    _captured_closed_text_callers,
+    _captured_literal_argument_origin,
+    _captured_record_read,
+    captured_log_field_text_closed,
+)
+from .captured_operand_audit import (
+    _COOKIE_NAME_PROVIDERS,
+    _COOKIE_NAME_ROLE,
+    _registry_cookie_name_use,
+)
+
 
 def captured_django_startup_body(node):
     """Project only guards equivalent to the existing default-binding operation."""
@@ -611,6 +626,8 @@ def _registry_locator_use(keyword, call, aliases, source, path):
 def _public_registry_use(reference, aliases, source, path):
     parents = source.parents[path]
     parent = parents.get(id(reference))
+    if _registry_cookie_name_use(reference, parent, aliases, source, path):
+        return _COOKIE_NAME_ROLE
     match parent:
         case ast.Call(args=[operand, *defaults], keywords=[]) if (
             operand is reference
@@ -630,16 +647,7 @@ def _public_registry_use(reference, aliases, source, path):
             parent, parents.get(id(parent)), aliases, source, path
         )
     if isinstance(parent, ast.FormattedValue):
-        message = parents.get(id(parent))
-        if not _registry_formatted_label(parent, message):
-            return False
-        if _registry_help_message(message, aliases, source, path):
-            return "help"
-        if _registry_stderr_message(
-            parents.get(id(message)), message, aliases, source, path
-        ):
-            return "stderr"
-        return _environment_label_diagnostic(source, path, reference)
+        return _registry_formatted_use(reference, parent, aliases, source, path)
     match parent:
         case ast.BinOp(left=ast.Constant(value=str()), op=ast.Mod(), right=right) if (
             right is reference
@@ -647,6 +655,20 @@ def _public_registry_use(reference, aliases, source, path):
             if _registry_help_message(parent, aliases, source, path):
                 return "help"
     return False
+
+
+def _registry_formatted_use(reference, item, aliases, source, path):
+    parents = source.parents[path]
+    message = parents.get(id(item))
+    if not _registry_formatted_label(item, message):
+        return False
+    if _registry_help_message(message, aliases, source, path):
+        return "help"
+    if _registry_stderr_message(
+        parents.get(id(message)), message, aliases, source, path
+    ):
+        return "stderr"
+    return _environment_label_diagnostic(source, path, reference)
 
 
 def _registry_formatted_label(item, message):
@@ -773,6 +795,7 @@ def _registry_label_kind(value, aliases):
 
 def captured_public_registry_label(node, target, aliases):
     """Recognize closed registry labels used only for lookup and public messages."""
+    node._security_cookie_role_facts = {}
     value = getattr(node.value, "value", None)
     registry_label = _registry_label_kind(value, aliases)
     if registry_label is None and {"sys", "sys.exit"}.isdisjoint(
@@ -783,35 +806,63 @@ def captured_public_registry_label(node, target, aliases):
     if source is None or source[2] is not target:
         return False
     index, owner, origin, _, references = source
-    roles = [_public_registry_use(ref, aliases, index, owner) for ref in references]
     foreign = _registry_external_references(index, owner, origin)
     if foreign is None:
         return False
-    roles.extend(
+    uses = [(ref, owner, aliases) for ref in references] + list(foreign)
+    roles = [
         _public_registry_use(ref, occurrence, index, path)
-        for ref, path, occurrence in foreign
-    )
+        for ref, path, occurrence in uses
+    ]
     readonly = set(references) | {ref for ref, _, _ in foreign}
     binding = index, owner, origin, readonly
     if set(roles) == {"exit_message"}:
-        from .pytest_collection_audit import _captured_pytest_inputs
-
-        module = index.snapshots[owner]
-        stage = getattr(
-            _captured_pytest_inputs(module)[1], "provisional_exclusions", None
-        )
-        if type(stage) is set and not _captured_text_may_be_secret(value):
-            if _captured_module_text_unchanged(*binding, providers=("sys.exit",)):
-                stage.add(
-                    (
-                        "SECURITY_HARDCODED_SECRET",
-                        index.relative(owner),
-                        *_native_span(node),
-                        "CRITICAL",
-                    )
-                )
+        _stage_registry_exit_message(binding, value, node)
         return False
-    return _registry_roles_closed(binding, value, registry_label, roles)
+    proven = _registry_roles_closed(binding, value, registry_label, roles)
+    if proven and _COOKIE_NAME_ROLE in roles:
+        _stage_public_registry_exclusion(
+            index, owner, node, cookie_uses=zip(uses, roles)
+        )
+        return False
+    return proven
+
+
+def _stage_registry_exit_message(binding, value, node):
+    """Stage the exit-message witness only for an unchanged public provider."""
+    if not _captured_text_may_be_secret(value) and _captured_module_text_unchanged(
+        *binding, providers=("sys.exit",)
+    ):
+        index, owner, _, _ = binding
+        _stage_public_registry_exclusion(index, owner, node)
+
+
+def _stage_public_registry_exclusion(index, owner, node, *, cookie_uses=None):
+    from .captured_operand_audit import cookie_name_trace
+    from .pytest_collection_audit import _captured_pytest_inputs
+
+    stage = getattr(
+        _captured_pytest_inputs(index.snapshots[owner])[1],
+        "provisional_exclusions",
+        None,
+    )
+    if type(stage) is set:
+        point = (
+            "SECURITY_HARDCODED_SECRET",
+            index.relative(owner),
+            *_native_span(node),
+            "CRITICAL",
+        )
+        if cookie_uses is not None:
+            trace = cookie_name_trace(index, cookie_uses)
+            if trace is None:
+                return
+            digest = sha256(
+                json.dumps(trace, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            node._security_cookie_role_facts = {"cookie_name_use_trace": trace}
+            point = (*point, digest)
+        stage.add(point)
 
 
 def _exit_chain_closed(source, path, site, active=()):
@@ -856,13 +907,25 @@ def _registry_roles_closed(binding, value, registry_label, roles):
     index, _, origin, readonly = binding
     if "stderr" in roles:
         readonly.update(_registry_stderr_operands(index))
-    if roles and all(role in _CREDENTIAL_LOCATOR_PROVIDERS for role in roles):
+    cookie_name = _COOKIE_NAME_ROLE in roles
+    if any(role in _CREDENTIAL_LOCATOR_PROVIDERS for role in roles) and all(
+        role in _CREDENTIAL_LOCATOR_PROVIDERS or role == _COOKIE_NAME_ROLE
+        for role in roles
+    ):
+        providers = ("fastapi.security", "sys.modules")
+        if cookie_name:
+            if not _registry_binding_namespace_closed(
+                index, origin.id, reject_reflection=True
+            ) or any(
+                {"starlette", "starlette.py"}.intersection(path.casefold().split("/"))
+                for path in index.module_paths() or ()
+            ):
+                return False
+            providers = (*providers, *sorted(_COOKIE_NAME_PROVIDERS))
         return _registry_locator_namespace_closed(
             index, origin.id, value
-        ) and _captured_module_text_unchanged(
-            *binding, ("fastapi.security", "sys.modules")
-        )
-    if not (registry_label and True in roles and all(roles)):
+        ) and _captured_module_text_unchanged(*binding, providers)
+    if cookie_name or not (registry_label and True in roles and all(roles)):
         return False
     lookup_only = all(role is True for role in roles)
     public = {"help", "stderr", "diagnostic"}.intersection(roles)
@@ -3151,194 +3214,6 @@ def _captured_statement_text_closed(call, query, driver):
     return _CapturedTextDefinitions(
         nodes, parents, tuple(callers.values()), owner, binding_occurrences
     ).prove(query)
-
-
-def _captured_closed_text_callers(
-    index, projection, owner_path, owner, resolve, scope, bind, dynamic
-):
-    callers, work = {}, 0
-    for path, tree in index.snapshots.items():
-        if not index.validate(path):
-            return {}
-        nodes = tuple(ast.walk(tree))
-        work += len(nodes)
-        if work > 16000 or dynamic(nodes):
-            return {}
-        parents = index.parents[path]
-        for expr in nodes:
-            if not isinstance(expr, (ast.Name, ast.Attribute)) or not isinstance(
-                expr.ctx, ast.Load
-            ):
-                continue
-            found = resolve(projection.symbols, path, expr, scope(expr, parents, None))
-            if found is None or found[0] != owner_path or found[1] is not owner:
-                continue
-            site = parents.get(id(expr))
-            if not isinstance(site, ast.Call) or site.func is not expr:
-                return {}
-            resolved = bind(site, path, index)
-            if (
-                resolved is None
-                or resolved.function is not owner
-                or not resolved.negative_binding_closed
-            ):
-                return {}
-            callers[id(site)] = resolved.arguments
-    return callers
-
-
-class _CapturedTextDefinitions:
-    """Prove scalar text from bounded captured definitions and literal record fields."""
-
-    def __init__(self, nodes, parents, actuals, owner, binds):
-        self.parents, self.actuals = parents, actuals
-        self.owner, self.binds, self.cache = owner, binds, {}
-        self.refs, self.active, self.known, self.fields = {}, set(), {}, {}
-        for n in nodes:
-            if isinstance(n, ast.Name):
-                self.refs.setdefault(n.id, []).append(n)
-
-    @staticmethod
-    def literal(expr):
-        return isinstance(expr, ast.Constant) and type(expr.value) in {
-            str,
-            int,
-            bool,
-            type(None),
-        }
-
-    def formal(self, name):
-        return [row.get(name) for row in self.actuals]
-
-    def prove(self, expr):
-        match expr:
-            case ast.Constant():
-                return self.literal(expr)
-            case ast.Name(id=name):
-                return self.name(name)
-            case ast.BinOp(left=left, op=ast.Add(), right=right):
-                return self.prove(left) and self.prove(right)
-            case ast.IfExp(body=left, orelse=right):
-                return self.prove(left) and self.prove(right)
-            case ast.JoinedStr(values=parts):
-                return all(self.prove(part) for part in parts)
-            case ast.FormattedValue(value=value, conversion=-1, format_spec=None):
-                return self.prove(value)
-            case ast.Call(
-                func=ast.Attribute(value=ast.Name(id=row), attr="get"),
-                args=[ast.Constant(value=key), *defaults],
-                keywords=[],
-            ) if type(key) is str:
-                return (
-                    len(defaults) <= 1
-                    and all(map(self.literal, defaults))
-                    and self.row_field(row, key)
-                )
-            case _:
-                return False
-
-    def name(self, name):
-        if name in self.known:
-            return self.known[name]
-        if name in self.active or len(self.active) >= 24:
-            return False
-        self.active.add(name)
-        is_formal = any(name in row for row in self.actuals)
-        base = is_formal and all(map(self.literal, self.formal(name)))
-        if is_formal and not base:
-            self.active.remove(name)
-            return False
-        for node in self.binds(self.owner.body, name, per_pass_facts=self.cache):
-            statement = self.parents.get(id(node))
-            if not self.assignment(statement, node):
-                self.active.remove(name)
-                return False
-            base |= isinstance(statement, (ast.Assign, ast.AnnAssign))
-        self.active.remove(name)
-        self.known[name] = base
-        return base
-
-    def assignment(self, statement, node):
-        match statement:
-            case ast.Assign(targets=[target], value=value) if target is node:
-                return self.prove(value)
-            case ast.AnnAssign(target=target, value=value) if target is node:
-                return self.prove(value)
-            case ast.AugAssign(target=target, op=ast.Add(), value=value) if (
-                target is node
-            ):
-                return self.prove(value)
-            case _:
-                return False
-
-    def row_field(self, name, key):
-        if name not in self.fields:
-            self.fields[name] = self.row_fields(name)
-        return key in self.fields[name]
-
-    def row_fields(self, row):
-        refs = self.refs.get(row, ())
-        writes = self.binds(self.owner.body, row, per_pass_facts=self.cache)
-        if len(writes) != 1:
-            return set()
-        loop = self.parents.get(id(writes[0]))
-        if (
-            not isinstance(loop, ast.For)
-            or loop.target is not writes[0]
-            or not isinstance(loop.iter, ast.Name)
-        ):
-            return set()
-        if not all(self.row_read(n) for n in refs if isinstance(n.ctx, ast.Load)):
-            return set()
-        formal = loop.iter.id
-        if self.binds(self.owner.body, formal, per_pass_facts=self.cache) or not all(
-            self.collection_read(n, loop.iter) for n in self.refs.get(formal, ())
-        ):
-            return set()
-        fields = None
-        for incoming in self.formal(formal):
-            if isinstance(incoming, ast.Constant) and incoming.value is None:
-                continue
-            if (
-                not isinstance(incoming, (ast.List, ast.Tuple))
-                or len(incoming.elts) > 64
-            ):
-                return set()
-            for expr in incoming.elts:
-                known = self.record_fields(expr)
-                if known is None:
-                    return set()
-                fields = known if fields is None else fields & known
-        return fields or set()
-
-    def record_fields(self, expr):
-        if not isinstance(expr, ast.Dict) or not all(
-            isinstance(k, ast.Constant) and type(k.value) is str for k in expr.keys
-        ):
-            return None
-        keys = [k.value for k in expr.keys]
-        if len(keys) != len(set(keys)) or not all(
-            self.literal(v) or isinstance(v, ast.Name) for v in expr.values
-        ):
-            return None
-        return {k for k, v in zip(keys, expr.values) if self.literal(v)}
-
-    def row_read(self, node):
-        member = self.parents.get(id(node))
-        call = self.parents.get(id(member))
-        return (
-            isinstance(member, ast.Attribute)
-            and member.value is node
-            and member.attr == "get"
-            and isinstance(call, ast.Call)
-            and call.func is member
-        )
-
-    def collection_read(self, node, iterator):
-        parent = self.parents.get(id(node))
-        return isinstance(node.ctx, ast.Load) and (
-            node is iterator or isinstance(parent, ast.If) and parent.test is node
-        )
 
 
 def _captured_sql_binding(expr, use, lexical, parents, bind_names):
@@ -5995,3 +5870,81 @@ def _revalidate_scan_role_support(audit, core, captured, primitive, native_rows)
             partition_state="VALIDATED" if coverage_complete else "INCOMPLETE",
             _verifier_native_rows=native_rows,
         )
+
+
+def argument_role_proof_helpers():
+    """Bind the exact argument and HTTP name proofs to scanner cache generations."""
+    from . import (
+        audit_action_refs,
+        audit_log_flow,
+        captured_operand_audit,
+        review_audits,
+        review_integrity,
+    )
+    from .fixture_scope_value_audit import (
+        hash_fixture_proof_helpers,
+        password_validation_proof_helpers,
+    )
+    from .intent_quality import bound_sink_argument
+    from .pickle_model_audit import captured_local_serialization_proof
+    from .provenance import (
+        credential_role_witness,
+        oauth_placeholder_proof_helpers,
+        oauth_service_locator_proof_helpers,
+    )
+    from .pytest_collection_audit import (
+        http_fixture_token_proof_helpers,
+        validation_marker_proof_helpers,
+    )
+    from .xonsh_program_audit import xonsh_program_role_helpers
+
+    return (
+        bound_sink_argument,
+        _captured_argument_definition,
+        captured_operand_audit._argument_binding_is_parameter_or_external,
+        _captured_literal_argument_origin,
+        _captured_closed_text_callers,
+        captured_log_field_text_closed,
+        _captured_record_read,
+        captured_operand_audit._captured_record_receiver_escapes,
+        _CapturedRecordText.__init__,
+        _CapturedRecordText.field,
+        _CapturedRecordText.scalar,
+        audit_log_flow._LogReader._flow,
+        audit_log_flow._LogReader._unsafe,
+        audit_log_flow.bound_sink_argument,
+        audit_log_flow.captured_log_field_text_closed,
+        captured_public_registry_label,
+        credential_role_witness,
+        _stage_public_registry_exclusion,
+        _stage_registry_exit_message,
+        _registry_cookie_name_use,
+        _registry_formatted_use,
+        captured_operand_audit.cookie_name_trace,
+        audit_action_refs._captured_operand_prover,
+        audit_action_refs._captured_credential_operand_proof,
+        audit_action_refs._with_captured_operand_proof,
+        audit_action_refs._attach_installer_prerequisite,
+        audit_action_refs._attach_validation_marker_context,
+        audit_action_refs._bound_operand_refutation,
+        review_integrity.security_assignment_findings,
+        review_audits.with_decl_proof,
+        *password_validation_proof_helpers(),
+        *hash_fixture_proof_helpers(),
+        *oauth_placeholder_proof_helpers(),
+        *oauth_service_locator_proof_helpers(),
+        *validation_marker_proof_helpers(),
+        *http_fixture_token_proof_helpers(),
+        *captured_operand_audit.command_operand_proof_helpers(),
+        *captured_operand_audit.installer_prerequisite_helpers(),
+        captured_local_serialization_proof,
+        *captured_operand_audit.captured_local_representation_helpers(),
+        *xonsh_program_role_helpers(),
+        _registry_roles_closed,
+        _COOKIE_NAME_PROVIDERS,
+        *(
+            value
+            for name, value in vars(captured_operand_audit).items()
+            if name.startswith("_registry_") and callable(value)
+        ),
+    )

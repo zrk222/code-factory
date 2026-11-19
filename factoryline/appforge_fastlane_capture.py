@@ -20,6 +20,7 @@ from typing import Any
 from .appforge_evidence_kit import _read_candidate
 from .appforge_surface_matrix import RECEIPT_SCHEMA as MATRIX_SCHEMA
 from .appforge_storefront_story import RECEIPT_SCHEMA as STORY_SCHEMA
+from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
 
 
@@ -65,39 +66,14 @@ def _text(value: object, field: str, limit: int = 300) -> str:
 
 
 def _local(root: Path, path: Path, *, exists: bool = True) -> Path:
-    workspace = Path(root).resolve()
-    target = path.resolve() if path.is_absolute() else (workspace / path).resolve()
-    try:
-        target.relative_to(workspace)
-    except ValueError as exc:
-        raise RevenueForgeError(
-            "APPFORGE_FASTLANE_CAPTURE_PATH_REJECTED",
-            "paths must remain inside the workspace",
-        ) from exc
-    if exists and not target.is_file():
-        raise RevenueForgeError(
-            "APPFORGE_FASTLANE_CAPTURE_INPUT_UNAVAILABLE",
-            "input must be a regular workspace file",
-        )
-    return target
+    return _artifact_local(Path(root), path, "APPFORGE_FASTLANE_CAPTURE", exists)
 
 
 def _read_json(root: Path, path: Path, schema: str) -> tuple[dict[str, Any], Path]:
     source = _local(root, path)
-    if source.stat().st_size > MAX_BYTES:
-        raise RevenueForgeError(
-            "APPFORGE_FASTLANE_CAPTURE_INPUT_TOO_LARGE", "JSON input exceeds 1 MiB"
-        )
-    try:
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RevenueForgeError(
-            "APPFORGE_FASTLANE_CAPTURE_INPUT_INVALID", "input must be valid JSON"
-        ) from exc
-    if not isinstance(value, dict) or value.get("schema") != schema:
-        raise RevenueForgeError(
-            "APPFORGE_FASTLANE_CAPTURE_SCHEMA_REJECTED", f"expected {schema}"
-        )
+    value = _artifact_json(
+        source, "APPFORGE_FASTLANE_CAPTURE", MAX_BYTES, schema=schema
+    )
     return value, source
 
 

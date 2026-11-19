@@ -7,8 +7,11 @@ import { downloadFeed, evaluate, matchesVersion, parseManifest, targets, tracker
 test('worker workflow path filters cover every Docker build input without framework scope', () => {
   const workflow = readFileSync('.github/workflows/worker-verification.yml', 'utf8').replace(/\r\n/g, '\n');
   const dockerfile = readFileSync('deploy/deep-adapters/Dockerfile', 'utf8').replace(/\r\n/g, '\n');
-  const dockerSourceFiles = [...new Set([...dockerfile.matchAll(/^COPY\s+(.+)$/gm)]
-    .flatMap(match => match[1].trim().split(/\s+/).slice(0, -1))
+  const copySources = [...dockerfile.matchAll(/^COPY\s+(.+)$/gm)]
+    .flatMap(match => match[1].trim().split(/\s+/).slice(0, -1));
+  const bindSources = [...dockerfile.matchAll(/^RUN\s+.*?--mount=type=bind,source=([^,\s]+)/gm)]
+    .map(match => match[1]);
+  const dockerSourceFiles = [...new Set([...copySources, ...bindSources]
     .filter(path => path.startsWith('factoryline/')))];
   assert.deepEqual(dockerSourceFiles.sort(), [
     'factoryline/__init__.py',
@@ -37,7 +40,7 @@ test('worker workflow path filters cover every Docker build input without framew
     assert(paths.includes('scripts/verify_semgrep_surface.mjs'));
     assert(paths.includes('scripts/verify_codeql_cross_file.mjs'));
     assert(paths.includes('.github/workflows/worker-verification.yml'));
-    for (const path of dockerSourceFiles) assert(paths.includes(path), `missing Docker COPY input ${path}`);
+    for (const path of dockerSourceFiles) assert(paths.includes(path), `missing Docker build input ${path}`);
     assert.deepEqual(paths.filter(path => path.startsWith('factoryline/')).sort(), dockerSourceFiles.slice().sort());
     assert.equal(paths.includes('factoryline/**'), false);
     assert.equal(paths.some(path => path.startsWith('factoryline/') && path.endsWith('/judge_framework.json')), false);

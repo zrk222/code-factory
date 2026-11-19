@@ -9,6 +9,7 @@ worker context and an independent validator after the retry.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -54,13 +55,7 @@ class ProofDeltaError(ValueError):
 
 def _canonical(value: object) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError) as exc:
         raise ProofDeltaError(
             "PROOF_DELTA_INVALID", f"receipt must be canonical JSON: {exc}"

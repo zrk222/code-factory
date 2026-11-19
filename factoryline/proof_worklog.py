@@ -9,6 +9,7 @@ release or an external delivery.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -704,13 +705,7 @@ class ProofWorklogError(ValueError):
 
 def _canonical(value: object) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError) as exc:
         raise ProofWorklogError(
             "E_PROOF_WORKLOG_SCHEMA", "worklog must be canonical JSON"

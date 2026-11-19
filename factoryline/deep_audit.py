@@ -8,6 +8,8 @@ The explicit scan entry point runs authorized, isolated adapter containers.
 
 from __future__ import annotations
 
+import re
+
 from . import deep_audit_io as _deep_audit_io
 from collections import defaultdict
 from itertools import islice
@@ -568,6 +570,10 @@ def _execute_lane(
     plan: dict,
     emit,
 ) -> dict:
+    if "runner_binding" in lane:
+        return _execute_local_lane(
+            root, directory, state, snapshot, lane, inventory, plan, emit
+        )
     if lane["engine"] == "zap" and "native_target" in lane:
         return _execute_zap_controlled_lane(
             directory, state, snapshot, lane, inventory, plan, emit
@@ -717,6 +723,286 @@ def _execute_lane(
     write_run_json(directory, f"bundle-{lane['id']}.json", bundle)
     result.update(bundle_sha256=digest(bundle), execution=facts)
     return result
+
+
+def _local_profile_context(root, snapshot, scratch, lane):
+    """Resolve only verified operator-owned tool roles, never candidate configuration."""
+    import platform
+    from .deep_audit_attestation import verify_local_tool_manifest
+    from .deep_audit_sarif import _local_execution_context
+
+    binding = lane["runner_binding"]
+    actual = {
+        "os": platform.system().lower(),
+        "architecture": platform.machine().lower(),
+    }
+    actual["architecture"] = {"amd64": "x86_64", "arm64": "aarch64"}.get(
+        actual["architecture"], actual["architecture"]
+    )
+    if actual != binding["platform"]:
+        raise RuntimeAuditError("E_LOCAL_PLATFORM", "signed local platform differs")
+    manifest = verify_local_tool_manifest(binding, candidate_root=root)
+    bundle_root = Path(binding["tool_manifest"]["path"]).parent
+    roles = {row["role"]: row for row in manifest["files"] if row["role"] != "resource"}
+    profile = strict_json(_deep_audit_io.bound_bytes(bundle_root, roles["profile"]))
+    _deep_audit_io._native_profile(profile, lane)
+    executable = local_file(bundle_root, roles["executable"]["path"])
+    resources = sorted(
+        {
+            local_file(bundle_root, row["path"]).parent
+            for row in manifest["files"]
+            if row["role"] == "resource"
+        }
+    )
+    context = {
+        "provider": "local-native",
+        "runner_binding_sha256": digest(binding),
+        "profile_sha256": binding["profile_sha256"],
+        "tool_manifest_sha256": binding["tool_manifest"]["sha256"],
+        "executable": str(executable),
+        "rules_path": str(local_file(bundle_root, roles["rules"]["path"])),
+        "source_root": str(snapshot),
+        "scratch_root": str(scratch),
+        "path_flavor": "windows" if os.name == "nt" else "posix",
+        "tool_context": {
+            "bundle_root": bundle_root,
+            "executable": executable,
+            "resource_dirs": resources or [bundle_root],
+            "cache_root": scratch / "tool-cache",
+            "manifest_sha256": binding["tool_manifest"]["sha256"],
+        },
+    }
+    _local_execution_context(context, lane)
+    _deep_audit_io._semgrep_challenge_command(profile, execution_context=context)
+    if profile["version_argv"] not in (
+        [str(executable), "--version"],
+        [str(executable), "--version", "--disable-version-check"],
+    ):
+        raise RuntimeAuditError(
+            "E_LOCAL_PROFILE", "exact native version command required"
+        )
+    return profile, context
+
+
+def _local_failure_transport(directory, output, lane, inventory, context, error):
+    """Preserve bounded partial native output before owned scratch cleanup."""
+    from .deep_audit_io import write_run_json
+
+    retained, remaining = [], LIMIT
+    for key in ("report", "coverage", "challenge_report"):
+        path = output / lane[key]
+        if not path.exists() and not path.is_symlink():
+            continue
+        with local_file(output, lane[key]).open("rb") as stream:
+            raw = stream.read(remaining + 1)
+        complete = len(raw) <= remaining
+        raw = raw[:remaining]
+        name = sha256_bytes(raw) + ".native-partial"
+        _publish_content_addressed_file(
+            directory, directory / name, raw, "retained native output differs"
+        )
+        retained.append(
+            {
+                "role": key,
+                "path": name,
+                "sha256": sha256_bytes(raw),
+                "bytes": len(raw),
+                "complete": complete,
+            }
+        )
+        remaining -= len(raw)
+    write_run_json(
+        directory,
+        f"failure-{lane['id']}.json",
+        {
+            "completion": "COMMAND_FAILED",
+            "diagnostic_code": getattr(error, "code", "E_WORKER_EVIDENCE"),
+            "candidate_sha256": inventory["candidate_sha256"],
+            "execution_context": {
+                key: value for key, value in context.items() if key != "tool_context"
+            },
+            "retained_output": retained,
+            **_local_failure_diagnostic(error),
+        },
+    )
+
+
+def _local_failure_diagnostic(error):
+    """Retain controlled command identity and scalar facts, never exception text."""
+    value = getattr(error, "native_diagnostic", None)
+    if not isinstance(value, dict) or value.get("stage") != "semgrep_rule_command":
+        return _local_semgrep_verification_diagnostic(error)
+    metadata = {"stage": "semgrep_rule_command"}
+    index, rule, argv = (
+        value.get(key) for key in ("rule_index", "rule_id", "argv_sha256")
+    )
+    if type(index) is int and 0 <= index < 64:
+        metadata["rule_index"] = index
+    if isinstance(rule, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,256}", rule):
+        metadata["rule_id"] = rule
+    if isinstance(argv, str) and re.fullmatch(r"[0-9a-f]{64}", argv):
+        metadata["argv_sha256"] = argv
+    if type(value.get("deadline_exhausted")) is bool:
+        metadata["deadline_exhausted"] = value["deadline_exhausted"]
+    metadata["process"] = _local_failure_process_facts(value.get("process"))
+    return {"command_diagnostic": metadata}
+
+
+def _local_semgrep_verification_diagnostic(error):
+    reasons = {
+        "rule exceeds signed budget": "rule_budget",
+        "native rule did not complete": "rule_incomplete",
+        "native source execution differs": "source_execution",
+        "per-rule findings contradict baseline": "baseline_parity",
+        "native rule evidence missing": "missing_rule_evidence",
+        "rule observation inventory differs": "observation_inventory",
+        "bounded source inventory required": "source_inventory",
+        "invalid native rule record": "rule_record",
+        "native report digest differs": "report_digest",
+        "isolated command differs": "isolated_command",
+        "native command binding differs": "command_binding",
+        "bounded raw report required": "raw_report_bound",
+        "invalid raw report": "raw_report_invalid",
+        "raw report binding differs": "raw_report_binding",
+        "local isolated command differs": "local_isolated_command",
+        "local execution role binding differs": "local_role_binding",
+        "native source accounting incomplete": "source_accounting",
+    }
+    if getattr(error, "code", None) != "E_SEMGREP_EXECUTION":
+        return {}
+    message = getattr(error, "message", None)
+    reason = reasons.get(message) if isinstance(message, str) else None
+    if reason is None:
+        return {}
+    return {"command_diagnostic": {"stage": "semgrep_verification", "reason": reason}}
+
+
+def _local_failure_process_facts(value):
+    if not isinstance(value, dict):
+        return {}
+    output = {}
+    for key in (
+        "timed_out",
+        "launch_error",
+        "output_limit_exceeded",
+        "cleanup_confirmed",
+        "cancelled",
+    ):
+        if type(value.get(key)) is bool:
+            output[key] = value[key]
+    for key in (
+        "exit_code",
+        "timeout_seconds",
+        "duration_ms",
+        "stdout_bytes",
+        "stderr_bytes",
+    ):
+        number = value.get(key)
+        if (type(number) is int and -(2**31) <= number < 2**63) or (
+            key == "exit_code" and number is None
+        ):
+            output[key] = number
+    for key in ("stdout_sha256", "stderr_sha256"):
+        if isinstance(value.get(key), str) and re.fullmatch(
+            r"[0-9a-f]{64}", value[key]
+        ):
+            output[key] = value[key]
+    reason = value.get("termination_reason")
+    if isinstance(reason, str) and reason in {
+        "process_exit",
+        "timeout",
+        "output_limit",
+        "launch_error",
+        "cancelled",
+    }:
+        output["termination_reason"] = reason
+    artifact_reason = value.get("artifact_limit_reason")
+    if (
+        output.get("output_limit_exceeded") is True
+        and isinstance(artifact_reason, str)
+        and artifact_reason
+        in {
+            "invalid_root",
+            "entry_disappeared",
+            "entry_unreadable",
+            "linked_entry",
+            "file_count",
+            "byte_count",
+            "entry_count",
+        }
+    ):
+        output["artifact_limit_reason"] = artifact_reason
+    return output
+
+
+def _execute_local_lane(root, directory, state, snapshot, lane, inventory, plan, emit):
+    """Use the shared native executor; host process bounds do not imply isolation."""
+    from .deep_audit_attestation import verify_local_tool_manifest
+    from .deep_audit_io import write_run_json
+    from .deep_audit_sarif import normalize_execution_bundle
+
+    cancelled, stop = threading.Event(), threading.Event()
+    monitor = threading.Thread(
+        target=_monitor_lane,
+        args=(directory, state, stop, cancelled, emit),
+        daemon=True,
+    )
+    contract = {
+        "schema": "factory.deep-adapter-input.v1",
+        "run_id": state["run_id"],
+        "manifest_sha256": state["manifest_sha256"],
+        "inventory": inventory,
+        "lane": lane,
+        "obligations": plan["obligations"],
+    }
+    monitor.start()
+    try:
+        with tempfile.TemporaryDirectory(prefix="factory-native-") as temporary:
+            scratch = Path(temporary).resolve()
+            output = scratch / "output"
+            output.mkdir()
+            profile, context = _local_profile_context(root, snapshot, scratch, lane)
+            try:
+                bundle = execute_native_profile(
+                    profile,
+                    contract,
+                    snapshot,
+                    output,
+                    execution_context=context,
+                    cancelled=cancelled,
+                )
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                _local_failure_transport(
+                    directory, output, lane, inventory, context, error
+                )
+                raise
+            # Retain raw transports even when a subsequent admission check fails.
+            write_run_json(directory, f"bundle-{lane['id']}.json", bundle)
+            verify_local_tool_manifest(lane["runner_binding"], candidate_root=root)
+            _deep_audit_io._adapter_sources(snapshot, inventory)
+            if cancelled.is_set():
+                raise RuntimeAuditError("E_LOCAL_CANCELLED", "local lane cancelled")
+            result = normalize_execution_bundle(
+                bundle,
+                lane,
+                inventory,
+                state["run_id"],
+                plan["obligations"],
+                execution_context=context,
+            )
+            result.update(
+                bundle_sha256=digest(bundle),
+                execution={
+                    "provider": "local-native",
+                    "runner_binding_sha256": digest(lane["runner_binding"]),
+                    "platform": lane["runner_binding"]["platform"],
+                    "isolation": "none",
+                },
+            )
+            return result
+    finally:
+        stop.set()
+        monitor.join(timeout=2)
 
 
 def _zap_docker_control(base, args, deadline):
@@ -2423,7 +2709,10 @@ def _capture_and_execute(
             },
             emit,
         )
-        if not state["gaps"]:
+        if all(
+            gap.get("code") in {"UNCOVERED_SOURCE", "DEPENDENCY_DEPTH"}
+            for gap in state["gaps"]
+        ):
             verify_authorization(
                 plan, manifest_sha256, authorization, trust_root, trust_root_sha256
             )
@@ -2546,7 +2835,7 @@ def scan_deep_audit(
 
     root = Path(root).resolve()
     request_reference = _request_file_reference(root, request_file)
-    plan = load_execution_manifest(manifest, manifest_sha256)
+    plan = load_execution_manifest(manifest, manifest_sha256, candidate_root=root)
     _authorized, verified_authorization_sha256 = verify_execution_authorization(
         plan,
         manifest_sha256,
@@ -4384,9 +4673,20 @@ def execute_native_profile(
     contract: dict,
     source: _deep_audit_io.Path,
     output: _deep_audit_io.Path,
+    *,
+    execution_context=None,
+    cancelled=None,
 ) -> dict:
     """Run native tools; incomplete coverage/challenges remain explicit, never inferred."""
+    from .deep_audit_sarif import _local_execution_context, _local_semgrep_report
+
     inventory, lane = _deep_audit_io._adapter_contract_parts(contract)
+    execution_context = _local_execution_context(execution_context, lane)
+    options = (
+        {"execution_context": execution_context, "cancelled": cancelled}
+        if execution_context
+        else {}
+    )
     _deep_audit_io._native_profile(profile, lane)
     _deep_audit_io._adapter_sources(source, inventory)
     if lane["engine"] == "gitleaks":
@@ -4403,19 +4703,37 @@ def execute_native_profile(
         inventory,
         lane,
         paths,
+        **options,
     )
+    raw = execution["raw_report"]
+    if execution_context:
+        sources = {row["path"]: row["sha256"] for row in inventory["files"]}
+        raw = _local_semgrep_report(raw, sources, execution_context)
     report = _deep_audit_io._native_report(
-        execution["raw_report"],
+        raw,
         profile,
         contract,
         _deep_audit_io.Path(output),
         execution["invocations"],
     )
     challenges, covered_obligations = _deep_audit_io._native_profile_challenges(
-        profile, contract, _deep_audit_io.Path(source), lane, execution, started
+        profile,
+        contract,
+        _deep_audit_io.Path(source),
+        lane,
+        execution,
+        started,
+        **options,
     )
     coverage = _deep_audit_io._native_profile_coverage(
-        execution, report, inventory, lane, profile, challenges, covered_obligations
+        execution,
+        report,
+        inventory,
+        lane,
+        profile,
+        challenges,
+        covered_obligations,
+        **({"execution_context": execution_context} if execution_context else {}),
     )
     if lane["engine"] == "osv":
         required = {
@@ -4449,7 +4767,39 @@ def execute_native_profile(
     return bundle
 
 
-def _run_native_profile(profile, contract, source, output, inventory, lane, paths):
+def _native_profile_scratch(context):
+    from contextlib import nullcontext
+
+    if context:
+        return nullcontext(context["scratch_root"])
+    return _deep_audit_io.tempfile.TemporaryDirectory(prefix="factory-native-")
+
+
+def _local_baseline_argv(commands, context):
+    """Preserve pinned profile bytes while binding baseline findings to exact rule IDs."""
+    if context:
+        commands[0]["argv"].insert(
+            commands[0]["argv"].index("--config"), "--no-rewrite-rule-ids"
+        )
+
+
+def _run_native_profile(
+    profile,
+    contract,
+    source,
+    output,
+    inventory,
+    lane,
+    paths,
+    *,
+    execution_context=None,
+    cancelled=None,
+):
+    options = (
+        {"execution_context": execution_context, "cancelled": cancelled}
+        if execution_context
+        else {}
+    )
     _deep_audit_io._osv_profile_preflight(profile, lane)
     rule_inventory = None
     config_path = _deep_audit_io._fuzz_profile_preflight(profile, lane)
@@ -4470,7 +4820,9 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
                 "E_SEMGREP_EXECUTION", "bounded source inventory required"
             )
         config = _deep_audit_io.Path(
-            "/opt/factory/rules/semgrep-pattern-limited.yml"
+            execution_context["rules_path"]
+            if execution_context
+            else "/opt/factory/rules/semgrep-pattern-limited.yml"
         ).read_bytes()
         semgrep_rules, rule_inventory = _deep_audit_io._semgrep_rule_inventory(
             config, lane
@@ -4485,13 +4837,13 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         lane.get("timeout_seconds"), "timeout", minimum=1, maximum=3600
     )
     started = _deep_audit_io.time.monotonic()
-    with _deep_audit_io.tempfile.TemporaryDirectory(
-        prefix="factory-native-"
-    ) as temporary:
+    with _native_profile_scratch(execution_context) as temporary:
         scratch = _deep_audit_io.Path(temporary)
         probe = scratch / "probe"
         probe.mkdir()
-        version = _deep_audit_io._native_version(profile, source, probe, timeout)
+        version = _deep_audit_io._native_version(
+            profile, source, probe, timeout, **options
+        )
         query_inventory = _deep_audit_io._codeql_query_preflight(
             profile,
             source,
@@ -4516,8 +4868,13 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
                 **({"config": str(config_path)} if config_path is not None else {}),
             },
         )
+        _local_baseline_argv(commands, execution_context)
         invocations = _deep_audit_io._adapter_commands(
-            commands, {**lane, "timeout_seconds": int(remaining)}, source, scratch
+            commands,
+            {**lane, "timeout_seconds": int(remaining)},
+            source,
+            scratch,
+            **options,
         )
         query_execution = (
             _deep_audit_io._codeql_query_execution(
@@ -4559,7 +4916,7 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
             ledger_json = invocations[0].pop("native_rule_ledger_json", None)
         semgrep_execution = (
             _deep_audit_io._semgrep_rule_runs(
-                profile, lane, source, scratch, semgrep_rules, started
+                profile, lane, source, scratch, semgrep_rules, started, **options
             )
             if semgrep_rules is not None
             else None

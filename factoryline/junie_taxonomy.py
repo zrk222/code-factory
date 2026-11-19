@@ -498,6 +498,11 @@ def validate_junie_contribution(
 def junie_taxonomy(root: Path | str) -> dict[str, object]:
     """Return the complete read-only taxonomy Junie can discover through MCP."""
     workspace = _workspace(root)
+    pack = _pack()
+    return _taxonomy(workspace, pack, _manifest(workspace, pack))
+
+
+def _taxonomy(workspace: Path, pack: dict, manifest: dict) -> dict[str, object]:
     stages = [dict(stage, tools=list(stage["tools"])) for stage in _STAGES]
     canonical_audit_taxonomy = audit_taxonomy()
     core = {
@@ -518,7 +523,7 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
         ],
         "ide_workflow": {
             "schema": "factory.junie-ide-workflow.v1",
-            "daily_action": _pack_text("daily_action_guidance"),
+            "daily_action": pack["daily_action_guidance"],
             "entry": "Open the JetBrains FactoryLine Junie tab, inspect this taxonomy, then open CF + ForgeLine evidence for the current project.",
             "verify": [
                 "Inspect the changed diff and sealed intent in JetBrains before choosing a lane.",
@@ -546,7 +551,7 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
         },
         "claim_boundary": "Local taxonomy does not install, enable, start, observe, or control Junie; no proof of external IDE state.",
         "authority": dict(_AUTHORITY),
-        "project_pack": junie_manifest(workspace),
+        "project_pack": manifest,
     }
     taxonomy_sha256 = _sha(core)
     return {
@@ -556,30 +561,30 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
     }
 
 
-def _guidance() -> bytes:
+def _guidance(pack: dict | None = None) -> bytes:
+    pack = _pack() if pack is None else pack
     stages = "\n".join(
         f"{index}. **{stage['label']}** — {stage['when']}"
         for index, stage in enumerate(_STAGES, start=1)
     )
     return (
-        _pack_text("guidance_template").replace("{stages}", stages)
-        + _pack_text("native_deep_audit")
-        + _pack_text("daily_action_guidance")
+        pack["guidance_template"].replace("{stages}", stages)
+        + pack["native_deep_audit"]
+        + pack["daily_action_guidance"]
     ).encode("utf-8")
 
 
-def _junie_proof_agent_bytes() -> bytes:
+def _junie_proof_agent_bytes(pack: dict | None = None) -> bytes:
     """Return the native Junie read-only proof-review subagent manifest."""
+    pack = _pack() if pack is None else pack
     return (
-        _pack_text("proof_agent")
-        + _pack_text("native_deep_audit")
-        + _pack_text("daily_action_guidance")
+        pack["proof_agent"] + pack["native_deep_audit"] + pack["daily_action_guidance"]
     ).encode("utf-8")
 
 
-def _pack_text(key: str) -> str:
+def _pack() -> dict:
     resource = files("factoryline").joinpath("data", "junie_pack.json")
-    return json.loads(resource.read_text(encoding="utf-8"))[key]
+    return json.loads(resource.read_text(encoding="utf-8"))
 
 
 def _junie_mcp_bytes(workspace: Path) -> bytes:
@@ -606,9 +611,17 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
     Junie settings file and carries no execution or release authority.
     """
     workspace = _workspace(root)
-    guidance = _guidance()
-    mcp = _junie_mcp_bytes(workspace)
-    subagent = _junie_proof_agent_bytes()
+    pack = _pack()
+    return _manifest(workspace, pack)
+
+
+def _manifest(
+    workspace: Path, pack: dict, mcp: bytes | None = None
+) -> dict[str, object]:
+    guidance = _guidance(pack)
+    mcp = _junie_mcp_bytes(workspace) if mcp is None else mcp
+    subagent = _junie_proof_agent_bytes(pack)
+    canonical_audit_taxonomy = audit_taxonomy()
     core: dict[str, object] = {
         "schema": MANIFEST_SCHEMA,
         "marker": "JUNIE_FACTORYLINE_MANIFEST_READY",
@@ -644,10 +657,10 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
             "mcp": ".junie/mcp/mcp.json",
             "subagents": ".junie/agents/",
         },
-        "daily_action_guidance": _pack_text("daily_action_guidance"),
-        "native_workers": audit_taxonomy()["native_workers"],
-        "native_worker_contract": audit_taxonomy()["native_worker_contract"],
-        "agent_usage_contract": audit_taxonomy()["agent_usage_contract"],
+        "daily_action_guidance": pack["daily_action_guidance"],
+        "native_workers": canonical_audit_taxonomy["native_workers"],
+        "native_worker_contract": canonical_audit_taxonomy["native_worker_contract"],
+        "agent_usage_contract": canonical_audit_taxonomy["agent_usage_contract"],
         "operating_profile": {
             "version": "4",
             "mode": "supervised",
@@ -767,8 +780,9 @@ def install_junie_factoryline_pack(
     agents_target = workspace / ".junie" / "AGENTS.md"
     mcp_target = workspace / ".junie" / "mcp" / "mcp.json"
     subagent_target = workspace / SUBAGENT_PATH
-    agents = _guidance()
-    subagent = _junie_proof_agent_bytes()
+    pack = _pack()
+    agents = _guidance(pack)
+    subagent = _junie_proof_agent_bytes(pack)
     # Check every conflict before making either write.
     if agents_target.exists() and agents_target.read_bytes() != agents:
         raise JunieTaxonomyError(
@@ -789,7 +803,7 @@ def install_junie_factoryline_pack(
         if changed_agents or changed_mcp or changed_subagent
         else "already_current"
     )
-    manifest = junie_manifest(workspace)
+    manifest = _manifest(workspace, pack, mcp)
     return {
         "schema": INSTALL_SCHEMA,
         "marker": "JUNIE_FACTORYLINE_PACK_INSTALLED",
@@ -803,7 +817,7 @@ def install_junie_factoryline_pack(
             "subagent": {"path": SUBAGENT_PATH, "sha256": sha256(subagent).hexdigest()},
         },
         "manifest": {"schema": MANIFEST_SCHEMA, "sha256": manifest["manifest_sha256"]},
-        "taxonomy_sha256": junie_taxonomy(workspace)["taxonomy_sha256"],
+        "taxonomy_sha256": _taxonomy(workspace, pack, manifest)["taxonomy_sha256"],
         "authority": dict(_AUTHORITY),
         "next_action": "In JetBrains, enable the project code-factory MCP server and, if supported by this Junie build, the read-only factoryline-proof subagent. Ask Junie to call factory.junie_taxonomy before a scoped mission. FactoryLine did not enable or contact Junie.",
     }

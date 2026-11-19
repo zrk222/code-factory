@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
+import pytest
 
 from factoryline.benchmark_lab import evaluate_benchmark
 from factoryline.independent_execution import validate_execution_attestation
@@ -8,6 +9,44 @@ from factoryline.incremental_scheduler import plan_incremental
 
 def _digest(seed: str) -> str:
     return hashlib.sha256(seed.encode()).hexdigest()
+
+
+@pytest.mark.parametrize("path", ["web/app.tsx", "server/app.go", "core/app.rs"])
+def test_polyglot_sarif_handoff_and_existing_graph_chain_preserve_source(
+    tmp_path, path
+):
+    """Synthetic SARIF conversion, not native detector or signer qualification."""
+    from test_deep_audit_sarif import report, ANALYZER
+    from factoryline.deep_audit_sarif import normalize_sarif
+    from factoryline.deep_audit_io import canonical_bytes, sha256_bytes
+    from factoryline.deep_audit import _agent_actions
+    from factoryline.deep_audit_loop import _chain
+    from factoryline.audit_action_refs import audit_remediation_packet
+
+    payload = report()
+    raw = canonical_bytes(payload).replace(b"app.py", path.encode())
+    (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / path).write_bytes(b"source\nsink\n")
+    (tmp_path / "report.json").write_bytes(raw)
+    source_sha = sha256_bytes((tmp_path / path).read_bytes())
+    finding = normalize_sarif(
+        tmp_path,
+        {"path": "report.json", "sha256": sha256_bytes(raw)},
+        ANALYZER,
+        {path: source_sha},
+    )["findings"][0]
+    action = _agent_actions("a" * 64, [finding])[0]
+    assert action["finding_id"] == finding["finding_id"]
+    assert action["affected_paths"] == [path]
+    assert action["repair_packet"] == audit_remediation_packet("a" * 64, finding)
+    assert action["repair_packet"]["automatic_execution"] is False
+    chain = _chain(finding, {"decision": "REVIEW_REQUIRED"}, "report.json")
+    assert (chain["finding_id"], chain["source"], chain["source_sha256"]) == (
+        finding["finding_id"],
+        path,
+        source_sha,
+    )
+    assert chain["handoff"] == "human_review_required"
 
 
 def test_receipts_are_bounded_and_cross_module_authority_stays_disabled(tmp_path):

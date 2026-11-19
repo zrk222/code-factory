@@ -10,7 +10,7 @@ timeouts, memory limits, challenge outcomes, and report completeness.
 | `codeql-python-worker` | CodeQL 2.27.1 Python bundle | SARIF | Full interprocedural Python query suite; this target covers Python only. |
 | `codeql-javascript-worker` | CodeQL 2.27.1, JavaScript queries 2.4.6 | SARIF with source-bound code flows | Full JavaScript/TypeScript security-extended suite, including modeled cross-module flows. Candidate extraction and framework models determine coverage. |
 | `codeql-actions-worker` | CodeQL 2.27.1, Actions queries 0.6.36 | SARIF with workflow source-to-sink flows | Full GitHub Actions security-extended suite; workflow injection and trust-boundary models depend on extracted YAML. This does not execute workflows or prove external actions safe. |
-| `semgrep-worker` | Semgrep 1.141.0, fifteen local Python/JavaScript/TypeScript/PHP rules | SARIF | Tracks declared request sources through local aliases into SQL, command, HTML and filesystem-path sinks; also checks unsafe Python deserialization and disabled TLS. Pattern-limited only: it cannot satisfy the `interprocedural-full` static gate. Candidate `.semgrepignore` still requires native source accounting. |
+| `semgrep-worker` | OpenGrep OSS 1.15.0 (Semgrep-compatible), thirty rules across twelve source languages | SARIF with source-bound local flows | Request-to-shell/SQL checks cover Python, JS/TS, PHP, Go, Java, C# and Ruby; explicit unsafe API/trust checks also cover Rust, C/C++ and Swift. Native controls verify safe counterparts, aliases, trace endpoints and detector removal. Pattern-limited only; no interfile or `interprocedural-full` claim. Candidate `.semgrepignore` still requires native source accounting. |
 | `osv-worker` | OSV-Scanner 2.2.0 + immutable PyPI database snapshot | OSV JSON | Offline PyPI dependency scanning only; the pinned database snapshot ages and does not cover other ecosystems. |
 | `syft-worker` | Syft 1.33.0 | Syft JSON | Inventory only; this is not a vulnerability scan. |
 | `gitleaks-worker` | Gitleaks 8.28.0 | SARIF | Built-in rules are pinned with the image; native accounting limitations remain. |
@@ -138,7 +138,7 @@ Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,
 `rules/tests/javascript-controls.js` to both `semgrep-pattern-limited.js` and
 `semgrep-pattern-limited.ts`, and the rules YAML beside those files. Run the
-pinned Semgrep image with `semgrep --test --metrics=off
+pinned Semgrep-compatible OpenGrep image with `semgrep --test --metrics=off
 --disable-version-check <folder>`. Set `HOME=/tmp` and
 `SEMGREP_SETTINGS_FILE=/tmp/settings.yml` when the container is read-only.
 

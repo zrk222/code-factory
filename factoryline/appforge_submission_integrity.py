@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .appforge_evidence_kit import _read_candidate
+from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
 
 CONTRACT_SCHEMA = "factory.appforge.submission-integrity-contract.v1"
@@ -33,39 +34,19 @@ def _file_sha(p: Path) -> str:
 
 
 def _local(root: Path, path: Path, exists: bool = True) -> Path:
-    workspace = Path(root).resolve()
-    target = path.resolve() if path.is_absolute() else (workspace / path).resolve()
-    try:
-        target.relative_to(workspace)
-    except ValueError as exc:
-        raise RevenueForgeError(
-            "APPFORGE_SUBMISSION_INTEGRITY_PATH_REJECTED",
-            "paths must remain inside the workspace",
-        ) from exc
-    if exists and not target.is_file():
-        raise RevenueForgeError(
-            "APPFORGE_SUBMISSION_INTEGRITY_INPUT_UNAVAILABLE",
-            "input must be a regular workspace file",
-        )
-    return target
+    return _artifact_local(Path(root), path, "APPFORGE_SUBMISSION_INTEGRITY", exists)
 
 
 def _read(root: Path, path: Path) -> tuple[dict[str, Any], Path]:
     source = _local(root, path)
-    if source.stat().st_size > MAX_BYTES:
-        raise RevenueForgeError(
-            "APPFORGE_SUBMISSION_INTEGRITY_INPUT_TOO_LARGE", "input exceeds 1 MiB"
-        )
-    try:
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RevenueForgeError(
-            "APPFORGE_SUBMISSION_INTEGRITY_INPUT_INVALID", "input must be JSON"
-        ) from exc
-    if not isinstance(value, dict):
-        raise RevenueForgeError(
-            "APPFORGE_SUBMISSION_INTEGRITY_INPUT_INVALID", "input must be an object"
-        )
+    value = _artifact_json(
+        source,
+        "APPFORGE_SUBMISSION_INTEGRITY",
+        MAX_BYTES,
+        object_message="input must be an object",
+        large_message="input exceeds 1 MiB",
+        invalid_message="input must be JSON",
+    )
     return value, source
 
 

@@ -15,6 +15,7 @@ runner, alter a contract, grant credentials, or authorize a release.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -103,13 +104,7 @@ class IntakeParametersError(ValueError):
 
 def _canonical(value: Any) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError, UnicodeEncodeError) as exc:
         raise IntakeParametersError(
             "INTAKE_PARAMETERS_CANONICAL", "value is not canonical JSON"

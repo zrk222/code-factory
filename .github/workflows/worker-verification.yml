@@ -54,7 +54,7 @@ on:
       target:
         description: Manual worker selection; automatic PR/push checks are unchanged
         type: choice
-        options: [all, osv-worker]
+        options: [all, osv-worker, semgrep-worker]
         default: all
 
 permissions:
@@ -95,6 +95,10 @@ jobs:
           let temporary;
           try {
             const event = JSON.parse(process.env.GITHUB_EVENT_JSON);
+            if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && event.inputs?.target === 'semgrep-worker') {
+              appendFileSync(process.env.GITHUB_OUTPUT, `sdk=false\nmatrix=${JSON.stringify(targets)}\nreason=manual-semgrep-only\n`);
+              process.exit(0);
+            }
             if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && event.inputs?.target === 'osv-worker') {
               appendFileSync(process.env.GITHUB_OUTPUT, `sdk=true\nmatrix=${JSON.stringify(['osv-worker'])}\nreason=manual-osv-only\n`);
               process.exit(0);
@@ -137,6 +141,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - name: Install the source-bound SARIF normalizer
+        run: python -m pip install .
       - name: Build hash-bound multi-language rule worker
         run: docker build --platform linux/amd64 --target semgrep-worker -f deploy/deep-adapters/Dockerfile -t factory-semgrep:candidate .
       - name: Verify vulnerable and safe native controls in isolation
@@ -150,9 +159,11 @@ jobs:
             semgrep-surface-verification.json
             semgrep-surface-verification.json.sarif
             semgrep-surface-verification.json.suppression-enabled.sarif
+            semgrep-surface-verification.json.normalized.json
+            semgrep-surface-verification.json.rule-execution.json
           if-no-files-found: error
   sdk-workers:
-    needs: plan-worker-targets
+    needs: [plan-worker-targets, selector-controls]
     if: needs.plan-worker-targets.outputs.sdk == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -167,8 +178,6 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
-      - name: Check regression verifier positive and fail-closed controls
-        run: node --test scripts/verify_worker_cves.test.mjs
       - name: Build SDK worker from reviewed recipe
         run: docker build --platform linux/amd64 --target "${{ matrix.target }}" -f deploy/deep-adapters/Dockerfile -t factory-worker:candidate .
       - name: Verify original fifteen CVEs and package imports using immutable image ID

@@ -3854,18 +3854,6 @@ def logging_security_precondition(
     return log_security_precondition(module, call, witness, input_flow)
 
 
-def _bound_module_settings(statement):
-    from .review_audits import _bound_names
-
-    names = _bound_names(statement)
-    names.update(
-        n.name
-        for n in ast.walk(statement)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    )
-    return names
-
-
 def _hook_return(node):
     return bool(
         isinstance(node, ast.Call)

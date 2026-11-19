@@ -20,6 +20,7 @@ from .oracle_firewall import (
     AUTHORITY_ORIGINS,
     verify_oracle_contract,
 )
+from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import RevenueForgeError
 
 
@@ -55,38 +56,18 @@ def _candidate(value: object, field: str) -> dict[str, str]:
 
 
 def _local(root: Path, path: Path, *, exists: bool = True) -> Path:
-    workspace = Path(root).resolve()
-    target = path.resolve() if path.is_absolute() else (workspace / path).resolve()
-    try:
-        target.relative_to(workspace)
-    except ValueError as exc:
-        raise RevenueForgeError(
-            "APPFORGE_ORACLE_PATH_REJECTED", "paths must remain inside the workspace"
-        ) from exc
-    if exists and not target.is_file():
-        raise RevenueForgeError(
-            "APPFORGE_ORACLE_INPUT_UNAVAILABLE",
-            "input must be a regular workspace file",
-        )
-    return target
+    return _artifact_local(Path(root), path, "APPFORGE_ORACLE", exists)
 
 
 def _read(root: Path, path: Path) -> tuple[dict[str, Any], Path]:
     source = _local(root, path)
-    if source.stat().st_size > MAX_BYTES:
-        raise RevenueForgeError(
-            "APPFORGE_ORACLE_INPUT_TOO_LARGE", "input exceeds 1 MiB"
-        )
-    try:
-        value = json.loads(source.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RevenueForgeError(
-            "APPFORGE_ORACLE_INPUT_INVALID", "input must be valid JSON"
-        ) from exc
-    if not isinstance(value, dict) or value.get("schema") != AUTHORITY_SCHEMA:
-        raise RevenueForgeError(
-            "APPFORGE_ORACLE_SCHEMA_REJECTED", f"expected {AUTHORITY_SCHEMA}"
-        )
+    value = _artifact_json(
+        source,
+        "APPFORGE_ORACLE",
+        MAX_BYTES,
+        schema=AUTHORITY_SCHEMA,
+        large_message="input exceeds 1 MiB",
+    )
     return value, source
 
 
