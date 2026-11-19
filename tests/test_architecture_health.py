@@ -76,6 +76,89 @@ def test_health_collects_files_and_excludes_package_init(tmp_path: Path) -> None
     assert metrics["module_domains"] == {"manifest_missing": 1}
 
 
+def test_evaluation_shares_one_request_inventory_with_size_guard(monkeypatch, tmp_path):
+    policy = _policy(tmp_path / "policy.json")
+    tracked = [policy]
+    calls = []
+    original_guard = architecture_health.evaluate_file_size_guard
+
+    def discover(root):
+        calls.append(root)
+        return tracked
+
+    def guard(root, policy, *, tracked_paths, finding):
+        assert tracked_paths is tracked
+        return original_guard(
+            root, policy, tracked_paths=tracked_paths, finding=finding
+        )
+
+    monkeypatch.setattr(architecture_health, "_tracked_files", discover)
+    monkeypatch.setattr(architecture_health, "evaluate_file_size_guard", guard)
+    result = evaluate_architecture_health(tmp_path, policy)
+    assert calls == [tmp_path.resolve()]
+    assert result["metrics"]["tracked_files"] == 1
+    assert result["metrics"]["file_size_guard"]["enforced"] is True
+
+
+def test_public_health_requests_refresh_changed_inventory(monkeypatch, tmp_path):
+    policy = _policy(tmp_path / "policy.json")
+    source = tmp_path / "new.py"
+    source.write_text("pass\n", encoding="utf-8")
+    tracked = [policy]
+    calls = []
+
+    def discover(root):
+        calls.append(root)
+        return list(tracked)
+
+    monkeypatch.setattr(architecture_health, "_tracked_files", discover)
+    before = evaluate_architecture_health(tmp_path, policy)
+    tracked.append(source)
+    after = evaluate_architecture_health(tmp_path, policy)
+    assert before["metrics"]["python_files"] == 0
+    assert after["metrics"]["python_files"] == 1
+    assert len(calls) == 2
+    collect_architecture_health(tmp_path)
+    release_cadence_status(tmp_path)
+    assert len(calls) == 4
+
+
+def test_reentrant_evaluation_keeps_inventories_request_local(monkeypatch, tmp_path):
+    policy = _policy(tmp_path / "policy.json")
+    source = tmp_path / "nested.py"
+    source.write_text("pass\n", encoding="utf-8")
+    calls = []
+    nested = []
+
+    def discover(root):
+        calls.append(root)
+        if len(calls) == 1:
+            nested.append(evaluate_architecture_health(root, policy))
+            return [policy]
+        return [policy, source]
+
+    monkeypatch.setattr(architecture_health, "_tracked_files", discover)
+    outer = evaluate_architecture_health(tmp_path, policy)
+    assert len(calls) == 2
+    assert outer["metrics"]["python_files"] == 0
+    assert nested[0]["metrics"]["python_files"] == 1
+
+
+def test_evaluation_observes_git_index_changes_between_requests(tmp_path):
+    import subprocess
+
+    policy = _policy(tmp_path / "policy.json")
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "policy.json"], check=True)
+    before = evaluate_architecture_health(tmp_path, policy)
+    (tmp_path / "new.py").write_text("pass\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "new.py"], check=True)
+    after = evaluate_architecture_health(tmp_path, policy)
+    assert before["metrics"]["python_files"] == 0
+    assert after["metrics"]["python_files"] == 1
+    assert after["metrics"]["tracked_files"] == before["metrics"]["tracked_files"] + 1
+
+
 def test_health_blocks_budget_regression_but_keeps_debt_separate(
     tmp_path: Path,
 ) -> None:
