@@ -2026,6 +2026,31 @@ def test_pre_pr_reuse_binds_live_obligation_and_rechecks_real_proof(tmp_path, mu
     )
 
 
+def test_pre_pr_executable_native_alias_retargets_fail_closed(tmp_path):
+    import shutil
+    import sys
+    from factoryline.incremental_scheduler import _pre_pr_executable_identity
+
+    native = Path(sys.executable).resolve(strict=True)
+    other = tmp_path / native.name
+    shutil.copy2(native, other)
+    alias = tmp_path / ("alias" + native.suffix)
+    try:
+        alias.symlink_to(native)
+    except OSError:
+        pytest.skip("Host cannot create an executable symlink")
+    check = {"argv": [str(alias)], "env": {}}
+    first = _pre_pr_executable_identity(check)
+    assert first is not None
+    assert first == _pre_pr_executable_identity({"argv": [str(native)], "env": {}})
+    alias.unlink()
+    alias.symlink_to(other)
+    assert _pre_pr_executable_identity(check) != first
+    alias.unlink()
+    alias.symlink_to(tmp_path / "missing-native")
+    assert _pre_pr_executable_identity(check) is None
+
+
 def _pre_pr_seed_owned_tool(tmp_path, monkeypatch, manifest, mutation):
     import os
     import shutil

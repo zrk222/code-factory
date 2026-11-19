@@ -858,51 +858,13 @@ def run_pre_pr(
 
     root = Path(root).resolve()
     schedule, live, head = _pre_pr_inputs(root, manifest)
-    # Host observations, never caller tool labels, participate in the existing
-    # content-addressed key. Copy nested declarations rather than mutate input.
-    checks = {row["id"]: row for row in live["checks"]}
-    schedule = {**schedule, "gates": [dict(row) for row in schedule["gates"]]}
-    for gate in schedule["gates"]:
-        if gate["proof"]:
-            proof = gate["proof"]
-            gate["proof"] = {
-                **proof,
-                "toolchain": {
-                    **proof.get("toolchain", {}),
-                    "pre_pr_executable_sha256": _pre_pr_executable_identity(
-                        checks[gate["id"]]
-                    )
-                    or "unverifiable",
-                },
-            }
+    schedule = _pre_pr_observed_schedule(schedule, live)
     budget = _pre_pr_execution_budget(execution_budget, schedule)
-    if before_dispatch is not None and not callable(before_dispatch):
-        raise SchedulerError(
-            "E_PRE_PR_DISPATCH", "the trusted dispatch check must be callable"
-        )
+    _pre_pr_validate_dispatch_hook(before_dispatch)
     source = _source_digest(root)[0]
     oracle = _pre_pr_oracle(root, manifest["oracle"], live["contract_sha256"])
     plan = plan_incremental(root, schedule)
-    # A Git diff is unchanged across invocations. Exact current receipts, not
-    # diff membership alone, decide whether that obligation needs execution.
-    gates = {row["id"]: row for row in schedule["gates"]}
-    for item in plan["items"]:
-        proof = gates[item["id"]]["proof"]
-        if item["reason"] != "DEPENDENCY_CLOSURE_CHANGED" or not proof:
-            continue
-        if proof.get("assurance_level") not in (None, schedule["assurance_level"]):
-            continue
-        checked = evaluate_proofs(
-            root,
-            {"schema": "factory.proof-request.v1", "gates": [proof]},
-            changed_paths=schedule["changed_paths"],
-        )["items"][0]
-        if checked["disposition"] == "REUSE":
-            item.update(
-                disposition="REUSE",
-                reason=checked["reason"],
-                proof={key: checked[key] for key in ("proof_key", "receipt_sha256")},
-            )
+    _pre_pr_reconsider_exact_reuse(root, plan, schedule)
     _pre_pr_bind_reuse(plan, schedule, live)
     proof_snapshots = _pre_pr_proof_snapshots(root, plan, schedule, live)
     started = monotonic_ns()
@@ -972,6 +934,56 @@ def run_pre_pr(
         "claim_boundary": "Local declared-obligation reconciliation only; oracle declared independence is not authenticated execution, and no merge or release is authorized.",
     }
     return {**core, "receipt_sha256": _sha(core)}
+
+
+def _pre_pr_validate_dispatch_hook(before_dispatch: object) -> None:
+    """Require a callable hook before any scheduled gate can be admitted."""
+    if before_dispatch is not None and not callable(before_dispatch):
+        raise SchedulerError(
+            "E_PRE_PR_DISPATCH", "the trusted dispatch check must be callable"
+        )
+
+
+def _pre_pr_observed_schedule(schedule: dict, live: dict) -> dict:
+    """Bind host observations without mutating caller declarations."""
+    checks = {row["id"]: row for row in live["checks"]}
+    schedule = {**schedule, "gates": [dict(row) for row in schedule["gates"]]}
+    for gate in schedule["gates"]:
+        if gate["proof"]:
+            proof = gate["proof"]
+            gate["proof"] = {
+                **proof,
+                "toolchain": {
+                    **proof.get("toolchain", {}),
+                    "pre_pr_executable_sha256": _pre_pr_executable_identity(
+                        checks[gate["id"]]
+                    )
+                    or "unverifiable",
+                },
+            }
+    return schedule
+
+
+def _pre_pr_reconsider_exact_reuse(root: Path, plan: dict, schedule: dict) -> None:
+    """An unchanged Git diff may still have an exact current proof."""
+    gates = {row["id"]: row for row in schedule["gates"]}
+    for item in plan["items"]:
+        proof = gates[item["id"]]["proof"]
+        if item["reason"] != "DEPENDENCY_CLOSURE_CHANGED" or not proof:
+            continue
+        if proof.get("assurance_level") not in (None, schedule["assurance_level"]):
+            continue
+        checked = evaluate_proofs(
+            root,
+            {"schema": "factory.proof-request.v1", "gates": [proof]},
+            changed_paths=schedule["changed_paths"],
+        )["items"][0]
+        if checked["disposition"] == "REUSE":
+            item.update(
+                disposition="REUSE",
+                reason=checked["reason"],
+                proof={key: checked[key] for key in ("proof_key", "receipt_sha256")},
+            )
 
 
 def _pre_pr_proof_snapshots(root: Path, plan: dict, schedule: dict, live: dict) -> dict:
@@ -1153,23 +1165,26 @@ def _pre_pr_executable_observation(check: dict) -> dict | None:
         resolved = shutil.which(argv[0], path=_process_environment(check)["PATH"])
         if not resolved or not Path(resolved).is_absolute():
             return None
-        path = Path(resolved)
+        path = Path(resolved).resolve(strict=True)
         identity, digest = _stable_file_read(path, label="pre-PR executable")
         # Script/shebang launch chains are not a single bound native executable.
         with path.open("rb") as handle:
             magic = handle.read(4)
         if not (
             magic.startswith(b"MZ")
-            or magic == b"\x7fELF"
             or magic
             in {
+                b"\x7fELF",
                 b"\xcf\xfa\xed\xfe",
                 b"\xfe\xed\xfa\xcf",
                 b"\xca\xfe\xba\xbe",
             }
         ):
             return None
-        if (identity, digest) != _stable_file_read(path, label="pre-PR executable"):
+        if (identity, digest, path) != (
+            *_stable_file_read(path, label="pre-PR executable"),
+            Path(resolved).resolve(strict=True),
+        ):
             return None
         return {"path": str(path), "identity": identity, "sha256": digest}
     except (OSError, ValueError, ProofReuseError):
