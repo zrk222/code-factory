@@ -93,8 +93,9 @@ def test_scan_interface_format_conflicts_precede_execution(monkeypatch, other):
     assert error.value.code == 2
 
 
+@pytest.mark.parametrize("option", ["--output-contract", "--output-contr"])
 def test_scan_output_contract_is_bound_and_discovery_does_not_scan(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, option
 ):
     import hashlib
     import factoryline.cli_first_lap as cli
@@ -104,7 +105,7 @@ def test_scan_output_contract_is_bound_and_discovery_does_not_scan(
         adoption, "run_repo_scan", lambda *a, **k: pytest.fail("discovery scanned")
     )
     missing = tmp_path / "not created"
-    assert main(["scan", "--root", str(missing), "--output-contract"]) == 0
+    assert main(["scan", "--root", str(missing), option]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result == cli.scan_output_contract()
     assert result["schema"] == "factory.scan-interface-discovery.v1"
@@ -114,16 +115,17 @@ def test_scan_output_contract_is_bound_and_discovery_does_not_scan(
     assert not missing.exists()
 
 
-def test_scan_precommit_configuration_is_print_only(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("option", ["--pre-commit-config", "--pre-commit-confi"])
+def test_scan_precommit_configuration_is_print_only(
+    tmp_path, monkeypatch, capsys, option
+):
     import yaml
     import factoryline.adoption as adoption
 
     monkeypatch.setattr(
         adoption, "run_repo_scan", lambda *a, **k: pytest.fail("config scanned")
     )
-    assert (
-        main(["scan", "--root", str(tmp_path / "missing"), "--pre-commit-config"]) == 0
-    )
+    assert main(["scan", "--root", str(tmp_path / "missing"), option]) == 0
     text = capsys.readouterr().out
     hook = yaml.safe_load(text)["repos"][0]["hooks"][0]
     assert hook["entry"] == "factory scan --static-only --sarif --root ."
@@ -134,7 +136,15 @@ def test_scan_precommit_configuration_is_print_only(tmp_path, monkeypatch, capsy
 
 
 @pytest.mark.parametrize(
-    "option", ["--sarif", "--output-contract", "--pre-commit-config"]
+    "option",
+    [
+        "--sarif",
+        "--sar",
+        "--output-contract",
+        "--output-contr",
+        "--pre-commit-config",
+        "--pre-commit-confi",
+    ],
 )
 def test_scan_interface_machine_modes_disable_tty_update_check(option):
     from factoryline.cli import _interactive_update_check_allowed
@@ -219,6 +229,44 @@ def test_scan_sarif_shared_selection_preserves_static_multiplicity():
     }
     assert cli._scan_findings(result) == [static, static, native]
     assert len(cli._scan_sarif(result, 0)["runs"][0]["results"]) == 3
+
+
+@pytest.mark.parametrize("failed", [True, False])
+def test_scan_execution_successful_follows_analyzer_not_blocked_verdict(failed):
+    from factoryline.cli_first_lap import _scan_execution_successful, _scan_sarif
+
+    result = _scan_interface_result("BLOCKED")
+    result["static_security"]["state"] = "INVALID" if failed else "BLOCKED"
+    invocation = _scan_sarif(result, 2)["runs"][0]["invocations"][0]
+    assert invocation["executionSuccessful"] is (not failed)
+    assert _scan_execution_successful(result) is (not failed)
+
+
+@pytest.mark.parametrize(
+    "argv,expected",
+    [
+        (["scan", "--output-contr"], True),
+        (["scan", "--pre-commit-confi"], True),
+        (["scan", "--oracle-evidence"], False),
+        (["plan", "--output-contr"], False),
+    ],
+)
+def test_scan_machine_option_matches_only_discovery_prefixes(argv, expected):
+    from factoryline.ops_telemetry import _scan_machine_option
+
+    assert (
+        _scan_machine_option(argv, ("--output-contract", "--pre-commit-config"))
+        is expected
+    )
+
+
+def test_scan_sarif_malformed_tenant_contract_is_unsuccessful(tmp_path, capsys):
+    (tmp_path / "app.py").write_text("value = 1\n")
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory/tenant-read-contract.json").write_text("{}")
+    assert main(["scan", "--root", str(tmp_path), "--static-only", "--sarif"]) == 2
+    run = json.loads(capsys.readouterr().out)["runs"][0]
+    assert run["invocations"][0]["executionSuccessful"] is False
 
 
 @pytest.mark.parametrize(

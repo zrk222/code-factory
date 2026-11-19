@@ -249,14 +249,21 @@ def _root_from_argv(argv: list[str], fallback: Path) -> Path:
     return Path(fallback).resolve()
 
 
+def _scan_machine_option(argv: Iterable[str], names: Iterable[str]) -> bool:
+    """Recognize argparse's accepted long-option prefixes without loading parsers."""
+    values = tuple(argv)
+    return values[:1] == ("scan",) and any(
+        value.startswith("--") and any(name.startswith(value) for name in names)
+        for value in values[1:]
+    )
+
+
 def is_read_only_command(argv: Iterable[str]) -> bool:
     """Identify commands whose existing contract guarantees zero workspace writes."""
     argv = tuple(argv)
     if not argv:
         return True
-    if argv[0] == "scan" and {"--output-contract", "--pre-commit-config"}.intersection(
-        argv
-    ):
+    if _scan_machine_option(argv, ("--output-contract", "--pre-commit-config")):
         return True
     prefix: list[str] = []
     for item in argv:

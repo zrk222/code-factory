@@ -562,6 +562,25 @@ def _sarif_native_context(result: dict) -> dict:
     return properties
 
 
+def _scan_execution_successful(result: dict) -> bool:
+    """Separate completed findings from an analyzer that could not execute."""
+    static = result.get("static_security", {})
+    layers = [
+        result,
+        static,
+        static.get("python_ast_security", {}),
+        result.get("deep_audit"),
+    ]
+    return all(
+        layer.get("state") not in {"INVALID", "ERROR"}
+        and not str(layer.get("schema", "")).endswith(".error.v1")
+        and layer.get("audit_coverage", {}).get("measurement_state")
+        not in {"invalid", "error", "failed"}
+        for layer in layers
+        if isinstance(layer, dict)
+    )
+
+
 def _scan_sarif(result: dict, code: int) -> dict:
     rows = [_sarif_result(row) for row in _scan_findings(result)]
     notifications = []
@@ -583,10 +602,7 @@ def _scan_sarif(result: dict, code: int) -> dict:
                 },
             }
         )
-    invocation = {
-        "executionSuccessful": result.get("state") != "INVALID"
-        and not str(result.get("schema", "")).endswith(".error.v1")
-    }
+    invocation = {"executionSuccessful": _scan_execution_successful(result)}
     if notifications:
         invocation["toolExecutionNotifications"] = notifications
     return {

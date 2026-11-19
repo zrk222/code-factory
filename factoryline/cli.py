@@ -4656,7 +4656,13 @@ def _interactive_update_check_allowed(
     """Keep network checks out of automation, machine output, and server modes."""
     import os
 
+    from .ops_telemetry import _scan_machine_option
+
     values = list(argv)
+    if _scan_machine_option(
+        values, ("--sarif", "--output-contract", "--pre-commit-config")
+    ):
+        return False
     environment = os.environ if environ is None else environ
     input_stream = sys.stdin if stdin is None else stdin
     error_stream = sys.stderr if stderr is None else stderr
