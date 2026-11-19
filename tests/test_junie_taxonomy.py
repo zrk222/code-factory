@@ -1573,3 +1573,135 @@ def test_php_supplemental_security_scope_is_visible_and_bounded():
     assert "PHP .php" in scope
     assert "callee identity unresolved" in scope
     assert "PDO/framework/cross-function flows unsupported" in scope
+
+
+def test_junie_manifest_uses_one_detached_audit_snapshot(tmp_path, monkeypatch):
+    from factoryline import junie_taxonomy as module
+
+    calls = []
+    packs = []
+    load_pack = module._pack
+
+    def counted_pack():
+        result = load_pack()
+        packs.append(result)
+        return result
+
+    def snapshot():
+        result = audit_taxonomy()
+        calls.append(result)
+        return result
+
+    monkeypatch.setattr(module, "audit_taxonomy", snapshot)
+    monkeypatch.setattr(module, "_pack", counted_pack)
+    first = junie_manifest(tmp_path)
+    assert len(calls) == 1
+    assert len(packs) == 1
+    for key in ("native_workers", "native_worker_contract", "agent_usage_contract"):
+        assert first[key] == calls[0][key]
+    first["native_workers"]["semgrep"]["scope"] = "mutated"
+    second = junie_manifest(tmp_path)
+    assert len(calls) == 2
+    assert len(packs) == 2
+    assert second["native_workers"]["semgrep"]["scope"] != "mutated"
+    assert second["manifest_sha256"] == first["manifest_sha256"]
+
+
+@pytest.mark.parametrize("renderer", ["_guidance", "_junie_proof_agent_bytes"])
+def test_junie_render_reads_pack_once_and_observes_edits(
+    tmp_path, monkeypatch, renderer
+):
+    from factoryline import junie_taxonomy as module
+
+    pack_path = tmp_path / "data" / "junie_pack.json"
+    pack_path.parent.mkdir()
+    pack = {
+        "guidance_template": "guidance:{stages}",
+        "proof_agent": "proof",
+        "native_deep_audit": ":native",
+        "daily_action_guidance": ":daily",
+    }
+    pack_path.write_text(json.dumps(pack), encoding="utf-8")
+    reads = []
+    read_text = Path.read_text
+
+    def counted_read(path, *args, **kwargs):
+        reads.append(path)
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(module, "files", lambda package: tmp_path)
+    monkeypatch.setattr(Path, "read_text", counted_read)
+    render = getattr(module, renderer)
+    first = render()
+    assert reads == [pack_path]
+    assert first.endswith(b":native:daily")
+    pack["daily_action_guidance"] = ":updated"
+    pack_path.write_text(json.dumps(pack), encoding="utf-8")
+    second = render()
+    assert reads == [pack_path, pack_path]
+    assert second == first.removesuffix(b":daily") + b":updated"
+
+
+def test_junie_install_receipt_uses_captured_pack_during_mutation(
+    tmp_path, monkeypatch
+):
+    from factoryline import junie_taxonomy as module
+
+    original = module._pack()
+    expected_manifest = junie_manifest(tmp_path)
+    expected_taxonomy = junie_taxonomy(tmp_path)
+    loads = []
+
+    def changing_pack():
+        loads.append(True)
+        return (
+            dict(original) if len(loads) == 1 else dict(original, proof_agent="changed")
+        )
+
+    monkeypatch.setattr(module, "_pack", changing_pack)
+    receipt = install_junie_factoryline_pack(tmp_path, PACK_CONFIRMATION)
+    assert len(loads) == 1
+    assert receipt["manifest"]["sha256"] == expected_manifest["manifest_sha256"]
+    assert receipt["taxonomy_sha256"] == expected_taxonomy["taxonomy_sha256"]
+    for entry in expected_manifest["files"]:
+        assert (
+            sha256((tmp_path / entry["path"]).read_bytes()).hexdigest()
+            == entry["sha256"]
+        )
+    assert junie_manifest(tmp_path)["manifest_sha256"] != receipt["manifest"]["sha256"]
+
+
+def test_junie_install_manifest_binds_merged_mcp_bytes(tmp_path):
+    from factoryline import canonical_json_bytes
+
+    target = tmp_path / ".junie/mcp/mcp.json"
+    target.parent.mkdir(parents=True)
+    other = {"command": "other", "args": ["serve"]}
+    target.write_text(json.dumps({"mcpServers": {"other": other}}), encoding="utf-8")
+    canonical = junie_manifest(tmp_path)
+    receipt = install_junie_factoryline_pack(tmp_path, PACK_CONFIRMATION)
+    assert (
+        json.loads(target.read_text(encoding="utf-8"))["mcpServers"]["other"] == other
+    )
+    expected = {
+        key: value for key, value in canonical.items() if key != "manifest_sha256"
+    }
+    for entry in expected["files"]:
+        entry["sha256"] = sha256((tmp_path / entry["path"]).read_bytes()).hexdigest()
+    digest = sha256(canonical_json_bytes(expected)).hexdigest()
+    assert receipt["manifest"]["sha256"] == digest
+    assert (
+        receipt["targets"]["mcp"]["sha256"] == sha256(target.read_bytes()).hexdigest()
+    )
+    assert junie_manifest(tmp_path)["manifest_sha256"] == canonical["manifest_sha256"]
+    expected_taxonomy = junie_taxonomy(tmp_path)
+    expected_taxonomy.pop("taxonomy_sha256")
+    expected_taxonomy.pop("contribution_protocol")
+    expected_taxonomy["project_pack"] = dict(expected, manifest_sha256=digest)
+    assert (
+        receipt["taxonomy_sha256"]
+        == sha256(canonical_json_bytes(expected_taxonomy)).hexdigest()
+    )
+    repeated = install_junie_factoryline_pack(tmp_path, PACK_CONFIRMATION)
+    assert repeated["state"] == "already_current"
+    assert repeated["manifest"] == receipt["manifest"]
