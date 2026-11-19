@@ -59,30 +59,42 @@ export function verifySourceSinkFlows(report, manifest, sourceHashes) {
   const run = validatedRun(report);
   const required = manifest.filter(item => item.source_line !== undefined);
   if (!required.length) throw new Error('Missing source-to-sink fixture expectations');
-  return required.map(expected => {
-    const matches = run.results.filter(result => {
-      const place = result.locations?.[0]?.physicalLocation;
-      return result.ruleId === expected.rule && sourcePath(place?.artifactLocation?.uri) === expected.path &&
-        place.region?.startLine === expected.line;
-    });
-    if (matches.length !== 1) throw new Error('Missing or duplicate traced finding');
-    const flows = (matches[0].codeFlows ?? []).flatMap(flow => flow.threadFlows ?? []);
-    const paths = flows.map(thread => (thread.locations ?? []).map(step => {
-      const place = step.location?.physicalLocation;
-      const path = sourcePath(place?.artifactLocation?.uri);
-      const line = place?.region?.startLine;
-      if (!Object.hasOwn(sourceHashes, path) || !/^[a-f0-9]{64}$/.test(sourceHashes[path]) ||
-          !Number.isInteger(line) || line < 1 || step.index !== undefined) {
-        throw new Error('Unbound native flow step');
-      }
-      return { path, source_sha256: sourceHashes[path], line };
-    }));
-    if (!paths.some(steps => steps.length >= 2 && steps[0].path === expected.path &&
-        steps[0].line === expected.source_line && steps.at(-1).path === expected.path &&
-        steps.at(-1).line === expected.line)) throw new Error('Native source/sink endpoints differ');
-    return { rule: expected.rule, path: expected.path, source_line: expected.source_line,
-      sink_line: expected.line, flows: paths };
-  });
+  return required.map(expected => verifyExpectedFlow(run, expected, sourceHashes));
+}
+
+function verifyExpectedFlow(run, expected, sourceHashes) {
+  const matches = run.results.filter(result => matchesExpectedFinding(result, expected));
+  if (matches.length !== 1) throw new Error('Missing or duplicate traced finding');
+  const flows = (matches[0].codeFlows ?? []).flatMap(flow => flow.threadFlows ?? []);
+  const paths = flows.map(thread => (thread.locations ?? []).map(step => boundFlowStep(step, sourceHashes)));
+  if (!paths.some(steps => matchesEndpoints(steps, expected))) {
+    throw new Error('Native source/sink endpoints differ');
+  }
+  return { rule: expected.rule, path: expected.path, source_line: expected.source_line,
+    sink_line: expected.line, flows: paths };
+}
+
+function matchesExpectedFinding(result, expected) {
+  const place = result.locations?.[0]?.physicalLocation;
+  return result.ruleId === expected.rule && sourcePath(place?.artifactLocation?.uri) === expected.path &&
+    place.region?.startLine === expected.line;
+}
+
+function boundFlowStep(step, sourceHashes) {
+  const place = step.location?.physicalLocation;
+  const path = sourcePath(place?.artifactLocation?.uri);
+  const line = place?.region?.startLine;
+  if (!Object.hasOwn(sourceHashes, path) || !/^[a-f0-9]{64}$/.test(sourceHashes[path]) ||
+      !Number.isInteger(line) || line < 1 || step.index !== undefined) {
+    throw new Error('Unbound native flow step');
+  }
+  return { path, source_sha256: sourceHashes[path], line };
+}
+
+function matchesEndpoints(steps, expected) {
+  return steps.length >= 2 && steps[0].path === expected.path &&
+    steps[0].line === expected.source_line && steps.at(-1).path === expected.path &&
+    steps.at(-1).line === expected.line;
 }
 
 export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
