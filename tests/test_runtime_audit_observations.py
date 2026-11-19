@@ -4337,3 +4337,229 @@ def test_finite_terminal_command_reflection_tracks_provider_receiver(operation, 
     assert (
         bool(closed_shell_operation_witness(raw, "app.py", span, "os.system")) is proven
     )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "baseline_failed",
+        "skip",
+        "unreached",
+        "timeout",
+        "unrelated_assertion",
+        "setup_failed",
+    ],
+)
+def test_polyglot_synthetic_result_refuses_incomplete_evidence(failure):
+    """Synthetic contract fixtures: these do not qualify a native framework."""
+    import copy
+    from factoryline.runtime_audit_runner import _polyglot_result
+
+    facts = {
+        "exit_code": 0,
+        "timed_out": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "launch_error": False,
+    }
+    baseline = {
+        "process": facts,
+        "observation": {"valid": True, "reached": True, "outcome": "passed"},
+    }
+    mutant = copy.deepcopy(baseline)
+    mutant["process"]["exit_code"] = 1
+    mutant["observation"].update(outcome="failed", assertion_failed=True)
+    if failure == "baseline_failed":
+        baseline["observation"]["outcome"] = "failed"
+    elif failure == "skip":
+        mutant["observation"]["outcome"] = "pending"
+    elif failure == "unreached":
+        mutant["observation"]["reached"] = False
+    elif failure == "timeout":
+        mutant["process"]["timed_out"] = True
+    elif failure == "setup_failed":
+        baseline["process"]["exit_code"] = 1
+    else:
+        mutant["observation"]["assertion_failed"] = False
+    assert _polyglot_result(baseline, mutant, True) == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("changed", ["app.js", "app.test.js", "package.json"])
+def test_polyglot_synthetic_capture_source_and_config_drift(
+    tmp_path, monkeypatch, changed
+):
+    """Synthetic process substitute verifies drift refusal, not native behavior."""
+    from factoryline import runtime_audit_process as process
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    (tmp_path / "app.js").write_text("exports.value = () => 1;\n")
+    (tmp_path / "app.test.js").write_text("test('selected', () => {});\n")
+    (tmp_path / "package.json").write_text("{}")
+    monkeypatch.setattr(process, "_polyglot_tools", lambda *args: [])
+
+    def drift(*args):
+        (args[3] / changed).write_text("changed")
+        return {}
+
+    monkeypatch.setattr(process, "_polyglot_trial", drift)
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "jest",
+        "app.test.js",
+        "selected",
+        1,
+        "app.js",
+        "() => 1",
+        "() => 2",
+        ".factory/proof",
+        execute=True,
+    )
+    assert result["status"] == "INCOMPLETE"
+    assert "baseline changed source/configuration" in result["error"]
+    assert result["cleanup"]["removed"] is True
+
+
+@pytest.mark.parametrize("production", ["../outside.js", "app.test.js"])
+def test_polyglot_malformed_production_paths_refused(tmp_path, production):
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    (tmp_path / "app.test.js").write_text("test('selected', () => 1);\n")
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "jest",
+        "app.test.js",
+        "selected",
+        1,
+        production,
+        "() => 1",
+        "() => 2",
+        ".factory/proof",
+        execute=True,
+    )
+    assert result["status"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("invalid", ["boolean", "string", "escape", "sibling", "link"])
+def test_polyglot_go_cache_synthetic_scope_refusal(tmp_path, monkeypatch, invalid):
+    from factoryline import runtime_audit_process as process
+
+    root = tmp_path / "cf-polyglot-oracle-owned"
+    root.mkdir()
+    monkeypatch.setattr(process.tempfile, "gettempdir", lambda: str(tmp_path))
+    cache = root / "go-cache"
+    if invalid == "boolean":
+        cache = True
+    elif invalid == "string":
+        cache = str(cache)
+    elif invalid == "escape":
+        cache = tmp_path / "go-cache"
+    elif invalid == "sibling":
+        cache = tmp_path / "cf-polyglot-oracle-sibling/go-cache"
+    else:
+        monkeypatch.setattr(process, "path_chain_has_no_links", lambda *args: False)
+    with pytest.raises(process.RuntimeAuditError, match="nonlinked child"):
+        process._validate_go_cache(cache, root / "candidate", root / "baseline-runtime")
+
+
+def test_polyglot_go_cache_keeps_fresh_home_and_private_cache(tmp_path, monkeypatch):
+    from factoryline import runtime_audit_process as process
+
+    root = tmp_path / "cf-polyglot-oracle-owned"
+    root.mkdir()
+    monkeypatch.setattr(process.tempfile, "gettempdir", lambda: str(tmp_path))
+    for name in ("baseline", "mutant"):
+        scratch = root / name
+        scratch.mkdir()
+        process._validate_go_cache(root / "go-cache", root / "candidate", scratch)
+        environment = process._environment(scratch)
+        assert environment["HOME"] == str((scratch / "runtime-home").resolve())
+        assert "LOCALAPPDATA" not in environment
+
+
+@pytest.mark.parametrize(
+    "covered",
+    [
+        "example.test/project/otherapp.go",
+        "example.test/project/other/app.go",
+        "example.test/project/app.go",
+    ],
+)
+def test_polyglot_synthetic_go_coverage_requires_exact_module_source(tmp_path, covered):
+    """Synthetic coverage parser identity tests, not native qualification."""
+    import json
+    from factoryline.runtime_audit_process import _polyglot_go_observation
+
+    (tmp_path / "go.mod").write_text("module example.test/project\n")
+    target = tmp_path / "app.go"
+    target.write_text("package app\n")
+    stdout, coverage = tmp_path / "stdout.json", tmp_path / "coverage"
+    stdout.write_text(json.dumps({"Action": "pass", "Test": "TestSelected"}) + "\n")
+    coverage.write_text(f"mode: set\n{covered}:1.1,1.20 1 1\n")
+    observed = _polyglot_go_observation(
+        stdout, coverage, target, "TestSelected", "app_test.go", 1, 1
+    )
+    assert observed["reached"] is (covered == "example.test/project/app.go")
+
+
+def test_polyglot_installed_dependency_bytes_invalidate_identity(tmp_path):
+    from factoryline.runtime_audit_process import _polyglot_tools
+
+    (tmp_path / "package-lock.json").write_text("{}")
+    package = tmp_path / "node_modules/jest/bin"
+    package.mkdir(parents=True)
+    tool = package / "jest.js"
+    tool.write_text("entry")
+    transitive = tmp_path / "node_modules/other/index.js"
+    transitive.parent.mkdir()
+    transitive.write_text("first")
+    launcher = tmp_path / "node.exe"
+    launcher.write_text("launcher")
+    before = _polyglot_tools("jest", tool, launcher)
+    transitive.write_text("second")
+    after = _polyglot_tools("jest", tool, launcher)
+    assert before != after
+    assert before[-1]["files"] != after[-1]["files"]
+
+
+def test_polyglot_artifact_quota_actual_burst_child_is_incomplete(tmp_path):
+    import sys
+    from factoryline.runtime_audit_process import (
+        run_bounded_command,
+        validate_production_mutation_process,
+    )
+
+    reports, scratch = tmp_path / "reports", tmp_path / "scratch"
+    reports.mkdir()
+    scratch.mkdir()
+    writer = "import pathlib,sys,time; pathlib.Path(sys.argv[1]).write_bytes(b'x'*(33*1024*1024)); time.sleep(30)"
+    code = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]); time.sleep(30)"
+    facts = run_bounded_command(
+        [sys.executable, "-c", code, writer, str(reports / "burst")],
+        tmp_path,
+        10,
+        scratch,
+        artifact_tree=reports,
+    )
+    assert facts["output_limit_exceeded"] is True
+    assert facts["cleanup_confirmed"] is True
+    assert validate_production_mutation_process(facts) is False
+    assert facts["duration_ms"] < 10000
+
+
+def test_polyglot_artifact_quota_checks_immediate_exit(tmp_path):
+    import sys
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    reports, scratch = tmp_path / "reports", tmp_path / "scratch"
+    reports.mkdir()
+    scratch.mkdir()
+    code = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); [(p/str(i)).touch() for i in range(201)]"
+    facts = run_bounded_command(
+        [sys.executable, "-c", code, str(reports)],
+        tmp_path,
+        10,
+        scratch,
+        artifact_tree=reports,
+    )
+    assert facts["output_limit_exceeded"] is True
+    assert facts["cleanup_confirmed"] is True

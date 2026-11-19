@@ -9145,3 +9145,227 @@ def test_local_roundtrip_rejects_store_builtin_rebinding():
     assert not _reference_builtin_bindings_clear(
         ast.parse("len = unknown_observer\n" + body), names
     )
+
+
+@pytest.mark.parametrize(
+    "after,expected", [("return 2", "KILLED"), ("return (1)", "SURVIVED")]
+)
+def test_polyglot_go_real_opt_in(tmp_path, after, expected):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in actual Go subprocess qualification")
+    (tmp_path / "go.mod").write_text("module oraclefixture\n\ngo 1.23\n")
+    (tmp_path / "app.go").write_text(
+        "package oraclefixture\nfunc Value() int { return 1 }\n"
+    )
+    (tmp_path / "app_test.go").write_text(
+        'package oraclefixture\nimport "testing"\nfunc TestSelected(t *testing.T) { if Value() != 1 { t.Errorf("wrong value") } }\n'
+    )
+    tool = Path.home() / ".cache/code-factory-tools/go1.27.4/go/bin/go.exe"
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "go",
+        "app_test.go",
+        "TestSelected",
+        3,
+        "app.go",
+        "return 1",
+        after,
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+    )
+    assert result["status"] == expected, result
+
+
+@pytest.mark.parametrize("attribute", ["", "#[should_panic]\n", "#[ignore]\n"])
+@pytest.mark.parametrize(
+    "after,expected", [("{ 2 }", "KILLED"), ("{ (1) }", "SURVIVED")]
+)
+def test_polyglot_cargo_real_opt_in(tmp_path, attribute, after, expected):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in actual Cargo subprocess qualification")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname="oraclefixture"\nversion="0.1.0"\nedition="2021"\n'
+    )
+    (tmp_path / "Cargo.lock").write_text(
+        'version = 4\n[[package]]\nname = "oraclefixture"\nversion = "0.1.0"\n'
+    )
+    (tmp_path / "src/lib.rs").write_text("pub fn value() -> i32 { 1 }\n")
+    (tmp_path / "tests/oracle.rs").write_text(
+        attribute
+        + "#[test]\nfn selected() { assert_eq!(oraclefixture::value(), 1); }\n"
+    )
+    tool = (
+        Path.home() / ".rustup/toolchains/stable-x86_64-pc-windows-msvc/bin/cargo.exe"
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "cargo",
+        "tests/oracle.rs",
+        "selected",
+        2,
+        "src/lib.rs",
+        "{ 1 }",
+        after,
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+    )
+    if attribute:
+        assert result["status"] == "INCOMPLETE"
+        assert "cannot qualify" in result["error"]
+    else:
+        assert result["baseline"]["process"]["exit_code"] == 0, result
+        assert result["mutant"]["process"]["exit_code"] == (
+            101 if expected == "KILLED" else 0
+        ), result
+        if expected == "KILLED" and result["status"] == "INCOMPLETE":
+            assert result["baseline"]["observation"]["reached"] is True
+            assert (
+                "missing or excessive LLVM profiles"
+                in result["mutant"]["observation"]["reason"]
+            )
+        else:
+            assert result["status"] == expected, result
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["baseline_false", "skip", "zero", "setup", "compile", "unrelated", "timeout"],
+)
+def test_polyglot_jest_negative_real_opt_in(tmp_path, case):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip("opt-in native negative subprocess qualification")
+    (tmp_path / "package.json").write_text('{"name":"oracle-fixture"}')
+    (tmp_path / "app.js").write_text("exports.value = () => 1;\n")
+    bodies = {
+        "baseline_false": "test('selected', () => { expect(value()).toBe(9); });",
+        "skip": "test.skip('selected', () => { expect(value()).toBe(1); });",
+        "zero": "test('different', () => { expect(value()).toBe(1); });",
+        "setup": "throw new Error('setup'); test('selected', () => {});",
+        "compile": "test('selected', () => { expect(value()).toBe(1); });",
+        "unrelated": "test('selected', () => { expect(value()).toBe(1);\n expect(true).toBe(true); });",
+        "timeout": "test('selected', () => { while (true) {} });",
+    }
+    (tmp_path / "app.test.js").write_text(
+        "const {value} = require('./app');\n" + bodies[case] + "\n"
+    )
+    tool = (
+        Path.home()
+        / ".cache/code-factory-tools/js-oracles/node_modules/jest/bin/jest.js"
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "jest",
+        "app.test.js",
+        "selected",
+        3 if case == "unrelated" else 2,
+        "app.js",
+        "() => 1",
+        "() => (" if case == "compile" else "() => 2",
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+        node_executable=Path("C:/nvm4w/nodejs/node.exe"),
+        timeout_seconds=2 if case == "timeout" else 120,
+    )
+    assert result["status"] == "INCOMPLETE", result
+    assert result["cleanup"]["removed"] is True
+
+
+def test_polyglot_capture_requires_explicit_execution(tmp_path):
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    with pytest.raises(RuntimeAuditError, match="execute=True"):
+        capture_polyglot_oracle_challenge(
+            tmp_path,
+            "jest",
+            "x.test.js",
+            "selected",
+            2,
+            "x.js",
+            "return 1",
+            "return 2",
+            ".factory/proof",
+        )
+
+
+def test_polyglot_capture_missing_tool_is_incomplete(tmp_path):
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    (tmp_path / "app.js").write_text("exports.value = () => 1;\n")
+    (tmp_path / "app.test.js").write_text("test('selected', () => {});\n")
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        "jest",
+        "app.test.js",
+        "selected",
+        1,
+        "app.js",
+        "() => 1",
+        "() => 2",
+        ".factory/proof",
+        execute=True,
+        tool_executable=tmp_path / "missing.js",
+    )
+    assert result["status"] == "INCOMPLETE"
+    assert result["error_code"] == "E_POLYGLOT_CAPTURE"
+
+
+@pytest.mark.parametrize(
+    "after,expected", [("() => 2", "KILLED"), ("() => (1)", "SURVIVED")]
+)
+@pytest.mark.parametrize("framework", ["jest", "vitest"])
+def test_polyglot_jest_real_opt_in(tmp_path, after, expected, framework):
+    import os
+    from pathlib import Path
+    from factoryline.runtime_audit_runner import capture_polyglot_oracle_challenge
+
+    if os.environ.get("CF_POLYGLOT_REAL") != "1":
+        pytest.skip(
+            "opt-in actual subprocess qualification; synthetic fixtures are separate"
+        )
+    (tmp_path / "package.json").write_text(
+        '{"name":"oracle-fixture","jest":{"testEnvironment":"node"}}'
+    )
+    (tmp_path / "app.js").write_text("exports.value = () => 1;\n")
+    (tmp_path / "app.test.js").write_text(
+        "const {value} = require('./app');\ntest('selected', () => { expect(value()).toBe(1); });\n"
+    )
+    tool = (
+        Path.home()
+        / ".cache/code-factory-tools/js-oracles/node_modules"
+        / {"jest": "jest/bin/jest.js", "vitest": "vitest/vitest.mjs"}[framework]
+    )
+    result = capture_polyglot_oracle_challenge(
+        tmp_path,
+        framework,
+        "app.test.js",
+        "selected",
+        2,
+        "app.js",
+        "() => 1",
+        after,
+        ".factory/proof",
+        execute=True,
+        tool_executable=tool,
+        node_executable=Path("C:/nvm4w/nodejs/node.exe"),
+    )
+    assert result["status"] == expected, result
+    assert result["cleanup"]["removed"] is True
+    assert result["source_unchanged"] is True
