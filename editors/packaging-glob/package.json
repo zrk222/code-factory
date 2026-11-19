@@ -1,0 +1,10 @@
+{
+  "name": "@factoryline/vsce-glob",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VSCE file enumeration using patched glob instead of picomatch.",
+  "license": "MIT OR Apache-2.0",
+  "main": "index.cjs",
+  "engines": { "node": ">=22" },
+  "dependencies": { "glob": "14.0.2" }
+}

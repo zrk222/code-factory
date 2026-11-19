@@ -14,6 +14,12 @@ from functools import lru_cache
 from pathlib import Path, PurePosixPath
 import yaml
 
+from .fixture_scope_value_audit import (
+    _MAKE_DESCRIPTORS,
+    _captured_make_pytest_argv,
+    captured_makefile_names as captured_makefile_names,
+)
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
@@ -1663,84 +1669,6 @@ def _captured_shell_target_unresolved(argv, command):
 
 def _captured_shell_compound(command):
     return any(token in command for token in ("&&", "||", ";", "|", ">", "<"))
-
-
-_MAKE_DESCRIPTORS = frozenset({"GNUmakefile", "makefile", "Makefile"})
-
-
-def captured_makefile_names(root):
-    """Record actual directory names, including on case-insensitive filesystems."""
-    return (
-        p.name for p in Path(root).glob("*[Mm]akefile") if p.name in _MAKE_DESCRIPTORS
-    )
-
-
-def _captured_make_pytest_argv(raw):
-    """Project one literal test recipe without evaluating Make or its shell."""
-    try:
-        lines = raw.decode("utf-8").splitlines()
-    except (AttributeError, UnicodeError):
-        return None
-    parsed = _captured_make_test_recipe(lines)
-    if parsed is None:
-        return None
-    recipe, variables = parsed
-    if recipe == "pytest":
-        return ("pytest",)
-    match = re.fullmatch(r"(uv|\$\(([A-Za-z_][A-Za-z_0-9]*)\))\s+run\s+pytest", recipe)
-    if match and (match[1] == "uv" or variables.get(match[2]) == "uv"):
-        return ("uv", "run", "pytest")
-    return None
-
-
-def _captured_make_test_recipe(lines):
-    """Collect one non-continued test recipe and its literal variable bindings."""
-    variables, targets, recipes = {}, set(), []
-    target, continued = None, False
-    for line in lines:
-        if (
-            not line
-            or not continued
-            and not line.startswith("\t")
-            and (not line.strip() or line.lstrip().startswith("#"))
-        ):
-            continue
-        if line.startswith("\t") or continued:
-            if target is None:
-                return None
-            continued = line.endswith("\\")
-            if target == "test":
-                if continued:
-                    return None
-                recipes.append(line.strip())
-            continue
-        target = _captured_make_header(line, variables, targets)
-        if target is False:
-            return None
-    return (recipes[0], variables) if len(recipes) == 1 and not continued else None
-
-
-def _captured_make_header(line, variables, targets):
-    if match := re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)\s*=\s*([^$]+)", line):
-        name, value = match.groups()
-        if (
-            name in variables
-            or name in {"SHELL", "PATH", "MAKEFLAGS", "MAKEFILES", "BASH_ENV", "ENV"}
-            or name.startswith(("PYTEST_", "UV_"))
-        ):
-            return False
-        variables[name] = value.strip()
-        return None
-    if match := re.fullmatch(r"([A-Za-z_][\w.-]*|\.PHONY):\s*([\w. -]*)", line):
-        target, dependencies = match.groups()
-        if (
-            target not in targets
-            and target not in _MAKE_DESCRIPTORS
-            and not (target == "test" and dependencies)
-        ):
-            targets.add(target)
-            return target
-    return False
 
 
 def captured_flask_fixture_configuration(scope):
@@ -4704,3 +4632,1325 @@ def _manifest_scope_proof(path, raw, basis):
     if not isinstance(raw, bytes):
         return None
     return {"path": path, "sha256": hashlib.sha256(raw).hexdigest(), "basis": basis}
+
+
+def captured_validation_marker_context(index, path, node):
+    """Describe a captured validation-only test assertion and its unresolved consumer."""
+    if not _marker_literal_assignment(node) or len(index.snapshots) > 128:
+        return None
+    if not index.validate(path):
+        return None
+    tree = index.snapshots[path]
+    owner = index.parents[path].get(id(node))
+    if not _marker_selected_test(index, path, tree, owner):
+        return None
+    paths = index.module_paths()
+    if paths is None or any(
+        stem + suffix in paths
+        for stem in ("fastapi", "pydantic", "pytest", "starlette")
+        for suffix in (".py", "/__init__.py")
+    ):
+        return None
+    context = {"source": index, "module_paths": paths, "modules": index.snapshots}
+    request = _marker_request_context(context, path, owner, node)
+    if request is None:
+        return None
+    call, installation, route, status, no_echo = request
+    chain = _marker_unresolved_dispatch(context, path, owner, installation)
+    if chain is None:
+        return None
+    return {
+        "scope": "CAPTURED_IN_PROCESS_VALIDATION_TEST",
+        "operand_role": "INPUT_MARKER_IN_VALIDATION_ASSERTION",
+        "disposition": "RETAIN_REVIEW",
+        "consumer_authority": "UNRESOLVED_SHARED_CLASSIFIER_REGISTRY",
+        "consumer_resolution": "CAPTURED_REGISTRATION_AND_DECLARED_ENGINE_TYPE",
+        "test": _marker_evidence(index, path, owner),
+        "route": _marker_evidence(index, path, route),
+        "request": _marker_evidence(index, path, call),
+        "assertions": [
+            _marker_evidence(index, path, item) for item in (status, no_echo)
+        ],
+        "unresolved_consumer": [
+            _marker_evidence(index, origin, item) for origin, item in chain
+        ],
+        "runtime_execution": "UNASSESSED",
+    }
+
+
+def _marker_literal_assignment(node):
+    match node:
+        case ast.Assign(targets=[ast.Name()], value=ast.Constant(value=str() as text)):
+            return 0 < len(text) <= 1024
+    return False
+
+
+def _marker_selected_test(index, path, tree, owner):
+    if not isinstance(owner, ast.FunctionDef) or owner not in tree.body:
+        return False
+    a = owner.args
+    if any(
+        (a.args, a.posonlyargs, a.kwonlyargs, a.vararg, a.kwarg, owner.decorator_list)
+    ):
+        return False
+    return captured_pytest_function_selected(
+        index, path, owner, captured_pytest_documents(tree)
+    )
+
+
+def _marker_request_context(context, path, owner, node):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    marker = node.targets[0].id
+    if binding_occurrences(owner.body, marker) != [node.targets[0]]:
+        return None
+    position = owner.body.index(node)
+    following = owner.body[position + 1 : position + 5]
+    if len(following) != 4:
+        return None
+    match following[0]:
+        case ast.Assign(
+            targets=[ast.Name(id=response)],
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Call(func=client, args=[ast.Name(id=app)], keywords=[]),
+                    attr="post",
+                ),
+                args=[ast.Constant(value=str() as endpoint)],
+                keywords=[ast.keyword(arg="json", value=ast.Dict() as payload)],
+            ) as call,
+        ) if endpoint.startswith("/") and _app_expression_name(
+            context, path, client, owner
+        ) in {"fastapi.testclient.TestClient", "starlette.testclient.TestClient"}:
+            pass
+        case _:
+            return None
+    schema = _marker_inert_route(context, path, owner, app, endpoint, position)
+    checks = _marker_negative_assertions(following[1:], marker, response)
+    if schema is None or checks is None:
+        return None
+    install, route, fields, decorator = schema
+    status, no_echo = checks
+    if not _marker_invalid_payload(payload, fields, marker):
+        return None
+    if _marker_loads(owner, marker) != _marker_loads(call, marker) | _marker_loads(
+        no_echo, marker
+    ):
+        return None
+    if _marker_loads(owner, app) != {
+        install.args[0],
+        decorator.func.value,
+        call.func.value.args[0],
+    }:
+        return None
+    return call, install, route, status, no_echo
+
+
+def _marker_loads(node, name):
+    return {
+        item
+        for item in ast.walk(node)
+        if isinstance(item, ast.Name)
+        and item.id == name
+        and isinstance(item.ctx, ast.Load)
+    }
+
+
+def _marker_inert_route(context, path, owner, app, endpoint, marker_position):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if marker_position < 3:
+        return None
+    allocation, placement, route = owner.body[marker_position - 3 : marker_position]
+    match allocation, placement, route:
+        case (
+            ast.Assign(
+                targets=[ast.Name(id=allocated)],
+                value=ast.Call(func=factory, args=[], keywords=[]),
+            ),
+            ast.Expr(
+                value=ast.Call(args=[ast.Name(id=passed)], keywords=[]) as install
+            ),
+            ast.FunctionDef(
+                decorator_list=[
+                    ast.Call(
+                        func=ast.Attribute(value=ast.Name(id=receiver), attr="post"),
+                        args=[ast.Constant(value=route_path)],
+                        keywords=[],
+                    ) as decorator
+                ],
+                args=ast.arguments(
+                    posonlyargs=[],
+                    args=[ast.arg(annotation=ast.Name(id=model))],
+                    kwonlyargs=[],
+                    defaults=[],
+                    vararg=None,
+                    kwarg=None,
+                ),
+                body=[ast.Return(value=ast.Dict(keys=[], values=[]))],
+            ),
+        ) if app == allocated == passed == receiver and route_path == endpoint:
+            pass
+        case _:
+            return None
+    if (
+        _app_expression_name(context, path, factory, owner) != "fastapi.FastAPI"
+        or binding_occurrences(owner.body, app) != allocation.targets
+    ):
+        return None
+    fields = _marker_model_fields(context, path, owner, model, marker_position)
+    return (install, route, fields, decorator) if fields else None
+
+
+def _marker_model_fields(context, path, owner, model, marker_position):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if binding_occurrences(owner.body, "str") or binding_occurrences(
+        context["modules"][path].body, "str"
+    ):
+        return None
+    match binding_occurrences(owner.body, model):
+        case [ast.ClassDef(bases=[base], keywords=[], decorator_list=[]) as cls] if (
+            cls in owner.body[: marker_position - 3]
+            and _app_expression_name(context, path, base, owner) == "pydantic.BaseModel"
+            and not getattr(cls, "type_params", ())
+        ):
+            pass
+        case _:
+            return None
+    fields = set()
+    for member in cls.body:
+        match member:
+            case ast.AnnAssign(
+                target=ast.Name(id=name), annotation=ast.Name(id="str"), value=None
+            ) if name not in fields and not name.startswith("_"):
+                fields.add(name)
+            case _:
+                return None
+    return fields
+
+
+def _marker_invalid_payload(payload, fields, marker):
+    if any(
+        not isinstance(item, ast.Constant) or type(item.value) is not str
+        for item in payload.keys
+    ):
+        return False
+    names = [item.value for item in payload.keys]
+    if set(names) != fields or len(names) != len(fields):
+        return False
+    marker_values = [
+        item
+        for item in payload.values
+        if isinstance(item, ast.Name) and item.id == marker
+    ]
+    return (
+        len(marker_values) == 1
+        and all(
+            item is marker_values[0] or isinstance(item, ast.Constant)
+            for item in payload.values
+        )
+        and any(
+            isinstance(item, ast.Constant) and type(item.value) is int
+            for item in payload.values
+        )
+    )
+
+
+def _marker_negative_assertions(statements, marker, response):
+    match statements:
+        case [
+            ast.Assign(
+                targets=[ast.Name(id=text)],
+                value=ast.Attribute(value=ast.Name(id=body_source), attr="text"),
+            ),
+            ast.Assert(
+                test=ast.Compare(
+                    left=ast.Attribute(
+                        value=ast.Name(id=status_source), attr="status_code"
+                    ),
+                    ops=[ast.Eq()],
+                    comparators=[ast.Constant(value=422)],
+                ),
+                msg=None,
+            ) as status,
+            ast.Assert(
+                test=ast.Compare(
+                    left=ast.Name(id=found),
+                    ops=[ast.NotIn()],
+                    comparators=[ast.Name(id=observed)],
+                ),
+                msg=None,
+            ) as no_echo,
+        ] if (
+            body_source == status_source == response
+            and found == marker
+            and observed == text
+        ):
+            return status, no_echo
+    return None
+
+
+def _marker_source_export(context, name):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .fixture_scope_value_audit import _reference_local_export
+
+    if not isinstance(name, str) or "." not in name:
+        return None
+    module, member = name.rsplit(".", 1)
+    stem = module.replace(".", "/")
+    paths = context["module_paths"]
+    choices = [
+        paths[key] for key in (stem + ".py", stem + "/__init__.py") if key in paths
+    ]
+    if len(choices) != 1 or choices[0] is None:
+        return None
+    path = choices[0]
+    source = context["source"]
+    if not source.validate(path):
+        return None
+    tree = source.snapshots[path]
+    match binding_occurrences(tree.body, member):
+        case [ast.AsyncFunctionDef() as fn] if fn in tree.body:
+            return path, fn
+    return _reference_local_export(source, path, member)
+
+
+def _marker_unresolved_dispatch(context, path, owner, install):
+    from .mock_fixture_provenance import _app_expression_name
+
+    selected = _marker_source_export(
+        context, _app_expression_name(context, path, install.func, owner)
+    )
+    if selected is None or not isinstance(selected[1], ast.FunctionDef):
+        return None
+    install_path, installer = selected
+    handler = _marker_selected_handler(context, install_path, installer)
+    if handler is None:
+        return None
+    handler_path, callback = handler
+    pipeline = _marker_exception_forwarding(context, handler_path, callback)
+    if pipeline is None:
+        return None
+    pipeline_path, handler_fn = pipeline
+    dispatch = _marker_registry_dispatch(context, pipeline_path, handler_fn)
+    if dispatch is None:
+        return None
+    return (
+        (install_path, installer),
+        (handler_path, callback),
+        (pipeline_path, handler_fn),
+        *dispatch,
+    )
+
+
+def _marker_selected_handler(context, path, installer):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if not installer.args.args or installer.decorator_list:
+        return None
+    receiver = installer.args.args[0].arg
+    if binding_occurrences(installer.body, receiver):
+        return None
+    handlers = []
+    for row in installer.body:
+        match row:
+            case ast.Expr(
+                value=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id=app), attr="add_exception_handler"
+                    ),
+                    args=[error, function],
+                    keywords=[],
+                )
+            ) if app == receiver:
+                if (
+                    _app_expression_name(context, path, error, installer)
+                    == "fastapi.exceptions.RequestValidationError"
+                ):
+                    handlers.append(
+                        _marker_source_export(
+                            context,
+                            _app_expression_name(context, path, function, installer),
+                        )
+                    )
+    return handlers[0] if len(handlers) == 1 else None
+
+
+def _marker_exception_forwarding(context, path, callback):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if not isinstance(callback, ast.AsyncFunctionDef) or callback.decorator_list:
+        return None
+    kinds = [
+        arg.arg
+        for arg in callback.args.args
+        if _app_expression_name(context, path, arg.annotation, callback)
+        == "fastapi.exceptions.RequestValidationError"
+    ]
+    if len(kinds) != 1 or binding_occurrences(callback.body, kinds[0]):
+        return None
+    match callback.body[-1]:
+        case ast.Return(
+            value=ast.Call(
+                args=[
+                    ast.Call(
+                        func=forward, args=[ast.Name(id=original)], keywords=keywords
+                    )
+                ],
+                keywords=[],
+            )
+        ) if original == kinds[0] and {item.arg for item in keywords} >= {
+            "engine",
+            "formatter",
+        }:
+            return _marker_source_export(
+                context, _app_expression_name(context, path, forward, callback)
+            )
+    return None
+
+
+def _marker_registry_dispatch(context, path, pipeline):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    if not isinstance(pipeline, ast.FunctionDef) or not pipeline.args.args:
+        return None
+    original = pipeline.args.args[0].arg
+    dispatches = [
+        item
+        for item in ast.walk(pipeline)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Attribute)
+        and item.func.attr == "classify"
+        and len(item.args) == 1
+        and isinstance(item.args[0], ast.Name)
+        and item.args[0].id == original
+    ]
+    if len(dispatches) != 1 or not isinstance(dispatches[0].func.value, ast.Name):
+        return None
+    name = dispatches[0].func.value.id
+    candidates = [arg.annotation for arg in pipeline.args.kwonlyargs if arg.arg == name]
+    if len(candidates) != 1 or binding_occurrences(pipeline.body, name):
+        return None
+    selected = _marker_source_export(
+        context, _app_expression_name(context, path, candidates[0], pipeline)
+    )
+    return (
+        _marker_selected_registry(context, selected) if selected is not None else None
+    )
+
+
+def _marker_selected_registry(context, selected):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    path, engine = selected
+    if not isinstance(engine, ast.ClassDef):
+        return None
+    match binding_occurrences(engine.body, "classify"):
+        case [ast.FunctionDef() as classify]:
+            pass
+        case _:
+            return None
+    match _marker_classifier_iteration(classify):
+        case str() as method:
+            pass
+        case _:
+            return None
+    match binding_occurrences(engine.body, method):
+        case [ast.FunctionDef() as active]:
+            pass
+        case _:
+            return None
+    reads = [
+        item
+        for item in ast.walk(active)
+        if isinstance(item, ast.Call)
+        and getattr(item.func, "attr", None) == "registered_classifiers"
+        and not item.args
+        and not item.keywords
+    ]
+    if len(reads) != 1:
+        return None
+    registry = _marker_source_export(
+        context, _app_expression_name(context, path, reads[0].func, active)
+    )
+    if registry is None or not isinstance(registry[1], ast.FunctionDef):
+        return None
+    match registry[1].body:
+        case [
+            ast.Return(
+                value=ast.Call(func=ast.Name(id="list"), args=[ast.Name()], keywords=[])
+            )
+        ]:
+            return ((path, classify), (path, reads[0]), registry)
+    return None
+
+
+def _marker_classifier_iteration(classify):
+    if len(classify.args.args) != 2:
+        return None
+    owner, exception = [item.arg for item in classify.args.args]
+    for row in classify.body:
+        match row:
+            case ast.For(
+                target=ast.Name(id=member),
+                iter=ast.Call(
+                    func=ast.Attribute(value=ast.Name(id=receiver), attr=method),
+                    args=[],
+                    keywords=[],
+                ),
+                body=[
+                    ast.Assign(
+                        value=ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id=classifier), attr="classify"
+                            ),
+                            args=[ast.Name(id=item)],
+                            keywords=[],
+                        )
+                    ),
+                    *_,
+                ],
+            ) if receiver == owner and member == classifier and item == exception:
+                return method
+    return None
+
+
+def _marker_evidence(index, path, item):
+    return {
+        "path": index.relative(path),
+        "sha256": index.inventory[path],
+        "span": [item.lineno, item.col_offset, item.end_lineno, item.end_col_offset],
+    }
+
+
+def validation_marker_proof_helpers():
+    """Bind callable lookup slots for the retained validation-context witness."""
+    from .credential_role_constructor_provider import binding_occurrences
+    from .fixture_scope_value_audit import _reference_local_export
+    from .mock_fixture_provenance import _app_expression_name
+
+    return (
+        captured_validation_marker_context,
+        *(globals()[name] for name in _MARKER_CONTEXT_HELPERS),
+        binding_occurrences,
+        captured_pytest_documents,
+        captured_pytest_function_selected,
+        _reference_local_export,
+        _app_expression_name,
+    )
+
+
+_MARKER_CONTEXT_HELPERS = tuple(
+    name for name in globals() if name.startswith("_marker_")
+)
+
+
+# Published access_token response example in GitHub's OAuth authorization docs.
+# https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
+_HTTP_FIXTURE_PUBLIC_SAMPLE_SHA256 = (
+    "bc3ae723f57c6b9e3fd80b699fcc420f6074b0b1718039669d22631d508ac0a7"
+)
+_HTTP_FIXTURE_PUBLIC_SOURCE = (
+    "https://github.com/github/docs/blob/74d2d500a67997b55f366c2387dc0280104fd9bc/"
+    "content/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps.md#L126-L134",
+    "b4c8481a707440f70f49cc8198e2ba8a15ce68b72a26480841a007f38947d574",
+)
+
+
+def captured_http_fixture_token_proof(index, path, node):
+    """Bind a documented token to a mock payload and a fixed intercepted request."""
+    if not _marker_literal_assignment(node) or len(index.snapshots) > 128:
+        return None
+    literal = node.value.value.encode("utf-8", "surrogatepass")
+    if hashlib.sha256(literal).hexdigest() != _HTTP_FIXTURE_PUBLIC_SAMPLE_SHA256:
+        return None
+    context = _http_fixture_context(index, path)
+    if context is None:
+        return None
+    matches = _http_fixture_pair(context, path, node)
+    if matches is None:
+        return None
+    issuer, reader, sample = matches
+    if not _http_fixture_sample_closed(index, path, node.value, sample, literal):
+        return None
+    if not _http_fixture_providers_stable(context, issuer, reader):
+        return None
+    return _http_fixture_receipt(context, path, node, issuer, reader, sample)
+
+
+def _http_fixture_context(index, path):
+    from .fixture_scope_value_audit import _hash_fixture_collection_path_clear
+
+    if not index.validate(path):
+        return None
+    tree = index.snapshots[path]
+    documents = captured_pytest_documents(tree)
+    selected = captured_pytest_configuration(
+        documents, source_role_only=True, complete_precedence=True
+    )
+    paths = index.module_paths()
+    if (
+        selected is None
+        or paths is None
+        or any(
+            name + suffix in paths
+            for name in ("aiohttp", "aioresponses", "pytest", "pytest_asyncio")
+            for suffix in (".py", "/__init__.py")
+        )
+    ):
+        return None
+    providers = [
+        captured_distribution_provider(documents, name, include_optional=True)
+        for name in ("aiohttp", "aioresponses", "pytest", "pytest-asyncio")
+    ]
+    if not all(providers) or not _http_fixture_collection_closed(index, path):
+        return None
+    options = selected["options"]
+    if "pythonpath" in options or not _hash_fixture_collection_path_clear(
+        PurePosixPath(index.relative(path)), options
+    ):
+        return None
+    return {
+        "source": index,
+        "module_paths": paths,
+        "modules": index.snapshots,
+        "selector": selected["identity"],
+        "providers": providers,
+    }
+
+
+def _http_fixture_collection_closed(index, path):
+    for peer, tree in index.snapshots.items():
+        if not index.validate(peer):
+            return False
+        if peer.name == "conftest.py" and peer.parent in path.parents and tree.body:
+            return False
+        if _pytest_collection_hook_names(tree, peer.name == "conftest.py", True):
+            return False
+        if any(_pytest_plugin_declaration_active(node) for node in ast.walk(tree)):
+            return False
+    return True
+
+
+def _http_fixture_test_selected(context, path, owner):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import _app_expression_name
+
+    tree = context["modules"][path]
+    if binding_occurrences(tree.body, owner.name) != [owner]:
+        return None
+    selector = context["selector"]
+    relative = context["source"].relative(path)
+    if not _pytest_file_matches(relative, selector["python_files"]):
+        return None
+    if not _pytest_name_matches(owner.name, selector["python_functions"]):
+        return None
+    marks = binding_occurrences(tree.body, "pytestmark")
+    match marks:
+        case [ast.Name() as target]:
+            mark = context["source"].parents[path].get(id(target))
+        case _:
+            return None
+    if (
+        mark in tree.body
+        and isinstance(mark, ast.Assign)
+        and len(mark.targets) == 1
+        and _http_fixture_global_names_stable(tree, {"pytestmark", owner.name})
+        and _http_fixture_expression_root_stable(tree, mark.value)
+        and _app_expression_name(context, path, mark.value) == "pytest.mark.asyncio"
+        and all(_http_fixture_test_module_statement(item, mark) for item in tree.body)
+    ):
+        return mark
+    return None
+
+
+def _http_fixture_test_module_statement(item, mark):
+    return (
+        item is mark
+        or isinstance(item, (ast.Import, ast.ImportFrom))
+        or isinstance(item, ast.AsyncFunctionDef)
+        and not item.decorator_list
+        and not list(ast.iter_child_nodes(item.args))
+        and (
+            item.returns is None
+            or isinstance(item.returns, ast.Constant)
+            and item.returns.value is None
+        )
+    )
+
+
+def _http_fixture_global_names_stable(tree, names):
+    return not any(
+        isinstance(node, ast.Global) and names.intersection(node.names)
+        for node in ast.walk(tree)
+    )
+
+
+def _http_fixture_expression_root_stable(tree, expression):
+    while isinstance(expression, ast.Attribute):
+        expression = expression.value
+    return isinstance(expression, ast.Name) and _http_fixture_global_names_stable(
+        tree, {expression.id}
+    )
+
+
+def _http_fixture_pair(context, path, node):
+    tree = context["modules"][path]
+    parents = context["source"].parents[path]
+    owner = parents.get(id(parents.get(id(node))))
+    if not isinstance(owner, ast.AsyncFunctionDef):
+        return None
+    reader = _http_fixture_test(context, path, owner, "get")
+    if reader is None or reader["inputs"] != [node]:
+        return None
+    issuers = []
+    for item in tree.body:
+        issuer = _http_fixture_test(context, path, item, "post")
+        if issuer is not None and issuer["sample"].value == node.value.value:
+            issuers.append(issuer)
+    if len(issuers) != 1 or issuers[0]["origin"] != reader["origin"]:
+        return None
+    return issuers[0], reader, issuers[0]["sample"]
+
+
+def _http_fixture_test(context, path, owner, method):
+    from .mock_fixture_provenance import _app_expression_name
+
+    match owner:
+        case ast.AsyncFunctionDef(body=[ast.With(items=[item], body=body)]) if (
+            not owner.decorator_list and not list(ast.iter_child_nodes(owner.args))
+        ):
+            pass
+        case _:
+            return None
+    match item:
+        case ast.withitem(
+            context_expr=ast.Call(func=factory, args=[], keywords=[]),
+            optional_vars=ast.Name(id=mock),
+        ) if (
+            _app_expression_name(context, path, factory, owner)
+            == "aioresponses.aioresponses"
+        ):
+            pass
+        case _:
+            return None
+    if not _http_fixture_expression_root_stable(context["modules"][path], factory):
+        return None
+    match body:
+        case [*inputs, payload, register, observe, assertion] if len(inputs) == (
+            1 if method == "get" else 2
+        ):
+            pass
+        case _:
+            return None
+    mark = _http_fixture_test_selected(context, path, owner)
+    if mark is None:
+        return None
+    request = _http_fixture_response(
+        mock, method, payload, register, observe, assertion
+    )
+    if request is None:
+        return None
+    request.update(owner=owner, inputs=inputs, mock=item.context_expr, mark=mark)
+    return _http_fixture_bind_request(context, path, request, method)
+
+
+def _http_fixture_response(mock, method, payload, register, observe, assertion):
+    match payload, register, observe, assertion:
+        case (
+            ast.Assign(targets=[ast.Name(id=data)], value=ast.Dict() as fixture),
+            ast.Expr(
+                value=ast.Call(
+                    func=ast.Attribute(value=ast.Name(id=receiver), attr=verb),
+                    args=[endpoint],
+                    keywords=keywords,
+                ) as registration
+            ),
+            ast.Assign(
+                targets=[ast.Name(id=result)],
+                value=ast.Await(
+                    value=ast.Call(args=[ast.Name() as argument], keywords=[]) as call
+                ),
+            ),
+            ast.Assert(
+                test=ast.Compare(
+                    left=ast.Name(id=observed),
+                    ops=[ast.Eq()],
+                    comparators=[
+                        ast.Subscript(
+                            value=ast.Name(id=expected),
+                            slice=ast.Constant(value=str() as key),
+                        )
+                    ],
+                ),
+                msg=None,
+            ),
+        ) if (receiver, verb, result, data) == (mock, method, observed, expected):
+            pass
+        case _:
+            return None
+    if not _http_fixture_registration_options(keywords, data):
+        return None
+    sample = _http_fixture_json_field(fixture, key)
+    if (
+        sample is None
+        or (method == "post" and key != "access_token")
+        or len({mock, data, result}) != 3
+    ):
+        return None
+    return {
+        "endpoint": endpoint,
+        "key": key,
+        "sample": sample,
+        "argument": argument,
+        "registration": registration,
+        "call": call,
+        "assertion": assertion,
+        "locals": {mock, data, result},
+    }
+
+
+def _http_fixture_registration_options(keywords, data):
+    values = {item.arg: item.value for item in keywords}
+    match values:
+        case {
+            "status": ast.Constant(value=200 as status),
+            "payload": ast.Name(id=value),
+        }:
+            return (
+                len(keywords) == len(values) == 2
+                and type(status) is int
+                and value == data
+            )
+    return False
+
+
+def _http_fixture_json_field(fixture, key):
+    import json
+
+    try:
+        json.dumps(ast.literal_eval(fixture), allow_nan=False)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    fields = {
+        name.value: value
+        for name, value in zip(fixture.keys, fixture.values)
+        if isinstance(name, ast.Constant) and isinstance(name.value, str)
+    }
+    value = fields.get(key)
+    if len(fields) != len(fixture.keys):
+        return None
+    return (
+        value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str)
+        else None
+    )
+
+
+def _http_fixture_bind_request(context, path, request, method):
+    from .mock_fixture_provenance import _app_expression_name
+
+    owner, call = request["owner"], request["call"]
+    canonical = _app_expression_name(context, path, call.func, owner)
+    resolved = _http_fixture_direct_symbol(context, path, owner, call.func)
+    if canonical is None or resolved is None:
+        return None
+    origin, callback, _ = resolved
+    if not isinstance(callback, ast.AsyncFunctionDef):
+        return None
+    argument = _http_fixture_test_argument(request, method)
+    if argument is None:
+        return None
+    consumer = _http_fixture_transport(
+        context, origin, callback, method, request["key"]
+    )
+    if consumer is None:
+        return None
+    setup, outgoing, header = consumer
+    url = _http_fixture_test_url(context, path, request, method, argument)
+    sent = _http_fixture_transport_url(
+        context, origin, callback, setup, outgoing, argument, method
+    )
+    if url is None or url != sent:
+        return None
+    return {
+        **request,
+        "origin": origin,
+        "canonical": canonical,
+        "callback": callback,
+        "outgoing": outgoing,
+        "header": header,
+        "endpoint_providers": _http_fixture_endpoint_providers(url),
+        "route_binding": _http_fixture_route_binding(url, method),
+    }
+
+
+def _http_fixture_direct_symbol(context, path, owner, expression):
+    from .mock_fixture_provenance import _app_source_symbol
+
+    if not _http_fixture_expression_root_stable(context["modules"][path], expression):
+        return None
+    chain = []
+    site = _app_source_symbol(context, path, expression, owner, provider_chain=chain)
+    if site is None or len(chain) != 1:
+        return None
+    origin, declaration = site
+    canonical, _, name = chain[0]
+    tree = context["modules"][origin]
+    if declaration in tree.body and _http_fixture_global_names_stable(tree, {name}):
+        return origin, declaration, canonical.rpartition(".")[0]
+    return None
+
+
+def _http_fixture_endpoint_providers(projection):
+    match projection:
+        case ("endpoint", provider, _, _, _):
+            return {provider}
+        case ("template", parts):
+            return set().union(*map(_http_fixture_endpoint_providers, parts))
+    return set()
+
+
+def _http_fixture_route_binding(projection, method):
+    if method == "get":
+        return "MATCHED_FIXED_HTTPS_URL"
+    if _http_fixture_config_references(projection):
+        # The sample is only in the POST mock response. Matching URL syntax
+        # does not establish that the captured config produces matching values.
+        return "SHARED_URL_TEMPLATE_CONFIGURATION_VALUES_UNASSESSED"
+    return "MATCHED_LITERAL_URL_TEMPLATE"
+
+
+def _http_fixture_config_references(projection):
+    match projection:
+        case ("configuration", _):
+            return True
+        case ("template", parts):
+            return any(map(_http_fixture_config_references, parts))
+    return False
+
+
+def _http_fixture_test_argument(request, method):
+    match request["inputs"][0]:
+        case ast.Assign(
+            targets=[ast.Name(id=name)], value=ast.Constant(value=str() as value)
+        ):
+            pass
+        case _:
+            return None
+    if name != request["argument"].id or name in request["locals"]:
+        return None
+    owner = request["owner"]
+    expected = 1 if method == "get" else 2
+    if len(_marker_loads(owner, name)) != expected:
+        return None
+    return value
+
+
+def _http_fixture_transport(context, path, callback, method, key):
+    from .mock_fixture_provenance import _app_expression_name, _app_has_dynamic_scope
+
+    parameter = _rejection_single_argument(callback)
+    if parameter is None or callback.decorator_list:
+        return None
+    if _app_has_dynamic_scope(context, path, callback, tuple(ast.walk(callback))):
+        return None
+    position = 1 if method == "get" else 2
+    setup = callback.body[:position]
+    match callback.body[position:]:
+        case [
+            ast.AsyncWith(items=[entry], body=[inner, *inside]),
+            *tail,
+            ast.Return(value=result),
+        ]:
+            pass
+        case _:
+            return None
+    match entry, inner:
+        case (
+            ast.withitem(
+                context_expr=ast.Call(func=factory, args=[], keywords=[]),
+                optional_vars=ast.Name(id=session),
+            ),
+            ast.AsyncWith(
+                items=[
+                    ast.withitem(
+                        context_expr=ast.Call(
+                            func=ast.Attribute(value=ast.Name(id=receiver), attr=verb),
+                            args=[_],
+                            keywords=[
+                                ast.keyword(arg="headers", value=ast.Name(id=headers))
+                            ],
+                        ) as outgoing,
+                        optional_vars=ast.Name(id=response),
+                    )
+                ],
+                body=[read, *within],
+            ),
+        ) if (receiver, verb) == (session, method) and _app_expression_name(
+            context, path, factory, callback
+        ) == "aiohttp.ClientSession":
+            pass
+        case _:
+            return None
+    if not _http_fixture_expression_root_stable(context["modules"][path], factory):
+        return None
+    if not _http_fixture_response_projection(
+        read, response, [*within, *inside, *tail], result, key
+    ):
+        return None
+    header = _http_fixture_request_header(setup, headers, parameter, method)
+    if header is None or len(_marker_loads(callback, parameter)) != 1:
+        return None
+    if _marker_loads(callback, headers) != {outgoing.keywords[0].value}:
+        return None
+    if len({parameter, headers, session, response}) != 4:
+        return None
+    return setup, outgoing, header
+
+
+def _http_fixture_response_projection(read, response, statements, result, key):
+    match read:
+        case ast.Assign(
+            targets=[ast.Name(id=decoded)],
+            value=ast.Await(
+                value=ast.Call(
+                    func=ast.Attribute(value=ast.Name(id=source), attr="json"),
+                    args=[],
+                    keywords=[],
+                )
+            ),
+        ) if source == response:
+            pass
+        case _:
+            return False
+    match statements:
+        case [
+            ast.Try(
+                body=[ast.Assign() | ast.AnnAssign() as lookup],
+                handlers=[
+                    ast.ExceptHandler(
+                        type=ast.Name(id="KeyError"),
+                        name=None,
+                    )
+                ],
+                orelse=[],
+                finalbody=[],
+            )
+        ]:
+            pass
+        case [ast.Assign() | ast.AnnAssign() as lookup]:
+            pass
+        case _:
+            return False
+    match lookup.value, result:
+        case ast.Subscript(
+            value=ast.Name(id=data), slice=ast.Constant(value=member)
+        ), ast.Name(id=returned):
+            return (data, member, returned) == (
+                decoded,
+                key,
+                _http_fixture_result_name(lookup),
+            )
+    return False
+
+
+def _http_fixture_result_name(statement):
+    match statement:
+        case (
+            ast.Assign(targets=[ast.Name(id=name)])
+            | ast.AnnAssign(
+                target=ast.Name(id=name),
+                annotation=ast.Name(id="str"),
+                simple=1,
+            )
+        ):
+            return name
+    return None
+
+
+def _http_fixture_request_header(setup, name, parameter, method):
+    if len(setup) != (1 if method == "get" else 2):
+        return None
+    match setup[-1]:
+        case (
+            ast.Assign(
+                targets=[ast.Name(id=target)],
+                value=ast.Dict(keys=[ast.Constant(value=key)], values=[value]),
+            ) as header
+        ) if target == name:
+            pass
+        case _:
+            return None
+    match method, key, value:
+        case "post", "Accept", ast.Constant(value="application/json"):
+            return header
+        case "get", "Authorization", ast.JoinedStr(
+            values=[
+                ast.Constant(value="Bearer "),
+                ast.FormattedValue(
+                    value=ast.Name(id=argument), conversion=-1, format_spec=None
+                ),
+            ]
+        ) if argument == parameter:
+            return header
+    return None
+
+
+def _http_fixture_test_url(context, path, request, method, argument):
+    owner, endpoint = request["owner"], request["endpoint"]
+    if method == "get":
+        return _http_fixture_fixed_url(context, path, owner, endpoint)
+    match request["inputs"][1], endpoint:
+        case ast.Assign(targets=[ast.Name(id=name)], value=value), ast.Name(
+            id=target
+        ) if name == target:
+            if name in request["locals"] or name == request["argument"].id:
+                return None
+            return _http_fixture_url_parts(
+                context, path, owner, value, {request["argument"].id: argument}
+            )
+    return None
+
+
+def _http_fixture_transport_url(
+    context, path, callback, setup, outgoing, argument, method
+):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    endpoint = outgoing.args[0]
+    if method == "get":
+        return _http_fixture_fixed_url(context, path, callback, endpoint)
+    match setup[0], endpoint:
+        case ast.Assign(targets=[ast.Name(id=name) as binding], value=value), ast.Name(
+            id=target
+        ) if name == target:
+            parameter = callback.args.args[0].arg
+            if (
+                name != parameter
+                and binding_occurrences(callback.body, name) == [binding]
+                and _marker_loads(callback, name) == {endpoint}
+            ):
+                return _http_fixture_url_parts(
+                    context, path, callback, value, {parameter: argument}
+                )
+    return None
+
+
+def _http_fixture_fixed_url(context, path, owner, endpoint):
+    from urllib.parse import urlsplit
+
+    if not isinstance(endpoint, (ast.Name, ast.Constant)):
+        return None
+    projection = _http_fixture_url_parts(context, path, owner, endpoint, {})
+    if projection is None:
+        return None
+    value = projection[-1]
+    try:
+        url = urlsplit(value)
+    except ValueError:
+        return None
+    if url.scheme == "https" and url.hostname and not url.username and not url.fragment:
+        return projection
+    return None
+
+
+def _http_fixture_url_parts(context, path, owner, node, values):
+    from .mock_fixture_provenance import _app_expression_name
+
+    match node:
+        case ast.Name(id=name) if name in values:
+            return "literal", values[name]
+        case ast.Name():
+            site = _http_fixture_direct_symbol(context, path, owner, node)
+            match site:
+                case origin, ast.Assign(
+                    value=ast.Constant(value=str() as address)
+                ) as declaration, provider if address.startswith("https://"):
+                    return "endpoint", provider, origin, declaration, address
+            return None
+        case ast.Attribute() if _http_fixture_expression_root_stable(
+            context["modules"][path], node
+        ):
+            provider = _app_expression_name(context, path, node, owner)
+            return ("configuration", provider) if provider else None
+        case ast.Constant(value=str() as value):
+            return "literal", value
+        case ast.FormattedValue(value=value, conversion=-1, format_spec=None):
+            return _http_fixture_url_parts(context, path, owner, value, values)
+        case ast.JoinedStr(values=parts):
+            projected = tuple(
+                _http_fixture_url_parts(context, path, owner, part, values)
+                for part in parts
+            )
+            return ("template", projected) if all(projected) else None
+    return None
+
+
+def _http_fixture_sample_closed(index, path, candidate, sample, literal):
+    tree = index.snapshots[path]
+    matches = {
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and node.value == candidate.value
+    }
+    if matches != {candidate, sample} or index.source_bytes[path].count(literal) != 2:
+        return False
+    if any(
+        isinstance(item, ast.Constant) and item.value == candidate.value
+        for peer, snapshot in index.snapshots.items()
+        if peer != path
+        for item in ast.walk(snapshot)
+    ):
+        return False
+    documents = captured_pytest_documents(tree) or {}
+    relative = index.relative(path)
+    if relative in documents and documents[relative] != index.source_bytes[path]:
+        return False
+    return not any(
+        literal in raw
+        for peer, raw in (
+            *index.source_bytes.items(),
+            *documents.items(),
+        )
+        if peer not in {path, relative} and isinstance(raw, bytes)
+    )
+
+
+def _http_fixture_providers_stable(context, issuer, reader):
+    from . import review_audits as audit
+    from .credential_role_constructor_provider import _presentation_provider_facts
+
+    protected = {
+        "aiohttp",
+        "aioresponses",
+        "pytest",
+        "pytest_asyncio",
+        "sys.modules",
+        issuer["canonical"].rpartition(".")[0],
+        reader["canonical"].rpartition(".")[0],
+        *issuer["endpoint_providers"],
+        *reader["endpoint_providers"],
+    }
+    # These effects are already accounted for by the exact fixture shape.
+    known = {
+        node
+        for root in (issuer["registration"], reader["registration"], reader["mark"])
+        for node in ast.walk(root)
+    }
+    known.add(reader["outgoing"].args[0])
+    index = context["source"]
+    for path, tree in index.snapshots.items():
+        # The validated workspace loop owns every peer. Omitting the module
+        # sentinel keeps the shared analysis from re-scanning unprojected peers.
+        nodes = [
+            item for item in ast.walk(tree) if item is not tree and item not in known
+        ]
+        _, mutations, star = _presentation_provider_facts(
+            tree, nodes, index.parents[path], audit
+        )
+        if star or any(
+            _http_fixture_provider_overlap(change, protected) for change in mutations
+        ):
+            return False
+    return True
+
+
+def _http_fixture_provider_overlap(change, protected):
+    owner, attribute = change
+    target = owner if attribute == "*" else owner + "." + attribute
+    return any(
+        target == provider
+        or target.startswith(provider + ".")
+        or provider.startswith(target + ".")
+        for provider in protected
+    )
+
+
+def _http_fixture_receipt(context, path, node, issuer, reader, sample):
+    index = context["source"]
+    return {
+        "hypothesis": "CAPTURED_OPERATIVE_HTTP_AUTHENTICATION_TOKEN",
+        "scope": "CAPTURED_PYTHON_SOURCE",
+        "literal_role": "PUBLISHED_OAUTH_EXAMPLE_IN_INTERCEPTED_FIXTURE",
+        "published_example": {
+            "source": _HTTP_FIXTURE_PUBLIC_SOURCE[0],
+            "source_sha256": _HTTP_FIXTURE_PUBLIC_SOURCE[1],
+            "field": "access_token",
+            "value_sha256": _HTTP_FIXTURE_PUBLIC_SAMPLE_SHA256,
+        },
+        "declaration": _marker_evidence(index, path, node),
+        "mock_response_origin": _marker_evidence(index, path, sample),
+        "provider_declarations": context["providers"],
+        "transfers": [
+            {
+                "method": method,
+                "route_binding": case["route_binding"],
+                "mock": _marker_evidence(index, path, case["mock"]),
+                "registration": _marker_evidence(index, path, case["registration"]),
+                "consumer_call": _marker_evidence(index, path, case["call"]),
+                "request": _marker_evidence(index, case["origin"], case["outgoing"]),
+                "header": _marker_evidence(index, case["origin"], case["header"]),
+                "assertion": _marker_evidence(index, path, case["assertion"]),
+            }
+            for method, case in (("POST", issuer), ("GET", reader))
+        ],
+        "credential_literal_observation": "RETAINED",
+        "runtime_execution": "UNASSESSED",
+    }
+
+
+def http_fixture_token_proof_helpers():
+    """Bind the actual HTTP fixture proof lookups used across cache epochs."""
+    from .credential_role_constructor_provider import (
+        _presentation_provider_facts,
+        binding_occurrences,
+    )
+    from .fixture_scope_value_audit import (
+        _HASH_PYTEST_NORECURSEDIRS,
+        _hash_fixture_collection_path_clear,
+    )
+    from .mock_fixture_provenance import (
+        _app_expression_name,
+        _app_has_dynamic_scope,
+        _app_source_symbol,
+    )
+
+    return (
+        captured_http_fixture_token_proof,
+        *(globals()[name] for name in _HTTP_FIXTURE_HELPERS),
+        _HTTP_FIXTURE_PUBLIC_SAMPLE_SHA256,
+        _HTTP_FIXTURE_PUBLIC_SOURCE,
+        _marker_literal_assignment,
+        _marker_loads,
+        _marker_evidence,
+        _pytest_collection_hook_names,
+        _pytest_file_matches,
+        _pytest_name_matches,
+        _pytest_pattern_list,
+        _pytest_plugin_declaration_active,
+        _app_expression_name,
+        _app_has_dynamic_scope,
+        _presentation_provider_facts,
+        _app_source_symbol,
+        _HASH_PYTEST_NORECURSEDIRS,
+        _hash_fixture_collection_path_clear,
+        _rejection_single_argument,
+        binding_occurrences,
+        captured_distribution_provider,
+        captured_pytest_configuration,
+        captured_pytest_documents,
+    )
+
+
+_HTTP_FIXTURE_HELPERS = tuple(
+    name for name in globals() if name.startswith("_http_fixture_")
+)

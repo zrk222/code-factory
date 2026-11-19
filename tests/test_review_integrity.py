@@ -29,6 +29,119 @@ from factoryline import intent_quality as intent_quality_module
 from factoryline.workflow_audit import CATEGORIES, audit_workflows
 
 
+@pytest.mark.parametrize(
+    ("declaration", "closed"),
+    [("pass", True), ("nonlocal label", False), ("global label", False)],
+)
+def test_captured_record_field_requires_closed_nested_bindings(
+    tmp_path, monkeypatch, declaration, closed
+):
+    from types import SimpleNamespace
+
+    from factoryline import credential_role_identity_effects
+    from factoryline.captured_operand_audit import _CapturedRecordText
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    source = (
+        "def build():\n"
+        "    label = 'initial'\n"
+        "    def update():\n"
+        f"        {declaration}\n"
+        "        label = 'updated'\n"
+        "    update()\n"
+        "    return {'label': label}\n"
+    ).encode()
+    path = tmp_path / "example.py"
+    tree = ast.parse(source)
+    digest = sha256(source).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: source}, {path: digest})
+    assert index.validate(path)
+    resolved = SimpleNamespace(
+        function=tree.body[0], negative_binding_closed=True, arguments={}, path=path
+    )
+    monkeypatch.setattr(
+        credential_role_identity_effects,
+        "resolve_source_identity_call",
+        lambda *_args: resolved,
+    )
+    call = ast.parse("build()", mode="eval").body
+    assert _CapturedRecordText(index).field(call, path, "label", {}) is closed
+
+
+@pytest.mark.parametrize(
+    ("module_level", "inventory_size", "expected"),
+    [
+        (True, 1, ["placeholder", "locator"]),
+        (False, 1, ["password", "hash", "http"]),
+        (False, 218, ["hash"]),
+    ],
+)
+def test_credential_operand_dispatch_limits_proof_scope(
+    tmp_path, monkeypatch, module_level, inventory_size, expected
+):
+    from types import SimpleNamespace
+
+    from factoryline import (
+        fixture_scope_value_audit,
+        provenance,
+        pytest_collection_audit,
+    )
+    from factoryline.audit_action_refs import _captured_credential_operand_proof
+
+    invoked = []
+    for module, slot, role in (
+        (fixture_scope_value_audit, "captured_password_validation_proof", "password"),
+        (fixture_scope_value_audit, "captured_hash_fixture_proof", "hash"),
+        (provenance, "captured_oauth_placeholder_proof", "placeholder"),
+        (provenance, "captured_oauth_service_locator_proof", "locator"),
+        (pytest_collection_audit, "captured_http_fixture_token_proof", "http"),
+    ):
+        monkeypatch.setattr(
+            module, slot, lambda *_args, role=role: invoked.append(role)
+        )
+    node = ast.parse('sample = "inert fixture"').body[0]
+    path = tmp_path / "test_source.py"
+    parent = ast.Module() if module_level else ast.FunctionDef()
+    index = SimpleNamespace(
+        snapshots=(None,) * inventory_size, parents={path: {id(node): parent}}
+    )
+    assert _captured_credential_operand_proof(index, path, node) is None
+    assert invoked == expected
+
+
+def test_native_epoch_includes_all_new_credential_operand_dependencies():
+    from factoryline.captured_security_audit import argument_role_proof_helpers
+    from factoryline.fixture_scope_value_audit import hash_fixture_proof_helpers
+    from factoryline.provenance import oauth_service_locator_proof_helpers
+    from factoryline.pytest_collection_audit import http_fixture_token_proof_helpers
+
+    registered = argument_role_proof_helpers()
+    assert all(
+        helper in registered
+        for group in (
+            hash_fixture_proof_helpers(),
+            oauth_service_locator_proof_helpers(),
+            http_fixture_token_proof_helpers(),
+        )
+        for helper in group
+    )
+
+
+@pytest.mark.parametrize("slot", ["stdlib", "collection"])
+def test_oracle_cache_tracks_shared_pytest_path_matcher(tmp_path, monkeypatch, slot):
+    from factoryline import fixture_scope_value_audit, pytest_collection_audit
+
+    module = (
+        fixture_scope_value_audit.fnmatch
+        if slot == "stdlib"
+        else pytest_collection_audit
+    )
+    before = review_audits._oracle_context_cache_key(tmp_path, [], {})
+    monkeypatch.setattr(module, "fnmatchcase", lambda *_args: False)
+    assert review_audits._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
 def _database_context_project(root, dialect="sqlite"):
     (root / "app.py").write_text("value = 1\n")
     (root / "factory.database.json").write_text(
@@ -3036,6 +3149,100 @@ def _fixture(root, project="cli-library", profile="python-3.11"):
 
 def _audit(root):
     return audit_workflows(root, "contract.json", "observations.json")
+
+
+@pytest.mark.parametrize(
+    "changed",
+    ["contract.json", "observations.json", "applicability-review.txt", "source.txt"],
+)
+def test_capture_workflow_audit_rechecks_exact_snapshot(tmp_path, monkeypatch, changed):
+    from collections import Counter
+
+    _fixture(tmp_path)
+    paths = (tmp_path, "contract.json", "observations.json")
+    receipt, contract, observations, recheck = (
+        workflow_audit_module.capture_workflow_audit(*paths)
+    )
+    assert receipt["state"] == "PASS"
+    assert workflow_audit_module.audit_workflow_snapshot(*paths) == (
+        receipt,
+        contract,
+        observations,
+    )
+
+    original = workflow_audit_module._artifact_digest
+    reads = Counter()
+
+    def record_read(path, remaining, **limits):
+        reads[path.name] += 1
+        return original(path, remaining, **limits)
+
+    monkeypatch.setattr(workflow_audit_module, "_artifact_digest", record_read)
+    assert recheck()
+    assert reads == dict.fromkeys(
+        (
+            "contract.json",
+            "observations.json",
+            "applicability-review.txt",
+            "source.txt",
+        ),
+        1,
+    )
+    path = tmp_path / changed
+    path.write_bytes(path.read_bytes() + b"\n")
+    assert not recheck()
+
+
+def test_capture_workflow_audit_rejects_redirected_evidence(tmp_path):
+    _fixture(tmp_path)
+    review = tmp_path / "applicability-review.txt"
+    copy = tmp_path / "review-copy.txt"
+    copy.write_bytes(review.read_bytes())
+    original = review.rename(tmp_path / "original-review.txt")
+    try:
+        review.symlink_to(original.name)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+    receipt, _, _, recheck = workflow_audit_module.capture_workflow_audit(
+        tmp_path, "contract.json", "observations.json"
+    )
+    assert receipt["state"] == "PASS"
+    assert recheck()
+    review.unlink()
+    review.symlink_to(copy.name)
+    assert not recheck()
+
+
+@pytest.mark.parametrize("drift", [False, True])
+def test_workflow_audit_reuses_repeated_artifacts_with_fresh_recheck(
+    tmp_path, monkeypatch, drift
+):
+    from collections import Counter
+
+    from factoryline import workflow_audit
+
+    contract, _ = _fixture(tmp_path)
+    original = workflow_audit._artifact_digest
+    reads = Counter()
+    review = tmp_path / "applicability-review.txt"
+    review_size = review.stat().st_size
+
+    def observed(path, remaining):
+        result = original(path, remaining)
+        reads[path.name] += 1
+        if drift and path == review and reads[path.name] == 1:
+            path.write_text("Changed review evidence.", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(workflow_audit, "_artifact_digest", observed)
+    result = _audit(tmp_path)
+    assert reads[review.name] == 2
+    assert result["resource_usage"]["artifact_references"] == len(CATEGORIES) + 1
+    candidate_size = (tmp_path / contract["candidate"][0]["path"]).stat().st_size
+    assert (
+        result["resource_usage"]["bytes_hashed"] == 7 * review_size + 2 * candidate_size
+    )
+    assert result["state"] == ("INCOMPLETE" if drift else "PASS")
 
 
 @pytest.mark.parametrize(

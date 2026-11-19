@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Iterable
+from . import canonical_ascii_json_compat_bytes as _studio_json
 
 from .assembly_process import run_cli_detailed
 from .product_missions import (
@@ -192,10 +193,6 @@ def build_blueprint(
         ],
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
-
-
-def _studio_json(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _studio_sha(value: object) -> str:

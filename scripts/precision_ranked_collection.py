@@ -225,7 +225,9 @@ class _RegisteredDispatch:
             outcome = None if code == 0 and work.result_path.is_file() else WORKER_ERROR
         except TimeoutError:
             outcome = DEFERRED
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            outcome = "timeout"
+        except OSError:
             outcome = WORKER_ERROR
         except RuntimeError:
             with self.lock:
@@ -244,7 +246,11 @@ class _RegisteredDispatch:
         if outcome is not None:
             if outcome == DEFERRED:
                 study.attempted -= 1
-            row = _incomplete(controller, work.job, outcome)
+            row = _incomplete(
+                controller, work.job, WORKER_ERROR if outcome == "timeout" else outcome
+            )
+            if outcome == "timeout":
+                row["failed_checks"] = ["timeout"]
             study.save(work.result_path, row)
             return row
         row = controller.read(work.result_path)

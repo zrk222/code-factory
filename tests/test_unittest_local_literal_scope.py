@@ -2,11 +2,18 @@
 
 import ast
 import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+from textwrap import dedent
 
 import pytest
 
 from factoryline import credential_role_identity_effects as effects
 from factoryline import credential_role_method_use_getter_audit as scope
+from factoryline.cli import _build_parser
+from factoryline.cli_audit import prepare_bounded_security_report
 from factoryline.mock_fixture_provenance import application_test_index
 
 
@@ -189,6 +196,131 @@ def test_captured_public_registry_label_requires_closed_uses(
     assert report["finding_conservation"]["state"] == "PASS"
 
 
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "closed",
+        "legacy_policy",
+        "credential_value",
+        "request_escape",
+        "response_escape",
+        "provider_rebound",
+        "provider_alias_rebound",
+        "callback_called_from_source",
+        "definition_time_use",
+        "class_scope_use",
+        "reflective_reference",
+        "starlette_shadow",
+    ],
+)
+def test_cookie_names_require_captured_http_receivers(tmp_path, variant):
+    from factoryline.review_audits import security_scan
+
+    before_cookie_read = (
+        "    inspect_request(request)\n" if variant == "request_escape" else ""
+    )
+    if variant == "class_scope_use":
+        before_cookie_read = (
+            "    class Definition:\n"
+            "        observed = request.cookies.get(API_KEY_NAME)\n"
+        )
+    before_cookie_write = (
+        "    inspect_response(response)\n" if variant == "response_escape" else ""
+    )
+    credential = "API_KEY_NAME" if variant == "credential_value" else "token"
+    provider_rebind = (
+        "RedirectResponse = external_response\n"
+        if variant == "provider_rebound"
+        else ""
+    )
+    if variant == "provider_alias_rebound":
+        provider_rebind = (
+            "from fastapi.applications import FastAPI as Implementation\n"
+            "Implementation.middleware = external_registration\n"
+        )
+    annotation = (
+        " -> request.cookies.get(API_KEY_NAME)"
+        if variant == "definition_time_use"
+        else ""
+    )
+    external_request = (
+        "request = external_request\n" if variant == "definition_time_use" else ""
+    )
+    callback_call = (
+        "\nasync def custom_caller(value, consumer):\n"
+        "    return await check(value, consumer)\n"
+        if variant == "callback_called_from_source"
+        else ""
+    )
+    reflection = (
+        "\nread_key(globals()['API_KEY_NAME'])\n"
+        if variant == "reflective_reference"
+        else ""
+    )
+    (tmp_path / "app.py").write_text(
+        "from fastapi import FastAPI, Request\n"
+        "from fastapi.responses import RedirectResponse\n"
+        "from fastapi.security import APIKeyHeader\n"
+        + provider_rebind
+        + external_request
+        + "API_KEY_NAME = 'X-App-Token'\n"
+        "app = FastAPI()\n"
+        "header = APIKeyHeader(name=API_KEY_NAME)\n"
+        "@app.middleware('http')\n"
+        f"async def check(request: Request, call_next){annotation}:\n"
+        + before_cookie_read
+        + "    observed = request.cookies.get(API_KEY_NAME)\n"
+        "    if observed:\n"
+        "        return await call_next(request)\n"
+        "    return RedirectResponse('/login')\n"
+        "@app.post('/session')\n"
+        "async def session(token):\n"
+        "    response = RedirectResponse('/')\n"
+        + before_cookie_write
+        + f"    response.set_cookie(key=API_KEY_NAME, value={credential})\n"
+        "    return response\n"
+        "@app.post('/logout')\n"
+        "async def logout():\n"
+        "    response = RedirectResponse('/')\n"
+        "    response.delete_cookie(API_KEY_NAME)\n"
+        "    return response\n" + callback_call + reflection,
+        encoding="utf8",
+    )
+    if variant == "starlette_shadow":
+        (tmp_path / "starlette.py").write_text("local = True\n", encoding="utf8")
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v2"
+        if variant == "legacy_policy"
+        else "source-role-v3",
+    )
+    raw = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    findings = [row for row in raw if row["code"] == "SECURITY_HARDCODED_SECRET"]
+    assert [row["facts"]["name"] for row in findings] == (
+        [] if variant == "closed" else ["API_KEY_NAME"]
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["finding_conservation"]["native_rows"] == "VERIFIED"
+    refuted = report.get("refuted_security_observations", [])
+    if variant == "closed":
+        (row,) = refuted
+        trace = row["facts"]["cookie_name_use_trace"]
+        assert [(step["operation"], step["operand"]) for step in trace] == [
+            ("fastapi.security.APIKeyHeader", "name"),
+            ("get", 0),
+            ("set_cookie", "key"),
+            ("delete_cookie", 0),
+        ]
+        assert all(
+            step["source_sha256"] == report["sources"][0]["sha256"] for step in trace
+        )
+    else:
+        assert not refuted
+
+
 @pytest.mark.parametrize("directory", ["service", "../outside"])
 def test_capture_launch_configuration_binds_only_contained_build_files(
     tmp_path, directory
@@ -314,6 +446,103 @@ def captured_scope(tmp_path, source, filename="test_scope.py"):
         and isinstance(node.value.value, str)
     )
     return index, path, assignment
+
+
+def test_proof_inventory_binds_exact_scanner_consumers():
+    from factoryline import (
+        audit_log_flow,
+        captured_operand_audit,
+        fixture_scope_value_audit,
+        pickle_model_audit,
+        provenance,
+        pytest_collection_audit,
+    )
+    from factoryline.captured_security_audit import argument_role_proof_helpers
+    from factoryline.django_class_fixture_audit import (
+        application_class_account_evidence,
+        class_fixture_helpers,
+    )
+    from factoryline.xonsh_program_audit import (
+        stage_xonsh_program_refutation,
+        xonsh_program_role_helpers,
+    )
+
+    argument_helpers = argument_role_proof_helpers()
+    program_helpers = xonsh_program_role_helpers()
+    assert audit_log_flow.captured_log_field_text_closed in argument_helpers
+    assert captured_operand_audit.cookie_name_trace in argument_helpers
+    assert captured_operand_audit.captured_command_operand_proof in argument_helpers
+    assert (
+        captured_operand_audit.captured_local_representation_proof in argument_helpers
+    )
+    assert pickle_model_audit.captured_local_serialization_proof in argument_helpers
+    assert all(
+        helper in argument_helpers
+        for helpers in (
+            captured_operand_audit.command_operand_proof_helpers(),
+            captured_operand_audit.captured_local_representation_helpers(),
+            captured_operand_audit.installer_prerequisite_helpers(),
+            fixture_scope_value_audit.password_validation_proof_helpers(),
+            provenance.oauth_placeholder_proof_helpers(),
+            pytest_collection_audit.validation_marker_proof_helpers(),
+        )
+        for helper in helpers
+    )
+    assert stage_xonsh_program_refutation in program_helpers
+    assert all(helper in argument_helpers for helper in program_helpers)
+    assert application_class_account_evidence in class_fixture_helpers()
+
+
+def test_operand_refutation_rechecks_warm_source_snapshot(tmp_path):
+    from factoryline.audit_action_refs import _bound_operand_refutation
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    raw = b"value = 1\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    primary, peer = tmp_path / "primary.py", tmp_path / "peer.py"
+    trees = {path: ast.parse(raw) for path in (primary, peer)}
+    for tree in trees.values():
+        tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(
+        tmp_path, trees, dict.fromkeys(trees, raw), dict.fromkeys(trees, digest)
+    )
+    point = ("DEVELOPMENT_RULE", "primary.py", 1, 0, 1, 9, "HIGH")
+
+    def propose(_source, _path, _node):
+        return {"hypothesis": "CLOSED_OPERAND"}
+
+    node = trees[primary].body[0]
+    assert _bound_operand_refutation(index, primary, node, point, propose)
+    assert index.validate(peer)
+    trees[peer].body[0].value.value = 2
+    assert index.validate(peer)
+    assert _bound_operand_refutation(index, primary, node, point, propose) is None
+
+
+def test_representation_policy_changes_native_cache_key(tmp_path, monkeypatch):
+    from factoryline import captured_operand_audit
+    from factoryline.review_audits import _oracle_context_cache_key
+
+    before = _oracle_context_cache_key(tmp_path, [], {}, captured=True)
+    monkeypatch.setattr(captured_operand_audit, "_REPRESENTATION_METHODS", frozenset())
+    assert _oracle_context_cache_key(tmp_path, [], {}, captured=True) != before
+
+
+@pytest.mark.parametrize(
+    "binding", ["_declaration_bindings", "_exact_source_call", "canonical_bytes"]
+)
+def test_program_proof_cache_changes_with_actual_import_binding(
+    tmp_path, monkeypatch, binding
+):
+    from factoryline import xonsh_program_audit
+    from factoryline.review_audits import _oracle_context_cache_key
+
+    original = _oracle_context_cache_key(tmp_path, [], {})
+    monkeypatch.setattr(xonsh_program_audit, binding, lambda *_args: None)
+    first = _oracle_context_cache_key(tmp_path, [], {})
+    monkeypatch.setattr(xonsh_program_audit, binding, lambda *_args: ())
+    second = _oracle_context_cache_key(tmp_path, [], {})
+    assert len({original, first, second}) == 3
 
 
 def evidence(tmp_path, source, filename="test_scope.py"):
@@ -2018,4 +2247,950 @@ def test_test_scope_disposition_does_not_depend_on_credential_identifier(
         if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
     ]
     assert len(rows) == 1 and rows[0]["tier"] == "PROVEN_PRIMITIVE"
+    assert report["finding_conservation"]["state"] == "PASS"
+
+
+_DRF_FIXTURE_FILES = {
+    "manage.py": """
+        import os
+        import sys
+        from django.core.management import execute_from_command_line
+
+        def main():
+            os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+            execute_from_command_line(sys.argv)
+
+        if __name__ == '__main__':
+            main()
+    """,
+    "config/__init__.py": "",
+    "config/settings.py": """
+        import os
+        INSTALLED_APPS = ['django.contrib.auth', 'rest_framework']
+        MIDDLEWARE = []
+        ROOT_URLCONF = 'config.urls'
+        DATABASES = {'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'HOST': os.getenv('POSTGRES_HOST'),
+            'PORT': os.getenv('POSTGRES_PORT', '5432'),
+        }}
+    """,
+    "config/urls.py": """
+        from django.urls import path
+        from rest_framework_simplejwt.views import TokenObtainPairView
+        urlpatterns = [path('auth/token/', TokenObtainPairView.as_view())]
+    """,
+    "tests/__init__.py": "",
+    "tests/base.py": """
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APITestCase
+
+        class AccountFixture(APITestCase):
+            password = 'synthetic-test-account-value'
+
+            @classmethod
+            def setUpTestData(cls):
+                cls.user = get_user_model().objects.create_user(
+                    username='example', email='user@example.invalid', password=cls.password,
+                )
+
+            def setUp(self):
+                self.client.force_authenticate(self.user)
+    """,
+    "tests/test_authentication.py": """
+        from .base import AccountFixture
+
+        class AccountTests(AccountFixture):
+            def test_login(self):
+                self.client.force_authenticate(user=None)
+                response = self.client.post(
+                    '/auth/token/', {'username': self.user.username, 'password': self.password},
+                    format='json',
+                )
+                self.assertEqual(response.status_code, 200)
+    """,
+    ".github/workflows/ci.yml": """
+        name: CI
+        on: pull_request
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: example_test
+          POSTGRES_USER: example_test
+          POSTGRES_PASSWORD: synthetic-ci-only
+        jobs:
+          test:
+            runs-on: ubuntu-24.04
+            services:
+              postgres:
+                image: postgres:17-alpine
+                ports:
+                  - 5432:5432
+                env:
+                  POSTGRES_DB: example_test
+                  POSTGRES_USER: example_test
+                  POSTGRES_PASSWORD: synthetic-ci-only
+            steps:
+              - run: python manage.py test
+    """,
+}
+
+
+_DRF_FIXTURE_MUTATIONS = {
+    "runtime-import": (
+        ("runtime.py", lambda _source: "from tests.base import AccountFixture\n"),
+    ),
+    "external-request": (
+        (
+            "tests/test_authentication.py",
+            lambda source: source.replace(
+                "'/auth/token/'", "'https://example.invalid/auth/token/'"
+            ),
+        ),
+    ),
+    "database-route": (
+        (
+            "config/settings.py",
+            lambda source: source.replace(
+                "os.getenv('POSTGRES_HOST')", "'external-db.invalid'"
+            ),
+        ),
+    ),
+    "custom-signer": (
+        (
+            "config/settings.py",
+            lambda source: source + "TEST_RUNNER = 'config.custom.DiscoverRunner'\n",
+        ),
+    ),
+    "serializer-override": (
+        (
+            "config/settings.py",
+            lambda source: source
+            + "SIMPLE_JWT = {}\nSIMPLE_JWT['TOKEN_OBTAIN_SERIALIZER'] = 'config.custom.Serializer'\n",
+        ),
+    ),
+    "parser-override": (
+        (
+            "config/settings.py",
+            lambda source: source
+            + "REST_FRAMEWORK = {'DEFAULT_PARSER_CLASSES': ['config.custom.Parser']}\n",
+        ),
+    ),
+    "database-options": (
+        (
+            "config/settings.py",
+            lambda source: source.replace(
+                "'HOST':",
+                "'OPTIONS': {'hostaddr': 'external-db.invalid'},\n    'HOST':",
+            ),
+        ),
+    ),
+    "aliased-receiver": (
+        (
+            "tests/test_authentication.py",
+            lambda source: source
+            + "\n    def test_other(account):\n        receive(account)\n",
+        ),
+    ),
+    "route-list-mutation": (
+        ("config/urls.py", lambda source: source + "\nreplace_routes(urlpatterns)\n"),
+    ),
+    "alternate-runner": (
+        (
+            ".github/workflows/other.yml",
+            lambda _source: "jobs:\n  other:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: python manage.py test --keepdb\n",
+        ),
+    ),
+    "alternate-runner-same-job": (
+        (
+            ".github/workflows/ci.yml",
+            lambda source: source + "      - run: python manage.py test --keepdb\n",
+        ),
+    ),
+    "alternate-pytest": (
+        (
+            ".github/workflows/other.yml",
+            lambda _source: "jobs:\n  verification:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: python -m pytest\n",
+        ),
+    ),
+    "alternate-py-test": (
+        (".github/workflows/ci.yml", lambda source: source + "      - run: py.test\n"),
+    ),
+    "unproven-runner-script": (
+        (
+            ".github/workflows/ci.yml",
+            lambda source: source + "      - run: bash ./ci/verify.sh\n",
+        ),
+    ),
+    "quoted-runner-script": (
+        (
+            ".github/workflows/ci.yml",
+            lambda source: source + '      - run: bash "./ci/verify.sh"\n',
+        ),
+    ),
+    "uncaptured-reusable-job": (
+        (
+            ".github/workflows/other.yml",
+            lambda _source: "jobs:\n  verification:\n    uses: ./.github/workflows/missing.yml\n",
+        ),
+    ),
+    "root-include": (
+        (
+            "config/urls.py",
+            lambda source: source.replace(
+                "import path", "import include, path"
+            ).replace(
+                "urlpatterns = [", "urlpatterns = [path('', include('config.other')), "
+            ),
+        ),
+    ),
+    "definition-time-read": (
+        (
+            "tests/base.py",
+            lambda source: source.replace(
+                "    @classmethod",
+                "    observed = observe(password)\n\n    @classmethod",
+            ),
+        ),
+    ),
+    "definition-time-namespace": (
+        (
+            "tests/base.py",
+            lambda source: source.replace(
+                "    @classmethod", "    observe(locals())\n\n    @classmethod"
+            ),
+        ),
+    ),
+    "middleware-mutation": (
+        (
+            "config/settings.py",
+            lambda source: source
+            + "\nactive = MIDDLEWARE\nactive.append('config.other.Custom')\n",
+        ),
+    ),
+    "middleware-dispatch-hook": (
+        (
+            "config/settings.py",
+            lambda source: source.replace(
+                "MIDDLEWARE = []", "MIDDLEWARE = ['config.middleware.Logger']"
+            ),
+        ),
+        (
+            "config/middleware.py",
+            lambda _source: "class Logger:\n    def __init__(self, get_response):\n        self.get_response = get_response\n    def __call__(self, request):\n        return self.get_response(request)\n    def process_view(self, request, view, args, kwargs):\n        record(request.body)\n",
+        ),
+    ),
+    "assigned-setup": (
+        (
+            "tests/test_authentication.py",
+            lambda source: source + "\n    setUp = replacement\n",
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "closed",
+        "runtime-import",
+        "external-request",
+        "database-route",
+        "custom-signer",
+        "serializer-override",
+        "parser-override",
+        "database-options",
+        "aliased-receiver",
+        "route-list-mutation",
+        "alternate-runner",
+        "alternate-runner-same-job",
+        "alternate-pytest",
+        "alternate-py-test",
+        "unproven-runner-script",
+        "quoted-runner-script",
+        "uncaptured-reusable-job",
+        "root-include",
+        "definition-time-read",
+        "definition-time-namespace",
+        "middleware-mutation",
+        "middleware-dispatch-hook",
+        "assigned-setup",
+    ],
+)
+def test_drf_fixture_requires_replayed_account_and_consumer_closure(tmp_path, mutation):
+    files = {
+        name: dedent(source).lstrip() for name, source in _DRF_FIXTURE_FILES.items()
+    }
+    for name, update in _DRF_FIXTURE_MUTATIONS.get(mutation, ()):
+        files[name] = update(files.get(name, ""))
+
+    for relative, source in files.items():
+        path = tmp_path / Path(relative)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    ledger = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    raw = [
+        row
+        for row in ledger
+        if row["path"] == "tests/base.py" and row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if mutation == "closed":
+        assert not raw
+        [refuted] = [
+            row
+            for row in report["refuted_security_observations"]
+            if row["path"] == "tests/base.py"
+        ]
+        proof = refuted["facts"]["fixture_evidence"]
+        assert proof["fixture_contract"] == "DRF_CLASS_ACCOUNT_LIFECYCLE"
+        assert [row["role"] for row in proof["consumer_use_closure"]["uses"]] == [
+            "fresh_account_password",
+            "test_client_password",
+        ]
+    else:
+        assert len(raw) == 1
+
+
+def test_fixture_text_model_rejects_import_identity_as_runtime_text():
+    from factoryline.credential_role_identity_effects import _Value
+    from factoryline.fixture_scope_value_audit import _closed_text_binary
+
+    template = _Value(inert_kind="scalar", scalar_kind="text", _exact_scalar=("%s",))
+    provider = _Value(
+        inert_kind="scope_namespace", _exact_scalar=("unittest.TestCase",)
+    )
+    assert _closed_text_binary(ast.Mod(), template, provider) is None
+
+
+_RAC_CLIENT = """class Client(object):
+    def __init__(self, host, password):
+        self.host = host
+        self.password = password
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.open_session()
+
+    def read_marker(self, record):
+        return self._extract(record, "MARK")
+
+    def _extract(self, record, field):
+        if record is None:
+            return
+        try:
+            return record.split("<%s>" % field)[1].split("</%s>" % field)[0]
+        except KeyError:
+            raise Exception("missing %s" % field)
+
+    def open_session(self):
+        external_authentication(self.password)
+"""
+
+_RAC_TEST = """from unittest import TestCase
+from client import Client
+
+TEST_PASSWORD = "synthetic-fixture-marker-3927"
+
+class Checks(TestCase):
+    def setUp(self):
+        self.client = Client("127.0.0.1", TEST_PASSWORD)
+
+    def test_marker(self):
+        self.assertEqual(self.client.read_marker("<MARK>yes</MARK>"), "yes")
+"""
+
+
+@pytest.mark.parametrize(
+    "counterexample",
+    [
+        None,
+        "authentication",
+        "context_manager",
+        "receiver_escape",
+        "fixture_field_read",
+        "production_import",
+        "duplicate_literal",
+        "unmodeled_loader",
+        "custom_dispatch",
+        "descriptor",
+        "missing_host_proof",
+        "teardown",
+    ],
+)
+def test_unused_unittest_client_credential_is_refuted_by_cli(tmp_path, counterexample):
+    test_source = _RAC_TEST
+    extra = {
+        "authentication": "        self.client.open_session()\n",
+        "context_manager": "        with self.client:\n            pass\n",
+        "receiver_escape": "        outside_fixture(self.client)\n",
+        "fixture_field_read": "        self.assertTrue(self.client.password)\n",
+        "teardown": "\n    def tearDown(self):\n        self.client.open_session()\n",
+        "unmodeled_loader": "\ndef load_tests(loader, tests, pattern):\n    return tests\n",
+        "custom_dispatch": "\n    def doCleanups(self):\n        self.client.open_session()\n",
+    }
+    test_source += extra.get(counterexample, "")
+    if counterexample == "missing_host_proof":
+        test_source = test_source.replace("127.0.0.1", "fixture.invalid")
+    if counterexample == "production_import":
+        (tmp_path / "production.py").write_text(
+            "import test_client\n", encoding="utf-8"
+        )
+    if counterexample == "duplicate_literal":
+        (tmp_path / "production.py").write_text(
+            'VALUE = "synthetic-fixture-marker-3927"\n', encoding="utf-8"
+        )
+    client = _RAC_CLIENT
+    if counterexample == "descriptor":
+        client = (
+            "from functools import cached_property\n\n"
+            + client
+            + "\n    @cached_property\n    def marker(self):\n"
+            + '        captured = self.password\n        return "yes"\n'
+        )
+        test_source = test_source.replace(
+            'self.client.read_marker("<MARK>yes</MARK>")', "self.client.marker"
+        )
+    (tmp_path / "client.py").write_text(client, encoding="utf-8")
+    (tmp_path / "test_client.py").write_text(test_source, encoding="utf-8")
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "factoryline.cli",
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+    report = json.loads(process.stdout)
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert report["finding_conservation"]["native_rows"] == "VERIFIED"
+    assert report["audit_coverage"]["complete"] is True
+    assert bool(report["finding_tier_report"]["ledger"]) is bool(counterexample)
+    refuted = report.get("refuted_security_observations", [])
+    if counterexample is None:
+        assert refuted[0]["facts"]["fixture_evidence"]["source_hypothesis"] == (
+            "SOURCE_TEST_CLIENT_CREDENTIAL_UNUSED"
+        )
+    else:
+        assert not refuted
+
+
+_PASSWORD_FORMAT_PROVIDER = """\
+import re
+
+class FormatPolicy:
+    @staticmethod
+    def check(value: str) -> str:
+        condition = (re.search(r"[a-z]", value) is None, "needs lowercase")
+        length = (len(value) < 8, f"length is {len(value)}")
+        errors = (condition, length)
+        for problem in errors:
+            if problem[0]:
+                raise ValueError(f"format error: {problem[1]}")
+        return value
+"""
+
+_PASSWORD_FORMAT_WRAPPER = """\
+import pytest
+from checks import FormatPolicy
+
+def test_format():
+    sample = "Static-Example-742"
+    assert FormatPolicy.check(sample) == sample
+"""
+
+
+def _password_validation_fixture(tmp_path, variant):
+    text = _PASSWORD_FORMAT_WRAPPER
+    provider = _PASSWORD_FORMAT_PROVIDER
+    documents = {}
+    if variant in {"raises", "raises_shadow", "fixture_pytest_rebinding"}:
+        receiver = "pytest" if variant == "raises_shadow" else "caught"
+        text = text.replace(
+            "    assert FormatPolicy.check(sample) == sample",
+            f"    expected = 'format error: needs lowercase'\n"
+            f"    with pytest.raises(ValueError) as {receiver}:\n"
+            f"        FormatPolicy.check(sample)\n"
+            f"    assert str({receiver}.value) == expected",
+        )
+    if variant == "escape":
+        text += "    route_elsewhere(sample)\n"
+    edits = {
+        "validator_effect": (
+            ("        return value", "        observe(value)\n        return value"),
+        ),
+        "regex_global": (
+            ("        return value", "        re = value\n        return value"),
+        ),
+        "raised_data": (
+            (
+                'raise ValueError(f"format error: {problem[1]}")',
+                "raise ValueError(value)",
+            ),
+        ),
+        "inert_guards": (
+            ('re.search(r"[a-z]", value) is None', "False"),
+            ("len(value) < 8", "1 < 8"),
+        ),
+    }
+    for original, replacement in edits.get(variant, ()):
+        provider = provider.replace(original, replacement)
+    if variant == "collection":
+        documents[tmp_path / "pytest.ini"] = b"[pytest]\npython_files = spec_*.py\n"
+    peer_source = {
+        "peer_rebinding": b"from checks import FormatPolicy as Local\nLocal.check = other\n",
+        "fixture_receiver_rebinding": b"import test_checks as Local\nLocal.FormatPolicy = other\n",
+        "nonpackage_receiver_rebinding": b"import test_checks as Local\nLocal.FormatPolicy = other\n",
+        "fixture_pytest_rebinding": b"import test_checks as Local\nLocal.pytest = other\n",
+        "validator_regex_rebinding": b"import checks as Local\nLocal.re = other\n",
+        "validator_builtin_rebinding": b"import checks as Local\nLocal.len = other\n",
+        "regex_internal_rebinding": b"import re\nre._compile = other\n",
+        "fixture_binding_escape": b"from test_checks import FormatPolicy as Local\nregister(Local)\n",
+    }.get(variant)
+    if peer_source is not None:
+        documents[tmp_path / "peer.py"] = peer_source
+    if variant == "duplicate":
+        documents[tmp_path / "peer.py"] = b'reused = "Static-Example-742"\n'
+    path = tmp_path / (
+        "tests/test_checks.py"
+        if variant == "nonpackage_receiver_rebinding"
+        else "test_checks.py"
+    )
+    documents[path] = text.encode()
+    documents[tmp_path / "checks.py"] = provider.encode()
+    return path, documents
+
+
+@pytest.mark.parametrize(
+    ("variant", "role"),
+    [
+        ("identity", "IDENTITY_ASSERTION"),
+        ("raises", "EXPECTED_FORMAT_ERROR"),
+        ("escape", None),
+        ("validator_effect", None),
+        ("peer_rebinding", None),
+        ("fixture_receiver_rebinding", None),
+        ("nonpackage_receiver_rebinding", None),
+        ("fixture_pytest_rebinding", None),
+        ("validator_regex_rebinding", None),
+        ("validator_builtin_rebinding", None),
+        ("regex_internal_rebinding", None),
+        ("fixture_binding_escape", None),
+        ("duplicate", None),
+        ("collection", None),
+        ("regex_global", None),
+        ("raised_data", None),
+        ("inert_guards", None),
+        ("raises_shadow", None),
+    ],
+)
+def test_captured_password_validation_proof(tmp_path, variant, role):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.fixture_scope_value_audit import (
+        captured_password_validation_proof,
+        password_validation_proof_helpers,
+    )
+
+    path, documents = _password_validation_fixture(tmp_path, variant)
+    python = {name: raw for name, raw in documents.items() if name.suffix == ".py"}
+    sources = {name: ast.parse(raw) for name, raw in python.items()}
+    inventory = {name: hashlib.sha256(raw).hexdigest() for name, raw in python.items()}
+    for peer, tree in sources.items():
+        tree._oracle_source_sha256 = inventory[peer]
+        tree._security_source_context = (tmp_path, documents)
+    index = SourceSnapshotIndex(tmp_path, sources, python, inventory)
+    node = sources[path].body[2].body[0]
+    proof = captured_password_validation_proof(index, path, node)
+    assert captured_password_validation_proof in password_validation_proof_helpers()
+    if role is None:
+        assert proof is None
+    else:
+        assert proof["test_consumer"]["role"] == role
+        assert proof["fixture"]["span"][0] == node.lineno - 1
+        assert proof["validator"]["path"] == "checks.py"
+        assert "Static-Example-742" not in repr(proof)
+
+
+@pytest.mark.parametrize("policy", ["source-role-v2", "source-role-v3"])
+def test_native_password_format_operand_refutation_is_policy_bound(tmp_path, policy):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    path, documents = _password_validation_fixture(tmp_path, "identity")
+    documents[path] = documents[path].replace(b"sample", b"password")
+    for peer, raw in documents.items():
+        peer.write_bytes(raw)
+    (tmp_path / "live_use.py").write_text(
+        'PASSWORD = "Sibling-Authority-43"\nlogin(PASSWORD)\n', encoding="utf-8"
+    )
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            policy,
+            "--json",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    raw = {
+        row["raw_finding"]["path"]
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    refuted = {
+        row["path"]
+        for row in report.get("refuted_security_observations", ())
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert "live_use.py" in raw and "live_use.py" not in refuted
+    assert (path.name in raw, path.name in refuted) == (
+        policy == "source-role-v2",
+        policy == "source-role-v3",
+    )
+
+
+_HASH_FIXTURE_TEST_SOURCE = """\
+from crypto_provider import compute, matches
+
+def test_cryptographic_roundtrip():
+    password = "Synthetic-hash-sample-727"
+    digest = compute(password)
+    assert matches(digest, password)
+"""
+
+_HASH_FIXTURE_PROVIDER_SOURCE = """\
+from passlib.context import CryptContext as Context
+from anyio.to_thread import run_sync
+
+shared = Context(schemes=["pbkdf2_sha256"])
+
+def compute(value: str) -> str:
+    return shared.hash(value)
+
+def matches(expected: str, value: str) -> bool:
+    return shared.verify(value, expected)
+
+async def async_compute(value: str) -> str:
+    return await run_sync(compute, value)
+"""
+
+_HASH_FIXTURE_MIGRATION_SOURCE = """\
+from passlib.context import CryptContext as Context
+
+def test_cryptographic_roundtrip():
+    password = "Synthetic-hash-sample-727"
+    engine = Context(schemes=["pbkdf2_sha512"])
+    legacy_digest = engine.hash(password)
+    engine = Context(schemes=["pbkdf2_sha256"])
+    current_digest = engine.hash(password)
+    engine = Context(schemes=["pbkdf2_sha256", "pbkdf2_sha512"])
+    assert engine.verify(password, legacy_digest)
+    assert engine.verify(password, current_digest)
+"""
+
+
+@pytest.mark.parametrize(
+    ("test_source", "provider", "related", "expected"),
+    [
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "app.py": "from crypto_provider import matches\n\ndef login(user, entered):\n    return matches(user.digest, entered)\n"
+            },
+            ["HASH", "VERIFICATION_ASSERTION"],
+        ),
+        (
+            _HASH_FIXTURE_MIGRATION_SOURCE,
+            "",
+            {},
+            ["HASH", "HASH", "VERIFICATION_ASSERTION", "VERIFICATION_ASSERTION"],
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE + "    store(digest)\n",
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE + "    return password\n",
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE.replace(
+                "assert matches(digest, password)", "assert matches(password, digest)"
+            ),
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE.replace(
+                "assert matches(digest, password)",
+                "assert matches(digest, password), password",
+            ),
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE.replace(
+                "return shared.hash(value)", "log(value)\n    return shared.hash(value)"
+            ),
+            {},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": "def pytest_collection_modifyitems(items):\n    items[:] = []\n"
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": "from helpers import remove_items as pytest_collection_modifyitems\n"
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {"conftest.py": "pytest_collection_modifyitems = remove_items\n"},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": 'setattr(harness, "pytest_collection_modifyitems", remove_items)\n'
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {"pytest.ini": "[pytest]\npython_functions = check_*\n"},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": "import crypto_provider as selected\nselected.compute = register\n"
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": 'from unittest import mock\n\ndef test_rebind():\n    with mock.patch("crypto_provider.matches"):\n        pass\n'
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {"passlib.py": "class CryptContext: pass\n"},
+            None,
+        ),
+        (
+            _HASH_FIXTURE_TEST_SOURCE,
+            _HASH_FIXTURE_PROVIDER_SOURCE,
+            {
+                "conftest.py": 'import crypto_provider as selected\nselected.shared.update(schemes=["pbkdf2_sha512"])\n'
+            },
+            None,
+        ),
+        (
+            _HASH_FIXTURE_MIGRATION_SOURCE.replace(
+                '["pbkdf2_sha256", "pbkdf2_sha512"]', '["pbkdf2_sha256"]'
+            ),
+            "",
+            {},
+            None,
+        ),
+    ],
+)
+def test_captured_hash_fixture_proof(
+    tmp_path, test_source, provider, related, expected
+):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.fixture_scope_value_audit import (
+        captured_hash_fixture_proof,
+        hash_fixture_proof_helpers,
+    )
+
+    path = tmp_path / "test_roundtrip.py"
+    documents = {tmp_path / key: raw.encode() for key, raw in related.items()}
+    documents.update(
+        {path: test_source.encode(), tmp_path / "crypto_provider.py": provider.encode()}
+    )
+    python = {peer: raw for peer, raw in documents.items() if peer.suffix == ".py"}
+    sources = {peer: ast.parse(raw) for peer, raw in python.items()}
+    inventory = {peer: hashlib.sha256(raw).hexdigest() for peer, raw in python.items()}
+    for peer, tree in sources.items():
+        tree._oracle_source_sha256 = inventory[peer]
+        tree._security_source_context = (tmp_path, documents)
+    index = SourceSnapshotIndex(tmp_path, sources, python, inventory)
+    node = sources[path].body[1].body[0]
+    proof = captured_hash_fixture_proof(index, path, node)
+    assert captured_hash_fixture_proof in hash_fixture_proof_helpers()
+    if expected is None:
+        assert proof is None
+    else:
+        assert [row["role"] for row in proof["test_consumers"]] == expected
+        assert proof["fixture"]["span"][0] == node.lineno - 1
+        assert "Synthetic-hash-sample-727" not in repr(proof)
+
+
+@pytest.mark.parametrize(
+    ("tokens", "checks_provider"),
+    [("-q --strict-markers", False), ("--cov=src", True), ("--no-cov-on-fail", True)],
+)
+def test_hash_fixture_checks_coverage_provider_only_when_requested(
+    monkeypatch, tokens, checks_provider
+):
+    from factoryline import pytest_collection_audit
+    from factoryline.fixture_scope_value_audit import (
+        _hash_fixture_collection_options_clear,
+    )
+
+    checked = []
+
+    def provider(documents):
+        checked.append(documents)
+        return True
+
+    monkeypatch.setattr(pytest_collection_audit, "_pytest_cov_provider", provider)
+    documents = {"requirements.txt": b"pytest-cov"}
+    assert _hash_fixture_collection_options_clear(documents, {"addopts": tokens})
+    assert checked == ([documents] if checks_provider else [])
+
+
+@pytest.mark.parametrize(
+    ("relative", "options", "collects"),
+    [
+        ("tests/test_roundtrip.py", {}, True),
+        (".hidden/test_roundtrip.py", {}, False),
+        ("tests/build/test_roundtrip.py", {}, False),
+        ("dist/test_roundtrip.py", {}, False),
+        ("node_modules/test_roundtrip.py", {}, False),
+        ("tests/__pycache__/test_roundtrip.py", {"norecursedirs": ""}, False),
+        (
+            "tests/nested/vendor/build/test_roundtrip.py",
+            {"norecursedirs": "vendor/build"},
+            False,
+        ),
+        ("tests/build/test_roundtrip.py", {"norecursedirs": "legacy"}, True),
+    ],
+)
+def test_hash_fixture_uses_captured_pytest_directory_rules(
+    tmp_path, relative, options, collects
+):
+    from types import SimpleNamespace
+
+    from factoryline.fixture_scope_value_audit import _hash_fixture_selected
+
+    path = tmp_path / relative
+    source = ast.parse(_HASH_FIXTURE_TEST_SOURCE)
+    configuration = "[pytest]\n" + "\n".join(
+        f"{key} = {value}" for key, value in options.items()
+    )
+    source._security_source_context = (
+        tmp_path,
+        {tmp_path / "pytest.ini": configuration.encode()},
+    )
+    index = SimpleNamespace(
+        root=tmp_path,
+        snapshots={path: source},
+        relative=lambda name: name.relative_to(tmp_path).as_posix(),
+    )
+    assert _hash_fixture_selected(index, path, source.body[1]) is collects
+
+
+def test_hash_fixture_native_scan_preserves_authentication_consumer(tmp_path):
+    from factoryline.cli import _build_parser
+    from factoryline.cli_audit import prepare_bounded_security_report
+
+    sources = {
+        "test_roundtrip.py": _HASH_FIXTURE_TEST_SOURCE,
+        "crypto_provider.py": _HASH_FIXTURE_PROVIDER_SOURCE,
+        "authentication.py": (
+            "from crypto_provider import compute\n"
+            'PASSWORD = "Account-Authority-813"\n\n'
+            "def enroll(account):\n"
+            "    account.digest = compute(PASSWORD)\n"
+        ),
+    }
+    for relative, raw in sources.items():
+        (tmp_path / relative).write_text(raw, encoding="utf-8")
+    args = _build_parser().parse_args(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    report = prepare_bounded_security_report(args)
+    findings = {
+        row["raw_finding"]["path"]
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    refuted = {
+        row["path"]
+        for row in report["refuted_security_observations"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    }
+    assert findings == {"authentication.py"}
+    assert refuted == {"test_roundtrip.py"}
+    assert report["audit_coverage"]["complete"] is True
     assert report["finding_conservation"]["state"] == "PASS"

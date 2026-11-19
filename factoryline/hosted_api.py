@@ -19,6 +19,7 @@ from urllib.parse import unquote, urlsplit
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
+from . import canonical_json_compat_bytes as _json_bytes
 from .control_plane import ControlPlaneError, Principal, canonical_json
 from .hosted_control import (
     EnvSecretResolver,
@@ -85,12 +86,6 @@ def _validate_installation_maps(
         raise PRAssuranceError(
             "E_HOSTED_CONFIG", "installation tenant and secret keys must match"
         )
-
-
-def _json_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _finish(start_response: Callable, status: str, value: Any) -> list[bytes]:

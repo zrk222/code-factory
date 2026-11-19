@@ -2233,21 +2233,6 @@ def _canary_environment_root_matches(env, aliases, env_key):
     )
 
 
-def _canary_root_env_key(tree, aliases, env_key):
-    """Require the consumer's only environment-root lookup to match the caller."""
-    lookups = [
-        node
-        for node in _canary_nodes(tree, ast.Call)
-        if _canary_call_name(node, aliases) == "os.environ.get"
-    ]
-    return (
-        len(lookups) == 1
-        and len(lookups[0].args) == 2
-        and isinstance(lookups[0].args[0], ast.Constant)
-        and lookups[0].args[0].value == env_key
-    )
-
-
 def _canary_record_contains_digest(tree, aliases, digest_name, input_name, record_name):
     """Link the raw-input digest mapping to the serialized record."""
     mappings = [

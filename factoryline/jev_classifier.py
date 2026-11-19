@@ -1090,6 +1090,10 @@ def review_evidence(
             type(exc).__name__,
             "Invalid or mismatched evidence requires human review; deterministic CF verdicts are unchanged.",
         )
+    return _review_evidence_request(request, transport)
+
+
+def _review_evidence_request(request, transport):
     base = _evidence_review_base(
         request,
         request["packet"],
@@ -1262,9 +1266,10 @@ def review_forgeline_packet(packet, *, transport=None):
         if len(contexts) != 1:
             raise JevClassificationError("one context required")
         context = contexts[0]
-        checked = build_evidence_review_input(
+        request = build_evidence_review_input(
             packet, candidate_sha256=context["candidate_sha256"]
-        )["packet"]
+        )
+        checked = request["packet"]
         if not _valid_forgeline_context(context):
             raise JevClassificationError("invalid context")
         manifest, material = context["source_manifest"], context["review_material"]
@@ -1286,7 +1291,7 @@ def review_forgeline_packet(packet, *, transport=None):
             "fallback_reason": type(exc).__name__,
             **_NO_RELEASE_DECISION,
         }
-    result = review_evidence(checked, candidate_sha256=candidate, transport=transport)
+    result = _review_evidence_request(request, transport)
     return {
         **result,
         "profile": context["profile"],

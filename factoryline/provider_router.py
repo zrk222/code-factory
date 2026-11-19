@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -59,13 +60,7 @@ class ProviderRouterError(ValueError):
 
 def _canonical(value: object) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError) as exc:
         raise ProviderRouterError(
             "PROVIDER_POLICY_INVALID", f"policy must be canonical JSON: {exc}"

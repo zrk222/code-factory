@@ -1889,6 +1889,10 @@ def test_mcp_setup_renders_copy_only_configs_for_supported_clients(tmp_path: Pat
         assert payload["transport"] == "stdio"
         assert payload["writes"] is False
         assert all(value is False for value in payload["authority"].values())
+        assert "factory.audit_taxonomy" in payload["next_action"]
+        assert "factory audit taxonomy --json" in payload["next_action"]
+        assert "agent_usage_contract.operations_reference" in payload["next_action"]
+        assert "does not prove execution or coverage" in payload["next_action"]
         assert payload["connection"] == {
             "command": "factory",
             "args": ["mcp", "serve", "--root", str(tmp_path.resolve())],
@@ -1905,6 +1909,44 @@ def test_mcp_setup_renders_copy_only_configs_for_supported_clients(tmp_path: Pat
     assert copilot["target"] == ".github/agents/factoryline-proof.agent.md"
     assert "mcp-servers:" in copilot["agent_profile"]
     assert "code-factory/factory.agent_proof_mission" in copilot["agent_profile"]
+    assert "code-factory/factory.audit_taxonomy" in copilot["agent_profile"]
+    assert (
+        "docs/AGENT_CONTRACTS.md#current-audit-operations" in copilot["agent_profile"]
+    )
+    assert (
+        'tools: ["read", "edit", "search", "code-factory/*"]'
+        in copilot["agent_profile"]
+    )
+    assert "native and normalized evidence hashes" in copilot["agent_profile"]
+    assert "coverage gaps" in copilot["agent_profile"]
+    assert "exact rerun" in copilot["agent_profile"]
+    assert "semgrep-pattern-limited.json" not in copilot["agent_profile"]
+
+
+def test_shared_agent_context_discovers_detached_canonical_workers():
+    from factoryline.audit_taxonomy import agent_taxonomy_context, audit_taxonomy
+
+    taxonomy = audit_taxonomy()
+    context = agent_taxonomy_context()
+    assert context["native_workers"] == taxonomy["native_workers"]
+    assert context["native_worker_contract"] == taxonomy["native_worker_contract"]
+    assert context["taxonomy_sha256"] == taxonomy["taxonomy_sha256"]
+    assert (
+        "not readiness, execution, coverage or PASS"
+        in context["native_worker_contract"]["discovery"]
+    )
+    assert "never launch workers" in context["native_worker_contract"]["execution"]
+    assert all(value is False for value in context["authority"].values())
+    role = taxonomy["specialist_roles"][0]["specialist_role"]
+    routed = agent_taxonomy_context(role)
+    assert routed["native_workers"] == taxonomy["native_workers"]
+    context["native_workers"]["semgrep"]["version"] = "mutated"
+    context["native_worker_contract"]["discovery"] = "mutated"
+    context["agent_usage_contract"]["operations_reference"]["path"] = "mutated"
+    refreshed = agent_taxonomy_context()
+    assert refreshed["native_workers"] == taxonomy["native_workers"]
+    assert refreshed["native_worker_contract"] == taxonomy["native_worker_contract"]
+    assert refreshed["agent_usage_contract"] == taxonomy["agent_usage_contract"]
 
 
 def test_junie_project_install_is_confirmed_idempotent_and_never_overwrites_a_conflict(

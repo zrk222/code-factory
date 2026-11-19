@@ -949,6 +949,16 @@ def test_release_integrity_rejects_missing_artifact_fan_in(tmp_path: Path) -> No
     assert result["next_action"]["action"] == "repair_release_workflow"
 
 
+def test_release_integrity_rejects_unverified_python_checkout(tmp_path: Path) -> None:
+    root = _workflow_copy(tmp_path)
+    publish = root / ".github" / "workflows" / "publish.yml"
+    original = publish.read_text(encoding="utf-8")
+    ancestry = 'git merge-base --is-ancestor "$CANDIDATE_COMMIT" HEAD'
+    assert original.count(ancestry) == 1
+    publish.write_text(original.replace(ancestry, "true"), encoding="utf-8")
+    assert release_integrity(root)["failed_check_ids"] == ["RELEASE_FAN_IN_EXACT"]
+
+
 @pytest.mark.parametrize(
     ("old", "new"),
     [
@@ -1088,6 +1098,30 @@ def test_release_integrity_rejects_unsealed_vscode_candidate_identity(
     result = release_integrity(root)
 
     assert result["ok"] is False
+    assert result["failed_check_ids"] == ["VSCODE_MARKETPLACE_CANDIDATE_SEALED"]
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("npm ci --no-audit --ignore-scripts", "npm ci --omit=dev"),
+        ("npm run audit", "echo skipped"),
+        ("working-directory: editors/vscode", "working-directory: elsewhere"),
+        (
+            "./editors/vscode/node_modules/.bin/vsce publish",
+            "npx --yes @vscode/vsce publish",
+        ),
+    ],
+)
+def test_release_integrity_rejects_unaudited_locked_publisher(tmp_path, before, after):
+    root = _workflow_copy(tmp_path)
+    workflow = root / ".github/workflows/vscode-marketplace.yml"
+    text = workflow.read_text(encoding="utf-8")
+    start = text.index("  publish:")
+    workflow.write_text(
+        text[:start] + text[start:].replace(before, after), encoding="utf-8"
+    )
+    result = release_integrity(root)
     assert result["failed_check_ids"] == ["VSCODE_MARKETPLACE_CANDIDATE_SEALED"]
 
 

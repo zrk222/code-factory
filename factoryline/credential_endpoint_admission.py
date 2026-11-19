@@ -3497,8 +3497,7 @@ class _OperativeCredentialOrigin:
             from .semantic_credential_sensor import _signing_source_span
 
             if not (
-                self.provider(path, "fastapi.FastAPI")
-                and isinstance(node, ast.Call)
+                isinstance(node, ast.Call)
                 and not node.args
                 and len(node.keywords) == 1
                 and node.keywords[0].arg == "bind"
@@ -3506,6 +3505,7 @@ class _OperativeCredentialOrigin:
                 and node.func.attr == "create_all"
                 and isinstance(node.func.value, ast.Attribute)
                 and node.func.value.attr == "metadata"
+                and self.provider(path, "fastapi.FastAPI")
             ):
                 return False, None
             base_chain, engine_chain = [], []

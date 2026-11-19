@@ -27,6 +27,43 @@ def _snippet(marker):
 
 
 @pytest.mark.parametrize(
+    "profile,python_version,platform,eligible",
+    [
+        ("dev,enterprise,hosted", "3.12.16", "Linux-6.11", True),
+        (None, "3.12.16", "Linux-6.11", False),
+        ("dev,enterprise,hosted", "3.11.9", "Linux-6.11", False),
+        ("dev,enterprise,hosted", "3.12.16", "Windows-11", False),
+    ],
+)
+def test_publish_reuses_only_matching_signed_python_profile(
+    tmp_path, monkeypatch, profile, python_version, platform, eligible
+):
+    from factoryline import signed_receipts
+
+    def fetch(commit, directory):
+        assert commit == "c" * 40
+        assert directory == tmp_path / "ci-release-evidence"
+        return {
+            "environment": {
+                "tests": {
+                    "test_profile": profile,
+                    "python": python_version,
+                    "platform": platform,
+                }
+            }
+        }
+
+    monkeypatch.setattr(signed_receipts, "fetch_ci_receipt", fetch)
+    monkeypatch.setenv("CANDIDATE_COMMIT", "c" * 40)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    code = _snippet("- name: Require attested clean-runner evidence for this commit")
+    exec(compile(code, str(WORKFLOW), "exec"), {})
+    assert output.read_text() == f"release_tests_verified={str(eligible).lower()}\n"
+
+
+@pytest.mark.parametrize(
     "tag,actor,opt_in,accepted",
     [
         ("v0.49.5", "zrk222", "true", True),

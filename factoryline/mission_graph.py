@@ -7,6 +7,7 @@ checkpoint never proves that a Code Factory transition is valid.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypedDict
@@ -76,13 +77,7 @@ def _now() -> str:
 
 def _canonical(value: object) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError) as exc:
         raise MissionGraphError(
             "MISSION_GRAPH_EVENT_INVALID", f"event must be canonical JSON: {exc}"

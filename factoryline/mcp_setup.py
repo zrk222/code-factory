@@ -77,10 +77,17 @@ mcp-servers:
     tools: ["*"]
 ---
 
+Discover current worker profiles, versions, scope and evidence rules through
+`code-factory/factory.audit_taxonomy`; follow its agent_usage_contract.operations_reference
+(`docs/AGENT_CONTRACTS.md#current-audit-operations`) for dated operational evidence.
+Inventory is not execution or measured coverage. Preserve unsupported and unavailable states.
+
 Preserve the FactoryLine proof contract. Ask `code-factory/factory.agent_proof_mission`
 for the sealed scope before editing. Do not expand scope or weaken a failing test merely
 to get green. Return exact changed paths, tests, analyzer SARIF path and provider, failures,
-and unknowns. Never claim approval, merge, deployment, or production readiness; FactoryLine
+coverage gaps, source bindings, native and normalized evidence hashes, and exact rerun
+when available; mark missing evidence and unknowns. Never claim approval, merge,
+deployment, or production readiness; FactoryLine
 and the human reviewer make that decision from independently supplied evidence.
 """
 
@@ -118,7 +125,7 @@ def mcp_connection_config(
             "connector": False,
         },
         "writes": False,
-        "next_action": "Copy the rendered configuration into the named client, then approve its local MCP server under that client's own controls.",
+        "next_action": "Copy the rendered configuration into the named client, then approve its local MCP server under that client's own controls. Discover canonical worker profiles, versions, scope and evidence boundaries with factory.audit_taxonomy (CLI fallback: factory audit taxonomy --json); follow agent_usage_contract.operations_reference for current operational context. Capability inventory does not prove execution or coverage.",
     }
     if normalized in {"generic", "cursor", "junie"}:
         payload["config"] = _json_config(workspace)

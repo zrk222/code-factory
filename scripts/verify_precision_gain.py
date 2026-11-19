@@ -1,4 +1,4 @@
-"""Check paired, fixed-panel actionable gain; never certify held-out freshness.
+"""Check paired precision gain or score a sealed single-arm raw sample.
 
 Inputs are hash-bound observations, not aggregate scores. This checks their
 internal consistency; source execution and label provenance require review.
@@ -17,10 +17,17 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from factoryline.benchmark_lab import _wilson
+from factoryline.deep_audit_io import LIMIT as MAX_EVIDENCE_BYTES
+from factoryline.deep_audit_io import strict_json
 from factoryline.run_metrics import _atomic_json
+from factoryline.runtime_audit_common import canonical_bytes
 
 SCHEMA = "factory.precision-gain.v1"
+SINGLE_ARM_SCHEMA = "factory.precision.frozen-sample.v1"
 FIELDS = ("raw", "active", "review", "supported")
+DEVELOPMENT_GATE_PASS = "DEVELOPMENT_GATE_PASS"
+MINIMUM_RAW_GAIN_PP = 5
+_FROZEN_HASHES = ("registration_sha256", "scanner_sha256", "configuration_sha256")
 
 
 def digest(payload: bytes) -> str:
@@ -31,7 +38,7 @@ def _hash(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
-def _index(rows: list[dict]) -> dict[str, dict]:
+def _index(rows: list[dict], *, allow_empty=False) -> dict[str, dict]:
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise ValueError("claims must be an array of objects")
     result = {}
@@ -40,7 +47,7 @@ def _index(rows: list[dict]) -> dict[str, dict]:
         if not isinstance(key, str) or not key or key in result:
             raise ValueError("missing or duplicate claim identity")
         result[key] = row
-    if not result:
+    if not result and not allow_empty:
         raise ValueError("empty cohort")
     return result
 
@@ -176,16 +183,8 @@ def _runtime_comparison(baseline, candidate):
     return {"baseline": before, "candidate": after, "delta": after - before}
 
 
-def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
-    """Reject omitted coverage, changed premises, lost TPs and unsupported gains."""
-    labels = _contract_labels(contract)
-    reasons, versions = [], []
-    for name, version in (("baseline", baseline), ("candidate", candidate)):
-        rows, incomplete = _version_rows(name, version, contract, labels)
-        reasons.extend(incomplete)
-        versions.append(rows)
-    before, after = versions
-    changed = {
+def _changed_memberships(before, after, labels):
+    return {
         key: {
             "before": [f for f in FIELDS if before[key][f]],
             "after": [f for f in FIELDS if after[key][f]],
@@ -193,30 +192,63 @@ def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
         for key in labels
         if any(before[key][f] != after[key][f] for f in FIELDS)
     }
+
+
+def _repair_reasons(contract, changed, lost, lost_unclear):
+    reasons = []
     if changed != contract.get("expected_changes"):
         reasons.append("observed changes differ from the registered repair impact")
-    lost = _lost_label_memberships(
-        before, after, labels, "TP", ("raw", "active", "supported", "active_or_review")
-    )
     if any(lost.values()):
         reasons.append("true-positive retention failed")
-    lost_unclear = _lost_label_memberships(
-        before, after, labels, "UNCLEAR", ("raw", "active_or_review")
-    )
     if any(lost_unclear.values()):
         reasons.append("unresolved claims were removed from review")
-    metrics = {
+    return reasons
+
+
+def _paired_metrics(before, after, labels):
+    return {
         name: {
             field: _metrics(rows, labels, field)
             for field in (*FIELDS, "active_or_review")
         }
         for name, rows in (("baseline", before), ("candidate", after))
     }
-    old, new = (
-        metrics[name]["active"]["precision"] for name in ("baseline", "candidate")
+
+
+def _precision_delta(metrics, population):
+    old = metrics["baseline"][population]["precision"]
+    new = metrics["candidate"][population]["precision"]
+    return new - old if old is not None and new is not None else None
+
+
+def _comparison_state(reasons, gain, raw_gain, development_gate):
+    if not development_gate:
+        return _measurement_state(reasons, gain)
+    if raw_gain is None or raw_gain * 100 + 1e-12 < MINIMUM_RAW_GAIN_PP:
+        reasons.append("raw precision gain is below five percentage points")
+    return "BLOCKED" if reasons else DEVELOPMENT_GATE_PASS
+
+
+def evaluate(
+    contract: dict, baseline: dict, candidate: dict, *, development_gate=False
+) -> dict:
+    """Reject omitted coverage, changed premises, lost TPs and unsupported gains."""
+    labels = _contract_labels(contract)
+    before, reasons = _version_rows("baseline", baseline, contract, labels)
+    after, incomplete = _version_rows("candidate", candidate, contract, labels)
+    reasons.extend(incomplete)
+    changed = _changed_memberships(before, after, labels)
+    lost = _lost_label_memberships(
+        before, after, labels, "TP", ("raw", "active", "supported", "active_or_review")
     )
-    gain = new - old if old is not None and new is not None else None
-    state = _measurement_state(reasons, gain)
+    lost_unclear = _lost_label_memberships(
+        before, after, labels, "UNCLEAR", ("raw", "active_or_review")
+    )
+    reasons.extend(_repair_reasons(contract, changed, lost, lost_unclear))
+    metrics = _paired_metrics(before, after, labels)
+    gain = _precision_delta(metrics, "active")
+    raw_gain = _precision_delta(metrics, "raw")
+    state = _comparison_state(reasons, gain, raw_gain, development_gate)
     selection = any(
         not before[key]["review"] and after[key]["review"] for key in labels
     )
@@ -226,6 +258,7 @@ def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
         "reasons": reasons,
         "metrics": metrics,
         "active_precision_delta": gain,
+        "raw_precision_delta": raw_gain,
         "changed_claims": changed,
         "changed_claim_labels": {key: labels[key]["label"] for key in changed},
         "lost_TPs": lost,
@@ -250,19 +283,176 @@ def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
     }
 
 
-def _read_bound(root: Path, reference: dict) -> dict:
+def _single_arm_cases(contract, selection):
+    if not isinstance(selection, dict) or not all(
+        _hash(contract.get(key)) and selection.get(key) == contract[key]
+        for key in _FROZEN_HASHES
+    ):
+        raise ValueError("changed or missing frozen candidate bindings")
+    if digest(canonical_bytes(selection)) != contract.get("selection_sha256"):
+        raise ValueError("frozen selection seal mismatch")
+    cases = _index(selection["cases"], allow_empty=True)
+    status = selection["collection"]
+    target = contract["sample_target"]
+    if (
+        type(selection.get("sample_target")) is not int
+        or selection["sample_target"] != target
+    ):
+        raise ValueError("frozen sample target differs")
+    if not isinstance(status, dict) or set(status) != {"registered", "complete"}:
+        raise ValueError("invalid collection denominator")
+    counts = (
+        status["registered"],
+        status["complete"],
+        selection["observed_raw"],
+        target,
+    )
+    if (
+        any(type(count) is not int or count < 0 for count in counts)
+        or status["registered"] == 0
+        or status["complete"] > status["registered"]
+        or len(cases) > min(selection["observed_raw"], target)
+    ):
+        raise ValueError("inconsistent collection or selection denominator")
+    _check_selected_observations(cases, selection["admission_available"])
+    return cases
+
+
+def _check_selected_observations(cases, admitted):
+    if type(admitted) is not bool:
+        raise ValueError("invalid admission availability")
+    for key, row in cases.items():
+        if (
+            len(key) > 160
+            or key != key.strip()
+            or not all(
+                _hash(row.get(field))
+                for field in (
+                    "source_sha256",
+                    "packet_sha256",
+                    "report_sha256",
+                    "finding_sha256",
+                )
+            )
+        ):
+            raise ValueError("invalid source, packet, report or finding binding")
+        if "admitted" not in row or (
+            type(row["admitted"]) is not bool
+            if admitted
+            else row["admitted"] is not None
+        ):
+            raise ValueError("admission membership contradicts availability")
+    observations = {
+        (row["report_sha256"], row["source_sha256"], row["finding_sha256"])
+        for row in cases.values()
+    }
+    if len(observations) != len(cases):
+        raise ValueError("selected packets repeat one raw observation")
+
+
+def _single_arm_reviews(reviews, cases, selection_sha):
+    if not isinstance(reviews, list) or len(reviews) != 2:
+        raise ValueError("require two reviewer envelopes")
+    reviewers = set()
+    decisions = []
+    for review in reviews:
+        if (
+            not isinstance(review, dict)
+            or review.get("selection_sha256") != selection_sha
+        ):
+            raise ValueError("reviewer seal does not match the frozen selection")
+        reviewer = review.get("reviewer_id")
+        if (
+            not isinstance(reviewer, str)
+            or not 1 <= len(reviewer) <= 160
+            or reviewer != reviewer.strip()
+            or reviewer.casefold() in reviewers
+        ):
+            raise ValueError("require distinct reviewer identities")
+        reviewers.add(reviewer.casefold())
+        labels = _index(review["cases"], allow_empty=True)
+        if labels.keys() != cases.keys():
+            raise ValueError("reviewer omitted or added selected packets")
+        for key, row in labels.items():
+            if row.get("label") not in ("TP", "FP", "UNCLEAR") or any(
+                row.get(field) != cases[key][field]
+                for field in ("source_sha256", "packet_sha256")
+            ):
+                raise ValueError("invalid label or reviewer source/packet binding")
+        decisions.append(labels)
+    return decisions
+
+
+def evaluate_single_arm(contract, selection, reviews):
+    """Score the sealed selected raw alerts using two bound sets of labels."""
+    if not isinstance(contract, dict) or contract.get("schema") != SINGLE_ARM_SCHEMA:
+        raise ValueError("require a frozen single-arm contract")
+    cases = _single_arm_cases(contract, selection)
+    first, second = _single_arm_reviews(reviews, cases, contract["selection_sha256"])
+    disagreements = [
+        key for key in cases if first[key]["label"] != second[key]["label"]
+    ]
+    disagreement_set = set(disagreements)
+    labels = {
+        key: {"label": "UNCLEAR" if key in disagreement_set else first[key]["label"]}
+        for key in cases
+    }
+    populations = {
+        key: {"raw": True, "admitted": row["admitted"]} for key, row in cases.items()
+    }
+    raw = _metrics(populations, labels, "raw")
+    admitted = (
+        _metrics(populations, labels, "admitted")
+        if selection["admission_available"]
+        else None
+    )
+    collection = selection["collection"]
+    incomplete = (
+        collection["complete"] != collection["registered"]
+        or len(cases) != contract["sample_target"]
+        or not raw["decided"]
+    )
+    return {
+        "schema": SINGLE_ARM_SCHEMA,
+        "state": "INCOMPLETE" if incomplete else "SCORED_SINGLE_ARM",
+        **{field: selection[field] for field in _FROZEN_HASHES},
+        "selection_sha256": contract["selection_sha256"],
+        "collection": {
+            **collection,
+            "unobserved": collection["registered"] - collection["complete"],
+        },
+        "observed_raw": selection["observed_raw"],
+        "selected_raw": len(cases),
+        "sample_target": contract["sample_target"],
+        "unselected_raw": selection["observed_raw"] - len(cases),
+        "admission_available": selection["admission_available"],
+        "metrics": {"raw": raw, "admitted": admitted},
+        "consensus": {key: row["label"] for key, row in labels.items()},
+        "disagreements": disagreements,
+        "publication_eligible": False,
+        "claim_boundary": "Selected raw sample only. Sampling, execution, reviewer independence and blindness require external evidence.",
+    }
+
+
+def _read_bound(root: Path, reference: dict, *, strict=False) -> dict:
     if not isinstance(reference, dict) or not isinstance(reference.get("path"), str):
         raise ValueError("invalid evidence reference")
     path = (root / reference["path"]).resolve()
     if not path.is_relative_to(root.resolve()):
         raise ValueError("evidence path escapes contract root")
-    payload = path.read_bytes()
+    if strict:
+        with path.open("rb") as stream:
+            payload = stream.read(MAX_EVIDENCE_BYTES + 1)
+    else:
+        payload = path.read_bytes()
     if digest(payload) != reference["sha256"]:
         raise ValueError("evidence digest mismatch")
-    return json.loads(payload)
+    return strict_json(payload) if strict else json.loads(payload)
 
 
 def _operator_summary(result, output):
+    if result.get("schema") == SINGLE_ARM_SCHEMA and "metrics" in result:
+        return _single_arm_summary(result, output)
     lines = [result["state"]]
     for arm, metrics in result.get("metrics", {}).items():
         active = metrics["active"]
@@ -275,6 +465,14 @@ def _operator_summary(result, output):
             f"{active['known_positive_cases_outside_population']} known TPs outside active, "
             f"{metrics['review']['emitted']} for review"
         )
+        for population, label in (("raw", "raw"), ("supported", "admitted")):
+            row = metrics[population]
+            precision = row["precision"]
+            score = "undefined" if precision is None else f"{precision:.2%}"
+            lines.append(
+                f"{arm} {label}: {score} precision, "
+                f"{row['UNCLEAR']} unclear of {row['emitted']} emitted"
+            )
     if elapsed := result.get("elapsed_seconds"):
         lines.append(
             f"Recorded runtime: {elapsed['baseline']:.2f}s -> "
@@ -291,57 +489,123 @@ def _operator_summary(result, output):
         "INVALID": "Repair the evidence inputs and verify the pair again.",
         "NO_PRECISION_GAIN": "Keep the baseline for precision work.",
         "ACTIVE_PRECISION_GAIN_FIXED_PANEL": "Review the case transitions before accepting the candidate.",
+        DEVELOPMENT_GATE_PASS: "The fixed development panel meets the raw precision and retention thresholds.",
     }
     lines.append(action[result["state"]])
     lines.append(f"Case changes and evidence: {output}")
     return "\n".join(lines)
 
 
+def _single_arm_summary(result, output):
+    lines = [
+        result["state"],
+        f"Selected raw alerts: {result['selected_raw']}/{result['sample_target']} registered, "
+        f"{result['unselected_raw']} observed alerts outside the sample.",
+    ]
+    for population, row in result["metrics"].items():
+        if row is None:
+            lines.append(f"{population}: unavailable")
+        else:
+            precision = row["precision"]
+            score = "undefined" if precision is None else f"{precision:.2%}"
+            lines.append(
+                f"{population}: {row['TP']} TP, {row['FP']} FP, {row['UNCLEAR']} unclear, "
+                f"precision {score} over {row['decided']} decided alerts"
+            )
+    lines.append(f"Evidence: {output}")
+    return "\n".join(lines)
+
+
 def _check_output_path(args, contract):
     output = args.out.resolve()
-    for arm in ("baseline", "candidate"):
-        reference = contract.get(arm)
+    references = [contract.get(key) for key in ("baseline", "candidate", "selection")]
+    reviews = contract.get("reviewers")
+    if isinstance(reviews, list):
+        references.extend(reviews)
+    for reference in references:
         if isinstance(reference, dict) and isinstance(reference.get("path"), str):
             if output == (args.contract.parent / reference["path"]).resolve():
                 raise ValueError("--out must not replace an observation")
 
 
+def _score_contract(contract, root, development_gate):
+    if contract.get("schema") == SINGLE_ARM_SCHEMA:
+        if development_gate:
+            raise ValueError("development gate requires a paired comparison")
+        reviewers = contract["reviewers"]
+        if not isinstance(reviewers, list) or len(reviewers) != 2:
+            raise ValueError("require two reviewer envelope references")
+        evidence = {"selection": contract["selection"], "reviewers": reviewers}
+        return evaluate_single_arm(
+            contract,
+            _read_bound(root, evidence["selection"], strict=True),
+            [_read_bound(root, reference, strict=True) for reference in reviewers],
+        ), evidence
+    evidence = {key: contract[key] for key in ("baseline", "candidate")}
+    return evaluate(
+        contract,
+        _read_bound(root, evidence["baseline"]),
+        _read_bound(root, evidence["candidate"]),
+        development_gate=development_gate,
+    ), evidence
+
+
 def main() -> int:
-    """Verify the sealed pair and write a receipt for the operator."""
+    """Verify sealed precision inputs and write a receipt for the operator."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("contract", type=Path)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--development-gate",
+        action="store_true",
+        help="Require at least five points of raw precision gain on the exposed panel",
+    )
     parser.add_argument(
         "--summary", action="store_true", help="Print an operator summary"
     )
     args = parser.parse_args()
     if args.out.resolve() == args.contract.resolve():
         parser.error("--out must not replace the contract")
+    schema = SCHEMA
+    contract_parsed = False
     try:
-        payload = args.contract.read_bytes()
-        contract = json.loads(payload)
-        if not isinstance(contract, dict):
-            raise ValueError("contract must be an object")
+        with args.contract.open("rb") as stream:
+            payload = stream.read(MAX_EVIDENCE_BYTES + 1)
+        contract = strict_json(payload)
+        if contract.get("schema") == SINGLE_ARM_SCHEMA:
+            schema = SINGLE_ARM_SCHEMA
+        contract_parsed = True
         try:
             _check_output_path(args, contract)
         except ValueError as exc:
             parser.error(str(exc))
-        result = evaluate(
-            contract,
-            _read_bound(args.contract.parent, contract["baseline"]),
-            _read_bound(args.contract.parent, contract["candidate"]),
+        result, evidence = _score_contract(
+            contract, args.contract.parent, args.development_gate
         )
         result["contract_sha256"] = digest(payload)
-        result["evidence"] = {key: contract[key] for key in ("baseline", "candidate")}
+        result["evidence"] = evidence
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        result = {"schema": SCHEMA, "state": "INVALID", "reason": str(exc)}
+        if not contract_parsed and args.out.exists():
+            parser.error(
+                f"Cannot replace an existing output with an unreadable contract: {exc}"
+            )
+        result = {"schema": schema, "state": "INVALID", "reason": str(exc)}
     _atomic_json(args.out, result)
     print(
         _operator_summary(result, args.out)
         if args.summary
         else json.dumps({"state": result["state"], "out": str(args.out)})
     )
-    return 0 if result["state"] == "ACTIVE_PRECISION_GAIN_FIXED_PANEL" else 2
+    return (
+        0
+        if result["state"]
+        in {
+            "ACTIVE_PRECISION_GAIN_FIXED_PANEL",
+            DEVELOPMENT_GATE_PASS,
+            "SCORED_SINGLE_ARM",
+        }
+        else 2
+    )
 
 
 if __name__ == "__main__":

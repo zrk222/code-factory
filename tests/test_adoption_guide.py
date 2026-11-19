@@ -38,6 +38,11 @@ def test_default_guide_has_exactly_three_journeys_and_one_primary_action():
         )
     assert "No independent production-scale" in result["battle_testing"]
     assert all(value is False for value in result["authority"].values())
+    solo = result["journeys"][0]
+    assert "authorized configured workers" in solo["authority_boundary"]
+    assert "--static-only" in solo["authority_boundary"]
+    assert "neither mode grants release approval" in solo["authority_boundary"]
+    assert "project tests" in solo["next_safe_action"]
 
 
 def test_team_guide_explains_intent_delta_independent_proof_and_human_control():

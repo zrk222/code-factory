@@ -10,6 +10,7 @@ or a release decision.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical_encode
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -79,13 +80,7 @@ class AgentProofBridgeError(ValueError):
 
 def _canonical(value: object) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return _canonical_encode(value)
     except (TypeError, ValueError) as exc:
         raise AgentProofBridgeError(
             "E_AGENT_BRIDGE_SCHEMA", "input must be canonical JSON"

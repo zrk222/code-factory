@@ -5,6 +5,26 @@ import copy
 import hashlib
 from dataclasses import dataclass
 
+from .fixture_scope_value_audit import (
+    _reference_assignment,
+    _reference_ast_equal,
+    _reference_builtin_bindings_clear,
+    _reference_dataclass_fields_clear,
+    _reference_dataclass_member_clear,
+    _reference_fixture_cache_helpers,
+    _reference_imported_member,
+    _reference_inventory_nodes,
+    _reference_local_export,
+    _reference_module_import,
+    _reference_plain_store_members,
+    _reference_readonly_trace,
+    _reference_roundtrip_frame,
+    _reference_selected_store_method,
+    _reference_source_owned_encoder,
+    _reference_store_closed_methods,
+    _reference_tensor_literals,
+)
+
 _PROVIDER_ASSUMPTIONS = (
     "CANONICAL_CPYTHON_PICKLE",
     "IMMUTABLE_PROVIDER_ARTIFACTS",
@@ -85,13 +105,36 @@ def _cache_member_callables(member):
 def cache_helpers():
     """Return model-owned callables and the executable members of its classes."""
     owned = tuple(globals().get(name) for name in _CACHE_HELPER_NAMES)
-    return owned + tuple(
-        method
-        for owner in owned
-        if isinstance(owner, type)
-        for member in vars(owner).values()
-        for method in _cache_member_callables(member)
-        if callable(method)
+    return (
+        owned
+        + (
+            _reference_assignment,
+            _reference_ast_equal,
+            _reference_builtin_bindings_clear,
+            _reference_dataclass_fields_clear,
+            _reference_dataclass_member_clear,
+            _reference_fixture_cache_helpers,
+            _reference_imported_member,
+            _reference_inventory_nodes,
+            _reference_local_export,
+            _reference_module_import,
+            _reference_plain_store_members,
+            _reference_readonly_trace,
+            _reference_roundtrip_frame,
+            _reference_selected_store_method,
+            _reference_source_owned_encoder,
+            _reference_store_closed_methods,
+            _reference_tensor_literals,
+        )
+        + _reference_fixture_cache_helpers()
+        + tuple(
+            method
+            for owner in owned
+            if isinstance(owner, type)
+            for member in vars(owner).values()
+            for method in _cache_member_callables(member)
+            if callable(method)
+        )
     )
 
 
@@ -2977,8 +3020,14 @@ def _pickle_serializer_namespace_data_read(origin, attribute, owner):
     """Separate immutable sys metadata from mutable import/serializer capabilities."""
     if origin != "sys":
         return False
-    if attribute.attr in {"version_info", "maxsize", "executable"}:
+    if attribute.attr in {"version_info", "maxsize", "executable", "byteorder"}:
         return True
+    if attribute.attr == "flags":
+        return (
+            isinstance(owner, ast.Attribute)
+            and owner.attr == "isolated"
+            and isinstance(owner.ctx, ast.Load)
+        )
     if attribute.attr == "getrefcount":
         return isinstance(owner, ast.Call) and owner.func is attribute
     return attribute.attr == "path" and isinstance(owner, ast.Compare)
@@ -5476,6 +5525,446 @@ def _captured_sink_parameter_names(scope):
     from .finite_capture import _captured_sink_parameter_names as implementation
 
     return implementation(scope)
+
+
+def captured_local_serialization_proof(index, path, node):
+    """Prove a closed local publication's byte edge and captured reference types."""
+    from . import review_audits as audit
+    from .pytest_collection_audit import (
+        captured_pytest_documents,
+        captured_pytest_function_selected,
+    )
+    from .runtime_audit_integrity import (
+        _closed_pickle_provider_source,
+        _exact_source_call,
+    )
+
+    if len(index.snapshots) > 128 or not index.validate(path):
+        return None
+    exact = _exact_source_call(index.source_bytes[path], node)
+    if exact is None:
+        return None
+    tree, load = exact
+    frame = _reference_roundtrip_frame(tree, load)
+    if frame is None or not _closed_pickle_provider_source(list(ast.walk(tree)), audit):
+        return None
+    function, dump, store, values, publication = frame
+    documents = captured_pytest_documents(index.snapshots[path])
+    if not captured_pytest_function_selected(index, path, function, documents):
+        return None
+    proof = _local_publication_authority(
+        index, path, function, store, values, publication
+    )
+    if proof is None or not _reference_provider_inventory(index, function.name, proof):
+        return None
+    producer_path, producer, class_names = proof
+    return {
+        "schema": "factory.pickle.closed-reference-roundtrip.v1",
+        "hypothesis": "EXTERNALLY_SUPPLIED_SERIALIZED_BYTES",
+        "origin": "SAME_EXPRESSION_CANONICAL_SERIALIZER",
+        "object_origin": "CAPTURED_LOCAL_PUBLICATION_REFERENCES",
+        "load_span": _fixed_program_span(load),
+        "dump_span": _fixed_program_span(dump),
+        "producer": {
+            "path": index.relative(producer_path),
+            "span": _fixed_program_span(producer),
+        },
+        "reference_classes": sorted(class_names),
+        "scope": "CAPTURED_PYTHON_SOURCE",
+        "native_provider_runtime": "UNASSESSED",
+        "reconstruction_runtime": "UNASSESSED",
+    }
+
+
+def _local_publication_authority(index, path, frame, store, values, publication):
+    from .review_audits import _name
+
+    if not _reference_tensor_literals(values) or not _reference_store_call(store):
+        return None
+    tree = index.snapshots[path]
+    if not all(
+        _reference_module_import(tree, local, provider)
+        for local, provider in (("np", "numpy"), ("torch", "torch"))
+    ):
+        return None
+    if any(
+        isinstance(item, ast.Name)
+        and isinstance(item.ctx, (ast.Store, ast.Del))
+        and item.id
+        in {"np", "torch", "zip", "str", "range", "len", "list", _name(store.func)}
+        for item in ast.walk(frame)
+    ):
+        return None
+    store_owner = _reference_local_export(index, path, _name(store.func))
+    pub_owner = _reference_local_export(index, path, _name(publication.func))
+    if store_owner is None or pub_owner is None:
+        return None
+    producer_path, producer = pub_owner
+    if not isinstance(producer, ast.FunctionDef) or not _reference_publication_body(
+        producer
+    ):
+        return None
+    if not _reference_builtin_bindings_clear(
+        index.snapshots[path], {"zip", "range", "str", "list", "len"}
+    ):
+        return None
+    if not _reference_tensor_mapper(index, producer_path):
+        return None
+    graph_classes = _reference_graph_classes(index, producer_path, store_owner)
+    if graph_classes is None:
+        return None
+    return producer_path, producer, graph_classes
+
+
+def _reference_store_call(call):
+    match call:
+        case ast.Call(
+            func=ast.Name(),
+            args=[ast.Name(id="tmp_path"), ast.Constant(value=str())],
+            keywords=keywords,
+        ):
+            return all(
+                item.arg == "codecs"
+                and _reference_tensor_literals(item.value)
+                or item.arg == "segment_target_bytes"
+                and _reference_numeric_option(item.value)
+                for item in keywords
+            )
+        case _:
+            return False
+
+
+def _reference_numeric_option(node):
+    if isinstance(node, ast.Constant):
+        return type(node.value) is int and 0 <= node.value < 1_000_000
+    return (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, (ast.Mult, ast.Pow))
+        and _reference_numeric_option(node.left)
+        and _reference_numeric_option(node.right)
+    )
+
+
+def _reference_publication_body(fn):
+    if (
+        fn.decorator_list
+        or ast.unparse(fn.args)
+        != "store, tensors, *, submission_id, record_prefix=None"
+    ):
+        return False
+    shape = (
+        'records = [tensor_record(value, f"{record_prefix or submission_id}:{name}", kind=name) for name, value in tensors.items()]',
+        "blob_set = store.publish(records, submission_id=submission_id)",
+        "refs = store.validate(blob_set)",
+        """return tuple(TensorRef(
+                codecs=tuple(sorted(store.codecs)), path=str(store.backend.path(ref.segment.path)),
+                shape=tuple(record.metadata['shape']), dtype=record.metadata['dtype'],
+                nbytes=len(record.payload), kind=record.metadata['kind'], validated=True,
+                offset=-1, record_ref=ref, root=str(store.backend.root), run_id=store.run_id,
+                blob_set=blob_set, blob_ordinal=i,
+            ) for i, (record, ref) in enumerate(zip(records, refs, strict=True)))""",
+    )
+    return len(fn.body) == len(shape) + (ast.get_docstring(fn) is not None) and all(
+        _reference_assignment(fn, i, source) for i, source in enumerate(shape)
+    )
+
+
+def _reference_tensor_mapper(index, path):
+    """Bind the DTO metadata keys to known shapes and local tensor operations."""
+    tree = index.snapshots[path]
+    builtins = {
+        "tuple",
+        "sorted",
+        "str",
+        "len",
+        "enumerate",
+        "zip",
+        "isinstance",
+        "list",
+        "memoryview",
+        "range",
+    }
+    if not _reference_builtin_bindings_clear(tree, builtins):
+        return False
+    if not all(
+        _reference_module_import(tree, local, provider)
+        for local, provider in (
+            ("np", "numpy"),
+            ("torch", "torch"),
+            ("sys", "sys"),
+            ("hashlib", "hashlib"),
+        )
+    ):
+        return False
+    entry = _reference_local_export(index, path, "tensor_record")
+    if entry is None or entry[0] != path or not isinstance(entry[1], ast.FunctionDef):
+        return False
+    fn = entry[1]
+    if fn.decorator_list or ast.unparse(fn.args) != "value, identity, *, kind=None":
+        return False
+    match fn.body:
+        case [
+            ast.If(test=byteorder, body=[ast.Raise()], orelse=[]),
+            conversion,
+            detach,
+            dtype,
+            ast.If(test=guard, body=[ast.Raise()], orelse=[]),
+            payload,
+            size,
+            grow,
+            chunks,
+            metadata,
+            result,
+        ]:
+            pass
+        case _:
+            return False
+    fields = (
+        (byteorder, "sys.byteorder != 'little'"),
+        (
+            conversion,
+            "if isinstance(value, np.ndarray):\n    value = torch.from_numpy(np.array(value, copy=True))",
+        ),
+        (detach, "value = value.detach().cpu().contiguous()"),
+        (dtype, "dtype = str(value.dtype).removeprefix('torch.')"),
+        (guard, "dtype not in DTYPES"),
+        (
+            payload,
+            'payload = memoryview(value.reshape(-1).view(torch.uint8).numpy()).cast("B") if value.numel() else memoryview(b"")',
+        ),
+        (size, "chunk_bytes = CHUNK_BYTES"),
+        (
+            grow,
+            "while (len(payload) + chunk_bytes - 1) // chunk_bytes > 512:\n    chunk_bytes *= 2",
+        ),
+        (
+            chunks,
+            "chunks = [hashlib.sha256(payload[i:i + chunk_bytes]).hexdigest() for i in range(0, len(payload), chunk_bytes)]",
+        ),
+        (
+            metadata,
+            "metadata = {'shape': list(value.shape), 'dtype': dtype, 'kind': kind, 'chunk_bytes': chunk_bytes, 'chunks': chunks}",
+        ),
+        (result, "return Record(identity, payload, 'tensor.v1', metadata)"),
+    )
+    return all(_reference_ast_equal(node, text) for node, text in fields)
+
+
+def _reference_graph_classes(index, pub, store_owner):
+    store_path, store = store_owner
+    if not _reference_store_provider(index, store_path, store):
+        return None
+    members = {"TensorRef": pub}
+    for name in ("Record", "RecordSetRef", "RecordRef", "SegmentRef", "Publication"):
+        members[name] = pub if name == "Record" else store_path
+    classes = {}
+    for name, origin in members.items():
+        entry = _reference_local_export(index, origin, name)
+        if (
+            entry is None
+            or not _reference_default_dataclass(index, *entry)
+            or not _reference_dataclass_fields_clear(entry[1], name)
+        ):
+            return None
+        if name == "Record" and not _reference_imported_member(
+            index.snapshots[entry[0]], ast.Name(id="field"), "dataclasses", "field"
+        ):
+            return None
+        classes[name] = entry
+    if not _reference_json_descriptors(classes):
+        return None
+    return set(classes) | {store.name}
+
+
+def _reference_default_dataclass(index, path, cls):
+    from . import review_audits as audit
+
+    if (
+        not isinstance(cls, ast.ClassDef)
+        or cls.bases
+        or cls.keywords
+        or len(cls.decorator_list) != 1
+    ):
+        return False
+    tree = index.snapshots[path]
+    aliases = audit._security_aliases(tree.body)
+    decorator = cls.decorator_list[0]
+    match decorator:
+        case ast.Call(
+            func=func,
+            args=[],
+            keywords=[ast.keyword(arg="frozen", value=ast.Constant(value=True))],
+        ) if _reference_imported_member(tree, func, "dataclasses", "dataclass"):
+            pass
+        case _:
+            return False
+    reserved = {"classmethod", "property", "dict"}
+    return all(
+        _reference_builtin_bindings_clear(scope, reserved) for scope in (tree, cls)
+    ) and all(
+        _reference_dataclass_member_clear(item, aliases, audit) for item in cls.body
+    )
+
+
+def _reference_store_provider(index, path, cls):
+    if not isinstance(cls, ast.ClassDef) or cls.decorator_list or cls.keywords:
+        return False
+    match cls.bases:
+        case [ast.Name(id=base)]:
+            record_reader = _reference_local_export(index, path, base)
+            if record_reader is None or record_reader[0] != path:
+                return False
+        case _:
+            return False
+    reader = record_reader[1]
+    if (
+        not isinstance(reader, ast.ClassDef)
+        or reader.bases
+        or reader.keywords
+        or reader.decorator_list
+    ):
+        return False
+    if not all(_reference_plain_store_members(member) for member in (cls, reader)):
+        return False
+    tree = index.snapshots[path]
+    return (
+        _reference_module_import(tree, "json", "json")
+        and _reference_imported_member(
+            tree, ast.Name(id="asdict"), "dataclasses", "asdict"
+        )
+        and _reference_builtin_bindings_clear(
+            tree,
+            {
+                "tuple",
+                "str",
+                "frozenset",
+                "dict",
+                "sorted",
+                "len",
+                "list",
+                "range",
+                "type",
+                "int",
+                "isinstance",
+                "bytes",
+                "bytearray",
+                "memoryview",
+                "TypeError",
+                "ValueError",
+            },
+        )
+        and _reference_store_methods(cls, reader)
+        and _reference_readonly_trace(index, path)
+        and _reference_source_owned_encoder(index, path)
+    )
+
+
+def _reference_store_methods(cls, reader):
+    initializer, publish, batch, close, inputs, fault = (
+        _reference_selected_store_method(cls, name)
+        for name in (
+            "__init__",
+            "publish",
+            "publish_many",
+            "close",
+            "_inputs",
+            "_fault",
+        )
+    )
+    validate = _reference_selected_store_method(cls, "validate", inherited_from=reader)
+    return _reference_store_closed_methods(
+        initializer, publish, batch, close, validate, inputs, fault
+    )
+
+
+def _reference_json_descriptors(classes):
+    expectations = {
+        "RecordRef": 'return cls(SegmentRef(**value["segment"]), value["ordinal"])',
+        "RecordSetRef": 'return cls(RecordRef.from_dict(value["manifest"]), **{k: v for k, v in value.items() if k != "manifest"})',
+    }
+    for name, expected in expectations.items():
+        _, cls = classes[name]
+        methods = [
+            item
+            for item in cls.body
+            if isinstance(item, ast.FunctionDef) and item.name == "from_dict"
+        ]
+        if len(methods) != 1:
+            return False
+        method = methods[0]
+        if ast.unparse(method.args) != "cls, value" or list(
+            map(ast.unparse, method.decorator_list)
+        ) != ["classmethod"]:
+            return False
+        if len(method.body) != 1 or not _reference_assignment(method, 0, expected):
+            return False
+    return True
+
+
+def _reference_provider_inventory(index, test_name, proof):
+    from . import review_audits as audit
+    from .runtime_audit_integrity import _conditional_v3_alias_closure
+
+    protected = proof[2] | {
+        "pickle",
+        "dataclasses",
+        "json",
+        "builtins",
+        "copyreg",
+        "__reduce__",
+        "__reduce_ex__",
+        "__getstate__",
+        "__setstate__",
+        "dispatch_table",
+        "loads",
+        "dumps",
+        "dataclass",
+        "__getattribute__",
+        "__new__",
+        "__post_init__",
+        "numpy",
+        "torch",
+        "arange",
+        "array",
+        "tensor",
+        "from_numpy",
+        "emit",
+        "_stream",
+        "_lock",
+        "_directory",
+    }
+    peer_names = {
+        "numpy",
+        "torch",
+        "pickle",
+        "dataclasses",
+        "json",
+        "builtins",
+        "copyreg",
+        "os",
+        "pathlib",
+        "atexit",
+        "socket",
+        "threading",
+        "time",
+    }
+    for peer in index.snapshots:
+        relative = index.relative(peer)
+        if relative is None or peer.name == "conftest.py" or not index.validate(peer):
+            return False
+        if peer.stem in peer_names or set(peer.parent.parts) & peer_names:
+            return False
+        tree = index.snapshots[peer]
+        aliases = audit._security_aliases(ast.walk(tree))
+        if not _pickle_serializer_provider_unmodified(
+            tree, aliases, audit, _conditional_v3_alias_closure
+        ):
+            return False
+        if not _reference_inventory_nodes(
+            index, peer, tree, protected | peer_names, aliases, test_name, audit
+        ):
+            return False
+    return True
 
 
 _CACHE_HELPER_NAMES = tuple(

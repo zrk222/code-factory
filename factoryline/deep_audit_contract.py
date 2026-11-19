@@ -358,6 +358,70 @@ def _validate_lane_image(lane: dict) -> None:
         )
 
 
+def _validate_local_runner(lane: dict) -> None:
+    binding = _keys(
+        lane["runner_binding"],
+        "kind platform profile_sha256 tool_manifest ruleset_sha256 provenance grants",
+    )
+    if (
+        binding["kind"],
+        lane["engine"],
+        lane["family"],
+        lane["mode"],
+        lane["tool_version"],
+    ) != ("local-native", "semgrep", "static", "pattern-limited", "1.15.0"):
+        raise RuntimeAuditError(
+            "E_LOCAL_RUNNER", "only pinned static OpenGrep is admitted"
+        )
+    for field in ("profile_sha256", "ruleset_sha256"):
+        require_digest(binding[field], field)
+    locator = _keys(binding["tool_manifest"], "path sha256")
+    require_digest(locator["sha256"], "tool_manifest.sha256")
+    path = Path(require_str(locator["path"], "tool_manifest.path", maximum=4096))
+    if not path.is_absolute() or ".." in path.parts:
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "absolute operator manifest required")
+    if binding["ruleset_sha256"] != lane["ruleset_sha256"]:
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "local rules identity differs")
+    platform = _keys(binding["platform"], "os architecture")
+    for field in platform:
+        require_str(platform[field], f"platform.{field}", maximum=40)
+    if (platform["os"], platform["architecture"]) not in {
+        ("windows", "x86_64"),
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+    }:
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "unsupported native platform")
+    _validate_local_runner_policy(binding)
+
+
+def _validate_local_runner_policy(binding: dict) -> None:
+    grants = _keys(binding["grants"], "read write network candidate_execution")
+    if grants != {
+        "read": ["captured-source", "rules", "tool-bundle"],
+        "write": ["scratch", "output"],
+        "network": False,
+        "candidate_execution": False,
+    } or any(
+        type(grants[field]) is not bool for field in ("network", "candidate_execution")
+    ):
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "exact static grants required")
+    provenance = _keys(
+        binding["provenance"], "release_url artifact_sha256 verification_receipt_sha256"
+    )
+    for field in ("artifact_sha256", "verification_receipt_sha256"):
+        require_digest(provenance[field], field)
+    url = require_str(provenance["release_url"], "release_url", maximum=512)
+    asset = {
+        ("windows", "x86_64"): "opengrep_windows_x86.exe",
+        ("linux", "x86_64"): "opengrep_manylinux_x86",
+        ("linux", "aarch64"): "opengrep_manylinux_aarch64",
+    }
+    platform = binding["platform"]
+    expected = "https://github.com/opengrep/opengrep/releases/download/v1.15.0/"
+    if url != expected + asset[(platform["os"], platform["architecture"])]:
+        raise RuntimeAuditError("E_LOCAL_RUNNER", "release asset platform differs")
+
+
 def _validate_lane_argv(lane: dict) -> None:
     argv = lane["argv"]
     if not isinstance(argv, list) or not 1 <= len(argv) <= 128:
@@ -398,6 +462,15 @@ def _validate_lane_mode(lane: dict) -> None:
             "E_ANALYSIS_MODE",
             "full-depth static analysis requires interprocedural full scan",
         )
+    if "runner_binding" in lane:
+        if lane["argv"] != [
+            "factory-native-profile",
+            lane["runner_binding"]["profile_sha256"],
+        ]:
+            raise RuntimeAuditError(
+                "E_ADAPTER_TEMPLATE", "local profile selector differs"
+            )
+        return
     if lane["argv"] != [
         "/opt/factory/bin/audit-adapter",
         lane["engine"],
@@ -427,7 +500,10 @@ def _execution_lane(
         raise RuntimeAuditError("E_EXECUTION_LANE", "missing or unknown lane fields")
     _keys(lane, " ".join(sorted(lane_fields)))
     _validate_lane_identity(lane)
-    _validate_lane_image(lane)
+    if "runner_binding" in lane:
+        _validate_local_runner(lane)
+    else:
+        _validate_lane_image(lane)
     _validate_lane_argv(lane)
     _validate_lane_reports(lane)
     _validate_lane_languages(lane)
@@ -461,6 +537,9 @@ def _execution_lane_fields(lane: dict, version: int) -> set[str]:
         "id engine family image argv report coverage challenge_report languages mode timeout_seconds memory_mib tool_version ruleset_sha256".split()
     )
     if version == 2:
+        if "runner_binding" in lane:
+            fields.remove("image")
+            fields.add("runner_binding")
         fields.add("native_artifact_roles")
         if lane.get("engine") != "syft":
             fields.update({"rule_ids", "mutation_config_sha256"})
@@ -1143,7 +1222,11 @@ def _execution_obligations(value: object, lanes: list[dict], version: int) -> No
 
 
 def load_execution_manifest(
-    path: Path, expected_sha256: str, inventory: dict | None = None
+    path: Path,
+    expected_sha256: str,
+    inventory: dict | None = None,
+    *,
+    candidate_root: Path | None = None,
 ) -> dict:
     """Validate the exact operator-selected execution plan; never discover it implicitly."""
     raw = _read(Path(path))
@@ -1163,6 +1246,13 @@ def load_execution_manifest(
     _validate_execution_identity(plan)
     lanes = _execution_lanes(plan["lanes"], version, inventory)
     _execution_obligations(plan["obligations"], lanes, version)
+    for lane in lanes:
+        if "runner_binding" in lane:
+            from .deep_audit_attestation import verify_local_tool_manifest
+
+            verify_local_tool_manifest(
+                lane["runner_binding"], candidate_root=candidate_root
+            )
     return plan
 
 
@@ -1288,6 +1378,9 @@ def _adapter_commands(
     lane: dict,
     source: _deep_audit_io.Path,
     scratch: _deep_audit_io.Path,
+    *,
+    execution_context=None,
+    cancelled=None,
 ) -> list[dict]:
     from .runtime_audit_process import run_bounded_command
 
@@ -1315,18 +1408,44 @@ def _adapter_commands(
                 directory,
                 remaining,
                 deadline,
+                **(
+                    {"execution_context": execution_context, "cancelled": cancelled}
+                    if execution_context
+                    else {}
+                ),
             )
         )
     return invocations
 
 
-def _adapter_invocation(runner, command, lane, source, directory, remaining, deadline):
+def _adapter_invocation(
+    runner,
+    command,
+    lane,
+    source,
+    directory,
+    remaining,
+    deadline,
+    *,
+    execution_context=None,
+    cancelled=None,
+):
     argv = [
         value.replace("{factory_ledger}", str(directory / "rule-ledger.json"))
         for value in command["argv"]
     ]
     stderr_path = _deep_audit_io._gitleaks_stderr_path(directory, lane)
-    facts = runner(argv, source, remaining, directory, stderr_path=stderr_path)
+    options = (
+        {"tool_context": execution_context["tool_context"], "cancelled": cancelled}
+        if execution_context
+        else {}
+    )
+    cwd = (
+        execution_context["tool_context"]["bundle_root"]
+        if execution_context
+        else source
+    )
+    facts = runner(argv, cwd, remaining, directory, stderr_path=stderr_path, **options)
     if _deep_audit_io._adapter_command_failed(
         facts, command["accepted_exit_codes"], deadline
     ):
@@ -1616,13 +1735,26 @@ def _native_version(
     source: _deep_audit_io.Path,
     scratch: _deep_audit_io.Path,
     timeout: int,
+    *,
+    execution_context=None,
+    cancelled=None,
 ) -> dict:
     from .runtime_audit_process import run_bounded_command
     import re
 
     capture = scratch / "version.txt"
+    options = (
+        {"tool_context": execution_context["tool_context"], "cancelled": cancelled}
+        if execution_context
+        else {}
+    )
+    cwd = (
+        execution_context["tool_context"]["bundle_root"]
+        if execution_context
+        else source
+    )
     facts = run_bounded_command(
-        profile["version_argv"], source, timeout, scratch, stdout_path=capture
+        profile["version_argv"], cwd, timeout, scratch, stdout_path=capture, **options
     )
     if (
         facts["exit_code"] != 0
@@ -1799,7 +1931,17 @@ def _fuzz_profile_preflight(profile, lane):
     return path
 
 
-def _native_profile_challenges(profile, contract, source, lane, execution, started):
+def _native_profile_challenges(
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    started,
+    *,
+    execution_context=None,
+    cancelled=None,
+):
     challenges = {"schema": "factory.deep-challenges.v1", "observations": []}
     covered_obligations = []
     if lane["engine"] == "gitleaks":
@@ -1812,7 +1954,17 @@ def _native_profile_challenges(profile, contract, source, lane, execution, start
         )
     elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
         challenges, covered_obligations = _deep_audit_io._semgrep_challenges(
-            profile, contract, source, lane, execution, started
+            profile,
+            contract,
+            source,
+            lane,
+            execution,
+            started,
+            **(
+                {"execution_context": execution_context, "cancelled": cancelled}
+                if execution_context
+                else {}
+            ),
         )
     elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
         challenges, covered_obligations = _deep_audit_io._runtime_challenges(
@@ -2019,7 +2171,8 @@ def _semgrep_rule_sources(rule, sources):
     if (
         not isinstance(languages, list)
         or not languages
-        or not set(languages) <= {"python", "javascript", "typescript", "php"}
+        or not all(isinstance(language, str) for language in languages)
+        or not set(languages) <= _deep_audit_io.SEMGREP_SOURCE_LANGUAGES
     ):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_RULESET", "unsupported pinned rule languages"

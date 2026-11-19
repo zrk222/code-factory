@@ -6,6 +6,8 @@ import ast
 from dataclasses import dataclass
 from itertools import chain
 from .semantic_credential_sensor import log_percent_slots, log_scalar_metadata
+from .captured_security_audit import captured_log_field_text_closed
+from .intent_quality import bound_sink_argument
 from . import credential_role_paths as log_evidence
 
 _LOGGING_LEVELS = frozenset("debug info warning error critical exception log".split())
@@ -193,15 +195,12 @@ class _LogReader:
         )
 
     def _unsafe(self, call, tainted, name):
-        keyword = next(
-            (item.value for item in call.keywords if item.arg == "msg"), None
-        )
         index = 1 if name == "logging.log" else 0
         offset = index + 1
         positional = len(call.args) > index
-        message = call.args[index] if positional else keyword
+        message = bound_sink_argument(call, index, ("msg",))
         if message is None:
-            return False
+            return None
         values = [message, *(call.args[offset:] if positional else [])]
         values.extend(
             item.value for item in call.keywords if item.arg in {"args", "values"}
@@ -233,7 +232,9 @@ class _LogReader:
         if provenance:
             return any(self._flow(child, tainted, True) for child in children)
         if any(self._flow(child, tainted, True) for child in children):
-            return not self._safe(node, tainted)
+            return not (
+                self._safe(node, tainted) or captured_log_field_text_closed(node)
+            )
         return any(self._flow(child, tainted) for child in children)
 
     def _source(self, node):

@@ -7341,3 +7341,469 @@ def test_source_bound_test_scope_cli_receipt_and_recompute(tmp_path, capsys):
         security_scan_status(tmp_path)["candidate_freshness"]
         != "CURRENT_SOURCE_HASHES_VERIFIED"
     )
+
+
+@pytest.mark.parametrize(
+    "variant", ["closed_statement", "extra_read", "wrong_handler", "provider_shadow"]
+)
+def test_retained_fastapi_validation_marker_context(tmp_path, variant):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.pytest_collection_audit import captured_validation_marker_context
+
+    test = """
+from adapter import install
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pydantic import BaseModel
+
+def test_redaction():
+    class Input(BaseModel):
+        username: str
+        password: str
+    app = FastAPI()
+    install(app)
+    @app.post('/check')
+    def check(body: Input):
+        return {}
+    password = 'generated-validation-marker'
+    response = TestClient(app).post('/check', json={'username': 7, 'password': password})
+    observed = response.text
+    assert response.status_code == 422
+    assert password not in observed
+"""
+    if variant == "extra_read":
+        test += "    send(password)\n"
+    if variant == "provider_shadow":
+        test += "    TestClient = other_provider\n"
+    installation = """
+from fastapi.exceptions import RequestValidationError
+from callback import on_error
+
+def install(app):
+    app.add_exception_handler(RequestValidationError, on_error)
+"""
+    if variant == "wrong_handler":
+        installation = installation.replace(
+            "RequestValidationError, on_error)", "OtherError, on_error)"
+        )
+    texts = {
+        "test_route.py": test,
+        "adapter.py": installation,
+        "callback.py": """
+from fastapi.exceptions import RequestValidationError
+from pipeline import handle
+
+async def on_error(request, exc: RequestValidationError):
+    return render(handle(exc, engine=engine_for(request), formatter=formatter()))
+""",
+        "pipeline.py": """
+from engine import Engine
+
+def handle(exc, *, engine: Engine, formatter):
+    value = engine.classify(exc)
+    return formatter(value)
+""",
+        "engine.py": """
+import registry
+
+class Engine:
+    def classify(self, exc):
+        for member in self.active():
+            value = member.classify(exc)
+            if value:
+                return value
+    def active(self):
+        return registry.registered_classifiers()
+""",
+        "registry.py": """
+_registered = []
+
+def registered_classifiers():
+    return list(_registered)
+""",
+    }
+    snapshots, raw, inventory = {}, {}, {}
+    for name, content in texts.items():
+        file = tmp_path / name
+        raw[file] = content.encode()
+        inventory[file] = hashlib.sha256(raw[file]).hexdigest()
+        snapshots[file] = ast.parse(raw[file])
+        snapshots[file]._oracle_source_sha256 = inventory[file]
+    path = tmp_path / "test_route.py"
+    tree = snapshots[path]
+    tree._security_oracle_context = {
+        "_security_launch_configs": {"pytest.ini": b"[pytest]\n"}
+    }
+    case = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+    )
+    index = SourceSnapshotIndex(tmp_path, snapshots, raw, inventory)
+    receipt = captured_validation_marker_context(index, path, case)
+    if variant != "closed_statement":
+        assert receipt is None
+        return
+    assert receipt["disposition"] == "RETAIN_REVIEW"
+    assert receipt["consumer_authority"] == "UNRESOLVED_SHARED_CLASSIFIER_REGISTRY"
+    assert receipt["runtime_execution"] == "UNASSESSED"
+    assert {row["path"] for row in receipt["unresolved_consumer"]} == {
+        "adapter.py",
+        "callback.py",
+        "pipeline.py",
+        "engine.py",
+        "registry.py",
+    }
+    assert all(
+        row["sha256"] == inventory[tmp_path / row["path"]]
+        for row in receipt["unresolved_consumer"]
+    )
+    assert ast.literal_eval(case.value) not in str(receipt)
+
+
+_HTTP_FIXTURE_SAMPLE = "published-test-example-token-4892"
+
+
+def _http_fixture_test_sources(variant):
+    tests = f"""
+import pytest
+from aioresponses import aioresponses as intercept
+from transport import ISSUE_URL, PROFILE_URL, issue, profile
+
+pytestmark = pytest.mark.asyncio
+
+async def test_issue():
+    with intercept() as mock:
+        code = 'generated-code'
+        url = f'{{ISSUE_URL}}?code={{code}}'
+        payload = {{'access_token': {_HTTP_FIXTURE_SAMPLE!r}}}
+        mock.post(url, status=200, payload=payload)
+        observed = await issue(code)
+        assert observed == payload['access_token']
+
+async def test_profile():
+    with intercept() as mock:
+        access_token = {_HTTP_FIXTURE_SAMPLE!r}
+        payload = {{'login': 'example-user'}}
+        mock.get(PROFILE_URL, status=200, payload=payload)
+        observed = await profile(access_token)
+        assert observed == payload['login']
+"""
+    transport = """
+import aiohttp
+
+ISSUE_URL = 'https://example.invalid/token'
+PROFILE_URL = 'https://example.invalid/profile'
+
+async def issue(code: str) -> str:
+    url = f'{ISSUE_URL}?code={code}'
+    headers = {'Accept': 'application/json'}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers) as response:
+            body = await response.json()
+            access_token: str = body['access_token']
+    return access_token
+
+async def profile(token: str) -> str:
+    headers = {'Authorization': f'Bearer {token}'}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(PROFILE_URL, headers=headers) as response:
+            body = await response.json()
+        try:
+            username: str = body['login']
+        except KeyError:
+            raise InvalidResponse(body.get('error'))
+    return username
+"""
+    changes = {
+        "passthrough": (
+            "with intercept() as mock:",
+            "with intercept(passthrough=[PROFILE_URL]) as mock:",
+        ),
+        "different_get_url": ("mock.get(PROFILE_URL,", "mock.get(ISSUE_URL,"),
+        "different_assertion": (
+            "assert observed == payload['login']",
+            "assert observed == payload['identifier']",
+        ),
+        "other_sample": (_HTTP_FIXTURE_SAMPLE, "another-token-shaped-fixture-7755"),
+        "escaped_local": (
+            "observed = await profile(access_token)",
+            "send(access_token)\n        observed = await profile(access_token)",
+        ),
+    }
+    if variant in changes:
+        tests = tests.replace(*changes[variant])
+    transport_changes = {
+        "different_post_url": (("?code=", "?other="),),
+        "post_url_rebound_to_headers": (
+            ("headers = {'Accept':", "url = {'Accept':"),
+            ("session.post(url, headers=headers)", "session.post(url, headers=url)"),
+        ),
+        "post_url_rebound_to_session": (
+            (
+                "as session:\n        async with session.post",
+                "as url:\n        async with url.post",
+            ),
+        ),
+        "escaped_header": (
+            (
+                "raise InvalidResponse",
+                "send(headers)\n            raise InvalidResponse",
+            ),
+        ),
+    }
+    for original, replacement in transport_changes.get(variant, ()):
+        transport = transport.replace(original, replacement)
+
+    test_global_names = {
+        "test_global_mock": "intercept",
+        "test_global_callback": "profile",
+    }
+    transport_global_names = {
+        "transport_global_endpoint": "PROFILE_URL",
+        "transport_global_factory": "aiohttp",
+    }
+    if variant in test_global_names:
+        name = test_global_names[variant]
+        tests += f"\nasync def rebind():\n    global {name}\n    {name} = replacement\n"
+    if variant in transport_global_names:
+        name = transport_global_names[variant]
+        transport += f"\ndef rebind():\n    global {name}\n    {name} = replacement\n"
+    return tests, transport
+
+
+def _http_fixture_sources_with_imports(test_path, tests, transport, variant):
+    texts = {test_path: tests, "transport.py": transport}
+    if variant == "reexported_callback":
+        texts[test_path] = tests.replace(
+            "from transport import ISSUE_URL, PROFILE_URL, issue, profile",
+            "from transport import ISSUE_URL, PROFILE_URL\nfrom wrapper import issue, profile",
+        )
+        texts["wrapper.py"] = "from transport import issue, profile\n"
+    if variant == "reexported_endpoint":
+        texts[test_path] = tests.replace(
+            "from transport import ISSUE_URL, PROFILE_URL, issue, profile",
+            "from wrapper import ISSUE_URL, PROFILE_URL\nfrom transport import issue, profile",
+        )
+        texts["wrapper.py"] = "from transport import ISSUE_URL, PROFILE_URL\n"
+    if variant in {"separate_endpoint", "separate_endpoint_replacement"}:
+        texts[test_path] = tests.replace(
+            "from transport import ISSUE_URL, PROFILE_URL, issue, profile",
+            "from addresses import ISSUE_URL, PROFILE_URL\nfrom transport import issue, profile",
+        )
+        start, end = (
+            transport.index("ISSUE_URL ="),
+            transport.index("\n\nasync def issue"),
+        )
+        texts["addresses.py"] = transport[start:end]
+        texts["transport.py"] = (
+            transport[:start]
+            + "from addresses import ISSUE_URL, PROFILE_URL"
+            + transport[end:]
+        )
+    if variant == "runtime_config_url":
+        node = "?code={code}"
+        texts[test_path] = "from runtime import config\n" + tests.replace(
+            node, node + "&client={config.ID}"
+        )
+        texts["transport.py"] = "from runtime import config\n" + transport.replace(
+            node, node + "&client={config.ID}"
+        )
+        texts["runtime.py"] = (
+            "class Settings:\n    ID = 'fixed-test-setting'\n\nconfig = Settings()\n"
+        )
+    return texts
+
+
+def _http_fixture_token_project(tmp_path, variant):
+    test_directory = "build" if variant == "default_excluded" else "checks"
+    tests, transport = _http_fixture_test_sources(variant)
+    texts = _http_fixture_sources_with_imports(
+        f"{test_directory}/test_identity.py", tests, transport, variant
+    )
+    extra = {
+        "mock_shadow": ("aioresponses.py", "aioresponses = passthrough\n"),
+        "autouse": (
+            "checks/conftest.py",
+            "def pytest_runtest_setup(item):\n    override_transport()\n",
+        ),
+        "transport_replacement": (
+            "other.py",
+            "import aiohttp\naiohttp.ClientSession.get = replacement\n",
+        ),
+        "endpoint_replacement": (
+            "other.py",
+            "import transport as provider\nprovider.PROFILE_URL = unmodeled_url\n",
+        ),
+        "separate_endpoint_replacement": (
+            "other.py",
+            "import addresses as provider\nprovider.PROFILE_URL = unmodeled_url\n",
+        ),
+        "encoded_production_copy": (
+            "other.py",
+            "TOKEN = '"
+            + "".join(f"\\x{ord(c):02x}" for c in _HTTP_FIXTURE_SAMPLE)
+            + "'\n",
+        ),
+    }
+    if variant in extra:
+        name, text = extra[variant]
+        texts[name] = text
+    docs = {
+        "pyproject.toml": b"""
+[tool.poetry.dependencies]
+aiohttp = '^3.7.4'
+
+[tool.poetry.dev-dependencies]
+aioresponses = '^0.7.2'
+pytest = '^6.2.5'
+pytest-asyncio = '^0.15.1'
+""",
+    }
+    options = {
+        "outside_selection": "testpaths = different",
+        "explicit_excluded": "norecursedirs = checks",
+        "pythonpath_override": "pythonpath = elsewhere",
+    }
+    if variant in options:
+        docs["pytest.ini"] = f"[pytest]\n{options[variant]}\n".encode()
+    for relative, data in docs.items():
+        _write(tmp_path, relative, data.decode())
+    for relative, text in texts.items():
+        _write(tmp_path, relative, text)
+    return docs, texts
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "closed",
+        "runtime_config_url",
+        "separate_endpoint",
+        "passthrough",
+        "different_get_url",
+        "different_post_url",
+        "post_url_rebound_to_headers",
+        "post_url_rebound_to_session",
+        "different_assertion",
+        "other_sample",
+        "escaped_local",
+        "escaped_header",
+        "mock_shadow",
+        "autouse",
+        "transport_replacement",
+        "endpoint_replacement",
+        "separate_endpoint_replacement",
+        "reexported_callback",
+        "reexported_endpoint",
+        "test_global_mock",
+        "test_global_callback",
+        "transport_global_endpoint",
+        "transport_global_factory",
+        "encoded_production_copy",
+        "outside_selection",
+        "default_excluded",
+        "explicit_excluded",
+        "pythonpath_override",
+        "stale_capture",
+    ],
+)
+def test_captured_http_fixture_token_requires_exact_mock_and_value(
+    tmp_path, monkeypatch, variant
+):
+    from factoryline import pytest_collection_audit as audit
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    docs, texts = _http_fixture_token_project(tmp_path, variant)
+    marker_digest = hashlib.sha256(_HTTP_FIXTURE_SAMPLE.encode()).hexdigest()
+    original_helpers = audit.http_fixture_token_proof_helpers()
+    monkeypatch.setattr(audit, "_HTTP_FIXTURE_PUBLIC_SAMPLE_SHA256", marker_digest)
+    assert audit.http_fixture_token_proof_helpers() != original_helpers
+    raw = {tmp_path / name: text.encode() for name, text in texts.items()}
+    snapshots = {path: ast.parse(data) for path, data in raw.items()}
+    inventory = {path: hashlib.sha256(data).hexdigest() for path, data in raw.items()}
+    for path, tree in snapshots.items():
+        tree._oracle_source_sha256 = inventory[path]
+    path = next(path for path in raw if path.name == "test_identity.py")
+    tree = snapshots[path]
+    tree._security_oracle_context = {"_security_launch_configs": docs}
+    node = next(
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.Assign)
+        and isinstance(item.targets[0], ast.Name)
+        and item.targets[0].id == "access_token"
+    )
+    if variant == "stale_capture":
+        raw[path] += b"\n# newer source snapshot\n"
+    index = SourceSnapshotIndex(tmp_path, snapshots, raw, inventory)
+    receipt = audit.captured_http_fixture_token_proof(index, path, node)
+    if variant not in {"closed", "runtime_config_url", "separate_endpoint"}:
+        assert receipt is None
+        return
+    assert receipt["published_example"]["value_sha256"] == marker_digest
+    assert receipt["declaration"]["sha256"] == inventory[path]
+    assert receipt["scope"] == "CAPTURED_PYTHON_SOURCE"
+    assert receipt["runtime_execution"] == "UNASSESSED"
+    assert [row["method"] for row in receipt["transfers"]] == ["POST", "GET"]
+    assert receipt["transfers"][0]["route_binding"] == (
+        "SHARED_URL_TEMPLATE_CONFIGURATION_VALUES_UNASSESSED"
+        if variant == "runtime_config_url"
+        else "MATCHED_LITERAL_URL_TEMPLATE"
+    )
+    assert receipt["transfers"][1]["route_binding"] == "MATCHED_FIXED_HTTPS_URL"
+    for transfer in receipt["transfers"]:
+        assert transfer["request"]["sha256"] == inventory[tmp_path / "transport.py"]
+        assert transfer["registration"]["sha256"] == inventory[path]
+    assert _HTTP_FIXTURE_SAMPLE not in str(receipt)
+
+
+def test_captured_http_fixture_token_native_conservation(tmp_path, monkeypatch, capsys):
+    import json
+
+    from factoryline import pytest_collection_audit as audit
+    from factoryline.cli import main
+
+    _http_fixture_token_project(tmp_path, "closed")
+    _write(
+        tmp_path,
+        "app.py",
+        "PASSWORD = 'operational-account-password-72'\ninstall(password=PASSWORD)\n",
+    )
+    digest = hashlib.sha256(_HTTP_FIXTURE_SAMPLE.encode()).hexdigest()
+    monkeypatch.setattr(audit, "_HTTP_FIXTURE_PUBLIC_SAMPLE_SHA256", digest)
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                "source-role-v3",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert not captured.err
+    report = json.loads(captured.out)
+    assert report["audit_coverage"]["complete"]
+    assert report["finding_conservation"]["state"] == "PASS"
+    assert [
+        row["path"]
+        for row in report["findings"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ] == ["app.py"]
+    (fixture,) = [
+        row
+        for row in report["refuted_security_observations"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert fixture["path"] == "checks/test_identity.py"
+    proof = fixture["facts"]["captured_operand_role"]
+    assert proof["published_example"]["value_sha256"] == digest
+    assert proof["source_authority_sha256"]
+    assert _HTTP_FIXTURE_SAMPLE not in captured.out

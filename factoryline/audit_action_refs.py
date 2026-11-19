@@ -544,7 +544,11 @@ def _security_fixture_snapshot_bindings(audit, core, verified):
 def _has_application_fixture_claim(core):
     return any(
         row.get("facts", {}).get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
-        for field in ("findings", "primitive_observations")
+        for field in (
+            "findings",
+            "primitive_observations",
+            "refuted_security_observations",
+        )
         for row in core.get(field, ())
     )
 
@@ -1548,14 +1552,21 @@ def _captured_declaration_authority(index, path, node):
 
 
 def with_captured_declaration_proof(relative, node, row):
-    """Attach proof without altering native raw data before replay."""
+    """Bind observed program roles to source and stage their proof for replay."""
     match row, node:
+        case {"code": "SECURITY_DYNAMIC_EXECUTION", "severity": "HIGH"}, ast.Call(
+            func=ast.Name(id="eval"), args=[ast.Attribute(), ast.Name()], keywords=[]
+        ):
+            from .xonsh_program_audit import stage_xonsh_program_refutation
+
+            stage_xonsh_program_refutation(relative, node, row)
+            return row
         case {"code": "SECURITY_DYNAMIC_EXECUTION", "severity": "HIGH"}, ast.Call(
             func=ast.Name(id="exec"), args=[ast.Subscript(), ast.Name()], keywords=[]
         ):
             pass
         case _:
-            return row
+            return _with_captured_operand_proof(relative, node, row)
     from .captured_security_audit import _native_span
     from .pytest_collection_audit import _captured_pytest_inputs
     from .semantic_credential_sensor import _security_helper_source_context
@@ -1574,6 +1585,170 @@ def with_captured_declaration_proof(relative, node, row):
     except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
         pass
     return row
+
+
+def _captured_operand_prover(code, node):
+    """Select the proof for this exact diagnostic and syntactic operand shape."""
+    match code, node:
+        case "SECURITY_DYNAMIC_EXECUTION", ast.Call(
+            func=ast.Name(id="eval"), args=[ast.Call()], keywords=[]
+        ):
+            from .captured_operand_audit import captured_local_representation_proof
+
+            return captured_local_representation_proof
+        case "SECURITY_OS_COMMAND", ast.Call(args=[_], keywords=[]):
+            from .captured_operand_audit import captured_command_operand_proof
+
+            return captured_command_operand_proof
+        case "SECURITY_UNSAFE_DESERIALIZATION", ast.Call(
+            args=[ast.Call()], keywords=[]
+        ):
+            from .pickle_model_audit import captured_local_serialization_proof
+
+            return captured_local_serialization_proof
+        case "SECURITY_HARDCODED_SECRET", (
+            ast.Assign(value=ast.Constant(value=str()))
+            | ast.AnnAssign(value=ast.Constant(value=str()))
+        ):
+            return _captured_credential_operand_proof
+        case _:
+            return None
+
+
+def _captured_credential_operand_proof(index, path, node):
+    from .fixture_scope_value_audit import (
+        captured_hash_fixture_proof,
+        captured_password_validation_proof,
+    )
+    from .provenance import (
+        captured_oauth_placeholder_proof,
+        captured_oauth_service_locator_proof,
+    )
+    from .pytest_collection_audit import captured_http_fixture_token_proof
+
+    if len(index.snapshots) > 128:
+        return captured_hash_fixture_proof(index, path, node)
+    if isinstance(index.parents[path].get(id(node)), ast.Module):
+        return captured_oauth_placeholder_proof(
+            index, path, node
+        ) or captured_oauth_service_locator_proof(index, path, node)
+    return (
+        captured_password_validation_proof(index, path, node)
+        or captured_hash_fixture_proof(index, path, node)
+        or captured_http_fixture_token_proof(index, path, node)
+    )
+
+
+def _with_captured_operand_proof(relative, node, row):
+    """Bind a captured operand refutation to the original primitive and source inventory."""
+    prove = _captured_operand_prover(row["code"], node)
+    if prove is None or row["facts"].get("security_precondition") is not None:
+        return row
+
+    from .captured_security_audit import _native_span
+    from .fixture_scope_value_audit import HASH_FIXTURE_MAX_SNAPSHOTS
+    from .pytest_collection_audit import _captured_pytest_inputs
+    from .semantic_credential_sensor import _security_helper_source_context
+
+    module, index, path = _security_helper_source_context(node, None)
+    span = _native_span(node)
+    if path is None or span is None or index.relative(path) != relative:
+        return row
+    point = (row["code"], relative, *span, row["severity"])
+    max_snapshots = (
+        HASH_FIXTURE_MAX_SNAPSHOTS
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+        else 128
+    )
+    evidence = _bound_operand_refutation(
+        index, path, node, point, prove, max_snapshots=max_snapshots
+    )
+    if evidence is None:
+        if row["code"] == "SECURITY_OS_COMMAND":
+            _attach_installer_prerequisite(index, path, node, point, row)
+        elif row["code"] == "SECURITY_HARDCODED_SECRET":
+            _attach_validation_marker_context(index, path, node, point, row)
+        return row
+    row["facts"]["captured_operand_role"] = evidence
+    stage = getattr(_captured_pytest_inputs(module)[1], "provisional_exclusions", None)
+    if type(stage) is set:
+        stage.add((*point, evidence["source_authority_sha256"]))
+    return row
+
+
+def _attach_installer_prerequisite(index, path, node, point, row):
+    """Record a conditional manifest guard while preserving the shell finding."""
+    from .captured_operand_audit import captured_installer_prerequisite
+    from .pytest_collection_audit import captured_pytest_documents
+
+    evidence = _bound_operand_refutation(
+        index, path, node, point, captured_installer_prerequisite
+    )
+    if evidence is None:
+        return
+    manifest = evidence["manifest"]
+    documents = captured_pytest_documents(index.snapshots[path]) or {}
+    raw = documents.get(manifest["path"])
+    if not isinstance(raw, bytes) or sha256(raw).hexdigest() != manifest["sha256"]:
+        return
+    row["facts"]["captured_installer_prerequisite"] = evidence
+    row["message"] = (
+        "The script raises before this shell call when the working directory selects "
+        "the captured root manifest. The actual invocation directory remains unresolved."
+    )
+
+
+def _attach_validation_marker_context(index, path, node, point, row):
+    """Record the local test use while keeping the unresolved credential review."""
+    from .pytest_collection_audit import captured_validation_marker_context
+
+    evidence = _bound_operand_refutation(
+        index, path, node, point, captured_validation_marker_context
+    )
+    if evidence is None:
+        return
+    row["facts"]["captured_validation_marker_context"] = evidence
+    row["message"] = (
+        "The captured in-process test uses this literal as a validation marker. "
+        "The declared classifier engine reads a shared registry. "
+        "Actual consumer selection remains unresolved."
+    )
+
+
+def _bound_operand_refutation(index, path, node, point, prove, *, max_snapshots=128):
+    from .credential_role_constructor_provider import SourceSnapshotIndex
+
+    if (
+        not index.bounded
+        or len(index.snapshots) > max_snapshots
+        or not index.validate(path)
+    ):
+        return None
+    try:
+        proof = prove(index, path, node)
+        if proof is None:
+            return None
+        # A successful proof must survive a fresh byte-to-AST check and freshly
+        # built parent maps before even its first-pass evidence is attached.
+        source = SourceSnapshotIndex(
+            index.root,
+            dict(index.snapshots),
+            dict(index.source_bytes),
+            dict(index.inventory),
+        )
+        if not all(source.validate(peer) for peer in source.snapshots):
+            return None
+        if prove(source, path, node) != proof:
+            return None
+        manifest = sorted(
+            (source.relative(peer), source.inventory[peer]) for peer in source.snapshots
+        )
+        authority = sha256(
+            canonical_bytes(["captured-operand-refutation-v1", point, manifest, proof])
+        ).hexdigest()
+    except (SyntaxError, TypeError, ValueError, RecursionError, MemoryError):
+        return None
+    return {**proof, "source_authority_sha256": authority}
 
 
 def _provisional_witnesses(points):
@@ -1627,19 +1802,44 @@ def _bound_test_configuration_refutation(
 
 def _negative_semantic_points(rows, core, captured, primitive, *, verify_fixture=True):
     """Recompute a specific refuted hypothesis, never general runtime safety."""
-    points = set()
     if core.get("audit_coverage", {}).get("complete") is not True:
-        return points
-    bindings = {row["path"]: row["sha256"] for row in core.get("sources", [])}
+        return set()
+    sources = core.get("sources", [])
+    bindings = {row["path"]: row["sha256"] for row in sources}
+    fixture_sources = [
+        *sources,
+        *core.get("oracle_context", {}).get("configuration_sources", []),
+    ]
+    fixture_bindings = {row["path"]: row["sha256"] for row in fixture_sources}
+    collection_known = not primitive._unknown_collection(core)
+    points = set()
     for row in rows:
         facts = row.get("facts", {})
-        if (
+        shell = (
             facts.get("disposition") == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX"
             and facts.get("operation_role")
-            in {"empty_command_input", "terminal_display_reset"}
+            in {
+                "empty_command_input",
+                "terminal_display_reset",
+                "fixed_privileged_stop_syntax",
+            }
             and facts.get("hypothesis") == "SOURCE_COMMAND_INJECTION"
-            and primitive.closed_shell_binding(row, core["sources"], bindings, captured)
-        ):
+            and primitive.closed_shell_binding(row, sources, bindings, captured)
+        )
+        fixture = (
+            collection_known
+            and facts.get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+            and isinstance(evidence := facts.get("fixture_evidence"), dict)
+            and (
+                evidence.get("source_hypothesis")
+                == "SOURCE_TEST_CLIENT_CREDENTIAL_UNUSED"
+                or evidence.get("fixture_contract") == "DRF_CLASS_ACCOUNT_LIFECYCLE"
+            )
+            and primitive.application_fixture_binding(
+                row, fixture_sources, fixture_bindings, captured
+            )
+        )
+        if shell or fixture:
             points.add(
                 tuple(row.get(key) for key in (*primitive._RULE_SPAN_KEYS, "severity"))
             )

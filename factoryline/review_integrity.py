@@ -6,6 +6,7 @@ import sys
 import io
 import re
 import ast
+from contextlib import nullcontext
 from .import_context import (
     _security_loop_block_findings as _security_loop_block_findings,
     _bound_names as _bound_names,
@@ -2535,6 +2536,7 @@ def _session_tls_constructor_map(scope, node, aliases):
 def security_assignment_findings(relative, node, aliases):
     """Combine literal diagnostics with proven session verification changes."""
     from . import intent_quality, review_audits as audit
+    from .audit_action_refs import _with_captured_operand_proof
 
     literal_findings = intent_quality._literal_assignment_diagnostics(
         relative,
@@ -2547,6 +2549,9 @@ def security_assignment_findings(relative, node, aliases):
     literal_findings = public_symbolic_findings(
         relative, node, literal_findings, sys.modules[__name__]
     )
+    literal_findings = [
+        _with_captured_operand_proof(relative, node, row) for row in literal_findings
+    ]
     return literal_findings + session_tls_findings(
         relative, node, aliases, audit._security_finding
     )
@@ -3501,6 +3506,14 @@ def security_call_name(node, aliases):
         if audit._security_call_finding(name, "", node) is not None:
             return ""
     return name
+
+
+def local_security_snapshot_batch(audit, tree, context):
+    """Validate queries together when a file falls back to its own capture."""
+    source = getattr(tree, "_security_source_model", None)
+    if source is not None and (context or {}).get("_security_source_model") is None:
+        return audit._security_snapshot_analysis_batch({"source": source})
+    return nullcontext()
 
 
 def security_source_sink_findings(relative, tree, nodes, aliases):
@@ -4481,12 +4494,15 @@ def _security_flow_source_assignment(
     from .semantic_credential_sensor import request_payload_value_kind
 
     structural = _security_structural_expression(value, requests, aliases)
-    if structural is not None and not structural.unknown and structural.roots:
-        value_kind = structural.scalar_kind
-    else:
-        value_kind = request_payload_value_kind(
-            value, requests, aliases, _security_scope_request_aliases, scope, statement
-        )
+    value_kind = request_payload_value_kind(
+        value,
+        requests,
+        aliases,
+        _security_scope_request_aliases,
+        scope,
+        statement,
+        fact=structural,
+    )
     binary_decode = _security_request_binary_decode_kind(
         value, requests, aliases, scope, statement, audit=sys.modules[__name__]
     )

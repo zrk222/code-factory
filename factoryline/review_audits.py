@@ -54,7 +54,6 @@ from .pytest_collection_audit import (
     _INVALID_PYTEST_CONFIG as _INVALID_PYTEST_CONFIG,
     _UNSUPPORTED_PYTEST_CONFIG as _UNSUPPORTED_PYTEST_CONFIG,
 )
-
 from .audit_action_refs import (
     _captured_application_source_bytes as _app_source_bytes,
     audit_remediation_packet as audit_remediation_packet,
@@ -66,6 +65,7 @@ from .audit_action_refs import (
     with_captured_declaration_proof as with_decl_proof,
 )
 from .finite_capture import closed_shell_finding, shell_execution_calls
+from .captured_security_audit import argument_role_proof_helpers
 from .deep_audit_io import local_file
 from .ops_telemetry import _measure_hash, _measure_parse
 from .runtime_audit_common import (
@@ -3755,10 +3755,10 @@ def _oracle_context_cache_key(
             "_structural_oracle_context",
         )
     )
+    from . import credential_endpoint_admission
     from .credential_role_identity_effects import security_value_helper_epoch
 
-    helpers += security_value_helper_epoch()
-    from . import credential_endpoint_admission
+    helpers += security_value_helper_epoch() + argument_role_proof_helpers()
 
     identity = {
         "credential_bindings": [
@@ -5427,8 +5427,6 @@ def _security_scan_tree(
         if isinstance(node, ast.Call):
             node._security_supported_precondition = None
             node._security_structural_values = None
-        for child in ast.iter_child_nodes(node):
-            child._security_parent = node
         node._scan_bound_names = None
         node._oracle_layout = None
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -5446,12 +5444,11 @@ def _security_scan_tree(
         tree._oracle_mock_fixture_provenance = context.get(
             "mock_fixture_provenance", {}
         )
-        helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
-            context.get("helpers", ())
-        )
-        weak_helper_names = _local_weak_assertion_helpers(tree, oracle_aliases) | set(
-            context.get("weak_helpers", ())
-        )
+        local_helpers = _local_assertion_helpers(tree, oracle_aliases)
+        helper_names = local_helpers | set(context.get("helpers", ()))
+        weak_helper_names = _local_weak_assertion_helpers(
+            tree, oracle_aliases, strong_helpers=local_helpers
+        ) | set(context.get("weak_helpers", ()))
         unittest_methods = _unittest_test_methods(tree, oracle_aliases)
         for cls in tree.body:
             if isinstance(cls, ast.ClassDef) and cls.name in context.get("mixins", ()):

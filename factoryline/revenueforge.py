@@ -75,6 +75,51 @@ def _local(root: Path, value: Path, *, exists: bool = True) -> Path:
     return resolved
 
 
+def _artifact_local(root, path, prefix, exists=True):
+    """Resolve an AppForge path using its existing containment/error contract."""
+    workspace = root.resolve()
+    target = path.resolve() if path.is_absolute() else (workspace / path).resolve()
+    try:
+        target.relative_to(workspace)
+    except ValueError as exc:
+        raise RevenueForgeError(
+            prefix + "_PATH_REJECTED", "paths must remain inside the workspace"
+        ) from exc
+    if exists and not target.is_file():
+        raise RevenueForgeError(
+            prefix + "_INPUT_UNAVAILABLE", "input must be a regular workspace file"
+        )
+    return target
+
+
+_ARTIFACT_ANY_SCHEMA = object()
+
+
+def _artifact_json(
+    source,
+    prefix,
+    limit,
+    *,
+    schema=_ARTIFACT_ANY_SCHEMA,
+    large_message="JSON input exceeds 1 MiB",
+    invalid_message="input must be valid JSON",
+    object_message=None,
+):
+    """Read bounded BOM-tolerant JSON without changing caller validation scope."""
+    if source.stat().st_size > limit:
+        raise RevenueForgeError(prefix + "_INPUT_TOO_LARGE", large_message)
+    try:
+        value = json.loads(source.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RevenueForgeError(prefix + "_INPUT_INVALID", invalid_message) from exc
+    if schema is not _ARTIFACT_ANY_SCHEMA:
+        if not isinstance(value, dict) or value.get("schema") != schema:
+            raise RevenueForgeError(prefix + "_SCHEMA_REJECTED", f"expected {schema}")
+    elif object_message is not None and not isinstance(value, dict):
+        raise RevenueForgeError(prefix + "_INPUT_INVALID", object_message)
+    return value
+
+
 def _read_yaml(root: Path, path: Path) -> dict[str, Any]:
     source = _local(root, path)
     if source.stat().st_size > MAX_INPUT_BYTES:
