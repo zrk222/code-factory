@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 import tokenize
-from types import CodeType, ModuleType
+from types import CodeType, MappingProxyType, ModuleType
 
 import pytest
 from pathlib import Path
@@ -1416,15 +1416,20 @@ def _challenge_runner_failure(output, facts):
     return None
 
 
-def _challenge_runtime_mapping(paths):
-    """Record only role names and hashes for runner-owned temporary paths."""
-    roles = {
+_CHALLENGE_RUNTIME_ROLES = MappingProxyType(
+    {
         "HOME": "runtime_home",
         "USERPROFILE": "runtime_home",
         "TMP": "runtime_temp",
         "TEMP": "runtime_temp",
         "TMPDIR": "runtime_temp",
     }
+)
+
+
+def _challenge_runtime_mapping(paths):
+    """Record only role names and hashes for runner-owned temporary paths."""
+    roles = _CHALLENGE_RUNTIME_ROLES
     if paths is None:
         return None
     return [
@@ -1467,13 +1472,7 @@ def _challenge_runtime_context(root, environment=None, normalized_paths=None):
 
 
 def _challenge_environment_digest(environment, normalized_paths):
-    roles = {
-        "HOME": "runtime_home",
-        "USERPROFILE": "runtime_home",
-        "TMP": "runtime_temp",
-        "TEMP": "runtime_temp",
-        "TMPDIR": "runtime_temp",
-    }
+    roles = _CHALLENGE_RUNTIME_ROLES
     if normalized_paths is not None:
         if set(normalized_paths) != set(roles):
             raise ValueError("Runtime path mapping is incomplete")
