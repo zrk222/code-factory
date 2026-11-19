@@ -114,9 +114,20 @@ def tree_has_no_links_or_reparse_points(
     deadline=float("inf"),
 ) -> bool:
     """Check a bounded copy tree for symbolic links and Windows reparse points."""
+    return (
+        _tree_observation_problem(
+            root, ignored, max_files=max_files, max_bytes=max_bytes, deadline=deadline
+        )
+        is None
+    )
+
+
+def _tree_observation_problem(
+    root, ignored=None, *, max_files, max_bytes, deadline, tolerate_disappeared=False
+):
     info = _tree_entry_info(root)
     if info is None or not stat.S_ISDIR(info.st_mode):
-        return False
+        return "invalid_root"
     ignored = ignored or set()
     files, total_bytes, entries = 0, 0, 0
     errors = []
@@ -124,29 +135,56 @@ def tree_has_no_links_or_reparse_points(
         dirs[:] = [name for name in dirs if name not in ignored]
         for name in dirs + names:
             entries += 1
-            if _tree_budget_exceeded(
+            if problem := _tree_budget_problem(
                 files, total_bytes, entries, max_files, max_bytes, deadline
             ):
-                return False
-            info = _tree_entry_info(Path(directory) / name)
-            if info is None:
-                return False
-            if stat.S_ISREG(info.st_mode):
+                return problem
+            info = _observe_tree_child(Path(directory) / name, tolerate_disappeared)
+            if isinstance(info, str):
+                return info
+            if info is not None and stat.S_ISREG(info.st_mode):
                 files += 1
                 total_bytes += info.st_size
-            if _tree_budget_exceeded(
+            if problem := _tree_budget_problem(
                 files, total_bytes, entries, max_files, max_bytes, deadline
             ):
-                return False
-    return not errors
+                return problem
+    return _tree_walk_problem(root, errors, tolerate_disappeared)
+
+
+def _observe_tree_child(path, tolerate_disappeared):
+    try:
+        info = _nonlinked_tree_lstat(path)
+    except FileNotFoundError:
+        return None if tolerate_disappeared else "entry_disappeared"
+    except OSError:
+        return "entry_unreadable"
+    return info if info is not None else "linked_entry"
+
+
+def _tree_walk_problem(root, errors, tolerate_disappeared):
+    for error in errors:
+        if not isinstance(error, FileNotFoundError):
+            return "entry_unreadable"
+        if not (
+            tolerate_disappeared
+            and error.filename is not None
+            and root in Path(error.filename).parents
+        ):
+            return "entry_disappeared"
+    return None
 
 
 def _tree_entry_info(path):
     """Inspect each entry once without following links or Windows reparse points."""
     try:
-        info = path.lstat()
+        return _nonlinked_tree_lstat(path)
     except OSError:
         return None
+
+
+def _nonlinked_tree_lstat(path):
+    info = path.lstat()
     if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(
         stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0
     ):
@@ -157,11 +195,23 @@ def _tree_entry_info(path):
 def _tree_budget_exceeded(files, total_bytes, entries, max_files, max_bytes, deadline):
     """Apply the same file, entry, byte and deadline limits throughout one walk."""
     return (
-        files > max_files
-        or total_bytes > max_bytes
-        or entries > max_files * 2
-        or time.monotonic() >= deadline
+        _tree_budget_problem(
+            files, total_bytes, entries, max_files, max_bytes, deadline
+        )
+        is not None
     )
+
+
+def _tree_budget_problem(files, total_bytes, entries, max_files, max_bytes, deadline):
+    if files > max_files:
+        return "file_count"
+    if total_bytes > max_bytes:
+        return "byte_count"
+    if entries > max_files * 2:
+        return "entry_count"
+    if time.monotonic() >= deadline:
+        return "deadline"
+    return None
 
 
 def regular_target_within(root: Path, target: Path) -> bool:
@@ -386,12 +436,15 @@ def _wait_for_exit_or_limit(
     deadline: float | None = None,
     unit=None,
     artifact_tree=None,
+    facts=None,
 ) -> bool:
     deadline = deadline if deadline is not None else time.monotonic() + timeout_seconds
     while not overflow.is_set() and not (cancelled is not None and cancelled.is_set()):
         if time.monotonic() >= deadline:
             return True
-        _observe_artifact_quota(artifact_tree, overflow, deadline)
+        _observe_artifact_quota(
+            artifact_tree, overflow, deadline, active=True, facts=facts
+        )
         if overflow.is_set():
             break
         if unit is not None:
@@ -401,7 +454,9 @@ def _wait_for_exit_or_limit(
             return True
         try:
             child.wait(timeout=min(0.01, remaining))
-            _observe_artifact_quota(artifact_tree, overflow, deadline)
+            _observe_artifact_quota(
+                artifact_tree, overflow, deadline, active=True, facts=facts
+            )
             # A process may become observable as exited just after wait's
             # timeout boundary. Keep the signed deadline authoritative.
             return time.monotonic() > deadline
@@ -410,18 +465,23 @@ def _wait_for_exit_or_limit(
     return False
 
 
-def _observe_artifact_quota(root, overflow, deadline=float("inf")):
+def _observe_artifact_quota(
+    root, overflow, deadline=float("inf"), *, active=False, facts=None
+):
     """Cooperative observed quota, not a kernel filesystem quota or sandbox."""
-    if time.monotonic() >= deadline:
+    if root is None or time.monotonic() >= deadline:
         return
     limits = {"max_files": 200, "max_bytes": 32 * 1024 * 1024}
-    if isinstance(root, dict):
+    native = isinstance(root, dict)
+    if native:
         root, limits = root["root"], root["limits"]
-    if root is not None and not tree_has_no_links_or_reparse_points(
-        root, **limits, deadline=deadline
-    ):
-        if time.monotonic() < deadline:
-            overflow.set()
+    problem = _tree_observation_problem(
+        root, **limits, deadline=deadline, tolerate_disappeared=active and native
+    )
+    if problem and problem != "deadline" and time.monotonic() < deadline:
+        if native and facts is not None:
+            facts.setdefault("artifact_limit_reason", problem)
+        overflow.set()
 
 
 def _join_stream_readers(
@@ -748,13 +808,16 @@ def _run_child_bounded(
             deadline=deadline,
             unit=_cleanup_unit(child),
             artifact_tree=artifact_tree,
+            facts=facts,
         )
         execution_duration_ms = max(
             0, round((time.monotonic() - execution_started) * 1000)
         )
         facts["output_limit_exceeded"] = overflow.is_set()
         cleanup_confirmed, streams_closed = _await_cleanup(child, threads)
-        _observe_artifact_quota(artifact_tree, overflow, deadline)
+        _observe_artifact_quota(artifact_tree, overflow, deadline, facts=facts)
+        if isinstance(artifact_tree, dict) and time.monotonic() >= deadline:
+            facts["timed_out"] = True
     except BaseException:
         _stop(child)
         _await_cleanup(child, threads)

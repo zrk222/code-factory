@@ -4768,6 +4768,179 @@ def test_shared_tree_validator_requires_directory_root(tmp_path):
     assert not tree_has_no_links_or_reparse_points(root)
 
 
+@pytest.mark.parametrize("active,overflowed", [(True, False), (False, True)])
+def test_native_artifact_observer_distinguishes_disappearing_child(
+    tmp_path, monkeypatch, active, overflowed
+):
+    from threading import Event
+    from factoryline import runtime_audit_process as process
+
+    child = tmp_path / "temporary"
+    child.write_bytes(b"x")
+    original_lstat = type(tmp_path).lstat
+
+    def remove_before_stat(path):
+        if path == child:
+            child.unlink()
+        return original_lstat(path)
+
+    monkeypatch.setattr(type(tmp_path), "lstat", remove_before_stat)
+    overflow, facts = Event(), {}
+    tree = process._native_artifact_tree({"cache_root": tmp_path / "cache"}, None)
+    process._observe_artifact_quota(tree, overflow, active=active, facts=facts)
+    assert not child.exists()
+    assert overflow.is_set() is overflowed
+    assert facts.get("artifact_limit_reason") == (
+        "entry_disappeared" if overflowed else None
+    )
+
+
+@pytest.mark.parametrize(
+    "error,where,reason",
+    [
+        (FileNotFoundError, "child", None),
+        (FileNotFoundError, "root", "entry_disappeared"),
+        (PermissionError, "child", "entry_unreadable"),
+    ],
+)
+def test_native_artifact_observer_checks_directory_walk_errors(
+    tmp_path, monkeypatch, error, where, reason
+):
+    import errno
+    from threading import Event
+    from factoryline import runtime_audit_process as process
+
+    target = tmp_path / "removed" if where == "child" else tmp_path
+
+    def walk(root, *, onerror):
+        code = errno.ENOENT if error is FileNotFoundError else errno.EACCES
+        onerror(error(code, "fixture walk failure", str(target)))
+        return iter(())
+
+    monkeypatch.setattr(process.os, "walk", walk)
+    overflow, facts = Event(), {}
+    tree = process._native_artifact_tree({"cache_root": tmp_path / "cache"}, None)
+    process._observe_artifact_quota(tree, overflow, active=True, facts=facts)
+    assert overflow.is_set() is (reason is not None)
+    assert facts.get("artifact_limit_reason") == reason
+
+
+@pytest.mark.parametrize(
+    "case,reason",
+    [
+        ("missing_root", "invalid_root"),
+        ("files", "file_count"),
+        ("bytes", "byte_count"),
+        ("entries", "entry_count"),
+        ("unreadable", "entry_unreadable"),
+        ("reparse", "linked_entry"),
+        ("symlink", "linked_entry"),
+    ],
+)
+def test_live_native_artifact_observer_preserves_hard_failures(
+    tmp_path, monkeypatch, case, reason
+):
+    from threading import Event
+    from types import SimpleNamespace
+    from factoryline import runtime_audit_process as process
+
+    root = tmp_path if case != "missing_root" else tmp_path / "missing"
+    target = tmp_path / "target"
+    limits = {"max_files": 1, "max_bytes": 3}
+    if case == "entries":
+        for name in ("first", "second", "third"):
+            (tmp_path / name).mkdir()
+    elif case == "symlink":
+        try:
+            target.symlink_to(tmp_path / "nowhere")
+        except OSError:
+            pytest.skip("Host does not grant symlink creation")
+    elif case != "missing_root":
+        target.write_bytes(b"four" if case == "bytes" else b"x")
+        if case == "files":
+            (tmp_path / "second").write_bytes(b"x")
+
+    original_lstat = type(tmp_path).lstat
+
+    def stat_entry(path):
+        if path == target and case == "unreadable":
+            raise PermissionError("fixture lstat failure")
+        info = original_lstat(path)
+        if path == target and case == "reparse":
+            return SimpleNamespace(
+                st_mode=info.st_mode,
+                st_file_attributes=process.stat.FILE_ATTRIBUTE_REPARSE_POINT,
+            )
+        return info
+
+    monkeypatch.setattr(type(tmp_path), "lstat", stat_entry)
+    overflow, facts = Event(), {}
+    process._observe_artifact_quota(
+        {"root": root, "limits": limits}, overflow, active=True, facts=facts
+    )
+    assert overflow.is_set()
+    assert facts["artifact_limit_reason"] == reason
+
+
+def test_native_artifact_limit_reason_reaches_process_facts(tmp_path, monkeypatch):
+    import sys
+    from factoryline import runtime_audit_process as process
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    monkeypatch.setattr(process, "_native_tool_environment", lambda *a, **kw: {})
+    monkeypatch.setattr(
+        process,
+        "_native_artifact_tree",
+        lambda *args: {"root": artifacts, "limits": {"max_files": 2, "max_bytes": 3}},
+    )
+    facts = process.run_bounded_command(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; Path('artifacts/x').write_bytes(b'four')",
+        ],
+        tmp_path,
+        10,
+        tmp_path,
+        tool_context={},
+    )
+    assert facts["cleanup_confirmed"] and facts["output_limit_exceeded"]
+    assert facts["termination_reason"] == "output_limit"
+    assert facts["artifact_limit_reason"] == "byte_count"
+
+
+def test_native_artifact_final_check_needs_remaining_budget(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from factoryline import runtime_audit_process as process
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    monkeypatch.setattr(process, "_native_tool_environment", lambda *a, **kw: {})
+    monkeypatch.setattr(
+        process,
+        "_native_artifact_tree",
+        lambda *args: {"root": artifacts, "limits": {"max_files": 2, "max_bytes": 3}},
+    )
+    original_cleanup = process._await_cleanup
+
+    def cleanup_with_late_finish(child, threads):
+        result = original_cleanup(child, threads)
+        monkeypatch.setattr(
+            process, "time", SimpleNamespace(monotonic=lambda: float("inf"))
+        )
+        return result
+
+    monkeypatch.setattr(process, "_await_cleanup", cleanup_with_late_finish)
+    facts = process.run_bounded_command(
+        [sys.executable, "-c", "pass"], tmp_path, 10, tmp_path, tool_context={}
+    )
+    assert facts["exit_code"] == 0 and facts["cleanup_confirmed"]
+    assert facts["timed_out"] and facts["termination_reason"] == "timeout"
+    assert not facts["output_limit_exceeded"]
+
+
 def test_artifact_observation_deadline_is_timeout_not_overflow(tmp_path, monkeypatch):
     import threading
     from factoryline import runtime_audit_process as process
@@ -4778,10 +4951,10 @@ def test_artifact_observation_deadline_is_timeout_not_overflow(tmp_path, monkeyp
     def slow_tree(root, **limits):
         calls.append(limits["deadline"])
         clock[0] = 3.0
-        return False
+        return "deadline"
 
     monkeypatch.setattr(process.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(process, "tree_has_no_links_or_reparse_points", slow_tree)
+    monkeypatch.setattr(process, "_tree_observation_problem", slow_tree)
     overflow = threading.Event()
     process._observe_artifact_quota(tmp_path, overflow, deadline=2.0)
     assert calls == [2.0] and not overflow.is_set()

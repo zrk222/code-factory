@@ -12,6 +12,7 @@ from __future__ import annotations
 from . import canonical_json_compat_bytes as _canonical
 
 import copy
+from collections import Counter
 from datetime import datetime, timezone
 from hashlib import sha256
 from html import escape
@@ -1432,6 +1433,7 @@ def _non_python_security_lane(
                 for row in workers
             ],
             candidate_sha256=execution["candidate_sha256"],
+            sources=inventory["files"],
             source_current=current,
             remaining_gaps=execution.get("gaps", []),
             findings=[
@@ -1860,6 +1862,127 @@ def _native_static_projection(payload):
     )
 
 
+def _mixed_security_sources(workspace, python, native):
+    from .deep_audit_io import _source_bytes, digest
+
+    native_sources = native.get("sources", [])
+    findings = native.get("findings", [])
+    if len({row["path"] for row in native_sources}) != len(native_sources):
+        raise ValueError("duplicate native source binding")
+    if (native_sources or findings) and (
+        native.get("source_current") is not True
+        or digest(native_sources) != native.get("candidate_sha256")
+    ):
+        raise ValueError("native source inventory is not current and bound")
+    sources = {}
+    for row in [*python.get("sources", []), *native_sources]:
+        binding = {"path": row["path"], "sha256": row["sha256"]}
+        if binding["path"] in sources and sources[binding["path"]] != binding:
+            raise ValueError("conflicting source bindings")
+        sources[binding["path"]] = binding
+    for binding in sources.values():
+        raw, _ = _source_bytes(workspace, binding["path"])
+        if sha256(raw).hexdigest() != binding["sha256"]:
+            raise ValueError("source binding changed")
+    identities = [
+        (row.get("lane_id"), row.get("finding_id", row.get("id"))) for row in findings
+    ]
+    if any(not isinstance(key, str) or not key for _, key in identities) or len(
+        set(identities)
+    ) != len(identities):
+        raise ValueError("missing or duplicate native finding identity")
+    for row in findings:
+        if sources.get(row.get("path"), {}).get("sha256") != row.get(
+            "source_sha256"
+        ) or not row.get("source_sha256"):
+            raise ValueError("native finding source is unbound")
+    return [sources[path] for path in sorted(sources)]
+
+
+def _mixed_security_report(workspace, python, native, projection_error=None):
+    """Assemble observations without extending the Python producer's policy or seals."""
+    error = projection_error
+    native_findings = native.get("findings", [])
+    try:
+        sources = _mixed_security_sources(workspace, python, native)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        error = "E_NATIVE_PROJECTION: " + _analyzer_failure_message(exc)
+        sources = python.get("sources", [])
+    if error:
+        native_findings = []
+    findings = [*python.get("findings", []), *native_findings]
+    result = {
+        "schema": "factory.mixed-security-audit.v1",
+        "marker": "MIXED_SECURITY_AUDIT_INCOMPLETE",
+        "state": python["state"]
+        if python.get("state") in {"INVALID", "BLOCKED"}
+        else "INVALID"
+        if error
+        else "INCOMPLETE",
+        "findings": findings,
+        "finding_counts": dict(
+            sorted(
+                Counter(
+                    row.get("code")
+                    or row.get("rule_id")
+                    or row.get("id")
+                    or "UNCLASSIFIED"
+                    for row in findings
+                ).items()
+            )
+        ),
+        "sources": sources,
+        "source_binding_count": len(sources),
+        "source_manifest_sha256": _digest(sources),
+        "candidate_sha256": native.get("candidate_sha256"),
+        "candidate_scope": "native_execution_inventory",
+        "python_ast_security": python,
+        "policy_scope": "python_ast_security",
+        "python_finding_conservation": python.get("finding_conservation", {}),
+        "finding_conservation": {
+            "state": "FAILED" if error else "UNASSESSED",
+            "scope": "mixed_diagnostic_identity_multiplicity",
+            "expected_raw_rows": len(python.get("findings", []))
+            + len(native.get("findings", [])),
+            "physical_raw_rows": len(findings),
+            "python_rows": len(python.get("findings", [])),
+            "native_raw_rows": len(native_findings),
+            "native_policy_state": "UNASSESSED",
+        },
+        "policy_scopes": {
+            "native_static": {
+                "state": "UNASSESSED",
+                "raw_rows": len(native_findings),
+                "admitted_rows": None,
+            }
+        },
+        "languages": native.get("languages", []),
+        "audit_coverage": {
+            "complete": False,
+            "measurement_state": "incomplete",
+            "python_ast_security": python.get("audit_coverage", {}),
+            "native_static": {
+                "measurement_state": native.get("verification", "UNAVAILABLE")
+            },
+        },
+        "claim_boundary": "Python policy and producer seals apply only to python_ast_security. Native rows are source-bound observations, not supported defects or release approval.",
+        "action_summary": "Review source-bound findings and remaining language obligations; native observations grant no approval.",
+    }
+    for key in (
+        "message",
+        "oracle_context",
+        "finding_tier_report",
+        "action_packets",
+        "selected_defect_policy",
+        "defect_policy_decision",
+    ):
+        if key in python:
+            result[key] = python[key]
+    if error:
+        result["native_projection_error"] = error
+    return {**result, "audit_sha256": _digest(result)}, error
+
+
 def _scan_security_and_deep_audit(
     workspace: Path,
     inventory: dict[str, Any],
@@ -1912,23 +2035,10 @@ def _scan_security_and_deep_audit(
             for name, count in inventory.get("file_types", {}).items()
         ):
             non_python, projection_error = _native_static_projection(non_python)
-            static_security = {
-                **static_security,
-                "state": static_security["state"]
-                if static_security.get("state") in {"INVALID", "BLOCKED"}
-                else "INCOMPLETE",
-                "findings": [
-                    *static_security.get("findings", []),
-                    *non_python.get("findings", []),
-                ],
-                "languages": non_python.get("languages", []),
-                "audit_coverage": {
-                    **static_security.get("audit_coverage", {}),
-                    "complete": False,
-                    "measurement_state": "incomplete",
-                },
-                "action_summary": "Review source-bound native static findings and remaining language obligations; native observations grant no approval.",
-            }
+            static_security, assembly_error = _mixed_security_report(
+                workspace, static_security, non_python, projection_error
+            )
+            projection_error = projection_error or assembly_error
         return static_security, deep_audit, projection_error
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
         return (
@@ -1988,7 +2098,8 @@ def _repo_scan_state(
 ) -> tuple[str, str]:
     from .pytest_collection_audit import _UNAVAILABLE_COLLECTION_INPUTS
 
-    collection = static_security.get("oracle_context", {}).get(
+    python_security = static_security.get("python_ast_security", static_security)
+    collection = python_security.get("oracle_context", {}).get(
         "static_pytest_collection", {}
     )
     if collection.get("state") in _UNAVAILABLE_COLLECTION_INPUTS:
@@ -1998,6 +2109,14 @@ def _repo_scan_state(
         for finding in static_security.get("findings", [])
     ):
         return "BLOCKED", "BLOCKED"
+    if static_security.get("schema") == "factory.mixed-security-audit.v1":
+        if static_security.get("state") in {
+            "INVALID",
+            "BLOCKED",
+        } or python_security.get("regressions"):
+            return "BLOCKED", "BLOCKED"
+        if deep_audit is None or deep_audit["state"] == "PASS":
+            return "INCOMPLETE", "INCOMPLETE"
     if deep_audit is not None:
         state = deep_audit["state"]
         return state, state

@@ -8,6 +8,8 @@ The explicit scan entry point runs authorized, isolated adapter containers.
 
 from __future__ import annotations
 
+import re
+
 from . import deep_audit_io as _deep_audit_io
 from collections import defaultdict
 from itertools import islice
@@ -820,8 +822,117 @@ def _local_failure_transport(directory, output, lane, inventory, context, error)
                 key: value for key, value in context.items() if key != "tool_context"
             },
             "retained_output": retained,
+            **_local_failure_diagnostic(error),
         },
     )
+
+
+def _local_failure_diagnostic(error):
+    """Retain controlled command identity and scalar facts, never exception text."""
+    value = getattr(error, "native_diagnostic", None)
+    if not isinstance(value, dict) or value.get("stage") != "semgrep_rule_command":
+        return _local_semgrep_verification_diagnostic(error)
+    metadata = {"stage": "semgrep_rule_command"}
+    index, rule, argv = (
+        value.get(key) for key in ("rule_index", "rule_id", "argv_sha256")
+    )
+    if type(index) is int and 0 <= index < 64:
+        metadata["rule_index"] = index
+    if isinstance(rule, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,256}", rule):
+        metadata["rule_id"] = rule
+    if isinstance(argv, str) and re.fullmatch(r"[0-9a-f]{64}", argv):
+        metadata["argv_sha256"] = argv
+    if type(value.get("deadline_exhausted")) is bool:
+        metadata["deadline_exhausted"] = value["deadline_exhausted"]
+    metadata["process"] = _local_failure_process_facts(value.get("process"))
+    return {"command_diagnostic": metadata}
+
+
+def _local_semgrep_verification_diagnostic(error):
+    reasons = {
+        "rule exceeds signed budget": "rule_budget",
+        "native rule did not complete": "rule_incomplete",
+        "native source execution differs": "source_execution",
+        "per-rule findings contradict baseline": "baseline_parity",
+        "native rule evidence missing": "missing_rule_evidence",
+        "rule observation inventory differs": "observation_inventory",
+        "bounded source inventory required": "source_inventory",
+        "invalid native rule record": "rule_record",
+        "native report digest differs": "report_digest",
+        "isolated command differs": "isolated_command",
+        "native command binding differs": "command_binding",
+        "bounded raw report required": "raw_report_bound",
+        "invalid raw report": "raw_report_invalid",
+        "raw report binding differs": "raw_report_binding",
+        "local isolated command differs": "local_isolated_command",
+        "local execution role binding differs": "local_role_binding",
+        "native source accounting incomplete": "source_accounting",
+    }
+    if getattr(error, "code", None) != "E_SEMGREP_EXECUTION":
+        return {}
+    message = getattr(error, "message", None)
+    reason = reasons.get(message) if isinstance(message, str) else None
+    if reason is None:
+        return {}
+    return {"command_diagnostic": {"stage": "semgrep_verification", "reason": reason}}
+
+
+def _local_failure_process_facts(value):
+    if not isinstance(value, dict):
+        return {}
+    output = {}
+    for key in (
+        "timed_out",
+        "launch_error",
+        "output_limit_exceeded",
+        "cleanup_confirmed",
+        "cancelled",
+    ):
+        if type(value.get(key)) is bool:
+            output[key] = value[key]
+    for key in (
+        "exit_code",
+        "timeout_seconds",
+        "duration_ms",
+        "stdout_bytes",
+        "stderr_bytes",
+    ):
+        number = value.get(key)
+        if (type(number) is int and -(2**31) <= number < 2**63) or (
+            key == "exit_code" and number is None
+        ):
+            output[key] = number
+    for key in ("stdout_sha256", "stderr_sha256"):
+        if isinstance(value.get(key), str) and re.fullmatch(
+            r"[0-9a-f]{64}", value[key]
+        ):
+            output[key] = value[key]
+    reason = value.get("termination_reason")
+    if isinstance(reason, str) and reason in {
+        "process_exit",
+        "timeout",
+        "output_limit",
+        "launch_error",
+        "cancelled",
+    }:
+        output["termination_reason"] = reason
+    artifact_reason = value.get("artifact_limit_reason")
+    if (
+        output.get("output_limit_exceeded") is True
+        and isinstance(artifact_reason, str)
+        and artifact_reason
+        in {
+            "invalid_root",
+            "entry_disappeared",
+            "entry_unreadable",
+            "linked_entry",
+            "file_count",
+            "byte_count",
+            "entry_count",
+        }
+    ):
+        output["artifact_limit_reason"] = artifact_reason
+    return output
 
 
 def _execute_local_lane(root, directory, state, snapshot, lane, inventory, plan, emit):
