@@ -217,7 +217,7 @@ spec_markdown: |
 
   | Obligation | Named assertion and expected observation |
   |---|---|
-  | bounded_inputs | `test_duplicate_json_fields_are_rejected`: duplicate keys reject; byte/count ceilings are normative validator limits, not established by this one assertion |
+  | bounded_inputs | `test_review_input_byte_boundary`, `test_review_contract_count_boundaries`, `test_review_round_total_finding_boundary`: accept exact 1,000,000-byte, 8-reviewer, 64-criterion and 256-finding limits; reject one over with no new receipt and preserve existing output on oversized input. `test_review_unknown_envelope_fields_reject_without_receipt` rejects extra contract/round/reviewer fields; `test_duplicate_json_fields_are_rejected` rejects duplicate keys |
   | declared_digest_bindings | `test_complete_review_is_advisory_and_binds_exact_coverage`: stored receipt recomputes to its declared digest |
   | incomplete_review_cells | `test_missing_duplicated_unknown_or_malformed_cells_are_indeterminate`: all four mutations remain INDETERMINATE |
   | objective_review_queue | `test_disagreeing_objective_alignment_escalates_to_human_queue`: objective disagreement stays in human review |
