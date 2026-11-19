@@ -1378,6 +1378,9 @@ def _adapter_commands(
     lane: dict,
     source: _deep_audit_io.Path,
     scratch: _deep_audit_io.Path,
+    *,
+    execution_context=None,
+    cancelled=None,
 ) -> list[dict]:
     from .runtime_audit_process import run_bounded_command
 
@@ -1405,18 +1408,44 @@ def _adapter_commands(
                 directory,
                 remaining,
                 deadline,
+                **(
+                    {"execution_context": execution_context, "cancelled": cancelled}
+                    if execution_context
+                    else {}
+                ),
             )
         )
     return invocations
 
 
-def _adapter_invocation(runner, command, lane, source, directory, remaining, deadline):
+def _adapter_invocation(
+    runner,
+    command,
+    lane,
+    source,
+    directory,
+    remaining,
+    deadline,
+    *,
+    execution_context=None,
+    cancelled=None,
+):
     argv = [
         value.replace("{factory_ledger}", str(directory / "rule-ledger.json"))
         for value in command["argv"]
     ]
     stderr_path = _deep_audit_io._gitleaks_stderr_path(directory, lane)
-    facts = runner(argv, source, remaining, directory, stderr_path=stderr_path)
+    options = (
+        {"tool_context": execution_context["tool_context"], "cancelled": cancelled}
+        if execution_context
+        else {}
+    )
+    cwd = (
+        execution_context["tool_context"]["bundle_root"]
+        if execution_context
+        else source
+    )
+    facts = runner(argv, cwd, remaining, directory, stderr_path=stderr_path, **options)
     if _deep_audit_io._adapter_command_failed(
         facts, command["accepted_exit_codes"], deadline
     ):
@@ -1706,13 +1735,26 @@ def _native_version(
     source: _deep_audit_io.Path,
     scratch: _deep_audit_io.Path,
     timeout: int,
+    *,
+    execution_context=None,
+    cancelled=None,
 ) -> dict:
     from .runtime_audit_process import run_bounded_command
     import re
 
     capture = scratch / "version.txt"
+    options = (
+        {"tool_context": execution_context["tool_context"], "cancelled": cancelled}
+        if execution_context
+        else {}
+    )
+    cwd = (
+        execution_context["tool_context"]["bundle_root"]
+        if execution_context
+        else source
+    )
     facts = run_bounded_command(
-        profile["version_argv"], source, timeout, scratch, stdout_path=capture
+        profile["version_argv"], cwd, timeout, scratch, stdout_path=capture, **options
     )
     if (
         facts["exit_code"] != 0
@@ -1889,7 +1931,17 @@ def _fuzz_profile_preflight(profile, lane):
     return path
 
 
-def _native_profile_challenges(profile, contract, source, lane, execution, started):
+def _native_profile_challenges(
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    started,
+    *,
+    execution_context=None,
+    cancelled=None,
+):
     challenges = {"schema": "factory.deep-challenges.v1", "observations": []}
     covered_obligations = []
     if lane["engine"] == "gitleaks":
@@ -1902,7 +1954,17 @@ def _native_profile_challenges(profile, contract, source, lane, execution, start
         )
     elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
         challenges, covered_obligations = _deep_audit_io._semgrep_challenges(
-            profile, contract, source, lane, execution, started
+            profile,
+            contract,
+            source,
+            lane,
+            execution,
+            started,
+            **(
+                {"execution_context": execution_context, "cancelled": cancelled}
+                if execution_context
+                else {}
+            ),
         )
     elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
         challenges, covered_obligations = _deep_audit_io._runtime_challenges(

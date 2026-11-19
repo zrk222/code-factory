@@ -78,9 +78,9 @@ def _local_execution_context(context, lane):
         _local_absolute_path(context[key], context["path_flavor"])
     source = _local_absolute_path(context["source_root"], context["path_flavor"])
     scratch = _local_absolute_path(context["scratch_root"], context["path_flavor"])
-    if source.is_relative_to(scratch) or scratch.is_relative_to(source):
+    if scratch.is_relative_to(source):
         raise RuntimeAuditError(
-            "E_LOCAL_CONTEXT", "disjoint source and scratch roots required"
+            "E_LOCAL_CONTEXT", "scratch must remain outside captured source"
         )
     return context
 
@@ -200,14 +200,26 @@ def _local_artifact_uri(artifact, run, context):
     if "uriBaseId" in value:
         key = require_str(value["uriBaseId"], "local URI base ID", maximum=256)
         bases = _object(run.get("originalUriBaseIds", {}))
-        base = _object(bases.get(key, {})).get("uri")
-        if _local_absolute_path(base, context["path_flavor"]) != _local_absolute_path(
-            context["source_root"], context["path_flavor"]
-        ):
+        _local_artifact_base(uri, key, bases, context)
+    return uri, indexed.get("uri") if indexed is not None else None
+
+
+def _local_artifact_base(uri, key, bases, context):
+    root = _local_absolute_path(context["source_root"], context["path_flavor"])
+    if key in bases:
+        base = _object(bases[key]).get("uri")
+        if _local_absolute_path(base, context["path_flavor"]) != root:
             raise RuntimeAuditError(
                 "E_SARIF_INDIRECTION", "untrusted local source base"
             )
-    return uri, indexed.get("uri") if indexed is not None else None
+        return
+    # OpenGrep may label an already-absolute URI with an undeclared %SRCROOT%.
+    # Its absolute path must independently identify this exact snapshot.
+    path = _local_absolute_path(uri, context["path_flavor"])
+    if not path.is_relative_to(root):
+        raise RuntimeAuditError(
+            "E_SARIF_INDIRECTION", "absolute local artifact escapes source"
+        )
 
 
 def _provider_identity_field(lane):
@@ -4692,7 +4704,7 @@ def _normalize_challenge_artifact_paths(run, root):
             stack.extend(item)
 
 
-def _normalize_challenge_message_paths(run, root):
+def _normalize_challenge_message_paths(run, root, *, exact_prefix=False):
     stack = [run]
     while stack:
         item = stack.pop()
@@ -4700,14 +4712,32 @@ def _normalize_challenge_message_paths(run, root):
             message = item.get("message")
             if isinstance(message, dict) and isinstance(message.get("text"), str):
                 text = message["text"]
-                message["text"] = text.replace(root + "/", "/src/").replace(
-                    root + "\\", "/src/"
-                )
+                message["text"] = _challenge_message_root(text, root, exact_prefix)
                 if message["text"] == root:
                     message["text"] = "/src"
             stack.extend(item.values())
         elif isinstance(item, list):
             stack.extend(item)
+
+
+def _challenge_message_root(text, root, exact_prefix):
+    if exact_prefix:
+        pattern = r"(?<![\w/\\.:~-])" + re.escape(root) + r"[/\\]"
+        return re.sub(pattern, lambda _: "/src/", text)
+    return text.replace(root + "/", "/src/").replace(root + "\\", "/src/")
+
+
+def _local_semgrep_challenge_projection(report, context):
+    """Comparison-only projection after strict raw path validation; baseline stays intact."""
+    root = _local_absolute_path(context["source_root"], context["path_flavor"])
+    spellings = {str(root), root.as_posix()}
+    for run in report["runs"]:
+        for spelling in spellings:
+            _normalize_challenge_message_paths(run, spelling, exact_prefix=True)
+        for result in run.get("results", []):
+            result.pop("fingerprints", None)
+            result.pop("partialFingerprints", None)
+    return report
 
 
 def _under_challenge_root(uri, root):

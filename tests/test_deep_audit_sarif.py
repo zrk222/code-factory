@@ -14,8 +14,160 @@ from factoryline.runtime_audit_common import (
 ANALYZER = {"id": "scanner", "driver": "Example", "version": "1"}
 
 
+def _local_challenge_comparison_fixture(root, opaque):
+    from copy import deepcopy
+    from factoryline.deep_audit_loop import _semgrep_challenge_report
+
+    native = report()
+    driver = native["runs"][0]["tool"]["driver"]
+    driver.update(name="Opengrep OSS", version="1.15.0")
+    item = native["runs"][0]["results"][0]
+    item["message"] = {
+        "text": f"source {root}\\app.py and {root.replace(chr(92), '/')}/app.py"
+    }
+    item["fingerprints"] = {"matchBasedId/v1": opaque}
+    item["partialFingerprints"] = {"primary/v1": opaque}
+    for location_item in [
+        item["locations"][0],
+        *[
+            row["location"]
+            for row in item["codeFlows"][0]["threadFlows"][0]["locations"]
+        ],
+    ]:
+        location_item["physicalLocation"]["artifactLocation"] = {
+            "uri": root + "\\app.py"
+        }
+    original = deepcopy(native)
+    _, _, _, _, context = _local_semgrep_admission_fixture()
+    context["source_root"] = root
+    raw = canonical_bytes(native)
+    projected = _semgrep_challenge_report(
+        raw,
+        {"tool_version": "1.15.0"},
+        root,
+        {"app.py": "a" * 64},
+        execution_context=context,
+    )
+    assert native == original
+    return projected, native
+
+
+@pytest.mark.parametrize("change", [None, "line", "rule", "flow", "suppression"])
+def test_local_challenge_comparison_only_removes_root_and_opaque_fingerprint_variance(
+    change,
+):
+    first, _ = _local_challenge_comparison_fixture(
+        "C:\\owned\\first\\source", "opaque-one"
+    )
+    second, native = _local_challenge_comparison_fixture(
+        "C:\\owned\\second\\source", "opaque-two"
+    )
+    item = second["runs"][0]["results"][0]
+    if change == "line":
+        item["locations"][0]["physicalLocation"]["region"]["startLine"] += 1
+    elif change == "rule":
+        item["ruleId"] = "other-rule"
+    elif change == "flow":
+        item["codeFlows"][0]["threadFlows"][0]["locations"][0]["kinds"] = ["sink"]
+    elif change == "suppression":
+        item["suppressions"] = [{"kind": "external", "status": "accepted"}]
+    assert (digest(first) == digest(second)) is (change is None)
+    assert native["runs"][0]["results"][0]["fingerprints"] == {
+        "matchBasedId/v1": "opaque-two"
+    }
+
+
+def test_local_challenge_message_prefix_lookalikes_remain_meaningful():
+    from factoryline.deep_audit_sarif import _normalize_challenge_message_paths
+
+    run = {
+        "message": {
+            "text": "C:/owned/root-other/app.py XC:/owned/root/app.py C:/owned/root/app.py"
+        }
+    }
+    _normalize_challenge_message_paths(run, "C:/owned/root", exact_prefix=True)
+    assert (
+        run["message"]["text"]
+        == "C:/owned/root-other/app.py XC:/owned/root/app.py /src/app.py"
+    )
+
+
+@pytest.mark.parametrize(
+    "source,scratch,accepted",
+    [
+        ("C:/owned/workflow/source", "C:/owned/workflow", True),
+        ("C:/owned/workflow/source", "C:/owned/workflow/run", True),
+        ("C:/owned/workflow/source", "C:/owned/workflow/source", False),
+        ("C:/owned/workflow/source", "C:/owned/workflow/source/output", False),
+    ],
+)
+def test_local_context_workflow_can_contain_source_but_outputs_cannot(
+    source, scratch, accepted
+):
+    from factoryline.deep_audit_sarif import _local_execution_context
+
+    _, lane, _, _, context = _local_semgrep_admission_fixture()
+    context.update(source_root=source, scratch_root=scratch)
+    if accepted:
+        assert _local_execution_context(context, lane) == context
+    else:
+        with pytest.raises(RuntimeAuditError, match="outside captured source"):
+            _local_execution_context(context, lane)
+
+
+@pytest.mark.parametrize(
+    "uri,base,accepted",
+    [
+        ("C:/snap/source/app.js", None, True),
+        ("file:///C:/snap/source/app.js", None, True),
+        ("app.js", None, False),
+        ("C:/snap/source-other/app.js", None, False),
+        ("C:/snap/source/app.js", "file:///C:/other/", False),
+        ("C:/snap/source/app.js", "file:///C:/snap/source/", True),
+    ],
+)
+def test_local_native_absolute_uri_base_requires_independent_snapshot_containment(
+    uri, base, accepted
+):
+    from factoryline.deep_audit_sarif import _local_semgrep_report
+
+    _, _, sources, _, context = _local_semgrep_admission_fixture()
+    run = {
+        "results": [
+            {
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": uri, "uriBaseId": "%SRCROOT%"}
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    if base is not None:
+        run["originalUriBaseIds"] = {"%SRCROOT%": {"uri": base}}
+    raw = {"runs": [run]}
+    if accepted:
+        mapped = _local_semgrep_report(raw, sources, context)
+        location = mapped["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
+            "artifactLocation"
+        ]
+        assert location == {"uri": "app.js"}
+        assert (
+            raw["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
+                "artifactLocation"
+            ]["uri"]
+            == uri
+        )
+    else:
+        with pytest.raises(RuntimeAuditError):
+            _local_semgrep_report(raw, sources, context)
+
+
 def test_local_rule_runner_threads_scoped_cwd_and_cancellation(tmp_path, monkeypatch):
     import base64
+    import os
     import threading
     import time
     from pathlib import Path
@@ -36,6 +188,7 @@ def test_local_rule_runner_threads_scoped_cwd_and_cancellation(tmp_path, monkeyp
         executable=str(bundle / "opengrep.exe"),
         rules_path=str(bundle / "rules.yml"),
         tool_context={"bundle_root": str(bundle)},
+        path_flavor="windows" if os.name == "nt" else "posix",
     )
     cancelled = threading.Event()
     calls = []

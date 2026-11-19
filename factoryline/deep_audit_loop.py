@@ -4362,10 +4362,14 @@ def _semgrep_challenge_report(
         )
     report = _deep_audit_io._native_sarif_metadata(report, profile, [])
     if execution_context:
-        from .deep_audit_sarif import _local_semgrep_report
+        from .deep_audit_sarif import (
+            _local_semgrep_report,
+            _local_semgrep_challenge_projection,
+        )
 
         context = {**execution_context, "source_root": str(source_root)}
         report = _local_semgrep_report(report, sources, context)
+        report = _local_semgrep_challenge_projection(report, context)
     else:
         _deep_audit_io._normalize_challenge_sarif_paths(report, source_root)
     return _deep_audit_io._native_sarif_paths(report, sources)
