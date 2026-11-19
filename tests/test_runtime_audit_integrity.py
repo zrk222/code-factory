@@ -4830,6 +4830,8 @@ def test_werkzeug_source_built_ast_proof_recomputes_and_rejects_mutations(tmp_pa
         "path": source_path,
         "line": calls[0].lineno,
         "column": calls[0].col_offset,
+        "end_line": calls[0].end_lineno,
+        "end_column": calls[0].end_col_offset,
         "facts": facts,
     }
     assert primitive._fixed_program_binding(
