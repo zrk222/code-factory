@@ -3181,7 +3181,19 @@ def test_semgrep_native_rejects_resealed_wrong_rule_config_path():
 
 
 @pytest.mark.parametrize(
-    "language, source", [("javascript", "app.js"), ("php", "app.php")]
+    "language, source",
+    [
+        ("javascript", "app.js"),
+        ("php", "app.php"),
+        ("go", "app.go"),
+        ("rust", "app.rs"),
+        ("java", "App.java"),
+        ("c", "app.c"),
+        ("cpp", "app.cpp"),
+        ("csharp", "App.cs"),
+        ("ruby", "app.rb"),
+        ("swift", "app.swift"),
+    ],
 )
 def test_semgrep_native_rules_account_for_applicable_and_other_languages(
     language, source
@@ -3235,7 +3247,19 @@ def test_semgrep_native_rules_account_for_applicable_and_other_languages(
     ],
 )
 @pytest.mark.parametrize(
-    "language, source", [("javascript", "app.js"), ("php", "app.php")]
+    "language, source",
+    [
+        ("javascript", "app.js"),
+        ("php", "app.php"),
+        ("go", "app.go"),
+        ("rust", "app.rs"),
+        ("java", "App.java"),
+        ("c", "app.c"),
+        ("cpp", "app.cpp"),
+        ("csharp", "App.cs"),
+        ("ruby", "app.rb"),
+        ("swift", "app.swift"),
+    ],
 )
 def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(
     invalid, language, source
@@ -9617,3 +9641,31 @@ def test_php_semgrep_unsupported_formats_not_counted_as_execution(name):
     from factoryline.deep_audit_io import _semgrep_rule_sources
 
     assert _semgrep_rule_sources({"languages": ["php"]}, {name: "a" * 64}) == set()
+
+
+@pytest.mark.parametrize(
+    "language,source",
+    [
+        ("go", "app.go"),
+        ("rust", "app.rs"),
+        ("java", "App.java"),
+        ("c", "app.c"),
+        ("cpp", "app.cpp"),
+        ("csharp", "App.cs"),
+        ("ruby", "app.rb"),
+        ("swift", "app.swift"),
+    ],
+)
+def test_polyglot_semgrep_native_sources_are_language_bound(language, source):
+    from factoryline.deep_audit_io import _semgrep_rule_sources
+
+    sources = {source: "a" * 64, "unrelated.py": "b" * 64}
+    assert _semgrep_rule_sources({"languages": [language]}, sources) == {source}
+
+
+@pytest.mark.parametrize("languages", [["generic"], ["unknown"], [None], []])
+def test_polyglot_semgrep_rejects_unsupported_native_grammar(languages):
+    from factoryline.deep_audit_io import _semgrep_rule_sources
+
+    with pytest.raises(RuntimeAuditError, match="unsupported pinned rule languages"):
+        _semgrep_rule_sources({"languages": languages}, {"app.go": "a" * 64})

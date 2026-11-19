@@ -13,7 +13,18 @@ const rulesPath = 'deploy/deep-adapters/rules/semgrep-pattern-limited.yml';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = { schema: 'factory.semgrep-surface-controls.v1', state: 'BLOCKED',
   observed_at: new Date().toISOString(), image, source: {},
-  claim_boundary: 'Native positive, safe and detector-removal controls for all fifteen bundled rules in Python, JavaScript, TypeScript and PHP; no general detection-accuracy or interprocedural-coverage claim.' };
+  claim_boundary: 'Native positive, safe and detector-removal controls for all bundled rules, including explicit unsafe API/configuration candidates across twelve source languages; no general detection-accuracy or interprocedural-coverage claim.' };
+// Synthetic native parser/positive/safe controls: one finding per source, no accuracy claim.
+const polyglotControls = {
+  go: ['go.disabled-tls-verification', 'package controls\nimport "crypto/tls"\nfunc controls() {\n// ruleid: go.disabled-tls-verification\n_ = tls.Config{InsecureSkipVerify: true}\n// ok: go.disabled-tls-verification\n_ = tls.Config{InsecureSkipVerify: false}\n}'],
+  rs: ['rust.reqwest-disabled-tls-verification', 'fn controls() {\n// ruleid: rust.reqwest-disabled-tls-verification\nlet _ = reqwest::Client::builder().danger_accept_invalid_certs(true);\n// ok: rust.reqwest-disabled-tls-verification\nlet _ = reqwest::Client::builder().danger_accept_invalid_certs(false);\n}'],
+  java: ['java.disabled-hostname-verification', 'class Controls { void controls() {\n// ruleid: java.disabled-hostname-verification\njavax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier((host, session) -> true);\n// ok: java.disabled-hostname-verification\njavax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier((host, session) -> false);\n}}'],
+  c: ['c.unsafe-gets', 'void controls() { char buffer[64];\n// ruleid: c.unsafe-gets\ngets(buffer);\n// ok: c.unsafe-gets\nfgets(buffer, sizeof(buffer), stdin);\n}'],
+  cpp: ['c.unsafe-gets', 'void controls() { char buffer[64];\n// ruleid: c.unsafe-gets\ngets(buffer);\n// ok: c.unsafe-gets\nfgets(buffer, sizeof(buffer), stdin);\n}'],
+  cs: ['csharp.disabled-certificate-verification', 'class Controls { void Run() {\n// ruleid: csharp.disabled-certificate-verification\nSystem.Net.ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, errors) => true;\n// ok: csharp.disabled-certificate-verification\nSystem.Net.ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, errors) => false;\n}}'],
+  rb: ['ruby.disabled-tls-verification', '# ruleid: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_NONE\n# ok: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_PEER'],
+  swift: ['swift.trust-exceptions', 'func controls(trust: SecTrust) {\n// ruleid: swift.trust-exceptions\nSecTrustSetExceptions(trust, SecTrustCopyExceptions(trust))\n// ok: swift.trust-exceptions\nSecTrustEvaluateWithError(trust, nil)\n}'],
+};
 const temp = mkdtempSync(join(tmpdir(), 'cf-semgrep-surface-'));
 function docker(args) {
   const run = spawnSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
@@ -41,6 +52,9 @@ try {
   copyFileSync('deploy/deep-adapters/rules/tests/python-controls.txt', join(temp, 'semgrep-pattern-limited.py'));
   for (const extension of ['js', 'ts']) copyFileSync('deploy/deep-adapters/rules/tests/javascript-controls.js', join(temp, `semgrep-pattern-limited.${extension}`));
   copyFileSync('deploy/deep-adapters/rules/tests/php-controls.php', join(temp, 'semgrep-pattern-limited.php'));
+  for (const [extension, [, content]] of Object.entries(polyglotControls)) {
+    writeFileSync(join(temp, `semgrep-pattern-limited.${extension}`), `${content}\n`);
+  }
   // mkdtempSync defaults to 0700. The hardened image runs Semgrep as a
   // non-root user, so make only these synthetic, read-only test inputs
   // traversable before mounting the directory with Docker's readonly option.
@@ -50,7 +64,7 @@ try {
     '--entrypoint', '/usr/bin/semgrep', id, '--test', '--json', '--metrics=off', '--disable-version-check', '--disable-nosem', '/cases']);
   receipt.controls = JSON.parse(controls);
   const tested = Object.values(receipt.controls.results ?? {}).flatMap(result => Object.entries(result.checks ?? {}));
-  if (tested.length !== 15 || tested.some(([, check]) => check.passed !== true || check.errors?.length)) {
+  if (tested.length !== 22 || tested.some(([, check]) => check.passed !== true || check.errors?.length)) {
     throw new Error('Incomplete or failing rule controls');
   }
   if (receipt.controls.config_missing_tests?.length || receipt.controls.config_with_errors?.length) {
@@ -85,7 +99,7 @@ try {
   mkdirSync(dirname(resolve(root, output)), { recursive: true });
   writeFileSync(`${output}.sarif`, native);
   const findings = (sarif.runs ?? []).flatMap(run => run.results ?? []);
-  if (findings.length !== 73) throw new Error(`Native profile expected 73 control findings, observed ${findings.length}`);
+  if (findings.length !== 81) throw new Error(`Native profile expected 81 control findings, observed ${findings.length}`);
   const active = results => results.filter(result => !(result.suppressions ?? []).some(suppression => suppression.status !== 'rejected'));
   const keys = results => results.map(result => {
     const locations = result.locations ?? [];
@@ -97,7 +111,7 @@ try {
   // Semgrep retains inSource metadata even with --disable-nosem. The worker
   // consumes all results from this profile; only the enabled scan excludes it.
   const disabledKeys = keys(findings);
-  if (new Set(disabledKeys).size !== 73 || annotated.some(key => !disabledKeys.includes(key))) {
+  if (new Set(disabledKeys).size !== 81 || annotated.some(key => !disabledKeys.includes(key))) {
     throw new Error('Disabled suppression omitted or duplicated an exact control finding');
   }
   if (!argv.includes('--disable-nosem')) throw new Error('Production profile must disable inline suppression');
@@ -111,6 +125,13 @@ try {
   if (JSON.stringify(enabledKeys) !== JSON.stringify(expectedKeys)) {
     throw new Error('Enabled suppression did not remove exactly the four annotated findings');
   }
+  const polyglotExpected = Object.entries(polyglotControls).map(([extension, [rule, content]]) => {
+    const line = content.split(/\r?\n/).findIndex(value => value.includes(`ruleid: ${rule}`)) + 2;
+    return `opt.factory.rules.${rule}|semgrep-pattern-limited.${extension}|${line}`;
+  }).sort();
+  const polyglotObserved = disabledKeys.filter(key => Object.keys(polyglotControls).some(extension => key.includes(`|semgrep-pattern-limited.${extension}|`)));
+  if (JSON.stringify(polyglotObserved) !== JSON.stringify(polyglotExpected)) throw new Error('Polyglot exact native findings differ');
+  receipt.polyglot_controls = { state: 'PASS', expected: polyglotExpected, scope: 'Pattern-limited candidates; synthetic controls, no precision or interprocedural claim.' };
   receipt.native_findings = findings.length;
   receipt.inline_suppression_control = 'PASS';
   receipt.suppression_control = { annotated_findings: annotated.sort(), disabled_report_findings: disabledKeys.length,
@@ -119,7 +140,7 @@ try {
   receipt.native_sarif_sha256 = hash(Buffer.from(native));
   receipt.native_dataflow_findings = findings.filter(result => result.codeFlows?.length).length;
   receipt.dataflow_trace_state = receipt.native_dataflow_findings > 0 ? 'OBSERVED' : 'NOT_MEASURED';
-  if (receipt.native_rule_ids.length !== 15) throw new Error('Native profile omitted rules');
+  if (receipt.native_rule_ids.length !== 22) throw new Error('Native profile omitted rules');
   receipt.detector_mutations = [];
   for (const ruleId of receipt.native_rule_ids) {
     const mutationArgv = [...argv.filter(value => value !== '{source}'),

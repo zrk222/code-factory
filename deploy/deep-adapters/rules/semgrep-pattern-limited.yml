@@ -384,3 +384,73 @@ rules:
       confidence: MEDIUM
       cwe: ["CWE-502"]
       scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
+  - id: go.disabled-tls-verification
+    message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
+    severity: WARNING
+    languages: [go]
+    pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-295"]
+      scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
+  - id: rust.reqwest-disabled-tls-verification
+    message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
+    severity: WARNING
+    languages: [rust]
+    pattern: "reqwest::Client::builder().danger_accept_invalid_certs(true)"
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-295"]
+      scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
+  - id: java.disabled-hostname-verification
+    message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
+    severity: WARNING
+    languages: [java]
+    pattern: "javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(($HOST, $SESSION) -> true)"
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-297"]
+      scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
+  - id: c.unsafe-gets
+    message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
+    severity: WARNING
+    languages: [c, cpp]
+    pattern: "gets($BUFFER)"
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-242"]
+      scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
+  - id: csharp.disabled-certificate-verification
+    message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
+    severity: WARNING
+    languages: [csharp]
+    pattern: "System.Net.ServicePointManager.ServerCertificateValidationCallback = ($SENDER, $CERT, $CHAIN, $ERRORS) => true"
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-295"]
+      scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
+  - id: ruby.disabled-tls-verification
+    message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
+    severity: WARNING
+    languages: [ruby]
+    pattern: "OpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_NONE"
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-295"]
+      scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
+  - id: swift.trust-exceptions
+    message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
+    severity: WARNING
+    languages: [swift]
+    pattern: "SecTrustSetExceptions($TRUST, SecTrustCopyExceptions($TRUST))"
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-295"]
+      scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."

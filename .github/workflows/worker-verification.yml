@@ -54,7 +54,7 @@ on:
       target:
         description: Manual worker selection; automatic PR/push checks are unchanged
         type: choice
-        options: [all, osv-worker]
+        options: [all, osv-worker, semgrep-worker]
         default: all
 
 permissions:
@@ -95,6 +95,10 @@ jobs:
           let temporary;
           try {
             const event = JSON.parse(process.env.GITHUB_EVENT_JSON);
+            if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && event.inputs?.target === 'semgrep-worker') {
+              appendFileSync(process.env.GITHUB_OUTPUT, `sdk=false\nmatrix=${JSON.stringify(targets)}\nreason=manual-semgrep-only\n`);
+              process.exit(0);
+            }
             if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && event.inputs?.target === 'osv-worker') {
               appendFileSync(process.env.GITHUB_OUTPUT, `sdk=true\nmatrix=${JSON.stringify(['osv-worker'])}\nreason=manual-osv-only\n`);
               process.exit(0);

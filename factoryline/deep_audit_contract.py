@@ -2019,7 +2019,8 @@ def _semgrep_rule_sources(rule, sources):
     if (
         not isinstance(languages, list)
         or not languages
-        or not set(languages) <= {"python", "javascript", "typescript", "php"}
+        or not all(isinstance(language, str) for language in languages)
+        or not set(languages) <= _deep_audit_io.SEMGREP_SOURCE_LANGUAGES
     ):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_RULESET", "unsupported pinned rule languages"
