@@ -59,3 +59,36 @@ suppressed I/O, 0777.
 ## Exit codes
 
 `0` clean, `1` findings, `2` usage/IO error. CI-ready as-is.
+
+## Tool reference
+
+Requires PHP 8.1+ with `tokenizer`. No application boot or network is needed.
+
+```sh
+php phprt.php rules
+php phprt.php scan <path>
+php phprt.php scan <path> --json
+php phprt.php scan <path> --min=high
+php phprt.php fix <path>             # dry run
+php phprt.php fix <path> --write     # explicitly authorized writes only
+php report.php scan.json "my app" > report.md
+php tests.php
+```
+
+Token rules use bounded source/sink windows; source rules match configuration
+literals and crypto/TLS shapes. These heuristics do not prove general dataflow,
+reachability, exploitability, authorization or the absence of vulnerabilities.
+Escaped-output contexts suppress selected findings, not every possible XSS case.
+
+The fixer rewrites `display_errors`, `0777` permissions and simple reflected
+superglobal output, and annotates `mcrypt_encrypt`. Review every proposed change;
+PHP lint checks syntax, not semantic correctness. Other findings need manual repair.
+
+`lib/Engine.php` owns scanning, `lib/php-rules.php` the rule catalogue,
+`phprt.php` CLI/fixes, `report.php` Markdown output. `tests.php` checks the seeded
+`samples/vuln.php`, safe controls and fix syntax. The sample is intentionally
+vulnerable and must never be served or executed as an application.
+
+Earlier PR notes reported runs on DVWA and phpseclib. Those are historical,
+exposed observations, not fresh accuracy benchmarks or evidence for this revision.
+The removed PR/tool prose remains in Git history; this is the single usage owner.
