@@ -36,6 +36,7 @@ MAX_AUDITS = 200
 MAX_TOKEN_SECONDS = 900
 MAX_MCP_TOKEN_SECONDS = 86400
 RETENTION_SECONDS = 7 * 86400
+PURGE_BATCH_LIMIT = 5000
 PAID_CUTOFF = datetime(2027, 1, 1, tzinfo=timezone.utc)
 SHA = re.compile(r"[a-f0-9]{40}(?:[a-f0-9]{24})?\Z")
 HEX64 = re.compile(r"[a-f0-9]{64}\Z")
@@ -572,16 +573,25 @@ class MetaConnectorAPI:
             db.execute(
                 "CREATE INDEX IF NOT EXISTS meta_audits_owner ON meta_audits(tenant, subject, created)"
             )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS meta_audits_expiry ON meta_audits(created)"
+            )
 
     def _db(self):
         return connect(self.database)
 
-    def purge_expired(self) -> int:
-        """Delete expired summaries without requiring another user upload."""
+    def purge_expired(self, limit: int = PURGE_BATCH_LIMIT) -> int:
+        """Delete expired summaries without requiring another user upload.
+
+        Bounded per call so a leaked cron secret cannot turn into an unbounded
+        delete; the daily cron drains the backlog over successive runs.
+        """
         cutoff = int(datetime.now(timezone.utc).timestamp()) - RETENTION_SECONDS
         with self._db() as db:
             return db.execute(
-                "DELETE FROM meta_audits WHERE created<?", (cutoff,)
+                "DELETE FROM meta_audits WHERE id IN "
+                "(SELECT id FROM meta_audits WHERE created<? LIMIT ?)",
+                (cutoff, limit),
             ).rowcount
 
     def _account_row(self, db: Any, tenant: str, subject: str) -> Any:
