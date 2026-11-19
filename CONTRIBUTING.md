@@ -12,8 +12,8 @@ python -m build
 python -m twine check dist/*
 ```
 
-For cross-brick changes, also run `python scripts/prooflab_e2e.py` with the four
-numbered packages installed from their matching source train.
+For cross-brick changes, install the candidate and pinned public companions with
+`python -m pip install ".[factory]"`, then run `python -I scripts/prooflab_e2e.py`.
 
 ## Doctrines
 

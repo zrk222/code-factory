@@ -494,7 +494,7 @@ def _build_parser(
 ) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="factory",
-        description="Snap SpecLine, ForgeLine, HSF and Prestige into one assembly line.",
+        description="Review code and collect evidence for changes.",
     )
     sub = p.add_subparsers(dest="cmd")
 
@@ -531,6 +531,9 @@ def _build_parser(
     )
     plan_verify.add_argument("--json", action="store_true")
     if common_only:
+        from .cli_first_lap import add_scan_parser
+
+        add_scan_parser(sub)
         return p
 
     from .cli_foundations import add_parser as add_foundation_parsers
@@ -4573,7 +4576,7 @@ def _dispatch(argv=None) -> int:
             "first-lap",
             "first-proof",
         }:
-            first_lap = argv[0] in {"scan", "first-lap", "first-proof"}
+            first_lap = argv[0] in {"first-lap", "first-proof"}
             p = _build_parser(common_only=not first_lap, first_lap_only=first_lap)
             a, unknown = p.parse_known_args(argv)
             if unknown:
