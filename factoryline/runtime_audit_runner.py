@@ -11,6 +11,7 @@ import shutil
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -826,20 +827,20 @@ def _write_mutation_capture(prepared, cleanup, baseline, mutation, mutation_ok, 
         raise RuntimeAuditError(
             "E_MUTATION_OUTPUT", "evidence path changed during capture"
         )
-    diff_text = "".join(
-        difflib.unified_diff(
-            prepared["source"]
-            .decode("utf-8", errors="replace")
-            .splitlines(keepends=True),
-            prepared["mutant"]
-            .decode("utf-8", errors="replace")
-            .splitlines(keepends=True),
-            fromfile=prepared["target_relative"],
-            tofile=prepared["target_relative"] + " (mutant)",
-        )
+    path_bytes = prepared["target_relative"].encode("utf-8")
+    diff_lines = difflib.diff_bytes(
+        difflib.unified_diff,
+        list(BytesIO(prepared["source"])),
+        list(BytesIO(prepared["mutant"])),
+        fromfile=path_bytes,
+        tofile=path_bytes + b" (mutant)",
+    )
+    diff_bytes = b"".join(
+        line if line.endswith(b"\n") else line + b"\n\\ No newline at end of file\n"
+        for line in diff_lines
     )
     diff_path = new_output_path_inside(prepared["root"], evidence / "production.diff")
-    diff_path.write_text(diff_text, encoding="utf-8")
+    diff_path.write_bytes(diff_bytes)
     payload = _mutation_base_payload(prepared)
     payload.update(
         {
