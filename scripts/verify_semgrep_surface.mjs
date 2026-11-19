@@ -228,7 +228,7 @@ try {
     'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js', 'deploy/deep-adapters/rules/tests/php-controls.php',
     'scripts/verify_semgrep_surface.mjs', 'scripts/semgrep_mutation_controls.mjs',
     'deploy/deep-adapters/Dockerfile', 'factoryline/deep_audit_attestation.py',
-    'factoryline/deep_audit_loop.py', 'factoryline/deep_audit_sarif.py']) {
+    'factoryline/deep_audit_loop.py', 'factoryline/deep_audit_sarif.py', 'factoryline/audit_taxonomy.py']) {
     receipt.source[path] = hash(readFileSync(path));
   }
   if (receipt.source[rulesPath] !== profile.ruleset_sha256) throw new Error('Ruleset hash differs from profile');

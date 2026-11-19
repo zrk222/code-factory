@@ -44,7 +44,7 @@ _NATIVE_WORKERS = {
     "semgrep": {
         "target": "semgrep-worker",
         "profile": "semgrep-pattern-limited.json",
-        "version": "1.141.0",
+        "version": "1.15.0",
         "php_rule_ids": [
             "php.request-command-injection",
             "php.request-sql-injection",
@@ -52,7 +52,7 @@ _NATIVE_WORKERS = {
             "php.request-file-inclusion",
             "php.request-unsafe-deserialization",
         ],
-        "scope": "Fifteen Python/JavaScript/TypeScript/PHP rules with local request-to-sink taint; PHP .php command, procedural SQL, filesystem path, inclusion and unserialize candidates only; callee identity unresolved; PDO/framework/cross-function flows unsupported; inline suppression disabled; candidate ignore rules can reduce inspection. Community SARIF traces remain unmeasured.",
+        "scope": "OpenGrep OSS: thirty rules across twelve source languages; native source-bound local request-to-sink traces and unsafe API/configuration checks. PHP .php only; callee identity unresolved; PDO/framework/cross-function flows unsupported. No interfile or general accuracy claim. Inline suppression disabled; candidate ignore rules can reduce inspection.",
     },
     "osv": {
         "target": "osv-worker",
@@ -93,11 +93,12 @@ _NATIVE_WORKERS = {
 }
 _NATIVE_WORKER_CONTRACT = {
     "discovery": "deploy/deep-adapters/README.md and profiles; build final targets on Linux/amd64.",
+    "inventory": "Worker profiles describe capabilities, not installed readiness, executed analysis, measured coverage or passing evidence. Preserve unsupported, incomplete and unavailable states.",
     "execution": "Explicit authorized CLI execution; MCP status tools are read-only and never launch workers.",
     "isolation": "Image-owned Python -I startup; network none for ordinary workers, private internal network for signed ZAP app/worker targets; read-only source, non-root, bounded memory/time/output and cleanup.",
     "evidence": "Candidate and source hashes, exact image digest, tool/rules versions, invocation facts, native report digest, source-bound normalized findings and runtime counts.",
     "admission": "Successful native execution is INCOMPLETE until source accounting, applicable obligations and independent challenges are validated; never infer complete=true.",
-    "agent_action": "Return path, rule, severity, evidence digest, concrete repair and exact rerun; route missing accounting/challenge evidence as an actionable gap.",
+    "agent_action": "Return path, rule, severity, source binding, native and normalized evidence digests, failures, coverage gaps, concrete repair and exact rerun when available; mark unavailable fields and route missing accounting/challenge evidence as an actionable gap.",
     "tracing": "Preserve native and normalized digests separately, source binding, deadlines, output exhaustion and cleanup failures. Discover signed optional Python HTTP request-associated tracing in agent_usage_contract.six_lane_review.zap_source_trace; declared routes alone do not prove line execution.",
     "unified_cli": "factory scan --root PATH --deep --worker-config .factory/worker-config.json --json; configure signed manifest, authorization and SHA-pinned trust root before execution.",
     "selection": "Use Python CodeQL for Python, JavaScript CodeQL for JS/TS and Actions CodeQL for GitHub workflows; reuse exact image and candidate-bound evidence only. Do not launch all workers for every edit.",
@@ -624,6 +625,8 @@ def agent_taxonomy_context(specialist_role: str | None = None) -> dict[str, Any]
         ],
         "measurement_states": taxonomy["measurement_states"],
         "agent_usage_contract": taxonomy["agent_usage_contract"],
+        "native_workers": taxonomy["native_workers"],
+        "native_worker_contract": taxonomy["native_worker_contract"],
         "handoff_rules": [
             "Preserve measurement IDs, status meanings, and taxonomy digest.",
             "Resolve referenced action, evidence, denominator, completion, and stop fields before work.",
