@@ -2065,7 +2065,8 @@ def _pre_pr_seed_owned_tool(tmp_path, monkeypatch, manifest, mutation):
     tool_dirs = [tmp_path / ".factory" / name for name in ("tools-a", "tools-b")]
     for directory in tool_dirs:
         directory.mkdir(parents=True)
-        shutil.copy2(executable, directory / Path(executable).name)
+        # Preserve runnable bytes/mode, not macOS system-file restriction flags.
+        shutil.copy(executable, directory / Path(executable).name)
     tool = tool_dirs[0] / Path(executable).name
     manifest["live"]["checks"][0]["argv"] = [
         tool.name if mutation == "executable_resolution" else str(tool),
@@ -2073,6 +2074,22 @@ def _pre_pr_seed_owned_tool(tmp_path, monkeypatch, manifest, mutation):
     ]
     monkeypatch.setenv("PATH", str(tool_dirs[0]) + os.pathsep + os.environ["PATH"])
     return tool, tool_dirs
+
+
+def test_pre_pr_owned_tool_copy_does_not_copy_system_metadata(tmp_path, monkeypatch):
+    import shutil
+
+    def forbidden_metadata(*args, **kwargs):
+        raise AssertionError("System metadata must not enter owned test executables")
+
+    monkeypatch.setattr(shutil, "copystat", forbidden_metadata)
+    manifest = {"live": {"checks": [{}]}}
+    tool, directories = _pre_pr_seed_owned_tool(
+        tmp_path, monkeypatch, manifest, "executable_bytes"
+    )
+    assert tool.is_file()
+    assert len(directories) == 2
+    assert tool.read_bytes() == (directories[1] / tool.name).read_bytes()
 
 
 def _pre_pr_seed_setup(tmp_path, monkeypatch, mutation):
