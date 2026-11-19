@@ -587,10 +587,6 @@ def _pack() -> dict:
     return json.loads(resource.read_text(encoding="utf-8"))
 
 
-def _pack_text(key: str) -> str:
-    return _pack()[key]
-
-
 def _junie_mcp_bytes(workspace: Path) -> bytes:
     payload = {
         "mcpServers": {

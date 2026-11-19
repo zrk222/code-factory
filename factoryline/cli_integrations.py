@@ -82,11 +82,7 @@ def add_parser(sub: Any) -> None:
         "--allow-origin",
         action="append",
         default=[],
-        help=(
-            "exact browser Origin to permit; the literal PORT or {port} is "
-            "replaced with the bound port. By default cross-origin requests "
-            "are rejected"
-        ),
+        help="exact browser Origin to permit. Use PORT or {port} for the bound port on a loopback origin",
     )
 
     junie = sub.add_parser(
@@ -504,27 +500,31 @@ def _http_authentication(args: Any, environ: Any, mcp_error: type[Exception]):
 def _run_mcp_http(args: Any) -> int:
     import os
 
-    from .mcp import McpError, create_streamable_http_server
+    from .mcp import McpError, _resolve_http_origins, create_streamable_http_server
 
     auth_kwargs, auth_description = _http_authentication(args, os.environ, McpError)
+    allowed_origins = tuple(args.allow_origin)
     server = create_streamable_http_server(
         Path(args.root),
         **auth_kwargs,
         port=args.port,
-        allowed_origins=tuple(args.allow_origin),
+        allowed_origins=allowed_origins,
     )
     try:
+        port = server.server_address[1]
         print(
-            f"Factory MCP Streamable HTTP listening at http://127.0.0.1:{server.server_address[1]}/mcp",
+            f"Factory MCP Streamable HTTP listening at http://127.0.0.1:{port}/mcp",
             file=sys.stderr,
         )
-        resolved = getattr(server, "allowed_origins", ())
-        if resolved:
-            print(f"Allowed browser Origins: {', '.join(resolved)}", file=sys.stderr)
-        else:
+        resolved = _resolve_http_origins(allowed_origins, port)
+        templates = [
+            origin
+            for original, origin in zip(allowed_origins, resolved)
+            if original != origin
+        ]
+        if templates:
             print(
-                "Allowed browser Origins: none (cross-origin requests rejected)",
-                file=sys.stderr,
+                f"Resolved loopback origins: {json.dumps(templates)}", file=sys.stderr
             )
         print(auth_description, file=sys.stderr)
         print("No SSE, subscriptions, remote bind, or A2A endpoint.", file=sys.stderr)

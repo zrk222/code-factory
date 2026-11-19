@@ -130,6 +130,11 @@ function trustedWorkflowProgram() {
   const workflow = readFileSync(new URL('../.github/workflows/worker-verification.yml', import.meta.url), 'utf8');
   const program = workflow.match(/node --input-type=module <<'NODE'\r?\n([\s\S]*?)          NODE/)[1];
   assert.ok(!workflow.slice(workflow.indexOf('  plan-worker-targets:'), workflow.indexOf('  selector-controls:')).includes('node --test'));
+  const sdkJob = workflow.split('  sdk-workers:')[1].split(/\r?\n  [\w-]+:/)[0];
+  assert.match(sdkJob, /^    needs: \[plan-worker-targets, selector-controls\]\r?$/m);
+  assert.match(sdkJob, /^    if: needs\.plan-worker-targets\.outputs\.sdk == 'true'\r?$/m);
+  assert.doesNotMatch(sdkJob, /node --test/);
+  assert.equal(workflow.match(/node --test scripts\/select_worker_targets\.test\.mjs scripts\/verify_worker_cves\.test\.mjs scripts\/verify_osv_worker\.test\.mjs scripts\/semgrep_mutation_controls\.test\.mjs/g)?.length, 1);
   return program.replace(/^          /gm, '');
 }
 

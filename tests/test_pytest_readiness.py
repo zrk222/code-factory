@@ -14,6 +14,13 @@ import pytest
 
 
 def test_challenge_environment_requires_exact_supervisor_runtime_paths(tmp_path):
+    import hashlib
+    from factoryline.pytest_readiness import _challenge_runtime_mapping
+    from factoryline.pytest_readiness import _CHALLENGE_RUNTIME_ROLES
+
+    with pytest.raises(TypeError):
+        _CHALLENGE_RUNTIME_ROLES["HOME"] = "runtime_temp"
+
     home = str(tmp_path / "runtime-home")
     temp = str(tmp_path / "runtime-temp")
     mapping = {
@@ -24,7 +31,26 @@ def test_challenge_environment_requires_exact_supervisor_runtime_paths(tmp_path)
         "TMPDIR": temp,
     }
 
-    assert _challenge_environment_digest(mapping, mapping)
+    digest = _challenge_environment_digest(mapping, mapping)
+    relocated = {name: value + "-relocated" for name, value in mapping.items()}
+    assert _challenge_environment_digest(relocated, relocated) == digest
+    assert _challenge_runtime_mapping(mapping) == [
+        {
+            "name": name,
+            "role": role,
+            "path_sha256": hashlib.sha256(mapping[name].encode("utf-8")).hexdigest(),
+        }
+        for name, role in [
+            ("HOME", "runtime_home"),
+            ("TEMP", "runtime_temp"),
+            ("TMP", "runtime_temp"),
+            ("TMPDIR", "runtime_temp"),
+            ("USERPROFILE", "runtime_home"),
+        ]
+    ]
+    assert _challenge_runtime_mapping(None) is None
+    with pytest.raises(ValueError, match="incomplete"):
+        _challenge_environment_digest(mapping, {"HOME": home})
 
     aliased = dict(mapping)
     aliased["HOME"] = str(tmp_path / "alias" / ".." / "runtime-home")

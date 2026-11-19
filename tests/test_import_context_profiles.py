@@ -534,6 +534,128 @@ def _manifest(**overrides):
     return value
 
 
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("edit", {"tsx"}),
+        ("silent-edit", {"tsx"}),
+        ("shared", {"tsx", "go", "rust"}),
+        ("crosspackage", {"go", "rust"}),
+        ("delete", {"tsx"}),
+        ("rename", {"tsx"}),
+        ("lock", {"tsx", "go", "rust"}),
+        ("tool", {"tsx", "go", "rust"}),
+    ],
+)
+def test_polyglot_content_proof_routing_and_fixture_execution_shadow(
+    tmp_path, change, expected
+):
+    """Execute a content-report fixture; this does not qualify any native scanner."""
+    import json
+    import subprocess
+    import sys
+    import time
+
+    sources = {"tsx": "web/app.tsx", "go": "server/app.go", "rust": "core/app.rs"}
+    shared = ["rules.json", "deps.lock"]
+    for name in [*sources.values(), *shared]:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("safe\n", encoding="utf-8")
+    script = (
+        "import pathlib,sys,json,hashlib; "
+        "rows={p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest() "
+        "if pathlib.Path(p).exists() else 'MISSING' for p in sys.argv[2:]}; "
+        "print(json.dumps({'state':'INCOMPLETE' if 'MISSING' in rows.values() else 'OBSERVED',"
+        "'inputs':rows,'tool':sys.argv[1]},sort_keys=True))"
+    )
+    proofs, closures = {}, {}
+    for package, source in sources.items():
+        inputs = [source, *shared, *([sources["go"]] if package == "rust" else [])]
+        proofs[package] = {
+            "name": package,
+            "command": [sys.executable, "-B", "-c", script, "1", *inputs],
+            "inputs": inputs,
+            "outputs": [f"{package}.json"],
+            "relevant_paths": inputs,
+            "read_only": True,
+            "safe_to_skip": False,
+            "toolchain": {"fixture": "1"},
+            "environment": {"mode": "offline"},
+        }
+        closures[package] = [
+            source.split("/")[0],
+            *shared,
+            *([sources["go"]] if package == "rust" else []),
+        ]
+
+    def plan(changed):
+        return plan_incremental(
+            tmp_path,
+            _manifest(
+                changed_paths=changed or ["docs/readme.md"],
+                gates=[
+                    {"id": key, "depends_on": [], "side_effects": False, "proof": proof}
+                    for key, proof in proofs.items()
+                ],
+                dependency_closure=closures,
+            ),
+        )
+
+    def execute(proof):
+        raw = subprocess.check_output(proof["command"], cwd=tmp_path)
+        (tmp_path / proof["outputs"][0]).write_bytes(raw)
+        return json.loads(raw)
+
+    assert {row["disposition"] for row in plan([])["items"]} == {"RUN"}
+    for proof in proofs.values():
+        started = time.perf_counter()
+        execute(proof)
+        record_proof(
+            tmp_path,
+            proof,
+            elapsed_ms=max(1, round((time.perf_counter() - started) * 1000)),
+        )
+    assert {row["disposition"] for row in plan([])["items"]} == {"REUSE"}
+    target = {
+        "shared": shared[0],
+        "lock": shared[1],
+        "crosspackage": sources["go"],
+    }.get(change, sources["tsx"])
+    changed = [] if change == "silent-edit" else [target]
+    if change == "delete":
+        (tmp_path / target).unlink()
+    elif change == "rename":
+        renamed = "web/renamed.tsx"
+        (tmp_path / target).rename(tmp_path / renamed)
+        changed.append(renamed)
+        proofs["tsx"]["inputs"][0] = renamed
+        proofs["tsx"]["command"][-3] = renamed
+    elif change == "tool":
+        changed = []
+        for proof in proofs.values():
+            proof["toolchain"]["fixture"] = "2"
+            proof["command"][4] = "2"
+    else:
+        (tmp_path / target).write_text("changed\n", encoding="utf-8")
+    routed = plan(changed)
+    assert {
+        row["id"] for row in routed["items"] if row["disposition"] == "RUN"
+    } == expected
+    incremental = {
+        row["id"]: execute(proofs[row["id"]])
+        if row["disposition"] == "RUN"
+        else json.loads((tmp_path / proofs[row["id"]]["outputs"][0]).read_bytes())
+        for row in routed["items"]
+    }
+    full = {key: execute(proof) for key, proof in proofs.items()}
+    assert full["tsx"]["state"] == ("INCOMPLETE" if change == "delete" else "OBSERVED")
+    envelope = {"assurance_level": "isolated_worker", "obligations": list(proofs)}
+    assert compare_shadow(
+        {**envelope, "findings": incremental}, {**envelope, "findings": full}
+    )["shadow_equivalent"]
+
+
 def test_unknown_closure_fails_closed_to_run_and_preserves_topological_order():
     result = plan_incremental(
         __import__("pathlib").Path.cwd(),

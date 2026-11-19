@@ -4253,25 +4253,6 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 },
             }
             response: object = _result(request_id, result)
-        elif method == "initialize":
-            # Advertise the version this transport actually enforces, not the
-            # stdio version, so a client that echoes it is never rejected.
-            try:
-                result = dispatch(clean_request, self.workspace)
-            except Exception:
-                response = _error(
-                    request_id,
-                    -32603,
-                    "internal MCP handler error",
-                    "MCP_HTTP_INTERNAL_ERROR",
-                )
-            else:
-                if isinstance(result, dict) and isinstance(result.get("result"), dict):
-                    result["result"] = {
-                        **result["result"],
-                        "protocolVersion": MCP_STREAMABLE_HTTP_VERSION,
-                    }
-                response = result
         else:
             try:
                 response = dispatch(clean_request, self.workspace)
@@ -4293,6 +4274,8 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 return None
             if "result" in response and isinstance(response["result"], dict):
                 modern_result = dict(response["result"])
+                if method == "initialize":
+                    modern_result["protocolVersion"] = MCP_STREAMABLE_HTTP_VERSION
                 modern_result.update(
                     {
                         "resultType": "complete",
@@ -4375,7 +4358,7 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 400,
                 request_id,
                 -32020,
-                "params._meta with clientCapabilities is required",
+                "request metadata and clientCapabilities are required",
                 "MCP_HTTP_META_MISSING",
             )
             return False
@@ -4521,21 +4504,18 @@ def _validate_http_address(port, allowed_origins):
         )
 
 
-def resolve_allowed_origins(allowed_origins, port):
-    """Substitute the bound port into allowed-origin placeholders.
-
-    Callers often cannot know the port before bind (``port=0``), so an origin
-    may carry the literal token ``PORT`` or ``{port}``.  Resolution is exact:
-    only those tokens are replaced, and an origin is left untouched when it
-    contains neither.  The result still fail-closes because the handler keeps
-    comparing whole origin strings.
-    """
+def _resolve_http_origins(origins: tuple[str, ...], bound_port: int) -> tuple[str, ...]:
+    """Resolve explicit loopback port placeholders before exact Origin matching."""
+    loopback = {
+        f"{scheme}://{host}"
+        for scheme in ("http", "https")
+        for host in ("127.0.0.1", "localhost")
+    }
     resolved = []
-    for origin in allowed_origins:
-        for token in ("{port}", "PORT"):
-            if token in origin:
-                origin = origin.replace(token, str(port))
-                break
+    for origin in origins:
+        endpoint, _, suffix = origin.rpartition(":")
+        if endpoint in loopback and suffix in {"PORT", "{port}"}:
+            origin = f"{endpoint}:{bound_port}"
         resolved.append(origin)
     return tuple(resolved)
 
@@ -4558,21 +4538,16 @@ def create_streamable_http_server(
     workspace = _workspace_root(root)
     _validate_http_options(bearer_token, bearer_validator, port, allowed_origins)
     try:
-        handler = partial(
+        server = HTTPServer(("127.0.0.1", port), _McpHttpHandler)
+        server.RequestHandlerClass = partial(
             _McpHttpHandler,
             workspace=workspace,
             bearer_token=bearer_token,
             bearer_validator=bearer_validator,
-            allowed_origins=allowed_origins,
+            allowed_origins=_resolve_http_origins(allowed_origins, server.server_port),
         )
-        server = HTTPServer(("127.0.0.1", port), handler)
+        return server
     except OSError as exc:
         raise McpError(
             f"could not bind local MCP HTTP server: {exc}", "MCP_HTTP_BIND_FAILED"
         ) from exc
-    # Resolve placeholders only after a real port exists; a static origin list
-    # can never match a port=0 bind otherwise.
-    server.allowed_origins = resolve_allowed_origins(
-        allowed_origins, server.server_address[1]
-    )
-    return server
