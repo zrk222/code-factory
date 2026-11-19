@@ -100,7 +100,7 @@ def add_parser(sub: Any) -> None:
     boundary.add_argument("--environment-sha256")
     boundary.add_argument("--json", action="store_true")
     benchmark = senior_sub.add_parser(
-        "benchmark", help="evaluate a manifest-bound buggy/fixed defect corpus"
+        "benchmark", help="evaluate supplied defect benchmark or recall observations"
     )
     benchmark.add_argument("manifest")
     benchmark.add_argument("--observations", required=True)
@@ -558,16 +558,22 @@ def _senior_boundary(args: Any) -> tuple[dict[str, Any], int]:
 
 def _senior_benchmark(args: Any) -> tuple[dict[str, Any], int]:
     from .benchmark_lab import evaluate_benchmark, load_benchmark_json
+    from .senior_assurance import RECALL_SCHEMA, evaluate_source_bound_recall
 
-    result = evaluate_benchmark(
-        load_benchmark_json(Path(args.manifest)),
-        load_benchmark_json(Path(args.observations)),
-        out=_optional_output(args),
+    manifest = load_benchmark_json(Path(args.manifest))
+    observations = load_benchmark_json(Path(args.observations))
+    recall = manifest.get("schema") == RECALL_SCHEMA
+    evaluate = evaluate_source_bound_recall if recall else evaluate_benchmark
+    result = evaluate(manifest, observations, out=_optional_output(args))
+    code = 0 if result["decision"] in {"PASS", "MEASURED"} else 1
+    summary = (
+        "Evaluated frozen recall captures against the supplied truth manifest."
+        if recall
+        else "Evaluated supplied buggy/fixed benchmark observations; no replay command ran."
     )
-    code = 0 if result["decision"] == "PASS" else 1
     return _senior_action(
         result,
-        "Evaluated supplied buggy/fixed benchmark observations; no replay command ran.",
+        summary,
         code,
     )
 

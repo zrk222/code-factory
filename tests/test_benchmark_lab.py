@@ -15,6 +15,8 @@ from typing import Any, Callable
 
 import pytest
 
+from factoryline.senior_assurance import evaluate_source_bound_recall
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from factoryline.benchmark_lab import (
@@ -270,6 +272,212 @@ def test_precision_cli_cannot_overwrite_bound_observation(tmp_path, capsys):
     assert observation.read_bytes() == payload
 
 
+def _single_arm_precision_panel(admission=False):
+    scope = {
+        key: _digest(key)
+        for key in ("scanner_sha256", "registration_sha256", "configuration_sha256")
+    }
+    contract = {"schema": _gain["SINGLE_ARM_SCHEMA"], **scope, "sample_target": 3}
+    selection = {
+        **scope,
+        "collection": {"registered": 2, "complete": 2},
+        "observed_raw": 5,
+        "sample_target": 3,
+        "admission_available": admission,
+        "cases": [
+            {
+                "id": key,
+                "source_sha256": _digest(key + " source"),
+                "packet_sha256": _digest(key + " packet"),
+                "report_sha256": _digest("normal report"),
+                "finding_sha256": _digest(key + " finding"),
+                "admitted": key != "c" if admission else None,
+            }
+            for key in "abc"
+        ],
+    }
+    reviews = [
+        {
+            "reviewer_id": reviewer,
+            "cases": [
+                {
+                    **{
+                        key: row[key]
+                        for key in ("id", "source_sha256", "packet_sha256")
+                    },
+                    "label": label,
+                }
+                for row, label in zip(selection["cases"], labels)
+            ],
+        }
+        for reviewer, labels in (
+            ("one", ("TP", "FP", "FP")),
+            ("two", ("TP", "TP", "FP")),
+        )
+    ]
+    _seal_single_arm_selection(contract, selection, reviews)
+    return contract, selection, reviews
+
+
+def _seal_single_arm_selection(contract, selection, reviews):
+    seal = _gain["digest"](_gain["canonical_bytes"](selection))
+    contract["selection_sha256"] = seal
+    for review in reviews:
+        review["selection_sha256"] = seal
+
+
+@pytest.mark.parametrize("admission", [False, True])
+def test_single_arm_precision_uses_only_decided_raw_alerts(admission):
+    contract, selection, reviews = _single_arm_precision_panel(admission)
+    result = _gain["evaluate_single_arm"](contract, selection, reviews)
+    raw = result["metrics"]["raw"]
+    assert result["state"] == "SCORED_SINGLE_ARM"
+    assert result["consensus"] == {"a": "TP", "b": "UNCLEAR", "c": "FP"}
+    assert result["disagreements"] == ["b"]
+    assert (raw["TP"], raw["FP"], raw["UNCLEAR"]) == (1, 1, 1)
+    assert (raw["emitted"], raw["decided"], raw["precision"]) == (3, 2, 0.5)
+    assert raw["precision_label_bounds"] == pytest.approx([1 / 3, 2 / 3])
+    assert (result["observed_raw"], result["unselected_raw"]) == (5, 2)
+    assert result["publication_eligible"] is False
+    admitted = result["metrics"]["admitted"]
+    if admission:
+        assert (admitted["emitted"], admitted["decided"], admitted["precision"]) == (
+            2,
+            1,
+            1,
+        )
+    else:
+        assert admitted is None
+
+
+def test_single_arm_keeps_failed_captures_and_remaining_selection_visible():
+    contract, selection, reviews = _single_arm_precision_panel()
+    selection["collection"]["complete"] = 1
+    contract["sample_target"] = selection["sample_target"] = 4
+    _seal_single_arm_selection(contract, selection, reviews)
+    result = _gain["evaluate_single_arm"](contract, selection, reviews)
+    assert result["state"] == "INCOMPLETE"
+    assert result["collection"] == {"registered": 2, "complete": 1, "unobserved": 1}
+    assert (result["sample_target"], result["selected_raw"]) == (4, 3)
+    assert result["metrics"]["raw"]["decided"] == 2
+    assert result["metrics"]["admitted"] is None
+
+
+def test_single_arm_zero_observed_alerts_have_no_precision():
+    contract, selection, reviews = _single_arm_precision_panel(admission=True)
+    selection.update(observed_raw=0, cases=[])
+    for review in reviews:
+        review["cases"] = []
+    _seal_single_arm_selection(contract, selection, reviews)
+    result = _gain["evaluate_single_arm"](contract, selection, reviews)
+    assert result["state"] == "INCOMPLETE"
+    for metrics in result["metrics"].values():
+        assert metrics["emitted"] == metrics["decided"] == 0
+        assert metrics["precision"] is None
+        assert metrics["precision_label_bounds"] is None
+
+
+def test_single_arm_rejects_double_weighting_a_raw_observation():
+    contract, selection, reviews = _single_arm_precision_panel()
+    first, duplicate = selection["cases"][:2]
+    for field in ("finding_sha256", "report_sha256", "source_sha256"):
+        duplicate[field] = first[field]
+    for review in reviews:
+        review["cases"][1]["source_sha256"] = first["source_sha256"]
+    _seal_single_arm_selection(contract, selection, reviews)
+    with pytest.raises(ValueError, match="repeat one raw observation"):
+        _gain["evaluate_single_arm"](contract, selection, reviews)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        ("selection", "selection seal"),
+        ("configuration", "frozen candidate"),
+        ("duplicate_reviewer", "distinct reviewer"),
+        ("missing_packet", "omitted or added"),
+        ("packet_binding", "reviewer source/packet"),
+        ("admission", "contradicts availability"),
+        ("denominator", "selection denominator"),
+        ("target", "sample target differs"),
+    ],
+)
+def test_single_arm_precision_rejects_drift(mutation, reason):
+    contract, selection, reviews = _single_arm_precision_panel()
+    if mutation == "selection":
+        selection["observed_raw"] += 1
+    elif mutation == "configuration":
+        selection["configuration_sha256"] = _digest("changed profile")
+    elif mutation == "duplicate_reviewer":
+        reviews[1]["reviewer_id"] = reviews[0]["reviewer_id"].upper()
+    elif mutation == "missing_packet":
+        reviews[1]["cases"].pop()
+    elif mutation == "packet_binding":
+        reviews[1]["cases"][0]["packet_sha256"] = _digest("other packet")
+    elif mutation == "admission":
+        selection["cases"][0]["admitted"] = False
+    elif mutation == "target":
+        contract["sample_target"] += 1
+    else:
+        selection["observed_raw"] = 1
+    if mutation != "selection":
+        _seal_single_arm_selection(contract, selection, reviews)
+    with pytest.raises(ValueError, match=reason):
+        _gain["evaluate_single_arm"](contract, selection, reviews)
+
+
+def test_single_arm_cli_seals_receipt_and_protects_reviewer_input(tmp_path):
+    contract, selection, reviews = _single_arm_precision_panel()
+    refs = []
+    for name, value in zip(
+        ("selection", "reviewer-one", "reviewer-two"), [selection, *reviews]
+    ):
+        path = tmp_path / (name + ".json")
+        payload = _gain["canonical_bytes"](value)
+        path.write_bytes(payload)
+        refs.append({"path": path.name, "sha256": _gain["digest"](payload)})
+    contract.update(selection=refs[0], reviewers=refs[1:])
+    manifest = tmp_path / "contract.json"
+    contract_bytes = _gain["canonical_bytes"](contract)
+    manifest.write_bytes(contract_bytes)
+    receipt = tmp_path / "receipt.json"
+    script = Path(__file__).resolve().parents[1] / "scripts/verify_precision_gain.py"
+    command = [sys.executable, str(script), str(manifest), "--out"]
+    scored = subprocess.run(
+        [*command, str(receipt), "--summary"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert scored.returncode == 0, scored.stderr
+    assert "admitted: unavailable" in scored.stdout
+    assert json.loads(receipt.read_bytes())["evidence"] == {
+        "selection": refs[0],
+        "reviewers": refs[1:],
+    }
+    reviewer = tmp_path / refs[1]["path"]
+    before = reviewer.read_bytes()
+    rejected = subprocess.run(
+        [*command, str(reviewer)], capture_output=True, text=True, timeout=20
+    )
+    assert rejected.returncode == 2
+    assert "must not replace an observation" in rejected.stderr
+    assert reviewer.read_bytes() == before
+    ambiguous_manifests = (
+        b'{"sample_target": 3,' + contract_bytes[1:],
+        contract_bytes.rstrip()[:-1]
+        + b',"schema":"factory.precision-gain.v1","reviewers":[]}',
+    )
+    for ambiguous in ambiguous_manifests:
+        manifest.write_bytes(ambiguous)
+        rejected = subprocess.run(
+            [*command, str(reviewer)], capture_output=True, text=True, timeout=20
+        )
+        assert rejected.returncode == 2
+        assert "duplicate JSON key" in rejected.stderr
+        assert reviewer.read_bytes() == before
+
+
 @pytest.mark.parametrize("label", ["TP", "UNCLEAR"])
 def test_precision_gate_blocks_lost_reviewed_claim_even_when_active_precision_rises(
     label,
@@ -422,6 +630,299 @@ def test_versioned_seeded_corpus_keeps_unresolved_calls_in_unknown_tier(tmp_path
         assert result["finding_counts"] == {case["expected_finding"]: 1}
         assert result["findings"][0]["severity"] == "INFO"
         assert result["state"] == "INCOMPLETE"
+
+
+def _recall_pair():
+    """Entirely synthetic source bindings; no external corpus is consulted."""
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    cases = []
+    rows = {}
+    for key, truth in (
+        ("positive", "POSITIVE"),
+        ("clean", "CLEAN"),
+        ("unclear", "UNCLEAR"),
+    ):
+        path = f"synthetic/{key}.py"
+        source_hash = _digest(f"synthetic source {key}")
+        cases.append(
+            {
+                "id": key,
+                "category": "stateful_invariant",
+                "path": path,
+                "source_sha256": source_hash,
+                "truth": truth,
+                "expected": {"rule": "synthetic-rule", "line": 3}
+                if truth == "POSITIVE"
+                else None,
+            }
+        )
+        finding = [{"rule": "synthetic-rule", "line": 3}] if truth == "POSITIVE" else []
+        rows[key] = {
+            "path": path,
+            "source_sha256": source_hash,
+            "report_sha256": _digest(f"synthetic report {key}"),
+            "raw": finding,
+            "admitted": copy.deepcopy(finding),
+        }
+    observations = {
+        "schema": "factory.defect-recall-observations.v1",
+        "scanner_sha256": _digest("scanner"),
+        "configuration_sha256": _digest("configuration"),
+        "cases": rows,
+    }
+    manifest = {
+        "schema": "factory.defect-recall.v1",
+        "benchmark_id": "synthetic-recall",
+        "version": "1",
+        "partition": "public",
+        "scanner_sha256": observations["scanner_sha256"],
+        "configuration_sha256": observations["configuration_sha256"],
+        "observations_sha256": hashlib.sha256(
+            canonical_bytes(observations)
+        ).hexdigest(),
+        "cases": cases,
+    }
+    return manifest, observations
+
+
+def _seal_recall(manifest, observations):
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    manifest["observations_sha256"] = hashlib.sha256(
+        canonical_bytes(observations)
+    ).hexdigest()
+
+
+def test_source_bound_recall_keeps_admission_denominator_and_deduplicates():
+    manifest, observations = _recall_pair()
+    observations["cases"]["positive"]["raw"] *= 2
+    observations["cases"]["positive"]["admitted"] = []
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    metric = result["metrics"]["overall"]
+    assert result["decision"] == "MEASURED"
+    assert metric["known_positives"] == 1
+    assert metric["unclear_truth"] == 1
+    assert metric["raw"]["denominator"] == metric["admitted"]["denominator"] == 1
+    assert metric["raw"]["detected"] == 1
+    assert metric["raw"]["recall"] == 1.0
+    assert metric["admitted"]["false_negatives"] == 1
+    assert metric["admitted"]["recall"] == 0.0
+    assert metric["raw"]["clean_controls"] == {
+        "denominator": 1,
+        "flagged": 0,
+        "clean": 1,
+        "unobserved": 0,
+    }
+    assert result["metrics"]["by_category"]["stateful_invariant"] == metric
+
+
+def test_source_bound_recall_preserves_unobserved_and_bounds():
+    manifest, observations = _recall_pair()
+    del observations["cases"]["positive"]
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    assert result["decision"] == "INCOMPLETE"
+    for arm in ("raw", "admitted"):
+        metric = result["metrics"]["overall"][arm]
+        assert metric["denominator"] == 1
+        assert metric["unobserved"] == 1
+        assert metric["false_negatives"] == 0
+        assert metric["recall"] is None
+        assert metric["recall_lower_bound"] == 0.0
+        assert metric["recall_upper_bound"] == 1.0
+        assert metric["recall_ci95_wilson"] is None
+
+
+def test_source_bound_recall_absent_admission_and_wrong_site():
+    manifest, observations = _recall_pair()
+    observations["cases"]["positive"].update(
+        raw=[{"rule": "synthetic-rule", "line": 4}],
+        admitted=None,
+    )
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    metric = result["metrics"]["overall"]
+    assert result["decision"] == "INCOMPLETE"
+    assert metric["raw"]["false_negatives"] == 1
+    assert metric["raw"]["recall"] == 0.0
+    assert metric["admitted"]["recall"] is None
+    assert metric["admitted"]["unobserved"] == 1
+
+
+@pytest.mark.parametrize("conflict", ["raw", "admitted"])
+def test_source_bound_recall_rejects_conflicting_populations_for_one_report(conflict):
+    manifest, observations = _recall_pair()
+    positive = manifest["cases"][0]
+    manifest["cases"].append(
+        {
+            **positive,
+            "id": "second",
+            "expected": {"rule": "synthetic-rule", "line": 4},
+        }
+    )
+    capture = observations["cases"]["positive"]
+    capture["raw"].append({"rule": "synthetic-rule", "line": 4})
+    capture["admitted"] = copy.deepcopy(capture["raw"])
+    observations["cases"]["second"] = copy.deepcopy(capture)
+    observations["cases"]["second"][conflict] = None
+    if conflict == "raw":
+        observations["cases"]["second"]["admitted"] = None
+    _seal_recall(manifest, observations)
+    with pytest.raises(BenchmarkError, match="Conflicting populations"):
+        evaluate_source_bound_recall(manifest, observations)
+    observations["cases"]["second"] = copy.deepcopy(capture)
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    assert result["metrics"]["overall"]["raw"]["detected"] == 2
+
+
+@pytest.mark.parametrize("existing", [0, 1])
+def test_source_bound_recall_rejects_reused_clean_control_scope(existing):
+    manifest, observations = _recall_pair()
+    manifest["cases"].append(
+        {
+            **manifest["cases"][existing],
+            "id": "second",
+            "truth": "CLEAN",
+            "expected": None,
+        }
+    )
+    with pytest.raises(
+        BenchmarkError, match="Duplicate or contradictory clean control"
+    ):
+        evaluate_source_bound_recall(manifest, observations)
+
+
+def test_source_bound_recall_requires_consistent_report_and_source_identity():
+    manifest, observations = _recall_pair()
+    positive = manifest["cases"][0]
+    capture = observations["cases"]["positive"]
+    second = {**positive, "id": "second", "expected": {"rule": "other", "line": 4}}
+    second_capture = copy.deepcopy(capture)
+    manifest["cases"].append(second)
+    observations["cases"]["second"] = second_capture
+
+    second_capture["report_sha256"] = _digest("alternate report for the same source")
+    _seal_recall(manifest, observations)
+    with pytest.raises(BenchmarkError, match="Conflicting populations or reports"):
+        evaluate_source_bound_recall(manifest, observations)
+
+    second["source_sha256"] = second_capture["source_sha256"] = _digest("variant")
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    assert result["metrics"]["overall"]["raw"]["denominator"] == 2
+
+    second_capture["report_sha256"] = capture["report_sha256"]
+    _seal_recall(manifest, observations)
+    with pytest.raises(BenchmarkError, match="multiple source digests for one path"):
+        evaluate_source_bound_recall(manifest, observations)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["seal", "scanner", "configuration", "source", "path", "extra", "subset"],
+)
+def test_source_bound_recall_rejects_drift_and_invalid_observations(mutation):
+    manifest, observations = _recall_pair()
+    if mutation == "seal":
+        manifest["observations_sha256"] = _digest("incorrect seal")
+    elif mutation in {"scanner", "configuration"}:
+        observations[f"{mutation}_sha256"] = _digest("drift")
+    elif mutation == "source":
+        observations["cases"]["positive"]["source_sha256"] = _digest("drift")
+    elif mutation == "path":
+        observations["cases"]["positive"]["path"] = "synthetic/other.py"
+    elif mutation == "extra":
+        observations["cases"]["extra"] = copy.deepcopy(
+            observations["cases"]["positive"]
+        )
+    else:
+        observations["cases"]["positive"]["admitted"] = [{"rule": "other", "line": 3}]
+    if mutation != "seal":
+        _seal_recall(manifest, observations)
+    with pytest.raises(BenchmarkError):
+        evaluate_source_bound_recall(manifest, observations)
+
+
+def test_source_bound_recall_zero_positive_is_not_measured():
+    manifest, observations = _recall_pair()
+    manifest["cases"] = manifest["cases"][1:]
+    del observations["cases"]["positive"]
+    _seal_recall(manifest, observations)
+    result = evaluate_source_bound_recall(manifest, observations)
+    assert result["decision"] == "INCOMPLETE"
+    for arm in ("raw", "admitted"):
+        metric = result["metrics"]["overall"][arm]
+        assert metric["denominator"] == 0
+        assert metric["recall"] is None
+        assert metric["recall_ci95_wilson"] is None
+
+
+def test_source_bound_recall_keeps_measured_misses_and_missing_captures_separate():
+    manifest, observations = _recall_pair()
+    positive = manifest["cases"][0]
+    capture = observations["cases"]["positive"]
+    for key in ("observed-miss", "unobserved"):
+        path, source = f"synthetic/{key}.py", _digest(key)
+        manifest["cases"].append(
+            {**positive, "id": key, "path": path, "source_sha256": source}
+        )
+        if key == "observed-miss":
+            observations["cases"][key] = {
+                **capture,
+                "path": path,
+                "source_sha256": source,
+                "report_sha256": _digest("empty report"),
+                "raw": [],
+                "admitted": [],
+            }
+    _seal_recall(manifest, observations)
+    metrics = evaluate_source_bound_recall(manifest, observations)["metrics"]["overall"]
+    for arm in ("raw", "admitted"):
+        row = metrics[arm]
+        assert row["denominator"] == 3
+        assert (row["detected"], row["false_negatives"], row["unobserved"]) == (1, 1, 1)
+        assert row["recall"] is None
+        assert row["recall_lower_bound"] == pytest.approx(1 / 3)
+        assert row["recall_upper_bound"] == pytest.approx(2 / 3)
+
+
+@pytest.mark.parametrize("missing,expected_exit", [(False, 0), (True, 1)])
+def test_senior_benchmark_routes_source_bound_recall(
+    tmp_path, capsys, missing, expected_exit
+):
+    from factoryline.cli import main
+
+    manifest, observations = _recall_pair()
+    if missing:
+        del observations["cases"]["positive"]
+        _seal_recall(manifest, observations)
+    contract_path = tmp_path / "manifest.json"
+    capture_path = tmp_path / "capture.json"
+    output_path = tmp_path / "receipt.json"
+    contract_path.write_text(json.dumps(manifest), encoding="utf-8")
+    capture_path.write_text(json.dumps(observations), encoding="utf-8")
+    assert (
+        main(
+            [
+                "senior",
+                "benchmark",
+                str(contract_path),
+                "--observations",
+                str(capture_path),
+                "--out",
+                str(output_path),
+                "--json",
+            ]
+        )
+        == expected_exit
+    )
+    receipt = json.loads(output_path.read_bytes())
+    assert receipt["schema"] == "factory.defect-recall-receipt.v1"
+    assert receipt["authority"] == "none" and receipt["release_approval"] is False
+    assert json.loads(capsys.readouterr().out)["decision"] == receipt["decision"]
 
 
 def _paired_context_observation():
