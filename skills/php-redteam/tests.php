@@ -89,6 +89,12 @@ foreach ($regressions as [$rule, $source, $expected, $line]) {
         $fail++;
     }
 }
+$unterminated = '<?php preg_replace(\'' . str_repeat('\\', 10000);
+$scanner->scanFile('unterminated.php', $unterminated);
+if (preg_last_error() !== PREG_NO_ERROR) {
+    echo "REGRESSION unterminated escaped pattern exceeded regex limits\n";
+    $fail++;
+}
 $callback = array_values(array_filter($rules, fn (Rule $r): bool => $r->id === 'RCE-003'))[0];
 if (!str_contains($callback->fix, 'allowlist') || str_contains($callback->fix, 'if (function_exists')) {
     echo "REGRESSION callback remediation must require an allowlist\n";

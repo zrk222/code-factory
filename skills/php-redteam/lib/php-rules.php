@@ -54,7 +54,7 @@ return [
         'CWE-78'),
 
     $src('RCE-005', 'high', 'preg_replace /e modifier',
-        ['~\bpreg_replace\s*\(\s*([\'"])((?:\\\\.|(?!\1).)*)\1~s'],
+        ['~\bpreg_replace\s*\(\s*([\'"])((?:\\\\.|(?!\1)[^\\\\])*)\1~s'],
         'The /e modifier evaluates the replacement as PHP. Removed in PHP 7, but legacy code still relies on it.',
         'Move to preg_replace_callback().',
         'CWE-95'),
