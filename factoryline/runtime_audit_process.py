@@ -828,14 +828,40 @@ def _polyglot_inventory(root, ignored):
     return rows
 
 
-def _polyglot_source_files(root, ignored, *, include_bytecode=False):
-    for directory, dirs, names in os.walk(root):
+def _polyglot_source_files(root, ignored, *, include_bytecode=False, limits=None):
+    if limits is not None:
+        info = _tree_entry_info(root)
+        if info is None or not stat.S_ISDIR(info.st_mode):
+            raise ValueError("tool dependency root must be a nonlinked directory")
+    files, total, entries = 0, 0, 0
+    onerror = _polyglot_walk_error if limits is not None else None
+    for directory, dirs, names in os.walk(root, onerror=onerror):
         dirs[:] = sorted(name for name in dirs if name not in ignored)
+        if limits is not None:
+            entries += len(dirs) + len(names)
+            if entries > limits[0] * 2:
+                raise ValueError("tool dependency entry limit exceeded")
+            sizes = [_polyglot_entry_size(Path(directory) / name) for name in dirs + names]
+            files += sum(size is not None for size in sizes)
+            total += sum(size for size in sizes if size is not None)
+            if _tree_budget_exceeded(files, total, entries, *limits, float("inf")):
+                raise ValueError("tool dependencies exceed bounded regular-file inventory")
         for name in sorted(names):
             if name not in ignored and (
                 include_bytecode or not name.endswith((".pyc", ".pyo"))
             ):
                 yield Path(directory) / name
+
+
+def _polyglot_walk_error(error):
+    raise error
+
+
+def _polyglot_entry_size(path):
+    info = _tree_entry_info(path)
+    if info is None:
+        raise ValueError("tool dependency entry is linked or unreadable")
+    return info.st_size if stat.S_ISREG(info.st_mode) else None
 
 
 def _polyglot_argv(framework, tool, launcher, test, selector, report, coverage):
@@ -1303,12 +1329,10 @@ def _polyglot_tools(framework, tool, launcher):
 
 def _polyglot_dependencies(root):
     """Bind installed bytes, including transitive packages, twice per capture."""
-    if not tree_has_no_links_or_reparse_points(
-        root, max_files=10000, max_bytes=128 * 1024 * 1024
-    ):
-        raise ValueError("tool dependencies exceed bounded regular-file inventory")
     rows, total = [], 0
-    for path in _polyglot_source_files(root, set(), include_bytecode=True):
+    for path in _polyglot_source_files(
+        root, set(), include_bytecode=True, limits=(10000, 128 * 1024 * 1024)
+    ):
         digest, size = _polyglot_stream_hash(path, 64 * 1024 * 1024)
         total += size
         if len(rows) >= 10000 or total > 128 * 1024 * 1024:

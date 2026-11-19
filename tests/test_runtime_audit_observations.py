@@ -4817,3 +4817,41 @@ def test_shared_tree_budget_boundary_after_entry_projection(
         )
         is expected
     )
+
+
+@pytest.mark.parametrize("limits", [(1, 10), (10, 1), (0, 10)])
+def test_polyglot_dependency_walk_preserves_small_bounds(tmp_path, limits):
+    from factoryline.runtime_audit_process import _polyglot_source_files
+
+    (tmp_path / "a.pyc").write_bytes(b"ab")
+    (tmp_path / "z.js").write_bytes(b"cd")
+    with pytest.raises(ValueError):
+        list(_polyglot_source_files(tmp_path, set(), include_bytecode=True, limits=limits))
+
+
+def test_polyglot_dependency_walk_rejects_root_and_walk_errors(tmp_path, monkeypatch):
+    import factoryline.runtime_audit_process as process
+
+    root = tmp_path / "file"
+    root.write_bytes(b"x")
+    with pytest.raises(ValueError):
+        process._polyglot_dependencies(root)
+
+    def unreadable(root, *, onerror):
+        onerror(PermissionError("unreadable subtree"))
+        yield root, [], []
+
+    monkeypatch.setattr(process.os, "walk", unreadable)
+    with pytest.raises(PermissionError):
+        process._polyglot_dependencies(tmp_path)
+
+
+def test_polyglot_dependency_walk_rejects_linked_entry(tmp_path, monkeypatch):
+    import factoryline.runtime_audit_process as process
+
+    target = tmp_path / "target"
+    target.write_bytes(b"x")
+    original = process._tree_entry_info
+    monkeypatch.setattr(process, "_tree_entry_info", lambda path: None if path == target else original(path))
+    with pytest.raises(ValueError):
+        process._polyglot_dependencies(tmp_path)
