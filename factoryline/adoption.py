@@ -1355,7 +1355,10 @@ def _pattern_guard_path_lane(workspace: Path, source_count: int) -> dict[str, An
     )
 
 
-def _non_python_security_lane(workspace: Path, languages: list[str]) -> dict[str, Any]:
+def _non_python_security_lane(
+    workspace: Path, languages: list[str], execution: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Project the in-process scan_deep_audit result, never a receipt file."""
     non_python = [name for name in languages if name not in {"python", "docs"}]
     receipts = _receipt_inventory(
         workspace,
@@ -1367,19 +1370,86 @@ def _non_python_security_lane(workspace: Path, languages: list[str]) -> dict[str
             "*trivy*.json",
         ),
     )
+    result = {"receipts": receipts, "verification": "UNVERIFIED"}
+    state = "NOT_MEASURED" if non_python else "NOT_APPLICABLE"
+    if non_python and execution and execution.get("candidate_sha256"):
+        from .deep_audit_io import inventory_candidate
+
+        inventory = inventory_candidate(workspace)
+        current = (
+            not inventory["gaps"]
+            and not any(
+                row.get("code")
+                in {"SOURCE_CHANGED_DURING_RUN", "CANDIDATE_DRIFT", "SNAPSHOT_DRIFT"}
+                for row in execution.get("gaps", [])
+            )
+            and inventory["candidate_sha256"] == execution["candidate_sha256"]
+        )
+        workers = [
+            row for row in execution.get("lanes", []) if row.get("family") == "static"
+        ]
+        source_paths = {row["path"] for row in inventory["files"]}
+        observed = [
+            row
+            for row in workers
+            if current
+            and row.get("state") == "OBSERVED"
+            and not row.get("gaps")
+            and row.get("obligations")
+            and row.get("covered_paths")
+            and set(row["covered_paths"]) <= source_paths
+            and all(
+                _SHA256.fullmatch(str(row.get(key, "")))
+                for key in ("report_sha256", "coverage_sha256", "challenge_sha256")
+            )
+        ]
+        covered = {path for row in observed for path in row.get("covered_paths", [])}
+        language_results = []
+        for language in non_python:
+            sources = [row for row in inventory["files"] if row["language"] == language]
+            complete = bool(sources) and all(row["path"] in covered for row in sources)
+            language_results.append(
+                {
+                    "language": language,
+                    "sources": sources,
+                    "state": "REVIEW_REQUIRED" if complete else "INCOMPLETE",
+                }
+            )
+        state = (
+            "REVIEW_REQUIRED"
+            if all(row["state"] == "REVIEW_REQUIRED" for row in language_results)
+            and len(observed) == len(workers)
+            else "INCOMPLETE"
+        )
+        result.update(
+            languages=language_results,
+            workers=[
+                {key: value for key, value in row.items() if key != "action_id"}
+                for row in workers
+            ],
+            candidate_sha256=execution["candidate_sha256"],
+            source_current=current,
+            remaining_gaps=execution.get("gaps", []),
+            findings=[
+                finding for row in observed for finding in row.get("findings", [])
+            ],
+            verification="SCOPED" if state == "REVIEW_REQUIRED" else "INCOMPLETE",
+        )
     return _lane(
         "non_python_security",
-        state="NOT_MEASURED" if non_python else "NOT_APPLICABLE",
+        state=state,
         applicable=bool(non_python),
-        result={"receipts": receipts, "verification": "UNVERIFIED"},
-        basis="The bundled AST lane does not cover non-Python source languages.",
+        result=result,
+        basis="The bundled AST lane does not cover non-Python source languages; native observations are bounded by captured paths and obligations.",
         next_action=(
             "Run and verify language-specific CodeQL/Semgrep or equivalent worker receipts for: "
             + ", ".join(non_python)
             if non_python
             else "No non-Python source was discovered."
         ),
-        denominator_state="UNMEASURED" if non_python else "MEASURED",
+        denominator_state=("SCOPED" if state == "REVIEW_REQUIRED" else "UNMEASURED")
+        if non_python
+        else "MEASURED",
     )
 
 
@@ -1719,6 +1789,7 @@ def run_deep_repository_audit(
     from .operations import TelemetryRecorder, measured_span
 
     recorder = TelemetryRecorder("local-workspace", service="factory.scan")
+    execution = None
     operations = [
         ("inventory", lambda: _candidate_inventory_lane(inventory, source_count)),
         ("architecture", lambda: _architecture_health_lane(workspace)),
@@ -1729,7 +1800,10 @@ def run_deep_repository_audit(
                 workspace, python_count, tenant_contract, oracle_options, max_files
             ),
         ),
-        ("languages", lambda: _non_python_security_lane(workspace, languages)),
+        (
+            "languages",
+            lambda: _non_python_security_lane(workspace, languages, execution),
+        ),
         (
             "documentation",
             lambda: _documentation_integrity_lane(int(file_types.get("docs", 0))),
@@ -1743,9 +1817,13 @@ def run_deep_repository_audit(
         ),
     ]
     lanes = []
+    if any(name not in {"python", "docs"} for name in languages):
+        operations.sort(key=lambda operation: operation[0] == "languages")
     with measured_span(recorder, "repository_audit"):
         for name, operation in operations:
             lanes.extend(_observed_native_lane(recorder, name, operation))
+            if name == "workers":
+                execution = lanes[-1].get("result")
     report = _deep_audit_report(lanes, python_count, languages, max_files)
     report["telemetry"] = {
         "schema": "factory.scan-telemetry.v1",
@@ -1755,6 +1833,27 @@ def run_deep_repository_audit(
     }
     report["audit_sha256"] = _digest(report)
     return report
+
+
+def _native_static_projection(payload):
+    """Reject malformed native projections without discarding prior analyzer evidence."""
+    if isinstance(payload, dict):
+        findings, languages = payload.get("findings", []), payload.get("languages", [])
+        valid_findings = isinstance(findings, list) and all(
+            isinstance(row, dict) for row in findings
+        )
+        valid_languages = isinstance(languages, list) and all(
+            isinstance(row, dict)
+            and isinstance(row.get("language"), str)
+            and row["language"]
+            for row in languages
+        )
+        if valid_findings and valid_languages:
+            return payload, None
+    return (
+        {},
+        "E_NATIVE_PROJECTION: malformed native static projection; native findings were not admitted.",
+    )
 
 
 def _scan_security_and_deep_audit(
@@ -1795,7 +1894,38 @@ def _scan_security_and_deep_audit(
             static_security = _scan_static_security(
                 workspace, inventory, oracle_options, max_files
             )
-        return static_security, deep_audit, None
+        projection_error = None
+        non_python = next(
+            (
+                lane.get("result")
+                for lane in deep_audit["lanes"]
+                if lane["measurement_id"] == "non_python_security"
+            ),
+            {},
+        )
+        if any(
+            name not in {"python", "docs"} and count
+            for name, count in inventory.get("file_types", {}).items()
+        ):
+            non_python, projection_error = _native_static_projection(non_python)
+            static_security = {
+                **static_security,
+                "state": static_security["state"]
+                if static_security.get("state") in {"INVALID", "BLOCKED"}
+                else "INCOMPLETE",
+                "findings": [
+                    *static_security.get("findings", []),
+                    *non_python.get("findings", []),
+                ],
+                "languages": non_python.get("languages", []),
+                "audit_coverage": {
+                    **static_security.get("audit_coverage", {}),
+                    "complete": False,
+                    "measurement_state": "incomplete",
+                },
+                "action_summary": "Review source-bound native static findings and remaining language obligations; native observations grant no approval.",
+            }
+        return static_security, deep_audit, projection_error
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
         return (
             {
@@ -1860,7 +1990,7 @@ def _repo_scan_state(
     if collection.get("state") in _UNAVAILABLE_COLLECTION_INPUTS:
         return "BLOCKED", "BLOCKED"
     if any(
-        finding.get("severity") in {"CRITICAL", "HIGH"}
+        str(finding.get("severity", "")).upper() in {"CRITICAL", "HIGH"}
         for finding in static_security.get("findings", [])
     ):
         return "BLOCKED", "BLOCKED"
