@@ -141,6 +141,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - name: Install the source-bound SARIF normalizer
+        run: python -m pip install .
       - name: Build hash-bound multi-language rule worker
         run: docker build --platform linux/amd64 --target semgrep-worker -f deploy/deep-adapters/Dockerfile -t factory-semgrep:candidate .
       - name: Verify vulnerable and safe native controls in isolation
@@ -154,6 +159,7 @@ jobs:
             semgrep-surface-verification.json
             semgrep-surface-verification.json.sarif
             semgrep-surface-verification.json.suppression-enabled.sarif
+            semgrep-surface-verification.json.normalized.json
           if-no-files-found: error
   sdk-workers:
     needs: plan-worker-targets

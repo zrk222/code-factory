@@ -454,3 +454,165 @@ rules:
       confidence: MEDIUM
       cwe: ["CWE-295"]
       scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
+  - id: go.request-command-injection
+    message: Request data reaches a command operand; review this local source-to-sink candidate.
+    severity: WARNING
+    languages: [go]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: "func $F(..., $REQ *http.Request, ...) { ... }"
+          - pattern: "$REQ.FormValue(...)"
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern: "exec.Command(\"sh\", \"-c\", $VALUE, ...)"
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: "exec.Command(\"/bin/sh\", \"-c\", $VALUE, ...)"
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-78"]
+      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+  - id: go.request-sql-injection
+    message: Request data reaches a sql operand; review this local source-to-sink candidate.
+    severity: WARNING
+    languages: [go]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: "func $F(..., $REQ *http.Request, ...) { ... }"
+          - pattern: "$REQ.FormValue(...)"
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern-inside: "func $F(..., $DB *sql.DB, ...) { ... }"
+          - pattern: "$DB.Query($VALUE, ...)"
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-89"]
+      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+  - id: java.request-command-injection
+    message: Request data reaches a command operand; review this local source-to-sink candidate.
+    severity: WARNING
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: "$RET $F(..., javax.servlet.http.HttpServletRequest $REQ, ...) { ... }"
+          - pattern: "$REQ.getParameter(...)"
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern: "new java.lang.ProcessBuilder(\"sh\", \"-c\", $VALUE)"
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: "new java.lang.ProcessBuilder(\"/bin/sh\", \"-c\", $VALUE)"
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-78"]
+      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+  - id: java.request-sql-injection
+    message: Request data reaches a sql operand; review this local source-to-sink candidate.
+    severity: WARNING
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: "$RET $F(..., javax.servlet.http.HttpServletRequest $REQ, ...) { ... }"
+          - pattern: "$REQ.getParameter(...)"
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern: "(java.sql.Statement $DB).executeQuery($VALUE)"
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: "(java.sql.Statement $DB).execute($VALUE)"
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-89"]
+      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+  - id: csharp.request-command-injection
+    message: Request data reaches a command operand; review this local source-to-sink candidate.
+    severity: WARNING
+    languages: [csharp]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: "$RET $F(..., Microsoft.AspNetCore.Http.HttpRequest $REQ, ...) { ... }"
+          - pattern: "$REQ.Query[...]"
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern: "System.Diagnostics.Process.Start(\"/bin/sh\", \"-c \" + $VALUE)"
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-78"]
+      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+  - id: csharp.request-sql-injection
+    message: Request data reaches a sql operand; review this local source-to-sink candidate.
+    severity: WARNING
+    languages: [csharp]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: "$RET $F(..., Microsoft.AspNetCore.Http.HttpRequest $REQ, ...) { ... }"
+          - pattern: "$REQ.Query[...]"
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern: "new System.Data.SqlClient.SqlCommand($VALUE, ...)"
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-89"]
+      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+  - id: ruby.request-command-injection
+    message: Request data reaches a command operand; review this local source-to-sink candidate.
+    severity: WARNING
+    languages: [ruby]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: "class $C < ActionController::Base\n...\nend"
+          - pattern: "params[...]"
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern: "Kernel.system($VALUE)"
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-78"]
+      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+  - id: ruby.request-sql-injection
+    message: Request data reaches a sql operand; review this local source-to-sink candidate.
+    severity: WARNING
+    languages: [ruby]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: "class $C < ActionController::Base\n...\nend"
+          - pattern: "params[...]"
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern: "ActiveRecord::Base.connection.execute($VALUE)"
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-89"]
+      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
