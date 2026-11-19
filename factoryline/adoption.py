@@ -1406,7 +1406,11 @@ def _non_python_security_lane(
         covered = {path for row in observed for path in row.get("covered_paths", [])}
         language_results = []
         for language in non_python:
-            sources = [row for row in inventory["files"] if row["language"] == language]
+            group = {
+                "c_cpp": {"c", "cpp"},
+                "shell": {"shell", "powershell"},
+            }.get(language, {language})
+            sources = [row for row in inventory["files"] if row["language"] in group]
             complete = bool(sources) and all(row["path"] in covered for row in sources)
             language_results.append(
                 {

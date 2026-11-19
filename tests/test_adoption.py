@@ -30,7 +30,16 @@ from factoryline.cli import main
 
 
 @pytest.mark.parametrize(
-    "language,suffix", [("typescript", "tsx"), ("go", "go"), ("rust", "rs")]
+    "language,suffix",
+    [
+        ("typescript", "tsx"),
+        ("go", "go"),
+        ("rust", "rs"),
+        ("c_cpp", "c"),
+        ("c_cpp", "cpp"),
+        ("shell", "sh"),
+        ("shell", "ps1"),
+    ],
 )
 @pytest.mark.parametrize(
     "defect",
@@ -115,6 +124,45 @@ def test_non_python_projects_trusted_engine_return_boundary(
         "path",
     }:
         assert lane["result"]["findings"] == []
+
+
+@pytest.mark.parametrize("suffixes", [("c", "cpp"), ("sh", "ps1")])
+@pytest.mark.parametrize("coverage", ["all", "first", "second", "none"])
+def test_native_language_group_coverage_keeps_every_member(
+    tmp_path, suffixes, coverage
+):
+    """Synthetic engine returns exercise real inventory grouping, not scanner accuracy."""
+    import subprocess
+    from factoryline.adoption import _non_python_security_lane
+    from factoryline.deep_audit_io import inventory_candidate
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    paths = [f"app.{suffix}" for suffix in suffixes]
+    for path in paths:
+        (tmp_path / path).write_text("// source\n", encoding="utf-8")
+    inventory = inventory_candidate(tmp_path)
+    selected = {"all": paths, "first": paths[:1], "second": paths[1:], "none": []}
+    worker = {
+        "family": "static",
+        "state": "OBSERVED",
+        "gaps": [],
+        "obligations": ["source-static"],
+        "covered_paths": selected[coverage],
+        "report_sha256": "a" * 64,
+        "coverage_sha256": "b" * 64,
+        "challenge_sha256": "c" * 64,
+        "findings": [],
+    }
+    execution = {"candidate_sha256": inventory["candidate_sha256"], "lanes": [worker]}
+    languages = [
+        key
+        for key, count in _workspace_inventory(tmp_path)["file_types"].items()
+        if count
+    ]
+    lane = _non_python_security_lane(tmp_path, languages, execution)
+    assert lane["state"] == ("REVIEW_REQUIRED" if coverage == "all" else "INCOMPLETE")
+    assert len(lane["result"]["languages"]) == 1
+    assert lane["result"]["languages"][0]["sources"] == inventory["files"]
 
 
 def test_non_python_receipt_flags_cannot_admit_native_evidence(tmp_path):
