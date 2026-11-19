@@ -254,6 +254,10 @@ def is_read_only_command(argv: Iterable[str]) -> bool:
     argv = tuple(argv)
     if not argv:
         return True
+    if argv[0] == "scan" and {"--output-contract", "--pre-commit-config"}.intersection(
+        argv
+    ):
+        return True
     prefix: list[str] = []
     for item in argv:
         value = str(item)

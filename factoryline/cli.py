@@ -4726,7 +4726,17 @@ def _interactive_update_check_allowed(
     ):
         return False
     if not values or any(
-        value in {"--json", "--version", "-h", "--help"} for value in values
+        value
+        in {
+            "--json",
+            "--sarif",
+            "--output-contract",
+            "--pre-commit-config",
+            "--version",
+            "-h",
+            "--help",
+        }
+        for value in values
     ):
         return False
     if values[0] in {

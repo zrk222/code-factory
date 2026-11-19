@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -46,7 +48,9 @@ def add_parser(sub: Any) -> None:
         "--worker-config",
         help="workspace-relative signed worker configuration; otherwise discover .factory/native-worker-config.json",
     )
-    scan.add_argument("--json", action="store_true")
+    formats = scan.add_mutually_exclusive_group()
+    for flag in ("json", "sarif", "output-contract", "pre-commit-config"):
+        formats.add_argument("--" + flag, action="store_true")
     scan.add_argument(
         "--require-complete",
         action="store_true",
@@ -247,6 +251,16 @@ def _run_first_proof(args: Any) -> int:
 
 
 def _run_scan(args: Any) -> int:
+    if getattr(args, "output_contract", False):
+        try:
+            contract = scan_output_contract()
+        except (OSError, ValueError, UnicodeError):
+            return _scan_interface_error()
+        print(json.dumps(contract, indent=2, sort_keys=True))
+        return 0
+    if getattr(args, "pre_commit_config", False):
+        print(_precommit_configuration(), end="")
+        return 0
     from .adoption import run_repo_scan
 
     try:
@@ -279,7 +293,13 @@ def _run_scan(args: Any) -> int:
             "message": str(exc),
         }
         code = 2
-    if args.json:
+    if getattr(args, "sarif", False):
+        try:
+            document = _scan_sarif(result, code)
+        except (OSError, ValueError, UnicodeError):
+            return _scan_interface_error()
+        print(json.dumps(document, indent=2, sort_keys=True))
+    elif args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         _print_repo_scan(result, code)
@@ -342,7 +362,7 @@ def _print_repo_scan(result: dict, code: int) -> None:
         print(f"error    : {error}", file=sys.stderr)
 
 
-def _print_scan_findings(result: dict) -> None:
+def _scan_findings(result: dict) -> list:
     findings = list(result.get("static_security", {}).get("findings", []))
     deep = result.get("deep_audit") or {}
     findings.extend(deep.get("native_domains", {}).get("findings", []))
@@ -359,11 +379,230 @@ def _print_scan_findings(result: dict) -> None:
                 continue
             seen_native.add(identity)
         displayed.append(row)
+    return displayed
+
+
+def _print_scan_findings(result: dict) -> None:
+    displayed = _scan_findings(result)
     print(f"findings : {len(displayed)}")
     for row in displayed:
         print(
             f"  {row.get('severity', 'INFO')} {row.get('code', row.get('rule_id', row.get('finding_id', 'FINDING')))} {row.get('path', '.')}:{row.get('line', 1)}:{row.get('column', 0)} - {row.get('message', row.get('summary', row.get('remediation', 'Review finding evidence.')))}"
         )
+
+
+def _scan_interface_error() -> int:
+    print(
+        json.dumps(
+            {
+                "schema": "factory.scan-interface.error.v1",
+                "state": "INVALID",
+                "message": "Bundled scan output contract is unavailable or invalid.",
+            }
+        ),
+        file=sys.stderr,
+    )
+    return 2
+
+
+def scan_output_contract() -> dict:
+    """Discover the bundled additive output boundary without scanning a workspace."""
+    from importlib.resources import files
+
+    raw = files("factoryline").joinpath("data/repo_scan.schema.json").read_bytes()
+    schema = json.loads(raw)
+    if (
+        not isinstance(schema, dict)
+        or schema.get("$id") != "urn:code-factory:repo-scan:v1"
+        or "$schema" not in schema
+    ):
+        raise ValueError("Invalid bundled scan output contract")
+    return {
+        "schema": "factory.scan-interface-discovery.v1",
+        "contract_sha256": hashlib.sha256(raw).hexdigest(),
+        "output_schema": schema,
+    }
+
+
+def _precommit_configuration() -> str:
+    return (
+        "repos:\n  - repo: local\n    hooks:\n"
+        "      - id: code-factory-scan\n        name: Code Factory static scan\n"
+        "        entry: factory scan --static-only --sarif --root .\n"
+        "        language: system\n        pass_filenames: false\n"
+        "        require_serial: true\n        types_or: [python]\n"
+        "        stages: [pre-commit]\n"
+    )
+
+
+def _sarif_rule(row: dict) -> str:
+    value = row.get("code") or row.get("rule_id") or "FINDING"
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value):
+        return value
+    return "FINDING"
+
+
+def _sarif_message(row: dict) -> str:
+    value = row.get("message") or row.get("summary") or row.get("remediation")
+    if not isinstance(value, str):
+        return "Review finding evidence."
+    # External diagnostic text is untrusted; do not export local absolute roots.
+    value = re.sub(r"(?:\\\\|[A-Za-z]:[\\/]|(?<!\w)/)[^\s]+", "[local path]", value)
+    return (
+        "".join(c if c.isprintable() else " " for c in value)[:2048]
+        or "Review finding evidence."
+    )
+
+
+def _sarif_location(row: dict) -> list:
+    from urllib.parse import quote
+
+    path, line = row.get("path"), row.get("line")
+    if not isinstance(path, str) or not path or type(line) is not int or line <= 0:
+        return []
+    if (
+        path.startswith("/")
+        or any(c in path for c in "\\:\0")
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+        or any(not c.isprintable() for c in path)
+    ):
+        return []
+    return [
+        {
+            "physicalLocation": {
+                "artifactLocation": {"uri": quote(path, safe="/")},
+                "region": {"startLine": line},
+            }
+        }
+    ]
+
+
+def _sarif_result(row: dict) -> dict:
+    severity = row.get("severity", "INFO")
+    severity = severity if isinstance(severity, str) and len(severity) <= 32 else "INFO"
+    result = {
+        "ruleId": _sarif_rule(row),
+        "level": {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning"}.get(
+            severity.upper(), "note"
+        ),
+        "message": {"text": _sarif_message(row)},
+        "properties": {"originalSeverity": severity},
+    }
+    location = _sarif_location(row)
+    if location:
+        result["locations"] = location
+    identity = [row.get("lane_id"), row.get("finding_id")]
+    if all(isinstance(v, str) and v for v in identity):
+        raw = json.dumps(identity, ensure_ascii=True, separators=(",", ":")).encode()
+        result["partialFingerprints"] = {
+            "factoryNativeIdentity/v1": hashlib.sha256(raw).hexdigest()
+        }
+    else:
+        raw = json.dumps(result, sort_keys=True, ensure_ascii=True).encode()
+        result["partialFingerprints"] = {
+            "factoryFinding/v1": hashlib.sha256(raw).hexdigest()
+        }
+    return result
+
+
+def _sarif_scan_properties(result: dict, code: int) -> dict:
+    coverage = result.get("static_security", {}).get("audit_coverage", {})
+    keys = (
+        "complete",
+        "measurement_state",
+        "files_discovered",
+        "files_attempted",
+        "files_audited",
+        "inventory_complete",
+        "audit_rate",
+    )
+    properties = {
+        "state": result.get("state", "INVALID"),
+        "verdict": result.get("verdict", "INCOMPLETE"),
+        "exitCode": code,
+        "releaseApproval": False,
+        "claimBoundary": "Output adaptation does not independently validate evidence or grant release approval.",
+        "staticCoverage": {k: coverage[k] for k in keys if k in coverage},
+        "deepLanes": [
+            {"measurementId": row.get("measurement_id"), "state": row.get("state")}
+            for row in (result.get("deep_audit") or {}).get("lanes", [])
+        ],
+    }
+    scan_hash = result.get("scan_sha256")
+    if isinstance(scan_hash, str) and re.fullmatch("[0-9a-f]{64}", scan_hash):
+        properties["scanSha256"] = scan_hash
+    properties.update(_sarif_native_context(result))
+    properties["contractSha256"] = scan_output_contract()["contract_sha256"]
+    return properties
+
+
+def _sarif_native_context(result: dict) -> dict:
+    security = result.get("static_security") or {}
+    policy = security.get("policy_scopes", {}).get("native_static", {}).get("state")
+    properties = {"nativePolicyState": policy} if policy is not None else {}
+    native = (result.get("deep_audit") or {}).get("native_domains") or {}
+    properties["nativeDomains"] = [
+        {
+            "measurementId": row.get("measurement_id"),
+            "state": row.get("state"),
+            **(
+                {"sourceCurrent": row["result"]["source_current"]}
+                if isinstance(row.get("result"), dict)
+                and "source_current" in row["result"]
+                else {}
+            ),
+        }
+        for row in native.get("domains", [])
+    ]
+    return properties
+
+
+def _scan_sarif(result: dict, code: int) -> dict:
+    rows = [_sarif_result(row) for row in _scan_findings(result)]
+    notifications = []
+    if result.get("state") != "PASS" or result.get("verdict") != "PASS":
+        notifications.append(
+            {
+                "level": "warning",
+                "message": {
+                    "text": "Scan is not PASS; findings or evidence gaps remain. No release approval is granted."
+                },
+            }
+        )
+    if any("locations" not in row for row in rows):
+        notifications.append(
+            {
+                "level": "warning",
+                "message": {
+                    "text": "Some findings lack a safe known source location; no location or column was inferred."
+                },
+            }
+        )
+    invocation = {
+        "executionSuccessful": result.get("state") != "INVALID"
+        and not str(result.get("schema", "")).endswith(".error.v1")
+    }
+    if notifications:
+        invocation["toolExecutionNotifications"] = notifications
+    return {
+        "version": "2.1.0",
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "Code Factory",
+                        "rules": [
+                            {"id": key} for key in sorted({r["ruleId"] for r in rows})
+                        ],
+                    }
+                },
+                "results": rows,
+                "invocations": [invocation],
+                "properties": _sarif_scan_properties(result, code),
+            }
+        ],
+    }
 
 
 def _read_input(path: str | Path) -> Any:
