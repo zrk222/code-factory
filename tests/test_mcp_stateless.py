@@ -136,7 +136,12 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
     tmp_path: Path,
 ) -> None:
     token = "local-test-token-0123456789abcdef"
-    server = create_streamable_http_server(tmp_path, bearer_token=token, port=0)
+    server = create_streamable_http_server(
+        tmp_path,
+        bearer_token=token,
+        port=0,
+        allowed_origins=("http://127.0.0.1:PORT", "http://localhost:{port}"),
+    )
     worker = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
     worker.start()
     port = server.server_address[1]
@@ -148,24 +153,26 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
         auth: str | None = token,
         origin: str | None = None,
         method_header: str | None = None,
+        protocol: str = MCP_STREAMABLE_HTTP_VERSION,
+        include_metadata: bool = True,
         transfer_encoding: bool = False,
     ) -> tuple[int, dict[str, object] | None]:
+        body_params = dict(params or {})
+        if include_metadata:
+            body_params["_meta"] = {
+                "io.modelcontextprotocol/protocolVersion": protocol,
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
         payload = {
             "jsonrpc": "2.0",
             "id": "http-1",
             "method": method,
-            "params": {
-                **(params or {}),
-                "_meta": {
-                    "io.modelcontextprotocol/protocolVersion": MCP_STREAMABLE_HTTP_VERSION,
-                    "io.modelcontextprotocol/clientCapabilities": {},
-                },
-            },
+            "params": body_params,
         }
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
-            "MCP-Protocol-Version": MCP_STREAMABLE_HTTP_VERSION,
+            "MCP-Protocol-Version": protocol,
             "Mcp-Method": method_header or method,
             "Host": f"127.0.0.1:{port}",
         }
@@ -196,7 +203,9 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
             connection.close()
 
     try:
-        status, discovery = request("server/discover")
+        status, discovery = request(
+            "server/discover", origin=f"http://127.0.0.1:{port}"
+        )
         assert status == 200
         assert discovery is not None
         assert discovery["result"]["resultType"] == "complete"
@@ -204,7 +213,11 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
         assert discovery["result"]["cacheScope"] == "private"
         assert discovery["result"]["ttlMs"] == 0
 
-        status, tool_list = request("tools/list")
+        status, initialized = request("initialize", origin=f"http://localhost:{port}")
+        assert status == 200 and initialized is not None
+        advertised = initialized["result"]["protocolVersion"]
+        assert advertised == MCP_STREAMABLE_HTTP_VERSION
+        status, tool_list = request("tools/list", protocol=advertised)
         assert status == 200
         assert tool_list is not None
         assert tool_list["result"]["resultType"] == "complete"
@@ -219,16 +232,68 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
 
         assert request("server/discover", auth="wrong-token")[0] == 401
         assert request("server/discover", origin="https://attacker.example")[0] == 403
+        assert request("server/discover", origin="http://127.0.0.1:PORT")[0] == 403
         assert request("server/discover", transfer_encoding=True)[0] == 400
+        status, missing = request("tools/list", include_metadata=False)
+        assert status == 400 and missing is not None
+        assert missing["error"]["data"]["marker"] == "MCP_HTTP_META_MISSING"
         status, mismatch = request("tools/list", method_header="resources/list")
         assert status == 400
         assert mismatch is not None
         assert mismatch["error"]["code"] == -32020
+        assert mismatch["error"]["data"]["marker"] == "MCP_HTTP_HEADER_MISMATCH"
     finally:
         server.shutdown()
         server.server_close()
         worker.join(timeout=3)
     assert not worker.is_alive()
+
+
+def test_http_startup_prints_only_resolved_loopback_origins(
+    tmp_path, monkeypatch, capsys
+):
+    from http.server import HTTPServer
+    from urllib.parse import urlsplit
+
+    def stop_after_bind(_server, **_options):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(HTTPServer, "serve_forever", stop_after_bind)
+    token = "fixture-token-not-for-logging-123456"
+    sensitive_origin = "https://example.test/?credential=fixture-secret"
+    monkeypatch.setenv("FACTORY_MCP_HTTP_TOKEN", token)
+    assert (
+        main(
+            [
+                "mcp",
+                "serve-http",
+                "--root",
+                str(tmp_path),
+                "--port",
+                "0",
+                "--allow-origin",
+                "http://localhost:{port}",
+                "--allow-origin",
+                sensitive_origin,
+            ]
+        )
+        == 0
+    )
+    lines = capsys.readouterr().err.splitlines()
+    address = next(
+        line.split("listening at ", 1)[1] for line in lines if "listening at " in line
+    )
+    port = urlsplit(address).port
+    assert port > 0
+    resolved = next(
+        line.split(": ", 1)[1]
+        for line in lines
+        if line.startswith("Resolved loopback origins: ")
+    )
+    assert json.loads(resolved) == [f"http://localhost:{port}"]
+    assert not any(
+        secret in line for line in lines for secret in (token, "fixture-secret")
+    )
 
 
 def test_oidc_bearer_validator_binds_exact_tenant_and_group(

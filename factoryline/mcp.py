@@ -4246,6 +4246,8 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 return None
             if "result" in response and isinstance(response["result"], dict):
                 modern_result = dict(response["result"])
+                if method == "initialize":
+                    modern_result["protocolVersion"] = MCP_STREAMABLE_HTTP_VERSION
                 modern_result.update(
                     {
                         "resultType": "complete",
@@ -4329,7 +4331,7 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 request_id,
                 -32020,
                 "request metadata and clientCapabilities are required",
-                "MCP_HTTP_HEADER_MISMATCH",
+                "MCP_HTTP_META_MISSING",
             )
             return False
         requested_version = meta.get(_HTTP_META_PROTOCOL_VERSION)
@@ -4474,6 +4476,22 @@ def _validate_http_address(port, allowed_origins):
         )
 
 
+def _resolve_http_origins(origins: tuple[str, ...], bound_port: int) -> tuple[str, ...]:
+    """Resolve explicit loopback port placeholders before exact Origin matching."""
+    loopback = {
+        f"{scheme}://{host}"
+        for scheme in ("http", "https")
+        for host in ("127.0.0.1", "localhost")
+    }
+    resolved = []
+    for origin in origins:
+        endpoint, _, suffix = origin.rpartition(":")
+        if endpoint in loopback and suffix in {"PORT", "{port}"}:
+            origin = f"{endpoint}:{bound_port}"
+        resolved.append(origin)
+    return tuple(resolved)
+
+
 def create_streamable_http_server(
     root: Path | str,
     *,
@@ -4492,14 +4510,15 @@ def create_streamable_http_server(
     workspace = _workspace_root(root)
     _validate_http_options(bearer_token, bearer_validator, port, allowed_origins)
     try:
-        handler = partial(
+        server = HTTPServer(("127.0.0.1", port), _McpHttpHandler)
+        server.RequestHandlerClass = partial(
             _McpHttpHandler,
             workspace=workspace,
             bearer_token=bearer_token,
             bearer_validator=bearer_validator,
-            allowed_origins=allowed_origins,
+            allowed_origins=_resolve_http_origins(allowed_origins, server.server_port),
         )
-        return HTTPServer(("127.0.0.1", port), handler)
+        return server
     except OSError as exc:
         raise McpError(
             f"could not bind local MCP HTTP server: {exc}", "MCP_HTTP_BIND_FAILED"
