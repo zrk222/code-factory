@@ -899,10 +899,11 @@ def _coordinator_handshake(root, request, owner, context, job):
         worker,
     )
     job["run_id"] = row["run_id"]
+    # Mark possible execution before publishing ACK to the independently running child.
+    job["acknowledged"] = True
     _coordinator_write(
         root, job["directory"], "ack.json", dict(handshake_sha256=digest(handshake))
     )
-    job["acknowledged"] = True
     return True
 
 

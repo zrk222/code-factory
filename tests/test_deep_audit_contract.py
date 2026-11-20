@@ -233,6 +233,32 @@ def test_coordinator_cancellation_keeps_existing_cleanup_window(
     assert job.get("cancel_hard_kill", False) is acknowledged
 
 
+def test_coordinator_ack_is_marked_before_worker_can_observe_it(tmp_path, monkeypatch):
+    """Synthetic publication-order control, not native process acceptance."""
+    from types import SimpleNamespace
+    import factoryline.cli_deep_audit as module
+    import factoryline.assembly_process as assembly
+
+    request = _coordinator_test_request(tmp_path, "audit")
+    request["payload"] = {}
+    owner = {"pid": 10, "creation": "owner"}
+    worker = {"pid": 11, "creation": "child"}
+    job = dict(observed=worker, request_sha256="c" * 64, snapshot={},
+               directory=tmp_path, acknowledged=False)
+    handshake = dict(worker_identity=worker, run_id="d" * 32,
+                     request_id=request["request_id"], request_sha256="c" * 64, snapshot={})
+    monkeypatch.setattr(module, "_coordinator_read", lambda *args: handshake)
+    monkeypatch.setattr(module, "_coordinator_preflight", lambda *args: {})
+    monkeypatch.setattr(module, "_coordinator_live_lease", lambda *args: None)
+    monkeypatch.setattr(assembly, "_process_creation_identity", lambda *args: "child")
+    context = {"store": SimpleNamespace(bind=lambda *args: {"run_id": "d" * 32})}
+    def publish(*args):
+        assert job["acknowledged"] is True
+        assert job["run_id"] == "d" * 32
+    monkeypatch.setattr(module, "_coordinator_write", publish)
+    assert module._coordinator_handshake(tmp_path, request, owner, context, job) is True
+
+
 def _coordinator_test_owner(root, module, monkeypatch):
     """Use explicit synthetic process identity for platform-neutral ingress tests."""
     import hashlib
