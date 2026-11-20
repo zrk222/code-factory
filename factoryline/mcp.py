@@ -4000,9 +4000,12 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
             f"127.0.0.1:{server_port}",
             f"localhost:{server_port}",
         }
+        # Prefer the port-resolved list bound to the server; fall back to the
+        # handler value for any caller that constructs the handler directly.
+        allowed_origins = getattr(self.server, "allowed_origins", self.allowed_origins)
         host_valid = len(host_values) == 1 and host_values[0].lower() in allowed_hosts
         origin_valid = len(origin_values) <= 1 and (
-            not origin_values or origin_values[0] in self.allowed_origins
+            not origin_values or origin_values[0] in allowed_origins
         )
         if not host_valid or not origin_valid:
             self._send_json(403, None)
@@ -4069,8 +4072,32 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
             return None
         return int(token, 16)
 
+    def _drain_body(self) -> None:
+        """Read a bounded Content-Length body so the reply is not reset.
+
+        Called on paths that answer before normal request parsing.  Windows
+        TCP stacks reset the socket when a response is written while request
+        bytes are still unread, which hides the intended status from the
+        client.  A missing, malformed or oversized body is simply not drained.
+        """
+        values = self.headers.get_all("Content-Length", [])
+        if len(values) != 1:
+            return
+        try:
+            length = int(values[0])
+        except ValueError:
+            return
+        if not 0 < length <= _HTTP_MAX_BODY_BYTES:
+            return
+        self.connection.settimeout(2.0)
+        try:
+            self.rfile.read(length)
+        except (OSError, TimeoutError):
+            self.close_connection = True
+
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         """Reject GET requests after validating the local request origin."""
+        self._drain_body()
         if not self._source_checks_pass():
             return
         self.send_response(405)
@@ -4083,12 +4110,14 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
         """Validate bounded framing and identity before dispatching a read-only MCP request."""
         if self.path != "/mcp":
+            self._drain_body()
             self._send_json(404, None)
             return
         if not self._framing_valid():
             return
         content_lengths = self.headers.get_all("Content-Length", [])
         if not self._headers_valid(content_lengths):
+            self._drain_body()
             return
         content_length = self._body_length()
         if content_length is None:
@@ -4246,6 +4275,8 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 return None
             if "result" in response and isinstance(response["result"], dict):
                 modern_result = dict(response["result"])
+                if method == "initialize":
+                    modern_result["protocolVersion"] = MCP_STREAMABLE_HTTP_VERSION
                 modern_result.update(
                     {
                         "resultType": "complete",
@@ -4329,7 +4360,7 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
                 request_id,
                 -32020,
                 "request metadata and clientCapabilities are required",
-                "MCP_HTTP_HEADER_MISMATCH",
+                "MCP_HTTP_META_MISSING",
             )
             return False
         requested_version = meta.get(_HTTP_META_PROTOCOL_VERSION)
@@ -4474,6 +4505,22 @@ def _validate_http_address(port, allowed_origins):
         )
 
 
+def _resolve_http_origins(origins: tuple[str, ...], bound_port: int) -> tuple[str, ...]:
+    """Resolve explicit loopback port placeholders before exact Origin matching."""
+    loopback = {
+        f"{scheme}://{host}"
+        for scheme in ("http", "https")
+        for host in ("127.0.0.1", "localhost")
+    }
+    resolved = []
+    for origin in origins:
+        endpoint, _, suffix = origin.rpartition(":")
+        if endpoint in loopback and suffix in {"PORT", "{port}"}:
+            origin = f"{endpoint}:{bound_port}"
+        resolved.append(origin)
+    return tuple(resolved)
+
+
 def create_streamable_http_server(
     root: Path | str,
     *,
@@ -4492,14 +4539,15 @@ def create_streamable_http_server(
     workspace = _workspace_root(root)
     _validate_http_options(bearer_token, bearer_validator, port, allowed_origins)
     try:
-        handler = partial(
+        server = HTTPServer(("127.0.0.1", port), _McpHttpHandler)
+        server.RequestHandlerClass = partial(
             _McpHttpHandler,
             workspace=workspace,
             bearer_token=bearer_token,
             bearer_validator=bearer_validator,
-            allowed_origins=allowed_origins,
+            allowed_origins=_resolve_http_origins(allowed_origins, server.server_port),
         )
-        return HTTPServer(("127.0.0.1", port), handler)
+        return server
     except OSError as exc:
         raise McpError(
             f"could not bind local MCP HTTP server: {exc}", "MCP_HTTP_BIND_FAILED"

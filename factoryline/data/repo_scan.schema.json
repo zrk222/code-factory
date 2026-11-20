@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:code-factory:repo-scan:v1",
+  "title": "Code Factory scan v1 public JSON output",
+  "description": "Frozen top-level scan envelope. Additive fields are permitted; required fields and enum meanings are versioned. A nonblocking exit is not full-stack approval.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["schema", "state", "verdict", "assessment", "static_security", "deep_audit", "evidence_limits", "next_actions", "scan_sha256", "run_receipt_sha256"],
+      "properties": {
+        "schema": {"const": "factory.repo-scan.v1"},
+        "state": {"enum": ["PASS", "BLOCKED", "INCOMPLETE", "INVALID"]},
+        "verdict": {"enum": ["PASS", "BLOCKED", "INCOMPLETE", "INVALID"]},
+        "assessment": {"type": "object"},
+        "static_security": {"type": "object"},
+        "deep_audit": {"type": ["object", "null"]},
+        "evidence_limits": {"type": "array", "items": {"type": "string"}},
+        "next_actions": {"type": "array", "items": {"type": "string"}},
+        "scan_sha256": {"$ref": "#/$defs/sha256"},
+        "run_receipt_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["schema", "state", "verdict", "message"],
+      "properties": {
+        "schema": {"const": "factory.repo-scan.error.v1"},
+        "state": {"const": "INVALID"},
+        "verdict": {"const": "INCOMPLETE"},
+        "message": {"type": "string"}
+      },
+      "additionalProperties": true
+    }
+  ],
+  "$defs": {"sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+  "x-code-factory": {
+    "contract_version": "factory.scan-interface.v1",
+    "exit_codes": {"0": "No blocking findings/checks; evidence gaps may remain.", "2": "Blocked or invalid; require-complete also rejects any non-PASS result."},
+    "authority": "none",
+    "discovery": "Prints this schema with its raw-byte SHA-256. Does not scan, install a hook or approve a release."
+  }
+}

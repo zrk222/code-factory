@@ -9,16 +9,16 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+from factoryline.contract import Receipt, ensure_layout
+from factoryline.proof import (
+    build_passport,
+    build_trace,
+    challenge_trace,
+    verify_passport,
+)
 
-from factoryline.contract import Receipt, ensure_layout  # noqa: E402
-from factoryline.proof import build_passport, verify_passport  # noqa: E402
-from factoryline.proof import build_trace  # noqa: E402
-from factoryline.proof import challenge_trace  # noqa: E402
 
-
-EXAMPLE = ROOT / "examples" / "prooflab"
+EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "prooflab"
 
 
 def run(command: list[str], cwd: Path) -> None:

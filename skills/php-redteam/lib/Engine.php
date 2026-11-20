@@ -143,15 +143,19 @@ final class TokenWalker
             $name = strtolower(substr($want, 2));
             return $this->text($i - 1) === '::' && strtolower($this->text($i)) === $name;
         }
+        $id = $this->flat[$i][0] ?? null;
+        $tok = strtolower($this->text($i));
+        if ($id === T_NAME_FULLY_QUALIFIED && substr_count($tok, '\\') === 1) {
+            $tok = substr($tok, 1);
+            $id = T_STRING;
+        }
         if (str_contains($want, ':')) {
             [$kind, $name] = explode(':', $want, 2);
-            return ($this->flat[$i][0] ?? null) === constant($kind)
-                && strtolower($this->text($i)) === strtolower($name);
+            return $id === constant($kind) && $tok === strtolower($name);
         }
         if (str_starts_with($want, 'T_')) {
-            return ($this->flat[$i][0] ?? null) === constant($want);
+            return $id === constant($want);
         }
-        $tok = strtolower($this->text($i));
         $want = strtolower($want);
         if (str_starts_with($want, '$')) {
             return $this->isVar($i) && $tok === $want;
@@ -230,7 +234,17 @@ final class Scanner
                     if (!preg_match_all($needle, $source, $m, PREG_OFFSET_CAPTURE)) {
                         continue;
                     }
-                    foreach ($m[0] as $hit) {
+                    foreach ($m[0] as $index => $hit) {
+                        if ($rule->id === 'RCE-005') {
+                            $pattern = $m[2][$index][0];
+                            $delimiter = $pattern[0] ?? '';
+                            $close = ['(' => ')', '[' => ']', '{' => '}', '<' => '>'][$delimiter] ?? $delimiter;
+                            $last = $close === '' ? false : strrpos($pattern, $close);
+                            if ($last === false || $last === 0 || ctype_alnum($delimiter)
+                                || !preg_match('/^[a-zA-Z]*e[a-zA-Z]*$/', substr($pattern, $last + 1))) {
+                                continue;
+                            }
+                        }
                         $line = substr_count(substr($source, 0, $hit[1]), "\n") + 1;
                         $findings[] = new Finding(
                             $rule->id, $rule->severity, $rule->title, $path, $line,
@@ -251,10 +265,11 @@ final class Scanner
                 if ($rule->requireAny !== [] && !$this->matchesAnyNear($walker, $i, $rule->requireAny, $rule->window)) {
                     continue;
                 }
-                if ($rule->skipIf !== [] && $this->matchesSequence($walker, $i, $rule->skipIf, $rule->window)) {
+                $outputRule = in_array($rule->id, ['XSS-001', 'WP-001'], true);
+                if (!$outputRule && $rule->skipIf !== [] && $this->matchesSequence($walker, $i, $rule->skipIf, $rule->window)) {
                     continue;
                 }
-                if ($rule->skipIf !== [] && $this->escapedNear($walker, $i, $rule->skipIf)) {
+                if ($outputRule && $this->alreadyEscaped($walker, $i, $rule->skipIf)) {
                     continue;
                 }
                 $line = $walker->line($i);
@@ -268,42 +283,25 @@ final class Scanner
         return $findings;
     }
 
-    /**
-     * True when an escaper from the rule's skipIf list wraps the value on
-     * either side of the sink: `echo esc_html($_GET[x])` and
-     * `echo $_GET[x]|raw` differ only in which side the name sits on.
-     */
-    private function escapedNear(TokenWalker $w, int $i, array $escapers): bool
-    {
-        $lo = max(0, $i - 6);
-        $hi = min($w->count(), $i + 6);
-        for ($j = $lo; $j < $hi; $j++) {
-            foreach ($escapers as $e) {
-                if (strtolower($w->text($j)) === strtolower($e)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     /** True when the superglobal under an echo is already wrapped by an escaper. */
-    private function alreadyEscaped(TokenWalker $w, int $i): bool
+    private function alreadyEscaped(TokenWalker $w, int $i, array $escapers): bool
     {
-        $headers = ['htmlspecialchars', 'htmlentities', 'esc_html', 'esc_attr', 'wp_kses',
-            'json_encode', 'strip_tags', 'rawurlencode', 'urlencode', 'intval', 'absint'];
         for ($j = $i + 1; $j < min($w->count(), $i + 8); $j++) {
-            if ($w->isVar($j)) {
-                return false;
-            }
-            if ($w->isOpen($j) || $w->text($j) === '[') {
+            if ($w->isOpen($j)) {
                 continue;
             }
-            foreach ($headers as $h) {
-                if (strtolower($w->text($j)) === $h) {
-                    return true;
+            if (!in_array(strtolower($w->text($j)), $escapers, true) || !$w->isOpen($j + 1)) {
+                return false;
+            }
+            $depth = 0;
+            for ($k = $j + 1; $k < $w->count(); $k++) {
+                if ($w->text($k) === '(') {
+                    $depth++;
+                } elseif ($w->text($k) === ')' && --$depth === 0) {
+                    return in_array($w->text($k + 1), [';', ''], true);
                 }
             }
+            return false;
         }
         return false;
     }

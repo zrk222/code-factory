@@ -4,7 +4,7 @@ import sys
 import time
 
 
-_QUICK_HELP = """Code Factory - review your code with less setup.
+_QUICK_HELP = """Code Factory - review your code and its evidence.
 
 Start here:
   Scan my code       factory scan --root .

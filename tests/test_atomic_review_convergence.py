@@ -194,6 +194,101 @@ def test_complete_review_is_advisory_and_binds_exact_coverage(tmp_path: Path) ->
     )
 
 
+@pytest.mark.parametrize("input_name", ["contract.json", "round.json"])
+@pytest.mark.parametrize("extra_bytes", [0, 1])
+def test_review_input_byte_boundary(
+    tmp_path: Path, input_name: str, extra_bytes: int
+) -> None:
+    contract = _contract()
+    _write_json(tmp_path, "contract.json", contract)
+    _write_json(tmp_path, "round.json", _round(contract))
+    path = tmp_path / input_name
+    data = path.read_bytes()
+    # Valid JSON whitespace pads bytes without changing the contract digest.
+    path.write_bytes(data + b" " * (1_000_000 + extra_bytes - len(data)))
+    assert path.stat().st_size == 1_000_000 + extra_bytes
+    output = tmp_path / "receipt.json"
+    if extra_bytes:
+        output.write_bytes(b"existing receipt must survive")
+        with pytest.raises(ReviewConvergenceError) as error:
+            evaluate_review_round(tmp_path, "contract.json", "round.json", output.name)
+        assert error.value.code == "E_REVIEW_SIZE"
+        assert output.read_bytes() == b"existing receipt must survive"
+    else:
+        result = evaluate_review_round(
+            tmp_path, "contract.json", "round.json", output.name
+        )
+        assert result["state"] == "REVIEW_COMPLETE_ADVISORY"
+        assert not any(result["authority"].values())
+
+
+@pytest.mark.parametrize("dimension,limit", [("reviewers", 8), ("criteria", 64)])
+@pytest.mark.parametrize("extra", [0, 1])
+def test_review_contract_count_boundaries(
+    tmp_path: Path, dimension: str, limit: int, extra: int
+) -> None:
+    contract = _contract()
+    if dimension == "reviewers":
+        contract["reviewer_ids"] = [f"reviewer-{i}" for i in range(limit + extra)]
+    else:
+        template = contract["criteria"][0]
+        contract["criteria"] = [
+            {**template, "id": f"criterion-{i}"} for i in range(limit + extra)
+        ]
+    review = _round(contract)
+    if extra:
+        with pytest.raises(ReviewConvergenceError) as error:
+            _evaluate(tmp_path, contract, review)
+        assert error.value.code == "E_REVIEW_LIMIT"
+        assert not (tmp_path / "receipt.json").exists()
+    else:
+        result = _evaluate(tmp_path, contract, review)
+        assert result["state"] == "REVIEW_COMPLETE_ADVISORY"
+        assert len(result["coverage"]) == len(contract["criteria"]) * len(
+            contract["reviewer_ids"]
+        )
+
+
+@pytest.mark.parametrize("total", [256, 257])
+def test_review_round_total_finding_boundary(tmp_path: Path, total: int) -> None:
+    contract = _contract()
+    review = _round(contract)
+    cells = [cell for item in review["reviews"] for cell in item["criteria"]]
+    # Spread over cells so a per-cell limit cannot mask the global ceiling.
+    for index in range(total):
+        cell = cells[index % len(cells)]
+        cell["outcome"] = "finding"
+        cell["findings"].append(_finding(title=f"Distinct finding {index}"))
+    if total > 256:
+        with pytest.raises(ReviewConvergenceError) as error:
+            _evaluate(tmp_path, contract, review)
+        assert error.value.code == "E_REVIEW_LIMIT"
+        assert not (tmp_path / "receipt.json").exists()
+    else:
+        result = _evaluate(tmp_path, contract, review)
+        assert result["state"] == "REVIEW_FINDINGS"
+        assert len(result["findings"]) == total
+        assert not any(result["authority"].values())
+
+
+@pytest.mark.parametrize("scope", ["contract", "round", "review_record"])
+def test_review_unknown_envelope_fields_reject_without_receipt(
+    tmp_path: Path, scope: str
+) -> None:
+    contract = _contract()
+    review = _round(contract)
+    target = {
+        "contract": contract,
+        "round": review,
+        "review_record": review["reviews"][0],
+    }[scope]
+    target["approve_release"] = True
+    with pytest.raises(ReviewConvergenceError) as error:
+        _evaluate(tmp_path, contract, review)
+    assert error.value.code == "E_REVIEW_SCHEMA"
+    assert not (tmp_path / "receipt.json").exists()
+
+
 def test_deduplicates_reviewers_without_weakening_required_finding(
     tmp_path: Path,
 ) -> None:

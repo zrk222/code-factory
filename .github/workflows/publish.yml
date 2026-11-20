@@ -87,7 +87,7 @@ jobs:
             exit 1
           }
           echo "commit=$candidate_commit" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.12"
       - name: Verify exact prior validation producers before reuse
@@ -261,7 +261,7 @@ jobs:
           git merge-base --is-ancestor "$CANDIDATE_COMMIT" HEAD
           git switch --detach "$CANDIDATE_COMMIT"
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.12"
 
@@ -405,7 +405,7 @@ jobs:
           run-id: ${{ needs.guard.outputs.verified_reuse_run_id || github.run_id }}
           github-token: ${{ github.token }}
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: "3.12"
 

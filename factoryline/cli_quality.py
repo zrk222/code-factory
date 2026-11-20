@@ -13,6 +13,12 @@ OWNER = "quality-assurance"
 
 def add_parser(sub: Any) -> None:
     """Register quality and capability-evidence parsers without loading engines."""
+    add_quality_parser(sub)
+    add_evidence_parser(sub)
+
+
+def add_quality_parser(sub: Any) -> None:
+    """Register quality evidence parsers without loading command engines."""
     quality_harness = sub.add_parser(
         "quality-harness",
         help="bind full-stack engineering evidence and six human UX judgments",
@@ -39,7 +45,10 @@ def add_parser(sub: Any) -> None:
         "spec-validate",
         help="strictly validate the Full-Stack UX Harness SSAT/YAML contract and write a local receipt",
     )
-    quality_spec_validate.add_argument("spec")
+    quality_spec_validate.add_argument(
+        "spec",
+        help="workspace-contained full-stack-ux-harness-v1.ssat.yaml or explicit v1alpha1 contract",
+    )
     quality_spec_validate.add_argument("--root", default=".")
     quality_spec_validate.add_argument("--out")
     quality_spec_validate.add_argument("--json", action="store_true")
@@ -47,10 +56,13 @@ def add_parser(sub: Any) -> None:
         "spec-verify",
         help="replay a Full-Stack UX Harness spec receipt against its current source",
     )
-    quality_spec_verify.add_argument("receipt")
+    quality_spec_verify.add_argument("receipt", help="workspace-contained spec receipt")
     quality_spec_verify.add_argument("--root", default=".")
     quality_spec_verify.add_argument("--json", action="store_true")
 
+
+def add_evidence_parser(sub: Any) -> None:
+    """Register capability evidence arguments without executing commands."""
     evidence_audit = sub.add_parser(
         "evidence-audit",
         help="bind capability claims to source and tests; execute only with --execute",

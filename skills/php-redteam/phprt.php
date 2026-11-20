@@ -12,7 +12,7 @@ declare(strict_types=1);
  * Exit codes: 0 clean, 1 findings, 2 usage/IO error.
  */
 
-require __DIR__ . '/lib/Engine.php';
+require_once __DIR__ . '/lib/Engine.php';
 
 const SEV_ORDER = ['low' => 1, 'medium' => 2, 'high' => 3];
 
@@ -77,6 +77,9 @@ function rel(string $base, string $file): string
  */
 function applyFix(Finding $f, string $source): ?string
 {
+    if (in_array($f->rule, ['HARD-001', 'HARD-005'], true)) {
+        return literalArgumentFix($f, $source);
+    }
     $lines = explode("\n", $source);
     $idx = $f->line - 1;
     if (!isset($lines[$idx])) {
@@ -85,22 +88,8 @@ function applyFix(Finding $f, string $source): ?string
     $line = $lines[$idx];
 
     switch ($f->rule) {
-        case 'HARD-001':
-            if (preg_match('/display_errors\s*,?\s*[^;]+;/i', $line)) {
-                $lines[$idx] = "ini_set('display_errors', '0'); // phprt HARD-001";
-                return implode("\n", $lines);
-            }
-            return null;
-
-        case 'HARD-005':
-            if (str_contains($line, '0777')) {
-                $lines[$idx] = str_replace('0777', '0755', $line);
-                return implode("\n", $lines);
-            }
-            return null;
-
         case 'XSS-001':
-            $pat = '/(echo\s+)(\$_' . '(?:GET|POST|REQUEST|COOKIE)\[[^\]]+\])(\s*;)/';
+            $pat = '/^(\s*echo\s+)(\$_' . '(?:GET|POST|REQUEST|COOKIE)\[[^\]]+\])(\s*;)\s*$/';
             if (preg_match($pat, $line, $m)) {
                 $lines[$idx] = str_replace(
                     $m[0],
@@ -111,14 +100,110 @@ function applyFix(Finding $f, string $source): ?string
             }
             return null;
 
-        case 'CRYPT-002':
-            if (preg_match('/mcrypt_encrypt\s*\(/', $line)) {
-                $lines[$idx] = $line . ' // TODO phprt CRYPT-002: move to openssl_encrypt (AES-256-GCM)';
-                return implode("\n", $lines);
-            }
-            return null;
     }
     return null;
+}
+
+/** Replace only a lexer-identified literal argument; never rewrite its line. */
+function literalArgumentFix(Finding $f, string $source): ?string
+{
+    $tokens = [];
+    $offset = 0;
+    $line = 1;
+    foreach (token_get_all($source) as $token) {
+        $text = is_array($token) ? $token[1] : $token;
+        $kind = is_array($token) ? $token[0] : 0;
+        if (!in_array($kind, [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+            $tokens[] = [$kind, $text, $line, $offset];
+        }
+        $line += substr_count($text, "\n");
+        $offset += strlen($text);
+    }
+    $call = $f->rule === 'HARD-001' ? 'ini_set' : 'chmod';
+    foreach ($tokens as $i => $token) {
+        if ($token[2] !== $f->line || !in_array($token[0], [T_STRING, T_NAME_FULLY_QUALIFIED], true)
+            || strtolower(ltrim($token[1], '\\')) !== $call || ($tokens[$i + 1][1] ?? '') !== '('
+            || in_array($tokens[$i - 1][1] ?? '', ['->', '?->', '::', 'function', 'new'], true)) {
+            continue;
+        }
+        $args = [[]];
+        $depth = 0;
+        for ($j = $i + 2; $j < count($tokens); $j++) {
+            $text = $tokens[$j][1];
+            if ($text === ')' && $depth === 0) {
+                break;
+            }
+            if ($text === ',' && $depth === 0) {
+                $args[] = [];
+                continue;
+            }
+            $depth += in_array($text, ['(', '[', '{'], true) ? 1 : (in_array($text, [')', ']', '}'], true) ? -1 : 0);
+            $args[array_key_last($args)][] = $tokens[$j];
+        }
+        if ($j === count($tokens) || count($args) !== 2 || count($args[1]) !== 1) {
+            continue;
+        }
+        $value = $args[1][0];
+        if ($f->rule === 'HARD-001') {
+            if (count($args[0]) !== 1 || $args[0][0][0] !== T_CONSTANT_ENCAPSED_STRING
+                || strtolower(substr($args[0][0][1], 1, -1)) !== 'display_errors'
+                || !in_array($value[0], [T_LNUMBER, T_CONSTANT_ENCAPSED_STRING, T_STRING], true)
+                || ($value[0] === T_STRING && strtolower($value[1]) !== 'true')
+                || !in_array(strtolower(trim($value[1], "\"'")), ['1', 'on', 'true'], true)) {
+                continue;
+            }
+            $replacement = "'0'";
+        } else {
+            if ($value[0] !== T_LNUMBER || $value[1] !== '0777') {
+                continue;
+            }
+            $replacement = '0755';
+        }
+        return substr_replace($source, $replacement, $value[3], strlen($value[1]));
+    }
+    return null;
+}
+
+/** Lint without loading application code and always remove the owned scratch file. */
+function validFixCandidate(string $source): bool
+{
+    $temp = tempnam(sys_get_temp_dir(), 'phprt-lint-');
+    if ($temp === false) {
+        return false;
+    }
+    try {
+        if (file_put_contents($temp, $source) !== strlen($source)) {
+            return false;
+        }
+        $output = [];
+        exec(escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($temp) . ' 2>&1', $output, $code);
+        return $code === 0;
+    } finally {
+        unlink($temp);
+    }
+}
+
+/** Preserve original bytes on failed validation or replacement. */
+function writeFixCandidate(string $file, string $original, string $source): bool
+{
+    if (is_link($file) || file_get_contents($file) !== $original) {
+        return false;
+    }
+    $temp = tempnam(dirname($file), '.phprt-');
+    if ($temp === false) {
+        return false;
+    }
+    try {
+        $mode = fileperms($file);
+        return file_put_contents($temp, $source) === strlen($source)
+            && $mode !== false && chmod($temp, $mode & 0777)
+            && file_get_contents($file) === $original && !is_link($file)
+            && rename($temp, $file);
+    } finally {
+        if (is_file($temp)) {
+            unlink($temp);
+        }
+    }
 }
 
 function printRules(array $rules): void
@@ -169,11 +254,13 @@ function main(array $argv): int
     $scanner = new Scanner($rules);
     $files = targetFiles($path);
     $all = [];
+    $originals = [];
     foreach ($files as $file) {
         $source = @file_get_contents($file);
         if ($source === false) {
             continue;
         }
+        $originals[$file] = $source;
         foreach ($scanner->scanFile($file, $source) as $f) {
             if (severityAtLeast($f->severity, $min)) {
                 $all[] = [$f, $source];
@@ -192,9 +279,18 @@ function main(array $argv): int
             }
         }
         foreach ($perFile as $file => $source) {
+            if (!validFixCandidate($source)) {
+                fwrite(STDERR, "refusing invalid PHP candidate: $file\n");
+                return 2;
+            }
+        }
+        foreach ($perFile as $file => $source) {
             $rel = rel($path, $file);
             if ($write) {
-                file_put_contents($file, $source);
+                if (!writeFixCandidate($file, $originals[$file], $source)) {
+                    fwrite(STDERR, "refusing changed, unowned or unwritable target: $file\n");
+                    return 2;
+                }
                 fwrite(STDERR, "wrote $rel\n");
             } else {
                 fwrite(STDERR, "would write $rel\n");
@@ -233,4 +329,6 @@ function main(array $argv): int
     return $all === [] ? 0 : 1;
 }
 
-exit(main($argv));
+if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    exit(main($argv));
+}

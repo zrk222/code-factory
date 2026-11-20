@@ -1,4 +1,5 @@
 import builtins
+import argparse
 import json
 import subprocess
 from pathlib import Path
@@ -8,6 +9,264 @@ import pytest
 
 from factoryline import provenance as bootstrap
 from factoryline import provenance as provenance_module
+
+
+def _quality_adapter_parser():
+    from factoryline.cli_quality import add_parser
+
+    parser = argparse.ArgumentParser(prog="factory")
+    add_parser(parser.add_subparsers(dest="cmd"))
+    return parser
+
+
+def _parser_subcommands(parser):
+    return next(
+        action.choices
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+
+
+def _parser_action_schema(parser):
+    result = []
+    for action in parser._actions:
+        row = {
+            field: getattr(action, field)
+            for field in (
+                "dest",
+                "option_strings",
+                "nargs",
+                "const",
+                "default",
+                "required",
+                "metavar",
+                "help",
+                "type",
+            )
+        }
+        row["action"] = type(action)
+        row["choices"] = (
+            {
+                name: _parser_action_schema(child)
+                for name, child in action.choices.items()
+            }
+            if isinstance(action, argparse._SubParsersAction)
+            else action.choices
+        )
+        result.append(row)
+    return parser.format_help(), result
+
+
+def test_quality_adapter_matches_root_action_schema_help_and_registration_order():
+    from factoryline import cli, cli_quality
+
+    root = _parser_subcommands(cli._build_parser())
+    adapter = _parser_subcommands(_quality_adapter_parser())
+    assert list(adapter) == ["quality-harness", "evidence-audit"]
+    assert list(root)[
+        list(root).index("guide") : list(root).index("evidence-audit") + 1
+    ] == ["guide", "quality-harness", "audit", "evidence-audit"]
+    for name in adapter:
+        assert _parser_action_schema(adapter[name]) == _parser_action_schema(root[name])
+    assert cli_quality.COMMAND_GROUP == "quality-harness"
+    assert cli_quality.OWNER == "quality-assurance"
+    assert cli._DIRECT_ROUTES["quality-harness"] == ("cli_quality", "run_quality")
+    assert cli._DIRECT_ROUTES["evidence-audit"] == ("cli_quality", "run_evidence")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["quality-harness", "template", "--out", "manifest.json"],
+        [
+            "quality-harness",
+            "template",
+            "--out",
+            "m.json",
+            "--root",
+            "repo",
+            "--ui",
+            "--json",
+        ],
+        ["quality-harness", "verify", "manifest.json"],
+        [
+            "quality-harness",
+            "verify",
+            "m.json",
+            "--root",
+            "repo",
+            "--out",
+            "o.json",
+            "--json",
+        ],
+        ["quality-harness", "spec-validate", "contract.yaml"],
+        [
+            "quality-harness",
+            "spec-validate",
+            "c.yaml",
+            "--root",
+            "repo",
+            "--out",
+            "o.json",
+            "--json",
+        ],
+        ["quality-harness", "spec-verify", "receipt.json"],
+        ["quality-harness", "spec-verify", "r.json", "--root", "repo", "--json"],
+        ["evidence-audit"],
+        ["evidence-audit", "m.json", "--root", "repo", "--execute", "--json"],
+    ],
+)
+def test_quality_adapter_preserves_root_namespaces(argv):
+    from factoryline import cli
+
+    assert vars(_quality_adapter_parser().parse_args(argv)) == vars(
+        cli._build_parser().parse_args(argv)
+    )
+
+
+def test_quality_split_registrars_preserve_each_domain_and_wrapper_schema():
+    from factoryline.cli_quality import add_evidence_parser, add_quality_parser
+
+    combined = _parser_subcommands(_quality_adapter_parser())
+    for register, group in (
+        (add_quality_parser, "quality-harness"),
+        (add_evidence_parser, "evidence-audit"),
+    ):
+        parser = argparse.ArgumentParser(prog="factory")
+        register(parser.add_subparsers(dest="cmd"))
+        commands = _parser_subcommands(parser)
+        assert list(commands) == [group]
+        assert _parser_action_schema(commands[group]) == _parser_action_schema(
+            combined[group]
+        )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["quality-harness"],
+        ["quality-harness", "template"],
+        ["quality-harness", "verify"],
+        ["quality-harness", "spec-validate"],
+        ["quality-harness", "spec-verify"],
+        ["evidence-audit", "--unknown"],
+    ],
+)
+def test_quality_adapter_preserves_root_argument_errors(argv, capsys):
+    from factoryline import cli
+
+    for parser in (_quality_adapter_parser(), cli._build_parser()):
+        with pytest.raises(SystemExit) as error:
+            parser.parse_args(argv)
+        assert error.value.code == 2
+        assert "error:" in capsys.readouterr().err
+
+
+def test_quality_registration_does_not_import_command_engines(monkeypatch):
+    from factoryline import cli
+
+    original = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name.rsplit(".", 1)[-1] in {
+            "capability_evidence",
+            "full_stack_ux_harness",
+            "full_stack_ux_spec",
+        }:
+            raise AssertionError("parser registration imported command engine")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    _quality_adapter_parser()
+    cli._build_parser()
+    cli._build_parser(common_only=True)
+    cli._build_parser(first_lap_only=True)
+
+
+@pytest.mark.parametrize("raw", [b"+line\n" * 100, b"+" + b"x" * 9000])
+def test_mutation_diff_cli_preview_truncation(tmp_path, capsys, raw):
+    import base64
+    import hashlib
+    from factoryline import cli
+
+    capture = {
+        "schema": "factory.local-production-mutation-capture.v1",
+        "production_mutation": {
+            "path": "app.py",
+            "diff_path": "production.diff",
+            "diff_sha256": hashlib.sha256(raw).hexdigest(),
+        },
+        "selection": {"test_path": "test_app.py"},
+    }
+    (tmp_path / "capture.json").write_text(json.dumps(capture), encoding="utf-8")
+    (tmp_path / "production.diff").write_bytes(raw)
+    argv = ["runtime-audit", "mutation-diff", "capture.json", "--root", str(tmp_path)]
+    assert cli.main(argv) == 0
+    human = capsys.readouterr().out
+    assert "PREVIEW TRUNCATED" in human and "HISTORICAL" in human
+    assert len(human.splitlines()) <= 86
+    assert len(human) < 50000
+    assert cli.main(argv + ["--json"]) == 0
+    assert base64.b64decode(json.loads(capsys.readouterr().out)["diff_base64"]) == raw
+
+
+@pytest.mark.parametrize("machine", [False, True])
+def test_mutation_diff_cli_read_only_dispatch(tmp_path, monkeypatch, capsys, machine):
+    import base64
+    import hashlib
+    import socket
+    from factoryline import cli, ops_telemetry
+
+    raw = b"--- old\r\n+changed-line\xff\x1bsecret-no-final-newline"
+    capture = {
+        "schema": "factory.local-production-mutation-capture.v1",
+        "production_mutation": {
+            "path": "source.py",
+            "diff_path": "production.diff",
+            "diff_sha256": hashlib.sha256(raw).hexdigest(),
+        },
+        "selection": {"test_path": "tests/test_source.py"},
+    }
+    (tmp_path / "capture.json").write_text(json.dumps(capture), encoding="utf-8")
+    (tmp_path / "production.diff").write_bytes(raw)
+    before = sorted(p.name for p in tmp_path.iterdir())
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("viewer must not execute, network or write ledger")
+
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(socket, "socket", forbidden)
+    monkeypatch.setattr(ops_telemetry, "record_lifecycle", forbidden)
+    monkeypatch.setattr(cli, "_notify_interactive_update", forbidden)
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.rsplit(".", 1)[-1] in {
+            "runtime_audit",
+            "runtime_audit_runner",
+            "runtime_audit_contract",
+        }:
+            forbidden()
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    argv = ["runtime-audit", "mutation-diff", "capture.json", "--root", str(tmp_path)]
+    if machine:
+        argv.append("--json")
+    assert ops_telemetry.is_read_only_command(argv)
+    assert cli.main(argv) == 0
+    output = capsys.readouterr().out
+    if machine:
+        result = json.loads(output)
+        assert base64.b64decode(result["diff_base64"]) == raw
+    else:
+        assert "HISTORICAL" in output and "HASH_VERIFIED" in output
+        assert "+changed-line" in output
+        assert "\x1b" not in output and "\\u001b" in output
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+    (tmp_path / "production.diff").write_bytes(b"tampered")
+    assert cli.main(argv + ([] if machine else ["--json"])) == 2
+    assert json.loads(capsys.readouterr().err)["code"] == "E_MUTATION_DIFF_INPUT"
 
 
 def _actionability_args(root, **changes):
@@ -404,6 +663,20 @@ def test_advanced_help_and_explicit_commands_keep_original_dispatch(monkeypatch)
     for values, expected in pairs:
         assert bootstrap.main(values) == 7
         assert calls[-1] == expected
+
+
+def test_scan_help_does_not_register_optional_workflows(monkeypatch, capsys):
+    from factoryline import cli_first_lap
+
+    def unexpected_registry(_sub):
+        pytest.fail("scan help loaded the full command registry")
+
+    monkeypatch.setattr(cli_first_lap, "add_parser", unexpected_registry)
+    with pytest.raises(SystemExit) as result:
+        bootstrap.main(["scan", "--help"])
+    assert result.value.code == 0
+    output = capsys.readouterr().out
+    assert "--static-only" in output and "--deep" in output
 
 
 def test_home_operator_flow_shows_plan_only_action_without_dummy_commands(

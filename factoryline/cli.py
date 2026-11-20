@@ -494,7 +494,7 @@ def _build_parser(
 ) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="factory",
-        description="Snap SpecLine, ForgeLine, HSF and Prestige into one assembly line.",
+        description="Review code and collect evidence for changes.",
     )
     sub = p.add_subparsers(dest="cmd")
 
@@ -531,6 +531,9 @@ def _build_parser(
     )
     plan_verify.add_argument("--json", action="store_true")
     if common_only:
+        from .cli_first_lap import add_scan_parser
+
+        add_scan_parser(sub)
         return p
 
     from .cli_foundations import add_parser as add_foundation_parsers
@@ -562,65 +565,15 @@ def _build_parser(
     guide.add_argument("--journey", help="one of: solo, team, enterprise")
     guide.add_argument("--json", action="store_true")
 
-    quality_harness = sub.add_parser(
-        "quality-harness",
-        help="bind full-stack engineering evidence and six human UX judgments",
-    )
-    quality_sub = quality_harness.add_subparsers(required=True, dest="quality_cmd")
-    quality_template = quality_sub.add_parser(
-        "template", help="write a closed, unverified quality manifest"
-    )
-    quality_template.add_argument("--root", default=".")
-    quality_template.add_argument("--out", required=True)
-    quality_template.add_argument(
-        "--ui", action="store_true", help="include the seven UI evidence checks"
-    )
-    quality_template.add_argument("--json", action="store_true")
-    quality_verify = quality_sub.add_parser(
-        "verify",
-        help="verify bound evidence and human judgments without executing checks",
-    )
-    quality_verify.add_argument("manifest")
-    quality_verify.add_argument("--root", default=".")
-    quality_verify.add_argument("--out")
-    quality_verify.add_argument("--json", action="store_true")
-    quality_spec_validate = quality_sub.add_parser(
-        "spec-validate",
-        help="strictly validate the Full-Stack UX Harness SSAT/YAML contract and write a local receipt",
-    )
-    quality_spec_validate.add_argument(
-        "spec",
-        help="workspace-contained full-stack-ux-harness-v1.ssat.yaml or explicit v1alpha1 contract",
-    )
-    quality_spec_validate.add_argument("--root", default=".")
-    quality_spec_validate.add_argument("--out")
-    quality_spec_validate.add_argument("--json", action="store_true")
-    quality_spec_verify = quality_sub.add_parser(
-        "spec-verify",
-        help="replay a Full-Stack UX Harness spec receipt against its current source",
-    )
-    quality_spec_verify.add_argument("receipt", help="workspace-contained spec receipt")
-    quality_spec_verify.add_argument("--root", default=".")
-    quality_spec_verify.add_argument("--json", action="store_true")
+    from .cli_quality import add_evidence_parser, add_quality_parser
+
+    add_quality_parser(sub)
 
     from .cli_audit import add_parser as add_audit_parser
 
     add_audit_parser(sub)
 
-    evidence_audit = sub.add_parser(
-        "evidence-audit",
-        help="bind capability claims to source and tests; execute only with --execute",
-    )
-    evidence_audit.add_argument(
-        "manifest", nargs="?", default="evidence/capability-evidence.json"
-    )
-    evidence_audit.add_argument("--root", default=".")
-    evidence_audit.add_argument(
-        "--execute",
-        action="store_true",
-        help="run the reviewed manifest commands locally without a shell",
-    )
-    evidence_audit.add_argument("--json", action="store_true")
+    add_evidence_parser(sub)
 
     from .cli_review_surfaces import add_parser as add_review_surface_parsers
 
@@ -4623,7 +4576,7 @@ def _dispatch(argv=None) -> int:
             "first-lap",
             "first-proof",
         }:
-            first_lap = argv[0] in {"scan", "first-lap", "first-proof"}
+            first_lap = argv[0] in {"first-lap", "first-proof"}
             p = _build_parser(common_only=not first_lap, first_lap_only=first_lap)
             a, unknown = p.parse_known_args(argv)
             if unknown:
@@ -4665,7 +4618,8 @@ def main(argv=None) -> int:
             except Exception:
                 pass
         raise
-    _notify_interactive_update(values, code)
+    if values[:2] != ["runtime-audit", "mutation-diff"]:
+        _notify_interactive_update(values, code)
     if not read_only:
         try:
             record_lifecycle(
@@ -4702,7 +4656,13 @@ def _interactive_update_check_allowed(
     """Keep network checks out of automation, machine output, and server modes."""
     import os
 
+    from .ops_telemetry import _scan_machine_option
+
     values = list(argv)
+    if _scan_machine_option(
+        values, ("--sarif", "--output-contract", "--pre-commit-config")
+    ):
+        return False
     environment = os.environ if environ is None else environ
     input_stream = sys.stdin if stdin is None else stdin
     error_stream = sys.stderr if stderr is None else stderr
@@ -4726,7 +4686,17 @@ def _interactive_update_check_allowed(
     ):
         return False
     if not values or any(
-        value in {"--json", "--version", "-h", "--help"} for value in values
+        value
+        in {
+            "--json",
+            "--sarif",
+            "--output-contract",
+            "--pre-commit-config",
+            "--version",
+            "-h",
+            "--help",
+        }
+        for value in values
     ):
         return False
     if values[0] in {
