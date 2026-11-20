@@ -13,6 +13,217 @@ COMMAND_GROUP = "deep-audit"
 OWNER = "senior-audit-maintainers"
 
 
+def serve_deep_audit_coordinator(
+    root, lease_seconds, session_nonce, input_stream, output_stream
+) -> dict:
+    """Serve bounded local admission; execution remains gated until worker binding exists."""
+    import os
+    import time
+    from .agentic_control import CoordinatorRequestStore
+    from .assembly_process import _process_creation_identity
+
+    root = Path(root).resolve(strict=True)
+    ttl = 300 if lease_seconds is None else lease_seconds
+    if type(ttl) is not int or not 1 <= ttl <= 3600:
+        raise ValueError("coordinator lease must be an integer from 1 through 3600")
+    _coordinator_hex(session_nonce, 32)
+    creation = _process_creation_identity(os.getpid())
+    if creation is None:
+        raise ValueError("coordinator process creation identity is unavailable")
+    owner = dict(
+        pid=os.getpid(),
+        creation=creation,
+        session_nonce=session_nonce,
+        runtime_sha256=_coordinator_runtime_identity(),
+        workspace_sha256=hashlib.sha256(str(root).encode()).hexdigest(),
+    )
+    store = CoordinatorRequestStore(root)
+    store.acquire(owner, ttl, time.monotonic())
+    context = dict(store=store, expires_at=time.monotonic() + ttl, stop=False)
+    last = _coordinator_result("OBSERVED", execution_available=False)
+    try:
+        while not context["stop"]:
+            raw = input_stream.readline(65537)
+            if not raw:
+                break
+            try:
+                request = _coordinator_line(raw)
+                last = dispatch_deep_audit_request(root, request, owner, context)
+            except (ValueError, TypeError, KeyError, OSError) as error:
+                last = _coordinator_result(
+                    "INCOMPLETE", code=getattr(error, "code", "E_COORDINATOR_REQUEST")
+                )
+            output_stream.write(json.dumps(last, sort_keys=True) + "\n")
+            output_stream.flush()
+            if len(raw.encode("utf-8") if isinstance(raw, str) else raw) > 65536:
+                break
+    finally:
+        store.release(owner)
+    return last
+
+
+def dispatch_deep_audit_request(
+    root, request, owner_identity, execution_context
+) -> dict:
+    """Validate intent and live ownership before any admission or process creation."""
+    _coordinator_request(root, request)
+    _coordinator_check_owner(root, request, owner_identity, execution_context)
+    if request["operation"] == "stop":
+        execution_context["stop"] = True
+        return _coordinator_result("STOPPED", request_id=request["request_id"])
+    if request["operation"] == "status":
+        return _coordinator_result(
+            "OBSERVED", request_id=request["request_id"], execution_available=False
+        )
+    # An ingress or SQLite metadata pass is not execution authorization. Until
+    # the worker provenance handshake is wired, even a valid request fails closed.
+    return _coordinator_result(
+        "INCOMPLETE",
+        request_id=request["request_id"],
+        code="E_COORDINATOR_WORKER_UNVERIFIED",
+    )
+
+
+def _coordinator_result(state, **fields):
+    return dict(
+        schema="factory.deep-audit-coordinator.v1",
+        state=state,
+        authority="none",
+        release_approval=False,
+        **fields,
+    )
+
+
+def _coordinator_hex(value, length):
+    if (
+        not isinstance(value, str)
+        or len(value) != length
+        or any(c not in "0123456789abcdef" for c in value)
+    ):
+        raise ValueError("invalid coordinator identity")
+
+
+def _coordinator_line(raw):
+    from .deep_audit_io import strict_json
+
+    encoded = raw.encode("utf-8") if isinstance(raw, str) else raw
+    if not isinstance(encoded, bytes) or not 1 <= len(encoded) <= 65536:
+        raise ValueError("coordinator line exceeds byte boundary")
+    return strict_json(encoded)
+
+
+def _coordinator_request(root, request):
+    if not isinstance(request, dict):
+        raise ValueError("coordinator request must be an object")
+    required = {"version", "operation", "workspace", "session_nonce", "request_id"}
+    operation = request.get("operation")
+    allowed = required | ({"payload"} if operation == "audit" else set())
+    if (
+        set(request) != allowed
+        or type(request["version"]) is not int
+        or request["version"] != 1
+    ):
+        raise ValueError("invalid coordinator request schema")
+    if not isinstance(operation, str) or operation not in {"audit", "status", "stop"}:
+        raise ValueError("unknown coordinator operation")
+    for key in ("session_nonce", "request_id"):
+        _coordinator_hex(request[key], 32)
+    if not isinstance(request["workspace"], str) or request["workspace"] != str(
+        Path(root).resolve(strict=True)
+    ):
+        raise ValueError("coordinator workspace differs")
+    if operation == "audit":
+        _coordinator_payload(root, request["payload"])
+
+
+def _coordinator_payload(root, payload):
+    from .deep_audit_io import local_file
+
+    expected = {
+        "manifest",
+        "manifest_sha256",
+        "authorization",
+        "trust_root",
+        "trust_root_sha256",
+    }
+    if not isinstance(payload, dict) or set(payload) != expected:
+        raise ValueError("coordinator audit payload must bind the existing signed scan")
+    for name in ("manifest_sha256", "trust_root_sha256"):
+        _coordinator_hex(payload[name], 64)
+    for name in ("manifest", "authorization", "trust_root"):
+        local_file(Path(root), payload[name])
+
+
+def _coordinator_runtime_identity():
+    # Bind loaded bodies, not merely a source file which could change after import.
+    # Marshal encodings can change reference flags after first execution; only
+    # normalized executable code fields belong in this in-process identity.
+    loaded = [
+        (name, _coordinator_code_identity(value.__code__))
+        for name, value in sorted(globals().items())
+        if callable(value) and getattr(value, "__module__", None) == __name__
+    ]
+    return hashlib.sha256(
+        json.dumps([sys.executable, sys.version, loaded]).encode()
+    ).hexdigest()
+
+
+def _coordinator_code_identity(code):
+    return [
+        code.co_code.hex(),
+        code.co_argcount,
+        code.co_posonlyargcount,
+        code.co_kwonlyargcount,
+        code.co_flags,
+        code.co_names,
+        code.co_varnames,
+        code.co_freevars,
+        code.co_cellvars,
+        getattr(code, "co_exceptiontable", b"").hex(),
+        [_coordinator_constant(value) for value in code.co_consts],
+    ]
+
+
+def _coordinator_constant(value):
+    from types import CodeType
+
+    if isinstance(value, CodeType):
+        return ["code", _coordinator_code_identity(value)]
+    if isinstance(value, tuple):
+        return ["tuple", [_coordinator_constant(item) for item in value]]
+    if isinstance(value, frozenset):
+        return [
+            "frozenset",
+            sorted(json.dumps(_coordinator_constant(item)) for item in value),
+        ]
+    return [type(value).__name__, repr(value)]
+
+
+def _coordinator_check_owner(root, request, owner, context):
+    import os
+    import time
+    from .assembly_process import _process_creation_identity
+
+    expected_workspace = hashlib.sha256(
+        str(Path(root).resolve(strict=True)).encode()
+    ).hexdigest()
+    expiry = context.get("expires_at")
+    if type(expiry) not in (int, float) or not 0 < expiry < float("inf"):
+        raise ValueError("invalid coordinator expiry")
+    if (
+        owner.get("pid") != os.getpid()
+        or owner.get("creation") is None
+        or _process_creation_identity(os.getpid()) != owner["creation"]
+        or owner.get("runtime_sha256") != _coordinator_runtime_identity()
+        or owner.get("workspace_sha256") != expected_workspace
+        or owner.get("session_nonce") != request["session_nonce"]
+        or context.get("stop") is not False
+        or time.monotonic() >= expiry
+    ):
+        raise ValueError("coordinator owner is missing, stale or differs")
+    context["store"].check_owner(owner, time.monotonic())
+
+
 def add_parser(sub: Any) -> None:
     """Register senior-audit commands without loading audit engines."""
     deep = sub.add_parser(

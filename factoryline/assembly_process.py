@@ -14,6 +14,7 @@ import os
 import math
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -25,6 +26,104 @@ CLEANUP_TIMEOUT_SECONDS = 10.0
 READ_CHUNK_BYTES = 65_536
 PROCESS_SNAPSHOT_TIMEOUT_SECONDS = 1.0
 PROCESS_SNAPSHOT_INTERVAL_SECONDS = 0.25
+
+
+def _process_creation_identity(pid) -> str | None:
+    """Observe creation identity, never signalling or authorizing later PID use."""
+    if type(pid) is not int or not 0 < pid <= 0xFFFFFFFF:
+        return None
+    if os.name == "nt":
+        return _windows_process_creation_identity(pid)
+    if sys.platform != "linux":
+        return None
+    try:
+        first = _linux_creation_observation(pid)
+        return first if first == _linux_creation_observation(pid) else None
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
+def _bounded_identity_text(path: Path, limit: int) -> str:
+    with path.open("r", encoding="ascii") as stream:
+        text = stream.read(limit + 1)
+    if len(text) > limit:
+        raise ValueError("oversized identity observation")
+    return text.strip()
+
+
+def _linux_stat_start_ticks(text: str, pid: int) -> str | None:
+    opening, closing = text.find("("), text.rfind(")")
+    if opening < 1 or closing <= opening or text[:opening].strip() != str(pid):
+        return None
+    fields = text[closing + 1 :].split()
+    if len(fields) < 20 or fields[0] not in set("RSDTtWPI"):
+        return None
+    ticks = fields[19]
+    return ticks if ticks.isascii() and ticks.isdecimal() and int(ticks) > 0 else None
+
+
+def _linux_creation_observation(pid: int) -> str | None:
+    boot = _bounded_identity_text(Path("/proc/sys/kernel/random/boot_id"), 64)
+    groups = boot.split("-")
+    if [len(group) for group in groups] != [8, 4, 4, 4, 12]:
+        return None
+    if any(char not in "0123456789abcdef" for char in boot.replace("-", "")):
+        return None
+    ticks = _linux_stat_start_ticks(
+        _bounded_identity_text(Path(f"/proc/{pid}/stat"), 4096), pid
+    )
+    return f"linux:{boot}:{pid}:{ticks}" if ticks is not None else None
+
+
+def _windows_identity_api():
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [
+        ctypes.POINTER(wintypes.FILETIME)
+    ] * 4
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return kernel32
+
+
+def _windows_process_creation_identity(pid) -> str | None:
+    """Observe an opened Windows process without granting signal authority."""
+    if type(pid) is not int or not 0 < pid <= 0xFFFFFFFF:
+        return None
+    try:
+        kernel32 = _windows_identity_api()
+        handle = kernel32.OpenProcess(0x00101000, False, pid)
+        if not handle:
+            return None
+        try:
+            return _windows_opened_creation_identity(kernel32, handle, pid)
+        finally:
+            if not kernel32.CloseHandle(handle):
+                raise OSError("process identity handle closure failed")
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _windows_opened_creation_identity(kernel32, handle, pid: int) -> str | None:
+    from ctypes import wintypes
+
+    if kernel32.WaitForSingleObject(handle, 0) != 258:
+        return None
+    times = [wintypes.FILETIME() for _ in range(4)]
+    if not kernel32.GetProcessTimes(handle, *(ctypes.byref(item) for item in times)):
+        return None
+    if kernel32.WaitForSingleObject(handle, 0) != 258:
+        return None
+    ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+    return f"windows:{pid}:{ticks:016x}" if ticks else None
+
+
 WINDOWS_CREATE_SUSPENDED = 0x00000004
 # The Windows-only subprocess constants are absent on POSIX Python builds.
 # Keep their documented values available for deterministic cross-platform
@@ -584,6 +683,26 @@ def _monitor(child, unit, readers, failed, heartbeat, deadline: float) -> str:
         time.sleep(0.05)
 
 
+def _observe_started_child(observer, child, unit, readers, outputs) -> None:
+    """Share observation only; failures clean up the existing owned launch."""
+    try:
+        creation = _process_creation_identity(child.pid)
+        observer({"pid": child.pid, "creation": creation})
+        if creation is None:
+            raise RuntimeError("started process creation identity unavailable")
+    except BaseException:
+        _measure_call(
+            "child_cleanup",
+            _finish_and_close,
+            child,
+            unit,
+            readers,
+            outputs,
+            "started observer failed",
+        )
+        raise
+
+
 def run_cli_detailed(
     cli: str,
     args: list[str],
@@ -593,6 +712,7 @@ def run_cli_detailed(
     timeout: float = 300,
     max_stream_bytes: int = MAX_STREAM_BYTES,
     env: dict[str, str] | None = None,
+    started_observer: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     """Return a bounded CLI result with an explicit cleanup receipt.
 
@@ -601,6 +721,8 @@ def run_cli_detailed(
     exited.  The legacy :func:`run_cli` wrapper keeps its two-value API for
     Assembly callers while this structured form lets evidence-producing paths
     distinguish a clean result from an unobservable or escaped descendant.
+    An optional observer receives only PID and creation identity before monitoring;
+    missing identity or observer failure cleans up the owned launch and propagates.
     """
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("positive finite execution deadline required")
@@ -628,6 +750,8 @@ def run_cli_detailed(
     ]
     for reader in readers:
         reader.start()
+    if started_observer is not None:
+        _observe_started_child(started_observer, child, unit, readers, outputs)
     try:
         reason = _measure_call(
             "child_wait",

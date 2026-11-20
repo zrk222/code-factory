@@ -18,6 +18,267 @@ from factoryline.enterprise_receipts import (
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+def _coordinator_test_request(root, operation="status"):
+    return dict(
+        version=1,
+        operation=operation,
+        workspace=str(root.resolve()),
+        session_nonce="a" * 32,
+        request_id="b" * 32,
+    )
+
+
+def _coordinator_test_payload(root):
+    for name in ("manifest.json", "authorization.json", "trust.json"):
+        (root / name).write_text("{}", encoding="utf-8")
+    return dict(
+        manifest="manifest.json",
+        manifest_sha256="c" * 64,
+        authorization="authorization.json",
+        trust_root="trust.json",
+        trust_root_sha256="d" * 64,
+    )
+
+
+@pytest.mark.parametrize("unicode_text", [False, True])
+def test_coordinator_line_exact_utf8_byte_boundary(unicode_text):
+    from factoryline.cli_deep_audit import _coordinator_line
+
+    content = "é" * 100 if unicode_text else "x" * 100
+    raw = json.dumps({"value": content}, ensure_ascii=False).encode("utf-8")
+    exact = raw + b" " * (65536 - len(raw))
+    assert _coordinator_line(exact) == {"value": content}
+    assert _coordinator_line(exact.decode("utf-8")) == {"value": content}
+    with pytest.raises(ValueError):
+        _coordinator_line(exact + b" ")
+
+
+@pytest.mark.parametrize("raw", [b'{"a":1,"a":2}', b"\xff", b"", b"{"])
+def test_coordinator_line_rejects_invalid_encoding_or_json(raw):
+    from factoryline.cli_deep_audit import _coordinator_line
+
+    with pytest.raises((ValueError, RuntimeAuditError)):
+        _coordinator_line(raw)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"version": True},
+        {"version": 2},
+        {"operation": "launch"},
+        {"request_id": "A" * 32},
+        {"request_id": "b" * 31},
+        {"session_nonce": "g" * 32},
+        {"session_nonce": None},
+        {"executable": "python"},
+        {"run_id": "c" * 32},
+        {"payload": {}},
+        {"workspace": "."},
+    ],
+)
+def test_coordinator_request_rejects_invalid_envelope(tmp_path, change):
+    from factoryline.cli_deep_audit import _coordinator_request
+
+    request = _coordinator_test_request(tmp_path)
+    request.update(change)
+    with pytest.raises(ValueError):
+        _coordinator_request(tmp_path, request)
+
+
+@pytest.mark.parametrize("value", [[], None, 1, "status"])
+def test_coordinator_request_requires_object(tmp_path, value):
+    from factoryline.cli_deep_audit import _coordinator_request
+
+    with pytest.raises(ValueError):
+        _coordinator_request(tmp_path, value)
+
+
+@pytest.mark.parametrize("operation", ["audit", "status", "stop"])
+def test_coordinator_payload_is_required_only_for_audit(tmp_path, operation):
+    from factoryline.cli_deep_audit import _coordinator_request
+
+    value = _coordinator_test_request(tmp_path, operation)
+    if operation != "audit":
+        value["payload"] = _coordinator_test_payload(tmp_path)
+    with pytest.raises(ValueError):
+        _coordinator_request(tmp_path, value)
+
+
+def test_coordinator_rejects_noncanonical_workspace_alias(tmp_path):
+    from factoryline.cli_deep_audit import _coordinator_request
+
+    value = _coordinator_test_request(tmp_path)
+    value["workspace"] += "/."
+    with pytest.raises(ValueError):
+        _coordinator_request(tmp_path, value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing", "extra", "escape", "absolute", "absent", "directory", "digest"],
+)
+def test_coordinator_audit_requires_exact_existing_relative_bindings(
+    tmp_path, mutation
+):
+    from factoryline.cli_deep_audit import _coordinator_request
+
+    request = _coordinator_test_request(tmp_path, "audit")
+    payload = _coordinator_test_payload(tmp_path)
+    request["payload"] = payload
+    assert _coordinator_request(tmp_path, request) is None
+    if mutation == "missing":
+        del payload["authorization"]
+    elif mutation == "extra":
+        payload["executable"] = "python"
+    elif mutation == "escape":
+        payload["manifest"] = "../manifest.json"
+    elif mutation == "absolute":
+        payload["manifest"] = str(tmp_path / "manifest.json")
+    elif mutation == "absent":
+        payload["authorization"] = "missing.json"
+    elif mutation == "directory":
+        (tmp_path / "directory").mkdir()
+        payload["trust_root"] = "directory"
+    else:
+        payload["manifest_sha256"] = "z" * 64
+    with pytest.raises((ValueError, RuntimeAuditError)):
+        _coordinator_request(tmp_path, request)
+
+
+def _coordinator_test_owner(root, module):
+    import hashlib
+    import os
+    import time
+    from factoryline.assembly_process import _process_creation_identity
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    owner = dict(
+        pid=os.getpid(),
+        creation=_process_creation_identity(os.getpid()),
+        session_nonce="a" * 32,
+        runtime_sha256=module._coordinator_runtime_identity(),
+        workspace_sha256=hashlib.sha256(str(root.resolve()).encode()).hexdigest(),
+    )
+    store = CoordinatorRequestStore(root)
+    store.acquire(owner, 60, time.monotonic())
+    return owner, dict(store=store, stop=False, expires_at=time.monotonic() + 60)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "creation",
+        "missing_creation",
+        "observed_unknown",
+        "pid",
+        "nonce",
+        "runtime",
+        "expired",
+        "workspace",
+    ],
+)
+def test_coordinator_stale_owner_rejects_before_child(tmp_path, monkeypatch, fault):
+    import factoryline.cli_deep_audit as module
+    import factoryline.assembly_process as assembly
+    import subprocess
+
+    owner, context = _coordinator_test_owner(tmp_path, module)
+    request = _coordinator_test_request(tmp_path, "audit")
+    request["payload"] = _coordinator_test_payload(tmp_path)
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *a, **k: pytest.fail("unexpected child")
+    )
+    if fault == "creation":
+        owner["creation"] = "wrong"
+    elif fault == "missing_creation":
+        owner["creation"] = None
+    elif fault == "observed_unknown":
+        monkeypatch.setattr(assembly, "_process_creation_identity", lambda pid: None)
+    elif fault == "expired":
+        context["expires_at"] = 0
+    else:
+        key = {
+            "pid": "pid",
+            "nonce": "session_nonce",
+            "runtime": "runtime_sha256",
+            "workspace": "workspace_sha256",
+        }[fault]
+        owner[key] = -1 if fault == "pid" else "wrong"
+    with pytest.raises(ValueError):
+        module.dispatch_deep_audit_request(tmp_path, request, owner, context)
+
+
+def test_coordinator_valid_audit_is_fail_closed_until_worker_verified(
+    tmp_path, monkeypatch
+):
+    import factoryline.cli_deep_audit as module
+    import subprocess
+
+    owner, context = _coordinator_test_owner(tmp_path, module)
+    request = _coordinator_test_request(tmp_path, "audit")
+    request["payload"] = _coordinator_test_payload(tmp_path)
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *a, **k: pytest.fail("unexpected child")
+    )
+    result = module.dispatch_deep_audit_request(tmp_path, request, owner, context)
+    assert result["state"] == "INCOMPLETE"
+    assert result["code"] == "E_COORDINATOR_WORKER_UNVERIFIED"
+    assert result["authority"] == "none" and result["release_approval"] is False
+
+
+def test_coordinator_deleted_lease_rejects_before_child(tmp_path, monkeypatch):
+    import factoryline.cli_deep_audit as module
+    import subprocess
+    from factoryline.agentic_control import AgenticControlError
+
+    owner, context = _coordinator_test_owner(tmp_path, module)
+    context["store"].release(owner)
+    request = _coordinator_test_request(tmp_path, "audit")
+    request["payload"] = _coordinator_test_payload(tmp_path)
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *a, **k: pytest.fail("unexpected child")
+    )
+    with pytest.raises((ValueError, AgenticControlError)):
+        module.dispatch_deep_audit_request(tmp_path, request, owner, context)
+
+
+@pytest.mark.parametrize("ttl", [None, 1, 300, 3600])
+def test_coordinator_native_foreground_status_stop_no_child(tmp_path, monkeypatch, ttl):
+    import io
+    import subprocess
+    from factoryline.cli_deep_audit import serve_deep_audit_coordinator
+
+    requests = [_coordinator_test_request(tmp_path, op) for op in ("status", "stop")]
+    requests[1]["request_id"] = "c" * 32
+    stream = io.BytesIO(
+        ("\n".join(json.dumps(row) for row in requests) + "\n").encode()
+    )
+    output = io.StringIO()
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *a, **k: pytest.fail("unexpected child")
+    )
+    result = serve_deep_audit_coordinator(tmp_path, ttl, "a" * 32, stream, output)
+    rows = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [row["state"] for row in rows] == ["OBSERVED", "STOPPED"]
+    assert rows[0]["execution_available"] is False
+    assert result == rows[-1]
+    assert all(
+        row["authority"] == "none" and row["release_approval"] is False for row in rows
+    )
+
+
+@pytest.mark.parametrize("ttl", [True, False, 0, 3601])
+def test_coordinator_rejects_invalid_ttl_before_ingress(tmp_path, ttl):
+    import io
+    from factoryline.cli_deep_audit import serve_deep_audit_coordinator
+
+    output = io.StringIO()
+    with pytest.raises(ValueError):
+        serve_deep_audit_coordinator(tmp_path, ttl, "a" * 32, io.BytesIO(), output)
+    assert output.getvalue() == ""
+
+
 @pytest.mark.parametrize("prefix", ["", "example/adapter@"])
 def test_full_local_image_id_and_repository_digest_are_immutable_pins(prefix):
     from factoryline.deep_audit_contract import _validate_lane_image
