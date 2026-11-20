@@ -169,9 +169,7 @@ def test_coordinator_duplicate_readback_precedes_filesystem_preflight(
     request = _coordinator_test_request(tmp_path, "audit")
     request["payload"] = _coordinator_test_payload(tmp_path)
     seal = digest(request)
-    context["store"].admit(
-        request["session_nonce"], request["request_id"], seal, owner
-    )
+    context["store"].admit(request["session_nonce"], request["request_id"], seal, owner)
     if drift == "deleted":
         for name in ("manifest.json", "authorization.json", "trust.json"):
             (tmp_path / name).unlink()
@@ -217,7 +215,8 @@ def test_coordinator_cancellation_keeps_existing_cleanup_window(
 
     calls = []
     monkeypatch.setattr(
-        audit, "cancel_deep_run",
+        audit,
+        "cancel_deep_run",
         lambda root, run_id: calls.append((root, run_id))
         or {"state": "CANCELLATION_REQUESTED"},
     )
@@ -243,34 +242,59 @@ def test_coordinator_ack_is_marked_before_worker_can_observe_it(tmp_path, monkey
     request["payload"] = {}
     owner = {"pid": 10, "creation": "owner"}
     worker = {"pid": 11, "creation": "child"}
-    job = dict(observed=worker, request_sha256="c" * 64, snapshot={},
-               directory=tmp_path, acknowledged=False)
-    handshake = dict(worker_identity=worker, run_id="d" * 32,
-                     request_id=request["request_id"], request_sha256="c" * 64, snapshot={})
+    job = dict(
+        observed=worker,
+        request_sha256="c" * 64,
+        snapshot={},
+        directory=tmp_path,
+        acknowledged=False,
+    )
+    handshake = dict(
+        worker_identity=worker,
+        run_id="d" * 32,
+        request_id=request["request_id"],
+        request_sha256="c" * 64,
+        snapshot={},
+    )
     monkeypatch.setattr(module, "_coordinator_read", lambda *args: handshake)
     monkeypatch.setattr(module, "_coordinator_preflight", lambda *args: {})
     monkeypatch.setattr(module, "_coordinator_live_lease", lambda *args: None)
     monkeypatch.setattr(assembly, "_process_creation_identity", lambda *args: "child")
     context = {"store": SimpleNamespace(bind=lambda *args: {"run_id": "d" * 32})}
+
     def publish(*args):
         assert job["acknowledged"] is True
         assert job["run_id"] == "d" * 32
+
     monkeypatch.setattr(module, "_coordinator_write", publish)
     assert module._coordinator_handshake(tmp_path, request, owner, context, job) is True
 
 
-def test_coordinator_reported_resource_cleanup_failure_never_completes(tmp_path, monkeypatch):
+def test_coordinator_reported_resource_cleanup_failure_never_completes(
+    tmp_path, monkeypatch
+):
     import factoryline.cli_deep_audit as module
     import factoryline.deep_audit as audit
 
-    job = dict(run_id="a" * 32, directory=tmp_path,
-               cleanup_confirmed=True, acknowledged=True)
-    monkeypatch.setattr(module, "_coordinator_read", lambda *args: {
-        "run_id": job["run_id"], "analysis_complete": False,
-    })
-    monkeypatch.setattr(audit, "deep_run_status", lambda *args: {
-        "analysis_complete": False, "gaps": [{"code": "E_CONTAINER_CLEANUP"}],
-    })
+    job = dict(
+        run_id="a" * 32, directory=tmp_path, cleanup_confirmed=True, acknowledged=True
+    )
+    monkeypatch.setattr(
+        module,
+        "_coordinator_read",
+        lambda *args: {
+            "run_id": job["run_id"],
+            "analysis_complete": False,
+        },
+    )
+    monkeypatch.setattr(
+        audit,
+        "deep_run_status",
+        lambda *args: {
+            "analysis_complete": False,
+            "gaps": [{"code": "E_CONTAINER_CLEANUP"}],
+        },
+    )
     with pytest.raises(ValueError, match="resource cleanup"):
         module._coordinator_completed(tmp_path, job, {"exit_code": 0})
 
@@ -544,7 +568,7 @@ def test_coordinator_native_restart_reconciles_expired_lease(tmp_path, phase):
         pytest.skip("native process identity unsupported")
     package = str(Path(module.__file__).resolve().parent.parent)
     nonce, request_id = "a" * 32, "e" * 32
-    bootstrap = r'''import io,json,sys,time
+    bootstrap = r"""import io,json,sys,time
 sys.path.insert(0,sys.argv[1])
 from factoryline.cli_deep_audit import _coordinator_owner,serve_deep_audit_coordinator
 from factoryline.agentic_control import AgenticControlError,CoordinatorRequestStore
@@ -566,9 +590,12 @@ else:
  except AgenticControlError as error: code=error.code
  else: code="unexpected-start"
  print(json.dumps({"code":code,"owner":owner,"forbidden_calls":events}),flush=True)
-'''
+"""
     observed = []
-    def started(row): observed.append(dict(row))
+
+    def started(row):
+        observed.append(dict(row))
+
     def launch(mode):
         return run_cli_detailed(
             sys.executable,
@@ -579,15 +606,20 @@ else:
         )
 
     original = launch("write")
-    assert original["ok"] and original["cleanup_confirmed"] and original["streams_closed"]
+    assert (
+        original["ok"] and original["cleanup_confirmed"] and original["streams_closed"]
+    )
     written = json.loads(original["stdout"].decode("utf-8"))
     old_owner = written["owner"]
     assert observed[-1]["pid"] == old_owner["pid"]
     assert observed[-1]["creation"] == old_owner["creation"]
     store = CoordinatorRequestStore(tmp_path)
+
     def metadata_rows():
         snapshot = read_run_json(store.path.parent, store.path.name)
-        return {key: store._decode(key, value) for key, value in snapshot["rows"].items()}
+        return {
+            key: store._decode(key, value) for key, value in snapshot["rows"].items()
+        }
 
     metadata = metadata_rows()
     lease_before = metadata["lease"]
@@ -603,19 +635,28 @@ else:
     while time.monotonic() < written["expires_monotonic"]:
         time.sleep(max(0, min(0.02, written["expires_monotonic"] - time.monotonic())))
     restarted = launch("restart")
-    assert restarted["ok"] and restarted["cleanup_confirmed"] and restarted["streams_closed"]
+    assert (
+        restarted["ok"]
+        and restarted["cleanup_confirmed"]
+        and restarted["streams_closed"]
+    )
     result = json.loads(restarted["stdout"].decode("utf-8"))
     new_owner = result["owner"]
     assert result["code"] == "E_COORDINATOR_OWNER"
     assert result["forbidden_calls"] == []
     assert observed[-1]["pid"] == new_owner["pid"]
     assert observed[-1]["creation"] == new_owner["creation"]
-    assert (new_owner["pid"], new_owner["creation"]) != (old_owner["pid"], old_owner["creation"])
+    assert (new_owner["pid"], new_owner["creation"]) != (
+        old_owner["pid"],
+        old_owner["creation"],
+    )
 
     after = metadata_rows()
     assert after["lease"] == lease_before
     if phase == "admitted":
-        assert after[key] == row_before | dict(state="INCOMPLETE", cleanup_confirmed=False)
+        assert after[key] == row_before | dict(
+            state="INCOMPLETE", cleanup_confirmed=False
+        )
         assert after[key]["owner_identity"] == old_owner
         assert after[key]["run_id"] is None
     else:

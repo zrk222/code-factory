@@ -767,11 +767,18 @@ def test_ci_windows_shards_keep_both_profiles_and_existing_bounds() -> None:
 
     jobs = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())["jobs"]
     for version in ("3.11", "3.12"):
-        assert {"os": "windows-latest", "python": version} in jobs["test"]["strategy"]["matrix"]["exclude"]
+        assert {"os": "windows-latest", "python": version} in jobs["test"]["strategy"][
+            "matrix"
+        ]["exclude"]
     shards = jobs["windows-shards"]
-    assert shards["strategy"]["matrix"] == {"python": ["3.11", "3.12"], "shard": [1, 2, 3, 4]}
+    assert shards["strategy"]["matrix"] == {
+        "python": ["3.11", "3.12"],
+        "shard": [1, 2, 3, 4],
+    }
     assert shards["timeout-minutes"] == 20
-    command = next(step["run"] for step in shards["steps"] if step.get("name") == "Test shard")
+    command = next(
+        step["run"] for step in shards["steps"] if step.get("name") == "Test shard"
+    )
     assert "--factory-ci-shard=${{ matrix.shard }}/4" in command
     assert "--deselect" not in command and "--ignore" not in command
     gate = jobs["windows-test"]
@@ -785,12 +792,17 @@ def test_ci_shards_assign_every_node_exactly_once() -> None:
     from types import SimpleNamespace
     from conftest import pytest_collection_modifyitems
 
-    nodes = [SimpleNamespace(nodeid=f"tests/test_{index}.py::test_case[boundary-{index}]") for index in range(513)]
+    nodes = [
+        SimpleNamespace(nodeid=f"tests/test_{index}.py::test_case[boundary-{index}]")
+        for index in range(513)
+    ]
     partitions = []
     for number in range(1, 5):
         selected = list(nodes)
-        config = SimpleNamespace(getoption=lambda key, n=number: (n, 4),
-                                 hook=SimpleNamespace(pytest_deselected=lambda **kwargs: None))
+        config = SimpleNamespace(
+            getoption=lambda key, n=number: (n, 4),
+            hook=SimpleNamespace(pytest_deselected=lambda **kwargs: None),
+        )
         pytest_collection_modifyitems(config, selected)
         partitions.append({item.nodeid for item in selected})
     assert all(partitions)
