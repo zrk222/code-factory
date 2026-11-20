@@ -54,8 +54,13 @@ spec_markdown: |
   functions/classes/defaults, executable bytes and per-job package/source hashes;
   the worker-generated UUID, observed PID creation identity, workspace, nonce and
   request hash must match before ACK permits native audit execution. Cheap native
-  identity/lease checks run on heartbeats; full package hashing runs at admission
-  and handshake, not on every heartbeat. Leases are rechecked after preflight.
+  identity/lease checks run on heartbeats and reuse the lease decoded from
+  identical ledger bytes without locking; any byte change forces the locked read.
+  Per-request owner checks reuse the owner's loaded-runtime hash. Full package and
+  runtime hashing runs at admission and handshake, not on every heartbeat. Full
+  source inventory runs at admission and in the worker's post-ACK gate; the
+  worker-start and handshake checks compare signed/package/runtime identity
+  without re-inventory. Leases are rechecked after preflight.
   Preflight validates the pinned manifest and signed authorization before source
   inventory can start read-only Git subprocesses. It then binds the same pinned
   plan against actual inventory and rejects plan drift, preserving both gates.
@@ -80,12 +85,19 @@ spec_markdown: |
   Native Windows idle, partial JSON and partial UTF-8 tests hold the pipe open and
   prove expiry without audit launch. This does not bound blocked output writes,
   stalled regular-file I/O or interference from another descriptor consumer.
+  Foreground serve renews its exact live lease while an audit thread runs or a
+  request is accepted, so audits are bounded by heartbeat lease checks and a
+  12-hour backstop rather than the lease left at launch; an idle session still
+  expires one TTL after its last renewal. Settled history of other sessions is
+  compacted when a new session acquires a lease beyond 256 retained requests.
   Full native analyzer success, Linux coordinator lifecycle, restart recovery
-  and the eleven-pair performance experiment remain unverified.
+  beyond proven-exited processes and the eleven-pair performance experiment
+  remain unverified.
   Its APIs are:
   - admit(session_nonce, request_id, request_sha256, owner_identity): atomically
     require the persisted owner, key by nonce:request_id, create ADMITTED with
-    run_id/worker_identity/cleanup_confirmed null, and return created=true.
+    run_id/worker_identity/launch_identity/cleanup_confirmed null, and return
+    created=true.
     Equal digest and owner return the original row with created=false; changed
     bytes or ownership reject. Another active or cleanup-unconfirmed row is BUSY.
   - read(session_nonce, request_id): return the hash/key-checked metadata or reject.
@@ -98,7 +110,12 @@ spec_markdown: |
     Repeated identical terminal metadata is idempotent; terminal changes reject.
   - abandon(session_nonce, request_id, request_sha256, cleanup_confirmed): close
     only an unbound ADMITTED request as INCOMPLETE without inventing a UUID.
-    Unconfirmed cleanup prevents subsequent admission; no automatic replay.
+    Unconfirmed cleanup prevents subsequent admission until an injected
+    read-only process_absent observer proves the recorded owner exited and any
+    recorded launch/worker child exited; no automatic replay.
+  - launched(session_nonce, request_id, request_sha256, launch_identity): record
+    exactly the observed child pid/creation once, before monitoring; bind then
+    requires the worker identity to match it.
   - acquire(owner_identity, lease_seconds, now_monotonic): create or renew only
     the exact live owner. TTL must be an integer 1..3600; time must be finite
     and nonnegative. An expired lease cannot renew, even for the same owner.
@@ -109,8 +126,10 @@ spec_markdown: |
     metadata snapshot. No lease or a live lease changes no row. For an expired
     lease, mark only its owner-bound ADMITTED/RUNNING requests INCOMPLETE with
     cleanup_confirmed=false, preserving every identity and UUID. Retain the
-    lease; no takeover, retry, signal or admission follows. Repetition changes
-    no terminal row. Return observed/reconciled counts and before/after hashes.
+    lease unless the observer proves its owner process exited, then retire it;
+    no takeover of a live owner, retry, signal or admission follows. Repetition
+    changes no terminal row. Return observed/reconciled counts, retired_lease
+    and before/after hashes.
   Foreground serve uses default TTL 300 when lease_seconds is None, requires a
   native creation identity, and reads one UTF-8 JSON object per line up to 65536
   bytes. Unknown/duplicate fields, invalid version/IDs, wrong canonical workspace
