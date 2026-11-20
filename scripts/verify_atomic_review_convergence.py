@@ -54,6 +54,10 @@ ASSERTIONS = {
         "test_graph_ops_reads_conventional_latest_receipt",
     ),
     "validation": (
+        "test_review_input_byte_boundary",
+        "test_review_contract_count_boundaries",
+        "test_review_round_total_finding_boundary",
+        "test_review_unknown_envelope_fields_reject_without_receipt",
         "test_missing_duplicated_unknown_or_malformed_cells_are_indeterminate",
         "test_duplicate_json_fields_are_rejected",
         "test_verification_assertions_require_exact_module_and_passing_case",

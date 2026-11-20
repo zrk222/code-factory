@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from hashlib import sha256
-from http.client import HTTPConnection
+from http.client import HTTPConnection, HTTPResponse
 import json
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 
 import pytest
 
@@ -136,7 +136,12 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
     tmp_path: Path,
 ) -> None:
     token = "local-test-token-0123456789abcdef"
-    server = create_streamable_http_server(tmp_path, bearer_token=token, port=0)
+    server = create_streamable_http_server(
+        tmp_path,
+        bearer_token=token,
+        port=0,
+        allowed_origins=("http://127.0.0.1:PORT", "http://localhost:{port}"),
+    )
     worker = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
     worker.start()
     port = server.server_address[1]
@@ -148,24 +153,26 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
         auth: str | None = token,
         origin: str | None = None,
         method_header: str | None = None,
+        protocol: str = MCP_STREAMABLE_HTTP_VERSION,
+        include_metadata: bool = True,
         transfer_encoding: bool = False,
     ) -> tuple[int, dict[str, object] | None]:
+        body_params = dict(params or {})
+        if include_metadata:
+            body_params["_meta"] = {
+                "io.modelcontextprotocol/protocolVersion": protocol,
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
         payload = {
             "jsonrpc": "2.0",
             "id": "http-1",
             "method": method,
-            "params": {
-                **(params or {}),
-                "_meta": {
-                    "io.modelcontextprotocol/protocolVersion": MCP_STREAMABLE_HTTP_VERSION,
-                    "io.modelcontextprotocol/clientCapabilities": {},
-                },
-            },
+            "params": body_params,
         }
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
-            "MCP-Protocol-Version": MCP_STREAMABLE_HTTP_VERSION,
+            "MCP-Protocol-Version": protocol,
             "Mcp-Method": method_header or method,
             "Host": f"127.0.0.1:{port}",
         }
@@ -196,7 +203,9 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
             connection.close()
 
     try:
-        status, discovery = request("server/discover")
+        status, discovery = request(
+            "server/discover", origin=f"http://127.0.0.1:{port}"
+        )
         assert status == 200
         assert discovery is not None
         assert discovery["result"]["resultType"] == "complete"
@@ -204,7 +213,11 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
         assert discovery["result"]["cacheScope"] == "private"
         assert discovery["result"]["ttlMs"] == 0
 
-        status, tool_list = request("tools/list")
+        status, initialized = request("initialize", origin=f"http://localhost:{port}")
+        assert status == 200 and initialized is not None
+        advertised = initialized["result"]["protocolVersion"]
+        assert advertised == MCP_STREAMABLE_HTTP_VERSION
+        status, tool_list = request("tools/list", protocol=advertised)
         assert status == 200
         assert tool_list is not None
         assert tool_list["result"]["resultType"] == "complete"
@@ -219,16 +232,246 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
 
         assert request("server/discover", auth="wrong-token")[0] == 401
         assert request("server/discover", origin="https://attacker.example")[0] == 403
+        assert request("server/discover", origin="http://127.0.0.1:PORT")[0] == 403
         assert request("server/discover", transfer_encoding=True)[0] == 400
+        status, missing = request("tools/list", include_metadata=False)
+        assert status == 400 and missing is not None
+        assert missing["error"]["data"]["marker"] == "MCP_HTTP_META_MISSING"
         status, mismatch = request("tools/list", method_header="resources/list")
         assert status == 400
         assert mismatch is not None
         assert mismatch["error"]["code"] == -32020
+        assert mismatch["error"]["data"]["marker"] == "MCP_HTTP_HEADER_MISMATCH"
     finally:
         server.shutdown()
         server.server_close()
         worker.join(timeout=3)
     assert not worker.is_alive()
+
+
+def _probe_http_response(
+    connection, client, method, path, payload, headers, status, rejected, body_sent
+):
+    """Send unchanged request bytes through one declared transport profile."""
+    if client == "standard":
+        connection.request(method, path, payload, headers)
+        return connection.getresponse()
+    encoded = payload.encode("utf-8")
+    headers["Content-Length"] = str(len(encoded))
+    frame = f"{method} {path} HTTP/1.1\r\n" + "".join(
+        f"{name}: {value}\r\n" for name, value in headers.items()
+    )
+    connection.connect()
+    prefix = frame.encode("ascii") + b"\r\n"
+    if client == "full_frame":
+        connection.sock.sendall(prefix + encoded)
+    else:
+        connection.sock.sendall(prefix)
+        if status == 415:
+            assert rejected.wait(3), "server did not reject headers before body"
+        connection.sock.sendall(encoded)
+        body_sent.set()
+    response = HTTPResponse(connection.sock)
+    response.begin()
+    return response
+
+
+@pytest.mark.parametrize(
+    "method,path,body,override,status",
+    [
+        ("POST", "/mcp", None, {}, 200),
+        ("POST", "/mcp", None, {"Authorization": ""}, 401),
+        ("POST", "/mcp", None, {"Authorization": "Bearer " + "x" * 40}, 401),
+        ("POST", "/mcp", None, {"Host": "evil.example"}, 403),
+        ("POST", "/mcp", None, {"Origin": "http://evil.example"}, 403),
+        ("GET", "/mcp", None, {}, 405),
+        ("POST", "/other", None, {}, 404),
+        ("POST", "/mcp", "{", {}, 400),
+        ("POST", "/mcp", "[]", {}, 400),
+        ("POST", "/mcp", None, {"Content-Type": "text/plain"}, 415),
+        ("POST", "/mcp", None, {"Mcp-Method": "tools/list"}, 400),
+        ("POST", "/mcp", None, {"MCP-Protocol-Version": "2024-11-05"}, 400),
+    ],
+)
+@pytest.mark.parametrize("client", ["standard", "full_frame", "split"])
+def test_redteam_http_probe_guards(
+    tmp_path, monkeypatch, method, path, body, override, status, client
+):
+    """Keep the manual probe's unique framing controls in the existing test owner."""
+    from factoryline.mcp import _McpHttpHandler
+
+    rejected = Event()
+    body_sent = Event()
+    drained = []
+    original_headers = _McpHttpHandler._headers_valid
+    original_drain = _McpHttpHandler._drain_body
+
+    def headers_valid(handler, content_lengths):
+        result = original_headers(handler, content_lengths)
+        if status == 415:
+            rejected.set()
+            if client == "split":
+                assert body_sent.wait(3), "split client did not send its bounded body"
+        return result
+
+    def drain_body(handler):
+        class CountedReader:
+            def read(self, size):
+                data = reader.read(size)
+                drained.append(len(data))
+                return data
+
+            def __getattr__(self, name):
+                return getattr(reader, name)
+
+        reader = handler.rfile
+        handler.rfile = CountedReader()
+        original_drain(handler)
+
+    monkeypatch.setattr(_McpHttpHandler, "_headers_valid", headers_valid)
+    monkeypatch.setattr(_McpHttpHandler, "_drain_body", drain_body)
+    if status == 415:
+        monkeypatch.setattr(
+            _McpHttpHandler,
+            "_read_rpc",
+            lambda *args: pytest.fail(
+                "rejected headers must not parse or dispatch RPC"
+            ),
+        )
+    token = "local-test-token-0123456789abcdef"
+    server = create_streamable_http_server(tmp_path, bearer_token=token, port=0)
+    worker = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+    worker.start()
+    port = server.server_address[1]
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": MCP_STREAMABLE_HTTP_VERSION,
+        "Mcp-Method": "initialize",
+        "Host": f"127.0.0.1:{port}",
+    }
+    headers.update(override)
+    payload = (
+        body
+        if body is not None
+        else json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": MCP_STREAMABLE_HTTP_VERSION,
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    }
+                },
+            }
+        )
+    )
+    connection = HTTPConnection("127.0.0.1", port, timeout=3)
+    try:
+        encoded = payload.encode("utf-8")
+        response = _probe_http_response(
+            connection,
+            client,
+            method,
+            path,
+            payload,
+            headers,
+            status,
+            rejected,
+            body_sent,
+        )
+        assert response.status == status
+        response.read()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=3)
+    assert not worker.is_alive()
+    if status == 415:
+        assert drained == [len(encoded)], "rejected body must be drained before close"
+
+
+@pytest.mark.parametrize(
+    "lengths,expected",
+    [
+        (["4"], [4]),
+        (["65536"], [65536]),
+        ([], []),
+        (["bad"], []),
+        (["0"], []),
+        (["-1"], []),
+        (["65537"], []),
+        (["4", "4"], []),
+    ],
+)
+def test_rejected_header_drain_preserves_existing_bounds(lengths, expected):
+    from http.client import HTTPMessage
+    from types import SimpleNamespace
+    from factoryline.mcp import _McpHttpHandler
+
+    headers = HTTPMessage()
+    for length in lengths:
+        headers.add_header("Content-Length", length)
+    reads, timeouts = [], []
+    handler = SimpleNamespace(
+        headers=headers,
+        connection=SimpleNamespace(settimeout=timeouts.append),
+        rfile=SimpleNamespace(read=reads.append),
+    )
+    _McpHttpHandler._drain_body(handler)
+    assert reads == expected
+    assert timeouts == ([2.0] if expected else [])
+
+
+def test_http_startup_prints_only_resolved_loopback_origins(
+    tmp_path, monkeypatch, capsys
+):
+    from http.server import HTTPServer
+    from urllib.parse import urlsplit
+
+    def stop_after_bind(_server, **_options):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(HTTPServer, "serve_forever", stop_after_bind)
+    token = "fixture-token-not-for-logging-123456"
+    sensitive_origin = "https://example.test/?credential=fixture-secret"
+    monkeypatch.setenv("FACTORY_MCP_HTTP_TOKEN", token)
+    assert (
+        main(
+            [
+                "mcp",
+                "serve-http",
+                "--root",
+                str(tmp_path),
+                "--port",
+                "0",
+                "--allow-origin",
+                "http://localhost:{port}",
+                "--allow-origin",
+                sensitive_origin,
+            ]
+        )
+        == 0
+    )
+    lines = capsys.readouterr().err.splitlines()
+    address = next(
+        line.split("listening at ", 1)[1] for line in lines if "listening at " in line
+    )
+    port = urlsplit(address).port
+    assert port > 0
+    resolved = next(
+        line.split(": ", 1)[1]
+        for line in lines
+        if line.startswith("Resolved loopback origins: ")
+    )
+    assert json.loads(resolved) == [f"http://localhost:{port}"]
+    assert not any(
+        secret in line for line in lines for secret in (token, "fixture-secret")
+    )
 
 
 def test_oidc_bearer_validator_binds_exact_tenant_and_group(
