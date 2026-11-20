@@ -3,13 +3,22 @@ rules:
     message: subprocess invocation enables shell parsing
     severity: WARNING
     languages: [python]
+    options:
+      symbolic_propagation: true
     patterns:
-      - pattern: subprocess.$FUNC(..., shell=True, ...)
+      # Only commands assembled from a non-literal operand can carry injected shell
+      # syntax; fixed literals and whole-command passthrough wrappers are not reported.
+      - pattern-either:
+          - pattern: subprocess.$FUNC($TEMPLATE % $VALUE, ..., shell=True, ...)
+          - pattern: subprocess.$FUNC($TEMPLATE.format(...), ..., shell=True, ...)
+          - pattern: subprocess.$FUNC(f"...", ..., shell=True, ...)
+          - pattern: subprocess.$FUNC($LEFT + $RIGHT, ..., shell=True, ...)
       - metavariable-regex:
           metavariable: $FUNC
           regex: ^(run|Popen|call|check_call|check_output)$
-      # A fixed literal command has no injectable operand; shell=True alone is not CWE-78.
       - pattern-not: subprocess.$FUNC("...", ...)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -31,6 +40,8 @@ rules:
       - patterns:
           - pattern: subprocess.$FUNC($VALUE, ..., shell=True, ...)
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: HIGH
@@ -49,6 +60,8 @@ rules:
       - patterns:
           - pattern: '$DB.execute($QUERY, ...)'
           - focus-metavariable: $QUERY
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: HIGH
@@ -61,6 +74,8 @@ rules:
       - pattern: pickle.loads(...)
       - pattern: pickle.load(...)
       - pattern: yaml.unsafe_load(...)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -69,7 +84,25 @@ rules:
     message: TLS certificate validation is disabled; enable verification and configure trusted certificates.
     severity: WARNING
     languages: [python]
-    pattern: requests.$METHOD(..., verify=False, ...)
+    patterns:
+      - pattern: requests.$METHOD(..., verify=False, ...)
+      # Report only connections that carry credentials or session material;
+      # unauthenticated probes of public endpoints are not a credential exposure.
+      - pattern-either:
+          - pattern: requests.$METHOD(..., auth=$CREDENTIAL, ...)
+          - pattern: requests.$METHOD(..., cert=$CREDENTIAL, ...)
+          - pattern: requests.$METHOD(..., cookies=$CREDENTIAL, ...)
+          - patterns:
+              - pattern-inside: |
+                  def $FUNCTION(...):
+                    $...BODY
+              - metavariable-pattern:
+                  metavariable: $...BODY
+                  language: generic
+                  patterns:
+                    - pattern-regex: (?i)(authorization|bearer|token|passw|secret|api[_-]?key|cookie|credential|\bauth\s*=)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: HIGH
@@ -89,6 +122,8 @@ rules:
               - pattern: child_process.exec($COMMAND, ...)
               - pattern: child_process.execSync($COMMAND, ...)
           - focus-metavariable: $COMMAND
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -98,6 +133,9 @@ rules:
     severity: ERROR
     languages: [javascript, typescript]
     mode: taint
+    options:
+      # Query builders returning placeholder SQL are not assumed to embed request text.
+      taint_assume_safe_functions: true
     pattern-sources:
       - pattern: '$REQ.query'
       - pattern: '$REQ.body'
@@ -106,6 +144,8 @@ rules:
       - patterns:
           - pattern: '$DB.query($QUERY, ...)'
           - focus-metavariable: $QUERY
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -133,6 +173,8 @@ rules:
               - pattern: '$RES.send($REQ.$SOURCE[$FIELD])'
           - pattern: '$RES.send($HTML)'
           - focus-metavariable: $HTML
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -173,6 +215,8 @@ rules:
       - patterns:
           - pattern: Path($PATH).open(...)
           - focus-metavariable: $PATH
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -200,6 +244,8 @@ rules:
       - patterns:
           - pattern: fs.createReadStream($PATH, ...)
           - focus-metavariable: $PATH
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -219,6 +265,10 @@ rules:
         exact: true
       - pattern: '$_COOKIE[...]'
         exact: true
+    pattern-sanitizers:
+      - pattern: (int) $VALUE
+      - pattern: (integer) $VALUE
+      - pattern: intval(...)
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -243,6 +293,8 @@ rules:
               - pattern: 'popen(..., command: $VALUE, ...)'
               - pattern: '\popen(..., command: $VALUE, ...)'
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -262,6 +314,10 @@ rules:
         exact: true
       - pattern: '$_COOKIE[...]'
         exact: true
+    pattern-sanitizers:
+      - pattern: (int) $VALUE
+      - pattern: (integer) $VALUE
+      - pattern: intval(...)
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -298,6 +354,8 @@ rules:
               - pattern: '\pg_query_params(connection: $VALUE, query: $PARAMS)'
               - pattern: '\pg_query_params($VALUE, query: $PARAMS)'
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -317,6 +375,10 @@ rules:
         exact: true
       - pattern: '$_COOKIE[...]'
         exact: true
+    pattern-sanitizers:
+      - pattern: (int) $VALUE
+      - pattern: (integer) $VALUE
+      - pattern: intval(...)
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -337,6 +399,8 @@ rules:
               - pattern: 'file_put_contents(..., filename: $VALUE, ...)'
               - pattern: '\file_put_contents(..., filename: $VALUE, ...)'
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -356,6 +420,10 @@ rules:
         exact: true
       - pattern: '$_COOKIE[...]'
         exact: true
+    pattern-sanitizers:
+      - pattern: (int) $VALUE
+      - pattern: (integer) $VALUE
+      - pattern: intval(...)
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -364,6 +432,8 @@ rules:
               - pattern: require $VALUE
               - pattern: require_once $VALUE
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -383,6 +453,10 @@ rules:
         exact: true
       - pattern: '$_COOKIE[...]'
         exact: true
+    pattern-sanitizers:
+      - pattern: (int) $VALUE
+      - pattern: (integer) $VALUE
+      - pattern: intval(...)
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -391,6 +465,8 @@ rules:
               - pattern: 'unserialize(..., data: $VALUE, ...)'
               - pattern: '\unserialize(..., data: $VALUE, ...)'
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -400,7 +476,25 @@ rules:
     message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
     severity: WARNING
     languages: [go]
-    pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+    patterns:
+      - pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+      # Report only functions whose traffic carries credentials or session material.
+      - pattern-either:
+          - pattern-inside: |
+              func $FUNCTION(...) { $...BODY }
+          - pattern-inside: |
+              func $FUNCTION(...) $RESULT { $...BODY }
+          - pattern-inside: |
+              func ($RECEIVER $TYPE) $FUNCTION(...) { $...BODY }
+          - pattern-inside: |
+              func ($RECEIVER $TYPE) $FUNCTION(...) $RESULT { $...BODY }
+      - metavariable-pattern:
+          metavariable: $...BODY
+          language: generic
+          patterns:
+            - pattern-regex: (?i)(authorization|bearer|setbasicauth|token|passw|secret|api[_-]?key|cookie|credential)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -411,6 +505,8 @@ rules:
     severity: WARNING
     languages: [rust]
     pattern: "reqwest::Client::builder().danger_accept_invalid_certs(true)"
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -420,7 +516,19 @@ rules:
     message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
     severity: WARNING
     languages: [java]
-    pattern: "javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(($HOST, $SESSION) -> true)"
+    patterns:
+      - pattern: "javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(($HOST, $SESSION) -> true)"
+      - pattern-not-inside: |
+          @Profile("test")
+          $RET $METHOD(...) { ... }
+      - pattern-not-inside: |
+          @Profile("dev")
+          $RET $METHOD(...) { ... }
+      - pattern-not-inside: |
+          @Profile("local")
+          $RET $METHOD(...) { ... }
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -431,6 +539,8 @@ rules:
     severity: WARNING
     languages: [c, cpp]
     pattern: "gets($BUFFER)"
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -441,6 +551,8 @@ rules:
     severity: WARNING
     languages: [csharp]
     pattern: "System.Net.ServicePointManager.ServerCertificateValidationCallback = ($SENDER, $CERT, $CHAIN, $ERRORS) => true"
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -451,6 +563,8 @@ rules:
     severity: WARNING
     languages: [ruby]
     pattern: "OpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_NONE"
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -461,6 +575,8 @@ rules:
     severity: WARNING
     languages: [swift]
     pattern: "SecTrustSetExceptions($TRUST, SecTrustCopyExceptions($TRUST))"
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -483,6 +599,8 @@ rules:
       - patterns:
           - pattern: "exec.Command(\"/bin/sh\", \"-c\", $VALUE, ...)"
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -503,6 +621,8 @@ rules:
           - pattern-inside: "func $F(..., $DB *sql.DB, ...) { ... }"
           - pattern: "$DB.Query($VALUE, ...)"
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -525,6 +645,8 @@ rules:
       - patterns:
           - pattern: "new java.lang.ProcessBuilder(\"/bin/sh\", \"-c\", $VALUE)"
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -547,6 +669,8 @@ rules:
       - patterns:
           - pattern: "(java.sql.Statement $DB).execute($VALUE)"
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -566,6 +690,8 @@ rules:
       - patterns:
           - pattern: "System.Diagnostics.Process.Start(\"/bin/sh\", \"-c \" + $VALUE)"
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -585,6 +711,8 @@ rules:
       - patterns:
           - pattern: "new System.Data.SqlClient.SqlCommand($VALUE, ...)"
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -604,6 +732,8 @@ rules:
       - patterns:
           - pattern: "Kernel.system($VALUE)"
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -623,6 +753,8 @@ rules:
       - patterns:
           - pattern: "ActiveRecord::Base.connection.execute($VALUE)"
           - focus-metavariable: $VALUE
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go"]
     metadata:
       category: security
       confidence: MEDIUM

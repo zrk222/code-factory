@@ -135,3 +135,9 @@ function queuedObjectSafe(req, res, queue) {
   // ok: javascript.request-html-injection
   res.send(queue[JSON.stringify(req.query)]);
 }
+
+function sqlHelperPlaceholdersSafe(req, db, service) {
+  const statement = service.listCommits(req.query.start, req.query.end);
+  // ok: javascript.request-sql-injection
+  db.query(statement.sql, statement.params);
+}

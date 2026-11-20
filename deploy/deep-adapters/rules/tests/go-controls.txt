@@ -1,0 +1,37 @@
+package controls
+
+import (
+	"crypto/tls"
+	"net/http"
+)
+
+func fetchWithToken(url string, token string) (*http.Response, error) {
+	client := &http.Client{Transport: &http.Transport{
+		// ruleid: go.disabled-tls-verification
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}}
+	request, _ := http.NewRequest("GET", url, nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	return client.Do(request)
+}
+
+type Probe struct{}
+
+func (p Probe) Handshake(address string) error {
+	// ok: go.disabled-tls-verification
+	connection, err := tls.Dial("tcp", address, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		return err
+	}
+	return connection.Close()
+}
+
+func (p Probe) Login(address string, password string) error {
+	// ruleid: go.disabled-tls-verification
+	connection, err := tls.Dial("tcp", address, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		return err
+	}
+	_, err = connection.Write([]byte("AUTH " + password))
+	return err
+}

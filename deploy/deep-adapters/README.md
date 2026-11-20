@@ -135,7 +135,17 @@ models or the full CodeQL lane. HTML `send` findings are limited to template
 literals, string concatenation and direct request values; objects serialized as
 JSON, binary buffers and helper results are left to review and the CodeQL lane,
 and findings still require checking the response content type. Shell-enabled
-`subprocess` calls with a fixed literal command are not reported.
+`subprocess` calls are reported only when the command string is built from a
+non-literal operand (`%`, `.format`, f-strings or concatenation); whole-command
+request passthrough is reported by the request taint rule. Python `verify=False`
+and Go `InsecureSkipVerify` are reported only where the call or enclosing
+function carries credentials or session material, so unauthenticated probes are
+not reported. Every rule skips tests, fixtures, exploit or CVE proof-of-concept
+corpora and generated code; PHP request rules treat integer casts as
+sanitizers, and the JavaScript SQL rule does not assume helper return values
+carry request text. Copy `rules/tests/php-controls.php` to
+`semgrep-pattern-limited.php` and `rules/tests/go-controls.txt` to
+`semgrep-pattern-limited.go` when running the native rule tests.
 
 Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,

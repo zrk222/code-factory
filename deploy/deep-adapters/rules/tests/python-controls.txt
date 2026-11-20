@@ -13,7 +13,8 @@ def command_bad(request):
 
 def command_shell_bad(request):
     value = request.form.get("command")
-    # ruleid: python.request-command-injection, python.subprocess-shell-true
+    # Whole-command request passthrough is reported by the request taint rule.
+    # ruleid: python.request-command-injection
     subprocess.run(value, shell=True)
 
 def command_safe(request):
@@ -40,9 +41,18 @@ def deserialization_safe(raw):
     # ok: python.unsafe-deserialization
     return yaml.safe_load(raw)
 
-def tls_bad():
+def tls_bad(token):
+    headers = {"Authorization": "Bearer " + token}
     # ruleid: python.disabled-tls-verification
-    return requests.get("https://example.test", verify=False)
+    return requests.get("https://example.test", headers=headers, verify=False)
+
+def tls_auth_argument_bad(user, secret):
+    # ruleid: python.disabled-tls-verification
+    return requests.post("https://example.test/login", auth=(user, secret), verify=False)
+
+def tls_unauthenticated_probe_safe(url):
+    # ok: python.disabled-tls-verification
+    return requests.head(url, headers={"User-Agent": "probe"}, verify=False)
 
 def tls_safe():
     # ok: python.disabled-tls-verification
@@ -210,3 +220,16 @@ def shell_interpolated_bad(filename):
 def shell_format_bad(name):
     # ruleid: python.subprocess-shell-true
     subprocess.check_output("./main.lua {}".format(name), shell=True)
+
+def shell_fstring_bad(name):
+    # ruleid: python.subprocess-shell-true
+    subprocess.run(f"convert {name} out.png", shell=True)
+
+def shell_concatenated_variable_bad(branch):
+    command = "git checkout " + branch
+    # ruleid: python.subprocess-shell-true
+    subprocess.run(command, shell=True)
+
+def shell_passthrough_wrapper_safe(command):
+    # ok: python.subprocess-shell-true
+    return subprocess.run(command, shell=True, capture_output=True)
