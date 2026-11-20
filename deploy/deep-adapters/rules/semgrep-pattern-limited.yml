@@ -8,6 +8,8 @@ rules:
       - metavariable-regex:
           metavariable: $FUNC
           regex: ^(run|Popen|call|check_call|check_output)$
+      # A fixed literal command has no injectable operand; shell=True alone is not CWE-78.
+      - pattern-not: subprocess.$FUNC("...", ...)
     metadata:
       category: security
       confidence: MEDIUM
@@ -117,8 +119,18 @@ rules:
       - pattern: '$REQ.query'
       - pattern: '$REQ.body'
       - pattern: '$REQ.params'
+    options:
+      symbolic_propagation: true
     pattern-sinks:
+      # Only string-building or direct request values can become HTML markup.
+      # Objects (JSON), buffers and helper results need review in other lanes.
       - patterns:
+          - pattern-either:
+              - pattern: '$RES.send(`...`)'
+              - pattern: '$RES.send("..." + $X)'
+              - pattern: '$RES.send($X + "...")'
+              - pattern: '$RES.send($REQ.$SOURCE.$FIELD)'
+              - pattern: '$RES.send($REQ.$SOURCE[$FIELD])'
           - pattern: '$RES.send($HTML)'
           - focus-metavariable: $HTML
     metadata:

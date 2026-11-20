@@ -189,3 +189,24 @@ def imported_path_open_rebound_safe(request):
     value = "fixed.txt"
     # ok: python.request-path-traversal
     return Path(value).open().read()
+
+def shell_literal_safe():
+    # ok: python.subprocess-shell-true
+    subprocess.call("python3 -m pip install -r requirements.txt", shell=True)
+
+def shell_adjacent_literal_safe():
+    # ok: python.subprocess-shell-true
+    subprocess.check_output(
+        "git --no-pager diff --name-status "
+        "origin/main HEAD",
+        shell=True,
+    )
+
+def shell_interpolated_bad(filename):
+    template = "git log --format='format:%%at' '%s'"
+    # ruleid: python.subprocess-shell-true
+    subprocess.check_output(template % filename, shell=True)
+
+def shell_format_bad(name):
+    # ruleid: python.subprocess-shell-true
+    subprocess.check_output("./main.lua {}".format(name), shell=True)

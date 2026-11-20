@@ -131,8 +131,11 @@ safe YAML loading, enabled TLS, and values rebound to constants have negative
 controls. These controls measure rule behavior on declared fixtures; they do
 not establish accuracy on arbitrary repositories. Aliased imports, custom
 framework sources, escaping helpers and cross-file flows require additional
-models or the full CodeQL lane. HTML `send` findings require checking the
-response content type and output context during review.
+models or the full CodeQL lane. HTML `send` findings are limited to template
+literals, string concatenation and direct request values; objects serialized as
+JSON, binary buffers and helper results are left to review and the CodeQL lane,
+and findings still require checking the response content type. Shell-enabled
+`subprocess` calls with a fixed literal command are not reported.
 
 Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,
