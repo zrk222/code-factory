@@ -685,6 +685,8 @@ def _monitor(child, unit, readers, failed, heartbeat, deadline: float) -> str:
 
 def _observe_started_child(observer, child, unit, readers, outputs) -> None:
     """Share observation only; failures clean up the existing owned launch."""
+    if observer is None:
+        return
     try:
         creation = _process_creation_identity(child.pid)
         observer({"pid": child.pid, "creation": creation})
@@ -750,8 +752,7 @@ def run_cli_detailed(
     ]
     for reader in readers:
         reader.start()
-    if started_observer is not None:
-        _observe_started_child(started_observer, child, unit, readers, outputs)
+    _observe_started_child(started_observer, child, unit, readers, outputs)
     try:
         reason = _measure_call(
             "child_wait",

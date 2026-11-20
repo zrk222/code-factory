@@ -3571,6 +3571,7 @@ class CoordinatorRequestStore:
             )
 
     def admit(self, session_nonce, request_id, request_sha256, owner_identity):
+        """Bind one idle workspace request to its exact persisted coordinator owner."""
         key = self._key(session_nonce, request_id)
         _digest(request_sha256, "request digest")
         owner = self._identity(owner_identity)
@@ -3620,6 +3621,7 @@ class CoordinatorRequestStore:
             )
 
     def abandon(self, session_nonce, request_id, request_sha256, cleanup_confirmed):
+        """Retain an unbound admission as incomplete without authorizing replay."""
         key = self._key(session_nonce, request_id)
         if type(cleanup_confirmed) is not bool:
             raise AgenticControlError(
@@ -3637,6 +3639,7 @@ class CoordinatorRequestStore:
             return row
 
     def read(self, session_nonce, request_id):
+        """Read one hash-verified request with its immutable identity bindings."""
         with self._connect() as db:
             row = self._load(db, self._key(session_nonce, request_id))
             if row is None:
@@ -3644,6 +3647,7 @@ class CoordinatorRequestStore:
             return row
 
     def bind(self, session_nonce, request_id, request_sha256, run_id, worker_identity):
+        """Attach a verified worker-generated run identity exactly once."""
         key, run_id = self._key(session_nonce, request_id), self._id(run_id)
         worker = self._identity(worker_identity)
         if worker["session_nonce"] != session_nonce:
@@ -3679,6 +3683,7 @@ class CoordinatorRequestStore:
         state,
         cleanup_confirmed,
     ):
+        """Record an immutable terminal state while preserving cleanup uncertainty."""
         key, run_id = self._key(session_nonce, request_id), self._id(run_id)
         if (
             state not in {"COMPLETE", "INCOMPLETE"}
@@ -3738,11 +3743,91 @@ class CoordinatorRequestStore:
         return prior
 
     def check_owner(self, owner_identity, now_monotonic):
+        """Require the exact persisted owner and an unexpired monotonic lease."""
         owner, now = self._identity(owner_identity), self._clock(now_monotonic)
         with self._connect() as db:
             return self._owner_lease(self._load(db, "lease"), owner, now)
 
+    @staticmethod
+    def _reconciliation_request(row):
+        fields = {
+            "session_nonce",
+            "request_id",
+            "request_sha256",
+            "owner_identity",
+            "state",
+            "run_id",
+            "worker_identity",
+            "cleanup_confirmed",
+        }
+        if set(row) != fields:
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "invalid request shape"
+            )
+        CoordinatorRequestStore._id(row["session_nonce"])
+        CoordinatorRequestStore._id(row["request_id"])
+        _digest(row["request_sha256"], "request digest")
+        owner = CoordinatorRequestStore._identity(row["owner_identity"])
+        valid = owner["session_nonce"] == row["session_nonce"]
+        valid &= row["state"] in {"ADMITTED", "RUNNING", "COMPLETE", "INCOMPLETE"}
+        valid &= (
+            type(row["cleanup_confirmed"]) is bool or row["cleanup_confirmed"] is None
+        )
+        if row["run_id"] is not None:
+            CoordinatorRequestStore._id(row["run_id"])
+            worker = CoordinatorRequestStore._identity(row["worker_identity"])
+            valid &= all(
+                worker[field] == owner[field]
+                for field in ("session_nonce", "runtime_sha256", "workspace_sha256")
+            )
+        elif row["worker_identity"] is not None or row["state"] == "RUNNING":
+            valid = False
+        if not valid:
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "invalid request binding"
+            )
+        return row
+
+    def reconcile_expired(self, now_monotonic):
+        """Account for interruption, retaining unknown cleanup and blocked ownership."""
+        now = self._clock(now_monotonic)
+        with self._connect() as db:
+            snapshot = db.execute(
+                "SELECT key,payload,sha FROM coordinator_metadata ORDER BY key"
+            ).fetchall()
+            rows = {
+                key: self._decode(key, (payload, seal))
+                for key, payload, seal in snapshot
+            }
+            requests = {
+                key: self._reconciliation_request(row)
+                for key, row in rows.items()
+                if key != "lease"
+            }
+            before = _sha(rows)
+            lease, changed = rows.get("lease"), 0
+            expired = lease is not None and lease["expires_monotonic"] <= now
+            for key, row in requests.items():
+                if (
+                    expired
+                    and row["owner_identity"] == lease["owner_identity"]
+                    and row["state"] in {"ADMITTED", "RUNNING"}
+                ):
+                    row.update(state="INCOMPLETE", cleanup_confirmed=False)
+                    self._save(db, key, row)
+                    changed += 1
+            return dict(
+                state="OBSERVED",
+                phase="expired-run-reconciliation",
+                observed=len(requests),
+                reconciled=changed,
+                before_sha256=before,
+                after_sha256=_sha(rows),
+                authority="none",
+            )
+
     def acquire(self, owner_identity, lease_seconds, now_monotonic):
+        """Acquire or renew a bounded lease without taking over stale ownership."""
         owner = self._identity(owner_identity)
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise AgenticControlError(
@@ -3760,6 +3845,7 @@ class CoordinatorRequestStore:
             return row
 
     def release(self, owner_identity):
+        """Remove only the lease belonging to the exact supplied owner identity."""
         owner = self._identity(owner_identity)
         with self._connect() as db:
             prior = self._load(db, "lease")

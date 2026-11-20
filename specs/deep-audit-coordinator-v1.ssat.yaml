@@ -57,6 +57,12 @@ spec_markdown: |
   - check_owner(owner_identity, now_monotonic): verify the same persisted live
     lease without renewal. release(owner_identity) deletes only that exact
     owner lease. Neither API signals PIDs or takes over ambiguous ownership.
+  - reconcile_expired(now_monotonic): atomically hash/key-check the retained
+    metadata snapshot. No lease or a live lease changes no row. For an expired
+    lease, mark only its owner-bound ADMITTED/RUNNING requests INCOMPLETE with
+    cleanup_confirmed=false, preserving every identity and UUID. Retain the
+    lease; no takeover, retry, signal or admission follows. Repetition changes
+    no terminal row. Return observed/reconciled counts and before/after hashes.
   Foreground serve uses default TTL 300 when lease_seconds is None, requires a
   native creation identity, and reads one UTF-8 JSON object per line up to 65536
   bytes. Unknown/duplicate fields, invalid version/IDs, wrong canonical workspace

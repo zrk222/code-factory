@@ -17,26 +17,15 @@ def serve_deep_audit_coordinator(
     root, lease_seconds, session_nonce, input_stream, output_stream
 ) -> dict:
     """Serve bounded local admission; execution remains gated until worker binding exists."""
-    import os
     import time
     from .agentic_control import CoordinatorRequestStore
-    from .assembly_process import _process_creation_identity
 
     root = Path(root).resolve(strict=True)
     ttl = 300 if lease_seconds is None else lease_seconds
     if type(ttl) is not int or not 1 <= ttl <= 3600:
         raise ValueError("coordinator lease must be an integer from 1 through 3600")
     _coordinator_hex(session_nonce, 32)
-    creation = _process_creation_identity(os.getpid())
-    if creation is None:
-        raise ValueError("coordinator process creation identity is unavailable")
-    owner = dict(
-        pid=os.getpid(),
-        creation=creation,
-        session_nonce=session_nonce,
-        runtime_sha256=_coordinator_runtime_identity(),
-        workspace_sha256=hashlib.sha256(str(root).encode()).hexdigest(),
-    )
+    owner = _coordinator_owner(root, session_nonce)
     store = CoordinatorRequestStore(root)
     store.acquire(owner, ttl, time.monotonic())
     context = dict(store=store, expires_at=time.monotonic() + ttl, stop=False)
@@ -117,15 +106,9 @@ def _coordinator_request(root, request):
         raise ValueError("coordinator request must be an object")
     required = {"version", "operation", "workspace", "session_nonce", "request_id"}
     operation = request.get("operation")
-    allowed = required | ({"payload"} if operation == "audit" else set())
-    if (
-        set(request) != allowed
-        or type(request["version"]) is not int
-        or request["version"] != 1
-    ):
-        raise ValueError("invalid coordinator request schema")
     if not isinstance(operation, str) or operation not in {"audit", "status", "stop"}:
         raise ValueError("unknown coordinator operation")
+    _coordinator_envelope(request, required, operation)
     for key in ("session_nonce", "request_id"):
         _coordinator_hex(request[key], 32)
     if not isinstance(request["workspace"], str) or request["workspace"] != str(
@@ -134,6 +117,16 @@ def _coordinator_request(root, request):
         raise ValueError("coordinator workspace differs")
     if operation == "audit":
         _coordinator_payload(root, request["payload"])
+
+
+def _coordinator_envelope(request, required, operation):
+    allowed = required | ({"payload"} if operation == "audit" else set())
+    if (
+        set(request) != allowed
+        or type(request["version"]) is not int
+        or request["version"] != 1
+    ):
+        raise ValueError("invalid coordinator request schema")
 
 
 def _coordinator_payload(root, payload):
@@ -199,24 +192,32 @@ def _coordinator_constant(value):
     return [type(value).__name__, repr(value)]
 
 
-def _coordinator_check_owner(root, request, owner, context):
+def _coordinator_owner(root, session_nonce):
     import os
-    import time
     from .assembly_process import _process_creation_identity
 
-    expected_workspace = hashlib.sha256(
-        str(Path(root).resolve(strict=True)).encode()
-    ).hexdigest()
+    creation = _process_creation_identity(os.getpid())
+    if creation is None:
+        raise ValueError("coordinator process creation identity is unavailable")
+    return dict(
+        pid=os.getpid(),
+        creation=creation,
+        session_nonce=session_nonce,
+        runtime_sha256=_coordinator_runtime_identity(),
+        workspace_sha256=hashlib.sha256(
+            str(Path(root).resolve(strict=True)).encode()
+        ).hexdigest(),
+    )
+
+
+def _coordinator_check_owner(root, request, owner, context):
+    import time
+
     expiry = context.get("expires_at")
     if type(expiry) not in (int, float) or not 0 < expiry < float("inf"):
         raise ValueError("invalid coordinator expiry")
     if (
-        owner.get("pid") != os.getpid()
-        or owner.get("creation") is None
-        or _process_creation_identity(os.getpid()) != owner["creation"]
-        or owner.get("runtime_sha256") != _coordinator_runtime_identity()
-        or owner.get("workspace_sha256") != expected_workspace
-        or owner.get("session_nonce") != request["session_nonce"]
+        owner != _coordinator_owner(root, request["session_nonce"])
         or context.get("stop") is not False
         or time.monotonic() >= expiry
     ):

@@ -268,6 +268,114 @@ def test_coordinator_store_busy_validates_all_sealed_rows(tmp_path):
         store.admit(nonce, "0" * 32, seal, owner)
 
 
+def _coordinator_metadata_snapshot(store):
+    with store._connect() as db:
+        return db.execute(
+            "SELECT key,payload,sha FROM coordinator_metadata ORDER BY key"
+        ).fetchall()
+
+
+@pytest.mark.parametrize("now,expected", [(10, 0), (309.999, 0), (310, 1), (311, 1)])
+def test_coordinator_reconcile_expiry_endpoint_and_idempotence(tmp_path, now, expected):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 300, 10)
+    original = store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    before = _coordinator_metadata_snapshot(store)
+    result = store.reconcile_expired(now)
+    assert result["reconciled"] == expected
+    assert result["observed"] == 1
+    assert result["phase"] == "expired-run-reconciliation"
+    assert result["authority"] == "none"
+    after = _coordinator_metadata_snapshot(store)
+    if not expected:
+        assert after == before
+        assert result["before_sha256"] == result["after_sha256"]
+    else:
+        current = store.read("a" * 32, "d" * 32)
+        assert current == {
+            key: value for key, value in original.items() if key != "created"
+        } | dict(state="INCOMPLETE", cleanup_confirmed=False)
+        assert before[-1] == after[-1]  # Lease is retained byte-for-byte.
+        with pytest.raises(AgenticControlError):
+            store.acquire(owner, 300, now)
+        repeated = store.reconcile_expired(now + 1)
+        assert repeated["reconciled"] == 0
+        assert repeated["before_sha256"] == result["after_sha256"]
+        assert _coordinator_metadata_snapshot(store) == after
+
+
+def test_coordinator_reconcile_without_lease_is_readonly(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store = CoordinatorRequestStore(tmp_path)
+    before = _coordinator_metadata_snapshot(store)
+    assert store.reconcile_expired(100)["reconciled"] == 0
+    assert _coordinator_metadata_snapshot(store) == before
+
+
+def test_coordinator_reconcile_preserves_bound_worker_and_terminal_other_owner(
+    tmp_path,
+):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 1, 10)
+    store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    bound = store.bind(
+        "a" * 32, "d" * 32, "e" * 64, "f" * 32, _coordinator_identity(pid=456)
+    )
+    terminal = dict(
+        bound, request_id="1" * 32, state="COMPLETE", cleanup_confirmed=True
+    )
+    other = dict(
+        bound,
+        session_nonce="2" * 32,
+        request_id="3" * 32,
+        owner_identity=_coordinator_identity("2" * 32),
+        worker_identity=_coordinator_identity("2" * 32, pid=456),
+    )
+    with store._connect() as db:
+        store._save(db, "a" * 32 + ":" + "1" * 32, terminal)
+        store._save(db, "2" * 32 + ":" + "3" * 32, other)
+    result = store.reconcile_expired(11)
+    assert result["reconciled"] == 1 and result["observed"] == 3
+    assert store.read("a" * 32, "d" * 32) == bound | dict(
+        state="INCOMPLETE", cleanup_confirmed=False
+    )
+    assert store.read("a" * 32, "1" * 32) == terminal
+    assert store.read("2" * 32, "3" * 32) == other
+
+
+@pytest.mark.parametrize("damage", ["copied_key", "hash", "shape"])
+def test_coordinator_reconcile_bad_history_rolls_back(tmp_path, damage):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 1, 10)
+    row = store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    with store._connect() as db:
+        if damage == "copied_key":
+            db.execute(
+                "INSERT INTO coordinator_metadata SELECT ?,payload,sha FROM coordinator_metadata WHERE key!='lease'",
+                ("a" * 32 + ":" + "f" * 32,),
+            )
+        elif damage == "hash":
+            db.execute(
+                "UPDATE coordinator_metadata SET sha=? WHERE key!='lease'", ("0" * 64,)
+            )
+        else:
+            del row["created"]
+            row["request_id"] = "f" * 32
+            row["unexpected"] = True
+            store._save(db, "a" * 32 + ":" + "f" * 32, row)
+    before = _coordinator_metadata_snapshot(store)
+    with pytest.raises(AgenticControlError):
+        store.reconcile_expired(11)
+    assert _coordinator_metadata_snapshot(store) == before
+
+
 SHA = "a" * 64
 
 
