@@ -29,7 +29,9 @@ def serve_deep_audit_coordinator(
     store = CoordinatorRequestStore(root)
     store.reconcile_expired(time.monotonic())
     store.acquire(owner, ttl, time.monotonic())
-    context = dict(store=store, expires_at=time.monotonic() + ttl, stop=False, job=None)
+    context = dict(
+        store=store, expires_at=time.monotonic() + ttl, stop=False, job=None, root=root
+    )
     last = _coordinator_result("OBSERVED", execution_available=False)
     try:
         while not context["stop"]:
@@ -160,6 +162,7 @@ def dispatch_deep_audit_request(
     """Validate intent and live ownership before any admission or process creation."""
     _coordinator_request(root, request)
     _coordinator_check_owner(root, request, owner_identity, execution_context)
+    execution_context.setdefault("root", Path(root))
     if request["operation"] == "stop":
         execution_context["stop"] = True
         clean = _coordinator_shutdown(execution_context)
@@ -220,7 +223,7 @@ def _coordinator_request(root, request):
     ):
         raise ValueError("coordinator workspace differs")
     if operation == "audit":
-        _coordinator_payload(root, request["payload"])
+        _coordinator_payload_shape(request["payload"])
 
 
 def _coordinator_envelope(request, required, operation):
@@ -236,6 +239,14 @@ def _coordinator_envelope(request, required, operation):
 def _coordinator_payload(root, payload):
     from .deep_audit_io import local_file
 
+    _coordinator_payload_shape(payload)
+    for name in ("manifest", "authorization", "trust_root"):
+        local_file(Path(root), payload[name])
+
+
+def _coordinator_payload_shape(payload):
+    from .deep_audit_io import relative_path
+
     expected = {
         "manifest",
         "manifest_sha256",
@@ -248,7 +259,7 @@ def _coordinator_payload(root, payload):
     for name in ("manifest_sha256", "trust_root_sha256"):
         _coordinator_hex(payload[name], 64)
     for name in ("manifest", "authorization", "trust_root"):
-        local_file(Path(root), payload[name])
+        relative_path(payload[name])
 
 
 def _coordinator_runtime_identity():
@@ -485,6 +496,26 @@ def _coordinator_admit(root, request, owner, context):
     from .agentic_control import AgenticControlError
     from .deep_audit_io import digest
 
+    seal = digest(request)
+    try:
+        row = context["store"].read(request["session_nonce"], request["request_id"])
+    except AgenticControlError as exc:
+        if getattr(exc, "code", None) != "E_COORDINATOR_REQUEST":
+            raise
+    else:
+        if row["request_sha256"] != seal:
+            raise AgenticControlError(
+                "E_COORDINATOR_REQUEST", "request identifier is already bound"
+            )
+        if row["owner_identity"] != owner:
+            raise AgenticControlError("E_COORDINATOR_OWNER", "request owner differs")
+        return _coordinator_result(
+            row["state"],
+            request_id=row["request_id"],
+            run_id=row["run_id"],
+            cleanup_confirmed=row["cleanup_confirmed"],
+        )
+
     active = context.get("job")
     if (
         active is not None
@@ -498,7 +529,6 @@ def _coordinator_admit(root, request, owner, context):
     if snapshot["runtime_sha256"] != owner["runtime_sha256"]:
         raise ValueError("loaded runtime differs")
     _coordinator_live_lease(root, request, owner, context)
-    seal = digest(request)
     row = context["store"].admit(
         request["session_nonce"], request["request_id"], seal, owner
     )
@@ -609,7 +639,7 @@ def _coordinator_worker_args(root, directory, config):
 
 def _coordinator_execute(root, request, owner, context, job):
     import time
-    from .assembly_process import run_cli_detailed
+    from .assembly_process import CLEANUP_TIMEOUT_SECONDS, run_cli_detailed
 
     directory, result = None, None
     try:
@@ -631,14 +661,16 @@ def _coordinator_execute(root, request, owner, context, job):
             sys.executable,
             args,
             root,
-            timeout=remaining,
+            timeout=remaining + CLEANUP_TIMEOUT_SECONDS,
             started_observer=lambda facts: job.update(observed=facts),
             heartbeat=lambda: _coordinator_heartbeat(
                 root, request, owner, context, job
             ),
         )
         job["cleanup_confirmed"] = (
-            result["cleanup_confirmed"] is True and result["streams_closed"] is True
+            result["cleanup_confirmed"] is True
+            and result["streams_closed"] is True
+            and not job.get("cancel_hard_kill")
         )
     except (ValueError, OSError, KeyError, TypeError, RuntimeError):
         job["cleanup_confirmed"] = not job["launch_attempted"]
@@ -777,9 +809,12 @@ def _coordinator_worker_event(root, directory, config, event):
 
 
 def _coordinator_heartbeat(root, request, owner, context, job):
+    import time
+    from .assembly_process import CLEANUP_TIMEOUT_SECONDS
+
     try:
         if job["cancel"].is_set():
-            return False
+            return _coordinator_cancel_grace(job, time.monotonic())
         _coordinator_live_lease(root, request, owner, context)
         if job["acknowledged"]:
             return True
@@ -788,7 +823,39 @@ def _coordinator_heartbeat(root, request, owner, context, job):
             return True
         return _coordinator_handshake(root, request, owner, context, job)
     except (ValueError, OSError, KeyError, TypeError):
+        _coordinator_begin_cancel(root, job, CLEANUP_TIMEOUT_SECONDS)
+        return _coordinator_cancel_grace(job, time.monotonic())
+
+
+def _coordinator_cancel_grace(job, now):
+    if job.get("cancel_hard_kill") or now >= job.get("cancel_deadline", 0):
+        if job.get("acknowledged"):
+            job["cancel_hard_kill"] = True
         return False
+    return True
+
+
+def _coordinator_begin_cancel(root, job, grace_seconds):
+    import time
+
+    job["cancel"].set()
+    if "cancel_deadline" in job:
+        return
+    job["cancel_deadline"] = time.monotonic() + grace_seconds
+    if not job.get("acknowledged") or not job.get("run_id"):
+        job["cancel_deadline"] = 0
+        return
+    try:
+        from .deep_audit import cancel_deep_run
+
+        result = cancel_deep_run(root, job["run_id"])
+        if result.get("state") not in {
+            "CANCELLATION_REQUESTED",
+            "ALREADY_STOPPED",
+        }:
+            job["cancel_hard_kill"] = True
+    except Exception:
+        job["cancel_hard_kill"] = True
 
 
 def _coordinator_live_lease(root, request, owner, context):
@@ -910,7 +977,9 @@ def _coordinator_unlink_control(root, directory):
 def _coordinator_cancel(context):
     job = context.get("job")
     if job is not None:
-        job["cancel"].set()
+        from .assembly_process import CLEANUP_TIMEOUT_SECONDS
+
+        _coordinator_begin_cancel(context.get("root"), job, CLEANUP_TIMEOUT_SECONDS)
 
 
 def _coordinator_shutdown(context):

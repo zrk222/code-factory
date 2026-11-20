@@ -42,7 +42,11 @@ spec_markdown: |
   One constant process-wide reentrant mutex plus existing graph authorization
   exclusive-file locking serializes metadata updates, not jobs. Same-process
   duplicate requests retain idempotent readback rather than a synthetic BUSY
-  substitute. Cross-process lock contention
+  substitute. After structural path/envelope validation and live owner checks,
+  an exact retained request returns its sealed state before new-execution file,
+  authorization-expiry or source-inventory checks. A changed request digest or
+  owner is rejected; a new request still passes all execution preflight gates.
+  Cross-process lock contention
   rejects BUSY; a crashed lock remains unresolved and is never silently removed
   or taken over. Atomic snapshot replacement preserves the previous state on
   failure. The existing run-JSON read budget remains unchanged. Tracked reserved
@@ -67,6 +71,10 @@ spec_markdown: |
   retain INCOMPLETE history; it writes no ACK and grants no execution authority.
   STOPPED requires confirmed owned process/stream/control cleanup. Completion
   also requires authoritative deep_run_status evidence, never done.json alone.
+  Cancellation of an acknowledged UUID uses the existing cancel_deep_run signal
+  and permits the existing ten-second cleanup interval before outer termination.
+  Lease expiry does not consume that cleanup interval as execution time. A forced
+  kill after acknowledgement leaves cleanup unconfirmed; no stopped claim follows.
   Native Windows tests cover actual children and signed placeholder-engine runs
   ending INCOMPLETE. Native private-worker bad-ACK/source-drift controls verify
   failure before any lane starts; they do not certify all dispatcher fault paths.

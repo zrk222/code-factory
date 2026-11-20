@@ -116,11 +116,9 @@ def test_coordinator_rejects_noncanonical_workspace_alias(tmp_path):
 
 @pytest.mark.parametrize(
     "mutation",
-    ["missing", "extra", "escape", "absolute", "absent", "directory", "digest"],
+    ["missing", "extra", "escape", "absolute", "digest"],
 )
-def test_coordinator_audit_requires_exact_existing_relative_bindings(
-    tmp_path, mutation
-):
+def test_coordinator_audit_requires_exact_relative_bindings(tmp_path, mutation):
     from factoryline.cli_deep_audit import _coordinator_request
 
     request = _coordinator_test_request(tmp_path, "audit")
@@ -135,15 +133,104 @@ def test_coordinator_audit_requires_exact_existing_relative_bindings(
         payload["manifest"] = "../manifest.json"
     elif mutation == "absolute":
         payload["manifest"] = str(tmp_path / "manifest.json")
-    elif mutation == "absent":
-        payload["authorization"] = "missing.json"
-    elif mutation == "directory":
-        (tmp_path / "directory").mkdir()
-        payload["trust_root"] = "directory"
     else:
         payload["manifest_sha256"] = "z" * 64
     with pytest.raises((ValueError, RuntimeAuditError)):
         _coordinator_request(tmp_path, request)
+
+
+@pytest.mark.parametrize("bad_path", ["missing.json", "directory"])
+def test_coordinator_payload_files_checked_at_new_request_preflight(tmp_path, bad_path):
+    from factoryline.cli_deep_audit import _coordinator_payload, _coordinator_request
+
+    request = _coordinator_test_request(tmp_path, "audit")
+    request["payload"] = _coordinator_test_payload(tmp_path)
+    if bad_path == "directory":
+        (tmp_path / bad_path).mkdir()
+    request["payload"]["authorization"] = bad_path
+    assert _coordinator_request(tmp_path, request) is None
+    with pytest.raises((ValueError, RuntimeAuditError)):
+        _coordinator_payload(tmp_path, request["payload"])
+
+
+@pytest.mark.parametrize("drift", ["deleted", "changed"])
+def test_coordinator_duplicate_readback_precedes_filesystem_preflight(
+    tmp_path, monkeypatch, drift
+):
+    import factoryline.cli_deep_audit as module
+    from factoryline.deep_audit_io import digest
+
+    monkeypatch.setattr(
+        module,
+        "_coordinator_preflight",
+        lambda *args: pytest.fail("duplicate must not rerun new-request preflight"),
+    )
+    owner, context = _coordinator_test_owner(tmp_path, module, monkeypatch)
+    request = _coordinator_test_request(tmp_path, "audit")
+    request["payload"] = _coordinator_test_payload(tmp_path)
+    seal = digest(request)
+    context["store"].admit(
+        request["session_nonce"], request["request_id"], seal, owner
+    )
+    if drift == "deleted":
+        for name in ("manifest.json", "authorization.json", "trust.json"):
+            (tmp_path / name).unlink()
+    else:
+        (tmp_path / "manifest.json").write_text("changed", encoding="utf-8")
+    result = module.dispatch_deep_audit_request(tmp_path, request, owner, context)
+    assert result["state"] == "ADMITTED"
+    assert context.get("job") is None
+
+
+def test_coordinator_duplicate_changed_request_rejected_before_preflight(
+    tmp_path, monkeypatch
+):
+    import factoryline.cli_deep_audit as module
+    from factoryline.agentic_control import AgenticControlError
+    from factoryline.deep_audit_io import digest
+
+    monkeypatch.setattr(
+        module,
+        "_coordinator_preflight",
+        lambda *args: pytest.fail("changed duplicate must not reach preflight"),
+    )
+    owner, context = _coordinator_test_owner(tmp_path, module, monkeypatch)
+    request = _coordinator_test_request(tmp_path, "audit")
+    request["payload"] = _coordinator_test_payload(tmp_path)
+    context["store"].admit(
+        request["session_nonce"], request["request_id"], digest(request), owner
+    )
+    request["payload"]["manifest_sha256"] = "e" * 64
+    with pytest.raises(AgenticControlError) as caught:
+        module.dispatch_deep_audit_request(tmp_path, request, owner, context)
+    assert caught.value.code == "E_COORDINATOR_REQUEST"
+
+
+@pytest.mark.parametrize("acknowledged", [False, True])
+def test_coordinator_cancellation_keeps_existing_cleanup_window(
+    tmp_path, monkeypatch, acknowledged
+):
+    import threading
+    import time
+    import factoryline.cli_deep_audit as module
+    import factoryline.deep_audit as audit
+
+    calls = []
+    monkeypatch.setattr(
+        audit, "cancel_deep_run",
+        lambda root, run_id: calls.append((root, run_id))
+        or {"state": "CANCELLATION_REQUESTED"},
+    )
+    job = dict(cancel=threading.Event(), acknowledged=acknowledged, run_id="a" * 32)
+    module._coordinator_begin_cancel(tmp_path, job, 10)
+    deadline = job["cancel_deadline"]
+    assert job["cancel"].is_set()
+    assert bool(calls) is acknowledged
+    assert module._coordinator_cancel_grace(job, time.monotonic()) is acknowledged
+    module._coordinator_begin_cancel(tmp_path, job, 10)
+    assert job["cancel_deadline"] == deadline and len(calls) <= 1
+    assert module._coordinator_cancel_grace(job, deadline + 1) is False
+    assert job.get("cancel_hard_kill", False) is acknowledged
 
 
 def _coordinator_test_owner(root, module, monkeypatch):
@@ -402,7 +489,7 @@ def test_coordinator_native_open_stdin_expires_and_releases_lease(tmp_path, part
 
 @pytest.mark.parametrize("phase", ["lease_only", "admitted"])
 def test_coordinator_native_restart_reconciles_expired_lease(tmp_path, phase):
-    """A fresh real coordinator reconciles a crashed owner before refusing takeover."""
+    """A fresh real coordinator reconciles an exited owner before refusing takeover."""
     import json
     import sys
     import time
@@ -1159,13 +1246,17 @@ def test_coordinator_unit_preflight_crosses_lease_before_admission(
 ):
     """Synthetic unit boundary, not native child-execution evidence."""
     from types import SimpleNamespace
+    from factoryline.agentic_control import AgenticControlError
     import factoryline.cli_deep_audit as module
 
     request = _coordinator_test_request(tmp_path, "audit")
     request["payload"] = {}
     context = dict(stop=False, expires_at=float("inf"))
     context["store"] = SimpleNamespace(
-        admit=lambda *a: pytest.fail("expired request admitted")
+        admit=lambda *a: pytest.fail("expired request admitted"),
+        read=lambda *a: (_ for _ in ()).throw(
+            AgenticControlError("E_COORDINATOR_REQUEST", "request not found")
+        ),
     )
 
     def preflight(*args):
