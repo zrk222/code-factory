@@ -33,7 +33,14 @@ def serve_deep_audit_coordinator(
     last = _coordinator_result("OBSERVED", execution_available=False)
     try:
         while not context["stop"]:
-            raw = input_stream.readline(65537)
+            try:
+                raw = _coordinator_readline(input_stream, context)
+            except (ValueError, OSError) as error:
+                last = _coordinator_result(
+                    "INCOMPLETE", code=getattr(error, "code", "E_COORDINATOR_INPUT")
+                )
+                _coordinator_emit(output_stream, last)
+                break
             if not raw:
                 break
             try:
@@ -43,18 +50,108 @@ def serve_deep_audit_coordinator(
                 last = _coordinator_result(
                     "INCOMPLETE", code=getattr(error, "code", "E_COORDINATOR_REQUEST")
                 )
-            output_stream.write(json.dumps(last, sort_keys=True) + "\n")
-            output_stream.flush()
-            if len(raw.encode("utf-8") if isinstance(raw, str) else raw) > 65536:
+            _coordinator_emit(output_stream, last)
+            if len(_coordinator_encoded(raw)) > 65536:
                 break
     finally:
         if _coordinator_shutdown(context):
             store.release(owner)
         else:
             last = _coordinator_result("INCOMPLETE", code="E_COORDINATOR_CLEANUP")
-            output_stream.write(json.dumps(last, sort_keys=True) + "\n")
-            output_stream.flush()
+            _coordinator_emit(output_stream, last)
     return last
+
+
+def _coordinator_emit(stream, value):
+    stream.write(json.dumps(value, sort_keys=True) + "\n")
+    stream.flush()
+
+
+def _coordinator_readline(stream, context):
+    import io
+    import time
+    from .agentic_control import AgenticControlError
+
+    buffer = context.setdefault("input_buffer", bytearray())
+    while True:
+        if time.monotonic() >= context["expires_at"]:
+            raise AgenticControlError(
+                "E_COORDINATOR_LEASE_EXPIRED", "input lease expired"
+            )
+        if isinstance(stream, (io.BytesIO, io.StringIO)):
+            return stream.readline(65537)
+        if not isinstance(stream, io.FileIO):
+            raise ValueError(
+                "coordinator input requires exclusive unbuffered ownership"
+            )
+        end = buffer.find(b"\n") + 1
+        if end or len(buffer) >= 65537:
+            end = end or len(buffer)
+            line = bytes(buffer[:end])
+            del buffer[:end]
+            return line
+        chunk = _coordinator_input_chunk(stream.fileno(), 65537 - len(buffer), context)
+        if chunk is None:
+            continue
+        if not chunk:
+            line = bytes(buffer)
+            buffer.clear()
+            return line
+        buffer.extend(chunk)
+
+
+def _coordinator_input_chunk(fd, capacity, context):
+    import os
+    import stat
+    import time
+
+    if stat.S_ISREG(os.fstat(fd).st_mode):
+        return os.read(fd, min(capacity, 4096))
+    if os.name == "nt":
+        available = _coordinator_windows_pipe_bytes(fd)
+        if available < 0:
+            return b""
+        if available:
+            return os.read(fd, min(available, capacity, 4096))
+        time.sleep(min(0.05, max(0, context["expires_at"] - time.monotonic())))
+        return None
+    import select
+
+    remaining = max(0, context["expires_at"] - time.monotonic())
+    try:
+        ready, _, _ = select.select([fd], [], [], min(0.05, remaining))
+    except InterruptedError:
+        return None
+    return os.read(fd, min(capacity, 4096)) if ready else None
+
+
+def _coordinator_windows_pipe_bytes(fd):
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetFileType.argtypes = [wintypes.HANDLE]
+    kernel.GetFileType.restype = wintypes.DWORD
+    if kernel.GetFileType(handle) != 3:  # FILE_TYPE_PIPE, not an interactive console.
+        raise ValueError("coordinator input requires a pipe or regular file")
+    kernel.PeekNamedPipe.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPVOID,
+    ]
+    kernel.PeekNamedPipe.restype = wintypes.BOOL
+    available = wintypes.DWORD()
+    if kernel.PeekNamedPipe(handle, None, 0, None, ctypes.byref(available), None):
+        return available.value
+    error = ctypes.get_last_error()
+    if error in (109, 233):  # Broken/disconnected pipe means EOF.
+        return -1
+    raise OSError(error, "coordinator input pipe observation failed")
 
 
 def dispatch_deep_audit_request(
@@ -98,10 +195,14 @@ def _coordinator_hex(value, length):
 def _coordinator_line(raw):
     from .deep_audit_io import strict_json
 
-    encoded = raw.encode("utf-8") if isinstance(raw, str) else raw
+    encoded = _coordinator_encoded(raw)
     if not isinstance(encoded, bytes) or not 1 <= len(encoded) <= 65536:
         raise ValueError("coordinator line exceeds byte boundary")
     return strict_json(encoded)
+
+
+def _coordinator_encoded(raw):
+    return raw.encode("utf-8") if isinstance(raw, str) else raw
 
 
 def _coordinator_request(root, request):

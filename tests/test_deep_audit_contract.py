@@ -321,6 +321,135 @@ def test_coordinator_rejects_invalid_ttl_before_ingress(tmp_path, ttl):
     assert output.getvalue() == ""
 
 
+@pytest.mark.parametrize("partial", [b"", b'{"operation":', b'{"value":"\xc3'])
+def test_coordinator_native_open_stdin_expires_and_releases_lease(tmp_path, partial):
+    import subprocess
+    import sys
+    import time
+    import factoryline.cli_deep_audit as module
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    if sys.platform not in {"win32", "linux"}:
+        pytest.skip("native pipe polling unsupported")
+    package = str(Path(module.__file__).resolve().parent.parent)
+    bootstrap = (
+        "import sys;sys.path.insert(0," + repr(package) + ");"
+        "from factoryline.cli_deep_audit import serve_deep_audit_coordinator;"
+        'exec("def no_child(event,args):\\n'
+        " if event=='subprocess.Popen':\\n"
+        "  print('UNEXPECTED_AUDIT_CHILD',file=sys.stderr,flush=True)\\n"
+        "  raise RuntimeError('unexpected audit child')\");"
+        "sys.addaudithook(no_child);"
+        "serve_deep_audit_coordinator(sys.argv[1],2,'a'*32,sys.stdin.buffer.raw,sys.stdout)"
+    )
+    started = time.monotonic()
+    child = subprocess.Popen(
+        [sys.executable, "-I", "-c", bootstrap, str(tmp_path.resolve())],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=tmp_path,
+    )
+    try:
+        if partial:
+            child.stdin.write(partial)
+            child.stdin.flush()
+        assert not child.stdin.closed
+        child.wait(timeout=15)
+        assert not child.stdin.closed, "the writer must remain open through expiry"
+        output = child.stdout.read().decode("utf-8")
+        error = child.stderr.read().decode("utf-8")
+        assert child.returncode == 0, error
+        assert "UNEXPECTED_AUDIT_CHILD" not in error
+        rows = [json.loads(line) for line in output.splitlines()]
+        assert len(rows) == 1
+        assert rows[0]["state"] == "INCOMPLETE"
+        assert rows[0]["code"] == "E_COORDINATOR_LEASE_EXPIRED"
+        assert rows[0]["authority"] == "none"
+        assert rows[0]["release_approval"] is False
+        assert time.monotonic() - started < 15
+        store = CoordinatorRequestStore(tmp_path)
+        with store._connect() as records:
+            assert records == {}, "idle expiry must release ownership without admission"
+        assert not any(
+            path.is_dir()
+            for path in (tmp_path / ".factory/deep-runs/requests").glob("coordinator-*")
+        )
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=10)
+        child.stdin.close()
+        child.stdout.close()
+        child.stderr.close()
+
+
+@pytest.mark.parametrize("text_stream", [False, True])
+def test_coordinator_readline_memory_coalesced_utf8_and_eof(text_stream):
+    import io
+    import time
+    from factoryline.cli_deep_audit import _coordinator_readline, _coordinator_line
+
+    raw = '{"value":"é"}\n{"value":2}\n'
+    stream = io.StringIO(raw) if text_stream else io.BytesIO(raw.encode())
+    context = dict(expires_at=time.monotonic() + 5)
+    assert _coordinator_line(_coordinator_readline(stream, context)) == {"value": "é"}
+    assert _coordinator_line(_coordinator_readline(stream, context)) == {"value": 2}
+    assert _coordinator_readline(stream, context) in (b"", "")
+
+
+@pytest.mark.parametrize("extra", [False, True])
+def test_coordinator_readline_exact_and_over_byte_boundary(extra):
+    import io
+    import time
+    from factoryline.cli_deep_audit import _coordinator_readline, _coordinator_line
+
+    raw = b'{"value":"ok"}'
+    raw += b" " * (65536 - len(raw))
+    if extra:
+        raw += b" "
+    line = _coordinator_readline(io.BytesIO(raw), dict(expires_at=time.monotonic() + 5))
+    if extra:
+        with pytest.raises(ValueError):
+            _coordinator_line(line)
+    else:
+        assert _coordinator_line(line) == {"value": "ok"}
+
+
+def test_coordinator_readline_native_fragmented_utf8_and_coalesced_lines():
+    import os
+    import sys
+    import threading
+    import time
+    from factoryline.cli_deep_audit import _coordinator_readline, _coordinator_line
+
+    if sys.platform not in {"win32", "linux"}:
+        pytest.skip("native pipe polling unsupported")
+    reader_fd, writer_fd = os.pipe()
+    reader = os.fdopen(reader_fd, "rb", buffering=0)
+    writer = os.fdopen(writer_fd, "wb", buffering=0)
+
+    def fragmented_writer():
+        for part in (b'{"value":"\xc3', b'\xa9"}', b'\n{"value":2}\n'):
+            writer.write(part)
+            time.sleep(0.025)
+        writer.close()
+
+    thread = threading.Thread(target=fragmented_writer)
+    thread.start()
+    try:
+        context = dict(expires_at=time.monotonic() + 5)
+        assert _coordinator_line(_coordinator_readline(reader, context)) == {
+            "value": "é"
+        }
+        assert _coordinator_line(_coordinator_readline(reader, context)) == {"value": 2}
+        assert _coordinator_readline(reader, context) == b""
+    finally:
+        thread.join(timeout=5)
+        reader.close()
+        assert not thread.is_alive()
+
+
 @pytest.mark.parametrize("prefix", ["", "example/adapter@"])
 def test_full_local_image_id_and_repository_digest_are_immutable_pins(prefix):
     from factoryline.deep_audit_contract import _validate_lane_image
@@ -812,6 +941,79 @@ def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_ch
         assert status["authority"] == "none" and status["release_approval"] is False
     finally:
         assert module._coordinator_shutdown(context)
+        context["store"].release(owner)
+
+
+@pytest.mark.parametrize("fault", ["bad_ack", "candidate_drift"])
+def test_coordinator_native_private_worker_rejects_before_lanes(tmp_path, fault):
+    """Real private worker only: the test, not a dispatcher, supplies the ACK."""
+    import sys
+    import factoryline.cli_deep_audit as module
+    from factoryline.assembly_process import run_cli_detailed
+    from factoryline.deep_audit import deep_run_status
+    from factoryline.deep_audit_io import digest, read_run_json, run_directory
+
+    if sys.platform not in {"win32", "linux"}:
+        pytest.skip("native process creation identity unsupported")
+    root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
+    directory = module._coordinator_control_directory(root)
+    snapshot = module._coordinator_preflight(root, request["payload"])
+    config = dict(
+        request=request,
+        request_sha256=digest(request),
+        snapshot=snapshot,
+        expires_at=context["expires_at"],
+    )
+    observed, handshakes = [], []
+
+    def heartbeat():
+        if handshakes or not (directory / "handshake.json").exists():
+            return True
+        handshake = module._coordinator_read(root, directory, "handshake.json")
+        handshakes.append(handshake)
+        if fault == "candidate_drift":
+            (root / "app.py").write_text(
+                "print('changed before ACK')\n", encoding="utf-8"
+            )
+        seal = "0" * 64 if fault == "bad_ack" else digest(handshake)
+        module._coordinator_write(
+            root, directory, "ack.json", {"handshake_sha256": seal}
+        )
+        return True
+
+    try:
+        result = run_cli_detailed(
+            sys.executable,
+            module._coordinator_worker_args(root, directory, config),
+            root,
+            timeout=40,
+            started_observer=observed.append,
+            heartbeat=heartbeat,
+        )
+        assert result["exit_code"] not in (0, None), result
+        assert result["cleanup_confirmed"] is True
+        assert result["streams_closed"] is True
+        assert len(handshakes) == len(observed) == 1
+        handshake = handshakes[0]
+        assert handshake["worker_identity"]["pid"] == observed[0]["pid"]
+        expected = (
+            "worker acknowledgement differs"
+            if fault == "bad_ack"
+            else "signed candidate inventory differs"
+        )
+        assert expected in result["output"]
+        status = deep_run_status(root, handshake["run_id"])
+        assert status["analysis_complete"] is False
+        events_dir = run_directory(root, handshake["run_id"])
+        events = [
+            read_run_json(events_dir, f"event-{index:05d}.json")
+            for index in range(1, status["sequence"] + 1)
+        ]
+        assert any(event["kind"] == "run_started" for event in events)
+        assert not any(event["kind"] == "lane_started" for event in events)
+        assert not (directory / "done.json").exists()
+    finally:
+        module._coordinator_remove_control(root, directory)
         context["store"].release(owner)
 
 

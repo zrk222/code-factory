@@ -65,9 +65,20 @@ spec_markdown: |
   STOPPED requires confirmed owned process/stream/control cleanup. Completion
   also requires authoritative deep_run_status evidence, never done.json alone.
   Native Windows tests cover actual children and signed placeholder-engine runs
-  ending INCOMPLETE. Full native analyzer success, bad-ACK/source-drift native
-  fault injection, idle input lease interruption, Linux coordinator lifecycle,
-  restart recovery and the eleven-pair performance experiment remain unverified.
+  ending INCOMPLETE. Native private-worker bad-ACK/source-drift controls verify
+  failure before any lane starts; they do not certify all dispatcher fault paths.
+  Foreground input accepts exclusively owned raw FileIO pipes/local regular files
+  or in-memory streams. OS pipes accumulate at most 65537 bytes, preserve bounded
+  coalesced carry, and check the lease before returning buffered data. POSIX select
+  or Windows typed PeekNamedPipe observation avoids blocking on idle/partial input.
+  Buffered wrappers/consoles are rejected, not mixed with descriptor reads. EOF
+  preserves existing final partial-object semantics. Expiry visibly emits
+  INCOMPLETE/E_COORDINATOR_LEASE_EXPIRED and invokes existing owned shutdown.
+  Native Windows idle, partial JSON and partial UTF-8 tests hold the pipe open and
+  prove expiry without audit launch. This does not bound blocked output writes,
+  stalled regular-file I/O or interference from another descriptor consumer.
+  Full native analyzer success, Linux coordinator lifecycle, restart recovery
+  and the eleven-pair performance experiment remain unverified.
   Its APIs are:
   - admit(session_nonce, request_id, request_sha256, owner_identity): atomically
     require the persisted owner, key by nonce:request_id, create ADMITTED with
