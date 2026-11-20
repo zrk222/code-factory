@@ -20,7 +20,7 @@ $rule = static function (
         $skipIf, $requireAny ?? $u);
 };
 
-$src = static fn (
+$srcRule = static fn (
     string $id, string $sev, string $title, array $anyOf,
     string $why, string $fix, string $cwe
 ) => new Rule($id, $sev, $title, 'source', $anyOf, [], 0, $why, $fix, $cwe);
@@ -53,7 +53,7 @@ return [
         . ' For arguments prefer the array form of proc_open.',
         'CWE-78'),
 
-    $src('RCE-005', 'high', 'preg_replace /e modifier',
+    $srcRule('RCE-005', 'high', 'preg_replace /e modifier',
         ['~\bpreg_replace\s*\(\s*([\'"])((?:\\\\.|(?!\1)[^\\\\])*)\1~s'],
         'The /e modifier evaluates the replacement as PHP. Removed in PHP 7, but legacy code still relies on it.',
         'Move to preg_replace_callback().',
@@ -85,20 +85,20 @@ return [
         'CWE-434', [], [], ['$_FILES']),
 
     // ------------------------------------------------------------- SQL
-    $src('SQL-001', 'high', 'query built by concatenation',
+    $srcRule('SQL-001', 'high', 'query built by concatenation',
         ['/(?:mysql_(?:query|real_escape_string)|mysqli_query|->query|->exec|pg_query)\s*\(\s*[\'"][^\'"]*[\'"]\s*\.\s*\$/',
          '/[\'"][^\'"]*(?:SELECT|INSERT|UPDATE|DELETE)[^\'"]*[\'"]\s*\.\s*\$[A-Za-z_]/i'],
         'String interpolation into SQL. A quote in the value breaks out of the literal.',
         'Prepared statements (PDO with bound params, or mysqli_stmt). If concatenating, cast to int or run real_escape_string.',
         'CWE-89'),
 
-    $src('SQL-002', 'medium', 'superglobal interpolated into a SQL string literal',
+    $srcRule('SQL-002', 'medium', 'superglobal interpolated into a SQL string literal',
         ['/(?:SELECT|INSERT|UPDATE|DELETE|WHERE|LIMIT|ORDER BY).*?\{?\$_(?:GET|POST|REQUEST|COOKIE)/i'],
         'The value sits inside the SQL literal. Escaping is easy to forget and varies by driver.',
         'Bind the parameter. Keep the SQL text static.',
         'CWE-89'),
 
-    $src('SQL-003', 'high', 'ORDER BY / LIMIT from user input',
+    $srcRule('SQL-003', 'high', 'ORDER BY / LIMIT from user input',
         ['/(?:ORDER\s+BY|LIMIT)\s*[\'"]?\s*\.\s*\$_/i'],
         'Column names and directions cannot be bound as parameters; they must be allowlisted.',
         "in_array(\$col, ['id','name','created'], true) and cast LIMIT with (int).",
@@ -115,16 +115,17 @@ return [
         ['T_ECHO', 'T_PRINT'], 6,
         'Reflected XSS: the value prints straight into the response.',
         "htmlspecialchars(\$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') at the sink, or rely on a template engine autoescape.",
-        'CWE-79'),
+        'CWE-79', [], ['htmlspecialchars', 'htmlentities', 'esc_html', 'esc_attr', 'intval', 'absint', 'json_encode']),
 
-    $src('XSS-002', 'medium', 'attribute value from superglobal',
+
+    $srcRule('XSS-002', 'medium', 'attribute value from superglobal',
         ['/<[a-z][^>]*=[^>]*<\?php\s+(?:echo|print)\s+\$_(?:GET|POST|REQUEST|COOKIE)/i'],
         'Inside an attribute an unescaped quote ends the attribute, so an attacker injects new attributes or a handler.',
         'Escape at the sink; htmlspecialchars with ENT_QUOTES covers both quote styles.',
         'CWE-79'),
 
     // --------------------------------------------------------- auth/session
-    $src('AUTH-001', 'high', 'loose comparison on a hash or token',
+    $srcRule('AUTH-001', 'high', 'loose comparison on a hash or token',
         ['/\$[^;\s]*\s*(?:===?|!==?)\s*\$[A-Za-z_]*(?:hash|token|password|secret|sig)[A-Za-z_]*\b/i'],
         'Using == on hash strings allows type juggling (0e123 == 0e456) and is not constant time.',
         'hash_equals($known, $given) for any secret compare.',
@@ -142,20 +143,20 @@ return [
         'random_int() or random_bytes() for anything security-relevant.',
         'CWE-338', [], [], ['$token']),
 
-    $src('AUTH-004', 'high', 'session id taken from the request',
+    $srcRule('AUTH-004', 'high', 'session id taken from the request',
         ['/session_id\s*\(\s*\$_/'],
         'Accepting a client-chosen session id permits fixation.',
         'Call session_regenerate_id(true) after a successful login.',
         'CWE-384'),
 
-    $src('AUTH-005', 'medium', 'no SameSite / Secure flags on setcookie',
+    $srcRule('AUTH-005', 'medium', 'no SameSite / Secure flags on setcookie',
         ['/setcookie\s*\((?:(?!\b(?:secure|samesite)\b)[^)])*\)/i'],
         'Default cookies travel on plain HTTP and cross-site, widening interception and CSRF.',
         "setcookie(\$n, \$v, ['secure' => true, 'httponly' => true, 'samesite' => 'Lax']);",
         'CWE-614'),
 
     // ------------------------------------------------------ config/crypto
-    $src('CRYPT-001', 'high', 'hardcoded secret or key',
+    $srcRule('CRYPT-001', 'high', 'hardcoded secret or key',
         ['/\$(?:password|passwd|pwd|secret|api_?key|token|priv(?:ate)?_?key)\s*=\s*[\'"][^\'"]{6,}[\'"]/i'],
         'A literal credential ships with the source, and in a public repo it is already leaked.',
         'Move to an env var read via getenv()/$_ENV and keep a .env.example in the repo.',
@@ -167,14 +168,14 @@ return [
         'openssl_encrypt/openssl_decrypt with AES-256-GCM.',
         'CWE-327', [], [], []),
 
-    $src('CRYPT-003', 'medium', 'openssl_encrypt with ECB or a fixed IV',
+    $srcRule('CRYPT-003', 'medium', 'openssl_encrypt with ECB or a fixed IV',
         ['/openssl_encrypt\s*\([^)]*ecb/i',
          '/openssl_(?:en|de)crypt\s*\([^)]*[\'"][A-Za-z0-9+\/=]{8,}[\'"]/i'],
         'ECB leaks block structure; a fixed IV makes ciphertexts deterministic and re-usable.',
         'Use AES-256-GCM (or CBC) with random_bytes(16) as the IV, stored alongside the ciphertext.',
         'CWE-329'),
 
-    $src('CRYPT-004', 'medium', 'TLS verification disabled',
+    $srcRule('CRYPT-004', 'medium', 'TLS verification disabled',
         ['/CURLOPT_SSL_VERIFYPEER\s*,\s*(?:false|0)\b/i', '/ssl\s*=>\s*(?:false|0)\b/i',
          '/verify_peer(?:_name)?\s*[\'"]?\s*=>\s*false/i'],
         'Any certificate is accepted, so a MITM on the network reads or rewrites the exchange.',
@@ -182,25 +183,25 @@ return [
         'CWE-295'),
 
     // --------------------------------------------------------- hardening
-    $src('HARD-001', 'low', 'error reporting left on',
+    $srcRule('HARD-001', 'low', 'error reporting left on',
         ['/display_errors["\x27]?\s*[,=>]+\s*["\x27]?(?:1|true|On|E_ALL)/i'],
         'Stack traces and paths render to visitors in production.',
         'display_errors=Off in php.ini, log_errors=On, and a custom error handler.',
         'CWE-209'),
 
-    $src('HARD-003', 'low', 'extract() on a superglobal',
+    $srcRule('HARD-003', 'low', 'extract() on a superglobal',
         ['/extract\s*\(\s*\$_/'],
         'extract overwrites local variables a caller already set — classic variable overloading.',
         'extract($_GET, EXTR_SKIP) or be explicit about the keys.',
         'CWE-621'),
 
-    $src('HARD-004', 'info', 'suppressed errors on I/O',
+    $srcRule('HARD-004', 'info', 'suppressed errors on I/O',
         ['/(?<![\w>$])@(?:fopen|unlink|rename|file_get_contents|mkdir|copy|include)/'],
         'A suppressed error hides a failed write, and the code continues with a false path.',
         'Check the return value and throw, or log the message.',
         'CWE-391'),
 
-    $src('HARD-005', 'medium', 'world-writable permissions',
+    $srcRule('HARD-005', 'medium', 'world-writable permissions',
         ['/chmod\s*\([^)]*0777/'],
         'World-writable files and directories let any local user replace them.',
         '0755 for directories and 0644 for files; 0700 only where the server owns them.',
@@ -211,4 +212,62 @@ return [
         'Nothing checks the extension, so a .php upload is served and executed.',
         'Append an allowlist: in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), [\'jpg\',\'png\',\'pdf\'], true).',
         'CWE-434', [], ['in_array', 'PATHINFO_EXTENSION'], ['$_FILES']),
+    // -------------------------- type juggling (PayloadsAllTheThings)
+    $srcRule('JUGG-001', 'high', 'loose == on a user-controlled value',
+        ['/$[A-Za-z_]\w*\s*==\s*$_|$_\w*\s*==\s*$[A-Za-z_]/'],
+        'PHP type juggling: "0e123" == "0e456" is true, so any magic-hash input matches. md5([]) is NULL too.',
+        'Use === or hash_equals(); cast to int before comparing ints.',
+        'CWE-697'),
+
+    $srcRule('JUGG-002', 'high', 'strcmp / non-strict in_array',
+        ['/strcmp\s*\(\s*$_/', '/in_array\s*\([^,]+,[^,]+\)(?!\s*,\s*true)/'],
+        'strcmp(array) returns NULL, and in_array without the third argument compares loosely.',
+        'Compare with ===, and always pass true as the third in_array argument.',
+        'CWE-697'),
+
+    // ------------------------------------------------ SSTI (Twig / Smarty)
+    $srcRule('SSTI-001', 'high', 'user input rendered as a template',
+        ['/$twig->render\s*\(\s*$_|$smarty->(?:display|fetch)\s*\(\s*$_/',
+         '/(?:createTemplate|fromString)\s*\(\s*$_/'],
+        'A user string compiled as template source executes template syntax. Probe {{7*7}} -> 49.',
+        'Render a fixed template name and pass parameters, not a user-supplied template.',
+        'CWE-1336'),
+
+    // ------------------------------------- deserialization header trust
+    $srcRule('DESER-001', 'high', 'serialized data accepted from the client',
+        ['/unserialize\s*\(\s*$_(?:GET|POST|REQUEST|COOKIE)/',
+         '/maybe_unserialize\s*\(\s*$_/'],
+        'PHP serialized form is O:, a:, s:. Accepting it is object injection; a POP chain in the autoload graph runs on __wakeup/__destruct.',
+        'unserialize($v, [\'allowed_classes\' => [Known::class]]) and never trust the type prefix alone.',
+        'CWE-502'),
+
+    // --------------------------------------------- LFI / RFI
+    $srcRule('LFI-001', 'high', 'include of a request value',
+        ['/include\s*\(?\s*$_(?:GET|POST|REQUEST|COOKIE)/'],
+        'With allow_url_include a ?page=http://evil/shell.txt executes remotely. ../, %00 (PHP<5.3.4) and php://filter all apply.',
+        'basename() plus an allowlist, or a realpath() prefix check inside a fixed directory.',
+        'CWE-98'),
+
+    // ------------------------------------------------------------- XXE
+    $srcRule('XXE-001', 'high', 'XML parsed without entity protection',
+        ['/simplexml_load_(?:string|file)\s*\(\s*$_/',
+         '/new\s+DOMDocument[^;]*->load(?:XML)?\s*\(\s*$_/i'],
+        'Default libxml on older builds expands external entities: <!ENTITY x SYSTEM "file:///etc/passwd"> leaks files.',
+        'libxml_disable_entity_loader(true) before PHP 8, plus LIBXML_NOENT; otherwise set parser flags explicitly.',
+        'CWE-611'),
+
+    // ------------------------------------------------------------ SSRF
+    $srcRule('SSRF-001', 'high', 'HTTP client fetches a request URL',
+        ['/curl_setopt\s*\([^,]+,\s*CURLOPT_URL\s*,\s*$_/',
+         '/file_get_contents\s*\(\s*$_/i'],
+        'An attacker URL reaches the client: 169.254.169.254 metadata, localhost services, file:// via file_get_contents.',
+        'Allowlist scheme and host; block link-local and loopback unless needed.',
+        'CWE-918'),
+
+    // ---------------------------------------------- error disclosure
+    $srcRule('INFO-001', 'low', 'raw exception message printed',
+        ['/die\s*\(\s*$e->getMessage\(\)/i', '/exit\s*\(\s*$e->getMessage\(\)/i'],
+        'Driver, path and SQL detail renders to the visitor.',
+        'Log $e and show a generic message; gate detail behind debug.',
+        'CWE-209'),
 ];

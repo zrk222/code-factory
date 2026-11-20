@@ -8,7 +8,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/phprt.php';
 
-$rules = require __DIR__ . '/lib/php-rules.php';
+$rules = array_merge(require __DIR__ . '/lib/php-rules.php', require __DIR__ . '/lib/framework-rules.php');
 $scanner = new Scanner($rules);
 $src = file_get_contents(__DIR__ . '/samples/vuln.php');
 $found = [];
@@ -48,6 +48,25 @@ foreach ($silent as $line => $banned) {
     }
 }
 
+$fwRules = require __DIR__ . '/lib/framework-rules.php';
+$fwScanner = new Scanner($fwRules);
+$fwSrc = file_get_contents(__DIR__ . '/samples/framework.php');
+$fwFound = [];
+foreach ($fwScanner->scanFile('f.php', $fwSrc) as $f) {
+    $fwFound[$f->rule][] = $f->line;
+}
+foreach (['WP-001' => 8, 'WP-002' => 6, 'WP-003' => 11, 'WP-004' => 14, 'WP-007' => 22,
+    'LAR-001' => 25, 'LAR-002' => 8, 'LAR-003' => 28, 'LAR-004' => 29, 'LAR-005' => 30,
+    'SYM-001' => 33, 'SYM-002' => 34, 'SYM-003' => 35, 'SYM-004' => 36] as $rule => $line) {
+    if (!isset($fwFound[$rule]) || !(in_array($line, $fwFound[$rule], true) || in_array($line + 1, $fwFound[$rule], true))) {
+        echo "FW    $rule missing at $line (fired: " . implode(',', $fwFound[$rule] ?? []) . ")\n";
+        $fail++;
+    }
+}
+if (isset($fwFound['WP-001']) && (in_array(9, $fwFound['WP-001'], true) || in_array(10, $fwFound['WP-001'], true))) {
+    echo "FP    WP-001 fired on esc_html control\n";
+    $fail++;
+}
 $fixed = $src;
 foreach ($scanner->scanFile('v.php', $fixed) as $f) {
     $fixed = applyFix($f, $fixed) ?? $fixed;
@@ -70,6 +89,14 @@ if ($lintCode !== 0) {
 }
 
 $regressions = [
+    ['XSS-001', '<?php htmlspecialchars($other); echo $_GET["x"];', true, 1],
+    ['WP-001', '<?php esc_html($other); echo $_GET["x"];', true, 1],
+    ['XSS-001', '<?php echo $_GET["x"]; htmlspecialchars($other);', true, 1],
+    ['WP-001', '<?php echo $_GET["x"]; esc_html($other);', true, 1],
+    ['XSS-001', '<?php echo htmlspecialchars($_GET["x"]);', false, 1],
+    ['WP-001', '<?php echo esc_html($_GET["x"]);', false, 1],
+    ['XSS-001', '<?php echo $_GET["x"] . htmlspecialchars($other);', true, 1],
+    ['WP-001', '<?php echo esc_html($other) . $_GET["x"];', true, 1],
     ['SQL-001', '<?php $id = $_GET["id"];' . "\n" . '$db->query("SELECT * FROM t WHERE id = " . $id);', true, 2],
     ['SQL-001', '<?php $db->query("SELECT * FROM t");', false, 1],
     ['RCE-004', '<?php \\system($_GET["cmd"]);', true, 1],

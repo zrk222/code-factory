@@ -25,8 +25,10 @@ function usage(): never
 /** @return list<Rule> */
 function loadRules(): array
 {
-    $rules = require __DIR__ . '/lib/php-rules.php';
-    return $rules;
+    return array_merge(
+        require __DIR__ . '/lib/php-rules.php',
+        require __DIR__ . '/lib/framework-rules.php',
+    );
 }
 
 /** @return list<string> */
