@@ -259,6 +259,22 @@ def test_coordinator_ack_is_marked_before_worker_can_observe_it(tmp_path, monkey
     assert module._coordinator_handshake(tmp_path, request, owner, context, job) is True
 
 
+def test_coordinator_reported_resource_cleanup_failure_never_completes(tmp_path, monkeypatch):
+    import factoryline.cli_deep_audit as module
+    import factoryline.deep_audit as audit
+
+    job = dict(run_id="a" * 32, directory=tmp_path,
+               cleanup_confirmed=True, acknowledged=True)
+    monkeypatch.setattr(module, "_coordinator_read", lambda *args: {
+        "run_id": job["run_id"], "analysis_complete": False,
+    })
+    monkeypatch.setattr(audit, "deep_run_status", lambda *args: {
+        "analysis_complete": False, "gaps": [{"code": "E_CONTAINER_CLEANUP"}],
+    })
+    with pytest.raises(ValueError, match="resource cleanup"):
+        module._coordinator_completed(tmp_path, job, {"exit_code": 0})
+
+
 def _coordinator_test_owner(root, module, monkeypatch):
     """Use explicit synthetic process identity for platform-neutral ingress tests."""
     import hashlib

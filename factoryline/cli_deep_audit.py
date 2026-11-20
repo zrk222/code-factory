@@ -671,6 +671,7 @@ def _coordinator_execute(root, request, owner, context, job):
             result["cleanup_confirmed"] is True
             and result["streams_closed"] is True
             and not job.get("cancel_hard_kill")
+            and (not job["acknowledged"] or result["exit_code"] == 0)
         )
     except (ValueError, OSError, KeyError, TypeError, RuntimeError):
         job["cleanup_confirmed"] = not job["launch_attempted"]
@@ -935,6 +936,8 @@ def _coordinator_completed(root, job, result):
     from .deep_audit import deep_run_status
 
     evidence = deep_run_status(root, job["run_id"])
+    if any("CLEANUP" in str(gap.get("code", "")) for gap in evidence.get("gaps", [])):
+        raise ValueError("owned audit resource cleanup is incomplete")
     return (
         done["analysis_complete"] is True and evidence.get("analysis_complete") is True
     )
