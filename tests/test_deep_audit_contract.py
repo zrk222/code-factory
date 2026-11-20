@@ -146,16 +146,21 @@ def test_coordinator_audit_requires_exact_existing_relative_bindings(
         _coordinator_request(tmp_path, request)
 
 
-def _coordinator_test_owner(root, module):
+def _coordinator_test_owner(root, module, monkeypatch):
+    """Use explicit synthetic process identity for platform-neutral ingress tests."""
     import hashlib
     import os
     import time
-    from factoryline.assembly_process import _process_creation_identity
+    import factoryline.assembly_process as assembly
     from factoryline.agentic_control import CoordinatorRequestStore
 
+    synthetic_creation = "synthetic-ingress-fixture:process-creation"
+    monkeypatch.setattr(
+        assembly, "_process_creation_identity", lambda pid: synthetic_creation
+    )
     owner = dict(
         pid=os.getpid(),
-        creation=_process_creation_identity(os.getpid()),
+        creation=synthetic_creation,
         session_nonce="a" * 32,
         runtime_sha256=module._coordinator_runtime_identity(),
         workspace_sha256=hashlib.sha256(str(root.resolve()).encode()).hexdigest(),
@@ -183,7 +188,7 @@ def test_coordinator_stale_owner_rejects_before_child(tmp_path, monkeypatch, fau
     import factoryline.assembly_process as assembly
     import subprocess
 
-    owner, context = _coordinator_test_owner(tmp_path, module)
+    owner, context = _coordinator_test_owner(tmp_path, module, monkeypatch)
     request = _coordinator_test_request(tmp_path, "audit")
     request["payload"] = _coordinator_test_payload(tmp_path)
     monkeypatch.setattr(
@@ -215,7 +220,7 @@ def test_coordinator_valid_audit_is_fail_closed_until_worker_verified(
     import factoryline.cli_deep_audit as module
     import subprocess
 
-    owner, context = _coordinator_test_owner(tmp_path, module)
+    owner, context = _coordinator_test_owner(tmp_path, module, monkeypatch)
     request = _coordinator_test_request(tmp_path, "audit")
     request["payload"] = _coordinator_test_payload(tmp_path)
     monkeypatch.setattr(
@@ -232,7 +237,7 @@ def test_coordinator_deleted_lease_rejects_before_child(tmp_path, monkeypatch):
     import subprocess
     from factoryline.agentic_control import AgenticControlError
 
-    owner, context = _coordinator_test_owner(tmp_path, module)
+    owner, context = _coordinator_test_owner(tmp_path, module, monkeypatch)
     context["store"].release(owner)
     request = _coordinator_test_request(tmp_path, "audit")
     request["payload"] = _coordinator_test_payload(tmp_path)
@@ -244,9 +249,12 @@ def test_coordinator_deleted_lease_rejects_before_child(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("ttl", [None, 1, 300, 3600])
-def test_coordinator_native_foreground_status_stop_no_child(tmp_path, monkeypatch, ttl):
+def test_coordinator_native_foreground_supported_or_fail_closed(
+    tmp_path, monkeypatch, ttl
+):
     import io
     import subprocess
+    import sys
     from factoryline.cli_deep_audit import serve_deep_audit_coordinator
 
     requests = [_coordinator_test_request(tmp_path, op) for op in ("status", "stop")]
@@ -258,6 +266,12 @@ def test_coordinator_native_foreground_status_stop_no_child(tmp_path, monkeypatc
     monkeypatch.setattr(
         subprocess, "Popen", lambda *a, **k: pytest.fail("unexpected child")
     )
+    if sys.platform not in {"win32", "linux"}:
+        with pytest.raises(ValueError, match="creation identity is unavailable"):
+            serve_deep_audit_coordinator(tmp_path, ttl, "a" * 32, stream, output)
+        assert output.getvalue() == ""
+        assert not (tmp_path / ".factory").exists()
+        return
     result = serve_deep_audit_coordinator(tmp_path, ttl, "a" * 32, stream, output)
     rows = [json.loads(line) for line in output.getvalue().splitlines()]
     assert [row["state"] for row in rows] == ["OBSERVED", "STOPPED"]
@@ -266,6 +280,26 @@ def test_coordinator_native_foreground_status_stop_no_child(tmp_path, monkeypatc
     assert all(
         row["authority"] == "none" and row["release_approval"] is False for row in rows
     )
+
+
+def test_coordinator_unknown_process_identity_fails_closed_before_lease(
+    tmp_path, monkeypatch
+):
+    import io
+    import subprocess
+    import factoryline.assembly_process as assembly
+    from factoryline.cli_deep_audit import serve_deep_audit_coordinator
+
+    monkeypatch.setattr(assembly, "_process_creation_identity", lambda pid: None)
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *a, **k: pytest.fail("unexpected child or fallback")
+    )
+    output = io.StringIO()
+    raw = json.dumps(_coordinator_test_request(tmp_path)).encode() + b"\n"
+    with pytest.raises(ValueError, match="creation identity is unavailable"):
+        serve_deep_audit_coordinator(tmp_path, 300, "a" * 32, io.BytesIO(raw), output)
+    assert output.getvalue() == ""
+    assert not (tmp_path / ".factory").exists()
 
 
 @pytest.mark.parametrize("ttl", [True, False, 0, 3601])

@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import threading
 from typing import Any, Iterable, Protocol
 from urllib.parse import urlsplit
 
@@ -3468,22 +3469,107 @@ def _runtime_result(item, status, action):
 
 
 class CoordinatorRequestStore:
-    """Trusted-caller metadata, not authentication against a hostile DB writer.
+    """Hash-checked metadata in the existing reserved deep-run control ledger.
 
-    Shares the workflow database; stores no request payload or audit result.
+    No payload/result retention or authentication against a hostile local writer.
     Leases never authorize PID signalling or automatic ownership takeover.
+    Lock contention fails BUSY; duplicates are readable after the writer commits.
     """
 
+    _metadata_lock = threading.RLock()
+
     def __init__(self, root):
-        self.path = _runtime_path(root)
-        with self._connect() as db:
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS coordinator_metadata "
-                "(key TEXT PRIMARY KEY, payload TEXT NOT NULL, sha TEXT NOT NULL)"
+        self.root = Path(root).resolve(strict=True)
+        self.path = self.root / ".factory/deep-runs/requests/coordinator-metadata.json"
+        self._paths()
+
+    def _paths(self):
+        current = self.root
+        for part in (".factory", "deep-runs", "requests"):
+            current /= part
+            if not current.exists() and not current.is_symlink():
+                current.mkdir(mode=0o700, exist_ok=True)
+            self._regular(current, directory=True)
+        for path in (self.path, self.path.with_suffix(".json.lock")):
+            if path.exists() or path.is_symlink():
+                self._regular(path, directory=False)
+
+    def _tracked_boundary(self):
+        from .deep_audit_io import _git_names
+
+        roots = (self.root, *self.root.parents)
+        if not any((root / ".git").exists() for root in roots):
+            return
+        tracked = {name.casefold() for name in _git_names(self.root, True)}
+        if any(
+            name == ".factory/deep-runs" or name.startswith(".factory/deep-runs/")
+            for name in tracked
+        ):
+            raise AgenticControlError(
+                "E_COORDINATOR_PATH", "tracked deep-run collision"
+            )
+
+    @staticmethod
+    def _regular(path, *, directory):
+        import stat
+
+        info = path.lstat()
+        linked = path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400
+        expected = (
+            stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+        )
+        if linked or not expected or (not directory and info.st_nlink != 1):
+            raise AgenticControlError(
+                "E_COORDINATOR_PATH", "linked or invalid metadata path"
             )
 
     def _connect(self):
-        return WorkflowEventStore._connect(self)
+        from contextlib import contextmanager
+        from .graph_authorization import _authorization_lock, GraphAuthorizationError
+        from .deep_audit_io import read_run_json, write_run_json, LIMIT
+
+        @contextmanager
+        def transaction():
+            self._paths()
+            try:
+                with self._metadata_lock, _authorization_lock(self.path):
+                    snapshot = (
+                        read_run_json(self.path.parent, self.path.name)
+                        if self.path.exists()
+                        else {"rows": {}}
+                    )
+                    rows = self._snapshot(snapshot)
+                    before = _sha(rows)
+                    yield rows
+                    if _sha(rows) != before:
+                        self._paths()
+                        self._tracked_boundary()
+                        value = {"rows": rows}
+                        if len(_canonical({**value, "sha256": _sha(value)})) > LIMIT:
+                            raise AgenticControlError(
+                                "E_COORDINATOR_INTEGRITY",
+                                "metadata byte bound exceeded",
+                            )
+                        write_run_json(self.path.parent, self.path.name, value)
+            except GraphAuthorizationError as error:
+                if error.code != "GRAPH_AUTHORIZATION_IN_PROGRESS":
+                    raise
+                raise AgenticControlError(
+                    "E_COORDINATOR_BUSY", "metadata lock requires review"
+                ) from error
+
+        return transaction()
+
+    def _snapshot(self, snapshot):
+        if set(snapshot) != {"rows"} or not isinstance(snapshot["rows"], dict):
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "invalid metadata snapshot"
+            )
+        for key, row in snapshot["rows"].items():
+            value = self._decode(key, row)
+            if key != "lease":
+                self._reconciliation_request(value)
+        return snapshot["rows"]
 
     @staticmethod
     def _id(value):
@@ -3521,15 +3607,17 @@ class CoordinatorRequestStore:
 
     @staticmethod
     def _load(db, key):
-        row = db.execute(
-            "SELECT payload,sha FROM coordinator_metadata WHERE key=?", (key,)
-        ).fetchone()
+        row = db.get(key)
         if row is None:
             return None
         return CoordinatorRequestStore._decode(key, row)
 
     @staticmethod
     def _decode(key, row):
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "invalid sealed metadata row"
+            )
         try:
             value = json.loads(row[0])
             valid = isinstance(value, dict) and _sha(value) == row[1]
@@ -3556,11 +3644,7 @@ class CoordinatorRequestStore:
 
     @staticmethod
     def _save(db, key, value):
-        db.execute(
-            "INSERT INTO coordinator_metadata VALUES (?,?,?) "
-            "ON CONFLICT(key) DO UPDATE SET payload=excluded.payload,sha=excluded.sha",
-            (key, _canonical(value).decode(), _sha(value)),
-        )
+        db[key] = [_canonical(value).decode(), _sha(value)]
 
     @staticmethod
     def _match(row, digest):
@@ -3606,10 +3690,7 @@ class CoordinatorRequestStore:
             return dict(row, created=True)
 
     def _idle(self, db):
-        snapshot = db.execute(
-            "SELECT key,payload,sha FROM coordinator_metadata WHERE key!='lease'"
-        ).fetchall()
-        rows = [self._decode(row[0], row[1:]) for row in snapshot]
+        rows = [self._decode(key, row) for key, row in db.items() if key != "lease"]
         # Unknown legacy/interrupted states cannot establish an idle workspace.
         if any(
             row.get("state") not in {"COMPLETE", "INCOMPLETE"}
@@ -3792,13 +3873,7 @@ class CoordinatorRequestStore:
         """Account for interruption, retaining unknown cleanup and blocked ownership."""
         now = self._clock(now_monotonic)
         with self._connect() as db:
-            snapshot = db.execute(
-                "SELECT key,payload,sha FROM coordinator_metadata ORDER BY key"
-            ).fetchall()
-            rows = {
-                key: self._decode(key, (payload, seal))
-                for key, payload, seal in snapshot
-            }
+            rows = {key: self._decode(key, row) for key, row in db.items()}
             requests = {
                 key: self._reconciliation_request(row)
                 for key, row in rows.items()
@@ -3851,7 +3926,7 @@ class CoordinatorRequestStore:
             prior = self._load(db, "lease")
             if prior is None or prior["owner_identity"] != owner:
                 raise AgenticControlError("E_COORDINATOR_OWNER", "exact owner required")
-            db.execute("DELETE FROM coordinator_metadata WHERE key='lease'")
+            del db["lease"]
 
 
 class WorkflowEventStore:
