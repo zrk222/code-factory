@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from hashlib import sha256
-from http.client import HTTPConnection
+from http.client import HTTPConnection, HTTPResponse
 import json
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 
 import pytest
 
@@ -249,6 +249,33 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
     assert not worker.is_alive()
 
 
+def _probe_http_response(
+    connection, client, method, path, payload, headers, status, rejected, body_sent
+):
+    """Send unchanged request bytes through one declared transport profile."""
+    if client == "standard":
+        connection.request(method, path, payload, headers)
+        return connection.getresponse()
+    encoded = payload.encode("utf-8")
+    headers["Content-Length"] = str(len(encoded))
+    frame = f"{method} {path} HTTP/1.1\r\n" + "".join(
+        f"{name}: {value}\r\n" for name, value in headers.items()
+    )
+    connection.connect()
+    prefix = frame.encode("ascii") + b"\r\n"
+    if client == "full_frame":
+        connection.sock.sendall(prefix + encoded)
+    else:
+        connection.sock.sendall(prefix)
+        if status == 415:
+            assert rejected.wait(3), "server did not reject headers before body"
+        connection.sock.sendall(encoded)
+        body_sent.set()
+    response = HTTPResponse(connection.sock)
+    response.begin()
+    return response
+
+
 @pytest.mark.parametrize(
     "method,path,body,override,status",
     [
@@ -266,8 +293,51 @@ def test_streamable_http_is_authenticated_loopback_and_protocol_bound(
         ("POST", "/mcp", None, {"MCP-Protocol-Version": "2024-11-05"}, 400),
     ],
 )
-def test_redteam_http_probe_guards(tmp_path, method, path, body, override, status):
+@pytest.mark.parametrize("client", ["standard", "full_frame", "split"])
+def test_redteam_http_probe_guards(
+    tmp_path, monkeypatch, method, path, body, override, status, client
+):
     """Keep the manual probe's unique framing controls in the existing test owner."""
+    from factoryline.mcp import _McpHttpHandler
+
+    rejected = Event()
+    body_sent = Event()
+    drained = []
+    original_headers = _McpHttpHandler._headers_valid
+    original_drain = _McpHttpHandler._drain_body
+
+    def headers_valid(handler, content_lengths):
+        result = original_headers(handler, content_lengths)
+        if status == 415:
+            rejected.set()
+            if client == "split":
+                assert body_sent.wait(3), "split client did not send its bounded body"
+        return result
+
+    def drain_body(handler):
+        class CountedReader:
+            def read(self, size):
+                data = reader.read(size)
+                drained.append(len(data))
+                return data
+
+            def __getattr__(self, name):
+                return getattr(reader, name)
+
+        reader = handler.rfile
+        handler.rfile = CountedReader()
+        original_drain(handler)
+
+    monkeypatch.setattr(_McpHttpHandler, "_headers_valid", headers_valid)
+    monkeypatch.setattr(_McpHttpHandler, "_drain_body", drain_body)
+    if status == 415:
+        monkeypatch.setattr(
+            _McpHttpHandler,
+            "_read_rpc",
+            lambda *args: pytest.fail(
+                "rejected headers must not parse or dispatch RPC"
+            ),
+        )
     token = "local-test-token-0123456789abcdef"
     server = create_streamable_http_server(tmp_path, bearer_token=token, port=0)
     worker = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
@@ -301,8 +371,18 @@ def test_redteam_http_probe_guards(tmp_path, method, path, body, override, statu
     )
     connection = HTTPConnection("127.0.0.1", port, timeout=3)
     try:
-        connection.request(method, path, payload, headers)
-        response = connection.getresponse()
+        encoded = payload.encode("utf-8")
+        response = _probe_http_response(
+            connection,
+            client,
+            method,
+            path,
+            payload,
+            headers,
+            status,
+            rejected,
+            body_sent,
+        )
         assert response.status == status
         response.read()
     finally:
@@ -311,6 +391,40 @@ def test_redteam_http_probe_guards(tmp_path, method, path, body, override, statu
         server.server_close()
         worker.join(timeout=3)
     assert not worker.is_alive()
+    if status == 415:
+        assert drained == [len(encoded)], "rejected body must be drained before close"
+
+
+@pytest.mark.parametrize(
+    "lengths,expected",
+    [
+        (["4"], [4]),
+        (["65536"], [65536]),
+        ([], []),
+        (["bad"], []),
+        (["0"], []),
+        (["-1"], []),
+        (["65537"], []),
+        (["4", "4"], []),
+    ],
+)
+def test_rejected_header_drain_preserves_existing_bounds(lengths, expected):
+    from http.client import HTTPMessage
+    from types import SimpleNamespace
+    from factoryline.mcp import _McpHttpHandler
+
+    headers = HTTPMessage()
+    for length in lengths:
+        headers.add_header("Content-Length", length)
+    reads, timeouts = [], []
+    handler = SimpleNamespace(
+        headers=headers,
+        connection=SimpleNamespace(settimeout=timeouts.append),
+        rfile=SimpleNamespace(read=reads.append),
+    )
+    _McpHttpHandler._drain_body(handler)
+    assert reads == expected
+    assert timeouts == ([2.0] if expected else [])
 
 
 def test_http_startup_prints_only_resolved_loopback_origins(

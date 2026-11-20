@@ -4117,6 +4117,7 @@ class _McpHttpHandler(BaseHTTPRequestHandler):
             return
         content_lengths = self.headers.get_all("Content-Length", [])
         if not self._headers_valid(content_lengths):
+            self._drain_body()
             return
         content_length = self._body_length()
         if content_length is None:
