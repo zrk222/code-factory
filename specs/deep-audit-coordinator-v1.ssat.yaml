@@ -56,6 +56,9 @@ spec_markdown: |
   request hash must match before ACK permits native audit execution. Cheap native
   identity/lease checks run on heartbeats; full package hashing runs at admission
   and handshake, not on every heartbeat. Leases are rechecked after preflight.
+  Preflight validates the pinned manifest and signed authorization before source
+  inventory can start read-only Git subprocesses. It then binds the same pinned
+  plan against actual inventory and rejects plan drift, preserving both gates.
   Transient worker configuration travels in bounded process arguments (8192 UTF-8
   JSON bytes, 30000 command characters), not a retained raw-input file. This is
   not secrecy from an OS process inspector or a hostile workspace writer.

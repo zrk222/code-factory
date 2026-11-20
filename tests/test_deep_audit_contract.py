@@ -228,6 +228,22 @@ def test_coordinator_unsigned_audit_rejects_before_worker(tmp_path, monkeypatch)
         module.dispatch_deep_audit_request(tmp_path, request, owner, context)
 
 
+def test_coordinator_invalid_manifest_rejects_before_inventory(tmp_path, monkeypatch):
+    import factoryline.cli_deep_audit as module
+    import factoryline.deep_audit_io as audit_io
+
+    payload = _coordinator_test_payload(tmp_path)
+    monkeypatch.setattr(
+        audit_io,
+        "inventory_candidate",
+        lambda *args: pytest.fail(
+            "invalid authorization reached inventory subprocesses"
+        ),
+    )
+    with pytest.raises((ValueError, RuntimeAuditError)):
+        module._coordinator_preflight(tmp_path, payload)
+
+
 def test_coordinator_deleted_lease_rejects_before_child(tmp_path, monkeypatch):
     import factoryline.cli_deep_audit as module
     import subprocess

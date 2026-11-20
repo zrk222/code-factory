@@ -429,11 +429,9 @@ def _coordinator_preflight(root, payload):
         name: local_file(root, payload[name])
         for name in ("manifest", "authorization", "trust_root")
     }
-    inventory = inventory_candidate(root)
     plan = load_execution_manifest(
         paths["manifest"],
         payload["manifest_sha256"],
-        inventory=inventory,
         candidate_root=root,
     )
     _, authorization = verify_execution_authorization(
@@ -444,6 +442,15 @@ def _coordinator_preflight(root, payload):
         payload["trust_root_sha256"],
         return_envelope_sha256=True,
     )
+    inventory = inventory_candidate(root)
+    bound_plan = load_execution_manifest(
+        paths["manifest"],
+        payload["manifest_sha256"],
+        inventory=inventory,
+        candidate_root=root,
+    )
+    if bound_plan != plan:
+        raise ValueError("signed execution plan changed during preflight")
     if (
         inventory["state"] != "COMPLETE"
         or inventory["candidate_sha256"] != plan["candidate_sha256"]
