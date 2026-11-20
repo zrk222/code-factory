@@ -44,6 +44,15 @@ from factoryline.studio import (
 )
 
 
+def test_pre_pr_scheduler_declares_each_top_level_function_once():
+    import ast
+    import factoryline.incremental_scheduler as scheduler
+
+    tree = ast.parse(Path(scheduler.__file__).read_bytes())
+    names = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
+    assert len(names) == len(set(names)), "duplicate scheduler function definitions"
+
+
 def _pre_pr_fixture(root, monkeypatch):
     import sys
     import factoryline.incremental_scheduler as review

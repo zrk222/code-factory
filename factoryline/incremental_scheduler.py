@@ -1128,56 +1128,6 @@ def run_pre_pr(
     return {**core, "receipt_sha256": _sha(core)}
 
 
-def _pre_pr_validate_dispatch_hook(before_dispatch: object) -> None:
-    """Require a callable hook before any scheduled gate can be admitted."""
-    if before_dispatch is not None and not callable(before_dispatch):
-        raise SchedulerError(
-            "E_PRE_PR_DISPATCH", "the trusted dispatch check must be callable"
-        )
-
-
-def _pre_pr_observed_schedule(schedule: dict, live: dict) -> dict:
-    """Bind host observations without mutating caller declarations."""
-    checks = {row["id"]: row for row in live["checks"]}
-    schedule = {**schedule, "gates": [dict(row) for row in schedule["gates"]]}
-    for gate in schedule["gates"]:
-        if gate["proof"]:
-            proof = gate["proof"]
-            gate["proof"] = {
-                **proof,
-                "toolchain": {
-                    **proof.get("toolchain", {}),
-                    "pre_pr_executable_sha256": _pre_pr_executable_identity(
-                        checks[gate["id"]]
-                    )
-                    or "unverifiable",
-                },
-            }
-    return schedule
-
-
-def _pre_pr_reconsider_exact_reuse(root: Path, plan: dict, schedule: dict) -> None:
-    """An unchanged Git diff may still have an exact current proof."""
-    gates = {row["id"]: row for row in schedule["gates"]}
-    for item in plan["items"]:
-        proof = gates[item["id"]]["proof"]
-        if item["reason"] != "DEPENDENCY_CLOSURE_CHANGED" or not proof:
-            continue
-        if proof.get("assurance_level") not in (None, schedule["assurance_level"]):
-            continue
-        checked = evaluate_proofs(
-            root,
-            {"schema": "factory.proof-request.v1", "gates": [proof]},
-            changed_paths=schedule["changed_paths"],
-        )["items"][0]
-        if checked["disposition"] == "REUSE":
-            item.update(
-                disposition="REUSE",
-                reason=checked["reason"],
-                proof={key: checked[key] for key in ("proof_key", "receipt_sha256")},
-            )
-
-
 def _pre_pr_proof_snapshots(root: Path, plan: dict, schedule: dict, live: dict) -> dict:
     """Capture exact declared facts before execution, including existing outputs."""
     from .proof_reuse import ProofReuseError, proof_facts
