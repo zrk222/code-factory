@@ -2026,29 +2026,322 @@ def test_pre_pr_reuse_binds_live_obligation_and_rechecks_real_proof(tmp_path, mu
     )
 
 
-def test_pre_pr_executable_native_alias_retargets_fail_closed(tmp_path):
-    import shutil
-    import sys
-    from factoryline.incremental_scheduler import _pre_pr_executable_identity
+@pytest.mark.parametrize(
+    "mode", ["new", "rewrite", "missing", "failure", "host_hook", "tamper"]
+)
+def test_pre_pr_runner_generated_report(tmp_path, monkeypatch, mode):
+    import factoryline.live_feedback as feedback
+    from factoryline.change_review import _sha
+    from factoryline.live_feedback import validate_live_manifest
+    from factoryline.incremental_scheduler import run_pre_pr
 
-    native = Path(sys.executable).resolve(strict=True)
-    other = tmp_path / native.name
-    shutil.copy2(native, other)
-    alias = tmp_path / ("alias" + native.suffix)
-    try:
-        alias.symlink_to(native)
-    except OSError:
-        pytest.skip("Host cannot create an executable symlink")
-    check = {"argv": [str(alias)], "env": {}}
-    first = _pre_pr_executable_identity(check)
-    assert first is not None
-    assert first == _pre_pr_executable_identity({"argv": [str(native)], "env": {}})
-    alias.unlink()
-    alias.symlink_to(other)
-    assert _pre_pr_executable_identity(check) != first
-    alias.unlink()
-    alias.symlink_to(tmp_path / "missing-native")
-    assert _pre_pr_executable_identity(check) is None
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    relative = ".factory/reports/check.json"
+    report = tmp_path / relative
+    code = "from pathlib import Path\np=Path('.factory/reports/check.json')\np.parent.mkdir(parents=True,exist_ok=True)\np.write_text('actual runner report')\n"
+    if mode in {"missing", "host_hook"}:
+        code = "pass\n"
+    if mode == "failure":
+        code += "raise SystemExit(1)\n"
+    (tmp_path / "check.py").write_text(code)
+    manifest["schedule"]["changed_paths"] = ["app.py", "check.py"]
+    manifest["live"]["changed_paths"] = ["app.py", "check.py"]
+    if mode == "rewrite":
+        report.parent.mkdir(parents=True)
+        report.write_text("previous report")
+    manifest["live"]["checks"][0]["capture_outputs"] = [relative]
+    check = validate_live_manifest(tmp_path, manifest["live"])["checks"][0]
+    manifest["schedule"]["gates"][0]["proof"] = {
+        "name": "unit",
+        "command": check["argv"],
+        "environment": check["env"],
+        "inputs": ["app.py", "check.py"],
+        "outputs": [relative],
+        "read_only": True,
+        "safe_to_skip": False,
+        "toolchain": {
+            "pre_pr_check_sha256": _sha(
+                {
+                    "check": check,
+                    "contract_sha256": manifest["live"]["contract_sha256"],
+                    "assurance_level": manifest["schedule"]["assurance_level"],
+                }
+            )
+        },
+    }
+    calls = []
+    original = feedback._run_check
+
+    def counted(*args, **kwargs):
+        calls.append(True)
+        result = original(*args, **kwargs)
+        if mode == "host_hook":
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text("host only")
+        return result
+
+    monkeypatch.setattr(feedback, "_run_check", counted)
+    first = run_pre_pr(tmp_path, manifest, execute=True)
+    proofs = list((tmp_path / ".factory/proofs").glob("*.json"))
+    if mode in {"missing", "failure", "host_hook"}:
+        assert not proofs
+        assert first["state"] == "BLOCKED"
+        return
+    assert len(proofs) == 1
+    assert report.read_text() == "actual runner report"
+    if mode == "tamper":
+        report.write_text("tampered")
+    second = run_pre_pr(tmp_path, manifest, execute=True)
+    assert len(calls) == (2 if mode == "tamper" else 1)
+    assert second["state"] == "PASS"
+
+
+def _pre_pr_capture_cli_protected(tmp_path, manifest, proof, check, paths, mode):
+    """Construct existing-output and governance conflicts without changing checks."""
+    if mode in {"rewrite", "tamper"}:
+        for relative in paths:
+            path = tmp_path / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("old")
+    if mode == "overlap":
+        _add_pre_pr_gate(manifest, "other")
+        manifest["live"]["checks"][1]["capture_outputs"] = [paths[0]]
+    if mode in {"input", "closure", "check_path"}:
+        target = tmp_path / paths[0]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("protected")
+        if mode == "input":
+            proof["inputs"].append(paths[0])
+        elif mode == "closure":
+            manifest["schedule"]["dependency_closure"]["unit"].append(paths[0])
+        else:
+            check["paths"].append(paths[0])
+    if mode in {"oracle", "intent", "authority", "contract"}:
+        directory = tmp_path / ".factory"
+        directory.mkdir(exist_ok=True)
+        if mode == "oracle":
+            manifest["oracle"]["contract"] = paths[0]
+        else:
+            (directory / "contract.json").write_text(
+                json.dumps({mode: {"path": paths[0]}})
+            )
+        target = tmp_path / paths[0]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}")
+
+
+def _pre_pr_capture_cli_setup(tmp_path, monkeypatch, mode):
+    from factoryline.change_review import _sha
+    from factoryline.live_feedback import validate_live_manifest
+
+    manifest = _pre_pr_fixture(tmp_path, monkeypatch)
+    count = 16 if mode in {"sixteen", "one_mib"} else 2
+    if mode == "count":
+        count = 17
+    paths = sorted(f".factory/reports/check-{index}.json" for index in range(count))
+    size = 65536 if mode == "one_mib" else 8
+    if mode == "aggregate":
+        size = 3000
+    code = "from pathlib import Path\n"
+    for relative in paths:
+        code += f"p=Path({relative!r}); p.parent.mkdir(parents=True,exist_ok=True); p.write_bytes(b'x'*{size})\n"
+    if mode == "missing":
+        code = "pass\n"
+    elif mode in {"linked", "escaping"}:
+        code = "from pathlib import Path\np=Path('.factory/reports'); p.mkdir(parents=True,exist_ok=True)\n"
+        code += f"(p/'check-0.json').symlink_to({str(tmp_path / 'app.py')!r})\n"
+    elif mode == "failure":
+        code += "raise SystemExit(1)\n"
+    (tmp_path / "check.py").write_text(code)
+    manifest["schedule"]["changed_paths"] = ["app.py", "check.py"]
+    manifest["live"]["changed_paths"] = ["app.py", "check.py"]
+    check = manifest["live"]["checks"][0]
+    check["capture_outputs"] = paths
+    check["max_output_bytes"] = 1048576 if mode == "one_mib" else 4096
+    if mode == "escaping":
+        check["capture_outputs"] = [".factory/reports/../escape.json"]
+    if mode in {"count", "escaping"}:
+        return manifest, paths
+    normalized = validate_live_manifest(tmp_path, manifest["live"])["checks"][0]
+    proof = {
+        "name": "unit",
+        "command": normalized["argv"],
+        "environment": normalized["env"],
+        "inputs": ["app.py", "check.py"],
+        "outputs": paths,
+        "read_only": True,
+        "safe_to_skip": False,
+        "toolchain": {
+            "pre_pr_check_sha256": _sha(
+                {
+                    "check": normalized,
+                    "contract_sha256": manifest["live"]["contract_sha256"],
+                    "assurance_level": manifest["schedule"]["assurance_level"],
+                }
+            )
+        },
+    }
+    manifest["schedule"]["gates"][0]["proof"] = proof
+    _pre_pr_capture_cli_protected(tmp_path, manifest, proof, check, paths, mode)
+    return manifest, paths
+
+
+def _pre_pr_capture_cli_execution(tmp_path, monkeypatch, mode, calls):
+    """Observe real execution and inject only the named terminal failure."""
+    import factoryline.senior_assurance as assurance
+
+    actual = assurance.run_cli_detailed
+
+    def observed(*args, **kwargs):
+        calls.append(True)
+        result = actual(*args, **kwargs)
+        if mode == "cleanup":
+            result["cleanup_confirmed"] = False
+        if mode == "cancelled":
+            result.update(ok=False, reason="cancelled")
+        if mode == "source_drift":
+            (tmp_path / "app.py").write_text("VALUE=3\n")
+        return result
+
+    monkeypatch.setattr(assurance, "run_cli_detailed", observed)
+
+
+def _pre_pr_capture_cli_rejected(tmp_path, paths, mode, calls, code, first, proofs):
+    """Keep pre-dispatch and post-execution rejection assertions distinct."""
+    assert code == 2 and first["state"] == "BLOCKED"
+    assert not proofs
+    if mode in {
+        "count",
+        "escaping",
+        "overlap",
+        "input",
+        "closure",
+        "check_path",
+        "oracle",
+        "intent",
+        "authority",
+        "contract",
+        "manifest",
+        "plan",
+    }:
+        assert not calls
+    elif mode != "source_drift":
+        assert not (tmp_path / paths[0]).exists()
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "new",
+        "rewrite",
+        "tamper",
+        "sixteen",
+        "one_mib",
+        "count",
+        "aggregate",
+        "missing",
+        "linked",
+        "escaping",
+        "overlap",
+        "input",
+        "closure",
+        "check_path",
+        "oracle",
+        "intent",
+        "authority",
+        "contract",
+        "manifest",
+        "failure",
+        "plan",
+        "cancelled",
+        "cleanup",
+        "source_drift",
+        "environment",
+        "executable",
+    ],
+)
+def test_pre_pr_generated_outputs_actual_cli(tmp_path, monkeypatch, capsys, mode):
+    """CLI+real process controls; unchanged oracle/release authority uses fixtures."""
+    manifest, paths = _pre_pr_capture_cli_setup(tmp_path, monkeypatch, mode)
+    path = tmp_path / ".factory/pre-pr.json"
+    if mode == "manifest":
+        path = tmp_path / paths[0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    calls = []
+    _pre_pr_capture_cli_execution(tmp_path, monkeypatch, mode, calls)
+
+    def invoke(execute=True):
+        path.write_text(json.dumps(manifest))
+        code = main(
+            ["change", "pre-pr", str(path), "--root", str(tmp_path), "--json"]
+            + (["--execute"] if execute else [])
+        )
+        return code, json.loads(capsys.readouterr().out)
+
+    code, first = invoke(mode != "plan")
+    proofs = list((tmp_path / ".factory/proofs").glob("*.json"))
+    positive = mode in {
+        "new",
+        "rewrite",
+        "tamper",
+        "sixteen",
+        "one_mib",
+        "environment",
+        "executable",
+    }
+    if not positive:
+        _pre_pr_capture_cli_rejected(tmp_path, paths, mode, calls, code, first, proofs)
+        return
+    assert code == 0 and first["state"] == "PASS" and len(proofs) == 1
+    assert (tmp_path / paths[0]).read_bytes() == b"x" * (
+        65536 if mode == "one_mib" else 8
+    )
+    if mode == "tamper":
+        (tmp_path / paths[0]).write_text("tampered")
+    elif mode == "environment":
+        manifest["live"]["checks"][0]["env"] = {"MODE": "changed"}
+    elif mode == "executable":
+        # Resolution drift is independently covered by native alias controls.
+        manifest["live"]["checks"][0]["argv"][0] = "python"
+    before = len(calls)
+    code, second = invoke()
+    assert code == 0 and second["state"] == "PASS"
+    assert len(calls) - before == (
+        1 if mode in {"tamper", "environment", "executable"} else 0
+    )
+    if mode not in {"tamper", "environment", "executable"}:
+        assert second["checks"][0]["reason"] == "VERIFIED_REUSE"
+
+
+def test_pre_pr_generated_report_late_hardlink_rejects_proof(
+    tmp_path, monkeypatch, capsys
+):
+    """Exact bytes do not admit a report whose ownership changed after export."""
+    import os
+    import factoryline.incremental_scheduler as scheduler
+
+    manifest, paths = _pre_pr_capture_cli_setup(tmp_path, monkeypatch, "new")
+    actual = scheduler._pre_pr_export_reports
+    observed = []
+
+    def linked_after_export(root, check, observation):
+        exported = actual(root, check, observation)
+        if exported:
+            report = root / paths[0]
+            os.link(report, root / ".factory/late-report-alias")
+            observed.append(report.stat().st_nlink)
+        return exported
+
+    monkeypatch.setattr(scheduler, "_pre_pr_export_reports", linked_after_export)
+    path = tmp_path / ".factory/pre-pr.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest))
+    main(
+        ["change", "pre-pr", str(path), "--root", str(tmp_path), "--json", "--execute"]
+    )
+    capsys.readouterr()
+    assert observed == [2]
+    assert not list((tmp_path / ".factory/proofs").glob("*.json"))
 
 
 def _pre_pr_seed_owned_tool(tmp_path, monkeypatch, manifest, mutation):
@@ -2074,22 +2367,6 @@ def _pre_pr_seed_owned_tool(tmp_path, monkeypatch, manifest, mutation):
     ]
     monkeypatch.setenv("PATH", str(tool_dirs[0]) + os.pathsep + os.environ["PATH"])
     return tool, tool_dirs
-
-
-def test_pre_pr_owned_tool_copy_does_not_copy_system_metadata(tmp_path, monkeypatch):
-    import shutil
-
-    def forbidden_metadata(*args, **kwargs):
-        raise AssertionError("System metadata must not enter owned test executables")
-
-    monkeypatch.setattr(shutil, "copystat", forbidden_metadata)
-    manifest = {"live": {"checks": [{}]}}
-    tool, directories = _pre_pr_seed_owned_tool(
-        tmp_path, monkeypatch, manifest, "executable_bytes"
-    )
-    assert tool.is_file()
-    assert len(directories) == 2
-    assert tool.read_bytes() == (directories[1] / tool.name).read_bytes()
 
 
 def _pre_pr_seed_setup(tmp_path, monkeypatch, mutation):
@@ -2352,3 +2629,44 @@ def test_pre_pr_final_revalidates_release_contract(tmp_path, monkeypatch, mutati
     assert result["state"] == ("PASS" if mutation == "none" else "BLOCKED")
     assert len(observed) == 2
     assert observed[0] == "original policy"
+
+
+def test_pre_pr_executable_native_alias_retargets_fail_closed(tmp_path):
+    import shutil
+    import sys
+    from factoryline.incremental_scheduler import _pre_pr_executable_identity
+
+    native = Path(sys.executable).resolve(strict=True)
+    other = tmp_path / native.name
+    shutil.copy2(native, other)
+    alias = tmp_path / ("alias" + native.suffix)
+    try:
+        alias.symlink_to(native)
+    except OSError:
+        pytest.skip("Host cannot create an executable symlink")
+    check = {"argv": [str(alias)], "env": {}}
+    first = _pre_pr_executable_identity(check)
+    assert first is not None
+    assert first == _pre_pr_executable_identity({"argv": [str(native)], "env": {}})
+    alias.unlink()
+    alias.symlink_to(other)
+    assert _pre_pr_executable_identity(check) != first
+    alias.unlink()
+    alias.symlink_to(tmp_path / "missing-native")
+    assert _pre_pr_executable_identity(check) is None
+
+
+def test_pre_pr_owned_tool_copy_does_not_copy_system_metadata(tmp_path, monkeypatch):
+    import shutil
+
+    def forbidden_metadata(*args, **kwargs):
+        raise AssertionError("System metadata must not enter owned test executables")
+
+    monkeypatch.setattr(shutil, "copystat", forbidden_metadata)
+    manifest = {"live": {"checks": [{}]}}
+    tool, directories = _pre_pr_seed_owned_tool(
+        tmp_path, monkeypatch, manifest, "executable_bytes"
+    )
+    assert tool.is_file()
+    assert len(directories) == 2
+    assert tool.read_bytes() == (directories[1] / tool.name).read_bytes()

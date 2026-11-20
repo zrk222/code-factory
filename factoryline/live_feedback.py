@@ -15,7 +15,12 @@ import re
 from typing import Any
 
 from .runtime_audit_common import canonical_bytes, exact_keys, reject_secret_material
-from .senior_assurance import SeniorAssuranceError, _source_digest, run_replay
+from .senior_assurance import (
+    SeniorAssuranceError,
+    _source_digest,
+    run_replay,
+    validate_capture_outputs,
+)
 
 
 SCHEMA = "factory.live-feedback.v1"
@@ -160,7 +165,7 @@ def _live_check_shape(check: Any, index: int) -> dict[str, Any]:
                 "timeout_seconds",
                 "max_output_bytes",
             },
-            {"env", "description"},
+            {"env", "description", "capture_outputs"},
         )
     except Exception as exc:
         raise LiveFeedbackError("E_LIVE_CHECK", f"checks[{index}]: {exc}") from exc
@@ -237,6 +242,11 @@ def _normalized_live_check(check: Any, index: int, ids: set[str]) -> dict[str, A
         "max_output_bytes": output,
         "env": env,
         "description": check.get("description"),
+        **(
+            {"capture_outputs": validate_capture_outputs(check["capture_outputs"])}
+            if "capture_outputs" in check
+            else {}
+        ),
     }
 
 
@@ -288,6 +298,8 @@ def _run_check(
         "max_output_bytes": check["max_output_bytes"],
         "contract_sha256": contract_sha256,
     }
+    if "capture_outputs" in check:
+        replay["capture_outputs"] = check["capture_outputs"]
     return run_replay(root, replay, execute=True)
 
 
@@ -341,6 +353,14 @@ def _live_check_row(
         "reason": receipt.get("failure_reason") or "CHECK_PASSED",
         "receipt_sha256": receipt.get("receipt_sha256"),
         "duration_ms": receipt.get("duration_ms"),
+        "executed": receipt.get("executed") is True,
+        "cleanup": receipt.get("cleanup") is True,
+        "observed_exit": receipt.get("observed_exit"),
+        **(
+            {"captured_outputs": receipt["captured_outputs"]}
+            if "captured_outputs" in receipt
+            else {}
+        ),
         "next_action": action,
     }
 

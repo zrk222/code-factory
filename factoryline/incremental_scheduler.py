@@ -826,14 +826,202 @@ def _pre_pr_gate(
     pinned = (
         {**check, "argv": [observed["path"], *check["argv"][1:]]} if observed else check
     )
-    forced = {**live, "checks": [pinned], "changed_paths": check["paths"]}
+    forced = {
+        key: value for key, value in live.items() if key != "_protected_output_paths"
+    }
+    forced.update(checks=[pinned], changed_paths=check["paths"])
     receipt = run_live_feedback(root, forced, execute=execute)
     state = receipt["checks"][0]["state"]
     if receipt["source_sha256"] != source or executable != _pre_pr_executable_identity(
         check
     ):
         state = "BLOCKED"
+    if check.get("capture_outputs") and state == "PASS":
+        export_check = {
+            **check,
+            "_protected_output_paths": live.get("_protected_output_paths", []),
+        }
+        if not _pre_pr_export_reports(root, export_check, receipt["checks"][0]):
+            state = "BLOCKED"
     return {"state": state, "reason": "SCHEDULED_EXECUTION", "live_receipt": receipt}
+
+
+def _pre_pr_export_reports(root: Path, check: dict, observation: dict) -> bool:
+    from .proof_reuse import ProofReuseError, _stable_file_read
+
+    if not (
+        observation.get("executed") is True
+        and observation.get("cleanup") is True
+        and observation.get("state") == "PASS"
+        and observation.get("observed_exit") == 0
+    ):
+        return False
+    rows = observation.get("captured_outputs", [])
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        return False
+    if [row.get("path") for row in rows] != check["capture_outputs"]:
+        return False
+    try:
+        pending = _pre_pr_pending_reports(root, check, rows)
+        if pending is None:
+            return False
+        # Validate the whole batch before allowing any host overwrite.
+        for path, data, digest in pending:
+            if not _pre_pr_report_destination(root, path.relative_to(root).as_posix()):
+                return False
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            if _stable_file_read(path, label="exported report")[1] != digest:
+                return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError, ProofReuseError):
+        return False
+
+
+def _pre_pr_pending_reports(root: Path, check: dict, rows: list[dict]) -> list | None:
+    import base64
+
+    pending = []
+    remaining = check["max_output_bytes"]
+    for row in rows:
+        relative = row["path"]
+        path = root / relative
+        if any(
+            paths_intersect(relative, protected)
+            for protected in check.get("_protected_output_paths", [])
+        ):
+            return None
+        if not _pre_pr_report_destination(root, relative):
+            return None
+        if len(row["data_base64"]) > 4 * ((remaining + 2) // 3):
+            return None
+        data = base64.b64decode(row["data_base64"], validate=True)
+        if (
+            type(row["bytes"]) is not int
+            or len(data) != row["bytes"]
+            or len(data) > remaining
+            or hashlib.sha256(data).hexdigest() != row["sha256"]
+        ):
+            return None
+        remaining -= len(data)
+        pending.append((path, data, row["sha256"]))
+    return pending
+
+
+def _pre_pr_output_ownership(live: dict) -> None:
+    owned = []
+    for check in live["checks"]:
+        for path in check.get("capture_outputs", []):
+            if any(
+                paths_intersect(path, existing)
+                for existing in [*owned, *live.get("_protected_output_paths", [])]
+            ):
+                raise SchedulerError(
+                    "E_PRE_PR_OUTPUT", "captured output ownership overlaps"
+                )
+            owned.append(path)
+
+
+def _pre_pr_report_destination(root: Path, relative: str) -> bool:
+    """Reject aliases before touching a destination or creating its parents."""
+    from .proof_reuse import _path_has_symlink
+
+    path = root / relative
+    if _path_has_symlink(root, relative) or not path.resolve().is_relative_to(root):
+        return False
+    if path.exists() and (not path.is_file() or path.stat().st_nlink != 1):
+        return False
+    return not any(
+        getattr(parent.stat(), "st_file_attributes", 0) & 1024
+        for parent in path.parents
+        if parent.exists() and parent.is_relative_to(root)
+    )
+
+
+def _pre_pr_protected_paths(
+    root: Path, manifest: dict, schedule: dict, live: dict
+) -> list[str]:
+    """Close export authority over source, declared inputs and referenced governance."""
+    from .senior_assurance import _source_digest
+
+    if not any(check.get("capture_outputs") for check in live["checks"]):
+        return []
+    protected = {row["path"] for row in _source_digest(root)[1]}
+    protected.update(manifest["oracle"].values())
+    protected.update(
+        path for paths in schedule["dependency_closure"].values() for path in paths
+    )
+    protected.update(path for check in live["checks"] for path in check["paths"])
+    protected.update(
+        path
+        for gate in schedule["gates"]
+        for path in (gate.get("proof") or {}).get("inputs", [])
+    )
+    queue = [manifest, f".factory/release-contracts/{manifest['feature']}.json"]
+    _pre_pr_protect_declared_reports(root, live, protected)
+    visited = set()
+    while queue:
+        value = queue.pop()
+        if isinstance(value, dict):
+            excluded = {"capture_outputs"}
+            if "read_only" in value and "command" in value:
+                excluded.add("outputs")
+            queue.extend(item for key, item in value.items() if key not in excluded)
+        elif isinstance(value, list):
+            queue.extend(value)
+        elif isinstance(value, str):
+            _pre_pr_protect_reference(root, value, protected, visited, queue)
+    return sorted(protected)
+
+
+def _pre_pr_protect_declared_reports(root: Path, live: dict, protected: set) -> None:
+    # A report declaration cannot overwrite the CLI's own manifest, even when
+    # the caller stored that governance artifact inside the report namespace.
+    for check in live["checks"]:
+        for relative in check.get("capture_outputs", []):
+            if not _pre_pr_report_destination(root, relative):
+                raise SchedulerError(
+                    "E_PRE_PR_OUTPUT", "report destination aliases protected storage"
+                )
+            path = root / relative
+            if path.is_file() and path.suffix.lower() == ".json":
+                try:
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if isinstance(value, dict) and value.get("schema") in {
+                    "factory.pre-pr.v1",
+                    "factory.live-feedback.v1",
+                    SCHEMA,
+                }:
+                    protected.add(relative)
+
+
+def _pre_pr_protect_reference(
+    root: Path, value: str, protected: set, visited: set, queue: list
+) -> None:
+    if value.startswith(".factory/reports/"):
+        protected.add(value)
+    if len(value) > 260 or any(char in value for char in "\n\r\x00"):
+        return
+    path = root / value
+    if not path.is_file() or not path.resolve().is_relative_to(root):
+        return
+    relative = path.relative_to(root).as_posix()
+    protected.add(relative)
+    if relative in visited or path.suffix.lower() != ".json":
+        return
+    visited.add(relative)
+    if len(visited) > 500 or path.stat().st_size > 1_048_576:
+        raise SchedulerError(
+            "E_PRE_PR_OUTPUT", "protected reference inventory exceeds bounds"
+        )
+    try:
+        queue.append(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        raise SchedulerError(
+            "E_PRE_PR_OUTPUT", "protected JSON reference cannot be inspected"
+        )
 
 
 def run_pre_pr(
@@ -858,6 +1046,10 @@ def run_pre_pr(
 
     root = Path(root).resolve()
     schedule, live, head = _pre_pr_inputs(root, manifest)
+    live["_protected_output_paths"] = _pre_pr_protected_paths(
+        root, manifest, schedule, live
+    )
+    _pre_pr_output_ownership(live)
     schedule = _pre_pr_observed_schedule(schedule, live)
     budget = _pre_pr_execution_budget(execution_budget, schedule)
     _pre_pr_validate_dispatch_hook(before_dispatch)
@@ -1006,7 +1198,9 @@ def _pre_pr_proof_snapshots(root: Path, plan: dict, schedule: dict, live: dict) 
         try:
             snapshots[item["id"]] = (
                 proof_facts(root, proof),
-                proof_facts(root, {**proof, "inputs": proof.get("outputs")}),
+                None
+                if checks[item["id"]].get("capture_outputs")
+                else proof_facts(root, {**proof, "inputs": proof.get("outputs")}),
                 _pre_pr_executable_identity(checks[item["id"]]),
             )
             if snapshots[item["id"]][-1] is None or snapshots[item["id"]][
@@ -1042,6 +1236,9 @@ def _pre_pr_record_proofs(
         duration = observation.get("duration_ms")
         if observation.get("state") != "PASS" or not isinstance(duration, (int, float)):
             continue
+        captured = observation.get("captured_outputs")
+        if captured is not None and not _pre_pr_captured_current(root, captured):
+            continue
         try:
             record_proof(
                 root, gates[identifier]["proof"], elapsed_ms=max(1, int(duration))
@@ -1049,6 +1246,21 @@ def _pre_pr_record_proofs(
         except ProofReuseError:
             # Never overwrite an existing (including corrupt) receipt implicitly.
             continue
+
+
+def _pre_pr_captured_current(root: Path, rows: list[dict]) -> bool:
+    from .proof_reuse import ProofReuseError, _stable_file_read
+
+    try:
+        return all(
+            _pre_pr_report_destination(root, row["path"])
+            and _stable_file_read(root / row["path"], label="captured report")[1]
+            == row["sha256"]
+            and _pre_pr_report_destination(root, row["path"])
+            for row in rows
+        )
+    except (ProofReuseError, OSError, KeyError):
+        return False
 
 
 def _pre_pr_proof_matches(
@@ -1061,6 +1273,10 @@ def _pre_pr_proof_matches(
         and proof.get("assurance_level") in (None, schedule["assurance_level"])
         and proof.get("command") == check["argv"]
         and proof.get("environment") == check["env"]
+        and (
+            not check.get("capture_outputs")
+            or proof.get("outputs") == check["capture_outputs"]
+        )
         and check["expected_exit"] == 0
         and set(item["dependency_paths"]).issubset(proof.get("inputs", []))
         and proof.get("toolchain", {}).get("pre_pr_check_sha256")
@@ -1189,3 +1405,53 @@ def _pre_pr_executable_observation(check: dict) -> dict | None:
         return {"path": str(path), "identity": identity, "sha256": digest}
     except (OSError, ValueError, ProofReuseError):
         return None
+
+
+def _pre_pr_validate_dispatch_hook(before_dispatch: object) -> None:
+    """Require a callable hook before any scheduled gate can be admitted."""
+    if before_dispatch is not None and not callable(before_dispatch):
+        raise SchedulerError(
+            "E_PRE_PR_DISPATCH", "the trusted dispatch check must be callable"
+        )
+
+
+def _pre_pr_observed_schedule(schedule: dict, live: dict) -> dict:
+    """Bind host observations without mutating caller declarations."""
+    checks = {row["id"]: row for row in live["checks"]}
+    schedule = {**schedule, "gates": [dict(row) for row in schedule["gates"]]}
+    for gate in schedule["gates"]:
+        if gate["proof"]:
+            proof = gate["proof"]
+            gate["proof"] = {
+                **proof,
+                "toolchain": {
+                    **proof.get("toolchain", {}),
+                    "pre_pr_executable_sha256": _pre_pr_executable_identity(
+                        checks[gate["id"]]
+                    )
+                    or "unverifiable",
+                },
+            }
+    return schedule
+
+
+def _pre_pr_reconsider_exact_reuse(root: Path, plan: dict, schedule: dict) -> None:
+    """An unchanged Git diff may still have an exact current proof."""
+    gates = {row["id"]: row for row in schedule["gates"]}
+    for item in plan["items"]:
+        proof = gates[item["id"]]["proof"]
+        if item["reason"] != "DEPENDENCY_CLOSURE_CHANGED" or not proof:
+            continue
+        if proof.get("assurance_level") not in (None, schedule["assurance_level"]):
+            continue
+        checked = evaluate_proofs(
+            root,
+            {"schema": "factory.proof-request.v1", "gates": [proof]},
+            changed_paths=schedule["changed_paths"],
+        )["items"][0]
+        if checked["disposition"] == "REUSE":
+            item.update(
+                disposition="REUSE",
+                reason=checked["reason"],
+                proof={key: checked[key] for key in ("proof_key", "receipt_sha256")},
+            )

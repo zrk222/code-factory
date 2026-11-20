@@ -10,6 +10,7 @@ external systems.
 from __future__ import annotations
 
 import copy
+import base64
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -25,6 +26,7 @@ from .assembly_process import run_cli_detailed
 from .benchmark_lab import BenchmarkError, _public_metrics
 from .runtime_audit_common import (
     MAX_ARTIFACT_BYTES,
+    MAX_NATIVE_ARTIFACTS,
     RuntimeAuditError,
     canonical_bytes,
     exact_keys,
@@ -331,7 +333,15 @@ def validate_replay_manifest(root: Path, value: dict[str, Any]) -> dict[str, Any
                 "max_output_bytes",
                 "contract_sha256",
             },
-            {"env", "description", "authority", "marker", "dependencies", "policy"},
+            {
+                "env",
+                "description",
+                "authority",
+                "marker",
+                "dependencies",
+                "policy",
+                "capture_outputs",
+            },
         )
         if value.get("schema") != REPLAY_MANIFEST_SCHEMA:
             raise RuntimeAuditError(
@@ -400,7 +410,68 @@ def validate_replay_manifest(root: Path, value: dict[str, Any]) -> dict[str, Any
         "timeout_seconds": timeout_seconds,
         "max_output_bytes": max_output_bytes,
         "contract_sha256": contract_sha256,
+        **(
+            {"capture_outputs": validate_capture_outputs(value["capture_outputs"])}
+            if "capture_outputs" in value
+            else {}
+        ),
     }
+
+
+def validate_capture_outputs(value: object) -> list[str]:
+    """Close report export authority to explicit local report artifact paths."""
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_NATIVE_ARTIFACTS:
+        raise SeniorAssuranceError(
+            "E_REPLAY_OUTPUT", "capture_outputs must be a bounded nonempty list"
+        )
+    paths = []
+    for raw in value:
+        if not isinstance(raw, str) or not raw.startswith(".factory/reports/"):
+            raise SeniorAssuranceError(
+                "E_REPLAY_OUTPUT", "only .factory/reports/ artifacts may be captured"
+            )
+        parts = raw.split("/")
+        if any(part in {"", ".", ".."} for part in parts) or any(
+            char in raw for char in "\\:\x00"
+        ):
+            raise SeniorAssuranceError("E_REPLAY_OUTPUT", "unsafe report path")
+        paths.append(raw)
+    if len(set(path.casefold() for path in paths)) != len(paths):
+        raise SeniorAssuranceError("E_REPLAY_OUTPUT", "report ownership must be unique")
+    return sorted(paths)
+
+
+def _captured_reports(workspace: Path, normalized: dict) -> list[dict]:
+    from .proof_reuse import _path_has_symlink, _stable_file_read
+
+    rows = []
+    remaining = normalized["max_output_bytes"]
+    for relative in normalized.get("capture_outputs", []):
+        path = workspace / relative
+        if _path_has_symlink(workspace, relative) or not path.resolve().is_relative_to(
+            workspace.resolve()
+        ):
+            raise OSError("unsafe report link")
+        identity, digest = _stable_file_read(path, label="runner report")
+        if path.stat().st_nlink != 1:
+            raise OSError("report is multiply linked")
+        if identity["size"] > remaining:
+            raise OSError("report output budget exceeded")
+        data = path.read_bytes()
+        if len(data) > remaining or hashlib.sha256(data).hexdigest() != digest:
+            raise OSError("report changed during capture")
+        if (identity, digest) != _stable_file_read(path, label="runner report"):
+            raise OSError("report identity changed during capture")
+        remaining -= len(data)
+        rows.append(
+            {
+                "path": relative,
+                "sha256": digest,
+                "bytes": len(data),
+                "data_base64": base64.b64encode(data).decode("ascii"),
+            }
+        )
+    return rows
 
 
 def _copy_source(source: Path, destination: Path) -> None:
@@ -430,7 +501,7 @@ def _execute_in_workspace(source: Path, normalized: dict[str, Any]) -> dict[str,
     with tempfile.TemporaryDirectory(prefix="factory-replay-") as temporary:
         sandbox_root = Path(temporary) / "workspace"
         _copy_source(source, sandbox_root)
-        return run_cli_detailed(
+        result = run_cli_detailed(
             normalized["argv"][0],
             normalized["argv"][1:],
             sandbox_root,
@@ -438,6 +509,15 @@ def _execute_in_workspace(source: Path, normalized: dict[str, Any]) -> dict[str,
             timeout=normalized["timeout_seconds"],
             max_stream_bytes=normalized["max_output_bytes"],
         )
+        if (
+            normalized.get("capture_outputs")
+            and result.get("exit_code") == normalized["expected_exit"] == 0
+            and result.get("cleanup_confirmed")
+            and result.get("streams_closed")
+            and not result.get("reason")
+        ):
+            result["captured_outputs"] = _captured_reports(sandbox_root, normalized)
+        return result
 
 
 def _record_process_result(
@@ -452,6 +532,8 @@ def _record_process_result(
             and bool(result.get("streams_closed")),
         }
     )
+    if "captured_outputs" in result:
+        outcome["captured_outputs"] = result["captured_outputs"]
     reason = str(result.get("reason") or "")
     if reason == "stage timed out":
         outcome.update({"timed_out": True, "failure_reason": "TIMEOUT"})
@@ -494,7 +576,7 @@ def _capture_process(source: Path, normalized: dict[str, Any]) -> dict[str, Any]
     try:
         result = _execute_in_workspace(source, normalized)
         _record_process_result(result, normalized, outcome)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         outcome.update(
             {"failure_reason": f"EXECUTION_ERROR:{type(exc).__name__}", "cleanup": True}
         )
@@ -585,6 +667,11 @@ def run_replay(
     receipt = {
         **base,
         "executed": True,
+        **(
+            {"captured_outputs": outcome["captured_outputs"]}
+            if "captured_outputs" in outcome
+            else {}
+        ),
         "state": outcome["state"],
         "cleanup": outcome["cleanup"],
         "timed_out": outcome["timed_out"],

@@ -1,0 +1,52 @@
+name: pre-pr-runner-output
+language: python
+modules:
+  - name: senior_assurance
+    path: factoryline/senior_assurance.py
+    functions:
+      - name: validate_capture_outputs
+        args: [value]
+        returns: list
+      - name: _captured_reports
+        args: [workspace, normalized]
+        returns: list
+  - name: live_feedback
+    path: factoryline/live_feedback.py
+    functions:
+      - name: _normalized_live_check
+        args: [check, index, ids]
+        returns: dict
+  - name: incremental_scheduler
+    path: factoryline/incremental_scheduler.py
+    functions:
+      - name: _pre_pr_export_reports
+        args: [root, check, observation]
+        returns: bool
+      - name: _pre_pr_output_ownership
+        args: [live]
+        returns: None
+      - name: _pre_pr_captured_current
+        args: [root, rows]
+        returns: bool
+dependencies:
+  - from: incremental_scheduler
+    to: senior_assurance
+  - from: live_feedback
+    to: senior_assurance
+  - from: incremental_scheduler
+    to: live_feedback
+invariants:
+  # Architecture proposal only: protected binding rejection must be added to the
+  # existing ownership/admission path, not a second executor or new module.
+  - name: capture_validation_has_no_execution_authority
+    forbid_pattern: "\\b(?:subprocess|requests|httpx|socket)\\b"
+    scopes:
+      - module: senior_assurance
+        symbol: validate_capture_outputs
+        max_lines: 50
+  - name: report_export_has_no_execution_authority
+    forbid_pattern: "\\b(?:subprocess|requests|httpx|socket)\\b"
+    scopes:
+      - module: incremental_scheduler
+        symbol: _pre_pr_export_reports
+        max_lines: 70

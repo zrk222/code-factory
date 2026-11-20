@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "name": "closed_report_capture_declaration_behavior",
+      "kind": "python",
+      "run": "import ast; from pathlib import Path; tree=ast.parse(Path('factoryline/senior_assurance.py').read_text(encoding='utf-8')); node=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='validate_capture_outputs'); namespace={'MAX_NATIVE_ARTIFACTS':16,'SeniorAssuranceError':lambda code,message: ValueError(code)}; exec(compile(ast.Module(body=[node],type_ignores=[]),'capture-validator','exec'),namespace); validate=namespace['validate_capture_outputs']; assert validate(['.factory/reports/b','.factory/reports/a'])==['.factory/reports/a','.factory/reports/b']; rejected=False\ntry: validate(['.factory/reports/../source.py'])\nexcept ValueError: rejected=True\nassert rejected, 'escaping output accepted'",
+      "expect_exit": 0,
+      "timeout_s": 30,
+      "must_fail_on_stub": true
+    }
+  ]
+}

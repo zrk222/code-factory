@@ -32,6 +32,77 @@ from factoryline.runtime_attestation import capture_supervised_attestation
 from factoryline.senior_engineering import senior_engineering_projection
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        [],
+        [".factory/reports/a"] * 17,
+        ["outside.json"],
+        [".factory/reports/../input"],
+        [".factory/reports/a", ".factory/reports/A"],
+        [".factory/reports/a\\b"],
+        [".factory/reports/a:b"],
+        [".factory/reports/"],
+    ],
+)
+def test_validate_capture_outputs_rejects_unsafe_declarations(value):
+    from factoryline.senior_assurance import validate_capture_outputs
+
+    with pytest.raises(SeniorAssuranceError, match="E_REPLAY_OUTPUT"):
+        validate_capture_outputs(value)
+
+
+def test_validate_capture_outputs_existing_sixteen_file_cap():
+    from factoryline.senior_assurance import validate_capture_outputs
+
+    paths = [f".factory/reports/{index}.json" for index in range(16)]
+    assert validate_capture_outputs(paths) == sorted(paths)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["digest", "bytes", "aggregate", "planned", "cleanup", "failed", "protected"],
+)
+def test_pre_pr_report_export_validates_whole_batch_before_writes(tmp_path, mode):
+    import base64
+    from factoryline.incremental_scheduler import _pre_pr_export_reports
+
+    paths = [".factory/reports/a.json", ".factory/reports/b.json"]
+    check = {"capture_outputs": paths, "max_output_bytes": 8}
+    rows = [
+        {
+            "path": path,
+            "bytes": 4,
+            "sha256": hashlib.sha256(b"good").hexdigest(),
+            "data_base64": base64.b64encode(b"good").decode(),
+        }
+        for path in paths
+    ]
+    observed = {
+        "executed": True,
+        "cleanup": True,
+        "state": "PASS",
+        "observed_exit": 0,
+        "captured_outputs": rows,
+    }
+    if mode == "digest":
+        rows[1]["sha256"] = "0" * 64
+    elif mode == "bytes":
+        rows[1]["bytes"] = 3
+    elif mode == "aggregate":
+        check["max_output_bytes"] = 7
+    elif mode == "planned":
+        observed["executed"] = False
+    elif mode == "cleanup":
+        observed["cleanup"] = False
+    elif mode == "failed":
+        observed["state"] = "FAIL"
+    else:
+        check["_protected_output_paths"] = [paths[1]]
+    assert not _pre_pr_export_reports(tmp_path, check, observed)
+    assert not (tmp_path / paths[0]).exists()
+
+
 def _sha_bytes(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
