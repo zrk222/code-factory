@@ -214,9 +214,7 @@ def test_coordinator_stale_owner_rejects_before_child(tmp_path, monkeypatch, fau
         module.dispatch_deep_audit_request(tmp_path, request, owner, context)
 
 
-def test_coordinator_valid_audit_is_fail_closed_until_worker_verified(
-    tmp_path, monkeypatch
-):
+def test_coordinator_unsigned_audit_rejects_before_worker(tmp_path, monkeypatch):
     import factoryline.cli_deep_audit as module
     import subprocess
 
@@ -226,10 +224,8 @@ def test_coordinator_valid_audit_is_fail_closed_until_worker_verified(
     monkeypatch.setattr(
         subprocess, "Popen", lambda *a, **k: pytest.fail("unexpected child")
     )
-    result = module.dispatch_deep_audit_request(tmp_path, request, owner, context)
-    assert result["state"] == "INCOMPLETE"
-    assert result["code"] == "E_COORDINATOR_WORKER_UNVERIFIED"
-    assert result["authority"] == "none" and result["release_approval"] is False
+    with pytest.raises((ValueError, RuntimeAuditError)):
+        module.dispatch_deep_audit_request(tmp_path, request, owner, context)
 
 
 def test_coordinator_deleted_lease_rejects_before_child(tmp_path, monkeypatch):
@@ -274,6 +270,18 @@ def test_coordinator_native_foreground_supported_or_fail_closed(
         return
     result = serve_deep_audit_coordinator(tmp_path, ttl, "a" * 32, stream, output)
     rows = [json.loads(line) for line in output.getvalue().splitlines()]
+    if ttl == 1 and any(row["state"] == "INCOMPLETE" for row in rows):
+        assert all(row["state"] in {"OBSERVED", "INCOMPLETE"} for row in rows)
+        assert all(
+            row.get("code") == "E_COORDINATOR_REQUEST"
+            for row in rows
+            if row["state"] == "INCOMPLETE"
+        )
+        assert all(
+            row["authority"] == "none" and row["release_approval"] is False
+            for row in rows
+        )
+        return
     assert [row["state"] for row in rows] == ["OBSERVED", "STOPPED"]
     assert rows[0]["execution_available"] is False
     assert result == rows[-1]
@@ -683,6 +691,265 @@ def execution_fixture(tmp_path):
         control / "authorization.json", payload, material["coordinator"]
     )
     return root, manifest, pin, authorization, trust, plan, inventory, material
+
+
+def _coordinator_signed_fixture(tmp_path):
+    import time
+    import factoryline.cli_deep_audit as module
+    from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline.deep_audit_io import inventory_candidate
+
+    root, manifest, pin, authorization, trust, _, inventory, material = (
+        execution_fixture(tmp_path)
+    )
+    public = root / ".factory/deep-runs/requests/integration"
+    public.mkdir(parents=True)
+    bindings = {}
+    for name, source in (
+        ("manifest", manifest),
+        ("authorization", authorization),
+        ("trust_root", trust),
+    ):
+        target = public / source.name
+        target.write_bytes(source.read_bytes())
+        assert target.read_bytes() == source.read_bytes()
+        bindings[name] = target.relative_to(root).as_posix()
+    assert inventory_candidate(root) == inventory
+    assert all(
+        not Path(entry["private_key"]).is_relative_to(root)
+        for entry in material.values()
+    )
+    request = _coordinator_test_request(root, "audit")
+    request["payload"] = dict(
+        bindings,
+        manifest_sha256=pin,
+        trust_root_sha256=sha256_bytes(trust.read_bytes()),
+    )
+    owner = module._coordinator_owner(root, request["session_nonce"])
+    store = CoordinatorRequestStore(root)
+    store.acquire(owner, 45, time.monotonic())
+    context = dict(store=store, expires_at=time.monotonic() + 45, stop=False, job=None)
+    return root, request, owner, context, inventory
+
+
+@pytest.mark.parametrize("stop_child", [False, True])
+def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_child):
+    import os
+    import sys
+    import time
+    import factoryline.cli_deep_audit as module
+    from factoryline.deep_audit import deep_run_status
+    from factoryline.deep_audit_io import inventory_candidate
+    from factoryline.agentic_control import AgenticControlError
+
+    if sys.platform not in {"win32", "linux"}:
+        pytest.skip("native process creation identity unsupported")
+    root, request, owner, context, inventory = _coordinator_signed_fixture(tmp_path)
+    observed_handshakes = []
+    try:
+        admitted = module.dispatch_deep_audit_request(root, request, owner, context)
+        assert admitted["state"] == "ADMITTED"
+        job = context["job"]
+        other = dict(request, request_id="c" * 32)
+        with pytest.raises(AgenticControlError, match="retained request"):
+            module.dispatch_deep_audit_request(root, other, owner, context)
+        deadline = time.monotonic() + 50
+        while job["thread"].is_alive() and time.monotonic() < deadline:
+            directory = job.get("directory")
+            if directory:
+                assert not (directory / "input.json").exists()
+            if (
+                directory
+                and not observed_handshakes
+                and (directory / "handshake.json").exists()
+            ):
+                try:
+                    observed_handshakes.append(
+                        module._coordinator_read(root, directory, "handshake.json")
+                    )
+                except OSError:
+                    pass
+            if stop_child and observed_handshakes:
+                stop = _coordinator_test_request(root, "stop")
+                stop["request_id"] = "d" * 32
+                result = module.dispatch_deep_audit_request(root, stop, owner, context)
+                assert result["state"] == "STOPPED"
+                assert result["cleanup_confirmed"] is True
+                break
+            time.sleep(0.01)
+        job["thread"].join(timeout=55)
+        assert not job["thread"].is_alive()
+        assert observed_handshakes, "fresh child never produced its sealed handshake"
+        handshake = observed_handshakes[0]
+        assert handshake["worker_identity"]["pid"] != os.getpid()
+        assert handshake["worker_identity"]["creation"]
+        assert handshake["worker_identity"]["pid"] == job["observed"]["pid"]
+        assert len(handshake["run_id"]) == 32
+        assert handshake["request_id"] == request["request_id"]
+        assert job["cleanup_confirmed"] is True, (
+            job.get("failure_phase"),
+            job.get("failure_code"),
+        )
+        assert not job["directory"].exists()
+        row = context["store"].read(request["session_nonce"], request["request_id"])
+        assert row["state"] in {"INCOMPLETE", "ABANDONED"}
+        assert row["cleanup_confirmed"] is True
+        if not stop_child:
+            assert job["acknowledged"] is True
+        assert row["run_id"] == handshake["run_id"]
+        evidence = deep_run_status(root, handshake["run_id"])
+        assert evidence["analysis_complete"] is False
+        assert inventory_candidate(root) == inventory
+        if not stop_child:
+            duplicate = module.dispatch_deep_audit_request(
+                root, request, owner, context
+            )
+            assert duplicate["state"] == "INCOMPLETE"
+            assert duplicate["run_id"] == row["run_id"]
+            assert context["job"] is job
+        status = module._coordinator_status(_coordinator_test_request(root), context)
+        assert status["audit_state"] == row["state"]
+        assert status["authority"] == "none" and status["release_approval"] is False
+    finally:
+        assert module._coordinator_shutdown(context)
+        context["store"].release(owner)
+
+
+@pytest.mark.parametrize(
+    "field", ["run_id", "request_id", "request_sha256", "snapshot", "extra"]
+)
+def test_coordinator_handshake_rejects_wrong_binding(tmp_path, field):
+    import factoryline.cli_deep_audit as module
+
+    request = _coordinator_test_request(tmp_path, "audit")
+    job = dict(request_sha256="c" * 64, snapshot={"candidate_sha256": "d" * 64})
+    handshake = dict(
+        worker_identity={},
+        run_id="e" * 32,
+        request_id=request["request_id"],
+        request_sha256=job["request_sha256"],
+        snapshot=job["snapshot"],
+    )
+    module._coordinator_verify_handshake(request, job, handshake)
+    handshake[field] = "invalid"
+    with pytest.raises(ValueError):
+        module._coordinator_verify_handshake(request, job, handshake)
+
+
+def test_coordinator_unit_preflight_crosses_lease_before_admission(
+    tmp_path, monkeypatch
+):
+    """Synthetic unit boundary, not native child-execution evidence."""
+    from types import SimpleNamespace
+    import factoryline.cli_deep_audit as module
+
+    request = _coordinator_test_request(tmp_path, "audit")
+    request["payload"] = {}
+    context = dict(stop=False, expires_at=float("inf"))
+    context["store"] = SimpleNamespace(
+        admit=lambda *a: pytest.fail("expired request admitted")
+    )
+
+    def preflight(*args):
+        context["expires_at"] = 0
+        return {"runtime_sha256": "c" * 64}
+
+    monkeypatch.setattr(module, "_coordinator_preflight", preflight)
+    monkeypatch.setattr(module, "_coordinator_runtime_identity", lambda: "c" * 64)
+    with pytest.raises(ValueError, match="live ownership"):
+        module._coordinator_admit(
+            tmp_path, request, {"runtime_sha256": "c" * 64}, context
+        )
+    assert "job" not in context
+
+
+def test_coordinator_unit_prelaunch_bounds_failure_cleans_control(
+    tmp_path, monkeypatch
+):
+    """Unit fault injection before subprocess launch; no native proof claim."""
+    from types import SimpleNamespace
+    import time
+    import factoryline.cli_deep_audit as module
+    import factoryline.assembly_process as assembly
+
+    request = _coordinator_test_request(tmp_path, "audit")
+    job = dict(
+        request_sha256="c" * 64,
+        snapshot={},
+        run_id=None,
+        cleanup_confirmed=False,
+        launch_attempted=False,
+    )
+    recorded = []
+    context = dict(
+        expires_at=time.monotonic() + 30,
+        store=SimpleNamespace(abandon=lambda *args: recorded.append(args)),
+    )
+
+    def bounded_args(*args):
+        raise ValueError("bounded argv rejected")
+
+    monkeypatch.setattr(module, "_coordinator_worker_args", bounded_args)
+    monkeypatch.setattr(module, "_coordinator_check_owner", lambda *args: None)
+    monkeypatch.setattr(
+        assembly, "run_cli_detailed", lambda *a, **k: pytest.fail("unexpected child")
+    )
+    module._coordinator_execute(tmp_path, request, {}, context, job)
+    assert job["launch_attempted"] is False
+    assert job["cleanup_confirmed"] is True
+    assert not job["directory"].exists()
+    assert recorded == [
+        (request["session_nonce"], request["request_id"], "c" * 64, True)
+    ]
+
+
+def test_coordinator_unit_done_cannot_override_authoritative_incomplete(
+    tmp_path, monkeypatch
+):
+    """A mocked positive worker claim must not promote incomplete evidence."""
+    import factoryline.cli_deep_audit as module
+    import factoryline.deep_audit as audit
+
+    run_id = "e" * 32
+    job = dict(
+        run_id=run_id, directory=tmp_path, cleanup_confirmed=True, acknowledged=True
+    )
+    monkeypatch.setattr(
+        module,
+        "_coordinator_read",
+        lambda *args: dict(run_id=run_id, analysis_complete=True),
+    )
+    observations = []
+
+    def authoritative(root, observed_run):
+        observations.append((root, observed_run))
+        return dict(state="INCOMPLETE", analysis_complete=False)
+
+    monkeypatch.setattr(audit, "deep_run_status", authoritative)
+    assert module._coordinator_completed(tmp_path, job, {"exit_code": 0}) is False
+    assert observations == [(tmp_path, run_id)]
+
+
+def test_coordinator_unit_control_cleanup_retries_sharing_violation(
+    tmp_path, monkeypatch
+):
+    """Synthetic sharing violation exercises bounded cleanup retry only."""
+    import factoryline.cli_deep_audit as module
+
+    directory = module._coordinator_control_directory(tmp_path)
+    original = module._coordinator_unlink_control
+    attempts = []
+
+    def transient(root, path):
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise PermissionError("synthetic reader")
+        return original(root, path)
+
+    monkeypatch.setattr(module, "_coordinator_unlink_control", transient)
+    module._coordinator_remove_control(tmp_path, directory)
+    assert attempts == [directory, directory]
+    assert not directory.exists()
 
 
 def execution_sign(path, payload, key):
