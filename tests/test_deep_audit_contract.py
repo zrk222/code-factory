@@ -400,6 +400,106 @@ def test_coordinator_native_open_stdin_expires_and_releases_lease(tmp_path, part
         child.stderr.close()
 
 
+@pytest.mark.parametrize("phase", ["lease_only", "admitted"])
+def test_coordinator_native_restart_reconciles_expired_lease(tmp_path, phase):
+    """A fresh real coordinator reconciles a crashed owner before refusing takeover."""
+    import json
+    import sys
+    import time
+    import factoryline.cli_deep_audit as module
+    from factoryline.agentic_control import AgenticControlError, CoordinatorRequestStore
+    from factoryline.assembly_process import run_cli_detailed
+    from factoryline.deep_audit_io import read_run_json
+
+    if sys.platform not in {"win32", "linux"}:
+        pytest.skip("native process identity unsupported")
+    package = str(Path(module.__file__).resolve().parent.parent)
+    nonce, request_id = "a" * 32, "e" * 32
+    bootstrap = r'''import io,json,sys,time
+sys.path.insert(0,sys.argv[1])
+from factoryline.cli_deep_audit import _coordinator_owner,serve_deep_audit_coordinator
+from factoryline.agentic_control import AgenticControlError,CoordinatorRequestStore
+root,phase,mode=sys.argv[2:5]; nonce="a"*32; request_id="e"*32; request_sha="f"*64
+owner=_coordinator_owner(root,nonce); store=CoordinatorRequestStore(root)
+if mode=="write":
+ lease=store.acquire(owner,1,time.monotonic())
+ if phase=="admitted": store.admit(nonce,request_id,request_sha,owner)
+ print(json.dumps({"owner":owner,"expires_monotonic":lease["expires_monotonic"]}),flush=True)
+else:
+ import factoryline.cli_deep_audit as cli
+ import factoryline.assembly_process as assembly
+ events=[]
+ def forbidden(*args,**kwargs): events.append("forbidden"); raise AssertionError("unexpected dispatch or signal")
+ cli.dispatch_deep_audit_request=forbidden
+ assembly._terminate_unit=forbidden
+ assembly._emergency_terminate=forbidden
+ try: serve_deep_audit_coordinator(root,1,nonce,io.BytesIO(b""),io.StringIO())
+ except AgenticControlError as error: code=error.code
+ else: code="unexpected-start"
+ print(json.dumps({"code":code,"owner":owner,"forbidden_calls":events}),flush=True)
+'''
+    observed = []
+    def started(row): observed.append(dict(row))
+    def launch(mode):
+        return run_cli_detailed(
+            sys.executable,
+            ["-I", "-c", bootstrap, package, str(tmp_path.resolve()), phase, mode],
+            tmp_path,
+            timeout=20,
+            started_observer=started,
+        )
+
+    original = launch("write")
+    assert original["ok"] and original["cleanup_confirmed"] and original["streams_closed"]
+    written = json.loads(original["stdout"].decode("utf-8"))
+    old_owner = written["owner"]
+    assert observed[-1]["pid"] == old_owner["pid"]
+    assert observed[-1]["creation"] == old_owner["creation"]
+    store = CoordinatorRequestStore(tmp_path)
+    def metadata_rows():
+        snapshot = read_run_json(store.path.parent, store.path.name)
+        return {key: store._decode(key, value) for key, value in snapshot["rows"].items()}
+
+    metadata = metadata_rows()
+    lease_before = metadata["lease"]
+    assert lease_before["owner_identity"] == old_owner
+    key = nonce + ":" + request_id
+    row_before = metadata.get(key)
+    if phase == "admitted":
+        assert row_before is not None and row_before["state"] == "ADMITTED"
+        assert row_before["run_id"] is None and row_before["worker_identity"] is None
+    else:
+        assert row_before is None
+
+    while time.monotonic() < written["expires_monotonic"]:
+        time.sleep(max(0, min(0.02, written["expires_monotonic"] - time.monotonic())))
+    restarted = launch("restart")
+    assert restarted["ok"] and restarted["cleanup_confirmed"] and restarted["streams_closed"]
+    result = json.loads(restarted["stdout"].decode("utf-8"))
+    new_owner = result["owner"]
+    assert result["code"] == "E_COORDINATOR_OWNER"
+    assert result["forbidden_calls"] == []
+    assert observed[-1]["pid"] == new_owner["pid"]
+    assert observed[-1]["creation"] == new_owner["creation"]
+    assert (new_owner["pid"], new_owner["creation"]) != (old_owner["pid"], old_owner["creation"])
+
+    after = metadata_rows()
+    assert after["lease"] == lease_before
+    if phase == "admitted":
+        assert after[key] == row_before | dict(state="INCOMPLETE", cleanup_confirmed=False)
+        assert after[key]["owner_identity"] == old_owner
+        assert after[key]["run_id"] is None
+    else:
+        assert after == metadata
+    with pytest.raises(AgenticControlError) as error:
+        store.acquire(new_owner, 1, time.monotonic())
+    assert error.value.code == "E_COORDINATOR_OWNER"
+    with pytest.raises(AgenticControlError) as error:
+        store.admit(nonce, "9" * 32, "8" * 64, new_owner)
+    assert error.value.code == "E_COORDINATOR_OWNER"
+    assert metadata_rows() == after
+
+
 @pytest.mark.parametrize("text_stream", [False, True])
 def test_coordinator_readline_memory_coalesced_utf8_and_eof(text_stream):
     import io
