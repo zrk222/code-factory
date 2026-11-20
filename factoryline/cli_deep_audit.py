@@ -13,6 +13,990 @@ COMMAND_GROUP = "deep-audit"
 OWNER = "senior-audit-maintainers"
 
 
+def serve_deep_audit_coordinator(
+    root, lease_seconds, session_nonce, input_stream, output_stream
+) -> dict:
+    """Serve owned signed audits; fresh children wait for verified acknowledgement."""
+    import time
+    from .agentic_control import CoordinatorRequestStore
+
+    root = Path(root).resolve(strict=True)
+    ttl = 300 if lease_seconds is None else lease_seconds
+    if type(ttl) is not int or not 1 <= ttl <= 3600:
+        raise ValueError("coordinator lease must be an integer from 1 through 3600")
+    _coordinator_hex(session_nonce, 32)
+    owner = _coordinator_owner(root, session_nonce)
+    store = CoordinatorRequestStore(root)
+    store.reconcile_expired(time.monotonic())
+    store.acquire(owner, ttl, time.monotonic())
+    context = dict(
+        store=store, expires_at=time.monotonic() + ttl, stop=False, job=None, root=root
+    )
+    last = _coordinator_result("OBSERVED", execution_available=False)
+    try:
+        while not context["stop"]:
+            try:
+                raw = _coordinator_readline(input_stream, context)
+            except (ValueError, OSError) as error:
+                last = _coordinator_result(
+                    "INCOMPLETE", code=getattr(error, "code", "E_COORDINATOR_INPUT")
+                )
+                _coordinator_emit(output_stream, last)
+                break
+            if not raw:
+                break
+            try:
+                request = _coordinator_line(raw)
+                last = dispatch_deep_audit_request(root, request, owner, context)
+            except (ValueError, TypeError, KeyError, OSError) as error:
+                last = _coordinator_result(
+                    "INCOMPLETE", code=getattr(error, "code", "E_COORDINATOR_REQUEST")
+                )
+            _coordinator_emit(output_stream, last)
+            if len(_coordinator_encoded(raw)) > 65536:
+                break
+    finally:
+        if _coordinator_shutdown(context):
+            store.release(owner)
+        else:
+            last = _coordinator_result("INCOMPLETE", code="E_COORDINATOR_CLEANUP")
+            _coordinator_emit(output_stream, last)
+    return last
+
+
+def _coordinator_emit(stream, value):
+    stream.write(json.dumps(value, sort_keys=True) + "\n")
+    stream.flush()
+
+
+def _coordinator_readline(stream, context):
+    import io
+    import time
+    from .agentic_control import AgenticControlError
+
+    buffer = context.setdefault("input_buffer", bytearray())
+    while True:
+        if time.monotonic() >= context["expires_at"]:
+            raise AgenticControlError(
+                "E_COORDINATOR_LEASE_EXPIRED", "input lease expired"
+            )
+        if isinstance(stream, (io.BytesIO, io.StringIO)):
+            return stream.readline(65537)
+        if not isinstance(stream, io.FileIO):
+            raise ValueError(
+                "coordinator input requires exclusive unbuffered ownership"
+            )
+        end = buffer.find(b"\n") + 1
+        if end or len(buffer) >= 65537:
+            end = end or len(buffer)
+            line = bytes(buffer[:end])
+            del buffer[:end]
+            return line
+        chunk = _coordinator_input_chunk(stream.fileno(), 65537 - len(buffer), context)
+        if chunk is None:
+            continue
+        if not chunk:
+            line = bytes(buffer)
+            buffer.clear()
+            return line
+        buffer.extend(chunk)
+
+
+def _coordinator_input_chunk(fd, capacity, context):
+    import os
+    import stat
+    import time
+
+    if stat.S_ISREG(os.fstat(fd).st_mode):
+        return os.read(fd, min(capacity, 4096))
+    if os.name == "nt":
+        available = _coordinator_windows_pipe_bytes(fd)
+        if available < 0:
+            return b""
+        if available:
+            return os.read(fd, min(available, capacity, 4096))
+        time.sleep(min(0.05, max(0, context["expires_at"] - time.monotonic())))
+        return None
+    import select
+
+    remaining = max(0, context["expires_at"] - time.monotonic())
+    try:
+        ready, _, _ = select.select([fd], [], [], min(0.05, remaining))
+    except InterruptedError:
+        return None
+    return os.read(fd, min(capacity, 4096)) if ready else None
+
+
+def _coordinator_windows_pipe_bytes(fd):
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetFileType.argtypes = [wintypes.HANDLE]
+    kernel.GetFileType.restype = wintypes.DWORD
+    if kernel.GetFileType(handle) != 3:  # FILE_TYPE_PIPE, not an interactive console.
+        raise ValueError("coordinator input requires a pipe or regular file")
+    kernel.PeekNamedPipe.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPVOID,
+    ]
+    kernel.PeekNamedPipe.restype = wintypes.BOOL
+    available = wintypes.DWORD()
+    if kernel.PeekNamedPipe(handle, None, 0, None, ctypes.byref(available), None):
+        return available.value
+    error = ctypes.get_last_error()
+    if error in (109, 233):  # Broken/disconnected pipe means EOF.
+        return -1
+    raise OSError(error, "coordinator input pipe observation failed")
+
+
+def dispatch_deep_audit_request(
+    root, request, owner_identity, execution_context
+) -> dict:
+    """Validate intent and live ownership before any admission or process creation."""
+    _coordinator_request(root, request)
+    _coordinator_check_owner(root, request, owner_identity, execution_context)
+    execution_context.setdefault("root", Path(root))
+    if request["operation"] == "stop":
+        execution_context["stop"] = True
+        clean = _coordinator_shutdown(execution_context)
+        return _coordinator_result(
+            "STOPPED" if clean else "INCOMPLETE",
+            request_id=request["request_id"],
+            cleanup_confirmed=clean,
+        )
+    if request["operation"] == "status":
+        return _coordinator_status(request, execution_context)
+    return _coordinator_admit(root, request, owner_identity, execution_context)
+
+
+def _coordinator_result(state, **fields):
+    return dict(
+        schema="factory.deep-audit-coordinator.v1",
+        state=state,
+        authority="none",
+        release_approval=False,
+        **fields,
+    )
+
+
+def _coordinator_hex(value, length):
+    if (
+        not isinstance(value, str)
+        or len(value) != length
+        or any(c not in "0123456789abcdef" for c in value)
+    ):
+        raise ValueError("invalid coordinator identity")
+
+
+def _coordinator_line(raw):
+    from .deep_audit_io import strict_json
+
+    encoded = _coordinator_encoded(raw)
+    if not isinstance(encoded, bytes) or not 1 <= len(encoded) <= 65536:
+        raise ValueError("coordinator line exceeds byte boundary")
+    return strict_json(encoded)
+
+
+def _coordinator_encoded(raw):
+    return raw.encode("utf-8") if isinstance(raw, str) else raw
+
+
+def _coordinator_request(root, request):
+    if not isinstance(request, dict):
+        raise ValueError("coordinator request must be an object")
+    required = {"version", "operation", "workspace", "session_nonce", "request_id"}
+    operation = request.get("operation")
+    if not isinstance(operation, str) or operation not in {"audit", "status", "stop"}:
+        raise ValueError("unknown coordinator operation")
+    _coordinator_envelope(request, required, operation)
+    for key in ("session_nonce", "request_id"):
+        _coordinator_hex(request[key], 32)
+    if not isinstance(request["workspace"], str) or request["workspace"] != str(
+        Path(root).resolve(strict=True)
+    ):
+        raise ValueError("coordinator workspace differs")
+    if operation == "audit":
+        _coordinator_payload_shape(request["payload"])
+
+
+def _coordinator_envelope(request, required, operation):
+    allowed = required | ({"payload"} if operation == "audit" else set())
+    if (
+        set(request) != allowed
+        or type(request["version"]) is not int
+        or request["version"] != 1
+    ):
+        raise ValueError("invalid coordinator request schema")
+
+
+def _coordinator_payload(root, payload):
+    from .deep_audit_io import local_file
+
+    _coordinator_payload_shape(payload)
+    for name in ("manifest", "authorization", "trust_root"):
+        local_file(Path(root), payload[name])
+
+
+def _coordinator_payload_shape(payload):
+    from .deep_audit_io import relative_path
+
+    expected = {
+        "manifest",
+        "manifest_sha256",
+        "authorization",
+        "trust_root",
+        "trust_root_sha256",
+    }
+    if not isinstance(payload, dict) or set(payload) != expected:
+        raise ValueError("coordinator audit payload must bind the existing signed scan")
+    for name in ("manifest_sha256", "trust_root_sha256"):
+        _coordinator_hex(payload[name], 64)
+    for name in ("manifest", "authorization", "trust_root"):
+        relative_path(payload[name])
+
+
+def _coordinator_runtime_identity():
+    # Bind loaded bodies, not merely a source file which could change after import.
+    # Marshal encodings can change reference flags after first execution; only
+    # normalized executable code fields belong in this in-process identity.
+    from . import (
+        agentic_control,
+        assembly_process,
+        deep_audit,
+        deep_audit_attestation,
+        deep_audit_contract,
+        deep_audit_io,
+        deep_audit_sarif,
+        enterprise_receipts,
+        runtime_audit_common,
+        runtime_audit_process,
+    )
+
+    modules = (
+        sys.modules[__name__],
+        deep_audit,
+        deep_audit_attestation,
+        deep_audit_contract,
+        deep_audit_io,
+        agentic_control,
+        assembly_process,
+        runtime_audit_process,
+        deep_audit_sarif,
+        enterprise_receipts,
+        runtime_audit_common,
+    )
+    loaded = [_coordinator_loaded_identity(module) for module in modules]
+    executable = hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(
+            [
+                str(Path(sys.executable).resolve()),
+                sys.version,
+                executable,
+                loaded,
+            ]
+        ).encode()
+    ).hexdigest()
+
+
+def _coordinator_loaded_identity(module):
+    entries = []
+    for name, value in sorted(vars(module).items()):
+        if getattr(value, "__module__", None) != module.__name__:
+            continue
+        members = vars(value).items() if isinstance(value, type) else [("", value)]
+        for member, body in sorted(members):
+            body = getattr(body, "__func__", body)
+            if hasattr(body, "__code__"):
+                entries.append(
+                    (name + "." + member, _coordinator_callable_identity(body))
+                )
+    return [module.__name__, entries]
+
+
+def _coordinator_callable_identity(body):
+    return [
+        _coordinator_code_identity(body.__code__),
+        _coordinator_constant(body.__defaults__),
+        _coordinator_constant(body.__kwdefaults__),
+        [_coordinator_constant(cell.cell_contents) for cell in body.__closure__ or ()],
+    ]
+
+
+def _coordinator_code_identity(code):
+    return [
+        code.co_code.hex(),
+        code.co_argcount,
+        code.co_posonlyargcount,
+        code.co_kwonlyargcount,
+        code.co_flags,
+        code.co_names,
+        code.co_varnames,
+        code.co_freevars,
+        code.co_cellvars,
+        getattr(code, "co_exceptiontable", b"").hex(),
+        [_coordinator_constant(value) for value in code.co_consts],
+    ]
+
+
+def _coordinator_constant(value):
+    from types import CodeType
+
+    if isinstance(value, CodeType):
+        return ["code", _coordinator_code_identity(value)]
+    if isinstance(value, tuple):
+        return ["tuple", [_coordinator_constant(item) for item in value]]
+    if isinstance(value, (set, frozenset)):
+        return [
+            type(value).__name__,
+            sorted(json.dumps(_coordinator_constant(item)) for item in value),
+        ]
+    if isinstance(value, dict):
+        return [
+            "dict",
+            sorted(
+                (str(key), _coordinator_constant(item)) for key, item in value.items()
+            ),
+        ]
+    if isinstance(value, list):
+        return ["list", [_coordinator_constant(item) for item in value]]
+    if hasattr(value, "__code__"):
+        return [
+            "callable",
+            value.__module__,
+            value.__qualname__,
+            _coordinator_code_identity(value.__code__),
+        ]
+    if isinstance(value, type):
+        return ["type", value.__module__, value.__qualname__]
+    if type(value).__module__ == "dataclasses":
+        return ["dataclasses", type(value).__name__, repr(value)]
+    if type(value) not in (
+        str,
+        int,
+        float,
+        bool,
+        bytes,
+        complex,
+        type(None),
+        type(Ellipsis),
+    ):
+        raise ValueError("unsupported loaded coordinator constant")
+    return [type(value).__name__, repr(value)]
+
+
+def _coordinator_owner(root, session_nonce):
+    import os
+    from .assembly_process import _process_creation_identity
+
+    creation = _process_creation_identity(os.getpid())
+    if creation is None:
+        raise ValueError("coordinator process creation identity is unavailable")
+    return dict(
+        pid=os.getpid(),
+        creation=creation,
+        session_nonce=session_nonce,
+        runtime_sha256=_coordinator_runtime_identity(),
+        workspace_sha256=hashlib.sha256(
+            str(Path(root).resolve(strict=True)).encode()
+        ).hexdigest(),
+    )
+
+
+def _coordinator_check_owner(root, request, owner, context):
+    import time
+
+    expiry = context.get("expires_at")
+    if type(expiry) not in (int, float) or not 0 < expiry < float("inf"):
+        raise ValueError("invalid coordinator expiry")
+    if (
+        owner != _coordinator_owner(root, request["session_nonce"])
+        or context.get("stop") is not False
+        or time.monotonic() >= expiry
+    ):
+        raise ValueError("coordinator owner is missing, stale or differs")
+    context["store"].check_owner(owner, time.monotonic())
+
+
+def _coordinator_preflight(root, payload):
+    from .deep_audit_contract import load_execution_manifest
+    from .deep_audit_attestation import verify_execution_authorization
+    from .deep_audit_io import (
+        inventory_candidate,
+        local_file,
+        digest,
+        _full_repository_scanner_identity,
+    )
+
+    _coordinator_payload(root, payload)
+    paths = {
+        name: local_file(root, payload[name])
+        for name in ("manifest", "authorization", "trust_root")
+    }
+    plan = load_execution_manifest(
+        paths["manifest"],
+        payload["manifest_sha256"],
+        candidate_root=root,
+    )
+    _, authorization = verify_execution_authorization(
+        plan,
+        payload["manifest_sha256"],
+        paths["authorization"],
+        paths["trust_root"],
+        payload["trust_root_sha256"],
+        return_envelope_sha256=True,
+    )
+    inventory = inventory_candidate(root)
+    bound_plan = load_execution_manifest(
+        paths["manifest"],
+        payload["manifest_sha256"],
+        inventory=inventory,
+        candidate_root=root,
+    )
+    if bound_plan != plan:
+        raise ValueError("signed execution plan changed during preflight")
+    if (
+        inventory["state"] != "COMPLETE"
+        or inventory["candidate_sha256"] != plan["candidate_sha256"]
+    ):
+        raise ValueError("signed candidate inventory differs")
+    return dict(
+        scanner_sha256=_full_repository_scanner_identity(),
+        candidate_sha256=inventory["candidate_sha256"],
+        inventory_sha256=digest(inventory),
+        plan_sha256=digest(plan),
+        authorization_sha256=authorization,
+        runtime_sha256=_coordinator_runtime_identity(),
+    )
+
+
+def _coordinator_status(request, context):
+    job = context.get("job")
+    fields = dict(request_id=request["request_id"], execution_available=False)
+    if job is not None:
+        row = context["store"].read(request["session_nonce"], job["request_id"])
+        fields.update(
+            audit_request_id=row["request_id"],
+            audit_state=row["state"],
+            run_id=row["run_id"],
+            cleanup_confirmed=row["cleanup_confirmed"],
+        )
+    return _coordinator_result("OBSERVED", **fields)
+
+
+def _coordinator_admit(root, request, owner, context):
+    import threading
+    from .agentic_control import AgenticControlError
+    from .deep_audit_io import digest
+
+    seal = digest(request)
+    try:
+        row = context["store"].read(request["session_nonce"], request["request_id"])
+    except AgenticControlError as exc:
+        if getattr(exc, "code", None) != "E_COORDINATOR_REQUEST":
+            raise
+    else:
+        if row["request_sha256"] != seal:
+            raise AgenticControlError(
+                "E_COORDINATOR_REQUEST", "request identifier is already bound"
+            )
+        if row["owner_identity"] != owner:
+            raise AgenticControlError("E_COORDINATOR_OWNER", "request owner differs")
+        return _coordinator_result(
+            row["state"],
+            request_id=row["request_id"],
+            run_id=row["run_id"],
+            cleanup_confirmed=row["cleanup_confirmed"],
+        )
+
+    active = context.get("job")
+    if (
+        active is not None
+        and active["thread"].is_alive()
+        and active["request_id"] != request["request_id"]
+    ):
+        raise AgenticControlError(
+            "E_COORDINATOR_BUSY", "retained request is still active"
+        )
+    snapshot = _coordinator_preflight(root, request["payload"])
+    if snapshot["runtime_sha256"] != owner["runtime_sha256"]:
+        raise ValueError("loaded runtime differs")
+    _coordinator_live_lease(root, request, owner, context)
+    row = context["store"].admit(
+        request["session_nonce"], request["request_id"], seal, owner
+    )
+    if not row["created"]:
+        return _coordinator_result(
+            row["state"], request_id=row["request_id"], run_id=row["run_id"]
+        )
+    job = dict(
+        request_id=request["request_id"],
+        request_sha256=seal,
+        snapshot=snapshot,
+        cancel=threading.Event(),
+        observed=None,
+        run_id=None,
+        cleanup_confirmed=False,
+        acknowledged=False,
+        launch_attempted=False,
+    )
+    thread = threading.Thread(
+        target=_coordinator_execute,
+        args=(root, request, owner, context, job),
+        daemon=True,
+    )
+    job["thread"] = thread
+    context["job"] = job
+    try:
+        thread.start()
+    except RuntimeError:
+        context["store"].abandon(
+            request["session_nonce"], request["request_id"], seal, True
+        )
+        job["cleanup_confirmed"] = True
+        raise
+    return _coordinator_result("ADMITTED", request_id=request["request_id"])
+
+
+def _coordinator_control_directory(root):
+    import tempfile
+    import stat
+
+    current = Path(root).resolve(strict=True)
+    for name in (".factory", "deep-runs", "requests"):
+        current /= name
+        current.mkdir(mode=0o700, exist_ok=True)
+        info = current.lstat()
+        if (
+            current.is_symlink()
+            or getattr(info, "st_file_attributes", 0) & 0x400
+            or not stat.S_ISDIR(info.st_mode)
+        ):
+            raise ValueError("linked coordinator control directory")
+    return Path(tempfile.mkdtemp(prefix="coordinator-", dir=current))
+
+
+def _coordinator_control_path(root, directory):
+    from .runtime_audit_process import path_chain_has_no_links
+
+    base = Path(root).resolve(strict=True)
+    path = Path(directory)
+    if path.parent != base / ".factory/deep-runs/requests" or not path.name.startswith(
+        "coordinator-"
+    ):
+        raise ValueError("invalid coordinator control path")
+    if not path_chain_has_no_links(base, path) or not path.is_dir():
+        raise ValueError("unverified coordinator control path")
+    return path
+
+
+def _coordinator_write(root, directory, name, value):
+    from .deep_audit_io import write_run_json
+
+    write_run_json(_coordinator_control_path(root, directory), name, value)
+
+
+def _coordinator_read(root, directory, name):
+    from .deep_audit_io import read_run_json
+
+    return read_run_json(_coordinator_control_path(root, directory), name)
+
+
+def _coordinator_bootstrap():
+    package = str(Path(__file__).resolve().parent.parent)
+    return (
+        "import sys;sys.path.insert(0," + repr(package) + ");"
+        "from factoryline.cli_deep_audit import _coordinator_worker;"
+        "_coordinator_worker(sys.argv[1],sys.argv[2],sys.argv[3])"
+    )
+
+
+def _coordinator_worker_args(root, directory, config):
+    from .deep_audit_io import canonical_bytes
+
+    raw = canonical_bytes(config)
+    if len(raw) > 8192:
+        raise ValueError("coordinator transient argument budget exceeded")
+    args = [
+        "-I",
+        "-c",
+        _coordinator_bootstrap(),
+        str(root),
+        str(directory),
+        base64.urlsafe_b64encode(raw).decode("ascii"),
+    ]
+    if sum(len(arg) + 3 for arg in args) > 30000:
+        raise ValueError("coordinator native command boundary exceeded")
+    return args
+
+
+def _coordinator_execute(root, request, owner, context, job):
+    import time
+    from .assembly_process import CLEANUP_TIMEOUT_SECONDS, run_cli_detailed
+
+    directory, result = None, None
+    try:
+        directory = _coordinator_control_directory(root)
+        job["directory"] = directory
+        config = dict(
+            request=request,
+            request_sha256=job["request_sha256"],
+            snapshot=job["snapshot"],
+            expires_at=context["expires_at"],
+        )
+        args = _coordinator_worker_args(root, directory, config)
+        _coordinator_check_owner(root, request, owner, context)
+        remaining = context["expires_at"] - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("coordinator lease expired before launch")
+        job["launch_attempted"] = True
+        result = run_cli_detailed(
+            sys.executable,
+            args,
+            root,
+            timeout=remaining + CLEANUP_TIMEOUT_SECONDS,
+            started_observer=lambda facts: job.update(observed=facts),
+            heartbeat=lambda: _coordinator_heartbeat(
+                root, request, owner, context, job
+            ),
+        )
+        job["cleanup_confirmed"] = (
+            result["cleanup_confirmed"] is True
+            and result["streams_closed"] is True
+            and not job.get("cancel_hard_kill")
+            and (not job["acknowledged"] or result["exit_code"] == 0)
+        )
+    except (ValueError, OSError, KeyError, TypeError, RuntimeError):
+        job["cleanup_confirmed"] = not job["launch_attempted"]
+    finally:
+        _coordinator_settle(root, request, context, job, directory, result)
+
+
+def _coordinator_settle(root, request, context, job, directory, result):
+    try:
+        phase = "lineage"
+        _coordinator_bind_interrupted(root, request, context, job)
+        phase = "completion_evidence"
+        complete = _coordinator_completed(root, job, result)
+        phase = "control_cleanup"
+        if directory is not None and job["cleanup_confirmed"]:
+            _coordinator_remove_control(root, directory)
+        phase = "terminal_metadata"
+        if job["run_id"] is None:
+            _coordinator_record_failure(request, context, job)
+        else:
+            context["store"].finish(
+                request["session_nonce"],
+                request["request_id"],
+                job["request_sha256"],
+                job["run_id"],
+                "COMPLETE" if complete else "INCOMPLETE",
+                job["cleanup_confirmed"],
+            )
+    except (ValueError, OSError, KeyError, TypeError, RuntimeError) as error:
+        job["failure_phase"] = phase
+        job["failure_code"] = type(error).__name__
+        job["cleanup_confirmed"] = False
+        _coordinator_record_failure(request, context, job)
+
+
+def _coordinator_bind_interrupted(root, request, context, job):
+    # Preserve observed lineage after owned termination; this never writes ACK
+    # or authorizes execution based on a dead or reused PID.
+    directory = job.get("directory")
+    if (
+        job["run_id"] is not None
+        or not job["cleanup_confirmed"]
+        or directory is None
+        or not (directory / "handshake.json").exists()
+    ):
+        return
+    handshake = _coordinator_read(root, directory, "handshake.json")
+    _coordinator_verify_handshake(request, job, handshake)
+    row = context["store"].read(request["session_nonce"], request["request_id"])
+    observed = job["observed"]
+    expected = dict(
+        row["owner_identity"], pid=observed["pid"], creation=observed["creation"]
+    )
+    if observed["creation"] is None or handshake["worker_identity"] != expected:
+        raise ValueError("interrupted worker lineage differs")
+    context["store"].bind(
+        request["session_nonce"],
+        request["request_id"],
+        job["request_sha256"],
+        handshake["run_id"],
+        expected,
+    )
+    job["run_id"] = handshake["run_id"]
+
+
+def _coordinator_worker(root, directory, encoded):
+    """Fixed fresh child entry; no caller-selected executable or run UUID."""
+    import time
+    from .deep_audit import scan_deep_audit
+    from .deep_audit_io import local_file, digest, strict_json
+
+    root = Path(root).resolve(strict=True)
+    if not isinstance(encoded, str) or len(encoded) > 10924:
+        raise ValueError("worker transient argument budget exceeded")
+    config = strict_json(base64.b64decode(encoded, altchars=b"-_", validate=True))
+    if set(config) != {"request", "request_sha256", "snapshot", "expires_at"}:
+        raise ValueError("worker input fields differ")
+    request = config["request"]
+    _coordinator_request(root, request)
+    if digest(request) != config["request_sha256"]:
+        raise ValueError("worker request differs")
+    if _coordinator_preflight(root, request["payload"]) != config["snapshot"]:
+        raise ValueError("worker source or runtime differs")
+    if time.monotonic() >= config["expires_at"]:
+        raise ValueError("worker lease expired")
+    payload = request["payload"]
+    result = scan_deep_audit(
+        root,
+        local_file(root, payload["manifest"]),
+        payload["manifest_sha256"],
+        authorization=local_file(root, payload["authorization"]),
+        trust_root=local_file(root, payload["trust_root"]),
+        trust_root_sha256=payload["trust_root_sha256"],
+        emit=lambda event: _coordinator_worker_event(root, directory, config, event),
+    )
+    _coordinator_write(
+        root,
+        directory,
+        "done.json",
+        dict(
+            run_id=result["run_id"],
+            analysis_complete=result.get("analysis_complete") is True,
+        ),
+    )
+
+
+def _coordinator_worker_event(root, directory, config, event):
+    import time
+    from .deep_audit_io import digest
+
+    if event["kind"] != "run_started":
+        return
+    request = config["request"]
+    identity = _coordinator_owner(root, request["session_nonce"])
+    handshake = dict(
+        worker_identity=identity,
+        run_id=event["run_id"],
+        request_id=request["request_id"],
+        request_sha256=config["request_sha256"],
+        snapshot=config["snapshot"],
+    )
+    _coordinator_hex(event["run_id"], 32)
+    _coordinator_write(root, directory, "handshake.json", handshake)
+    while time.monotonic() < config["expires_at"]:
+        if (Path(directory) / "ack.json").exists():
+            ack = _coordinator_read(root, directory, "ack.json")
+            if ack != dict(handshake_sha256=digest(handshake)):
+                raise ValueError("worker acknowledgement differs")
+            if _coordinator_preflight(root, request["payload"]) != config["snapshot"]:
+                raise ValueError("worker inputs drifted before execution")
+            if time.monotonic() >= config["expires_at"]:
+                raise ValueError("worker lease expired before execution")
+            return
+        time.sleep(0.05)
+    raise ValueError("worker acknowledgement lease expired")
+
+
+def _coordinator_heartbeat(root, request, owner, context, job):
+    import time
+    from .assembly_process import CLEANUP_TIMEOUT_SECONDS
+
+    try:
+        if job["cancel"].is_set():
+            return _coordinator_cancel_grace(job, time.monotonic())
+        _coordinator_live_lease(root, request, owner, context)
+        if job["acknowledged"]:
+            return True
+        directory = job["directory"]
+        if not (directory / "handshake.json").exists():
+            return True
+        return _coordinator_handshake(root, request, owner, context, job)
+    except (ValueError, OSError, KeyError, TypeError):
+        _coordinator_begin_cancel(root, job, CLEANUP_TIMEOUT_SECONDS)
+        return _coordinator_cancel_grace(job, time.monotonic())
+
+
+def _coordinator_cancel_grace(job, now):
+    if job.get("cancel_hard_kill") or now >= job.get("cancel_deadline", 0):
+        if job.get("acknowledged"):
+            job["cancel_hard_kill"] = True
+        return False
+    return True
+
+
+def _coordinator_begin_cancel(root, job, grace_seconds):
+    import time
+
+    job["cancel"].set()
+    if "cancel_deadline" in job:
+        return
+    job["cancel_deadline"] = time.monotonic() + grace_seconds
+    if not job.get("acknowledged") or not job.get("run_id"):
+        job["cancel_deadline"] = 0
+        return
+    try:
+        from .deep_audit import cancel_deep_run
+
+        result = cancel_deep_run(root, job["run_id"])
+        if result.get("state") not in {
+            "CANCELLATION_REQUESTED",
+            "ALREADY_STOPPED",
+        }:
+            job["cancel_hard_kill"] = True
+    except Exception:
+        job["cancel_hard_kill"] = True
+
+
+def _coordinator_live_lease(root, request, owner, context):
+    import os
+    import time
+    from .assembly_process import _process_creation_identity
+
+    if (
+        context["stop"]
+        or time.monotonic() >= context["expires_at"]
+        or owner["pid"] != os.getpid()
+        or owner["creation"] != _process_creation_identity(owner["pid"])
+        or owner["session_nonce"] != request["session_nonce"]
+        or request["workspace"] != str(root)
+    ):
+        raise ValueError("coordinator live ownership differs")
+    context["store"].check_owner(owner, time.monotonic())
+
+
+def _coordinator_handshake(root, request, owner, context, job):
+    from .assembly_process import _process_creation_identity
+    from .deep_audit_io import digest
+
+    handshake = _coordinator_read(root, job["directory"], "handshake.json")
+    worker = handshake["worker_identity"]
+    observed = job["observed"]
+    expected = dict(owner, pid=observed["pid"], creation=observed["creation"])
+    if worker != expected or observed["creation"] is None:
+        raise ValueError("worker native identity differs")
+    if _process_creation_identity(observed["pid"]) != observed["creation"]:
+        raise ValueError("worker native identity is stale")
+    _coordinator_verify_handshake(request, job, handshake)
+    if _coordinator_preflight(root, request["payload"]) != job["snapshot"]:
+        raise ValueError("signed inputs or runtime drifted")
+    _coordinator_live_lease(root, request, owner, context)
+    row = context["store"].bind(
+        request["session_nonce"],
+        request["request_id"],
+        job["request_sha256"],
+        handshake["run_id"],
+        worker,
+    )
+    job["run_id"] = row["run_id"]
+    # Mark possible execution before publishing ACK to the independently running child.
+    job["acknowledged"] = True
+    _coordinator_write(
+        root, job["directory"], "ack.json", dict(handshake_sha256=digest(handshake))
+    )
+    return True
+
+
+def _coordinator_verify_handshake(request, job, handshake):
+    expected = {"worker_identity", "run_id", "request_id", "request_sha256", "snapshot"}
+    if set(handshake) != expected:
+        raise ValueError("worker handshake fields differ")
+    _coordinator_hex(handshake["run_id"], 32)
+    if (
+        handshake["request_id"],
+        handshake["request_sha256"],
+        handshake["snapshot"],
+    ) != (request["request_id"], job["request_sha256"], job["snapshot"]):
+        raise ValueError("worker handshake binding differs")
+
+
+def _coordinator_completed(root, job, result):
+    if (
+        job["run_id"] is None
+        or result is None
+        or result["exit_code"] != 0
+        or not job["cleanup_confirmed"]
+        or not job["acknowledged"]
+    ):
+        return False
+    done = _coordinator_read(root, job["directory"], "done.json")
+    if set(done) != {"run_id", "analysis_complete"} or done["run_id"] != job["run_id"]:
+        raise ValueError("worker completion run differs")
+    from .deep_audit import deep_run_status
+
+    evidence = deep_run_status(root, job["run_id"])
+    if any("CLEANUP" in str(gap.get("code", "")) for gap in evidence.get("gaps", [])):
+        raise ValueError("owned audit resource cleanup is incomplete")
+    return (
+        done["analysis_complete"] is True and evidence.get("analysis_complete") is True
+    )
+
+
+def _coordinator_record_failure(request, context, job):
+    store = context["store"]
+    args = (request["session_nonce"], request["request_id"], job["request_sha256"])
+    if job["run_id"] is None:
+        store.abandon(*args, job["cleanup_confirmed"])
+    else:
+        store.finish(*args, job["run_id"], "INCOMPLETE", job["cleanup_confirmed"])
+
+
+def _coordinator_remove_control(root, directory):
+    import time
+    from .assembly_process import CLEANUP_TIMEOUT_SECONDS
+
+    deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
+    while True:
+        try:
+            _coordinator_unlink_control(root, directory)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+
+
+def _coordinator_unlink_control(root, directory):
+    directory = _coordinator_control_path(root, directory)
+    from .deep_audit_io import local_file
+
+    for name in ("handshake.json", "ack.json", "done.json"):
+        path = directory / name
+        if path.exists() or path.is_symlink():
+            local_file(directory, name).unlink()
+    directory.rmdir()
+
+
+def _coordinator_cancel(context):
+    job = context.get("job")
+    if job is not None:
+        from .assembly_process import CLEANUP_TIMEOUT_SECONDS
+
+        _coordinator_begin_cancel(context.get("root"), job, CLEANUP_TIMEOUT_SECONDS)
+
+
+def _coordinator_shutdown(context):
+    from .assembly_process import CLEANUP_TIMEOUT_SECONDS
+
+    _coordinator_cancel(context)
+    job = context.get("job")
+    if job is None:
+        return True
+    job["thread"].join(timeout=CLEANUP_TIMEOUT_SECONDS * 2)
+    return not job["thread"].is_alive() and job["cleanup_confirmed"] is True
+
+
 def add_parser(sub: Any) -> None:
     """Register senior-audit commands without loading audit engines."""
     deep = sub.add_parser(

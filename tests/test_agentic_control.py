@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 from factoryline.cli import main
-
 from factoryline.agentic_control import (
     AgenticControlError,
     audit_model_route_policy,
@@ -53,6 +52,477 @@ from factoryline.agentic_control import (
     create_orchestrator_plan,
     verify_orchestrator_plan,
 )
+
+
+def _coordinator_identity(nonce="a" * 32, pid=123):
+    return dict(
+        pid=pid,
+        creation="boot:123",
+        runtime_sha256="b" * 64,
+        session_nonce=nonce,
+        workspace_sha256="c" * 64,
+    )
+
+
+def test_coordinator_store_admission_and_immutable_binding(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store = CoordinatorRequestStore(tmp_path)
+    nonce, request, seal, run = "a" * 32, "d" * 32, "e" * 64, "f" * 32
+    owner = _coordinator_identity()
+    store.acquire(owner, 300, 10)
+    assert store.admit(nonce, request, seal, owner)["created"] is True
+    assert store.admit(nonce, request, seal, owner)["created"] is False
+    with pytest.raises(AgenticControlError):
+        store.admit(nonce, request, seal, _coordinator_identity(pid=124))
+    with pytest.raises(AgenticControlError):
+        store.admit(nonce, request, "0" * 64, owner)
+    worker = _coordinator_identity(pid=456)
+    bound = store.bind(nonce, request, seal, run, worker)
+    assert store.bind(nonce, request, seal, run, worker) == bound
+    for other_run in ("0" * 32, "f" * 64):
+        with pytest.raises(AgenticControlError):
+            store.bind(nonce, request, seal, other_run, worker)
+    with pytest.raises(AgenticControlError):
+        store.bind(nonce, request, seal, run, owner)
+    assert (
+        store.finish(nonce, request, seal, run, "COMPLETE", True)["state"] == "COMPLETE"
+    )
+    with pytest.raises(AgenticControlError):
+        store.finish(nonce, request, seal, run, "INCOMPLETE", False)
+    other = "1" * 32
+    store.release(owner)
+    store.acquire(_coordinator_identity(other), 300, 10)
+    assert store.admit(other, request, seal, _coordinator_identity(other))["created"]
+    assert store.read(other, request)["run_id"] is None
+    assert store.read(nonce, request)["run_id"] == run
+
+
+def test_coordinator_store_corruption_and_concurrent_admission(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store = CoordinatorRequestStore(tmp_path)
+    args = ("a" * 32, "d" * 32, "e" * 64, _coordinator_identity())
+    store.acquire(args[3], 300, 10)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        rows = list(pool.map(lambda _: store.admit(*args), range(8)))
+    assert sum(row["created"] for row in rows) == 1
+    assert all(row["request_sha256"] == args[2] for row in rows)
+    assert (
+        store.path == tmp_path / ".factory/deep-runs/requests/coordinator-metadata.json"
+    )
+    with store._connect() as db:
+        db[args[0] + ":" + args[1]][0] = "{}"
+    with pytest.raises(AgenticControlError, match="metadata hash differs"):
+        store.read(args[0], args[1])
+
+
+def test_coordinator_store_rejects_copied_rows_and_changed_lease(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 300, 10)
+    store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    copied = "a" * 32 + ":" + "0" * 32
+    with store._connect() as db:
+        db[copied] = list(db["a" * 32 + ":" + "d" * 32])
+    with pytest.raises(AgenticControlError, match="key binding"):
+        store.read("a" * 32, "0" * 32)
+    from factoryline.deep_audit_io import read_run_json, write_run_json
+
+    snapshot = read_run_json(store.path.parent, store.path.name)
+    del snapshot["rows"][copied]
+    write_run_json(store.path.parent, store.path.name, snapshot)
+    store.acquire(owner, 300, 10)
+    assert store.check_owner(owner, 11)["expires_monotonic"] == 310
+    for clock in (float("nan"), float("inf"), 10**400, True, -1):
+        with pytest.raises(AgenticControlError):
+            store.check_owner(owner, clock)
+        with pytest.raises(AgenticControlError):
+            store.acquire(owner, 300, clock)
+    with pytest.raises(AgenticControlError):
+        store.check_owner(owner, 310)
+    with pytest.raises(AgenticControlError):
+        store.check_owner(_coordinator_identity(pid=124), 11)
+    with store._connect() as db:
+        del db["lease"]
+    with pytest.raises(AgenticControlError):
+        store.check_owner(owner, 11)
+    replacement = store.acquire(_coordinator_identity(pid=124), 300, 10)
+    with pytest.raises(AgenticControlError):
+        store.check_owner(owner, 11)
+    replacement["extra"] = "forbidden"
+    from factoryline.agentic_control import _canonical, _sha
+
+    with store._connect() as db:
+        db["lease"] = [_canonical(replacement).decode(), _sha(replacement)]
+    with pytest.raises(AgenticControlError, match="invalid lease shape"):
+        store.check_owner(_coordinator_identity(pid=124), 11)
+
+
+def test_coordinator_store_owned_lease(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    assert store.acquire(owner, 300, 10)["expires_monotonic"] == 310
+    assert store.acquire(owner, 1, 11)["expires_monotonic"] == 12
+    with pytest.raises(AgenticControlError):
+        store.acquire(owner, 300, 12)
+    with pytest.raises(AgenticControlError):
+        store.acquire(_coordinator_identity(pid=124), 300, 1000)
+    with pytest.raises(AgenticControlError):
+        store.release(_coordinator_identity(pid=124))
+    for ttl in (True, 0, 3601):
+        with pytest.raises(AgenticControlError):
+            store.acquire(owner, ttl, 10)
+    store.release(owner)
+    assert store.acquire(_coordinator_identity(pid=124), 3600, 20)
+
+
+def test_coordinator_store_serializes_requests_and_abandons_without_replay(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    nonce, seal = "a" * 32, "e" * 64
+    with pytest.raises(AgenticControlError):
+        store.admit(nonce, "1" * 32, seal, owner)
+    store.acquire(owner, 300, 10)
+
+    def admit(request):
+        try:
+            return store.admit(nonce, request, seal, owner)
+        except AgenticControlError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(admit, ("1" * 32, "2" * 32)))
+    assert outcomes.count("E_COORDINATOR_BUSY") == 1
+    admitted = next(row for row in outcomes if isinstance(row, dict))
+    request = admitted["request_id"]
+    assert store.admit(nonce, request, seal, owner)["created"] is False
+    row = store.abandon(nonce, request, seal, True)
+    assert row["state"] == "INCOMPLETE" and row["run_id"] is None
+    assert store.admit(nonce, request, seal, owner)["created"] is False
+    with pytest.raises(AgenticControlError):
+        store.bind(nonce, request, seal, "f" * 32, owner)
+    with pytest.raises(AgenticControlError):
+        store.abandon(nonce, request, seal, True)
+    fresh = store.admit(nonce, "3" * 32, seal, owner)
+    store.bind(nonce, fresh["request_id"], seal, "f" * 32, owner)
+    with pytest.raises(AgenticControlError):
+        store.abandon(nonce, fresh["request_id"], seal, True)
+
+
+def test_coordinator_store_reads_one_snapshot_per_transaction(tmp_path, monkeypatch):
+    from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline import deep_audit_io
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    nonce, seal = "a" * 32, "e" * 64
+    store.acquire(owner, 300, 10)
+    original = deep_audit_io.read_run_json
+    calls = []
+
+    def traced(*args):
+        calls.append(args)
+        return original(*args)
+
+    monkeypatch.setattr(deep_audit_io, "read_run_json", traced)
+    counts = []
+    for index in range(21):
+        calls.clear()
+        request = f"{index:032x}"
+        store.admit(nonce, request, seal, owner)
+        counts.append(len(calls))
+        store.bind(nonce, request, seal, f"{index + 100:032x}", owner)
+        store.finish(nonce, request, seal, f"{index + 100:032x}", "COMPLETE", True)
+    assert counts == [1] * 21
+
+
+def test_coordinator_store_busy_validates_all_sealed_rows(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    nonce, request, seal = "a" * 32, "d" * 32, "e" * 64
+    store.acquire(owner, 300, 10)
+    store.admit(nonce, request, seal, owner)
+    store.abandon(nonce, request, seal, False)
+    with pytest.raises(AgenticControlError) as error:
+        store.admit(nonce, "0" * 32, seal, owner)
+    assert error.value.code == "E_COORDINATOR_BUSY"
+    with store._connect() as db:
+        db[nonce + ":" + "1" * 32] = list(db[nonce + ":" + request])
+    with pytest.raises(AgenticControlError, match="key binding"):
+        store.admit(nonce, "0" * 32, seal, owner)
+
+
+def _coordinator_metadata_snapshot(store):
+    from factoryline.deep_audit_io import read_run_json
+
+    return (
+        read_run_json(store.path.parent, store.path.name)
+        if store.path.exists()
+        else {"rows": {}}
+    )
+
+
+@pytest.mark.parametrize("now,expected", [(10, 0), (309.999, 0), (310, 1), (311, 1)])
+def test_coordinator_reconcile_expiry_endpoint_and_idempotence(tmp_path, now, expected):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 300, 10)
+    original = store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    before = _coordinator_metadata_snapshot(store)
+    result = store.reconcile_expired(now)
+    assert result["reconciled"] == expected
+    assert result["observed"] == 1
+    assert result["phase"] == "expired-run-reconciliation"
+    assert result["authority"] == "none"
+    after = _coordinator_metadata_snapshot(store)
+    if not expected:
+        assert after == before
+        assert result["before_sha256"] == result["after_sha256"]
+    else:
+        current = store.read("a" * 32, "d" * 32)
+        assert current == {
+            key: value for key, value in original.items() if key != "created"
+        } | dict(state="INCOMPLETE", cleanup_confirmed=False)
+        assert before["rows"]["lease"] == after["rows"]["lease"]
+        with pytest.raises(AgenticControlError):
+            store.acquire(owner, 300, now)
+        repeated = store.reconcile_expired(now + 1)
+        assert repeated["reconciled"] == 0
+        assert repeated["before_sha256"] == result["after_sha256"]
+        assert _coordinator_metadata_snapshot(store) == after
+
+
+def test_coordinator_reconcile_without_lease_is_readonly(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store = CoordinatorRequestStore(tmp_path)
+    before = _coordinator_metadata_snapshot(store)
+    assert store.reconcile_expired(100)["reconciled"] == 0
+    assert _coordinator_metadata_snapshot(store) == before
+
+
+def test_coordinator_reconcile_preserves_bound_worker_and_terminal_other_owner(
+    tmp_path,
+):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 1, 10)
+    store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    bound = store.bind(
+        "a" * 32, "d" * 32, "e" * 64, "f" * 32, _coordinator_identity(pid=456)
+    )
+    terminal = dict(
+        bound, request_id="1" * 32, state="COMPLETE", cleanup_confirmed=True
+    )
+    other = dict(
+        bound,
+        session_nonce="2" * 32,
+        request_id="3" * 32,
+        owner_identity=_coordinator_identity("2" * 32),
+        worker_identity=_coordinator_identity("2" * 32, pid=456),
+    )
+    with store._connect() as db:
+        store._save(db, "a" * 32 + ":" + "1" * 32, terminal)
+        store._save(db, "2" * 32 + ":" + "3" * 32, other)
+    result = store.reconcile_expired(11)
+    assert result["reconciled"] == 1 and result["observed"] == 3
+    assert store.read("a" * 32, "d" * 32) == bound | dict(
+        state="INCOMPLETE", cleanup_confirmed=False
+    )
+    assert store.read("a" * 32, "1" * 32) == terminal
+    assert store.read("2" * 32, "3" * 32) == other
+
+
+@pytest.mark.parametrize("damage", ["copied_key", "hash", "shape"])
+def test_coordinator_reconcile_bad_history_rolls_back(tmp_path, damage):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 1, 10)
+    row = store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    with store._connect() as db:
+        if damage == "copied_key":
+            db["a" * 32 + ":" + "f" * 32] = list(db["a" * 32 + ":" + "d" * 32])
+        elif damage == "hash":
+            db["a" * 32 + ":" + "d" * 32][1] = "0" * 64
+        else:
+            del row["created"]
+            row["request_id"] = "f" * 32
+            row["unexpected"] = True
+            store._save(db, "a" * 32 + ":" + "f" * 32, row)
+    before = _coordinator_metadata_snapshot(store)
+    with pytest.raises(AgenticControlError):
+        store.reconcile_expired(11)
+    assert _coordinator_metadata_snapshot(store) == before
+
+
+def test_coordinator_store_preserves_real_git_inventory_and_workflow_db(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline.deep_audit_io import inventory_candidate
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    source = tmp_path / "app.py"
+    source.write_text("print('fixture')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+    before = inventory_candidate(tmp_path)
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    assert not (tmp_path / ".factory/workflow-runtime").exists()
+    store.acquire(owner, 300, 10)
+    assert (
+        inventory_candidate(tmp_path)["candidate_sha256"] == before["candidate_sha256"]
+    )
+    store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    assert (
+        inventory_candidate(tmp_path)["candidate_sha256"] == before["candidate_sha256"]
+    )
+    store.bind("a" * 32, "d" * 32, "e" * 64, "f" * 32, owner)
+    assert (
+        inventory_candidate(tmp_path)["candidate_sha256"] == before["candidate_sha256"]
+    )
+    store.finish("a" * 32, "d" * 32, "e" * 64, "f" * 32, "COMPLETE", True)
+    store.release(owner)
+    after = inventory_candidate(tmp_path)
+    assert before["state"] == after["state"] == "COMPLETE"
+    assert before["candidate_sha256"] == after["candidate_sha256"]
+    # A tracked collision must block rather than silently disappear.
+    subprocess.run(["git", "add", "-f", str(store.path)], cwd=tmp_path, check=True)
+    with pytest.raises(AgenticControlError, match="tracked deep-run collision"):
+        store.acquire(owner, 300, 10)
+
+
+def test_coordinator_store_rejects_case_aliased_tracked_control_path(
+    tmp_path, monkeypatch
+):
+    from factoryline.agentic_control import CoordinatorRequestStore
+    import factoryline.deep_audit_io as io
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(
+        io, "_git_names", lambda *args: {".FACTORY/DEEP-RUNS/requests/user.json"}
+    )
+    store = CoordinatorRequestStore(tmp_path)
+    with pytest.raises(AgenticControlError, match="tracked deep-run collision"):
+        store.acquire(_coordinator_identity(), 300, 10)
+    assert not store.path.exists()
+
+
+def test_coordinator_store_never_touches_existing_workflow_database(tmp_path):
+    import sqlite3
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    path = tmp_path / ".factory/workflow-runtime/runtime.sqlite3"
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as database:
+        database.execute("CREATE TABLE user_data (value TEXT)")
+        database.execute("INSERT INTO user_data VALUES ('preserve original')")
+    original = path.read_bytes()
+    store = CoordinatorRequestStore(tmp_path)
+    store.acquire(_coordinator_identity(), 300, 10)
+    store.release(_coordinator_identity())
+    assert path.read_bytes() == original
+
+
+def test_coordinator_store_rejects_reparse_directory(tmp_path, monkeypatch):
+    import types
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store = CoordinatorRequestStore(tmp_path)
+    original = Path.lstat
+
+    def lstat(path):
+        value = original(path)
+        if path == store.path.parent:
+            return types.SimpleNamespace(
+                st_mode=value.st_mode, st_file_attributes=0x400
+            )
+        return value
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    with pytest.raises(AgenticControlError, match="linked"):
+        store.acquire(_coordinator_identity(), 300, 10)
+
+
+def test_coordinator_store_atomic_failure_and_stale_lock(tmp_path, monkeypatch):
+    from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline import deep_audit_io
+    from factoryline.graph_authorization import _authorization_lock
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 300, 10)
+    before = store.path.read_bytes()
+
+    def fail_replace(*args):
+        raise OSError("synthetic atomic replace failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(deep_audit_io.os, "replace", fail_replace)
+        with pytest.raises(OSError):
+            store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    assert store.path.read_bytes() == before
+    with _authorization_lock(store.path):
+        with pytest.raises(AgenticControlError) as error:
+            store.check_owner(owner, 11)
+        assert error.value.code == "E_COORDINATOR_BUSY"
+    lock = store.path.with_suffix(".json.lock")
+    lock.write_text("unknown crashed owner", encoding="utf-8")
+    with pytest.raises(AgenticControlError):
+        store.acquire(owner, 300, 11)
+    assert lock.read_text() == "unknown crashed owner"
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "dangling"])
+def test_coordinator_store_rejects_linked_metadata(tmp_path, kind):
+    import os
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 300, 10)
+    target = tmp_path / "linked-copy.json"
+    if kind == "hardlink":
+        os.link(store.path, target)
+    else:
+        original = store.path.read_bytes()
+        store.path.unlink()
+        if kind == "symlink":
+            target.write_bytes(original)
+        try:
+            store.path.symlink_to(target)
+        except OSError:
+            pytest.skip("native symlink permission unavailable")
+    with pytest.raises(AgenticControlError, match="linked"):
+        store.check_owner(owner, 11)
+
+
+def test_coordinator_store_crossprocess_lock_is_fail_closed(tmp_path):
+    import sys
+    from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline.graph_authorization import _authorization_lock
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 300, 10)
+    code = (
+        "import sys;from factoryline.agentic_control import CoordinatorRequestStore,AgenticControlError;"
+        "s=CoordinatorRequestStore(sys.argv[1]);\n"
+        "try:s.reconcile_expired(11)\n"
+        "except AgenticControlError as e:print(e.code)\n"
+    )
+    with _authorization_lock(store.path):
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(tmp_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    assert result.stdout.strip() == "E_COORDINATOR_BUSY"
 
 
 SHA = "a" * 64

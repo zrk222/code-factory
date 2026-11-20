@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import threading
 from typing import Any, Iterable, Protocol
 from urllib.parse import urlsplit
 
@@ -3465,6 +3466,467 @@ def _runtime_result(item, status, action):
         "artifacts": [],
         "authority": dict(_AUTHORITY),
     }
+
+
+class CoordinatorRequestStore:
+    """Hash-checked metadata in the existing reserved deep-run control ledger.
+
+    No payload/result retention or authentication against a hostile local writer.
+    Leases never authorize PID signalling or automatic ownership takeover.
+    Lock contention fails BUSY; duplicates are readable after the writer commits.
+    """
+
+    _metadata_lock = threading.RLock()
+
+    def __init__(self, root):
+        self.root = Path(root).resolve(strict=True)
+        self.path = self.root / ".factory/deep-runs/requests/coordinator-metadata.json"
+        self._paths()
+
+    def _paths(self):
+        current = self.root
+        for part in (".factory", "deep-runs", "requests"):
+            current /= part
+            if not current.exists() and not current.is_symlink():
+                current.mkdir(mode=0o700, exist_ok=True)
+            self._regular(current, directory=True)
+        for path in (self.path, self.path.with_suffix(".json.lock")):
+            if path.exists() or path.is_symlink():
+                self._regular(path, directory=False)
+
+    def _tracked_boundary(self):
+        from .deep_audit_io import _git_names
+
+        roots = (self.root, *self.root.parents)
+        if not any((root / ".git").exists() for root in roots):
+            return
+        tracked = {name.casefold() for name in _git_names(self.root, True)}
+        if any(
+            name == ".factory/deep-runs" or name.startswith(".factory/deep-runs/")
+            for name in tracked
+        ):
+            raise AgenticControlError(
+                "E_COORDINATOR_PATH", "tracked deep-run collision"
+            )
+
+    @staticmethod
+    def _regular(path, *, directory):
+        import stat
+
+        info = path.lstat()
+        linked = path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400
+        expected = (
+            stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+        )
+        if linked or not expected or (not directory and info.st_nlink != 1):
+            raise AgenticControlError(
+                "E_COORDINATOR_PATH", "linked or invalid metadata path"
+            )
+
+    def _connect(self):
+        from contextlib import contextmanager
+        from .graph_authorization import _authorization_lock, GraphAuthorizationError
+        from .deep_audit_io import read_run_json, write_run_json, LIMIT
+
+        @contextmanager
+        def transaction():
+            self._paths()
+            try:
+                with self._metadata_lock, _authorization_lock(self.path):
+                    snapshot = (
+                        read_run_json(self.path.parent, self.path.name)
+                        if self.path.exists()
+                        else {"rows": {}}
+                    )
+                    rows = self._snapshot(snapshot)
+                    before = _sha(rows)
+                    yield rows
+                    if _sha(rows) != before:
+                        self._paths()
+                        self._tracked_boundary()
+                        value = {"rows": rows}
+                        if len(_canonical({**value, "sha256": _sha(value)})) > LIMIT:
+                            raise AgenticControlError(
+                                "E_COORDINATOR_INTEGRITY",
+                                "metadata byte bound exceeded",
+                            )
+                        write_run_json(self.path.parent, self.path.name, value)
+            except GraphAuthorizationError as error:
+                if error.code != "GRAPH_AUTHORIZATION_IN_PROGRESS":
+                    raise
+                raise AgenticControlError(
+                    "E_COORDINATOR_BUSY", "metadata lock requires review"
+                ) from error
+
+        return transaction()
+
+    def _snapshot(self, snapshot):
+        if set(snapshot) != {"rows"} or not isinstance(snapshot["rows"], dict):
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "invalid metadata snapshot"
+            )
+        for key, row in snapshot["rows"].items():
+            value = self._decode(key, row)
+            if key != "lease":
+                self._reconciliation_request(value)
+        return snapshot["rows"]
+
+    @staticmethod
+    def _id(value):
+        if not isinstance(value, str) or re.fullmatch("[0-9a-f]{32}", value) is None:
+            raise AgenticControlError("E_COORDINATOR_ID", "32 lowercase hex required")
+        return value
+
+    @staticmethod
+    def _identity(value):
+        fields = {
+            "pid",
+            "creation",
+            "runtime_sha256",
+            "session_nonce",
+            "workspace_sha256",
+        }
+        if not isinstance(value, dict) or set(value) != fields:
+            raise AgenticControlError(
+                "E_COORDINATOR_IDENTITY", "exact identity fields required"
+            )
+        if type(value["pid"]) is not int or value["pid"] <= 0:
+            raise AgenticControlError("E_COORDINATOR_IDENTITY", "positive PID required")
+        creation = value["creation"]
+        if not isinstance(creation, str) or not 1 <= len(creation) <= 256:
+            raise AgenticControlError(
+                "E_COORDINATOR_IDENTITY", "bounded creation identity required"
+            )
+        for field in ("runtime_sha256", "workspace_sha256"):
+            _digest(value[field], field)
+        CoordinatorRequestStore._id(value["session_nonce"])
+        return dict(value)
+
+    def _key(self, nonce, request_id):
+        return self._id(nonce) + ":" + self._id(request_id)
+
+    @staticmethod
+    def _load(db, key):
+        row = db.get(key)
+        if row is None:
+            return None
+        return CoordinatorRequestStore._decode(key, row)
+
+    @staticmethod
+    def _decode(key, row):
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "invalid sealed metadata row"
+            )
+        try:
+            value = json.loads(row[0])
+            valid = isinstance(value, dict) and _sha(value) == row[1]
+        except (ValueError, TypeError):
+            valid = False
+        if not valid:
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "metadata hash differs"
+            )
+        if key != "lease" and key != (
+            str(value.get("session_nonce")) + ":" + str(value.get("request_id"))
+        ):
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "metadata key binding differs"
+            )
+        if key == "lease":
+            if set(value) != {"owner_identity", "expires_monotonic"}:
+                raise AgenticControlError(
+                    "E_COORDINATOR_INTEGRITY", "invalid lease shape"
+                )
+            CoordinatorRequestStore._identity(value["owner_identity"])
+            CoordinatorRequestStore._clock(value["expires_monotonic"])
+        return value
+
+    @staticmethod
+    def _save(db, key, value):
+        db[key] = [_canonical(value).decode(), _sha(value)]
+
+    @staticmethod
+    def _match(row, digest):
+        _digest(digest, "request digest")
+        if row is None or row["request_sha256"] != digest:
+            raise AgenticControlError(
+                "E_COORDINATOR_REQUEST", "missing or changed request"
+            )
+
+    def admit(self, session_nonce, request_id, request_sha256, owner_identity):
+        """Bind one idle workspace request to its exact persisted coordinator owner."""
+        key = self._key(session_nonce, request_id)
+        _digest(request_sha256, "request digest")
+        owner = self._identity(owner_identity)
+        if owner["session_nonce"] != session_nonce:
+            raise AgenticControlError("E_COORDINATOR_OWNER", "session identity differs")
+        with self._connect() as db:
+            lease = self._load(db, "lease")
+            if lease is None or lease["owner_identity"] != owner:
+                raise AgenticControlError(
+                    "E_COORDINATOR_OWNER", "persisted owner differs"
+                )
+            row = self._load(db, key)
+            if row is not None:
+                self._match(row, request_sha256)
+                if row["owner_identity"] != owner:
+                    raise AgenticControlError(
+                        "E_COORDINATOR_OWNER", "admitted owner differs"
+                    )
+                return dict(row, created=False)
+            self._idle(db)
+            row = dict(
+                session_nonce=session_nonce,
+                request_id=request_id,
+                request_sha256=request_sha256,
+                owner_identity=owner,
+                state="ADMITTED",
+                run_id=None,
+                worker_identity=None,
+                cleanup_confirmed=None,
+            )
+            self._save(db, key, row)
+            return dict(row, created=True)
+
+    def _idle(self, db):
+        rows = [self._decode(key, row) for key, row in db.items() if key != "lease"]
+        # Unknown legacy/interrupted states cannot establish an idle workspace.
+        if any(
+            row.get("state") not in {"COMPLETE", "INCOMPLETE"}
+            or row.get("cleanup_confirmed") is not True
+            for row in rows
+        ):
+            raise AgenticControlError(
+                "E_COORDINATOR_BUSY", "retained request requires reconciliation"
+            )
+
+    def abandon(self, session_nonce, request_id, request_sha256, cleanup_confirmed):
+        """Retain an unbound admission as incomplete without authorizing replay."""
+        key = self._key(session_nonce, request_id)
+        if type(cleanup_confirmed) is not bool:
+            raise AgenticControlError(
+                "E_COORDINATOR_FINISH", "cleanup boolean required"
+            )
+        with self._connect() as db:
+            row = self._load(db, key)
+            self._match(row, request_sha256)
+            if row["state"] != "ADMITTED" or row["run_id"] is not None:
+                raise AgenticControlError(
+                    "E_COORDINATOR_FINISH", "only unbound admission can be abandoned"
+                )
+            row.update(state="INCOMPLETE", cleanup_confirmed=cleanup_confirmed)
+            self._save(db, key, row)
+            return row
+
+    def read(self, session_nonce, request_id):
+        """Read one hash-verified request with its immutable identity bindings."""
+        with self._connect() as db:
+            row = self._load(db, self._key(session_nonce, request_id))
+            if row is None:
+                raise AgenticControlError("E_COORDINATOR_REQUEST", "request not found")
+            return row
+
+    def bind(self, session_nonce, request_id, request_sha256, run_id, worker_identity):
+        """Attach a verified worker-generated run identity exactly once."""
+        key, run_id = self._key(session_nonce, request_id), self._id(run_id)
+        worker = self._identity(worker_identity)
+        if worker["session_nonce"] != session_nonce:
+            raise AgenticControlError("E_COORDINATOR_OWNER", "worker session differs")
+        with self._connect() as db:
+            row = self._load(db, key)
+            self._match(row, request_sha256)
+            for field in ("workspace_sha256", "runtime_sha256"):
+                if worker[field] != row["owner_identity"][field]:
+                    raise AgenticControlError(
+                        "E_COORDINATOR_BINDING", "worker provenance differs"
+                    )
+            if row["run_id"] is not None:
+                if (row["run_id"], row["worker_identity"]) != (run_id, worker):
+                    raise AgenticControlError(
+                        "E_COORDINATOR_BINDING", "immutable worker binding differs"
+                    )
+                return row
+            if row["state"] != "ADMITTED":
+                raise AgenticControlError(
+                    "E_COORDINATOR_BINDING", "terminal request cannot execute"
+                )
+            row.update(run_id=run_id, worker_identity=worker, state="RUNNING")
+            self._save(db, key, row)
+            return row
+
+    def finish(
+        self,
+        session_nonce,
+        request_id,
+        request_sha256,
+        run_id,
+        state,
+        cleanup_confirmed,
+    ):
+        """Record an immutable terminal state while preserving cleanup uncertainty."""
+        key, run_id = self._key(session_nonce, request_id), self._id(run_id)
+        if (
+            state not in {"COMPLETE", "INCOMPLETE"}
+            or type(cleanup_confirmed) is not bool
+        ):
+            raise AgenticControlError(
+                "E_COORDINATOR_FINISH", "terminal state and cleanup boolean required"
+            )
+        if state == "COMPLETE" and not cleanup_confirmed:
+            raise AgenticControlError(
+                "E_COORDINATOR_FINISH", "complete requires cleanup"
+            )
+        with self._connect() as db:
+            row = self._load(db, key)
+            self._match(row, request_sha256)
+            if row["run_id"] != run_id:
+                raise AgenticControlError(
+                    "E_COORDINATOR_BINDING", "run identity differs"
+                )
+            if row["state"] in {"COMPLETE", "INCOMPLETE"}:
+                if (row["state"], row["cleanup_confirmed"]) != (
+                    state,
+                    cleanup_confirmed,
+                ):
+                    raise AgenticControlError(
+                        "E_COORDINATOR_FINISH", "terminal metadata is immutable"
+                    )
+                return row
+            row.update(state=state, cleanup_confirmed=cleanup_confirmed)
+            self._save(db, key, row)
+            return row
+
+    @staticmethod
+    def _clock(value):
+        import math
+
+        try:
+            valid = type(value) in (int, float) and math.isfinite(value) and value >= 0
+        except OverflowError:
+            valid = False
+        if not valid:
+            raise AgenticControlError(
+                "E_COORDINATOR_LEASE", "finite monotonic time required"
+            )
+        return value
+
+    @staticmethod
+    def _owner_lease(prior, owner, now):
+        if prior is None or prior["owner_identity"] != owner:
+            raise AgenticControlError(
+                "E_COORDINATOR_OWNER", "exact current owner required"
+            )
+        if prior["expires_monotonic"] <= now:
+            raise AgenticControlError(
+                "E_COORDINATOR_OWNER", "expired owner requires reconciliation"
+            )
+        return prior
+
+    def check_owner(self, owner_identity, now_monotonic):
+        """Require the exact persisted owner and an unexpired monotonic lease."""
+        owner, now = self._identity(owner_identity), self._clock(now_monotonic)
+        with self._connect() as db:
+            return self._owner_lease(self._load(db, "lease"), owner, now)
+
+    @staticmethod
+    def _reconciliation_request(row):
+        fields = {
+            "session_nonce",
+            "request_id",
+            "request_sha256",
+            "owner_identity",
+            "state",
+            "run_id",
+            "worker_identity",
+            "cleanup_confirmed",
+        }
+        if set(row) != fields:
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "invalid request shape"
+            )
+        CoordinatorRequestStore._id(row["session_nonce"])
+        CoordinatorRequestStore._id(row["request_id"])
+        _digest(row["request_sha256"], "request digest")
+        owner = CoordinatorRequestStore._identity(row["owner_identity"])
+        valid = owner["session_nonce"] == row["session_nonce"]
+        valid &= row["state"] in {"ADMITTED", "RUNNING", "COMPLETE", "INCOMPLETE"}
+        valid &= (
+            type(row["cleanup_confirmed"]) is bool or row["cleanup_confirmed"] is None
+        )
+        if row["run_id"] is not None:
+            CoordinatorRequestStore._id(row["run_id"])
+            worker = CoordinatorRequestStore._identity(row["worker_identity"])
+            valid &= all(
+                worker[field] == owner[field]
+                for field in ("session_nonce", "runtime_sha256", "workspace_sha256")
+            )
+        elif row["worker_identity"] is not None or row["state"] == "RUNNING":
+            valid = False
+        if not valid:
+            raise AgenticControlError(
+                "E_COORDINATOR_INTEGRITY", "invalid request binding"
+            )
+        return row
+
+    def reconcile_expired(self, now_monotonic):
+        """Account for interruption, retaining unknown cleanup and blocked ownership."""
+        now = self._clock(now_monotonic)
+        with self._connect() as db:
+            rows = {key: self._decode(key, row) for key, row in db.items()}
+            requests = {
+                key: self._reconciliation_request(row)
+                for key, row in rows.items()
+                if key != "lease"
+            }
+            before = _sha(rows)
+            lease, changed = rows.get("lease"), 0
+            expired = lease is not None and lease["expires_monotonic"] <= now
+            for key, row in requests.items():
+                if (
+                    expired
+                    and row["owner_identity"] == lease["owner_identity"]
+                    and row["state"] in {"ADMITTED", "RUNNING"}
+                ):
+                    row.update(state="INCOMPLETE", cleanup_confirmed=False)
+                    self._save(db, key, row)
+                    changed += 1
+            return dict(
+                state="OBSERVED",
+                phase="expired-run-reconciliation",
+                observed=len(requests),
+                reconciled=changed,
+                before_sha256=before,
+                after_sha256=_sha(rows),
+                authority="none",
+            )
+
+    def acquire(self, owner_identity, lease_seconds, now_monotonic):
+        """Acquire or renew a bounded lease without taking over stale ownership."""
+        owner = self._identity(owner_identity)
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise AgenticControlError(
+                "E_COORDINATOR_LEASE", "integer TTL 1..3600 required"
+            )
+        now_monotonic = self._clock(now_monotonic)
+        with self._connect() as db:
+            prior = self._load(db, "lease")
+            if prior is not None:
+                self._owner_lease(prior, owner, now_monotonic)
+            row = dict(
+                owner_identity=owner, expires_monotonic=now_monotonic + lease_seconds
+            )
+            self._save(db, "lease", row)
+            return row
+
+    def release(self, owner_identity):
+        """Remove only the lease belonging to the exact supplied owner identity."""
+        owner = self._identity(owner_identity)
+        with self._connect() as db:
+            prior = self._load(db, "lease")
+            if prior is None or prior["owner_identity"] != owner:
+                raise AgenticControlError("E_COORDINATOR_OWNER", "exact owner required")
+            del db["lease"]
 
 
 class WorkflowEventStore:

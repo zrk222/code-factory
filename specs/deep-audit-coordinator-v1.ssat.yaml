@@ -1,0 +1,250 @@
+name: deep-audit-coordinator-v1
+language: python
+spec_markdown: |
+  # Deep audit coordinator v1 - opt-in amendment
+  Status: ARCHITECTURE_GATED_IMPLEMENTATION_PENDING. No runtime completion claim.
+  Owner said "Approve warm coordinator + fresh workers"; the objective remains approved.
+  Approval: .factory/daemon-lifecycle/owner-approval-20261119.json; not release authority.
+  This versioned exception applies only to the explicit foreground coordinator command.
+  Existing p1 mission behavior and attestation-v1 remain unchanged and sealed:
+  - specs/p1-resumable-factory-mission.md SHA256 d1e3fbfd3f09787719a7e1360643ef398b059271e951504bee30b1155f7b3d17
+  - specs/p1-resumable-factory-mission.ssat.yaml SHA256 27a5f12805f38f17b2bb826e33c8fa544ec7f4c2dd03ba2b3d815cac100bbf82
+  - specs/deep-audit-attestation-v1.ssat.yaml SHA256 f6cf92654b392626cf1cd38640ab4c651741b449ac4932de31ec1de0df6ef1cf
+  No watcher, MCP write, worker pool, second executor/store, module, dependency or architecture-cap increase.
+  factoryline/deep_audit.py and factoryline/deep_audit_io.py receive zero changes.
+  Existing signed scan, supervisor, ledger and process-identity helpers remain authoritative.
+  Implemented prerequisite: read-only process creation identity in existing
+  assembly_process.py protects foundation admission. Windows uses an opened native
+  handle, zero-time wait and GetProcessTimes; Linux uses PID stat start ticks and
+  boot identity. Unsupported or ambiguous observations return None. This query
+  never signals a process and cannot independently eliminate a later PID race.
+  Actual cancellation must still use the existing owned Job/process-group handle.
+  Module signatures cover the implemented foundation and direct-API worker bridge.
+  The full MUST contract and public command remain unverified.
+
+  ## Current foundation and direct-API worker bridge (not full command completion)
+  Modify existing assembly_process.py, agentic_control.py and cli_deep_audit.py;
+  add no runtime module, dependency or result database. The coordinator is not
+  registered as a CLI command. The MUST requirements below describe
+  the complete target, not a claim of completed daemon operation or speedup.
+  Identity objects contain exactly pid (positive non-boolean integer), creation
+  (1..256 characters), runtime_sha256 and workspace_sha256 (64 lowercase hex),
+  and session_nonce (32 lowercase hex). They are trusted-caller observations,
+  not authentication against a hostile local database writer.
+  Owner-approved storage amendment: use the existing deep-run ledger, not the
+  added coordinator-only SQLite table. Preserve unrelated workflow-runtime data.
+  CoordinatorRequestStore(root) uses a single sealed metadata snapshot at
+  .factory/deep-runs/requests/coordinator-metadata.json through existing
+  read_run_json/write_run_json. The snapshot contains exactly rows, a mapping of
+  the lease record and requests keyed by nonce:request_id; each sealed row retains
+  its exact key binding.
+  Reads reject corrupt or copied metadata, links/reparse paths and hardlinks.
+  One constant process-wide reentrant mutex plus existing graph authorization
+  exclusive-file locking serializes metadata updates, not jobs. Same-process
+  duplicate requests retain idempotent readback rather than a synthetic BUSY
+  substitute. After structural path/envelope validation and live owner checks,
+  an exact retained request returns its sealed state before new-execution file,
+  authorization-expiry or source-inventory checks. A changed request digest or
+  owner is rejected; a new request still passes all execution preflight gates.
+  Cross-process lock contention
+  rejects BUSY; a crashed lock remains unresolved and is never silently removed
+  or taken over. Atomic snapshot replacement preserves the previous state on
+  failure. The existing run-JSON read budget remains unchanged. Tracked reserved
+  path collisions must remain in candidate inventory and block admission.
+  No workflow database is opened, deleted, migrated or modified by this class.
+  Coordinator bookkeeping must leave a complete signed source inventory unchanged.
+  Direct audit dispatch starts one fresh isolated Python child via the existing
+  run_cli_detailed and signed scan_deep_audit path. It verifies loaded critical
+  functions/classes/defaults, executable bytes and per-job package/source hashes;
+  the worker-generated UUID, observed PID creation identity, workspace, nonce and
+  request hash must match before ACK permits native audit execution. Cheap native
+  identity/lease checks run on heartbeats; full package hashing runs at admission
+  and handshake, not on every heartbeat. Leases are rechecked after preflight.
+  Preflight validates the pinned manifest and signed authorization before source
+  inventory can start read-only Git subprocesses. It then binds the same pinned
+  plan against actual inventory and rejects plan drift, preserving both gates.
+  Transient worker configuration travels in bounded process arguments (8192 UTF-8
+  JSON bytes, 30000 command characters), not a retained raw-input file. This is
+  not secrecy from an OS process inspector or a hostile workspace writer.
+  Sealed handshake/ACK/completion facts use the existing reserved run directory.
+  Interrupted verified lineage may bind a UUID after owned termination only to
+  retain INCOMPLETE history; it writes no ACK and grants no execution authority.
+  STOPPED requires confirmed owned process/stream/control cleanup. Completion
+  also requires authoritative deep_run_status evidence, never done.json alone.
+  Cancellation of an acknowledged UUID uses the existing cancel_deep_run signal
+  and permits the existing ten-second cleanup interval before outer termination.
+  Lease expiry does not consume that cleanup interval as execution time. A forced
+  kill after acknowledgement leaves cleanup unconfirmed; no stopped claim follows.
+  Native Windows tests cover actual children and signed placeholder-engine runs
+  ending INCOMPLETE. Native private-worker bad-ACK/source-drift controls verify
+  failure before any lane starts; they do not certify all dispatcher fault paths.
+  Foreground input accepts exclusively owned raw FileIO pipes/local regular files
+  or in-memory streams. OS pipes accumulate at most 65537 bytes, preserve bounded
+  coalesced carry, and check the lease before returning buffered data. POSIX select
+  or Windows typed PeekNamedPipe observation avoids blocking on idle/partial input.
+  Buffered wrappers/consoles are rejected, not mixed with descriptor reads. EOF
+  preserves existing final partial-object semantics. Expiry visibly emits
+  INCOMPLETE/E_COORDINATOR_LEASE_EXPIRED and invokes existing owned shutdown.
+  Native Windows idle, partial JSON and partial UTF-8 tests hold the pipe open and
+  prove expiry without audit launch. This does not bound blocked output writes,
+  stalled regular-file I/O or interference from another descriptor consumer.
+  Full native analyzer success, Linux coordinator lifecycle, restart recovery
+  and the eleven-pair performance experiment remain unverified.
+  Its APIs are:
+  - admit(session_nonce, request_id, request_sha256, owner_identity): atomically
+    require the persisted owner, key by nonce:request_id, create ADMITTED with
+    run_id/worker_identity/cleanup_confirmed null, and return created=true.
+    Equal digest and owner return the original row with created=false; changed
+    bytes or ownership reject. Another active or cleanup-unconfirmed row is BUSY.
+  - read(session_nonce, request_id): return the hash/key-checked metadata or reject.
+  - bind(session_nonce, request_id, request_sha256, run_id, worker_identity): bind
+    a 32-lowercase-hex worker UUID immutably, require matching session/workspace/
+    runtime, change ADMITTED to RUNNING, and allow only identical repeat binding.
+  - finish(session_nonce, request_id, request_sha256, run_id, state,
+    cleanup_confirmed): preserve the bound UUID and accept only COMPLETE or
+    INCOMPLETE with a boolean cleanup observation. COMPLETE requires true.
+    Repeated identical terminal metadata is idempotent; terminal changes reject.
+  - abandon(session_nonce, request_id, request_sha256, cleanup_confirmed): close
+    only an unbound ADMITTED request as INCOMPLETE without inventing a UUID.
+    Unconfirmed cleanup prevents subsequent admission; no automatic replay.
+  - acquire(owner_identity, lease_seconds, now_monotonic): create or renew only
+    the exact live owner. TTL must be an integer 1..3600; time must be finite
+    and nonnegative. An expired lease cannot renew, even for the same owner.
+  - check_owner(owner_identity, now_monotonic): verify the same persisted live
+    lease without renewal. release(owner_identity) deletes only that exact
+    owner lease. Neither API signals PIDs or takes over ambiguous ownership.
+  - reconcile_expired(now_monotonic): atomically hash/key-check the retained
+    metadata snapshot. No lease or a live lease changes no row. For an expired
+    lease, mark only its owner-bound ADMITTED/RUNNING requests INCOMPLETE with
+    cleanup_confirmed=false, preserving every identity and UUID. Retain the
+    lease; no takeover, retry, signal or admission follows. Repetition changes
+    no terminal row. Return observed/reconciled counts and before/after hashes.
+  Foreground serve uses default TTL 300 when lease_seconds is None, requires a
+  native creation identity, and reads one UTF-8 JSON object per line up to 65536
+  bytes. Unknown/duplicate fields, invalid version/IDs, wrong canonical workspace
+  or invalid signed-scan file paths reject before any child. Audit payload keys
+  are exactly manifest, manifest_sha256, authorization, trust_root,
+  trust_root_sha256. Paths are relative regular files within the workspace.
+  Receipts contain schema=factory.deep-audit-coordinator.v1, state,
+  authority=none and release_approval=false, plus request_id when validated.
+  Status returns OBSERVED with execution_available=false because public command
+  qualification remains incomplete. Direct API audit dispatch returns ADMITTED
+  for one verified unique request or its existing ledger state for duplicates.
+  Stop returns STOPPED only after confirmed cleanup; otherwise INCOMPLETE.
+  Invalid input emits INCOMPLETE and continues; an oversized line emits
+  INCOMPLETE and ends the input loop. EOF or stop releases the exact owned lease
+  only after confirmed cleanup; uncertainty retains the lease for review.
+  Runtime identity binds normalized loaded code fields, not unstable marshal
+  reference encoding. It must remain stable across first execution.
+  run_cli_detailed(..., started_observer=None) preserves existing default behavior.
+  An optional observer receives exactly actual child pid and native creation
+  identity after stream readers start and before monitoring. Unknown identity
+  or observer failure invokes existing owned cleanup, drains readers, closes
+  native handles, and propagates; the observer gains no signalling authority.
+  These APIs retain bounded hashes/IDs/state metadata, never request bodies,
+  prompts, or raw child output. Direct-API native handshake and stop controls do
+  not establish full command lifecycle, restart recovery or paired timing.
+
+  ## MUST - Functional core
+  ### Requirements (EARS)
+  - When explicitly started, the coordinator shall enforce `coordinator_request_schema` and parse exactly one JSON object per UTF-8 line, rejecting unknown fields, duplicate keys, unsupported versions or operations, caller-selected executables, caller-supplied run IDs, invalid IDs or escaping workspace paths before creating any child.
+  Request schema: at most 65536 UTF-8 bytes; exactly version=1, operation, workspace,
+  session_nonce and request_id, plus payload for audit only. Operations are audit/status/stop.
+  Request_id and session_nonce match [0-9a-f]{32}; payload is the existing signed scan contract.
+  - While active, the coordinator shall enforce `coordinator_lease_owner` and reject audit admission unless exactly one owner matches the canonical workspace, PID creation identity, runtime hash and nonce and the monotonic lease has not expired; require integer TTL 1..3600 seconds with default 300 seconds and reject booleans, missing, stale or ambiguous ownership without sending a signal.
+  Renewal requires the current verified owner and nonce; PID existence alone cannot prove ownership.
+  - When admitting a job, the coordinator shall enforce `coordinator_job_identity` and verify signed authorization, revocation, source inventory, profile, configuration, scanner, runtime and loaded entrypoint digests exactly before dispatch; reject mismatches or invalidate read-only cached material without reusing a stale result.
+  - When a valid unique audit is admitted, the coordinator shall enforce `coordinator_fresh_worker` and create exactly one fresh isolated child through the existing signed execution path, reject concurrent audits without queueing, preserve signed inner parallelism 1..8, and verify the worker-generated UUID through a workspace, nonce and request-bound handshake.
+  Worker provenance binds executable, loaded entrypoint, source hashes, workspace and request/run IDs.
+  - When a request ID repeats, the coordinator shall enforce `coordinator_idempotent_request` and return exactly the existing bound ledger state without a second execution for an equal canonical request digest; reject a changed digest and bind the request ID to the verified worker-generated run ID without a second result store.
+  - When stop or cancellation is requested, the coordinator shall enforce `coordinator_owned_cleanup` and verify the nonce, workspace, owner PID and creation identity before rejecting new admission and cancelling its owned child through existing Windows Job or POSIX group cleanup; emit `INCOMPLETE` for live or unknown descendants or streams and never signal a PID without verified creation identity.
+  - When a coordinator crashes or restarts, the coordinator shall enforce `coordinator_crash_recovery` and discard in-memory cache state and reconcile exactly the existing ledger before admitting work; retain interrupted runs as `INCOMPLETE` until recorded owner and child creation identities and cleanup are verified, and reject unknown or reused ownership without signalling or replay.
+  - While creating coordinator receipts, the coordinator shall enforce `coordinator_receipt_privacy` and persist exactly bounded hashes, counts, IDs, phase timings and cleanup or provenance facts without private prompts or raw input/output payloads; preserve read-only MCP and signed approval or attestation boundaries without adding a watcher, native worker pool, module, dependency, executor, result store or architecture-cap increase.
+  - When evaluating performance, the benchmark shall enforce `coordinator_paired_benchmark` and record exactly 11 paired cold and warm observations with fresh audit children, equal candidate/runtime/authorization identities and equal canonical outputs; reject mismatches, retain failures and report phase timings plus median, minimum, maximum and count without promising speedup or token savings.
+  Only run/session IDs, timestamps and measured durations may be excluded by an explicit normalizer.
+  Phase timings keep admission, startup, dispatch, execution, cleanup and total separate.
+
+  ### Acceptance scenarios (Gherkin)
+  ```gherkin
+  Scenario: R1 R2 valid foreground session
+    Given `coordinator_request_schema` and `coordinator_lease_owner` with lease TTL 300 and matching workspace, PID creation identity and 32-hex nonce
+    When an exact version 1 status line within 65536 bytes arrives
+    Then status reports verified ownership without creating an audit child
+  Scenario: R1 R2 invalid admission
+    Given `coordinator_request_schema` and `coordinator_lease_owner` with a TTL of true, false, 0 or 3601, expired lease, wrong root, duplicate key or unknown field
+    When audit is requested
+    Then admission rejects and creates zero children
+  Scenario: R2 TTL endpoints
+    Given `coordinator_lease_owner` with lease TTL 1, 300 or 3600 and matching owner identity
+    When a foreground session starts
+    Then the integer lease is accepted and omitted TTL defaults to 300
+  Scenario: R3 R4 fresh execution
+    Given `coordinator_job_identity` and `coordinator_fresh_worker` with current signed authorization and matching entrypoint/source/runtime hashes
+    When one audit is admitted with signed lane parallelism 8
+    Then exactly one fresh child runs and a concurrent audit rejects without queueing
+  Scenario: R3 identity drift
+    Given `coordinator_job_identity` with authorization revocation or changed source, config, profile, runtime or entrypoint
+    When audit is requested
+    Then stale cached material cannot authorize dispatch
+  Scenario: R5 duplicate request
+    Given `coordinator_idempotent_request` and one admitted request with a canonical digest
+    When identical request_id and digest repeat or that ID carries changed payload
+    Then identical input returns ledger state and changed input rejects with no second execution
+  Scenario: R6 R7 owned cleanup
+    Given `coordinator_owned_cleanup` and `coordinator_crash_recovery` with cancellation, crash, expired ownership or a reused PID
+    When stop or restart recovery is requested
+    Then only verified owned process identities may be signalled and unknown cleanup is INCOMPLETE
+  Scenario: R8 privacy boundary
+    Given `coordinator_receipt_privacy` with a private prompt or raw child stdout containing a secret
+    When a receipt is retained
+    Then no prompt or raw stdio is stored and MCP remains read-only
+  Scenario: R9 measured equivalence
+    Given `coordinator_paired_benchmark` with 11 paired cold/warm runs with fresh children and equal bound identities
+    When the declared normalizer compares outputs
+    Then canonical outputs match or the benchmark fails and all phase timings remain measured
+  ```
+  ## SHOULD - Structural boundaries
+modules:
+  - name: assembly_process
+    path: factoryline/assembly_process.py
+    functions:
+      - name: _process_creation_identity
+        args: [pid]
+        returns: str | None
+      - name: _windows_process_creation_identity
+        args: [pid]
+        returns: str | None
+  - name: cli_deep_audit
+    path: factoryline/cli_deep_audit.py
+    functions:
+      - name: serve_deep_audit_coordinator
+        args: [root, lease_seconds, session_nonce, input_stream, output_stream]
+        returns: dict
+      - name: dispatch_deep_audit_request
+        args: [root, request, owner_identity, execution_context]
+        returns: dict
+  - name: agentic_control
+    path: factoryline/agentic_control.py
+    functions: []
+dependencies:
+  - from: cli_deep_audit
+    to: assembly_process
+  - from: cli_deep_audit
+    to: agentic_control
+invariants:
+  - name: coordinator_never_gains_external_authority
+    forbid_pattern: "requests\\.|httpx\\.|socket\\.|\\b(?:publish|deploy|merge|approve)\\s*\\("
+    scopes:
+      - module: cli_deep_audit
+        symbol: serve_deep_audit_coordinator
+        max_lines: 75
+      - module: cli_deep_audit
+        symbol: dispatch_deep_audit_request
+        max_lines: 75
+tests:
+  - path: tests/test_deep_audit_contract.py
+    command: python -m pytest -q tests/test_deep_audit_contract.py -k coordinator
+  - path: tests/test_assembly_process.py
+    command: python -m pytest -q tests/test_assembly_process.py -k "cleanup or windows or native or coordinator"
+  - path: tests/test_benchmark_lab.py
+    command: python -m pytest -q tests/test_benchmark_lab.py -k coordinator
