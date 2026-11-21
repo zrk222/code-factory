@@ -1174,6 +1174,8 @@ def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_ch
     from factoryline.agentic_control import AgenticControlError
 
     if sys.platform not in {"win32", "linux"}:
+        if os.environ.get("FACTORY_REQUIRE_NATIVE_SIGNED_LIFECYCLE") == "1":
+            pytest.fail("selected CI host does not support native process identity")
         pytest.skip("native process creation identity unsupported")
     root, request, owner, context, inventory = _coordinator_signed_fixture(tmp_path)
     observed_handshakes = []

@@ -77,6 +77,74 @@ jobs:
           path: coordinated-acceptance.xml
           if-no-files-found: error
 
+  coordinator-signed-child-lifecycle:
+    name: coordinator signed-child lifecycle only (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install -e ".[dev]" pytest
+      - name: Exercise actual signed worker handshake, stop, and cleanup
+        env:
+          FACTORY_REQUIRE_NATIVE_SIGNED_LIFECYCLE: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: >-
+          python -m pytest -q -o addopts=
+          tests/test_deep_audit_contract.py::test_coordinator_native_signed_child_handshake_and_cleanup
+          --junitxml=native-signed-child-lifecycle.xml
+      - name: Require both lifecycle cases and reject skips
+        if: always()
+        env:
+          NATIVE_LIFECYCLE_OS: ${{ matrix.os }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          xml_path = Path("native-signed-child-lifecycle.xml")
+          suites = list(ET.parse(xml_path).iter("testsuite")) if xml_path.exists() else []
+          totals = {key: sum(int(suite.get(key, "0")) for suite in suites)
+                    for key in ("tests", "failures", "errors", "skipped")}
+          state = "PASS" if totals == {"tests": 2, "failures": 0, "errors": 0, "skipped": 0} else "FAIL"
+          receipt = {
+              "schema": "factory.coordinator-signed-child-lifecycle-ci.v1",
+              "state": state,
+              "platform": os.environ["NATIVE_LIFECYCLE_OS"],
+              "junit": str(xml_path) if xml_path.exists() else None,
+              **totals,
+              "scope": "actual signed child handshake/stop/cleanup only; no analyzer-family success claim",
+          }
+          Path("native-signed-child-lifecycle-summary.json").write_text(
+              json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
+          )
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+              summary.write(f"Coordinator signed-child lifecycle: {state} ({totals['tests']} cases, {totals['skipped']} skips).\n\n")
+              summary.write("Scope is actual worker handshake/stop/cleanup only; this is not six-family analyzer qualification.\n")
+          assert state == "PASS", receipt
+          print(json.dumps(receipt, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: coordinator-signed-child-lifecycle-${{ matrix.os }}
+          path: |
+            native-signed-child-lifecycle.xml
+            native-signed-child-lifecycle-summary.json
+          if-no-files-found: error
+
   candidate-quality:
     runs-on: ubuntu-latest
     timeout-minutes: 15
