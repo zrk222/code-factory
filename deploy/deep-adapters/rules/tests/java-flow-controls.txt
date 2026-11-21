@@ -1,0 +1,55 @@
+class FlowControls {
+void direct(javax.servlet.http.HttpServletRequest req, java.sql.Statement db) {
+// source: java.request-command-injection
+String value = req.getParameter("command");
+// ruleid: java.request-command-injection
+new java.lang.ProcessBuilder("sh", "-c", value);
+// source: java.request-sql-injection
+String query = req.getParameter("query");
+// ruleid: java.request-sql-injection
+db.executeQuery(query);
+}
+void aliases(javax.servlet.http.HttpServletRequest req, java.sql.Statement db) {
+// source: java.request-command-injection
+String value = req.getParameter("command");
+String alias = "echo " + value;
+// ruleid: java.request-command-injection
+new java.lang.ProcessBuilder("/bin/sh", "-c", alias);
+// source: java.request-sql-injection
+String name = req.getParameter("name");
+String query = "SELECT * FROM users WHERE name='" + name + "'";
+// ruleid: java.request-sql-injection
+db.execute(query);
+// ok: java.request-command-injection
+new java.lang.ProcessBuilder("echo", value);
+// ok: java.request-command-injection
+new java.lang.ProcessBuilder("sh", "-c", "echo fixed");
+// ok: java.request-command-injection
+new java.lang.ProcessBuilder("/bin/sh", "/opt/fixed-script.sh", value);
+// ok: java.request-sql-injection
+new java.sql.PreparedStatement("SELECT * FROM users WHERE name=?").setString(1, name);
+}
+void unrelated(LocalRequest req, LocalStatement db) {
+String value = req.getParameter("command");
+// ok: java.request-command-injection
+new java.lang.ProcessBuilder("sh", "-c", value);
+// ok: java.request-sql-injection
+db.executeQuery(value);
+}
+void wrongProvider(javax.servlet.http.HttpServletRequest req, LocalStatement db) {
+String value = req.getParameter("query");
+// ok: java.request-sql-injection
+db.executeQuery(value);
+}
+void frameworks(jakarta.servlet.http.HttpServletRequest req, java.sql.Connection conn) {
+// source: java.request-sql-injection
+String name = req.getParameter("name");
+// ruleid: java.request-sql-injection
+conn.prepareStatement("SELECT * FROM t WHERE n='" + name + "'");
+// source: java.request-command-injection
+String host = req.getParameter("host");
+// ruleid: java.request-command-injection
+Runtime.getRuntime().exec("ping " + host);
+}
+}
+

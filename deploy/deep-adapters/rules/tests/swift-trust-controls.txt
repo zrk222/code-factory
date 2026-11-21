@@ -1,0 +1,22 @@
+func controls(trust: SecTrust) {
+// ruleid: swift.trust-exceptions
+SecTrustSetExceptions(trust, SecTrustCopyExceptions(trust))
+// ok: swift.trust-exceptions
+SecTrustEvaluateWithError(trust, nil)
+}
+func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+// ruleid: swift.trust-exceptions
+completionHandler(.useCredential, URLCredential(trust: challenge.protectionSpace.serverTrust!))
+}
+func diagnosticTrust(trust: SecTrust, completionHandler: (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+let certificate = SecTrustGetCertificateAtIndex(trust, 0)
+print(certificate)
+// ruleid: swift.trust-exceptions
+completionHandler(.useCredential, URLCredential(trust: trust))
+}
+func checkedTrust(trust: SecTrust, completionHandler: (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+if SecTrustEvaluateWithError(trust, nil) {
+// ok: swift.trust-exceptions
+completionHandler(.useCredential, URLCredential(trust: trust))
+}
+}

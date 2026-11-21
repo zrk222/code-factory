@@ -733,7 +733,7 @@ rules:
                 - metavariable-pattern:
                     metavariable: $...CHECKED
                     language: generic
-                    pattern-regex: (SecTrustEvaluate|evaluate\(|SecTrustGetCertificate|SecCertificateCopyData|SecTrustCopyCertificateChain|SecTrustCopyKey|SecTrustCopyPublicKey|[Pp]inn)
+                    pattern-regex: (SecTrustEvaluate|evaluate\()
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -856,9 +856,14 @@ rules:
                 - metavariable-regex:
                     metavariable: $TYPE
                     regex: ^(?!(sql|sqlx|gorm|pgx|pgxpool)\.)
-          - metavariable-regex:
-              metavariable: $DB
-              regex: (?i)^(?!.*stmt).*(db|tx|conn|pool|sql|database|gorm)\w*$
+          - pattern-either:
+              - pattern-inside: "func $F(..., $DB *sql.DB, ...) { ... }"
+              - pattern-inside: "func $F(..., $DB *sql.Tx, ...) { ... }"
+              - pattern-inside: "func $F(..., $DB *sql.Conn, ...) { ... }"
+              - pattern-inside: "func ($RECV $RT) $F(..., $DB *sql.DB, ...) { ... }"
+              - metavariable-regex:
+                  metavariable: $DB
+                  regex: (?i)^(?!.*stmt).*(db|tx|conn|pool|sql|database|gorm)\w*$
           - focus-metavariable: $VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
@@ -896,6 +901,13 @@ rules:
           - metavariable-regex:
               metavariable: $SHELL
               regex: ^"((/bin/)?(sh|bash)|cmd(\.exe)?)"$
+          - pattern-either:
+              - patterns:
+                  - metavariable-regex: {metavariable: $SHELL, regex: '^"(/bin/)?(sh|bash)"$'}
+                  - metavariable-regex: {metavariable: $FLAG, regex: '^"-c"$'}
+              - patterns:
+                  - metavariable-regex: {metavariable: $SHELL, regex: '^"cmd(\.exe)?"$'}
+                  - metavariable-regex: {metavariable: $FLAG, regex: '(?i)^"/c"$'}
           - focus-metavariable: $VALUE
       - patterns:
           - pattern-either:
@@ -1124,8 +1136,12 @@ rules:
               - pattern: $MODEL.find_by_sql($VALUE, ...)
               - pattern: $MODEL.where($VALUE)
           - metavariable-regex: {metavariable: $MODEL, regex: '^[A-Z]\w*$'}
-          # find_by_sql([sql, *binds]) binds values as parameters.
+          # Non-array calls focus their SQL argument; array templates are separate.
           - pattern-not: $MODEL.find_by_sql([...], ...)
+          - focus-metavariable: $VALUE
+      - patterns:
+          - pattern: $MODEL.find_by_sql([$VALUE, ...], ...)
+          - metavariable-regex: {metavariable: $MODEL, regex: '^[A-Z]\w*$'}
           - focus-metavariable: $VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]

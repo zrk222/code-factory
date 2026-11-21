@@ -232,7 +232,7 @@ jobs:
               test "$(node -p "require('./package.json').version")" = 1.3.3
             elif [[ "$EXCEPTION_VERSION" == "1.3.6" ]]; then
               test "$RELEASE_REF" = vscode-v1.3.6
-              test "$(node -p "require('./package.json').version")" = 1.3.6
+              test "$(node -p "require('./editors/vscode/package.json').version")" = 1.3.6
             elif [[ -z "$EXCEPTION_VERSION" ]]; then
               test "$RELEASE_REF" = vscode-v1.1.4+build.1
             else

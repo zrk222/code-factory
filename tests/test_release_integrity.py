@@ -731,3 +731,44 @@ def test_build_provenance_creates_missing_editable_build_directory(
     for commit in ("a" * 40, None):
         hooks["write_provenance"](target, commit)
         assert runpy.run_path(str(target))["SOURCE_COMMIT"] == commit
+
+
+def test_vscode_136_preflight_shell_uses_actual_workspace_root(tmp_path):
+    import re
+    import shutil
+    import os
+
+    import yaml
+
+    workflow = WORKFLOW.with_name("vscode-marketplace.yml")
+    payload = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    steps = [step for job in payload["jobs"].values() for step in job.get("steps", [])]
+    step = next(
+        s for s in steps if s.get("name") == "Require the sealed candidate preflight"
+    )
+    assert step["working-directory"] == "${{ github.workspace }}"
+    branch = (
+        step["run"]
+        .split('elif [[ "$EXCEPTION_VERSION" == "1.3.6" ]]; then', 1)[1]
+        .split("elif", 1)[0]
+    )
+    command = next(line.strip() for line in branch.splitlines() if "node -p" in line)
+    assert re.fullmatch(r'test "\$\(node -p ".+"\)" = 1\.3\.6', command)
+    manifest = tmp_path / "editors" / "vscode" / "package.json"
+    manifest.parent.mkdir(parents=True)
+    bash = (
+        str(
+            Path(os.environ.get("ProgramFiles", "C:/Program Files"))
+            / "Git/bin/bash.exe"
+        )
+        if os.name == "nt"
+        else shutil.which("bash")
+    )
+    assert bash is not None
+    assert Path(bash).is_file()
+    for version, accepted in (("1.3.6", True), ("1.3.5", False)):
+        manifest.write_text(json.dumps({"version": version}), encoding="utf-8")
+        result = subprocess.run(
+            [bash, "-c", command], cwd=tmp_path, capture_output=True
+        )
+        assert (result.returncode == 0) is accepted
