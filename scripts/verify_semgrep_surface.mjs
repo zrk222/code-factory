@@ -23,8 +23,8 @@ const polyglotControls = {
   c: ['c.unsafe-gets', 'void controls() { char buffer[64];\n// ruleid: c.unsafe-gets\ngets(buffer);\n// ok: c.unsafe-gets\nfgets(buffer, sizeof(buffer), stdin);\n}'],
   cpp: ['c.unsafe-gets', 'void controls() { char buffer[64];\n// ruleid: c.unsafe-gets\ngets(buffer);\n// ok: c.unsafe-gets\nfgets(buffer, sizeof(buffer), stdin);\n}'],
   cs: ['csharp.disabled-certificate-verification', 'class Controls { void Run() {\n// ruleid: csharp.disabled-certificate-verification\nSystem.Net.ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, errors) => true;\n// ok: csharp.disabled-certificate-verification\nSystem.Net.ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, errors) => false;\n}}'],
-  rb: ['ruby.disabled-tls-verification', '# ruleid: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_NONE\n# ok: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_PEER'],
-  swift: ['swift.trust-exceptions', 'func controls(trust: SecTrust) {\n// ruleid: swift.trust-exceptions\nSecTrustSetExceptions(trust, SecTrustCopyExceptions(trust))\n// ok: swift.trust-exceptions\nSecTrustEvaluateWithError(trust, nil)\n}'],
+  rb: ['ruby.disabled-tls-verification', '# ruleid: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_NONE\n# ok: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_PEER\n# ruleid: ruby.disabled-tls-verification\nhttp.verify_mode = OpenSSL::SSL::VERIFY_NONE'],
+  swift: ['swift.trust-exceptions', 'func controls(trust: SecTrust) {\n// ruleid: swift.trust-exceptions\nSecTrustSetExceptions(trust, SecTrustCopyExceptions(trust))\n// ok: swift.trust-exceptions\nSecTrustEvaluateWithError(trust, nil)\n}\nfunc urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {\n// ruleid: swift.trust-exceptions\ncompletionHandler(.useCredential, URLCredential(trust: challenge.protectionSpace.serverTrust!))\n}'],
 };
 
 // Each annotated sink is an explicit fixture expectation, not an inferred detector.
@@ -70,6 +70,18 @@ value := req.FormValue("query")
 // ok: go.request-sql-injection
 db.Query(value)
 }
+func frameworks(c *gin.Context, r *http.Request) {
+// source: go.request-sql-injection
+query := r.URL.Query().Get("q")
+// ruleid: go.request-sql-injection
+store.db.Query("SELECT * FROM t WHERE q='" + query + "'")
+// source: go.request-command-injection
+tool := c.Param("tool")
+// ruleid: go.request-command-injection
+exec.Command(tool)
+// ok: go.request-sql-injection
+stmt.Exec(query)
+}
 `,
   java: `
 class FlowControls {
@@ -112,6 +124,16 @@ void wrongProvider(javax.servlet.http.HttpServletRequest req, LocalStatement db)
 String value = req.getParameter("query");
 // ok: java.request-sql-injection
 db.executeQuery(value);
+}
+void frameworks(jakarta.servlet.http.HttpServletRequest req, java.sql.Connection conn) {
+// source: java.request-sql-injection
+String name = req.getParameter("name");
+// ruleid: java.request-sql-injection
+conn.prepareStatement("SELECT * FROM t WHERE n='" + name + "'");
+// source: java.request-command-injection
+String host = req.getParameter("host");
+// ruleid: java.request-command-injection
+Runtime.getRuntime().exec("ping " + host);
 }
 }
 `,
@@ -156,6 +178,18 @@ System.Diagnostics.Process.Start("/bin/sh", "-c " + value);
 new System.Data.SqlClient.SqlCommand(value, connection);
 }
 }
+class UsersController : Controller {
+void Classic() {
+// source: csharp.request-sql-injection
+var name = Request.QueryString["name"];
+// ruleid: csharp.request-sql-injection
+new System.Data.SqlClient.SqlCommand("SELECT * FROM t WHERE n='" + name + "'", connection);
+// source: csharp.request-command-injection
+var host = Request.Form["host"];
+// ruleid: csharp.request-command-injection
+System.Diagnostics.Process.Start("cmd.exe", "/c ping " + host);
+}
+}
 `,
   rb: `
 class FlowControls < ActionController::Base
@@ -197,6 +231,22 @@ class Unrelated
     Kernel.system(value)
     # ok: ruby.request-sql-injection
     ActiveRecord::Base.connection.execute(value)
+  end
+end
+class UsersController < ApplicationController
+  def show
+    # source: ruby.request-sql-injection
+    name = params[:name]
+    # ruleid: ruby.request-sql-injection
+    User.where("name = '#{name}'")
+    # ok: ruby.request-sql-injection
+    User.where(name: name)
+    # ok: ruby.request-sql-injection
+    User.find_by_sql(["SELECT * FROM users WHERE name = ?", name])
+    # source: ruby.request-command-injection
+    host = params.fetch(:host)
+    # ruleid: ruby.request-command-injection
+    system("ping #{host}")
   end
 end
 `,
