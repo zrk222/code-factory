@@ -440,6 +440,71 @@ def _print_commercial(payload: Any, as_json: bool) -> None:
         print(payload)
 
 
+def _commercial_plan_payload(args: Any, policy_mod: Any, commercial_mode: Any) -> dict:
+    policy = (
+        policy_mod.load_policy(args.policy)
+        if getattr(args, "policy", None)
+        else policy_mod.default_policy()
+    )
+    return {
+        "revision": policy.revision,
+        "activation": policy.activation,
+        "mode": commercial_mode(),
+        "prelaunch_free_until": policy.prelaunch_free_until.isoformat(),
+        "price": {
+            "currency": policy.currency,
+            "seat_monthly": policy.seat_monthly_price,
+            "effective_from": policy.price_effective_from.isoformat(),
+        },
+        "allowances": {
+            "free_monthly_workflows": policy.free_monthly_workflows,
+            "paid_monthly_workflows": policy.paid_monthly_workflows,
+            "repair_reruns_per_workflow": policy.repair_reruns_per_workflow,
+            "repair_rerun_window_days": policy.repair_rerun_window_days,
+        },
+        "note": "reading plans and results is always free; nothing is charged or restricted while activation is false",
+    }
+
+
+def _commercial_entitlements_payload(
+    args: Any, now: datetime, product: str, load_entitlements: Any
+) -> dict:
+    rows = []
+    for entitlement in load_entitlements():
+        row = entitlement.as_dict()
+        if args.subject:
+            row["covers_subject_now"] = entitlement.covers(
+                subject=args.subject,
+                product=product,
+                version=args.version,
+                now=now,
+            )
+        rows.append(row)
+    return {"entitlements": rows, "count": len(rows)}
+
+
+def _commercial_usage_payload(
+    args: Any, now: datetime, ledger_type: Any, policy: Any
+) -> dict:
+    state = ledger_type().load(now)
+    period = policy.period_for(state.effective_now(now))
+    subjects = sorted(
+        {
+            reservation.subject
+            for reservation in state.reservations.values()
+            if reservation.period == period
+            and (args.subject is None or reservation.subject == args.subject)
+        }
+    )
+    return {
+        "period": period,
+        "clock_rollback_seen": state.clock_rollback_seen,
+        "subjects": {
+            subject: {"used": state.used(subject, period)} for subject in subjects
+        },
+    }
+
+
 def run_commercial(args: Any) -> int:
     """Execute one commercial command."""
     now = datetime.now(timezone.utc)
@@ -456,55 +521,14 @@ def run_commercial(args: Any) -> int:
 
     try:
         if args.commercial_cmd == "plan":
-            policy = (
-                policy_mod.load_policy(args.policy)
-                if getattr(args, "policy", None)
-                else policy_mod.default_policy()
-            )
             _print_commercial(
-                {
-                    "revision": policy.revision,
-                    "activation": policy.activation,
-                    "mode": commercial_mode(),
-                    "prelaunch_free_until": policy.prelaunch_free_until.isoformat(),
-                    "price": {
-                        "currency": policy.currency,
-                        "seat_monthly": policy.seat_monthly_price,
-                        "effective_from": policy.price_effective_from.isoformat(),
-                    },
-                    "allowances": {
-                        "free_monthly_workflows": policy.free_monthly_workflows,
-                        "paid_monthly_workflows": policy.paid_monthly_workflows,
-                        "repair_reruns_per_workflow": policy.repair_reruns_per_workflow,
-                        "repair_rerun_window_days": policy.repair_rerun_window_days,
-                    },
-                    "note": "reading plans and results is always free; nothing is charged or restricted while activation is false",
-                },
-                True,
+                _commercial_plan_payload(args, policy_mod, commercial_mode), True
             )
             return 0
 
         if args.commercial_cmd == "usage":
-            ledger = UsageLedger()
-            state = ledger.load(now)
-            period = policy_mod.period_for(state.effective_now(now))
-            subjects = sorted(
-                {
-                    r.subject
-                    for r in state.reservations.values()
-                    if r.period == period
-                    and (args.subject is None or r.subject == args.subject)
-                }
-            )
             _print_commercial(
-                {
-                    "period": period,
-                    "clock_rollback_seen": state.clock_rollback_seen,
-                    "subjects": {
-                        subject: {"used": state.used(subject, period)}
-                        for subject in subjects
-                    },
-                },
+                _commercial_usage_payload(args, now, UsageLedger, policy_mod),
                 True,
             )
             return 0
@@ -538,19 +562,10 @@ def run_commercial(args: Any) -> int:
             return 0
 
         if args.commercial_cmd == "entitlements":
-            loaded = load_entitlements()
-            rows = []
-            for entitlement in loaded:
-                row = entitlement.as_dict()
-                if args.subject:
-                    row["covers_subject_now"] = entitlement.covers(
-                        subject=args.subject,
-                        product=PRODUCT,
-                        version=args.version,
-                        now=now,
-                    )
-                rows.append(row)
-            _print_commercial({"entitlements": rows, "count": len(rows)}, True)
+            _print_commercial(
+                _commercial_entitlements_payload(args, now, PRODUCT, load_entitlements),
+                True,
+            )
             return 0
 
         print(f"unknown commercial command {args.commercial_cmd}")

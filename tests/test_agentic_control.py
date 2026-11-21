@@ -2205,6 +2205,50 @@ def test_proof_dispatch_reservation_fences_concurrent_requests_and_replacement_c
     assert reservations[0]["item"]["run"]["id"] == run["id"]
 
 
+def test_factory_dispatch_reserves_one_bound_phase_and_rejects_replays(
+    tmp_path, local_workflow_source
+):
+    store = local_workflow_store(tmp_path, lambda: 100.0)
+    supervisor = _incident_supervisor(
+        tmp_path,
+        _IncidentTestDriver(),
+        lambda: 100.0,
+        store_factory=local_workflow_store,
+    )
+    key, run, binding = _claim_proof_dispatch(supervisor, local_workflow_source)
+    intent = binding["action_intent_sha256"]
+
+    reserved = store.reserve_factory_dispatch(
+        key, "worker-a", run["id"], intent, "verify"
+    )
+    assert reserved["status"] == "reserved"
+    assert reserved["item"]["run"]["proof_dispatch_reserved"] is True
+    events = store.history(key)["events"]
+    matching = [
+        event for event in events if event["action"] == "proof_dispatch_reserved"
+    ]
+    assert len(matching) == 1
+    assert matching[0]["item"]["run"]["id"] == run["id"]
+    assert (
+        matching[0]["item"]["run"]["driver_binding"]["action_intent_sha256"] == intent
+    )
+
+    for owner, replay_intent, code in (
+        ("worker-a", intent, "E_WORKFLOW_PROOF_DISPATCH_RESERVED"),
+        ("worker-b", intent, "E_WORKFLOW_FENCED"),
+        ("worker-a", "b" * 64, "E_WORKFLOW_PROOF_DISPATCH"),
+    ):
+        with pytest.raises(AgenticControlError) as error:
+            store.reserve_factory_dispatch(
+                key, owner, run["id"], replay_intent, "verify"
+            )
+        assert error.value.code == code
+
+    after = store.history(key)["events"]
+    assert [event["action"] for event in after] == [event["action"] for event in events]
+    assert store.get(key)["run"]["proof_dispatch_reserved"] is True
+
+
 @pytest.mark.parametrize(
     ("change", "code"),
     [

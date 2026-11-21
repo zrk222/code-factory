@@ -139,6 +139,25 @@ max_seen = 1
 
 ## Reproducible verification
 
+When direct public-API acceptance checks are added, the system shall execute
+configuration parsing, policy loading and limits, local ledger views,
+entitlement payload validation, and commercial CLI registration and plan/usage
+JSON with positive and negative assertions, while retaining every prior test
+body unchanged. Static test attribution is not runtime coverage.
+
+When the existing commercial admission, ledger replay and CLI dispatch are
+refined for the CI complexity gate, the system shall preserve every existing
+condition, error, schema and CLI result and return passing Ruff C901 checks at
+the existing maximum complexity of 10 and passing actual ForgeLine AST checks
+including branch and Boolean-operation complexity; no exemption or threshold
+change is permitted. Actual repo-wide quality and attribution artifacts remain
+required and are not replaced by the narrower Ruff check.
+
+When the minimal worker SDK imports enterprise receipts, the system shall defer
+commercial storage dependencies until a commercial storage operation is called
+and return a passing result for the existing worker-image entrypoint import
+closure and omission-detection test, without expanding image copy lists.
+
 When the packaging contract is checked, the system shall return passing results
 for `python -m pytest -q tests/test_commercial_packaging.py`,
 `specline strict commercial-packaging-v1 --root .`, and

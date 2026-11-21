@@ -679,6 +679,55 @@ def test_scan_help_does_not_register_optional_workflows(monkeypatch, capsys):
     assert "--static-only" in output and "--deep" in output
 
 
+def test_scan_parser_registers_options_without_loading_worker_engines(
+    monkeypatch, capsys
+):
+    from factoryline import cli_first_lap
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        worker_engines = (
+            "deep_audit",
+            "runtime_audit",
+            "native_worker",
+            "worker_registry",
+        )
+        if name.startswith("factoryline.") and any(
+            engine in name for engine in worker_engines
+        ):
+            raise AssertionError(f"scan parser imported worker engine: {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    parser = argparse.ArgumentParser(prog="factory")
+    cli_first_lap.add_scan_parser(parser.add_subparsers(dest="command"))
+
+    default = parser.parse_args(["scan", "--root", "repo"])
+    assert (default.deep, default.root) == (True, "repo")
+
+    static = parser.parse_args(["scan", "--static-only", "--root", "static-repo"])
+    assert (static.deep, static.root) == (False, "static-repo")
+
+    for flag, destination in (
+        ("--json", "json"),
+        ("--sarif", "sarif"),
+        ("--output-contract", "output_contract"),
+        ("--pre-commit-config", "pre_commit_config"),
+    ):
+        parsed = parser.parse_args(["scan", "--root", "repo", flag])
+        assert getattr(parsed, destination) is True
+
+    for arguments in (
+        ["scan", "--deep", "--static-only"],
+        ["scan", "--json", "--sarif"],
+    ):
+        with pytest.raises(SystemExit) as result:
+            parser.parse_args(arguments)
+        assert result.value.code == 2
+        capsys.readouterr()
+
+
 def test_home_operator_flow_shows_plan_only_action_without_dummy_commands(
     tmp_path, capsys
 ):

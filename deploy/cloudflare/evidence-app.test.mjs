@@ -134,6 +134,8 @@ test("modeled per-delivery escrow preserves fixed TTL and purges/reschedules ala
   const originalNow = Date.now; const now = 2_000_000_000_000; Date.now = () => now;
   try {
     const { ctx, state, sql } = modeledContext(); const escrow = new app.DeliveryEscrow(ctx, {}); await ctx.ready;
+    await escrow.scheduleExpiry();
+    assert.equal(state.alarm, undefined);
     const digest = await sha(body); const secondId = "223e4567-e89b-42d3-a456-426614174000";
     await escrow.put(id, digest, body, now + 3 * 24 * 60 * 60 * 1000);
     const firstExpiry = sql.rows.get(`${id}:${digest}`).expires_at;

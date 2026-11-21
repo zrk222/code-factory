@@ -1176,6 +1176,13 @@ class Decision:
         }
 
 
+def _commercial_rerun_reason_prefix(rerun: RerunView | None) -> str:
+    """Explain why a requested repair is admitted as a new workflow."""
+    if rerun is not None and rerun.requested and not rerun.eligible:
+        return f"rerun not eligible ({rerun.reason}); admitted as a new workflow. "
+    return ""
+
+
 def decide(
     policy: Policy,
     *,
@@ -1226,11 +1233,7 @@ def decide(
             False,
         )
     limit = policy.monthly_limit(entitlement_valid)
-    reason_prefix = ""
-    if rerun is not None and rerun.requested and not rerun.eligible:
-        reason_prefix = (
-            f"rerun not eligible ({rerun.reason}); admitted as a new workflow. "
-        )
+    reason_prefix = _commercial_rerun_reason_prefix(rerun)
     if used < limit:
         return Decision(
             ALLOW,
@@ -1397,6 +1400,50 @@ class CommercialGate:
             )
         return RerunView(requested=True, eligible=True)
 
+    def _entitlement_status(
+        self,
+        *,
+        subject: str,
+        version: str,
+        presented_envelope: dict[str, Any] | None,
+        presented_trust_root: dict[str, Any] | None,
+        state,
+        now: datetime,
+    ) -> tuple[bool, str | None]:
+        """Resolve offline entitlement coverage without changing admission state."""
+        entitlement_valid = False
+        entitlement_invalid_reason: str | None = None
+        if presented_envelope is not None:
+            try:
+                if presented_trust_root is None:
+                    raise CommercialEntitlementError(
+                        "E_TRUST_ROOT_REQUIRED",
+                        "a presented entitlement needs its commercial trust root",
+                    )
+                presented = verify_entitlement_envelope(
+                    presented_envelope, trust_root=presented_trust_root
+                )
+                entitlement_valid = presented.covers(
+                    subject=subject,
+                    product=PRODUCT,
+                    version=version,
+                    now=state.effective_now(now),
+                )
+                if not entitlement_valid:
+                    entitlement_invalid_reason = "entitlement does not cover this subject, product, version or date"
+            except CommercialEntitlementError as exc:
+                entitlement_invalid_reason = f"{exc.code}: {exc.message}"
+        else:
+            covering = covering_entitlement(
+                load_entitlements(self.home),
+                subject=subject,
+                product=PRODUCT,
+                version=version,
+                now=state.effective_now(now),
+            )
+            entitlement_valid = covering is not None
+        return entitlement_valid, entitlement_invalid_reason
+
     def admit(
         self,
         *,
@@ -1434,37 +1481,14 @@ class CommercialGate:
         period = period_for(state.effective_now(now))
         used = state.used(subject, period)
 
-        entitlement_valid = False
-        entitlement_invalid_reason: str | None = None
-        if presented_envelope is not None:
-            try:
-                if presented_trust_root is None:
-                    raise CommercialEntitlementError(
-                        "E_TRUST_ROOT_REQUIRED",
-                        "a presented entitlement needs its commercial trust root",
-                    )
-                presented = verify_entitlement_envelope(
-                    presented_envelope, trust_root=presented_trust_root
-                )
-                entitlement_valid = presented.covers(
-                    subject=subject,
-                    product=PRODUCT,
-                    version=version,
-                    now=state.effective_now(now),
-                )
-                if not entitlement_valid:
-                    entitlement_invalid_reason = "entitlement does not cover this subject, product, version or date"
-            except CommercialEntitlementError as exc:
-                entitlement_invalid_reason = f"{exc.code}: {exc.message}"
-        else:
-            covering = covering_entitlement(
-                load_entitlements(self.home),
-                subject=subject,
-                product=PRODUCT,
-                version=version,
-                now=state.effective_now(now),
-            )
-            entitlement_valid = covering is not None
+        entitlement_valid, entitlement_invalid_reason = self._entitlement_status(
+            subject=subject,
+            version=version,
+            presented_envelope=presented_envelope,
+            presented_trust_root=presented_trust_root,
+            state=state,
+            now=now,
+        )
 
         rerun = self._rerun_view(
             subject=subject,

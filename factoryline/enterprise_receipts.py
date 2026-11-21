@@ -20,7 +20,6 @@ from dataclasses import dataclass
 import re
 import shutil
 from typing import NoReturn
-from .enterprise_ops import default_home
 
 serialization: Any = None
 Ed25519PrivateKey: Any = None
@@ -95,30 +94,48 @@ def _b64e(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
+def _mixed_base64_alphabet(value: str) -> bool:
+    return ("-" in value or "_" in value) and ("+" in value or "/" in value)
+
+
+def _validate_base64_padding(body: bytes, padding: int) -> int:
+    if b"=" in body or padding > 2 or len(body) % 4 == 1:
+        raise ValueError("invalid Base64 padding")
+    required_padding = -len(body) % 4
+    if padding and padding != required_padding:
+        raise ValueError("invalid Base64 padding")
+    return required_padding
+
+
+def _base64_body(value: str) -> tuple[bytes, int]:
+    encoded = value.encode("ascii")
+    if _mixed_base64_alphabet(value):
+        raise ValueError("mixed Base64 alphabets")
+    padding = len(encoded) - len(encoded.rstrip(b"="))
+    body = encoded[:-padding] if padding else encoded
+    required_padding = _validate_base64_padding(body, padding)
+    return body, required_padding
+
+
+def _canonical_base64_value(value: str, decoded: bytes) -> bool:
+    return value in {
+        base64.b64encode(decoded).decode("ascii"),
+        base64.b64encode(decoded).decode("ascii").rstrip("="),
+        base64.urlsafe_b64encode(decoded).decode("ascii"),
+        base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("="),
+    }
+
+
 def _b64d(value: Any, field: str) -> bytes:
     if not isinstance(value, str) or not value:
         raise EnterpriseReceiptError("E_INVALID_ENVELOPE", f"{field} is required")
     try:
-        encoded = value.encode("ascii")
-        if ("-" in value or "_" in value) and ("+" in value or "/" in value):
-            raise ValueError("mixed Base64 alphabets")
-        padding = len(encoded) - len(encoded.rstrip(b"="))
-        body = encoded[:-padding] if padding else encoded
-        if b"=" in body or padding > 2 or len(body) % 4 == 1:
-            raise ValueError("invalid Base64 padding")
-        required_padding = -len(body) % 4
-        if padding and padding != required_padding:
-            raise ValueError("invalid Base64 padding")
+        body, required_padding = _base64_body(value)
         padded = body + b"=" * required_padding
         decoded = base64.b64decode(padded, altchars=b"-_", validate=True)
         # Reject non-zero unused pad bits while accepting the canonical standard
         # and URL-safe forms, with or without padding.
-        if value not in {
-            base64.b64encode(decoded).decode("ascii"),
-            base64.b64encode(decoded).decode("ascii").rstrip("="),
-            base64.urlsafe_b64encode(decoded).decode("ascii"),
-            base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("="),
-        }:
+        if not _canonical_base64_value(value, decoded):
             raise ValueError("non-canonical Base64 encoding")
         return decoded
     except (binascii.Error, ValueError, UnicodeEncodeError) as exc:
@@ -1048,44 +1065,74 @@ class Entitlement:
         }
 
 
-def entitlement_from_payload(
-    payload: dict[str, Any], *, payload_sha256: str
-) -> Entitlement:
-    """Validate the commercial payload and return its immutable view."""
+def _entitlement_fail(code: str, message: str) -> NoReturn:
+    raise CommercialEntitlementError(code, message)
 
-    def fail(code: str, message: str) -> NoReturn:
-        raise CommercialEntitlementError(code, message)
 
+def _validate_entitlement_schema(payload: Any) -> None:
     if not isinstance(payload, dict) or payload.get("schema") != ENTITLEMENT_SCHEMA:
-        fail("E_ENTITLEMENT_SCHEMA", f"payload schema must be {ENTITLEMENT_SCHEMA}")
-    for name in ("entitlement_id", "subject", "product"):
-        if not isinstance(payload.get(name), str) or not payload[name].strip():
-            fail("E_ENTITLEMENT_FIELD", f"{name} is required")
+        _entitlement_fail(
+            "E_ENTITLEMENT_SCHEMA", f"payload schema must be {ENTITLEMENT_SCHEMA}"
+        )
+
+
+def _required_entitlement_text(payload: dict[str, Any], name: str) -> str:
+    value = payload.get(name)
+    if not isinstance(value, str) or not value.strip():
+        _entitlement_fail("E_ENTITLEMENT_FIELD", f"{name} is required")
+    return value.strip()
+
+
+def _entitlement_versions(payload: dict[str, Any]) -> tuple[str, str]:
     versions = payload.get("covered_versions")
     if not isinstance(versions, dict):
-        fail("E_ENTITLEMENT_FIELD", "covered_versions block is required")
-    # covered_versions.max is required on purpose: no silent open-ended grants
-    # over future versions. Each entitlement names its exact coverage ceiling.
+        _entitlement_fail("E_ENTITLEMENT_FIELD", "covered_versions block is required")
+    values = []
+    # covered_versions.max is required: no silent open-ended grants over future versions.
     for name in ("min", "max"):
-        if not isinstance(versions.get(name), str) or not versions[name].strip():
-            fail(
+        value = versions.get(name)
+        if not isinstance(value, str) or not value.strip():
+            _entitlement_fail(
                 "E_ENTITLEMENT_VERSIONS",
                 f"covered_versions.{name} must be an explicit version; "
                 "open-ended future-version grants are not issuable",
             )
+        values.append(value.strip())
+    return values[0], values[1]
+
+
+def _entitlement_seats(payload: dict[str, Any]) -> int:
     seats = payload.get("seats")
     if not isinstance(seats, int) or isinstance(seats, bool) or seats < 1:
-        fail("E_ENTITLEMENT_FIELD", "seats must be a positive integer")
+        _entitlement_fail("E_ENTITLEMENT_FIELD", "seats must be a positive integer")
+    return seats
+
+
+def _entitlement_window(payload: dict[str, Any]) -> tuple[datetime, datetime]:
     not_before = _parse_instant(payload.get("not_before"), "not_before")
     not_after = _parse_instant(payload.get("not_after"), "not_after")
     if not_before >= not_after:
-        fail("E_ENTITLEMENT_WINDOW", "not_before must be before not_after")
+        _entitlement_fail("E_ENTITLEMENT_WINDOW", "not_before must be before not_after")
+    return not_before, not_after
+
+
+def entitlement_from_payload(
+    payload: dict[str, Any], *, payload_sha256: str
+) -> Entitlement:
+    """Validate the commercial payload and return its immutable view."""
+    _validate_entitlement_schema(payload)
+    entitlement_id = _required_entitlement_text(payload, "entitlement_id")
+    subject = _required_entitlement_text(payload, "subject")
+    product = _required_entitlement_text(payload, "product")
+    version_min, version_max = _entitlement_versions(payload)
+    seats = _entitlement_seats(payload)
+    not_before, not_after = _entitlement_window(payload)
     return Entitlement(
-        entitlement_id=payload["entitlement_id"].strip(),
-        subject=payload["subject"].strip(),
-        product=payload["product"].strip(),
-        version_min=versions["min"].strip(),
-        version_max=versions["max"].strip(),
+        entitlement_id=entitlement_id,
+        subject=subject,
+        product=product,
+        version_min=version_min,
+        version_max=version_max,
         seats=seats,
         not_before=not_before,
         not_after=not_after,
@@ -1141,6 +1188,15 @@ def _commercial_read_json(path: Path) -> Any:
         raise CommercialEntitlementError("E_ENTITLEMENT_IO", str(exc)) from exc
 
 
+def _commercial_store_home(home: str | Path | None) -> Path:
+    """Load commercial storage only when used, not in the minimal worker SDK."""
+    if home is not None:
+        return Path(home)
+    from .enterprise_ops import default_home
+
+    return default_home()
+
+
 def import_entitlement(
     envelope_path: str | Path,
     *,
@@ -1161,7 +1217,7 @@ def import_entitlement(
             "E_ENTITLEMENT_SCHEMA", "entitlement envelope must be an object"
         )
     entitlement = verify_entitlement_envelope(envelope, trust_root=trust_root)
-    base = Path(home) if home is not None else default_home()
+    base = _commercial_store_home(home)
     entitlements_dir = base / ENTITLEMENTS_DIR
     entitlements_dir.mkdir(parents=True, exist_ok=True)
     stored_root = base / TRUST_ROOT_FILENAME
@@ -1184,7 +1240,7 @@ def import_entitlement(
 
 def load_entitlements(home: str | Path | None = None) -> list[Entitlement]:
     """Load and re-verify every imported entitlement. Tampered copies are dropped."""
-    base = Path(home) if home is not None else default_home()
+    base = _commercial_store_home(home)
     entitlements_dir = base / ENTITLEMENTS_DIR
     stored_root = base / TRUST_ROOT_FILENAME
     if not entitlements_dir.is_dir() or not stored_root.exists():

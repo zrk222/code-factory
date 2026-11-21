@@ -30,9 +30,125 @@ from factoryline.enterprise_enforcement import (
     CommercialAdmissionError,
     CommercialGate,
 )
+from factoryline.enterprise_enforcement import (
+    commercial_mode,
+    load_configured_policy,
+    load_policy,
+    default_policy,
+)
+from factoryline.enterprise_ops import default_home, LedgerState, Reservation
+from factoryline.enterprise_receipts import entitlement_from_payload
+from factoryline.cli_enterprise import add_commercial_parser, run_commercial
+import argparse
 
 UTF8 = "utf_8"
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_commercial_mode_defaults_normalizes_and_rejects_unknown_values():
+    assert commercial_mode({}) == "off"
+    assert commercial_mode({"FACTORY_COMMERCIAL_MODE": " SHADOW "}) == "shadow"
+    assert commercial_mode({"FACTORY_COMMERCIAL_MODE": "enforce"}) == "enforce"
+    assert commercial_mode({"FACTORY_COMMERCIAL_MODE": "activate-billing"}) == "off"
+
+
+def test_load_policy_and_load_configured_policy_retain_default_policy_monthly_limit(
+    tmp_path,
+):
+    policy = default_policy()
+    assert policy.activation is False
+    assert policy.monthly_limit(False) == 5
+    assert policy.monthly_limit(True) == 100
+    assert load_configured_policy({}) == policy
+    path = tmp_path / "policy.json"
+    raw = dict(cp.DEFAULT_POLICY, revision="explicit-local-only")
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    assert load_policy(path).revision == "explicit-local-only"
+    assert (
+        load_configured_policy({"FACTORY_COMMERCIAL_POLICY": str(path)}).activation
+        is False
+    )
+    with pytest.raises(cp.CommercialPolicyError) as missing:
+        load_policy(tmp_path / "absent.json")
+    assert missing.value.code == "E_POLICY_IO"
+    path.write_text("{", encoding="utf-8")
+    with pytest.raises(cp.CommercialPolicyError) as invalid:
+        load_configured_policy({"FACTORY_COMMERCIAL_POLICY": str(path)})
+    assert invalid.value.code == "E_POLICY_SCHEMA"
+
+
+def test_default_home_resolves_explicit_and_default_local_storage(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("FACTORY_COMMERCIAL_HOME", str(tmp_path / "local"))
+    assert default_home() == tmp_path / "local"
+    monkeypatch.delenv("FACTORY_COMMERCIAL_HOME")
+    assert default_home() == Path.home() / ".factoryline" / "commercial"
+
+
+def test_ledgerstate_counts_toward_allowance_reruns_used_and_find_original():
+    original = Reservation(
+        "original", "rick", "2027-02", "wf", "key", {}, None, status="finalized"
+    )
+    repair = Reservation(
+        "repair", "rick", "2027-02", "wf-repair", "repair-key", {}, "wf"
+    )
+    state = LedgerState(reservations={"original": original, "repair": repair})
+    assert state.counts_toward_allowance(original) is True
+    assert state.counts_toward_allowance(repair) is False
+    assert state.reruns_used("rick", "wf") == 1
+    assert state.reruns_used("other", "wf") == 0
+    assert state.find_original("rick", "wf") is original
+    assert state.find_original("other", "wf") is None
+    repair.status = "released"
+    assert state.reruns_used("rick", "wf") == 0
+    original.status = "open"
+    assert state.find_original("rick", "wf") is None
+
+
+def test_entitlement_from_payload_validates_explicit_version_and_seat_boundaries():
+    entitlement = entitlement_from_payload(
+        _commercial_entitlement_payload(), payload_sha256="test-digest"
+    )
+    assert entitlement.subject == "rick"
+    assert entitlement.payload_sha256 == "test-digest"
+    assert entitlement.version_max == "0.50.9"
+    with pytest.raises(CommercialEntitlementError) as seats:
+        entitlement_from_payload(
+            _commercial_entitlement_payload(seats=True), payload_sha256="test-digest"
+        )
+    assert seats.value.code == "E_ENTITLEMENT_FIELD"
+    with pytest.raises(CommercialEntitlementError) as versions:
+        entitlement_from_payload(
+            _commercial_entitlement_payload(covered_versions={"min": "0.49.0"}),
+            payload_sha256="test-digest",
+        )
+    assert versions.value.code == "E_ENTITLEMENT_VERSIONS"
+
+
+def test_add_commercial_parser_and_run_commercial_plan_usage_json(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setenv("FACTORY_COMMERCIAL_HOME", str(tmp_path))
+    monkeypatch.setenv("FACTORY_COMMERCIAL_MODE", "off")
+    parser = argparse.ArgumentParser()
+    add_commercial_parser(parser.add_subparsers(dest="cmd", required=True))
+    assert run_commercial(parser.parse_args(["commercial", "plan", "--json"])) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["activation"] is False
+    assert plan["mode"] == "off"
+    assert plan["allowances"]["free_monthly_workflows"] == 5
+    assert (
+        run_commercial(
+            parser.parse_args(["commercial", "usage", "--subject", "rick", "--json"])
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["subjects"] == {}
+    assert not (tmp_path / "usage-ledger.jsonl").exists()
+    with pytest.raises(SystemExit) as invalid:
+        parser.parse_args(["commercial", "unknown"])
+    assert invalid.value.code == 2
 
 
 def _packaging() -> dict:

@@ -1725,6 +1725,41 @@ class LedgerState:
         return None
 
 
+def _apply_ledger_event(state: LedgerState, event: dict[str, Any]) -> None:
+    """Replay one decoded JSON event into the in-memory ledger state."""
+    event_timestamp = _parse_ts(event.get("ts"))
+    if event_timestamp > state.max_seen:
+        state.max_seen = event_timestamp
+    kind = event.get("event")
+    rid: Any = event.get("reservation_id")
+    if kind == RESERVE:
+        new_reservation = Reservation(
+            reservation_id=rid,
+            subject=event["subject"],
+            period=event["period"],
+            workflow_id=event["workflow_id"],
+            idempotency_key=event["idempotency_key"],
+            binding=event.get("binding") or {},
+            rerun_of=event.get("rerun_of"),
+            created_at=event["ts"],
+        )
+        state.reservations[rid] = new_reservation
+        state.by_idempotency_key[new_reservation.idempotency_key] = rid
+    elif kind in {FINALIZE, RELEASE, EXPIRE}:
+        existing_reservation = state.reservations.get(rid)
+        if existing_reservation is None or existing_reservation.status != "open":
+            return
+        existing_reservation.status = {
+            FINALIZE: "finalized",
+            RELEASE: "released",
+            EXPIRE: "expired",
+        }[kind]
+        existing_reservation.outcome = event.get("outcome")
+        existing_reservation.closed_at = event["ts"]
+    else:
+        raise CommercialUsageError("E_LEDGER_CORRUPT", f"unknown event {kind!r}")
+
+
 class UsageLedger:
     """Append-only JSONL ledger with process- and thread-serialized updates."""
 
@@ -1762,11 +1797,45 @@ class UsageLedger:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, sort_keys=True) + "\n")
 
+    def _expire_stale_reservations(self, state: LedgerState, now: datetime) -> None:
+        effective = state.effective_now(now)
+        if effective > _utc(now):
+            state.clock_rollback_seen = True
+        cutoff = effective - timedelta(seconds=self.ttl_seconds)
+        expire_pending = [
+            (reservation.reservation_id, _iso(effective))
+            for reservation in state.reservations.values()
+            if reservation.status == "open"
+            and _parse_ts(reservation.created_at) < cutoff
+        ]
+        for reservation_id, expiration_timestamp in expire_pending:
+            self._append(
+                {
+                    "event": EXPIRE,
+                    "reservation_id": reservation_id,
+                    "ts": expiration_timestamp,
+                    "outcome": "ttl",
+                }
+            )
+            reservation = state.reservations[reservation_id]
+            reservation.status = "expired"
+            reservation.outcome = "ttl"
+            reservation.closed_at = expiration_timestamp
+
+    @staticmethod
+    def _validate_reservation_fields(
+        subject: str, workflow_id: str, idempotency_key: str
+    ) -> None:
+        if not subject or not workflow_id or not idempotency_key:
+            raise CommercialUsageError(
+                "E_RESERVATION_FIELDS",
+                "subject, workflow_id and idempotency_key required",
+            )
+
     def _load_unlocked(self, now: datetime) -> LedgerState:
         state = LedgerState()
         if not self.path.exists():
             return state
-        expire_pending: list[tuple[str, str]] = []
         with self.path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -1778,65 +1847,8 @@ class UsageLedger:
                     raise CommercialUsageError(
                         "E_LEDGER_CORRUPT", f"unparseable ledger line: {exc}"
                     ) from exc
-                event_timestamp = _parse_ts(event.get("ts"))
-                if event_timestamp > state.max_seen:
-                    state.max_seen = event_timestamp
-                kind = event.get("event")
-                rid = event.get("reservation_id")
-                if kind == RESERVE:
-                    reservation = Reservation(
-                        reservation_id=rid,
-                        subject=event["subject"],
-                        period=event["period"],
-                        workflow_id=event["workflow_id"],
-                        idempotency_key=event["idempotency_key"],
-                        binding=event.get("binding") or {},
-                        rerun_of=event.get("rerun_of"),
-                        created_at=event["ts"],
-                    )
-                    state.reservations[rid] = reservation
-                    state.by_idempotency_key[reservation.idempotency_key] = rid
-                elif kind in {FINALIZE, RELEASE, EXPIRE}:
-                    existing_reservation = state.reservations.get(rid)
-                    if (
-                        existing_reservation is None
-                        or existing_reservation.status != "open"
-                    ):
-                        continue
-                    existing_reservation.status = {
-                        FINALIZE: "finalized",
-                        RELEASE: "released",
-                        EXPIRE: "expired",
-                    }[kind]
-                    existing_reservation.outcome = event.get("outcome")
-                    existing_reservation.closed_at = event["ts"]
-                else:
-                    raise CommercialUsageError(
-                        "E_LEDGER_CORRUPT", f"unknown event {kind!r}"
-                    )
-        effective = state.effective_now(now)
-        if effective > _utc(now):
-            state.clock_rollback_seen = True
-        cutoff = effective - timedelta(seconds=self.ttl_seconds)
-        for reservation in state.reservations.values():
-            if (
-                reservation.status == "open"
-                and _parse_ts(reservation.created_at) < cutoff
-            ):
-                expire_pending.append((reservation.reservation_id, _iso(effective)))
-        for rid, expiration_timestamp in expire_pending:
-            self._append(
-                {
-                    "event": EXPIRE,
-                    "reservation_id": rid,
-                    "ts": expiration_timestamp,
-                    "outcome": "ttl",
-                }
-            )
-            reservation = state.reservations[rid]
-            reservation.status = "expired"
-            reservation.outcome = "ttl"
-            reservation.closed_at = expiration_timestamp
+                _apply_ledger_event(state, event)
+        self._expire_stale_reservations(state, now)
         return state
 
     def load(self, now: datetime) -> LedgerState:
@@ -1861,11 +1873,7 @@ class UsageLedger:
         A retry with a known idempotency key returns the original reservation
         with replayed=True and never consumes another slot.
         """
-        if not subject or not workflow_id or not idempotency_key:
-            raise CommercialUsageError(
-                "E_RESERVATION_FIELDS",
-                "subject, workflow_id and idempotency_key required",
-            )
+        self._validate_reservation_fields(subject, workflow_id, idempotency_key)
         with self._locked():
             state = self._load_unlocked(now)
             existing_id = state.by_idempotency_key.get(idempotency_key)
