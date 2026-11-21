@@ -255,6 +255,18 @@ trust-override recall on fresh files rose from 0 of 25 to 18 of 25; Ruby had no
 eligible fresh file (re-scanning the round-7 files: 0 to 9 of 25). The next 63
 fixed Go, Maven and RubyGems advisories were still not detected.
 
+Trust coverage ([evidence](../../docs/evidence/trust-coverage-round9.json)):
+the Java rule also reports `setHostnameVerifier((h, s) -> true)`, Apache
+`NoopHostnameVerifier`, `ALLOW_ALL_HOSTNAME_VERIFIER`, `TrustAllStrategy`,
+accept-all `loadTrustMaterial` lambdas, `verify(...)` returning `true` and
+empty `checkServerTrusted` trust managers; the Go rule also reports
+`InsecureSkipVerify = true` assignments. On all 79 scorable, previously untried
+Maven, Go and PyPI trust advisories, fix-hunk recall rose from 2 to 10 (12.7%,
+Wilson 7.0-21.8%; Maven 0 to 6 of 28, Go 1 to 3 of 22). A fresh panel of 20
+Java trust alerts had 7 of 9 decided alerts supported and 11 unclear (trust-all
+code reviewers could not tie to security-relevant traffic), which is why the
+rule stays in the review tier.
+
 Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,
 `rules/tests/javascript-controls.js` to both `semgrep-pattern-limited.js` and
