@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="A local-first code audit system connecting requirements, architecture, security checks, behavioral evidence, specialty AI review, and actionable repairs.">
-  <title>Code Factory — Audit code. Review evidence. Resolve defects.</title>
+  <title>Code Factory | From intent to a product you can inspect</title>
   <style>
     :root {
       --ink: #171610;
@@ -94,6 +94,22 @@
       .button { transition: none; }
       .button:hover { transform: none; }
     }
+
+    .hero { grid-template-columns: 1fr; gap: 28px; padding: 36px 0 64px; }
+    h1 { max-width: 22ch; font-size: clamp(2.7rem, 5.5vw, 4.6rem); line-height: 1.04; letter-spacing: -.05em; margin: 14px 0 20px; }
+    .lede { max-width: 76ch; font-size: 1.12rem; margin-bottom: 18px; }
+    .module-flow { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin: 20px 0 24px; }
+    .module-flow p { margin: 0; padding: 16px; background: rgba(255,255,255,.65); border: 1px solid var(--line); border-radius: 14px; }
+    .module-flow strong { display: block; }
+    .story { width: min(960px,100%); margin: 0; scroll-margin-top: 24px; }
+    .story video { display: block; width: 100%; aspect-ratio: 16/9; background: #111; object-fit: contain; }
+    .story-limit { color: var(--muted); font-size: .93rem; max-width: 85ch; margin: 16px 0 0; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    @media(max-width:50rem) { .module-flow { grid-template-columns:1fr; gap:10px; } .hero { padding-top:24px; } }
+    .story-layout { display:grid; grid-template-columns:minmax(240px,390px) minmax(0,1fr); gap:40px; align-items:center; margin-top:28px; }
+    .story video { aspect-ratio:9/16; }
+    .module-flow { grid-template-columns:1fr; }
+    @media(max-width:50rem) { .story-layout { grid-template-columns:1fr; gap:20px; } .story { max-width:340px; margin:auto; } h1 { font-size:2.6rem; } .lede { font-size:1rem; } }
   </style>
 </head>
 <body>
@@ -113,26 +129,31 @@
   <main id="main">
     <div class="shell hero">
       <div>
-        <div class="eyebrow">Governance infrastructure for high-stakes agentic workloads</div>
-        <h1>Audit code.<br>Review evidence.<br>Resolve defects.</h1>
-        <p class="lede"><strong>Your agent has finished a change. Your review comes next.</strong> Follow a local finding back to its source, inspect the recorded checks, and choose the repair you want to make. Rerun the affected checks and keep the evidence with the change before deciding what to accept. This static preview shows the workflow; it does not scan or upload your repository.</p>
-        <p class="boundary"><strong>Code Factory 0.49.7</strong> connects SpecLine intent, registered ForgeLine actions, and FactoryLine proof in a resumable mission. <a href="https://pypi.org/project/factoryline-code-factory/0.49.7/" target="_blank" rel="noopener noreferrer">PyPI package 0.49.7</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.49.7" target="_blank" rel="noopener noreferrer">GitHub release 0.49.7</a>.</p>
-        <div class="actions">
-          <a class="button primary" href="#audit-update">Explore the audit workflow</a>
-          <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md" target="_blank" rel="noopener noreferrer">See actual Factory Studio</a>
-        </div>
-        <div class="trust" id="release-proof" aria-label="Local proof boundaries">
-          <span>✓ Local by default</span>
-          <span>✓ No source upload</span>
-          <span>✓ No model account required</span>
-          <span>✓ Human decides what may be applied</span>
-          <span>✓ Missing evidence stays visible</span>
+        <div class="eyebrow">Code Factory: from requirement to working software</div>
+        <h1>From intent to a product you can inspect.</h1>
+        <p class="lede"><strong>WMM is a real product Code Factory helped assemble, not simply check afterward.</strong> Turn a requirement into a bounded change, challenge the checks, then repair and recheck with an inspectable trail back to the requirement.</p>
+        <div class="story-layout">
+          <figure class="visual story" id="story-video">
+            <video controls preload="metadata" playsinline poster="cf-story-v5-poster.jpg" aria-label="From requirements to WMM: Code Factory walkthrough">
+              <source src="cf-story-v5-narrated.mp4" type="video/mp4">
+              Your browser does not support embedded video. <a href="cf-story-v5-narrated.mp4">Open the walkthrough video</a>.
+            </video>
+            <figcaption>57-second narrated walkthrough. WMM screens use example data; process illustrations are labeled. Not a customer case or independent certification.</figcaption>
+          </figure>
+          <div class="story-explanation">
+            <div class="module-flow" aria-label="How the modules work together">
+              <p><strong>SpecLine</strong> defines the requirements and acceptance checks.</p>
+              <p><strong>ForgeLine</strong> builds scoped changes and challenges their checks.</p>
+              <p><strong>FactoryLine</strong> connects the work, recorded evidence and human review.</p>
+            </div>
+            <div class="actions">
+              <a class="button primary" href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">Explore Code Factory</a>
+              <a class="button" href="#audit-update">Inspect the audit workflow</a>
+            </div>
+            <p class="story-limit">Missing evidence stays explicit. A completed change is not a release certification. This is a static product preview, not a hosted repository scanner.</p>
+          </div>
         </div>
       </div>
-      <figure class="visual">
-        <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/studio-product-mission-0496.png" alt="Factory Studio Product Mission draft with intent and review callouts" width="1440" height="900" loading="lazy">
-        <figcaption>Factory Studio Product Mission with fictional example input.</figcaption>
-      </figure>
     </div>
 
     <section aria-labelledby="latest-telemetry">
