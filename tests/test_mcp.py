@@ -114,6 +114,8 @@ def test_devin_setup_and_native_plugin_are_copy_only_and_workspace_explicit(tmp_
         (root / "plugins/code-factory-devin/.devin-plugin/plugin.json").read_text()
     )
     server = plugin["mcpServers"]["code-factory"]
+    assert 60 <= len(plugin["description"]) <= 130
+    assert plugin["setup"]["steps"] and "cannot run audits" in plugin["setup"]["notice"]
     assert plugin["skills"] == [] and server["command"] == "factory"
     assert "${FACTORY_WORKSPACE_ROOT}" in server["args"]
     assert server["args"][-2:] == ["--profile", "devin"]
