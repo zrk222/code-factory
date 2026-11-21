@@ -1224,13 +1224,14 @@ def test_release_integrity_rejects_huggingface_metadata_that_would_fail_remotely
 ) -> None:
     root = _workflow_copy(tmp_path)
     readme = root / "deploy" / "huggingface" / "README.md"
-    readme.write_text(
-        readme.read_text(encoding="utf-8").replace(
-            "short_description: Audit code, review evidence, and resolve defects.",
-            f"short_description: {'x' * 61}",
-        ),
-        encoding="utf-8",
+    original = readme.read_text(encoding="utf-8")
+    mutated, count = re.subn(
+        r"(?m)^short_description: [^\r\n]+$",
+        f"short_description: {'x' * 61}",
+        original,
     )
+    assert count == 1 and mutated != original
+    readme.write_text(mutated, encoding="utf-8")
 
     result = release_integrity(root)
 

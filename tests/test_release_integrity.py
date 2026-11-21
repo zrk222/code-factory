@@ -716,3 +716,18 @@ def test_recovery_checks_actual_bytes_and_isolated_tooling(
             receipt["installed_metadata_sha256"]
             == hashlib.sha256(installed.read_bytes()).hexdigest()
         )
+
+
+def test_build_provenance_creates_missing_editable_build_directory(
+    tmp_path, monkeypatch
+):
+    import runpy
+    import setuptools
+
+    monkeypatch.setattr(setuptools, "setup", lambda **kwargs: None)
+    hooks = runpy.run_path(str(Path(__file__).resolve().parents[1] / "setup.py"))
+    target = tmp_path / "editable-build" / "factoryline" / "_build_provenance.py"
+    assert not target.parent.exists()
+    for commit in ("a" * 40, None):
+        hooks["write_provenance"](target, commit)
+        assert runpy.run_path(str(target))["SOURCE_COMMIT"] == commit
