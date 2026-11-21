@@ -163,7 +163,7 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
+export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
   const observedRuleIds = [...ruleIds].sort();
   if (manifest.length !== 120 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30 ||
@@ -179,6 +179,10 @@ export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
   if (ruleIds.some(rule => observedCounts.get(rule) !== fixedReviewedFindingCounts[rule])) {
     throw new Error('Reviewed per-rule positive finding counts differ');
   }
+}
+
+export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
+  verifyFindingCountMatrix(manifest, ruleIds);
   for (const language of ['go', 'java', 'csharp', 'ruby']) {
     for (const family of ['command', 'sql']) {
       const rule = `opt.factory.rules.${language}.request-${family}-injection`;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findingKeys, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix,
+import { findingKeys, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyFindingCountMatrix,
   fixedReviewedFindingCounts, javascriptControlManifest, verifyJavascriptControlMatrix,
   tsxQualificationSuffix } from './semgrep_mutation_controls.mjs';
 import { readFileSync } from 'node:fs';
@@ -81,6 +81,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
       ...((rules.includes(rule) && index < 2) ? { source_line: index + 2 } : {}),
     })));
   assert.doesNotThrow(() => verifyFlowControlMatrix(manifest, safe, all));
+  assert.doesNotThrow(() => verifyFindingCountMatrix(manifest, all));
   assert.throws(() => verifyFlowControlMatrix(manifest.slice(1), safe, all));
   assert.throws(() => verifyFlowControlMatrix(manifest, { ...safe, [rules[0]]: 2 }, all));
   assert.throws(() => verifyFlowControlMatrix([{ rule: all[8] }, ...manifest.slice(1)], safe, all));
@@ -92,6 +93,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   assert.equal(balancedReplacement.length, 120);
   assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 30);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
+  assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
 });
 
 test('fixed TSX qualification rejects omitted, substituted and wrong-language controls', () => {
