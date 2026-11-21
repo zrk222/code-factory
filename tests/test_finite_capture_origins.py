@@ -1076,6 +1076,98 @@ def _claim_fixture(tmp_path, **payload_changes):
     }
 
 
+def _test_claim_fixture(tmp_path, *, version_three=True):
+    from test_runtime_attestation import (
+        _oracle_payload_v3,
+        _oracle_payload,
+        _signed_oracle,
+    )
+
+    payload = _oracle_payload_v3() if version_three else _oracle_payload()
+    row = payload["tests"][0]
+    for path, content in (
+        (row["path"], b"test source"),
+        (row["mutation"]["source_path"], b"original source"),
+    ):
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    receipt, trust, _, payload = _signed_oracle(tmp_path, payload)
+    return {
+        "claim_type": "test_sensitivity",
+        "attestation_path": receipt.relative_to(tmp_path).as_posix(),
+        "attestation_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+        "trust_root_path": trust.relative_to(tmp_path).as_posix(),
+        "trust_root_sha256": hashlib.sha256(trust.read_bytes()).hexdigest(),
+        "source_manifest_sha256": payload["source_manifest_sha256"],
+        "environment_sha256": payload["environment_sha256"],
+        "test_path": row["path"],
+        "test_symbol": row["symbol"],
+        "case_id": row["baseline"]["case_ids"][0],
+    }
+
+
+def test_canonical_test_claim_reads_v3_observations_without_execution_or_writes(
+    tmp_path,
+):
+    from factoryline.mcp import dispatch
+
+    request = _test_claim_fixture(tmp_path)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "verify_claim", "arguments": request},
+        },
+        tmp_path,
+    )
+    result = json.loads(response["result"]["content"][0]["text"])
+    assert result["state"] == "PASS"
+    assert result["verified_predicate"] == "ATTESTED_ASSERTION_OBSERVATION"
+    assert result["test"]["case_id"] == request["case_id"]
+    assert result["workspace_currentness"] == "SELECTED_CAPTURED_INPUTS_VERIFIED"
+    assert result["authority"] == "none" and result["release_approval"] is False
+    assert "Not independent replay" in result["claim_boundary"]
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize(
+    "damage", ["source", "test", "case", "symbol", "environment", "pin", "extra"]
+)
+def test_canonical_test_claim_blocks_unbound_case_or_current_inputs(tmp_path, damage):
+    from factoryline.independent_execution import verify_claim
+
+    request = _test_claim_fixture(tmp_path)
+    if damage in {"source", "test"}:
+        path = request["test_path"] if damage == "test" else "factoryline/example.py"
+        (tmp_path / path).write_bytes(b"changed")
+    elif damage == "case":
+        request["case_id"] += "-other"
+    elif damage == "symbol":
+        request["test_symbol"] = "test_other"
+    elif damage == "environment":
+        request["environment_sha256"] = "0" * 64
+    elif damage == "pin":
+        request["attestation_sha256"] = "0" * 64
+    else:
+        request["approval"] = True
+    result = verify_claim(tmp_path, request)
+    assert result["state"] == "BLOCKED" and result["authority"] == "none"
+    assert result["test_sensitivity"] == "NOT_CHECKED"
+    if damage in {"source", "test", "case", "symbol"}:
+        assert result["finding"] == "E_CLAIM_TEST_BINDING"
+
+
+def test_canonical_test_claim_legacy_signature_is_not_assertion_proof(tmp_path):
+    from factoryline.independent_execution import verify_claim
+
+    result = verify_claim(tmp_path, _test_claim_fixture(tmp_path, version_three=False))
+    assert result["state"] == "INCOMPLETE"
+    assert result["finding"] == "E_CLAIM_ORACLE_VERSION"
+
+
 def test_canonical_claim_mcp_verifies_observation_not_code_or_release(tmp_path):
     from factoryline.mcp import dispatch
 

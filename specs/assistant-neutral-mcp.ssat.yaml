@@ -18,6 +18,17 @@ spec_markdown: |
   hiding schemas alone is insufficient. Full-profile clients are unchanged.
   No plugin installation, cloud deployment, marketplace listing or live Devin
   acceptance follows from a rendered config or a local protocol test.
+  A test_sensitivity claim additionally consumes only the existing v3 signed
+  oracle format with collection, executed-origin and visible assertion evidence.
+  The request pins source_manifest_sha256, environment_sha256 and one test_path,
+  test_symbol and case_id. Require exactly one matching observation; legacy
+  formats remain INCOMPLETE. Recheck captured baseline origin/config file hashes
+  and the test and original mutation source under the workspace before returning
+  ATTESTED_ASSERTION_OBSERVATION. A signature attests the collector's statements;
+  the verification call does not execute tests or establish collector independence.
+  Verification uses bounded byte snapshots without temporary files or writes.
+  Unsupported application correctness and unrestricted semantic claims remain
+  INCOMPLETE, never PASS. No model is a verdict and no release authority is added.
 modules:
   - name: mcp_setup
     path: factoryline/mcp_setup.py
@@ -37,6 +48,12 @@ modules:
       - name: verify_signed_document_value
         args: [envelope]
         returns: dict
+  - name: runtime_attestation
+    path: factoryline/runtime_attestation.py
+    functions:
+      - name: verify_signed_test_oracles_value
+        args: [receipt_bytes, trust_bytes]
+        returns: dict[str, Any]
   - name: mcp
     path: factoryline/mcp.py
     functions:
@@ -46,8 +63,17 @@ modules:
 dependencies:
   - {from: mcp, to: independent_execution}
   - {from: independent_execution, to: enterprise_receipts}
+  - {from: independent_execution, to: runtime_attestation}
+  - {from: runtime_attestation, to: enterprise_receipts}
   - {from: mcp, to: mcp_setup}
   - {from: mcp_setup, to: mcp}
+review_scopes:
+  - {module: independent_execution, symbol: verify_claim, max_lines: 85}
+  - {module: independent_execution, symbol: _claim_test_sensitivity, max_lines: 85}
+  - {module: independent_execution, symbol: _claim_test_inputs, max_lines: 40}
+  - {module: independent_execution, symbol: _claim_bytes, max_lines: 20}
+  - {module: runtime_attestation, symbol: _verify_oracle_envelope, max_lines: 85}
+  - {module: runtime_attestation, symbol: verify_signed_test_oracles_value, max_lines: 110}
 invariants:
   - name: setup_is_copy_only
     forbid_pattern: "write_text|write_bytes|mkdir|subprocess\\.|requests\\.|urllib\\.|socket\\."

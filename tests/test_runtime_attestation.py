@@ -23,6 +23,7 @@ from factoryline.runtime_attestation import (
     runtime_boundary_decision,
     validate_runtime_attestation,
     verify_signed_test_oracles,
+    verify_signed_test_oracles_value,
     verify_signed_runtime_attestation,
 )
 from factoryline.runtime_audit_common import canonical_bytes, sha256_bytes
@@ -570,6 +571,50 @@ def test_signed_test_oracle_v3_verifies_collection_and_assertion_observations(
     )
 
 
+def test_signed_test_oracle_value_api_verifies_v3_snapshot_and_rejects_tampering(
+    tmp_path: Path,
+):
+    payload = _oracle_payload_v3()
+    receipt, trust_path, _, _ = _signed_oracle(tmp_path, payload)
+    receipt_bytes, trust_bytes = receipt.read_bytes(), trust_path.read_bytes()
+    kwargs = {
+        "trust_root_sha256": sha256_bytes(trust_bytes),
+        "source_manifest_sha256": payload["source_manifest_sha256"],
+        "environment_sha256": payload["environment_sha256"],
+    }
+
+    result = verify_signed_test_oracles_value(receipt_bytes, trust_bytes, **kwargs)
+
+    assert result["state"] == "VERIFIED"
+    assert result["schema"] == TEST_ORACLE_VERIFICATION_SCHEMA_V3
+    assert result["tests"][0]["baseline"]["assertion_observations"]
+    assert result["tests"][0]["baseline"]["collection_catalog"]
+    with pytest.raises(RuntimeAttestationError):
+        verify_signed_test_oracles_value(
+            receipt_bytes[:-1] + b" ", trust_bytes, **kwargs
+        )
+    with pytest.raises(RuntimeAttestationError, match="E_TRUST_ROOT_PIN"):
+        verify_signed_test_oracles_value(
+            receipt_bytes,
+            trust_bytes,
+            **{**kwargs, "trust_root_sha256": _digest("wrong trust")},
+        )
+    trust = json.loads(trust_bytes)
+    trust["keys"][0]["roles"] = []
+    role_bytes = canonical_bytes(trust)
+    with pytest.raises(RuntimeAttestationError, match="E_KEY_ROLE_MISMATCH"):
+        verify_signed_test_oracles_value(
+            receipt_bytes,
+            role_bytes,
+            **{**kwargs, "trust_root_sha256": sha256_bytes(role_bytes)},
+        )
+    unsupported = json.loads(receipt_bytes)
+    unsupported["payload"] = base64.urlsafe_b64encode(
+        canonical_bytes({"schema": "factory.test-oracle-attestation.v99"})
+    ).decode("ascii").rstrip("=")
+    unsupported_bytes = canonical_bytes(unsupported)
+    with pytest.raises(RuntimeAttestationError, match="E_ORACLE_SCHEMA"):
+        verify_signed_test_oracles_value(unsupported_bytes, trust_bytes, **kwargs)
 def _compiled_frame_qualname(source: str, code_name: str) -> str | None:
     root = compile(source, "frame_qualname_fixture.py", "exec")
     if code_name == "<module>":
@@ -1157,7 +1202,7 @@ def test_signed_test_oracle_rechecks_receipt_and_trust_bytes(
     import factoryline.runtime_attestation as runtime_attestation
 
     receipt, trust, _, payload = _signed_oracle(tmp_path)
-    original_verify = runtime_attestation.verify_signed_document
+    original_verify = runtime_attestation.verify_signed_document_value
 
     def verify_then_drift(*args, **kwargs):
         result = original_verify(*args, **kwargs)
@@ -1165,7 +1210,7 @@ def test_signed_test_oracle_rechecks_receipt_and_trust_bytes(
         return result
 
     monkeypatch.setattr(
-        runtime_attestation, "verify_signed_document", verify_then_drift
+        runtime_attestation, "verify_signed_document_value", verify_then_drift
     )
     with pytest.raises(RuntimeAttestationError, match="E_ORACLE_DRIFT"):
         _verify_oracle(receipt, trust, payload)

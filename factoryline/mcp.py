@@ -225,7 +225,7 @@ def _tool_definitions() -> list[dict[str, object]]:
     tools = [
         {
             "name": "verify_claim",
-            "description": "Verify a pinned signed execution observation against explicit local trust, candidate and plan hashes. Does not prove code correctness, test sensitivity, workspace freshness or release readiness; unsupported claims stay INCOMPLETE. Read only, no execution.",
+            "description": "Verify pinned signed execution observations or v3 per-test assertion observations and selected captured inputs. No test execution, code-correctness verdict, independent replay or release authority. Unsupported claims stay INCOMPLETE.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -238,6 +238,8 @@ def _tool_definitions() -> list[dict[str, object]]:
                         "trust_root_sha256",
                         "candidate_sha256",
                         "plan_sha256",
+                        "source_manifest_sha256", "environment_sha256",
+                        "test_path", "test_symbol", "case_id",
                     )
                 },
                 "required": [
@@ -246,8 +248,10 @@ def _tool_definitions() -> list[dict[str, object]]:
                     "attestation_sha256",
                     "trust_root_path",
                     "trust_root_sha256",
-                    "candidate_sha256",
-                    "plan_sha256",
+                ],
+                "oneOf": [
+                    {"properties": {"claim_type": {"const": "execution_observation"}}, "required": ["candidate_sha256", "plan_sha256"]},
+                    {"properties": {"claim_type": {"const": "test_sensitivity"}}, "required": ["source_manifest_sha256", "environment_sha256", "test_path", "test_symbol", "case_id"]},
                 ],
                 "additionalProperties": False,
             },
