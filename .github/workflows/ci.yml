@@ -307,7 +307,7 @@ jobs:
           COVERAGE_FILE: .factory/test-reports/.coverage
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: >-
-          python -m pytest -p pytest_asyncio.plugin -p xdist.plugin -q -n 2 -p pytest_cov.plugin
+          python -m pytest -p pytest_asyncio.plugin -p xdist.plugin -q -n 3 -p pytest_cov.plugin
           --junitxml=.factory/test-reports/pytest.xml --durations=20
           --cov=factoryline --cov-branch
           --cov-report=json:.factory/test-reports/coverage.json
