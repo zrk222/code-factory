@@ -1243,9 +1243,93 @@ def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_ch
         status = module._coordinator_status(_coordinator_test_request(root), context)
         assert status["audit_state"] == row["state"]
         assert status["authority"] == "none" and status["release_approval"] is False
+        phases = {p["phase"]: p for p in status["phase_timings"]["phases"]}
+        assert set(phases) == {"child_launch", "child_wait", "child_cleanup"}
+        assert all(p["calls"] == p["completed"] == 1 for p in phases.values())
+        assert all(p["elapsed_ms"] >= 0 for p in phases.values())
+        assert status["phase_timings"]["status"] == "complete"
+        assert status["execution_available"] is False
+        assert str(root) not in json.dumps(status["phase_timings"])
     finally:
         assert module._coordinator_shutdown(context)
         context["store"].release(owner)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_coordinator_phase_recorders_are_job_local_private_and_preserve_errors(
+    tmp_path, monkeypatch, fail
+):
+    import threading
+    import factoryline.cli_deep_audit as module
+    from factoryline.ops_telemetry import _measure_call, _phase_telemetry
+
+    secret = "private-arguments-output-and-exception"
+    error = RuntimeError(secret)
+    errors, jobs = [], []
+
+    def execute(*args):
+        _measure_call("child_launch", lambda: secret)
+        assert "phase_timings" not in args[-1]
+        try:
+
+            def wait():
+                if fail:
+                    raise error
+                return secret
+
+            _measure_call("child_wait", wait)
+        finally:
+            _measure_call("child_cleanup", lambda: None)
+
+    def worker(job):
+        try:
+            module._coordinator_execute(tmp_path, {}, {}, {}, job)
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(module, "_coordinator_execute_job", execute)
+    with _phase_telemetry(0) as parent:
+        _measure_call("source_read", lambda: secret)
+        for _ in range(2):
+            job = {}
+            thread = threading.Thread(target=worker, args=(job,))
+            thread.start()
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+            jobs.append(job)
+        assert [p["phase"] for p in parent.snapshot()["phases"]] == ["source_read"]
+    assert errors == ([error, error] if fail else [])
+    for job in jobs:
+        telemetry = job["phase_timings"]
+        assert set(telemetry) == {
+            "status",
+            "phases",
+            "dropped_calls",
+            "dropped_phase_names",
+        }
+        assert telemetry["status"] == ("incomplete" if fail else "complete")
+        assert telemetry["dropped_calls"] == 0
+        assert telemetry["dropped_phase_names"] == []
+        assert secret not in json.dumps(telemetry) and str(tmp_path) not in json.dumps(
+            telemetry
+        )
+        phases = {p["phase"]: p for p in telemetry["phases"]}
+        assert set(phases) == {"child_launch", "child_wait", "child_cleanup"}
+        assert all(p["calls"] == 1 and p["elapsed_ms"] >= 0 for p in phases.values())
+        assert phases["child_wait"]["incomplete"] == int(fail)
+    assert jobs[0]["phase_timings"] is not jobs[1]["phase_timings"]
+
+
+def test_coordinator_runtime_identity_binds_loaded_telemetry(monkeypatch):
+    import factoryline.cli_deep_audit as module
+    import factoryline.ops_telemetry as telemetry
+
+    before = module._coordinator_runtime_identity()
+    assert before == module._coordinator_runtime_identity()
+    monkeypatch.setattr(
+        telemetry._PhaseTelemetry, "record", lambda *args, **kwargs: None
+    )
+    assert before != module._coordinator_runtime_identity()
 
 
 @pytest.mark.parametrize("fault", ["bad_ack", "candidate_drift"])
@@ -1407,6 +1491,12 @@ def test_coordinator_unit_prelaunch_bounds_failure_cleans_control(
     module._coordinator_execute(tmp_path, request, {}, context, job)
     assert job["launch_attempted"] is False
     assert job["cleanup_confirmed"] is True
+    assert job["phase_timings"] == {
+        "status": "not_observed",
+        "phases": [],
+        "dropped_calls": 0,
+        "dropped_phase_names": [],
+    }
     assert not job["directory"].exists()
     assert recorded == [
         (request["session_nonce"], request["request_id"], "c" * 64, True)

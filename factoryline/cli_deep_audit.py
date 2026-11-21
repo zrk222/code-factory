@@ -301,6 +301,7 @@ def _coordinator_runtime_identity():
         deep_audit_io,
         deep_audit_sarif,
         enterprise_receipts,
+        ops_telemetry,
         runtime_audit_common,
         runtime_audit_process,
     )
@@ -317,19 +318,12 @@ def _coordinator_runtime_identity():
         deep_audit_sarif,
         enterprise_receipts,
         runtime_audit_common,
+        ops_telemetry,
     )
     loaded = [_coordinator_loaded_identity(module) for module in modules]
     executable = hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()
-    return hashlib.sha256(
-        json.dumps(
-            [
-                str(Path(sys.executable).resolve()),
-                sys.version,
-                executable,
-                loaded,
-            ]
-        ).encode()
-    ).hexdigest()
+    identity = [str(Path(sys.executable).resolve()), sys.version, executable, loaded]
+    return hashlib.sha256(json.dumps(identity).encode()).hexdigest()
 
 
 def _coordinator_loaded_identity(module):
@@ -522,15 +516,15 @@ def _coordinator_preflight(root, payload, inventory=True):
 
 
 def _coordinator_status(request, context):
-    job = context.get("job")
     fields = dict(request_id=request["request_id"], execution_available=False)
-    if job is not None:
+    if (job := context.get("job")) is not None:
         row = context["store"].read(request["session_nonce"], job["request_id"])
         fields.update(
             audit_request_id=row["request_id"],
             audit_state=row["state"],
             run_id=row["run_id"],
             cleanup_confirmed=row["cleanup_confirmed"],
+            phase_timings=job.get("phase_timings"),
         )
     return _coordinator_result("OBSERVED", **fields)
 
@@ -682,6 +676,22 @@ def _coordinator_worker_args(root, directory, config):
 
 
 def _coordinator_execute(root, request, owner, context, job):
+    from .ops_telemetry import _phase_telemetry
+
+    with _phase_telemetry(0) as telemetry:
+        try:
+            _coordinator_execute_job(root, request, owner, context, job)
+        finally:
+            snapshot = telemetry.snapshot()
+            job["phase_timings"] = {
+                key: snapshot[key]
+                for key in ("status", "phases", "dropped_calls", "dropped_phase_names")
+            }
+            if not snapshot["phases"]:
+                job["phase_timings"]["status"] = "not_observed"
+
+
+def _coordinator_execute_job(root, request, owner, context, job):
     import time
     from .assembly_process import CLEANUP_TIMEOUT_SECONDS, run_cli_detailed
 
