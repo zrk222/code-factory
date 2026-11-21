@@ -90,8 +90,8 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 118);
-  assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 29);
+  assert.equal(balancedReplacement.length, 121);
+  assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 30);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
 });

@@ -165,6 +165,29 @@ carry request text. Copy `rules/tests/php-controls.php` to
 `semgrep-pattern-limited.go`, and `rules/tests/rust-controls.txt` to
 `semgrep-pattern-limited.rs` when running the native rule tests.
 
+Rules are split into two tiers so that tiering, not suppression, carries
+precision. Default-tier rules (severity ERROR/WARNING, SARIF error/warning,
+finding severity high/medium) are the high-confidence lane. Context-dependent
+rules carry `metadata.tier: review` and severity INFO (SARIF note, finding
+severity low): JavaScript request taint (command, SQL, HTML, path), TLS and
+trust bypasses (Go, Python, Rust, Java hostname, Ruby, Swift), unscoped Python
+deserialization (`python.unsafe-deserialization-unscoped`, any pickle/YAML
+source) and PHP file inclusion. Review-tier findings stay in the report; they
+need peer, reachability or framework context that a local pattern cannot see.
+The C# certificate rule stays in the default tier on its held-out record.
+Default-tier Python deserialization reports request or socket-event data only.
+JavaScript validator and allowlist guards (`isValid*`, `validate*`, `.has`,
+`.includes`), `path.basename` and `{text, values}` query objects, Java
+`Integer`/`Long` parsing and PHP `preg_replace` with a negated character class
+are sanitizers; WordPress core (`wp-admin`, `wp-includes`), Rust
+`tests.rs`/`test_utils.rs` and `TestUtils` helpers are excluded like other
+test or vendored code. Evidence: a pre-registered fresh panel of 60 default-tier
+alerts (round 6, repositories unseen in rounds 1-5, two independent review
+contexts) measured 54 of 60 decided alerts supported, 90.0% (Wilson
+79.9-95.3%); the blinded check of the 4 baseline (v4) alerts absent from every
+tier found all 4 were false positives. Round 5, before tiering, measured 73.2%
+across all rules, with JavaScript taint at 5 of 11 and TLS bypasses at 4 of 12.
+
 Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,
 `rules/tests/javascript-controls.js` to both `semgrep-pattern-limited.js` and

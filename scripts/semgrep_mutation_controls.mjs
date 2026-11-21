@@ -130,6 +130,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.request-path-traversal': 9,
   'opt.factory.rules.python.request-sql-injection': 1,
   'opt.factory.rules.python.unsafe-deserialization': 2,
+  'opt.factory.rules.python.unsafe-deserialization-unscoped': 3,
   'opt.factory.rules.ruby.disabled-tls-verification': 1,
   'opt.factory.rules.ruby.request-command-injection': 2,
   'opt.factory.rules.ruby.request-sql-injection': 2,
@@ -165,9 +166,9 @@ export function verifyJavascriptControlMatrix(manifest) {
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
   const observedRuleIds = [...ruleIds].sort();
-  if (manifest.length !== 118 || ruleIds.length !== 29 || new Set(ruleIds).size !== 29 ||
+  if (manifest.length !== 121 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30 ||
       JSON.stringify(observedRuleIds) !== JSON.stringify(expectedRuleIds) ||
-      Object.values(fixedReviewedFindingCounts).reduce((sum, count) => sum + count, 0) !== 118) {
+      Object.values(fixedReviewedFindingCounts).reduce((sum, count) => sum + count, 0) !== 121) {
     throw new Error('Registered rule/finding control matrix differs');
   }
   const observedCounts = new Map(ruleIds.map(rule => [rule, 0]));

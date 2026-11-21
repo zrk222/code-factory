@@ -33,9 +33,13 @@ def sql_safe(request, db):
     # ok: python.request-sql-injection
     db.execute("SELECT * FROM users WHERE name=?", (value,))
 
-def deserialization_bad(raw):
-    # ruleid: python.unsafe-deserialization
-    return pickle.loads(raw)
+def deserialization_bad(request):
+    # ruleid: python.unsafe-deserialization, python.unsafe-deserialization-unscoped
+    return pickle.loads(request.data)
+
+def deserialization_ipc(frame):
+    # ruleid: python.unsafe-deserialization-unscoped
+    return pickle.loads(frame)
 
 def deserialization_safe(raw):
     # ok: python.unsafe-deserialization
@@ -244,7 +248,7 @@ def parser_table_cache_safe(path):
         return pickle.load(handle)
 
 def request_pickle_bad():
-    # ruleid: python.unsafe-deserialization
+    # ruleid: python.unsafe-deserialization, python.unsafe-deserialization-unscoped
     return pickle.loads(base64.b64decode(request.form.get("data")))
 
 def tls_operator_opt_in_safe(args, token):
