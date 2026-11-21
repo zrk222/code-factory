@@ -203,6 +203,429 @@ def test_signed_plan_binds_six_lanes_sources_environment_and_authority(tmp_path)
     assert result["execution_policy"]["max_parallelism"] == 1
 
 
+def test_signed_plan_verifies_captured_documents_not_reopened_files(
+    tmp_path, monkeypatch
+):
+    import factoryline.runtime_audit_contract as contract
+
+    path, trust, pin, plan = signed_plan(tmp_path)
+    original = contract.verify_signed_document_value
+
+    def replace_paths_after_capture(envelope, **kwargs):
+        path.write_text('{"tampered":true}')
+        trust.write_text('{"keys":[]}')
+        return original(envelope, **kwargs)
+
+    monkeypatch.setattr(
+        contract, "verify_signed_document_value", replace_paths_after_capture
+    )
+    result = verify_runtime_audit_plan(path, trust, pin, tmp_path, D)
+    assert result["plan"] == plan
+    assert result["trust_root_sha256"] == pin
+    assert result["authority"] == "none"
+
+
+def test_runtime_plan_pin_refuses_dispatch_before_execution(tmp_path, monkeypatch):
+    import factoryline.runtime_audit as audit
+
+    path, trust, pin, _ = signed_plan(tmp_path)
+    monkeypatch.setattr(
+        audit,
+        "run_runtime_audit_plan",
+        lambda *a, **kw: pytest.fail("unadmitted execution"),
+    )
+    with pytest.raises(RuntimeAuditError, match="E_PLAN_CHANGED"):
+        audit.execute_runtime_audit(
+            path,
+            trust,
+            pin,
+            tmp_path,
+            D,
+            tmp_path / ".factory/runtime-audits",
+            expected_plan_sha256="0" * 64,
+        )
+
+
+def _proof_agent_fixture(tmp_path, *, fail_target=False):
+    import subprocess
+    from factoryline.product_missions import bind_mission_candidate, decide_mission
+    from test_product_missions import _pipeline
+
+    _, _, mission = _pipeline(tmp_path)
+    decision = decide_mission(
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="approved_execution",
+        rationale="Run only the exact signed local proof commands.",
+    )
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    path, trust, pin, plan = _runtime_rehearsal_plan(workspace)
+    if fail_target:
+        plan["lanes"][0]["target_argv"] = list(plan["lanes"][0]["known_bad_argv"])
+        plan["lanes"][0]["target_argv"][-2] = "approved-target-failure"
+    parameters, _ = _intake(workspace, scope=[item["path"] for item in plan["sources"]])
+    plan["intake_parameters"] = {
+        "path": parameters.relative_to(workspace).as_posix(),
+        "parameter_sha256": json.loads(parameters.read_text())["parameter_sha256"],
+        "external_effects": "local_only",
+    }
+    plan["execution_policy"] = {
+        "max_parallelism": 1,
+        "non_mutating": True,
+        "resource_safe": True,
+    }
+    path.write_text(
+        json.dumps(
+            sign_payload(
+                plan,
+                payload_type=PLAN_TYPE,
+                private_key_path=workspace / "keys/operator.private.pem",
+                keyid="operator",
+                identity="operator@example.test",
+                issuer="https://issuer.example.test",
+            )
+        )
+    )
+    (workspace / ".gitignore").write_text(
+        ".factory/\nkeys/\nplan.json\nmission.md\nintake-request.json\n"
+    )
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(workspace), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("add", "candidate.txt", "runner.py", ".gitignore")
+    git(
+        "-c",
+        "user.name=Test Owner",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "bound audit candidate",
+    )
+    commands = [
+        {"id": f"{side}-{i}", "argv": lane[key]}
+        for i, lane in enumerate(plan["lanes"])
+        for side, key in (("target", "target_argv"), ("bad", "known_bad_argv"))
+    ]
+    declaration = {
+        "schema": "factory.mission.candidate-declaration.v1",
+        "workspace": "candidate",
+        "base_commit": git("rev-parse", "HEAD"),
+        "paths": [item["path"] for item in plan["sources"]],
+        "interfaces": ["signed local six-business-lane audit"],
+        "profiles": ["factory.runtime-audit.v1"],
+        "commands": commands,
+        "audit_lanes": {
+            family: {
+                "applicable": family == "runtime",
+                "reason": "This packet runs local business-workflow evidence only.",
+            }
+            for family in (
+                "static",
+                "secrets",
+                "configuration",
+                "dependencies",
+                "runtime",
+                "fuzz",
+            )
+        },
+    }
+    binding = bind_mission_candidate(
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+    return path, trust, pin, workspace, plan, binding
+
+
+def test_proof_agent_runs_real_approved_six_lane_packet(tmp_path):
+    from factoryline.runtime_audit import execute_proof_agent
+
+    path, trust, pin, workspace, plan, binding = _proof_agent_fixture(tmp_path)
+    result = execute_proof_agent(
+        path,
+        trust,
+        pin,
+        workspace,
+        D,
+        Path(".factory/runtime-audits"),
+        mission_binding_path=Path(binding["path"]),
+        mission_root=tmp_path,
+        owner="release-owner",
+        confirmation="RUN Proof Agent",
+    )
+    assert result["state"] == "PASS", result["proof_debt"]
+    assert result["valid"] and result["proof_debt"] == []
+    assert len(result["lanes"]) == 6 and {
+        lane["state"] for lane in result["lanes"]
+    } == {"PASS"}
+    assert result["authority"] == "none" and not result["release_approval"]
+    assert result["signature_status"] == "UNSIGNED"
+    receipt = json.loads((workspace / result["runtime_receipt"]["path"]).read_text())
+    assert receipt["receipt_sha256"] == result["runtime_receipt"]["sha256"]
+    assert result["mission_binding_sha256"] == binding["binding_sha256"]
+    assert result["receipt_sha256"] == sha256_bytes(
+        canonical_bytes({k: v for k, v in result.items() if k != "receipt_sha256"})
+    )
+
+
+@pytest.mark.parametrize("failure", ["target", "postflight"])
+def test_proof_agent_cli_preserves_real_failure_and_returns_nonzero(
+    tmp_path, capsys, monkeypatch, failure
+):
+    from factoryline.cli import main
+    import factoryline.runtime_audit as audit
+
+    path, trust, pin, workspace, _, binding = _proof_agent_fixture(
+        tmp_path, fail_target=True
+    )
+    if failure == "postflight":
+        validate = audit._proof_agent_receipt
+
+        def contradict_written_receipt(result, *args):
+            result["receipt"]["decision"] = "invented"
+            return validate(result, *args)
+
+        monkeypatch.setattr(audit, "_proof_agent_receipt", contradict_written_receipt)
+    code = main(
+        [
+            "agent",
+            "prove",
+            "--plan",
+            str(path),
+            "--trust-root",
+            str(trust),
+            "--trust-root-sha256",
+            pin,
+            "--environment-digest",
+            D,
+            "--root",
+            str(workspace),
+            "--mission-root",
+            str(tmp_path),
+            "--mission-binding",
+            binding["path"],
+            "--owner",
+            "release-owner",
+            "--confirmation",
+            "RUN Proof Agent",
+            "--json",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert code == 1 and result["state"] == "BLOCKED"
+    if failure == "postflight":
+        assert result == {
+            "schema": "factory.proof-agent.v1",
+            "state": "BLOCKED",
+            "valid": False,
+            "finding": "E_PROOF_RECEIPT_DRIFT",
+            "authority": "none",
+            "release_approval": False,
+        }
+        receipts = list(
+            workspace.glob(".factory/runtime-audits/run-*/runtime-audit-receipt.json")
+        )
+        assert len(receipts) == 1
+        retained = json.loads(receipts[0].read_text(encoding="utf-8"))
+        assert retained["decision"] == "BLOCKED" and retained["repair_queue"]
+        return
+    assert result.get("proof_debt") and not result["valid"], result
+    assert not result["release_approval"]
+    assert (workspace / result["runtime_receipt"]["path"]).is_file()
+
+
+def test_proof_agent_incomplete_retains_evidence_and_never_passes(
+    tmp_path, monkeypatch
+):
+    import factoryline.runtime_audit as audit
+
+    path, trust, pin, workspace, _, binding = _proof_agent_fixture(tmp_path)
+    original = audit.execute_runtime_audit
+
+    def missing_output(*args, **kwargs):
+        result = original(*args, **kwargs)
+        receipt = result["receipt"]
+        receipt["decision"] = "BLOCKED"
+        receipt["lanes"][0]["state"] = "INCOMPLETE"
+        receipt["lanes"][0]["finding"] = "RUNTIME_AUDIT_EXECUTION_MISSING"
+        receipt.pop("receipt_sha256")
+        receipt["receipt_sha256"] = sha256_bytes(canonical_bytes(receipt))
+        (workspace / result["receipt_path"]).write_text(json.dumps(receipt))
+        return result
+
+    monkeypatch.setattr(audit, "execute_runtime_audit", missing_output)
+    result = audit.execute_proof_agent(
+        path,
+        trust,
+        pin,
+        workspace,
+        D,
+        Path(".factory/runtime-audits"),
+        mission_binding_path=Path(binding["path"]),
+        mission_root=tmp_path,
+        owner="release-owner",
+        confirmation="RUN Proof Agent",
+    )
+    assert result["state"] == "INCOMPLETE" and not result["valid"]
+    assert result["lanes"][0]["finding"] == "RUNTIME_AUDIT_EXECUTION_MISSING"
+
+
+def test_execute_proof_agent_wall_includes_final_receipt_validation(
+    tmp_path, monkeypatch
+):
+    import time
+    import factoryline.runtime_audit as audit
+
+    path, trust, pin, workspace, plan, binding = _proof_agent_fixture(tmp_path)
+    clock = [100.0]
+    receipt = {
+        "decision": "READY_FOR_HUMAN_REVIEW",
+        "receipt_sha256": D,
+        "lanes": [{"lane": lane["kind"], "state": "PASS"} for lane in plan["lanes"]],
+        "repair_queue": [],
+    }
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        audit,
+        "execute_runtime_audit",
+        lambda *a, **kw: {
+            "receipt": receipt,
+            "receipt_path": ".factory/runtime-audits/unit/receipt.json",
+        },
+    )
+
+    def final_validation(*args):
+        clock[0] += binding["budgets"]["max_wall_seconds"] + 1
+        return receipt
+
+    monkeypatch.setattr(audit, "_proof_agent_receipt", final_validation)
+    result = audit.execute_proof_agent(
+        path,
+        trust,
+        pin,
+        workspace,
+        D,
+        Path(".factory/runtime-audits"),
+        mission_binding_path=Path(binding["path"]),
+        mission_root=tmp_path,
+        owner="release-owner",
+        confirmation="RUN Proof Agent",
+    )
+    assert result["state"] == "INCOMPLETE" and not result["valid"]
+    assert result["observed_wall_seconds"] == binding["budgets"]["max_wall_seconds"] + 1
+    assert not result["within_wall_budget"]
+
+
+@pytest.mark.parametrize("damage", ["persisted", "hash", "plan", "decision"])
+def test_proof_agent_receipt_rechecks_child_proof(tmp_path, damage):
+    from factoryline.runtime_audit import _proof_agent_receipt
+    from factoryline.runtime_audit_contract import LANES
+
+    receipt = {
+        "schema": "factory.runtime-audit-receipt.v1",
+        "candidate_sha256": D,
+        "plan_payload_sha256": D,
+        "decision": "READY_FOR_HUMAN_REVIEW",
+        "lanes": [{"id": lane, "lane": lane, "state": "PASS"} for lane in LANES],
+        "authority": "none",
+        "release_approval": False,
+    }
+    if damage == "plan":
+        receipt["plan_payload_sha256"] = "0" * 64
+    if damage == "decision":
+        receipt["lanes"][0]["state"] = "INCOMPLETE"
+    receipt["receipt_sha256"] = sha256_bytes(canonical_bytes(receipt))
+    if damage == "hash":
+        receipt["receipt_sha256"] = "0" * 64
+    (tmp_path / "receipt.json").write_text(json.dumps(receipt))
+    returned = json.loads(json.dumps(receipt))
+    if damage == "persisted":
+        returned["decision"] = "invented"
+    with pytest.raises(RuntimeAuditError):
+        _proof_agent_receipt(
+            {"receipt_path": "receipt.json", "receipt": returned},
+            {"payload_sha256": D, "plan": {"candidate_sha256": D}},
+            tmp_path,
+        )
+
+
+@pytest.mark.parametrize("damage", ["confirmation", "owner", "source"])
+def test_proof_agent_stops_before_dispatch_on_unapproved_or_stale_packet(
+    tmp_path, monkeypatch, damage
+):
+    import factoryline.runtime_audit as audit
+    from factoryline.product_missions import ProductMissionError
+
+    path, trust, pin, workspace, _, binding = _proof_agent_fixture(tmp_path)
+    monkeypatch.setattr(
+        audit,
+        "execute_runtime_audit",
+        lambda *a, **kw: pytest.fail("unadmitted execution"),
+    )
+    if damage == "source":
+        (workspace / "candidate.txt").write_text("changed")
+    with pytest.raises((RuntimeAuditError, ProductMissionError)):
+        audit.execute_proof_agent(
+            path,
+            trust,
+            pin,
+            workspace,
+            D,
+            Path(".factory/runtime-audits"),
+            mission_binding_path=Path(binding["path"]),
+            mission_root=tmp_path,
+            owner="other" if damage == "owner" else "release-owner",
+            confirmation="missing" if damage == "confirmation" else "RUN Proof Agent",
+        )
+
+
+@pytest.mark.parametrize(
+    "damage,code",
+    [
+        ("commands", "E_PROOF_COMMAND_SCOPE"),
+        ("sources", "E_PROOF_SCOPE"),
+        ("profile", "E_PROOF_PROFILE"),
+        ("policy", "E_PROOF_POLICY"),
+        ("budget", "E_PROOF_BUDGET"),
+    ],
+)
+def test_proof_agent_scope_requires_exact_commands_sources_and_budget(
+    tmp_path, damage, code
+):
+    import copy
+    from factoryline.runtime_audit import _proof_agent_scope
+
+    path, trust, pin, workspace, _, binding = _proof_agent_fixture(tmp_path)
+    verified = verify_runtime_audit_plan(
+        path, trust, pin, workspace, D, require_intake=True
+    )
+    binding = copy.deepcopy(binding)
+    if damage == "commands":
+        binding["declaration"]["commands"][0]["argv"] = ["unapproved"]
+    elif damage == "sources":
+        binding["files"][0]["sha256"] = "0" * 64
+    elif damage == "profile":
+        binding["declaration"]["profiles"] = ["unrelated"]
+    elif damage == "policy":
+        verified["execution_policy"]["non_mutating"] = False
+    else:
+        binding["budgets"]["max_wall_seconds"] = 1
+    with pytest.raises(RuntimeAuditError, match=code):
+        _proof_agent_scope(binding, verified, workspace.resolve())
+
+
 def test_signed_six_lane_run_rejects_wrong_scenario_and_persists_receipt(tmp_path):
     from factoryline.runtime_audit import execute_runtime_audit, runtime_audit_status
 

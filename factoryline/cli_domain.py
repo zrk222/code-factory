@@ -980,6 +980,7 @@ def _is_agent_verification(a) -> bool:
         "attestation",
         "route-audit",
         "card-audit",
+        "prove",
     }
 
 
