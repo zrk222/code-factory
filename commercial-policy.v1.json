@@ -1,0 +1,35 @@
+{
+  "schema": "factory.commercial.policy.v1",
+  "revision": "2026-11-21-approved-start",
+  "activation": false,
+  "prelaunch_free_until": "2027-01-01",
+  "pricing": {
+    "currency": "USD",
+    "seat_monthly": 12.95,
+    "effective_from": "2027-01-01",
+    "promotion_end": null
+  },
+  "allowances": {
+    "free_monthly_workflows": 5,
+    "paid_monthly_workflows": 100,
+    "repair_reruns_per_workflow": 2,
+    "repair_rerun_window_days": 7
+  },
+  "seat": {
+    "subject": "named_human",
+    "includes": ["agents", "devices"]
+  },
+  "never_charged": [
+    "read_results",
+    "export_receipts",
+    "rejected_starts",
+    "internal_tool_errors"
+  ],
+  "overage": "none_hard_stop",
+  "notes": [
+    "Approved by the project owner on 2026-11-21 as the starting commercial model.",
+    "activation=false: nothing is restricted, billed or metered by default.",
+    "Free until 2027-01-01; the allowance counts are approved starting policy, not usage-tested economics.",
+    "Unresolved and explicit: covered future versions, promotion duration, and third-party rights review. No retroactive license change is made or implied."
+  ]
+}
