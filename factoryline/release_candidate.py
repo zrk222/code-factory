@@ -434,13 +434,20 @@ def _require_cadence_exceptions_enabled(
             "release cadence policy must declare boolean exceptions_enabled"
         )
     version = identity["version"]
-    if version in {"0.49.6", "1.3.3", "1.3.4"}:
+    if version in {"0.49.6", "1.3.3", "1.3.4", "0.50.0", "1.3.6"}:
         request = value.get("owner_request_record")
-        expected_scope = [
-            "core 0.49.6",
-            "VS Code/Open VSX 1.3.3",
-            "JetBrains 1.3.4",
-        ]
+        expected_scope = {
+            True: [
+                "core 0.50.0",
+                "VS Code/Open VSX 1.3.6",
+                "JetBrains 1.3.6",
+            ],
+            False: [
+                "core 0.49.6",
+                "VS Code/Open VSX 1.3.3",
+                "JetBrains 1.3.4",
+            ],
+        }[version in {"0.50.0", "1.3.6"}]
         try:
             recorded_at = datetime.fromisoformat(
                 str(request.get("recorded_at", "")).replace("Z", "+00:00")
@@ -465,6 +472,10 @@ def _require_cadence_exceptions_enabled(
         return None
     opted_in = value.get("one_time_version_opt_in")
     approved = {
+        ("core", "0.50.0", "v0.50.0", "pypi"),
+        ("vscode", "1.3.6", "vscode-v1.3.6", "openvsx"),
+        ("vscode", "1.3.6", "vscode-v1.3.6", "vscode-marketplace"),
+        ("jetbrains", "1.3.6", "jetbrains-v1.3.6", "jetbrains-marketplace"),
         ("core", "0.48.2", "v0.48.2", "pypi"),
         ("core", "0.49.5", "v0.49.5", "pypi"),
         ("core", "0.49.6", "v0.49.6", "pypi"),
@@ -528,6 +539,10 @@ def _cadence_exception_payload(
         "requesting_actor": (contract or {}).get("approved_by"),
     }
     allowed = {
+        ("core", "0.50.0", "v0.50.0", "pypi"),
+        ("vscode", "1.3.6", "vscode-v1.3.6", "openvsx"),
+        ("vscode", "1.3.6", "vscode-v1.3.6", "vscode-marketplace"),
+        ("jetbrains", "1.3.6", "jetbrains-v1.3.6", "jetbrains-marketplace"),
         ("core", "0.48.1", "v0.48.1", "pypi"),
         ("core", "0.48.2", "v0.48.2", "pypi"),
         ("core", "0.49.5", "v0.49.5", "pypi"),
@@ -573,6 +588,10 @@ def _cadence_exception_payload(
         and identity["version"] == "1.1.4"
         and candidate_tag == "vscode-v1.1.4+build.1"
     ) or (channel, identity["version"], candidate_tag, value.get("environment")) in {
+        ("core", "0.50.0", "v0.50.0", "pypi"),
+        ("vscode", "1.3.6", "vscode-v1.3.6", "openvsx"),
+        ("vscode", "1.3.6", "vscode-v1.3.6", "vscode-marketplace"),
+        ("jetbrains", "1.3.6", "jetbrains-v1.3.6", "jetbrains-marketplace"),
         ("core", "0.48.2", "v0.48.2", "pypi"),
         ("core", "0.49.5", "v0.49.5", "pypi"),
         ("core", "0.49.6", "v0.49.6", "pypi"),
@@ -699,6 +718,9 @@ def _cadence_admission(
                 exception.get("candidate_tag"),
             )
             in {
+                ("core", "0.50.0", "v0.50.0"),
+                ("vscode", "1.3.6", "vscode-v1.3.6"),
+                ("jetbrains", "1.3.6", "jetbrains-v1.3.6"),
                 ("core", "0.48.2", "v0.48.2"),
                 ("core", "0.49.5", "v0.49.5"),
                 ("core", "0.49.6", "v0.49.6"),

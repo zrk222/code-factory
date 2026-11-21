@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.50.0 — 2026-11-21 (release candidate; publication gated)
+
+Your AI can propose a repair. Your team needs evidence before trusting it.
+This release makes Code Factory a broader, tool-friendly evidence layer for
+polyglot developers—not another agent that approves its own work.
+
+- **Expanded:** 30 native security rules across 12 declared languages, with
+  default and review tiers, native source-to-sink traces where observed, SARIF
+  normalization and 30 rule-removal challenges. Native workers require setup;
+  the local static quick scan remains Python-only.
+- **Measured:** the completed default-tier alert panel returned 54 TP / 6 FP /
+  0 unclear (90.0%; Wilson 95% 79.9–95.3%). It spans six observed languages,
+  uses AI labels and includes 15 shortfall fills. Review-tier precision,
+  twelve-language precision and general recall are not established.
+- **Added:** frozen versioned scan JSON, SARIF 2.1.0 and opt-in pre-commit;
+  byte-exact historical mutation diffs preserve CRLF, non-UTF-8 bytes and missing
+  final newlines. Existing CI and editors can consume evidence without a new
+  review ritual.
+- **Connected:** read-only signed-observation `verify_claim`, the eight-tool
+  Devin evidence profile/plugin and an owner-admitted bounded Proof Agent link
+  approved scope, actual checks and persisted receipts. A valid binding is not
+  code correctness, live provider acceptance or automatic merge authority.
+- **Hardened:** coordinator crash/stop controls, executable-bound proof reuse,
+  bounded generated-report capture, path/link-safe IDE receipt reads and
+  tenant-scoped hosted evidence replay/recovery controls.
+- **Fixed:** the combined SDK worker's eager import regression, strict
+  complexity failures and duplicate commercial implementation files. Existing
+  architecture caps remain unchanged; no measured scan-speed gain is claimed.
+- **Aligned:** core 0.50.0 and editor/Devin plugin 1.3.6. Marketplace upload,
+  moderation and publication are reported separately for each channel.
+
 ## 0.49.7 — 2026-11-17
 
 - Bind approved SpecLine intent, registered ForgeLine actions, and FactoryLine proof to one resumable local mission.

@@ -1,16 +1,25 @@
 # FactoryLine for VS Code
 
-## VS Code 1.3.5
+## VS Code 1.3.6
 
-Governance infrastructure for high-stakes agentic workloads.
-
-The VS Code and Open VSX packages share version 1.3.5 with the JetBrains
-plugin. This release pairs with Code Factory core 0.49.7, installed separately.
+The VS Code and Open VSX packages share version 1.3.6 with the JetBrains
+plugin. This release pairs with Code Factory core 0.50.0, installed separately.
 
 You have a change open and a review to finish. FactoryLine keeps local audit
 findings and receipts beside your VS Code workspace, so you can follow a finding
 back to its file, choose what to repair, and check the result before accepting it.
 Start with **FactoryLine: Run CF + ForgeLine Audits**.
+
+### What's new in 1.3.6
+
+- The separately installed runtime provides **30 native security rules across
+  12 languages** when the required workers and toolchains are configured;
+  this extension does not bundle analyzers.
+- Review source-bound claim verification and bounded Proof Agent evidence.
+  Optional SARIF and pre-commit outputs connect findings to existing workflows;
+  read-only mutation-diff inspection does not change the captured diff.
+- IDE receipt reads fail closed for stale, malformed, oversized, escaped, or
+  changing files. Junie is optional, and applying changes remains your choice.
 
 **Run First Proof** is a setup demonstration that checks the local
 CLI; it does not assess repository code. For a repository assessment, run
@@ -43,6 +52,14 @@ This documentation-only update does not change extension runtime behavior.
 5. **CLI and editors.** `factory home` prints a local invitation to star the repo. Editor releases are VS Code and Open VSX 1.3.3 and JetBrains 1.3.4.
 
 ### Precision and product walkthrough
+
+The completed default-tier panel measured **90% precision (54 TP / 6 FP /
+0 unclear; 60 alerts; Wilson 95% 79.9–95.3%)** in **six observed languages**.
+AI labels and 15 shortfall fills limit interpretation: this is not twelve-language
+precision, review-tier precision, recall or independent human validation.
+[Result and limits](https://github.com/zrk222/code-factory/pull/354).
+
+Historical, exposed replay (not the current ruleset's score):
 
 The exposed N443-38 replay measured **88.24% decided actionable precision**
 (30/34) versus 85.71% on the same observed cases. It returned 37 of 38 cases and
@@ -262,7 +279,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.3.5.vsix
+code --install-extension factoryline-vscode-1.3.6.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
