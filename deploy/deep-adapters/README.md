@@ -199,6 +199,41 @@ challenges, and source-bound SARIF normalization. Its 121 synthetic findings
 include 45 review-tier notes retained by the normalizer. Native control
 readiness and held-out panel precision are separate measurements.
 
+Polyglot readiness ([evidence](../../docs/evidence/polyglot-readiness-round7.json))
+was measured on the same ruleset with two pre-registered studies. Round 7
+sampled up to 14 fresh alerts per declared language at every tier (no
+shortfall fill; two independent review contexts, 96.8% raw agreement). Recall
+was measured on fixed GitHub-reviewed advisories and on real uses of the
+dangerous APIs the explicit-API rules target.
+
+| Language | Round 7 supported / decided (tier) | Alert pool | API-occurrence recall |
+|---|---|---:|---|
+| C | 7/8 (default) | 160 | 17/25 (all 17 libc `gets` calls) |
+| C++ | 8/8 (default) | 759 | 8/25 (all 8 libc `gets` calls) |
+| PHP | 10/11 default, 3/3 review | 1,175 | - |
+| Python | 7/7 default, 5/6 review | 228 | 4/25 `verify=False` |
+| JavaScript | 7/13 (review) | 96 | - |
+| TypeScript | 6/14 (review) | 43 | - |
+| C# | 4/4 (default), insufficient | 31 | - |
+| Go | 1/1 default, 2/2 review, insufficient | 5 | 7/25 `InsecureSkipVerify` |
+| Java | 1/1 (default), insufficient | 1 | - |
+| Rust | 0/2 (review), insufficient | 3 | 3/25 `danger_accept_invalid_certs` |
+| Ruby | no alerts found | 0 | 0/25 `VERIFY_NONE` |
+| Swift | no alerts found | 0 | 0/25 trust overrides |
+
+Default tier: 38 of 40 decided alerts supported, 95.0% (Wilson 83.5-98.6%),
+with 12 unclear `gets` cases in contest code. Review tier: 23 of 40, 57.5%
+(Wilson 42.2-71.5%). Six languages had fewer than five decided alerts, so they
+have native controls but no measured precision. Ruby and Swift produced no
+alerts from fresh repositories: their trust rules match one call shape each
+(`SSLContext.new.verify_mode =` and `SecTrustSetExceptions`). None of 161 fixed
+advisories in rule-scope CWEs (25 per ecosystem; 9 NuGet, 2 crates.io) was
+detected in its fix hunks or anywhere in its changed files (0%, Wilson 0-2.3%):
+the rules see request-to-sink flows inside one web handler, while published
+advisories are mostly library APIs whose input arrives as function parameters.
+This lane is a high-precision local web-handler and unsafe-API detector; it is
+not a vulnerability-recall claim.
+
 Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,
 `rules/tests/javascript-controls.js` to both `semgrep-pattern-limited.js` and
