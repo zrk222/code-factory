@@ -554,8 +554,11 @@ def test_coordinator_native_open_stdin_expires_and_releases_lease(tmp_path, part
 
 
 @pytest.mark.parametrize("phase", ["lease_only", "admitted"])
-def test_coordinator_native_restart_reconciles_expired_lease(tmp_path, phase):
-    """A fresh real coordinator reconciles an exited owner before refusing takeover."""
+@pytest.mark.parametrize("exit_mode", ["normal", "crash"])
+def test_coordinator_native_restart_reconciles_expired_lease(
+    tmp_path, phase, exit_mode
+):
+    """A fresh real coordinator reconciles normally exited or crashed owners."""
     import json
     import sys
     import time
@@ -568,16 +571,17 @@ def test_coordinator_native_restart_reconciles_expired_lease(tmp_path, phase):
         pytest.skip("native process identity unsupported")
     package = str(Path(module.__file__).resolve().parent.parent)
     nonce, request_id = "a" * 32, "e" * 32
-    bootstrap = r"""import io,json,sys,time
+    bootstrap = r"""import io,json,os,sys,time
 sys.path.insert(0,sys.argv[1])
 from factoryline.cli_deep_audit import _coordinator_owner,serve_deep_audit_coordinator
 from factoryline.agentic_control import AgenticControlError,CoordinatorRequestStore
 root,phase,mode=sys.argv[2:5]; nonce="a"*32; request_id="e"*32; request_sha="f"*64
 owner=_coordinator_owner(root,nonce); store=CoordinatorRequestStore(root)
-if mode=="write":
+if mode in {"write","crash_write"}:
  lease=store.acquire(owner,1,time.monotonic())
  if phase=="admitted": store.admit(nonce,request_id,request_sha,owner)
  print(json.dumps({"owner":owner,"expires_monotonic":lease["expires_monotonic"]}),flush=True)
+ if mode=="crash_write": os._exit(73)
 else:
  import factoryline.cli_deep_audit as cli
  import factoryline.assembly_process as assembly
@@ -605,10 +609,13 @@ else:
             started_observer=started,
         )
 
-    original = launch("write")
-    assert (
-        original["ok"] and original["cleanup_confirmed"] and original["streams_closed"]
-    )
+    original = launch("crash_write" if exit_mode == "crash" else "write")
+    assert original["cleanup_confirmed"] and original["streams_closed"]
+    if exit_mode == "crash":
+        assert original["exit_code"] == 73
+        assert not original["ok"]
+    else:
+        assert original["ok"]
     written = json.loads(original["stdout"].decode("utf-8"))
     old_owner = written["owner"]
     assert observed[-1]["pid"] == old_owner["pid"]
