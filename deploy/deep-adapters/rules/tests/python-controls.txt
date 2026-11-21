@@ -233,3 +233,23 @@ def shell_concatenated_variable_bad(branch):
 def shell_passthrough_wrapper_safe(command):
     # ok: python.subprocess-shell-true
     return subprocess.run(command, shell=True, capture_output=True)
+
+def tls_payload_mentions_passwd_safe(target):
+    payload = "/index.php?file=/etc/passwd"
+    pattern = "CheckPasswordResult"
+    # ok: python.disabled-tls-verification
+    return requests.get(target + payload, verify=False), pattern
+
+def tls_client_secret_bad(endpoint, client_id, client_secret):
+    data = {"client_id": client_id, "client_secret": client_secret}
+    # ruleid: python.disabled-tls-verification
+    return requests.post(endpoint, data=data, verify=False)
+
+def parser_table_cache_safe(path):
+    with open(path, "rb") as handle:
+        # ok: python.unsafe-deserialization
+        return pickle.load(handle)
+
+def request_pickle_bad():
+    # ruleid: python.unsafe-deserialization
+    return pickle.loads(base64.b64decode(request.form.get("data")))

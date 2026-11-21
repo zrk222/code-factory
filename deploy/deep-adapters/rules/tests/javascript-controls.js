@@ -141,3 +141,9 @@ function sqlHelperPlaceholdersSafe(req, db, service) {
   // ok: javascript.request-sql-injection
   db.query(statement.sql, statement.params);
 }
+
+function containedDownloadSafe(req, res, root) {
+  const rel = safeRelative(req.query.path, root);
+  // ok: javascript.request-path-traversal
+  return fs.createReadStream(path.join(root, rel));
+}

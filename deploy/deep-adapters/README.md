@@ -138,11 +138,16 @@ and findings still require checking the response content type. Shell-enabled
 `subprocess` calls are reported only when the command string is built from a
 non-literal operand (`%`, `.format`, f-strings or concatenation); whole-command
 request passthrough is reported by the request taint rule. Python `verify=False`
-and Go `InsecureSkipVerify` are reported as explicit unsafe-TLS candidates
-regardless of visible credentials; findings require contextual review and are
-not classified as benign based on function names or credential-word heuristics.
-Every rule skips tests, fixtures, exploit or CVE proof-of-concept
-corpora and generated code; PHP request rules treat integer casts as
+and Go `InsecureSkipVerify` are reported only where the call or enclosing
+function carries credentials or session material, so unauthenticated probes are
+not reported; credential evidence is matched as identifiers (token, secret,
+password, Authorization, cookie), not substrings such as `/etc/passwd`.
+`pickle.load` of a file the program opens itself is not reported, and named
+containment helpers (`safe*`, `sanitize*`, `*within*`) sanitize JavaScript path
+traversal. Every rule skips tests, fixtures, exploit or CVE proof-of-concept
+corpora, generated code, vendored dependencies (`node_modules`, `vendor`,
+`third_party`, `site-packages`, virtualenvs, bundled `Lib/` copies), minified
+files and editor `.history` copies; PHP request rules treat integer casts as
 sanitizers, and the JavaScript SQL rule does not assume helper return values
 carry request text. Copy `rules/tests/php-controls.php` to
 `semgrep-pattern-limited.php` and `rules/tests/go-controls.txt` to
