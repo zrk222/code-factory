@@ -321,6 +321,53 @@ def test_wsgi_routes_require_bearer_and_never_accept_tenant_headers(monkeypatch)
     ]
 
 
+def test_wsgi_queue_retry_header_is_opt_in_and_does_not_replace_webhook_authentication():
+    class QueueRetryStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.retry_modes = []
+
+        def ingest(self, tenant_id, event, *, allow_duplicate=False):
+            self.retry_modes.append(allow_duplicate)
+            result = super().ingest(tenant_id, event)
+            if allow_duplicate:
+                result["duplicate"] = True
+            return result
+
+    store = QueueRetryStore()
+    service, _private = _service(store)
+    app = create_hosted_app(service)
+    _secret, body, headers = _webhook()
+    wsgi_headers = {
+        "HTTP_" + key.upper().replace("-", "_"): value for key, value in headers.items()
+    }
+    wsgi_headers["HTTP_X_FACTORY_DELIVERY_MODE"] = "queue-retry"
+
+    status, accepted = _api_call(
+        app, "POST", "/v1/github/webhooks", body=body, headers=wsgi_headers
+    )
+
+    assert status == "202 Accepted"
+    assert store.retry_modes == [True]
+    assert accepted["duplicate"] is True
+    assert "HOSTED_INGRESS_DUPLICATE_ACCEPTED" in accepted["markers"]
+
+    invalid_signature = {
+        **wsgi_headers,
+        "HTTP_X_HUB_SIGNATURE_256": "sha256=" + "0" * 64,
+    }
+    status, denied = _api_call(
+        app,
+        "POST",
+        "/v1/github/webhooks",
+        body=body,
+        headers=invalid_signature,
+    )
+    assert status == "400 Bad Request"
+    assert denied["error"]["code"] == "E_WEBHOOK_SIGNATURE"
+    assert store.retry_modes == [True]
+
+
 def test_service_rejects_self_approval_and_dispatch_retains_classified_failure(
     monkeypatch,
 ):

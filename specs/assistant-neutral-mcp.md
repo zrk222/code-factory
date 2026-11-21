@@ -18,6 +18,9 @@ handoff instead. Neither path grants execution or release authority.
 - When a generic or named client packet is rendered, the system shall return `MCP_CLIENT_CONFIG_COPYABLE` with valid standard MCP command-and-arguments JSON or a copyable Codex command, never an applied configuration. [REQ-MCP-COPY]
 - When the requested client is not one of the supported renderers, the system shall reject the request with `MCP_CLIENT_REJECTED`. [REQ-MCP-CLIENT-REJECT]
 - When the requested workspace root does not resolve to an existing directory, the system shall reject the request with `MCP_ROOT_REJECTED`. [REQ-MCP-ROOT-REJECT]
+- When a test_sensitivity claim supplies a pinned v3 oracle with exactly one selected test and case plus current captured inputs, the system shall return `ATTESTED_ASSERTION_OBSERVATION` without executing tests, writing files, or granting approval. [REQ-MCP-TEST-CLAIM]
+- When selected oracle inputs differ from captured hashes or the selected case is absent, the system shall return `E_CLAIM_TEST_BINDING` and BLOCKED. [REQ-MCP-TEST-BINDING]
+- When a test_sensitivity claim supplies a legacy oracle without v3 assertion observations, the system shall return `E_CLAIM_ORACLE_VERSION` and INCOMPLETE. [REQ-MCP-TEST-VERSION]
 
 ## Acceptance scenarios
 
@@ -50,3 +53,6 @@ Scenario: A non-MCP assistant retains a safe handoff
 | 4 | `MCP_CLIENT_CONFIG_COPYABLE` | emit `MCP_CLIENT_CONFIG_COPYABLE` |
 | 5 | `MCP_CLIENT_REJECTED` | reject with `MCP_CLIENT_REJECTED` |
 | 6 | `MCP_ROOT_REJECTED` | reject with `MCP_ROOT_REJECTED` |
+| 7 | `ATTESTED_ASSERTION_OBSERVATION` | emit `ATTESTED_ASSERTION_OBSERVATION` |
+| 8 | `E_CLAIM_TEST_BINDING` | reject with `E_CLAIM_TEST_BINDING` |
+| 9 | `E_CLAIM_ORACLE_VERSION` | emit `E_CLAIM_ORACLE_VERSION` |

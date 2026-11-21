@@ -13,6 +13,7 @@ from .runtime_audit_common import (
     lane_result,
     guarded_lane_evaluator,
     read_stable_json,
+    require_digest,
     sha256_bytes,
 )
 from .runtime_audit_compatibility import evaluate_compatibility
@@ -585,6 +586,7 @@ def execute_runtime_audit(
     *,
     require_intake: bool = False,
     max_parallelism: int = 1,
+    expected_plan_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Verify, execute, reverify, evaluate, and persist one signed runtime assurance plan."""
     verification = verify_runtime_audit_plan(
@@ -595,6 +597,12 @@ def execute_runtime_audit(
         environment_digest,
         require_intake=require_intake,
     )
+    if expected_plan_sha256 is not None and verification[
+        "payload_sha256"
+    ] != require_digest(expected_plan_sha256, "expected_plan_sha256"):
+        raise RuntimeAuditError(
+            "E_PLAN_CHANGED", "plan differs from admitted preflight"
+        )
     execution = run_runtime_audit_plan(
         verification["plan"],
         workspace_root,
@@ -638,6 +646,219 @@ def execute_runtime_audit(
             Path(workspace_root).resolve()
         ).as_posix(),
     }
+
+
+def _proof_agent_scope(binding: dict, verification: dict, workspace: Path) -> None:
+    """Bind the existing mission packet to the exact signed commands and sources."""
+    plan = verification["plan"]
+    declaration = binding["declaration"]
+    if Path(binding["workspace"]).resolve() != workspace:
+        raise RuntimeAuditError("E_PROOF_SCOPE", "mission workspace differs")
+    expected = {item["path"]: item["sha256"] for item in plan["sources"]}
+    observed = {item["path"]: item["sha256"] for item in binding["files"]}
+    if expected != observed or any(
+        item["state"] != "existing" for item in binding["files"]
+    ):
+        raise RuntimeAuditError(
+            "E_PROOF_SCOPE", "mission sources differ from signed plan"
+        )
+    commands = {tuple(item["argv"]) for item in declaration["commands"]}
+    planned = {
+        tuple(lane[key])
+        for lane in plan["lanes"]
+        for key in ("target_argv", "known_bad_argv")
+    }
+    if commands != planned:
+        raise RuntimeAuditError(
+            "E_PROOF_COMMAND_SCOPE", "mission argv differ from signed plan"
+        )
+    if (
+        "factory.runtime-audit.v1" not in declaration["profiles"]
+        or not declaration["audit_lanes"]["runtime"]["applicable"]
+    ):
+        raise RuntimeAuditError(
+            "E_PROOF_PROFILE", "mission must explicitly admit runtime audit"
+        )
+    policy = verification["execution_policy"]
+    if not (policy["non_mutating"] and policy["resource_safe"]):
+        raise RuntimeAuditError(
+            "E_PROOF_POLICY", "signed non-mutating resource-safe policy required"
+        )
+    planned_seconds = 2 * sum(lane["timeout_seconds"] for lane in plan["lanes"])
+    if planned_seconds > binding["budgets"]["max_wall_seconds"]:
+        raise RuntimeAuditError(
+            "E_PROOF_BUDGET", "declared command time exceeds mission budget"
+        )
+
+
+def _commercial_admission(*, owner: str, binding: dict, verification: dict):
+    """Soft commercial admission for one proof run; inert unless explicitly enabled.
+
+    FACTORY_COMMERCIAL_MODE selects off (default, no files, no decisions),
+    shadow (record decisions, never refuse) or enforce (soft local allowance).
+    Admission happens after safety preflight and before dispatch; it can refuse
+    a start, but it never changes a proof result or interrupts a run, and the
+    human seat subject is the run's owner, never an agent identity.
+    """
+    from datetime import datetime, timezone
+    import hashlib
+
+    from . import __version__ as _package_version
+    from .enterprise_enforcement import (
+        CommercialAdmissionError,
+        CommercialGate,
+        commercial_mode,
+    )
+
+    if commercial_mode() == "off":
+        return None
+    gate = CommercialGate()
+    plan_sha = str(verification.get("payload_sha256", ""))
+    binding_sha = str(binding.get("binding_sha256", ""))
+    # Same approved packet + same mission binding retried in the same period
+    # replays under one reservation instead of double charging.
+    idempotency_key = hashlib.sha256(f"{plan_sha}|{binding_sha}".encode()).hexdigest()
+    try:
+        return gate.admit(
+            subject=owner,
+            workflow_id=f"proof-agent:{plan_sha[:16]}",
+            idempotency_key=idempotency_key,
+            binding={"plan_digest": plan_sha, "scope_digest": binding_sha},
+            version=_package_version,
+            now=datetime.now(timezone.utc),
+        )
+    except CommercialAdmissionError as exc:
+        raise RuntimeAuditError(exc.code, exc.message) from exc
+
+
+def _commercial_settle(admission, outcome: str) -> None:
+    """Settle an admission at the terminal result; never mid-run, never raising."""
+    if admission is None:
+        return
+    from datetime import datetime, timezone
+
+    from .enterprise_enforcement import CommercialGate
+
+    try:
+        gate = CommercialGate()
+        gate.settle(admission, outcome=outcome, now=datetime.now(timezone.utc))
+    except Exception:
+        pass
+
+
+def execute_proof_agent(
+    plan_path: Path,
+    trust_root_path: Path,
+    trust_root_sha256: str,
+    workspace_root: Path,
+    environment_digest: str,
+    output_root: Path,
+    *,
+    mission_binding_path: Path,
+    mission_root: Path,
+    owner: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    """Execute one approved packet's deterministic checks, never approve the result."""
+    from time import monotonic
+    from .product_missions import _mission_repair_snapshot
+
+    if confirmation != "RUN Proof Agent":
+        raise RuntimeAuditError(
+            "E_PROOF_CONFIRMATION", "explicit RUN Proof Agent confirmation required"
+        )
+    started = monotonic()
+    workspace = Path(workspace_root).resolve()
+    binding = _mission_repair_snapshot(mission_binding_path, mission_root, owner)
+    verification = verify_runtime_audit_plan(
+        plan_path,
+        trust_root_path,
+        trust_root_sha256,
+        workspace,
+        environment_digest,
+        require_intake=True,
+    )
+    _proof_agent_scope(binding, verification, workspace)
+    admission = _commercial_admission(
+        owner=owner, binding=binding, verification=verification
+    )
+    try:
+        result = execute_runtime_audit(
+            plan_path,
+            trust_root_path,
+            trust_root_sha256,
+            workspace,
+            environment_digest,
+            output_root,
+            require_intake=True,
+            expected_plan_sha256=verification["payload_sha256"],
+        )
+        post_binding = _mission_repair_snapshot(
+            mission_binding_path, mission_root, owner
+        )
+        if post_binding != binding:
+            raise RuntimeAuditError("E_PROOF_SCOPE", "mission changed during execution")
+        receipt = _proof_agent_receipt(result, verification, workspace)
+    except Exception:
+        _commercial_settle(admission, "tool_error")
+        raise
+    _commercial_settle(admission, "completed")
+    elapsed = monotonic() - started
+    complete = all(lane["state"] != "INCOMPLETE" for lane in receipt["lanes"])
+    within_budget = elapsed <= binding["budgets"]["max_wall_seconds"]
+    passed = (
+        receipt["decision"] == "READY_FOR_HUMAN_REVIEW" and complete and within_budget
+    )
+    state = (
+        "PASS" if passed else "BLOCKED" if complete and within_budget else "INCOMPLETE"
+    )
+    core = {
+        "schema": "factory.proof-agent.v1",
+        "state": state,
+        "valid": passed,
+        "mission_binding_sha256": binding["binding_sha256"],
+        "plan_payload_sha256": verification["payload_sha256"],
+        "candidate_sha256": verification["plan"]["candidate_sha256"],
+        "runtime_receipt": {
+            "path": result["receipt_path"],
+            "sha256": receipt["receipt_sha256"],
+        },
+        "proof_debt": receipt["repair_queue"],
+        "lanes": receipt["lanes"],
+        "observed_wall_seconds": elapsed,
+        "within_wall_budget": within_budget,
+        "authority": "none",
+        "release_approval": False,
+        "signature_status": "UNSIGNED",
+        "scope_limitation": "One supervised local six-business-lane audit and its known-bad controls, not full native six-family code analysis, test-function sensitivity, a sandbox, remote operator authentication or mission/release approval. Commands are human-declared; no model supplies a verdict. Per-command limits apply; observed aggregate wall overrun remains INCOMPLETE, not a universal hard real-time bound.",
+    }
+    return {**core, "receipt_sha256": sha256_bytes(canonical_bytes(core))}
+
+
+def _proof_agent_receipt(result: dict, verification: dict, workspace: Path) -> dict:
+    """Recheck the persisted child receipt, not just a returned ready flag."""
+    from .deep_audit_io import relative_path
+    from .runtime_audit_common import _bounded_file, parse_json_bytes
+
+    receipt = parse_json_bytes(
+        _bounded_file(Path(relative_path(result["receipt_path"])), root=workspace)
+    )
+    if receipt != result["receipt"]:
+        raise RuntimeAuditError(
+            "E_PROOF_RECEIPT_DRIFT", "persisted child receipt differs"
+        )
+    expected = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    if receipt.get("receipt_sha256") != sha256_bytes(canonical_bytes(expected)):
+        raise RuntimeAuditError("E_PROOF_RECEIPT_DRIFT", "child receipt hash differs")
+    if (
+        receipt.get("plan_payload_sha256") != verification["payload_sha256"]
+        or receipt.get("candidate_sha256") != verification["plan"]["candidate_sha256"]
+    ):
+        raise RuntimeAuditError(
+            "E_PROOF_RECEIPT_DRIFT", "child plan or candidate differs"
+        )
+    validate_receipt_decision(receipt)
+    return receipt
 
 
 def runtime_audit_status(root: Path | str) -> dict[str, Any]:

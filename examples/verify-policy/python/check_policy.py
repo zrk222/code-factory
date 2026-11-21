@@ -1,4 +1,5 @@
 """Example policy evaluator. Exit zero only for the intended release policy."""
+
 from __future__ import annotations
 
 import json
@@ -10,7 +11,10 @@ def main(policy_path: str) -> int:
     policy = json.loads(Path(policy_path).read_text(encoding="utf-8"))
     checks = {
         "release.require_ci": policy.get("release", {}).get("require_ci") is True,
-        "quality.require_hollow_tests": policy.get("quality", {}).get("require_hollow_tests") is True,
+        "quality.require_hollow_tests": policy.get("quality", {}).get(
+            "require_hollow_tests"
+        )
+        is True,
     }
     failed = [name for name, passed in checks.items() if not passed]
     if failed:

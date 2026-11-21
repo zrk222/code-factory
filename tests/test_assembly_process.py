@@ -887,3 +887,123 @@ def test_native_surviving_child_is_unconfirmed(tmp_path) -> None:
             os.kill(escaped_pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="native Linux identity only")
+def test_coordinator_linux_absence_proves_exit_and_keeps_live_process():
+    import subprocess
+
+    own = assembly_process._process_creation_identity(os.getpid())
+    assert assembly_process._process_identity_absent(os.getpid(), own) is False
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        identity = assembly_process._process_creation_identity(child.pid)
+        assert assembly_process._process_identity_absent(child.pid, identity) is False
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
+    assert assembly_process._process_identity_absent(child.pid, identity) is True
+
+
+def _linux_absence(monkeypatch, *, boot="b" * 8, stat=None):
+    monkeypatch.setattr(assembly_process.sys, "platform", "linux")
+
+    def read(path, limit):
+        if "boot_id" in str(path):
+            return boot
+        if stat is None:
+            raise FileNotFoundError(path)
+        if isinstance(stat, BaseException):
+            raise stat
+        return stat
+
+    monkeypatch.setattr(assembly_process, "_bounded_identity_text", read)
+
+
+@pytest.mark.parametrize(
+    "options,expected",
+    [
+        ({}, True),
+        ({"boot": "c" * 8, "stat": "42 (x) S " + "0 " * 18 + "7"}, True),
+        ({"stat": "42 (x) S " + "0 " * 18 + "8"}, True),
+        ({"stat": "42 (x) Z " + "0 " * 18 + "7"}, True),
+        ({"stat": "42 (x) S " + "0 " * 18 + "7"}, False),
+        ({"stat": "43 (x) S " + "0 " * 18 + "8"}, False),
+        ({"stat": "42 (x) S"}, False),
+        ({"stat": PermissionError("unreadable")}, False),
+    ],
+)
+def test_coordinator_linux_absence_is_proof_only(monkeypatch, options, expected):
+    _linux_absence(monkeypatch, **options)
+    recorded = "linux:" + "b" * 8 + ":42:7"
+    assert assembly_process._process_identity_absent(42, recorded) is expected
+
+
+@pytest.mark.parametrize(
+    "pid,creation",
+    [
+        (True, "linux:b:42:7"),
+        (0, "linux:b:0:7"),
+        (42, None),
+        (42, ""),
+        (42, "x" * 257),
+        (42, "linux:b:43:7"),
+        (42, "linux:b:42"),
+        (42, "linux:b:42:x"),
+        (42, "boot:123"),
+    ],
+)
+def test_coordinator_absence_rejects_unverifiable_records(monkeypatch, pid, creation):
+    _linux_absence(monkeypatch, boot="b")
+    assert assembly_process._process_identity_absent(pid, creation) is False
+
+
+def _absence_api(monkeypatch, *, opened=99, error=87, ticks=123, wait=258, got=True):
+    events = []
+
+    def get_times(handle, creation, *others):
+        events.append("times")
+        creation._obj.dwLowDateTime = ticks & 0xFFFFFFFF
+        creation._obj.dwHighDateTime = ticks >> 32
+        return got
+
+    api = SimpleNamespace(
+        OpenProcess=lambda access, inherit, pid: events.append("open") or opened,
+        WaitForSingleObject=lambda handle, timeout: events.append("wait") or wait,
+        GetProcessTimes=get_times,
+        CloseHandle=lambda handle: events.append("close") or True,
+    )
+    monkeypatch.setattr(assembly_process.os, "name", "nt")
+    monkeypatch.setattr(assembly_process, "_windows_identity_api", lambda: api)
+    monkeypatch.setattr(assembly_process, "_windows_last_error", lambda: error)
+    return events
+
+
+@pytest.mark.parametrize(
+    "options,expected,events",
+    [
+        ({"opened": 0, "error": 87}, True, ["open"]),
+        ({"opened": 0, "error": 5}, False, ["open"]),
+        ({"ticks": 124}, True, ["open", "times", "close"]),
+        ({"wait": 0}, True, ["open", "times", "wait", "close"]),
+        ({"wait": 258}, False, ["open", "times", "wait", "close"]),
+        ({"got": False}, False, ["open", "times", "close"]),
+    ],
+)
+def test_coordinator_windows_absence_is_proof_only(
+    monkeypatch, options, expected, events
+):
+    observed = _absence_api(monkeypatch, **options)
+    recorded = f"windows:42:{123:016x}"
+    assert assembly_process._process_identity_absent(42, recorded) is expected
+    assert observed == events
+
+
+def test_coordinator_windows_absence_close_failure_is_unproven(monkeypatch):
+    events = _absence_api(monkeypatch, ticks=124)
+    api = assembly_process._windows_identity_api()
+    api.CloseHandle = lambda handle: False
+    assert (
+        assembly_process._process_identity_absent(42, f"windows:42:{123:016x}") is False
+    )
+    assert events == ["open", "times"]

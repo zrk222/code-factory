@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any
 
-from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
+from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document_value
 from .runtime_audit_common import (
     RuntimeAuditError,
     canonical_bytes,
@@ -531,14 +531,12 @@ def verify_runtime_audit_plan(
     root = Path(workspace_root).resolve()
     trust_path = Path(trust_root_path).resolve()
     expected_trust = require_digest(trust_root_sha256, "trust_root_sha256")
-    _, trust_digest = read_stable_json(trust_path)
+    trust_root, trust_digest = read_stable_json(trust_path)
     if trust_digest != expected_trust:
         raise RuntimeAuditError(
             "E_TRUST_ROOT_DRIFT", "trust-root bytes do not match the operator pin"
         )
-    envelope, envelope_digest = read_stable_json(
-        Path(path), max_string_length=1_048_576
-    )
+    envelope, _ = read_stable_json(Path(path), max_string_length=1_048_576)
     try:
         encoded = envelope["payload"]
         raw_payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
@@ -546,21 +544,16 @@ def verify_runtime_audit_plan(
     except (KeyError, TypeError, ValueError) as exc:
         raise RuntimeAuditError("E_PAYLOAD", "invalid strict signed payload") from exc
     try:
-        verified = verify_signed_document(
-            Path(path),
+        verified = verify_signed_document_value(
+            envelope,
             payload_type=PLAN_TYPE,
             schema=PLAN_SCHEMA,
-            trust_root_path=trust_path,
+            trust_root=trust_root,
         )
     except (EnterpriseReceiptError, OSError) as exc:
         raise RuntimeAuditError(getattr(exc, "code", "E_SIGNATURE"), str(exc)) from exc
     plan = verified["payload"]
-    if (
-        plan != parsed_payload
-        or read_stable_json(trust_path)[1] != trust_digest
-        or read_stable_json(Path(path), max_string_length=1_048_576)[1]
-        != envelope_digest
-    ):
+    if plan != parsed_payload:
         raise RuntimeAuditError(
             "E_INPUT_CHANGED", "signed inputs changed while verifying"
         )

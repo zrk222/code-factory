@@ -34,7 +34,7 @@ def add_parser(sub: Any) -> None:
     mcp_config.add_argument("--root", default=".")
     mcp_config.add_argument(
         "--client",
-        choices=["generic", "cursor", "opencode", "codex", "junie", "copilot"],
+        choices=["generic", "cursor", "opencode", "codex", "junie", "copilot", "devin"],
         default="generic",
     )
     mcp_config.add_argument("--json", action="store_true")
@@ -55,6 +55,7 @@ def add_parser(sub: Any) -> None:
         "serve", help="serve newline-delimited JSON-RPC over stdio"
     )
     mcp_serve.add_argument("--root", default=".")
+    mcp_serve.add_argument("--profile", choices=["full", "devin"], default="full")
     mcp_http = mcp_sub.add_parser(
         "serve-http", help="serve stateless MCP Streamable HTTP on loopback only"
     )
@@ -539,7 +540,7 @@ def _run_mcp_http(args: Any) -> int:
 def _run_mcp_stdio(args: Any) -> int:
     from .mcp import serve_stdio
 
-    return serve_stdio(Path(args.root))
+    return serve_stdio(Path(args.root), profile=args.profile)
 
 
 def _run_junie(args: Any) -> int:

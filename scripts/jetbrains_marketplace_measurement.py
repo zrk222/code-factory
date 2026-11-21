@@ -39,7 +39,9 @@ def fetch_json(url: str) -> Any:
         return json.load(response)
 
 
-def build_measurement(baseline: dict[str, Any], plugin: dict[str, Any]) -> dict[str, Any]:
+def build_measurement(
+    baseline: dict[str, Any], plugin: dict[str, Any]
+) -> dict[str, Any]:
     current_downloads = plugin.get("downloads")
     if not isinstance(current_downloads, int) or current_downloads < 0:
         raise BaselineError("MARKETPLACE_DOWNLOADS_UNAVAILABLE")
@@ -61,7 +63,9 @@ def build_measurement(baseline: dict[str, Any], plugin: dict[str, Any]) -> dict[
             "has_unapproved_update": plugin.get("hasUnapprovedUpdate") is True,
         },
         "download_delta": delta,
-        "download_delta_state": "observed" if delta >= 0 else "source_regression_review_required",
+        "download_delta_state": "observed"
+        if delta >= 0
+        else "source_regression_review_required",
         "conversion_rate": None,
         "conversion_rate_state": "unavailable_without_marketplace_impressions_or_page_views",
         "causal_uplift": None,
@@ -84,8 +88,15 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("docs/JETBRAINS_MARKETPLACE_MEASUREMENT.json"),
         help="JSON baseline captured from the public Marketplace API.",
     )
-    parser.add_argument("--plugin-id", type=int, default=None, help="Must match the baseline plugin ID when supplied.")
-    parser.add_argument("--json", action="store_true", help="Emit a machine-readable measurement.")
+    parser.add_argument(
+        "--plugin-id",
+        type=int,
+        default=None,
+        help="Must match the baseline plugin ID when supplied.",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit a machine-readable measurement."
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -95,21 +106,35 @@ def main(argv: list[str] | None = None) -> int:
             raise BaselineError("BASELINE_PLUGIN_ID_MISMATCH")
         plugin = fetch_json(f"https://plugins.jetbrains.com/api/plugins/{plugin_id}")
         measurement = build_measurement(baseline, plugin)
-    except (BaselineError, OSError, URLError, ValueError, json.JSONDecodeError) as error:
+    except (
+        BaselineError,
+        OSError,
+        URLError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
         result = {
             "schema": MEASUREMENT_SCHEMA,
             "measurable": False,
             "marker": "MARKETPLACE_MEASUREMENT_UNAVAILABLE",
             "reason": str(error),
         }
-        print(json.dumps(result, sort_keys=True) if args.json else f"{result['marker']}: {result['reason']}")
+        print(
+            json.dumps(result, sort_keys=True)
+            if args.json
+            else f"{result['marker']}: {result['reason']}"
+        )
         return 2
 
-    print(json.dumps(measurement, sort_keys=True) if args.json else (
-        f"Observed download delta: {measurement['download_delta']} "
-        f"(baseline {measurement['baseline']['downloads']} -> current {measurement['current']['downloads']}). "
-        "Conversion and causal uplift are unavailable without Marketplace analytics."
-    ))
+    print(
+        json.dumps(measurement, sort_keys=True)
+        if args.json
+        else (
+            f"Observed download delta: {measurement['download_delta']} "
+            f"(baseline {measurement['baseline']['downloads']} -> current {measurement['current']['downloads']}). "
+            "Conversion and causal uplift are unavailable without Marketplace analytics."
+        )
+    )
     return 0
 
 

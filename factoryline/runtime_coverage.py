@@ -29,7 +29,7 @@ LOCAL_COVERAGE_COMMAND = (
     "--cov-report=xml:.factory/test-reports/coverage.xml"
 )
 CI_COVERAGE_COMMAND = (
-    "python -m pytest -p pytest_asyncio.plugin -p xdist.plugin -q -n 2 -p pytest_cov.plugin "
+    "python -m pytest -p pytest_asyncio.plugin -p xdist.plugin -q -n 3 -p pytest_cov.plugin "
     "--junitxml=.factory/test-reports/pytest.xml --durations=20 "
     "--cov=factoryline --cov-branch "
     "--cov-report=json:.factory/test-reports/coverage.json "

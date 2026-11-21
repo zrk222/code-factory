@@ -22,11 +22,14 @@ from pathlib import Path
 import platform
 import re
 import sys
-import tempfile
 from typing import Any, Iterable
 
 from . import __version__
-from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
+from .enterprise_receipts import (
+    EnterpriseReceiptError,
+    verify_signed_document,
+    verify_signed_document_value,
+)
 from .runtime_audit_common import (
     RuntimeAuditError,
     canonical_bytes,
@@ -1453,22 +1456,16 @@ def _verify_oracle_envelope(
     key = key_matches[0]
     if key.get("revoked") or key.get("revoked_at"):
         _oracle_fail("E_ORACLE_KEY", "signer key is revoked")
-    with tempfile.TemporaryDirectory(prefix="factory-test-oracle-") as temporary:
-        snapshot = Path(temporary)
-        receipt_snapshot = snapshot / "receipt.json"
-        trust_snapshot = snapshot / "trust-root.json"
-        receipt_snapshot.write_bytes(receipt_bytes)
-        trust_snapshot.write_bytes(trust_bytes)
-        try:
-            verified = verify_signed_document(
-                receipt_snapshot,
-                payload_type=payload_type,
-                schema=expected_schema,
-                trust_root_path=trust_snapshot,
-                required_key_role="oracle-verifier",
-            )
-        except EnterpriseReceiptError as exc:
-            raise RuntimeAttestationError(exc.code, exc.message) from exc
+    try:
+        verified = verify_signed_document_value(
+            envelope,
+            payload_type=payload_type,
+            schema=expected_schema,
+            trust_root=trust,
+            required_key_role="oracle-verifier",
+        )
+    except EnterpriseReceiptError as exc:
+        raise RuntimeAttestationError(exc.code, exc.message) from exc
     if verified["payload"] != payload:
         _oracle_fail(
             "E_ORACLE_JSON", "verified payload differs from strict JSON snapshot"
@@ -1490,6 +1487,47 @@ def verify_signed_test_oracles(
         receipt_path, trust_path = Path(path), Path(trust_root_path)
         receipt_bytes = _oracle_read(receipt_path, "receipt")
         trust_bytes = _oracle_read(trust_path, "trust root")
+        result = verify_signed_test_oracles_value(
+            receipt_bytes,
+            trust_bytes,
+            trust_root_sha256=trust_root_sha256,
+            source_manifest_sha256=source_manifest_sha256,
+            environment_sha256=environment_sha256,
+            now=now,
+        )
+        if (
+            _oracle_read(receipt_path, "receipt") != receipt_bytes
+            or _oracle_read(trust_path, "trust root") != trust_bytes
+        ):
+            _oracle_fail(
+                "E_ORACLE_DRIFT", "receipt or trust root changed during verification"
+            )
+        return result
+    except RuntimeAttestationError:
+        raise
+    except (RuntimeAuditError, OSError, TypeError, ValueError, KeyError) as exc:
+        code = getattr(exc, "code", "E_ORACLE_INVALID")
+        message = getattr(exc, "message", "invalid test-oracle attestation")
+        raise RuntimeAttestationError(code, message) from exc
+
+
+def verify_signed_test_oracles_value(
+    receipt_bytes: bytes,
+    trust_bytes: bytes,
+    *,
+    trust_root_sha256: str,
+    source_manifest_sha256: str,
+    environment_sha256: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Verify bounded immutable oracle receipt and trust-root snapshots."""
+    try:
+        if not isinstance(receipt_bytes, bytes) or not isinstance(trust_bytes, bytes):
+            _oracle_fail("E_ORACLE_JSON", "receipt and trust root must be bytes")
+        if len(receipt_bytes) > MAX_TEST_ORACLE_BYTES:
+            _oracle_fail("E_ORACLE_SIZE", "receipt exceeds the 1 MiB limit")
+        if len(trust_bytes) > MAX_TEST_ORACLE_BYTES:
+            _oracle_fail("E_ORACLE_SIZE", "trust root exceeds the 1 MiB limit")
         trust_pin = require_digest(trust_root_sha256, "trust_root_sha256")
         if sha256_bytes(trust_bytes) != trust_pin:
             _oracle_fail("E_TRUST_ROOT_PIN", "trust root differs from operator pin")
@@ -1504,21 +1542,12 @@ def verify_signed_test_oracles(
             environment_sha256=expected_environment,
             now=now,
         )
-        if (
-            _oracle_read(receipt_path, "receipt") != receipt_bytes
-            or _oracle_read(trust_path, "trust root") != trust_bytes
-        ):
-            _oracle_fail(
-                "E_ORACLE_DRIFT", "receipt or trust root changed during verification"
-            )
         return {
-            "schema": (
-                TEST_ORACLE_VERIFICATION_SCHEMA_V3
-                if normalized["schema"] == TEST_ORACLE_SCHEMA_V3
-                else TEST_ORACLE_VERIFICATION_SCHEMA_V2
-                if normalized["schema"] == TEST_ORACLE_SCHEMA_V2
-                else TEST_ORACLE_VERIFICATION_SCHEMA
-            ),
+            "schema": {
+                TEST_ORACLE_SCHEMA: TEST_ORACLE_VERIFICATION_SCHEMA,
+                TEST_ORACLE_SCHEMA_V2: TEST_ORACLE_VERIFICATION_SCHEMA_V2,
+                TEST_ORACLE_SCHEMA_V3: TEST_ORACLE_VERIFICATION_SCHEMA_V3,
+            }[normalized["schema"]],
             "state": "VERIFIED",
             "payload_sha256": verified["payload_sha256"],
             "receipt_sha256": sha256_bytes(receipt_bytes),
@@ -1544,7 +1573,13 @@ def verify_signed_test_oracles(
         }
     except RuntimeAttestationError:
         raise
-    except (RuntimeAuditError, OSError, TypeError, ValueError, KeyError) as exc:
+    except (
+        RuntimeAuditError,
+        EnterpriseReceiptError,
+        TypeError,
+        ValueError,
+        KeyError,
+    ) as exc:
         code = getattr(exc, "code", "E_ORACLE_INVALID")
         message = getattr(exc, "message", "invalid test-oracle attestation")
         raise RuntimeAttestationError(code, message) from exc

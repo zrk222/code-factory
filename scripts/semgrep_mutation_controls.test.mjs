@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findingKeys, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix,
-  javascriptControlManifest, verifyJavascriptControlMatrix, tsxQualificationSuffix } from './semgrep_mutation_controls.mjs';
+import { findingKeys, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyFindingCountMatrix,
+  fixedReviewedFindingCounts, javascriptControlManifest, verifyJavascriptControlMatrix,
+  tsxQualificationSuffix } from './semgrep_mutation_controls.mjs';
 import { readFileSync } from 'node:fs';
 
 const finding = (ruleId, line = 1) => ({ ruleId, locations: [{ physicalLocation: {
@@ -73,20 +74,38 @@ for (const [name, mutate] of [
 test('registered matrix cannot lose alias, safe or provider controls with its expectations', () => {
   const rules = ['go', 'java', 'csharp', 'ruby'].flatMap(language =>
     ['command', 'sql'].map(family => `opt.factory.rules.${language}.request-${family}-injection`));
-  const manifest = rules.flatMap(rule => [{ rule, source_line: 2 }, { rule, source_line: 4 }]);
   const safe = Object.fromEntries(rules.map(rule => [rule, 3]));
-  const all = [...rules, ...Array.from({ length: 22 }, (_, i) => `other-${i}`)];
-  while (manifest.length < 106) manifest.push({ rule: all[8] });
+  const all = Object.keys(fixedReviewedFindingCounts);
+  const manifest = Object.entries(fixedReviewedFindingCounts).flatMap(([rule, count]) =>
+    Array.from({ length: count }, (_, index) => ({ rule,
+      ...((rules.includes(rule) && index < 2) ? { source_line: index + 2 } : {}),
+    })));
   assert.doesNotThrow(() => verifyFlowControlMatrix(manifest, safe, all));
+  assert.doesNotThrow(() => verifyFindingCountMatrix(manifest, all));
   assert.throws(() => verifyFlowControlMatrix(manifest.slice(1), safe, all));
   assert.throws(() => verifyFlowControlMatrix(manifest, { ...safe, [rules[0]]: 2 }, all));
   assert.throws(() => verifyFlowControlMatrix([{ rule: all[8] }, ...manifest.slice(1)], safe, all));
+  const pythonPath = 'opt.factory.rules.python.request-path-traversal';
+  const phpPath = 'opt.factory.rules.php.request-path-traversal';
+  const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
+  const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
+  balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
+  assert.equal(balancedReplacement.length, 121);
+  assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 30);
+  assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
+  assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
 });
 
 test('fixed TSX qualification rejects omitted, substituted and wrong-language controls', () => {
   const manifest = javascriptControlManifest();
   assert.doesNotThrow(() => verifyJavascriptControlMatrix(manifest));
-  assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 9);
+  assert.equal(manifest.filter(item => item.path.endsWith('.js')).length, 10);
+  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 10);
+  assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 12);
+  assert.deepEqual(manifest.filter(item => item.path.endsWith('.tsx')).slice(-2).map(item =>
+    [item.source_line, item.line]), [[159, 162], [163, 165]]);
+  assert.deepEqual(manifest.filter(item => item.path.endsWith('.js')).slice(-3).map(item =>
+    [item.source_line, item.line]), [[106, 106], [110, 112], [116, 118]]);
   assert.throws(() => verifyJavascriptControlMatrix(manifest.filter(item => !item.path.endsWith('.tsx'))));
   assert.throws(() => verifyJavascriptControlMatrix(manifest.map(item => ({ ...item,
     path: item.path.replace('.tsx', '.ts') }))));
@@ -101,8 +120,8 @@ test('reviewed TSX endpoints bind actual JSX, Unicode, imported aliases and rebo
     assert.match(lines[expected.line - 2], /ruleid: javascript\.request-/);
   }
   assert.match(source, /return <section title="é漢字">\{value\}<\/section>/);
-  assert.match(lines[108], /processAlias\.exec\(alias\)/);
-  assert.match(lines[111], /fileAlias\.readFileSync\(path\)/);
+  assert.match(lines[161], /processAlias\.exec\(alias\)/);
+  assert.match(lines[164], /fileAlias\.readFileSync\(path\)/);
   assert.match(source, /safe = "echo fixed"/);
   assert.match(source, /function shadowed\(processAlias, req\)/);
 });

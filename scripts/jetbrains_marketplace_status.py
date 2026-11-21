@@ -11,14 +11,20 @@ from urllib.request import urlopen
 SCHEMA = "factory.jetbrains-marketplace-status.v1"
 
 
-def _find_expected(updates: list[dict[str, Any]], expected_version: str | None) -> dict[str, Any] | None:
+def _find_expected(
+    updates: list[dict[str, Any]], expected_version: str | None
+) -> dict[str, Any] | None:
     if expected_version is None:
         return None
-    return next((item for item in updates if item.get("version") == expected_version), None)
+    return next(
+        (item for item in updates if item.get("version") == expected_version), None
+    )
 
 
 def _approved_and_listed(update: dict[str, Any] | None) -> bool:
-    return bool(update and update.get("approve") is True and update.get("listed") is True)
+    return bool(
+        update and update.get("approve") is True and update.get("listed") is True
+    )
 
 
 def _value(item: dict[str, Any] | None, key: str) -> Any:
@@ -26,19 +32,36 @@ def _value(item: dict[str, Any] | None, key: str) -> Any:
 
 
 def _marker_reason(
-    pending_metadata: bool, expected_version: str | None, expected: dict[str, Any] | None
+    pending_metadata: bool,
+    expected_version: str | None,
+    expected: dict[str, Any] | None,
 ) -> tuple[str, str]:
     if pending_metadata:
-        return "MARKETPLACE_UPDATE_PENDING", "plugin metadata is pending Marketplace approval"
+        return (
+            "MARKETPLACE_UPDATE_PENDING",
+            "plugin metadata is pending Marketplace approval",
+        )
     if expected_version and expected is None:
-        return "MARKETPLACE_VERSION_MISSING", f"expected version {expected_version} is not present"
+        return (
+            "MARKETPLACE_VERSION_MISSING",
+            f"expected version {expected_version} is not present",
+        )
     if expected_version and not _approved_and_listed(expected):
-        return "MARKETPLACE_VERSION_PENDING", f"expected version {expected_version} is not approved and listed"
-    return "MARKETPLACE_UPDATE_CLEAR", "plugin metadata and expected version are approved"
+        return (
+            "MARKETPLACE_VERSION_PENDING",
+            f"expected version {expected_version} is not approved and listed",
+        )
+    return (
+        "MARKETPLACE_UPDATE_CLEAR",
+        "plugin metadata and expected version are approved",
+    )
 
 
 def classify_status(
-    plugin: dict[str, Any], updates: list[dict[str, Any]], *, expected_version: str | None = None
+    plugin: dict[str, Any],
+    updates: list[dict[str, Any]],
+    *,
+    expected_version: str | None = None,
 ) -> dict[str, Any]:
     latest = next(iter(updates), None)
     pending_binary_update = plugin.get("hasUnapprovedUpdate") is True
@@ -79,7 +102,9 @@ def fetch_json(url: str) -> Any:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check public JetBrains Marketplace approval state.")
+    parser = argparse.ArgumentParser(
+        description="Check public JetBrains Marketplace approval state."
+    )
     parser.add_argument("--plugin-id", type=int, default=33009)
     parser.add_argument("--expected-version")
     parser.add_argument("--require-clear", action="store_true")
@@ -88,15 +113,34 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        plugin = fetch_json(f"https://plugins.jetbrains.com/api/plugins/{args.plugin_id}")
-        updates = fetch_json(f"https://plugins.jetbrains.com/api/plugins/{args.plugin_id}/updates?size=100")
-        result = classify_status(plugin, updates, expected_version=args.expected_version)
+        plugin = fetch_json(
+            f"https://plugins.jetbrains.com/api/plugins/{args.plugin_id}"
+        )
+        updates = fetch_json(
+            f"https://plugins.jetbrains.com/api/plugins/{args.plugin_id}/updates?size=100"
+        )
+        result = classify_status(
+            plugin, updates, expected_version=args.expected_version
+        )
     except (OSError, URLError, ValueError, json.JSONDecodeError) as error:
-        result = {"schema": SCHEMA, "clear": False, "marker": "MARKETPLACE_STATUS_UNAVAILABLE", "reason": str(error)}
-        print(json.dumps(result, sort_keys=True) if args.json else f"{result['marker']}: {result['reason']}")
+        result = {
+            "schema": SCHEMA,
+            "clear": False,
+            "marker": "MARKETPLACE_STATUS_UNAVAILABLE",
+            "reason": str(error),
+        }
+        print(
+            json.dumps(result, sort_keys=True)
+            if args.json
+            else f"{result['marker']}: {result['reason']}"
+        )
         return 2
 
-    print(json.dumps(result, sort_keys=True) if args.json else f"{result['marker']}: {result['reason']}")
+    print(
+        json.dumps(result, sort_keys=True)
+        if args.json
+        else f"{result['marker']}: {result['reason']}"
+    )
     if args.require_clear and not result["clear"]:
         return 3
     if args.require_upload_slot and not result["upload_slot_clear"]:

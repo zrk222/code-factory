@@ -5,6 +5,7 @@ human-facing marker.  This keeps a written-but-failed receipt from entering a
 Marketplace candidate and bounds parsing so a malformed artifact cannot
 consume unbounded runner memory.
 """
+
 from __future__ import annotations
 
 import json

@@ -100,3 +100,56 @@ function streamPathBad(req) {
   // ruleid: javascript.request-path-traversal
   return fs.createReadStream(value);
 }
+
+function htmlTemplateBad(req, res) {
+  // ruleid: javascript.request-html-injection
+  res.send(`API Running...${req.query.content}`);
+}
+
+function htmlDirectBad(req, res) {
+  const value = req.query.name;
+  // ruleid: javascript.request-html-injection
+  res.send(value);
+}
+
+function htmlBuiltVariableBad(req, res) {
+  const page = "<p>" + req.params.id + "</p>";
+  // ruleid: javascript.request-html-injection
+  res.send(page);
+}
+
+function jsonObjectSafe(req, res) {
+  const update = lookupUpdate(req.query);
+  // ok: javascript.request-html-injection
+  res.send(update);
+}
+
+function binaryMediaSafe(req, res) {
+  const video = renderPreview(req.query.id);
+  res.set("Content-Type", "video/mp4");
+  // ok: javascript.request-html-injection
+  res.send(video);
+}
+
+function queuedObjectSafe(req, res, queue) {
+  // ok: javascript.request-html-injection
+  res.send(queue[JSON.stringify(req.query)]);
+}
+
+function sqlHelperPlaceholdersSafe(req, db, service) {
+  const statement = service.listCommits(req.query.start, req.query.end);
+  // ok: javascript.request-sql-injection
+  db.query(statement.sql, statement.params);
+}
+
+function containedDownloadSafe(req, res, root) {
+  const rel = safeRelative(req.query.path, root);
+  // ok: javascript.request-path-traversal
+  return fs.createReadStream(path.join(root, rel));
+}
+
+async function storedDocumentSafe(req, res, Document) {
+  const record = await Document.findById(req.params.id);
+  // ok: javascript.request-path-traversal
+  return fs.readFileSync(path.resolve(record.filePath), "utf-8");
+}

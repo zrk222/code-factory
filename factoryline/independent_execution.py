@@ -13,7 +13,11 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
-from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
+from .enterprise_receipts import (
+    EnterpriseReceiptError,
+    verify_signed_document,
+    verify_signed_document_value,
+)
 from .runtime_audit_common import (
     canonical_bytes,
     exact_keys,
@@ -355,6 +359,28 @@ def verify_signed_execution_attestation(
         )
     except EnterpriseReceiptError as exc:
         raise ExecutionAttestationError(exc.code, exc.message) from exc
+    return _execution_verification(
+        verified,
+        candidate_sha256=candidate_sha256,
+        plan_sha256=plan_sha256,
+        now=now,
+        seen_nonces=seen_nonces,
+        revoked_keyids=revoked_keyids,
+        revoked_identities=revoked_identities,
+    )
+
+
+def _execution_verification(
+    verified: dict,
+    *,
+    candidate_sha256: str | None,
+    plan_sha256: str | None,
+    now: datetime | None = None,
+    seen_nonces: Iterable[str] = (),
+    revoked_keyids: Iterable[str] = (),
+    revoked_identities: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Apply the same observation and revocation checks to one verified snapshot."""
     signature = verified["signature"]
     if signature.get("keyid") in set(revoked_keyids) or signature.get(
         "identity"
@@ -382,4 +408,199 @@ def verify_signed_execution_attestation(
         "assurance_level": payload["assurance_level"],
         "authority": "none",
         "release_approval": False,
+    }
+
+
+def _claim_bytes(root: Path, path: object, digest: object) -> bytes:
+    from .deep_audit_io import relative_path
+    from .runtime_audit_common import RuntimeAuditError, _bounded_file
+
+    expected = require_digest(digest, "evidence SHA-256")
+    raw = _bounded_file(Path(relative_path(path)), root=root)
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise RuntimeAuditError("E_CLAIM_EVIDENCE_DRIFT", "evidence hash mismatch")
+    return raw
+
+
+def _claim_document(root: Path, path: object, digest: object) -> dict:
+    from .deep_audit_io import strict_json
+
+    return strict_json(_claim_bytes(root, path, digest))
+
+
+def _claim_test_inputs(workspace: Path, row: dict) -> None:
+    """Check only the captured test, baseline origins and configuration inputs."""
+    from .runtime_audit_common import RuntimeAuditError
+
+    inputs = [(row["path"], row["test_sha256"])]
+    mutation = row["mutation"]
+    inputs.append((mutation["source_path"], mutation["source_sha256"]))
+    inputs.extend(
+        (item["source_path"], item["source_sha256"])
+        for item in row["baseline"]["module_origins"]
+    )
+    for run in ("baseline", "mutation"):
+        inputs.extend(
+            (item["path"], item["sha256"])
+            for item in row[run]["collection_catalog"]["config_manifest"]
+        )
+    for path, digest in set(inputs):
+        try:
+            _claim_bytes(workspace, path, digest)
+        except RuntimeAuditError as exc:
+            if exc.code != "E_CLAIM_EVIDENCE_DRIFT":
+                raise
+            raise ExecutionAttestationError(
+                "E_CLAIM_TEST_BINDING", "captured input differs from the workspace"
+            ) from exc
+
+
+def _claim_test_sensitivity(root: Path | str, request: dict, result: dict) -> dict:
+    from .runtime_attestation import (
+        TEST_ORACLE_VERIFICATION_SCHEMA_V3,
+        verify_signed_test_oracles_value,
+    )
+
+    _exact(
+        request,
+        {
+            "claim_type",
+            "attestation_path",
+            "attestation_sha256",
+            "trust_root_path",
+            "trust_root_sha256",
+            "source_manifest_sha256",
+            "environment_sha256",
+            "test_path",
+            "test_symbol",
+            "case_id",
+        },
+        "E_CLAIM_SCHEMA",
+    )
+    workspace = Path(root).resolve(strict=True)
+    verified = verify_signed_test_oracles_value(
+        _claim_bytes(
+            workspace, request["attestation_path"], request["attestation_sha256"]
+        ),
+        _claim_bytes(
+            workspace, request["trust_root_path"], request["trust_root_sha256"]
+        ),
+        trust_root_sha256=request["trust_root_sha256"],
+        source_manifest_sha256=request["source_manifest_sha256"],
+        environment_sha256=request["environment_sha256"],
+    )
+    if verified["schema"] != TEST_ORACLE_VERIFICATION_SCHEMA_V3:
+        return {**result, "state": "INCOMPLETE", "finding": "E_CLAIM_ORACLE_VERSION"}
+    rows = [
+        row
+        for row in verified["tests"]
+        if (row["path"], row["symbol"])
+        == (request["test_path"], request["test_symbol"])
+        and request["case_id"] in row["baseline"]["case_ids"]
+        and request["case_id"] in row["mutation"]["case_ids"]
+    ]
+    if len(rows) != 1:
+        raise ExecutionAttestationError(
+            "E_CLAIM_TEST_BINDING", "selected test/case unmatched"
+        )
+    row = rows[0]
+    _claim_test_inputs(workspace, row)
+    return {
+        **result,
+        "state": "PASS",
+        "verified_predicate": "ATTESTED_ASSERTION_OBSERVATION",
+        "test_sensitivity": "ATTESTED_ASSERTION_OBSERVATION",
+        "workspace_currentness": "SELECTED_CAPTURED_INPUTS_VERIFIED",
+        "evidence_sha256": request["attestation_sha256"],
+        "trust_root_sha256": request["trust_root_sha256"],
+        "source_manifest_sha256": verified["source_manifest_sha256"],
+        "environment_sha256": verified["environment_sha256"],
+        "test": {
+            "path": row["path"],
+            "symbol": row["symbol"],
+            "line": row["line"],
+            "case_id": request["case_id"],
+            "test_sha256": row["test_sha256"],
+        },
+        "claim_boundary": "Pinned oracle-verifier's v3 collection/origin/assertion observations with selected captured inputs current at read time. Not independent replay, universal test quality, complete workspace freshness, code correctness, or release approval.",
+        "verification": {
+            "signature": verified["signature"],
+            "claim_boundary": verified["claim_boundary"],
+        },
+    }
+
+
+def verify_claim(root: Path | str, request: object) -> dict[str, Any]:
+    """Authenticate a typed observation; never infer code correctness from a signature."""
+    from .runtime_audit_common import RuntimeAuditError
+    from .runtime_attestation import RuntimeAttestationError
+
+    result: dict[str, Any] = {
+        "schema": "factory.claim-verification.v1",
+        "state": "BLOCKED",
+        "authority": "none",
+        "release_approval": False,
+        "workspace_currentness": "NOT_CHECKED",
+        "test_sensitivity": "NOT_CHECKED",
+        "revocation_status": "NOT_CHECKED",
+        "claim_boundary": "Only signed execution observation bindings against caller-pinned local trust are checked; no code correctness, fresh workspace, external identity, replay admission or release decision is inferred.",
+    }
+    try:
+        if not isinstance(request, dict):
+            raise ExecutionAttestationError("E_CLAIM_SCHEMA", "object required")
+        if request.get("claim_type") == "test_sensitivity":
+            return _claim_test_sensitivity(root, request, result)
+        _exact(
+            request,
+            {
+                "claim_type",
+                "attestation_path",
+                "attestation_sha256",
+                "trust_root_path",
+                "trust_root_sha256",
+                "candidate_sha256",
+                "plan_sha256",
+            },
+            "E_CLAIM_SCHEMA",
+        )
+        if request["claim_type"] != "execution_observation":
+            return {**result, "state": "INCOMPLETE", "finding": "E_CLAIM_UNSUPPORTED"}
+        candidate = require_digest(request["candidate_sha256"], "candidate_sha256")
+        plan = require_digest(request["plan_sha256"], "plan_sha256")
+        workspace = Path(root).resolve(strict=True)
+        envelope = _claim_document(
+            workspace, request["attestation_path"], request["attestation_sha256"]
+        )
+        trust = _claim_document(
+            workspace, request["trust_root_path"], request["trust_root_sha256"]
+        )
+        verified = verify_signed_document_value(
+            envelope,
+            payload_type=PAYLOAD_TYPE,
+            schema=SCHEMA,
+            trust_root=trust,
+        )
+        verification = _execution_verification(
+            verified,
+            candidate_sha256=candidate,
+            plan_sha256=plan,
+        )
+    except (
+        ExecutionAttestationError,
+        EnterpriseReceiptError,
+        RuntimeAuditError,
+        RuntimeAttestationError,
+    ) as exc:
+        return {**result, "finding": exc.code}
+    except OSError:
+        return {**result, "finding": "E_CLAIM_INPUT_UNAVAILABLE"}
+    return {
+        **result,
+        "state": "PASS",
+        "verified_predicate": "execution_observation_binding",
+        "evidence_sha256": request["attestation_sha256"],
+        "trust_root_sha256": request["trust_root_sha256"],
+        "candidate_sha256": candidate,
+        "plan_sha256": plan,
+        "verification": verification,
     }

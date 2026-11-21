@@ -16,7 +16,17 @@ MCP_SETUP_MARKERS = (
     "MCP_COPY_ONLY",
     "MCP_CLIENT_CONFIG_COPYABLE",
 )
-_CLIENTS = ("generic", "cursor", "opencode", "codex", "junie", "copilot")
+_CLIENTS = ("generic", "cursor", "opencode", "codex", "junie", "copilot", "devin")
+DEVIN_TOOLS = (
+    "verify_claim",
+    "factory.status",
+    "factory.audit_taxonomy",
+    "factory.search_audit_rules",
+    "factory.agent_proof_mission",
+    "factory.proof_delta_status",
+    "factory.graph_ops",
+    "factory.get_receipt",
+)
 
 
 class McpSetupError(ValueError):
@@ -36,14 +46,15 @@ def _workspace(root: Path | str) -> Path:
     return workspace
 
 
-def _command(root: Path) -> list[str]:
-    return ["factory", "mcp", "serve", "--root", str(root)]
+def _command(root: Path, client: str = "generic") -> list[str]:
+    command = ["factory", "mcp", "serve", "--root", str(root)]
+    return command + (["--profile", "devin"] if client == "devin" else [])
 
 
-def _json_config(root: Path) -> dict[str, object]:
+def _json_config(root: Path, client: str = "generic") -> dict[str, object]:
     return {
         "mcpServers": {
-            "code-factory": {"command": "factory", "args": _command(root)[1:]}
+            "code-factory": {"command": "factory", "args": _command(root, client)[1:]}
         }
     }
 
@@ -105,7 +116,7 @@ def mcp_connection_config(
             f"client must be one of: {', '.join(_CLIENTS)}", "MCP_CLIENT_REJECTED"
         )
 
-    command = _command(workspace)
+    command = _command(workspace, normalized)
     payload: dict[str, object] = {
         "schema": MCP_SETUP_SCHEMA,
         "marker": MCP_SETUP_MARKER,
@@ -127,15 +138,13 @@ def mcp_connection_config(
         "writes": False,
         "next_action": "Copy the rendered configuration into the named client, then approve its local MCP server under that client's own controls. Discover canonical worker profiles, versions, scope and evidence boundaries with factory.audit_taxonomy (CLI fallback: factory audit taxonomy --json); follow agent_usage_contract.operations_reference for current operational context. Capability inventory does not prove execution or coverage.",
     }
-    if normalized in {"generic", "cursor", "junie"}:
-        payload["config"] = _json_config(workspace)
-        payload["target"] = (
-            "any stdio MCP client"
-            if normalized == "generic"
-            else ".cursor/mcp.json"
-            if normalized == "cursor"
-            else ".junie/mcp/mcp.json"
-        )
+    if normalized in {"generic", "cursor", "junie", "devin"}:
+        payload["config"] = _json_config(workspace, normalized)
+        payload["target"] = {
+            "cursor": ".cursor/mcp.json",
+            "junie": ".junie/mcp/mcp.json",
+            "devin": "Devin MCP configuration in the Devin workspace (not this PC's loopback URL)",
+        }.get(normalized, "any stdio MCP client")
     elif normalized == "opencode":
         payload["config"] = _opencode_config(workspace)
         payload["target"] = "opencode.json or .opencode/opencode.json"
@@ -146,6 +155,62 @@ def mcp_connection_config(
         payload["agent_profile"] = _copilot_agent(workspace)
         payload["target"] = ".github/agents/factoryline-proof.agent.md"
     return payload
+
+
+def dispatch_evidence_profile(
+    request: object, root: Path | str
+) -> dict[str, object] | None:
+    """Enforce Devin's closed read-only surface, including direct hidden-tool calls."""
+    from . import mcp
+
+    context = mcp._request_context(request)
+    if context is None:
+        return mcp.dispatch(request, root)
+    request_id, notification, method, params = context
+    allowed = method in {
+        "initialize",
+        "ping",
+        "notifications/initialized",
+        "tools/list",
+    }
+    if method == "tools/call" and isinstance(params, dict):
+        allowed = params.get("name") in DEVIN_TOOLS
+    if not allowed:
+        return mcp._error_or_notification(
+            notification,
+            request_id,
+            -32601,
+            "outside read-only evidence profile",
+            "MCP_PROFILE_REJECTED",
+        )
+    response = mcp.dispatch(request, root)
+    if response is not None:
+        payload = response.get("result")
+        if isinstance(payload, dict):
+            response["result"] = _evidence_profile_result(method, params, payload)
+    return response
+
+
+def _evidence_profile_result(method: str, params: object, result: dict) -> dict:
+    from . import mcp
+
+    if method == "initialize":
+        return {**result, "capabilities": {"tools": {}}}
+    if method == "tools/list":
+        return {
+            **result,
+            "tools": [tool for tool in result["tools"] if tool["name"] in DEVIN_TOOLS],
+        }
+    if (
+        method == "tools/call"
+        and isinstance(params, dict)
+        and params.get("name") == "factory.status"
+    ):
+        status = json.loads(result["content"][0]["text"])
+        return mcp._content(
+            {**status, "tools": list(DEVIN_TOOLS), "resources": [], "profile": "devin"}
+        )
+    return result
 
 
 def _validated_install_client(client: str) -> str:

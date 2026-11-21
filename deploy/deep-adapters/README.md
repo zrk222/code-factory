@@ -122,17 +122,82 @@ This refresh does not establish vulnerability-free images or full audit coverage
 ## Expanded native scanning controls
 
 The Semgrep profile disables inline `nosemgrep` suppression and requests
-data-flow traces. The pinned community engine did not emit SARIF code-flow
-traces in native controls, so trace coverage is recorded as `NOT_MEASURED`.
-Its ruleset hash binds fifteen rules to the image profile.
+data-flow traces. Earlier controls recorded trace coverage as `NOT_MEASURED`.
+The v7 native run observed code-flow traces in 107 of its 121 fixture findings;
+that is fixture-specific transport evidence, not complete flow coverage.
+Its ruleset hash binds thirty rules to the image profile.
 Request-to-sink rules follow assignments and concatenations within supported
 local flows. Parameterized SQL, argv execution without a shell, static HTML,
 safe YAML loading, enabled TLS, and values rebound to constants have negative
 controls. These controls measure rule behavior on declared fixtures; they do
 not establish accuracy on arbitrary repositories. Aliased imports, custom
 framework sources, escaping helpers and cross-file flows require additional
-models or the full CodeQL lane. HTML `send` findings require checking the
-response content type and output context during review.
+models or the full CodeQL lane. HTML `send` findings are limited to template
+literals, string concatenation and direct request values; objects serialized as
+JSON, binary buffers and helper results are left to review and the CodeQL lane,
+and findings still require checking the response content type. The
+pattern-only `python.subprocess-shell-true` rule is not part of this
+precision profile (2 confirmed of 12 decided across four held-out panels);
+request data reaching a shell is reported by `python.request-command-injection`.
+Python `verify=False`
+and Go `InsecureSkipVerify` are reported only where the call or enclosing
+function carries credentials or session material, so unauthenticated probes are
+not reported; credential evidence is matched as identifiers (token, secret,
+password, Authorization, cookie), not substrings such as `/etc/passwd`.
+This credential and opt-in scoping replaces the earlier report-every-bypass
+policy on held-out evidence: four pre-registered fresh panels (rounds 1-4,
+177 alerts, two independent review contexts) took emitted-alert precision
+from 44.1% to 69.8% (round 4, Wilson 56.5-80.5%), and blinded checks of
+removed alerts found 34 of 38 decided removals were false positives.
+TLS bypasses behind an explicit operator opt-in (`if args.insecure`,
+`if cfg.insecure {}`) are not reported, and Rust clients are reported only
+when the function carries credentials, session or user identity.
+`pickle.load` of a file the program opens itself is not reported, records
+looked up by a request key (`findById`, `findProject`, `resolveSection`) are
+server-side data for JavaScript path traversal, and named
+containment helpers (`safe*`, `sanitize*`, `*within*`) sanitize JavaScript path
+traversal. Every rule skips tests, fixtures, exploit or CVE proof-of-concept
+corpora, generated code, vendored dependencies (`node_modules`, `vendor`,
+`third_party`, `site-packages`, virtualenvs, bundled `Lib/` copies), minified
+files and editor `.history` copies; PHP request rules treat integer casts as
+sanitizers, and the JavaScript SQL rule does not assume helper return values
+carry request text. Copy `rules/tests/php-controls.php` to
+`semgrep-pattern-limited.php` and `rules/tests/go-controls.txt` to
+`semgrep-pattern-limited.go`, and `rules/tests/rust-controls.txt` to
+`semgrep-pattern-limited.rs` when running the native rule tests.
+
+Rules are split into two tiers so that tiering, not suppression, carries
+precision. Default-tier rules (severity ERROR/WARNING, SARIF error/warning,
+finding severity high/medium) are the high-confidence lane. Context-dependent
+rules carry `metadata.tier: review` and severity INFO (SARIF note, finding
+severity low): JavaScript request taint (command, SQL, HTML, path), TLS and
+trust bypasses (Go, Python, Rust, Java hostname, Ruby, Swift), unscoped Python
+deserialization (`python.unsafe-deserialization-unscoped`, any pickle/YAML
+source) and PHP file inclusion. Review-tier findings stay in the report; they
+need peer, reachability or framework context that a local pattern cannot see.
+The C# certificate rule stays in the default tier on its held-out record.
+Default-tier Python deserialization reports request or socket-event data only.
+JavaScript validator and allowlist guards (`isValid*`, `validate*`, `.has`,
+`.includes`), `path.basename` and `{text, values}` query objects, Java
+`Integer`/`Long` parsing and PHP `preg_replace` with a negated character class
+are sanitizers; WordPress core (`wp-admin`, `wp-includes`), Rust
+`tests.rs`/`test_utils.rs` and `TestUtils` helpers are excluded like other
+test or vendored code. Evidence: a pre-registered fresh panel of 60 default-tier
+alerts (round 6, repositories unseen in rounds 1-5, two independent review
+contexts) measured 54 of 60 decided alerts supported, 90.0% (Wilson
+79.9-95.3%); the blinded check of the 4 baseline (v4) alerts absent from every
+tier found all 4 were false positives. Round 5, before tiering, measured 73.2%
+across all rules, with JavaScript taint at 5 of 11 and TLS bypasses at 4 of 12.
+Round 6 contained alerts from six observed languages; fifteen slots were
+shortfall fills, and eighteen findings used the C/C++ `c.unsafe-gets` rule.
+This is not a twelve-language precision estimate or a general recall result;
+review-tier precision was not measured in that round.
+
+The [v7 native verification run](https://github.com/zrk222/code-factory/actions/runs/44888372954)
+passed controls across twelve declared languages, all thirty detector-removal
+challenges, and source-bound SARIF normalization. Its 121 synthetic findings
+include 45 review-tier notes retained by the normalizer. Native control
+readiness and held-out panel precision are separate measurements.
 
 Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,

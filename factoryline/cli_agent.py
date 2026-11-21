@@ -94,6 +94,23 @@ def add_parser(sub: Any) -> None:
         "--verify", help="verify an existing Receipt v2 payload instead of building one"
     )
     extended.add_argument("--json", action="store_true")
+    prove = agent_sub.add_parser(
+        "prove", help="run one approved mission's signed six-business-lane proof plan"
+    )
+    for name in (
+        "plan",
+        "trust-root",
+        "trust-root-sha256",
+        "environment-digest",
+        "mission-binding",
+        "mission-root",
+        "owner",
+        "confirmation",
+    ):
+        prove.add_argument("--" + name, required=True)
+    prove.add_argument("--root", default=".")
+    prove.add_argument("--out", default=".factory/runtime-audits")
+    prove.add_argument("--json", action="store_true")
 
 
 def _run_contract_command(args: Any) -> dict[str, Any]:
@@ -262,6 +279,32 @@ def _run_agentic_control_command(args: Any) -> dict[str, Any]:
 
 def run(args: Any) -> dict[str, Any]:
     """Execute one selected agent command after the parser has resolved it."""
+    if args.agent_cmd == "prove":
+        from .runtime_audit import execute_proof_agent
+        from .runtime_audit_common import RuntimeAuditError
+
+        try:
+            return execute_proof_agent(
+                Path(args.plan),
+                Path(args.trust_root),
+                args.trust_root_sha256,
+                Path(args.root),
+                args.environment_digest,
+                Path(args.out),
+                mission_binding_path=Path(args.mission_binding),
+                mission_root=Path(args.mission_root),
+                owner=args.owner,
+                confirmation=args.confirmation,
+            )
+        except RuntimeAuditError as exc:
+            return {
+                "schema": "factory.proof-agent.v1",
+                "state": "BLOCKED",
+                "valid": False,
+                "finding": exc.code,
+                "authority": "none",
+                "release_approval": False,
+            }
     if args.agent_cmd in {"contract", "attestation"}:
         return _run_contract_command(args)
     return _run_agentic_control_command(args)

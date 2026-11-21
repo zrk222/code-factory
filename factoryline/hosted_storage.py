@@ -39,6 +39,46 @@ def _require_pending(row: Any, principal: Principal) -> None:
         )
 
 
+def _retained_delivery(
+    row: Any, event: PullRequestEvent
+) -> tuple[PullRequestEvent, str, str]:
+    if not row or (
+        int(row[0]),
+        row[1],
+        int(row[2]),
+        row[3],
+        row[4],
+        row[5],
+        row[6],
+    ) != (
+        event.installation_id,
+        event.repository,
+        event.pull_request,
+        event.head_sha,
+        event.actor,
+        event.action,
+        event.payload_sha256,
+    ):
+        raise PRAssuranceError(
+            "E_WEBHOOK_REPLAY",
+            "delivery conflicts with retained authenticated event",
+        )
+    return (
+        PullRequestEvent(
+            delivery_id=event.delivery_id,
+            repository=row[1],
+            pull_request=int(row[2]),
+            installation_id=int(row[0]),
+            head_sha=row[3],
+            actor=row[4],
+            action=row[5],
+            payload_sha256=row[6],
+        ),
+        str(row[8]),
+        row[7],
+    )
+
+
 SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS factory_installations (
     installation_id BIGINT PRIMARY KEY,
@@ -217,7 +257,13 @@ class PostgresAssuranceStore:
             )
         return str(row[0])
 
-    def ingest(self, tenant_id: str, event: PullRequestEvent) -> dict[str, Any]:
+    def ingest(
+        self,
+        tenant_id: str,
+        event: PullRequestEvent,
+        *,
+        allow_duplicate: bool = False,
+    ) -> dict[str, Any]:
         """Commit authenticated PR evidence and one pending approval transactionally."""
         evidence = {
             "schema": "factory.hosted-pr-assurance.evidence.v1",
@@ -228,6 +274,8 @@ class PostgresAssuranceStore:
         evidence_sha256 = sha256(canonical_json(evidence))
         approval_id = str(uuid.uuid4())
         requester = f"github-app:{event.installation_id}"
+        duplicate = False
+        retained_event = event
         try:
             with self._transaction(tenant_id) as (_db, cursor):
                 cursor.execute(
@@ -240,26 +288,51 @@ class PostgresAssuranceStore:
                         "E_INSTALLATION_TENANT",
                         "installation does not belong to routed tenant",
                     )
-                cursor.execute(
-                    """INSERT INTO factory_pr_deliveries
+                insert_sql = """INSERT INTO factory_pr_deliveries
                        (tenant_id, delivery_id, installation_id, repository, pull_request, head_sha,
                         actor, action, payload_sha256, evidence_sha256, approval_id, requester)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (
-                        tenant_id,
-                        event.delivery_id,
-                        event.installation_id,
-                        event.repository,
-                        event.pull_request,
-                        event.head_sha,
-                        event.actor,
-                        event.action,
-                        event.payload_sha256,
-                        evidence_sha256,
-                        approval_id,
-                        requester,
-                    ),
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+                insert_values = (
+                    tenant_id,
+                    event.delivery_id,
+                    event.installation_id,
+                    event.repository,
+                    event.pull_request,
+                    event.head_sha,
+                    event.actor,
+                    event.action,
+                    event.payload_sha256,
+                    evidence_sha256,
+                    approval_id,
+                    requester,
                 )
+                if allow_duplicate:
+                    cursor.execute(
+                        insert_sql
+                        + " ON CONFLICT (tenant_id, delivery_id) DO NOTHING"
+                        + " RETURNING approval_id, evidence_sha256",
+                        insert_values,
+                    )
+                    inserted = cursor.fetchone()
+                    if inserted:
+                        approval_id = str(inserted[0])
+                        evidence_sha256 = inserted[1]
+                    else:
+                        cursor.execute(
+                            """SELECT installation_id, repository, pull_request,
+                                      head_sha, actor, action, payload_sha256,
+                                      evidence_sha256, approval_id
+                               FROM factory_pr_deliveries
+                               WHERE tenant_id=%s AND delivery_id=%s FOR UPDATE""",
+                            (tenant_id, event.delivery_id),
+                        )
+                        retained = cursor.fetchone()
+                        retained_event, approval_id, evidence_sha256 = (
+                            _retained_delivery(retained, event)
+                        )
+                        duplicate = True
+                else:
+                    cursor.execute(insert_sql, insert_values)
         except PRAssuranceError:
             raise
         except Exception as exc:  # pragma: no cover - normalized by real driver
@@ -274,9 +347,10 @@ class PostgresAssuranceStore:
             "tenant_id": tenant_id,
             "approval_id": approval_id,
             "evidence_sha256": evidence_sha256,
-            "event": event.to_dict(),
+            "event": retained_event.to_dict(),
+            "duplicate": duplicate,
             "check_request": github_check_request(
-                event,
+                retained_event,
                 evidence_digest=evidence_sha256,
                 approval_id=approval_id,
                 status="pending",

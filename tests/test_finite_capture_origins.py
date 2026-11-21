@@ -1044,6 +1044,256 @@ def test_signed_attestation_verifies_against_local_trust_root(tmp_path):
         verify_signed_execution_attestation(receipt, other_root)
 
 
+def _claim_fixture(tmp_path, **payload_changes):
+    from pathlib import Path
+
+    keys = generate_key_material(
+        out_dir=tmp_path / "keys",
+        keyid="claim-runner",
+        identity="runner@example",
+        issuer="local",
+    )
+    payload = _payload(**payload_changes)
+    envelope = sign_payload(
+        payload,
+        payload_type=PAYLOAD_TYPE,
+        private_key_path=keys["private_key"],
+        keyid=keys["keyid"],
+        identity=keys["identity"],
+        issuer=keys["issuer"],
+    )
+    path = tmp_path / "claim.json"
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+    trust = Path(keys["trust_root"])
+    return {
+        "claim_type": "execution_observation",
+        "attestation_path": "claim.json",
+        "attestation_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "trust_root_path": trust.relative_to(tmp_path).as_posix(),
+        "trust_root_sha256": hashlib.sha256(trust.read_bytes()).hexdigest(),
+        "candidate_sha256": payload["candidate_sha256"],
+        "plan_sha256": payload["plan_sha256"],
+    }
+
+
+def _test_claim_fixture(tmp_path, *, version_three=True):
+    from test_runtime_attestation import (
+        _oracle_payload_v3,
+        _oracle_payload,
+        _signed_oracle,
+    )
+
+    payload = _oracle_payload_v3() if version_three else _oracle_payload()
+    row = payload["tests"][0]
+    for path, content in (
+        (row["path"], b"test source"),
+        (row["mutation"]["source_path"], b"original source"),
+    ):
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    receipt, trust, _, payload = _signed_oracle(tmp_path, payload)
+    return {
+        "claim_type": "test_sensitivity",
+        "attestation_path": receipt.relative_to(tmp_path).as_posix(),
+        "attestation_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+        "trust_root_path": trust.relative_to(tmp_path).as_posix(),
+        "trust_root_sha256": hashlib.sha256(trust.read_bytes()).hexdigest(),
+        "source_manifest_sha256": payload["source_manifest_sha256"],
+        "environment_sha256": payload["environment_sha256"],
+        "test_path": row["path"],
+        "test_symbol": row["symbol"],
+        "case_id": row["baseline"]["case_ids"][0],
+    }
+
+
+def test_canonical_test_claim_reads_v3_observations_without_execution_or_writes(
+    tmp_path,
+):
+    from factoryline.mcp import dispatch
+
+    request = _test_claim_fixture(tmp_path)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "verify_claim", "arguments": request},
+        },
+        tmp_path,
+    )
+    result = json.loads(response["result"]["content"][0]["text"])
+    assert result["state"] == "PASS"
+    assert result["verified_predicate"] == "ATTESTED_ASSERTION_OBSERVATION"
+    assert result["test"]["case_id"] == request["case_id"]
+    assert result["workspace_currentness"] == "SELECTED_CAPTURED_INPUTS_VERIFIED"
+    assert result["authority"] == "none" and result["release_approval"] is False
+    assert "Not independent replay" in result["claim_boundary"]
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize(
+    "damage", ["source", "test", "case", "symbol", "environment", "pin", "extra"]
+)
+def test_canonical_test_claim_blocks_unbound_case_or_current_inputs(tmp_path, damage):
+    from factoryline.independent_execution import verify_claim
+
+    request = _test_claim_fixture(tmp_path)
+    if damage in {"source", "test"}:
+        path = request["test_path"] if damage == "test" else "factoryline/example.py"
+        (tmp_path / path).write_bytes(b"changed")
+    elif damage == "case":
+        request["case_id"] += "-other"
+    elif damage == "symbol":
+        request["test_symbol"] = "test_other"
+    elif damage == "environment":
+        request["environment_sha256"] = "0" * 64
+    elif damage == "pin":
+        request["attestation_sha256"] = "0" * 64
+    else:
+        request["approval"] = True
+    result = verify_claim(tmp_path, request)
+    assert result["state"] == "BLOCKED" and result["authority"] == "none"
+    assert result["test_sensitivity"] == "NOT_CHECKED"
+    if damage in {"source", "test", "case", "symbol"}:
+        assert result["finding"] == "E_CLAIM_TEST_BINDING"
+
+
+def test_canonical_test_claim_legacy_signature_is_not_assertion_proof(tmp_path):
+    from factoryline.independent_execution import verify_claim
+
+    result = verify_claim(tmp_path, _test_claim_fixture(tmp_path, version_three=False))
+    assert result["state"] == "INCOMPLETE"
+    assert result["finding"] == "E_CLAIM_ORACLE_VERSION"
+
+
+def test_canonical_claim_mcp_verifies_observation_not_code_or_release(tmp_path):
+    from factoryline.mcp import dispatch
+
+    request = _claim_fixture(tmp_path)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "verify_claim", "arguments": request},
+        },
+        tmp_path,
+    )
+    result = json.loads(response["result"]["content"][0]["text"])
+    assert result["state"] == "PASS"
+    assert result["verified_predicate"] == "execution_observation_binding"
+    assert result["verification"]["verification"] == "offline_dsse_ed25519"
+    assert result["authority"] == "none" and not result["release_approval"]
+    assert (
+        result["workspace_currentness"] == result["test_sensitivity"] == "NOT_CHECKED"
+    )
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "unknown_field",
+        "candidate",
+        "plan",
+        "attestation_digest",
+        "trust_digest",
+        "escape",
+        "absolute",
+        "missing",
+        "duplicate",
+        "unsigned",
+        "tampered_signature",
+        "invalid_trust",
+        "oversize",
+        "snapshot_race",
+    ],
+)
+def test_canonical_claim_rejects_unbound_or_unsafe_evidence(
+    tmp_path, monkeypatch, damage
+):
+    from factoryline import runtime_audit_common as common
+    from factoryline.independent_execution import verify_claim
+
+    request = _claim_fixture(tmp_path)
+    path = tmp_path / "claim.json"
+    if damage == "unknown_field":
+        request["approve"] = True
+    elif damage in {"candidate", "plan"}:
+        request[damage + "_sha256"] = "0" * 64
+    elif damage.endswith("_digest"):
+        request[
+            "trust_root_sha256" if damage == "trust_digest" else "attestation_sha256"
+        ] = "0" * 64
+    elif damage in {"escape", "absolute", "missing"}:
+        request["attestation_path"] = {
+            "escape": "../claim.json",
+            "absolute": str(path.resolve()),
+            "missing": "absent.json",
+        }[damage]
+    elif damage == "snapshot_race":
+        monkeypatch.setattr(common, "_stable_read_identity", lambda *a, **k: False)
+    else:
+        envelope = json.loads(path.read_text())
+        if damage == "duplicate":
+            path.write_text('{"schema":"duplicate",' + path.read_text()[1:])
+        elif damage == "unsigned":
+            path.write_text(json.dumps(_payload()))
+        elif damage == "tampered_signature":
+            envelope["signatures"][0]["sig"] = "AAAAAAAA"
+            path.write_text(json.dumps(envelope))
+        elif damage == "invalid_trust":
+            trust = tmp_path / request["trust_root_path"]
+            trust.write_text('{"schema":"factory.trust.root.v1","keys":[]}')
+            request["trust_root_sha256"] = hashlib.sha256(
+                trust.read_bytes()
+            ).hexdigest()
+        else:
+            path.write_bytes(b"x" * (common.MAX_ARTIFACT_BYTES + 1))
+        request["attestation_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    result = verify_claim(tmp_path, request)
+    assert result["state"] == "BLOCKED" and result["finding"].startswith("E_")
+    assert "verification" not in result and result["authority"] == "none"
+
+
+def test_canonical_claim_rejects_expired_and_unsupported_claims(tmp_path):
+    from factoryline.independent_execution import verify_claim
+
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    request = _claim_fixture(
+        tmp_path,
+        issued_at=old.isoformat(),
+        expires_at=(old + timedelta(hours=1)).isoformat(),
+    )
+    assert verify_claim(tmp_path, request)["state"] == "BLOCKED"
+    request["claim_type"] = "application_correctness"
+    assert verify_claim(tmp_path, request)["state"] == "INCOMPLETE"
+
+
+def test_canonical_claim_verifies_captured_snapshot_not_reopened_path(
+    tmp_path, monkeypatch
+):
+    import factoryline.independent_execution as independent
+
+    request = _claim_fixture(tmp_path)
+    original = independent.verify_signed_document_value
+
+    def replace_after_capture(envelope, **kwargs):
+        (tmp_path / "claim.json").write_text('{"tampered":true}')
+        return original(envelope, **kwargs)
+
+    monkeypatch.setattr(
+        independent, "verify_signed_document_value", replace_after_capture
+    )
+    result = independent.verify_claim(tmp_path, request)
+    assert result["state"] == "PASS"
+    assert result["evidence_sha256"] == request["attestation_sha256"]
+    assert result["workspace_currentness"] == "NOT_CHECKED"
+
+
 def test_shell_operation_witness_reconstructs_supported_command_and_rejects_shell_syntax():
     source = b"import os\nos.system('upx --best app')\n"
     tree = ast.parse(source)

@@ -257,7 +257,7 @@ def test_coordinator_ack_is_marked_before_worker_can_observe_it(tmp_path, monkey
         snapshot={},
     )
     monkeypatch.setattr(module, "_coordinator_read", lambda *args: handshake)
-    monkeypatch.setattr(module, "_coordinator_preflight", lambda *args: {})
+    monkeypatch.setattr(module, "_coordinator_preflight", lambda *args, **kwargs: {})
     monkeypatch.setattr(module, "_coordinator_live_lease", lambda *args: None)
     monkeypatch.setattr(assembly, "_process_creation_identity", lambda *args: "child")
     context = {"store": SimpleNamespace(bind=lambda *args: {"run_id": "d" * 32})}
@@ -554,30 +554,34 @@ def test_coordinator_native_open_stdin_expires_and_releases_lease(tmp_path, part
 
 
 @pytest.mark.parametrize("phase", ["lease_only", "admitted"])
-def test_coordinator_native_restart_reconciles_expired_lease(tmp_path, phase):
-    """A fresh real coordinator reconciles an exited owner before refusing takeover."""
+@pytest.mark.parametrize("exit_mode", ["normal", "crash"])
+def test_coordinator_native_restart_reconciles_expired_lease(
+    tmp_path, phase, exit_mode
+):
+    """A fresh coordinator retires only safe dead-owner state, without replay."""
     import json
     import sys
     import time
     import factoryline.cli_deep_audit as module
     from factoryline.agentic_control import AgenticControlError, CoordinatorRequestStore
-    from factoryline.assembly_process import run_cli_detailed
+    from factoryline.assembly_process import _process_identity_absent, run_cli_detailed
     from factoryline.deep_audit_io import read_run_json
 
     if sys.platform not in {"win32", "linux"}:
         pytest.skip("native process identity unsupported")
     package = str(Path(module.__file__).resolve().parent.parent)
     nonce, request_id = "a" * 32, "e" * 32
-    bootstrap = r"""import io,json,sys,time
+    bootstrap = r"""import io,json,os,sys,time
 sys.path.insert(0,sys.argv[1])
 from factoryline.cli_deep_audit import _coordinator_owner,serve_deep_audit_coordinator
 from factoryline.agentic_control import AgenticControlError,CoordinatorRequestStore
 root,phase,mode=sys.argv[2:5]; nonce="a"*32; request_id="e"*32; request_sha="f"*64
 owner=_coordinator_owner(root,nonce); store=CoordinatorRequestStore(root)
-if mode=="write":
+if mode in {"write","crash_write"}:
  lease=store.acquire(owner,1,time.monotonic())
  if phase=="admitted": store.admit(nonce,request_id,request_sha,owner)
  print(json.dumps({"owner":owner,"expires_monotonic":lease["expires_monotonic"]}),flush=True)
+ if mode=="crash_write": os._exit(73)
 else:
  import factoryline.cli_deep_audit as cli
  import factoryline.assembly_process as assembly
@@ -588,7 +592,7 @@ else:
  assembly._emergency_terminate=forbidden
  try: serve_deep_audit_coordinator(root,1,nonce,io.BytesIO(b""),io.StringIO())
  except AgenticControlError as error: code=error.code
- else: code="unexpected-start"
+ else: code="started"
  print(json.dumps({"code":code,"owner":owner,"forbidden_calls":events}),flush=True)
 """
     observed = []
@@ -605,10 +609,13 @@ else:
             started_observer=started,
         )
 
-    original = launch("write")
-    assert (
-        original["ok"] and original["cleanup_confirmed"] and original["streams_closed"]
-    )
+    original = launch("crash_write" if exit_mode == "crash" else "write")
+    assert original["cleanup_confirmed"] and original["streams_closed"]
+    if exit_mode == "crash":
+        assert original["exit_code"] == 73
+        assert not original["ok"]
+    else:
+        assert original["ok"]
     written = json.loads(original["stdout"].decode("utf-8"))
     old_owner = written["owner"]
     assert observed[-1]["pid"] == old_owner["pid"]
@@ -642,7 +649,7 @@ else:
     )
     result = json.loads(restarted["stdout"].decode("utf-8"))
     new_owner = result["owner"]
-    assert result["code"] == "E_COORDINATOR_OWNER"
+    assert result["code"] == "started"
     assert result["forbidden_calls"] == []
     assert observed[-1]["pid"] == new_owner["pid"]
     assert observed[-1]["creation"] == new_owner["creation"]
@@ -651,23 +658,32 @@ else:
         old_owner["creation"],
     )
 
+    assert _process_identity_absent(old_owner["pid"], old_owner["creation"])
     after = metadata_rows()
-    assert after["lease"] == lease_before
     if phase == "admitted":
+        # A dead PID does not prove cleanup for an admitted request. Preserve
+        # its history and block new admission without signalling or replay.
+        assert "lease" not in after
         assert after[key] == row_before | dict(
             state="INCOMPLETE", cleanup_confirmed=False
         )
         assert after[key]["owner_identity"] == old_owner
         assert after[key]["run_id"] is None
+        verified = CoordinatorRequestStore(
+            tmp_path, process_absent=_process_identity_absent
+        )
+        verified.acquire(new_owner, 1, time.monotonic())
+        with pytest.raises(AgenticControlError) as error:
+            verified.admit(nonce, "9" * 32, "8" * 64, new_owner)
+        assert error.value.code == "E_COORDINATOR_BUSY"
+        assert metadata_rows()[key] == after[key]
+        verified.release(new_owner)
     else:
-        assert after == metadata
-    with pytest.raises(AgenticControlError) as error:
+        # With no admitted request to protect, a proven-exited owner may be
+        # retired; the restarted idle coordinator releases its own lease.
+        assert after == {}
         store.acquire(new_owner, 1, time.monotonic())
-    assert error.value.code == "E_COORDINATOR_OWNER"
-    with pytest.raises(AgenticControlError) as error:
-        store.admit(nonce, "9" * 32, "8" * 64, new_owner)
-    assert error.value.code == "E_COORDINATOR_OWNER"
-    assert metadata_rows() == after
+        store.release(new_owner)
 
 
 @pytest.mark.parametrize("text_stream", [False, True])
@@ -1158,6 +1174,8 @@ def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_ch
     from factoryline.agentic_control import AgenticControlError
 
     if sys.platform not in {"win32", "linux"}:
+        if os.environ.get("FACTORY_REQUIRE_NATIVE_SIGNED_LIFECYCLE") == "1":
+            pytest.fail("selected CI host does not support native process identity")
         pytest.skip("native process creation identity unsupported")
     root, request, owner, context, inventory = _coordinator_signed_fixture(tmp_path)
     observed_handshakes = []
@@ -4504,3 +4522,128 @@ def test_native_challenge_facts_use_actual_provider_binding(local, version):
     bindings["image_sha256" if local else "runner_binding_sha256"] = "b" * 64
     with pytest.raises(RuntimeAuditError):
         _validate_execution_bindings({}, data, bindings)
+
+
+def test_coordinator_cheap_preflight_keeps_signed_identity_without_inventory(
+    tmp_path, monkeypatch
+):
+    import factoryline.cli_deep_audit as module
+    from factoryline import assembly_process, deep_audit_io
+
+    # This is a preflight unit control, not a native process-identity probe.
+    monkeypatch.setattr(
+        assembly_process, "_process_creation_identity", lambda pid: "unit-owner"
+    )
+    root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
+    full = module._coordinator_preflight(root, request["payload"])
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("cheap preflight must not inventory the candidate")
+
+    monkeypatch.setattr(deep_audit_io, "inventory_candidate", forbidden)
+    cheap = module._coordinator_preflight(root, request["payload"], inventory=False)
+    # Patching a loaded module intentionally changes the runtime identity itself.
+    expected = module._coordinator_identity_view(full)
+    assert {k: v for k, v in cheap.items() if k != "runtime_sha256"} == {
+        k: v for k, v in expected.items() if k != "runtime_sha256"
+    }
+    assert "inventory_sha256" in full and "inventory_sha256" not in cheap
+    context["store"].release(owner)
+
+
+def test_coordinator_owner_check_reuses_runtime_identity(tmp_path, monkeypatch):
+    import time
+    import factoryline.cli_deep_audit as module
+    from factoryline import assembly_process
+
+    # Keep identity stable on unsupported native hosts without skipping this check.
+    monkeypatch.setattr(
+        assembly_process, "_process_creation_identity", lambda pid: "unit-owner"
+    )
+    root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
+
+    def forbidden():
+        raise AssertionError("per-request owner checks must not rehash the runtime")
+
+    monkeypatch.setattr(module, "_coordinator_runtime_identity", forbidden)
+    for _ in range(5):
+        module._coordinator_check_owner(root, request, owner, context)
+    with pytest.raises(ValueError):
+        module._coordinator_check_owner(
+            root, request, dict(owner, runtime_sha256="0" * 64), context
+        )
+    context["expires_at"] = time.monotonic() - 1
+    with pytest.raises(ValueError):
+        module._coordinator_check_owner(root, request, owner, context)
+    context["store"].release(owner)
+
+
+class _RenewStore:
+    def __init__(self, error=None):
+        self.calls, self.error = [], error
+
+    def acquire(self, owner, ttl, now):
+        from factoryline.agentic_control import AgenticControlError
+
+        self.calls.append((owner, ttl))
+        if self.error:
+            raise AgenticControlError(self.error, "synthetic contention")
+        return {"expires_monotonic": now + ttl}
+
+
+class _Thread:
+    def __init__(self, alive):
+        self.alive = alive
+
+    def is_alive(self):
+        return self.alive
+
+
+@pytest.mark.parametrize(
+    "remaining,active,activity,stop,renewed",
+    [
+        (100, True, False, False, True),
+        (100, False, True, False, True),
+        (100, False, False, False, False),
+        (200, True, False, False, False),
+        (-1, True, True, False, False),
+        (100, True, True, True, False),
+    ],
+)
+def test_coordinator_renews_live_lease_only_while_active(
+    remaining, active, activity, stop, renewed
+):
+    import time
+    import factoryline.cli_deep_audit as module
+
+    store = _RenewStore()
+    expires = time.monotonic() + remaining
+    context = dict(
+        store=store,
+        owner={"pid": 1},
+        ttl=300,
+        stop=stop,
+        expires_at=expires,
+        job={"thread": _Thread(active)},
+    )
+    module._coordinator_renew(context, activity=activity)
+    assert bool(store.calls) is renewed
+    if renewed:
+        assert context["expires_at"] > expires + 100
+    else:
+        assert context["expires_at"] == expires
+
+
+def test_coordinator_renewal_contention_retries_and_direct_api_never_renews():
+    import time
+    import factoryline.cli_deep_audit as module
+
+    expires = time.monotonic() + 10
+    store = _RenewStore("E_COORDINATOR_BUSY")
+    context = dict(store=store, owner={}, ttl=300, stop=False, expires_at=expires)
+    context["job"] = {"thread": _Thread(True)}
+    module._coordinator_renew(context)
+    assert store.calls and context["expires_at"] == expires
+    direct = dict(store=_RenewStore(), stop=False, expires_at=expires, job=None)
+    module._coordinator_renew(direct, activity=True)
+    assert direct["store"].calls == []

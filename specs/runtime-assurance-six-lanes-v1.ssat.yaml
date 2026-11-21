@@ -1,5 +1,114 @@
 name: runtime-assurance-six-lanes-v1
 language: python
+spec_markdown: |
+  # Bounded Proof Agent reference consumer
+  The explicit agent prove command consumes a verified owner-approved mission
+  candidate binding and a signed, expiring runtime-audit plan with strict intake.
+  It reuses the existing six business-workflow lane runners and known-bad
+  evaluators; it is not a replacement for full native six-family code analysis.
+  Require exact mission source paths/hashes and approved argv, runtime profile,
+  non-mutating/resource-safe signed policy, and a plan whose declared serial
+  command time fits the mission wall budget. Require RUN Proof Agent confirmation.
+  Bind the preflight plan hash before any execution, recheck source/plan and
+  mission after execution, preserve failed/incomplete evidence, and return one
+  hash-bound PASS/INCOMPLETE/BLOCKED review receipt. No model/provider calls,
+  scope expansion, patching, new executor/store/dependency, self-approval, merge
+  or release. Local operator labels are not remote identity authentication.
+  The signed-plan validator verifies the exact captured envelope/trust snapshots,
+  never a separately reopened document that can differ from the pinned bytes.
+  ## Public invocation and authority
+  Python API: execute_proof_agent(plan_path: Path, trust_root_path: Path,
+  trust_root_sha256: str, workspace_root: Path, environment_digest: str,
+  output_root: Path, *, mission_binding_path: Path, mission_root: Path,
+  owner: str, confirmation: str) -> dict[str, Any]. All inputs are required;
+  the four arguments after * are keyword-only. The SSAT function list below
+  records positional parameters as required by the existing signature parser.
+  factory agent prove requires --plan, --trust-root, --trust-root-sha256,
+  --environment-digest, --mission-binding, --mission-root, --owner and
+  --confirmation. --root defaults to current directory; --out defaults to
+  .factory/runtime-audits beneath root. --json keeps the existing JSON output.
+  The confirmation must exactly equal RUN Proof Agent; otherwise E_PROOF_CONFIRMATION.
+  Path inputs use the existing CLI Path rules (relative to the invocation cwd);
+  output is checked beneath the execution workspace by the existing runner.
+  The owner must match the existing mission's approved_execution decision.
+  _mission_repair_snapshot revalidates the mission, decision, candidate Git base,
+  declaration and file hashes before and after execution; its existing domain
+  errors propagate. This is local operator governance, not remote authentication.
+  A valid binding authorizes no source edit, model call or release transition.
+  ## Exact preflight and execution
+  verify_runtime_audit_plan requires strict intake for this route, checks signed
+  expiry, caller-pinned trust bytes, environment and every source with the
+  existing plan contract. It authenticates the parsed captured envelope and
+  trust snapshots with verify_signed_document_value; returned metadata describes
+  those snapshots, not a perpetual claim that disk files cannot change.
+  The mission workspace must resolve equal to root. Its file path/hash mapping
+  must equal the plan's mapping and every file must have state existing; otherwise
+  E_PROOF_SCOPE. Mission command argv sets must equal the union of target_argv and
+  known_bad_argv from all six lanes; order and duplicate vectors do not change set
+  equality. A mismatch is E_PROOF_COMMAND_SCOPE. Profiles must contain the literal
+  factory.runtime-audit.v1 and runtime lane applicability must be true, else
+  E_PROOF_PROFILE. Signed execution policy non_mutating and resource_safe must
+  both be true, else E_PROOF_POLICY. These are signed declarations, not OS sandbox
+  enforcement. Twice the sum of lane timeout_seconds must fit mission
+  max_wall_seconds, else E_PROOF_BUDGET. Existing lane, argv, source and intake
+  limits remain; this route executes serially (max_parallelism=1).
+  execute_runtime_audit receives expected_plan_sha256 from preflight and rejects
+  E_PLAN_CHANGED before invoking the existing runner if the authenticated payload
+  differs. This optional keyword defaults to None for existing callers. It then
+  executes both command legs per lane, revalidates the signed plan and sources,
+  evaluates expected known-bad finding codes and persists its ordinary runtime
+  receipt under a unique existing run directory. Arbitrary nonzero exit alone is
+  not a valid negative oracle; the existing lane evaluator must report the exact
+  signed expected_negative_code from a structurally valid scenario-bound artifact.
+  ## Returned evidence and failures
+  The Proof Agent rereads the bounded persisted child receipt and requires exact
+  equality with returned data, a matching canonical receipt hash, preflight plan
+  payload and candidate hashes, and validate_receipt_decision consistency.
+  Any mismatch is E_PROOF_RECEIPT_DRIFT or the existing receipt-validation error.
+  After mission and persisted child receipt validation, monotonic elapsed seconds are compared with
+  mission max_wall_seconds. A ready child decision within budget is PASS; a
+  complete failing child within budget is BLOCKED. Any INCOMPLETE lane or aggregate
+  wall overrun is INCOMPLETE. Per-command termination remains enforced; aggregate
+  wall time is observed, not a hard real-time watchdog. Final response construction,
+  canonical hashing and JSON serialization are excluded. Unexpected I/O/domain
+  failures remain errors, never synthetic passes, and already-written run evidence
+  is retained. This route does not auto-retry, repair, close a mission or release.
+  Return schema factory.proof-agent.v1 includes state, valid (true only for PASS),
+  mission_binding_sha256, plan_payload_sha256, candidate_sha256, runtime_receipt
+  (workspace-relative path and canonical receipt sha256), proof_debt (child repair
+  queue), child lanes, observed_wall_seconds, within_wall_budget, authority=none,
+  release_approval=false, signature_status=UNSIGNED and scope_limitation. Its own
+  receipt_sha256 hashes canonical JSON excluding that field. A hash is not a
+  signature. The CLI prints this JSON; PASS exits0, BLOCKED/INCOMPLETE exits1.
+  RuntimeAuditError from either preflight or postflight is caught by the CLI and
+  returns exactly six fields: schema=factory.proof-agent.v1, state=BLOCKED,
+  valid=false, finding=error code, authority=none, release_approval=false. This
+  reduced error response has no child path, signature status or receipt hash;
+  already-written .factory/runtime-audits/run-* evidence remains on disk for
+  inspection. Existing mission-domain errors use normal CLI error handling.
+  ## Coverage boundary
+  Tests bind a real owner-approved mission and signed intake/plan, execute all
+  six local business-workflow runners and known-bad legs, and inspect persisted
+  evidence. They also reject missing confirmation, wrong owner, stale sources,
+  changed command/scope/profile/policy/budget and child receipt contradictions.
+  Local fixture workloads are not native CodeQL/Pact/k6 qualification, a test-level
+  sensitivity certificate, independent signer identity, or production performance.
+  Shared fixture contract: tests/test_runtime_audit_contract.py::_proof_agent_fixture
+  reuses test_product_missions._pipeline and owner release-owner's local
+  approved_execution decision; it commits candidate.txt and runner.py in a
+  candidate Git workspace. _runtime_rehearsal_plan reuses signed_plan and
+  tests/fixtures/runtime_six_lane_worker.py, substitutes approved state-machine
+  and schema adapters, binds owner/consumer payload and SQLite schema digests,
+  and selects python_tracemalloc with local performance thresholds. Strict intake
+  comes from test_intake_admission._intake, scoped to those two source files with
+  local_only effects. The signed policy is serial, non_mutating and resource_safe;
+  declaration includes twelve exact target/known-bad argv entries, profile
+  factory.runtime-audit.v1 and runtime-only family applicability. Local HTTP,
+  SQLite, interleaving and allocation workloads are fixture evidence, not native
+  engine qualification. fail_target changes the first positive argv's extra
+  token to approved-target-failure, distinct from its known-bad argv; the fixture
+  worker uses argument count to produce its declared failing target. Parent
+  tests inspect actual artifacts and classify this as BLOCKED, not a clean pass.
 modules:
   - name: runtime_audit_contract
     path: factoryline/runtime_audit_contract.py
@@ -31,6 +140,21 @@ modules:
       - name: evaluate_runtime_audit
         args: [plan, executions, workspace_root]
         returns: dict
+      - name: execute_proof_agent
+        args: [plan_path, trust_root_path, trust_root_sha256, workspace_root, environment_digest, output_root]
+        returns: dict
+# The unchanged shared process executor remains covered by its existing tests;
+# A_SUBPROC review selects orchestration, pinned preflight and public runner
+# entrypoints, not the unchanged process-launch callees. Other danger probes
+# still inspect declared modules. No sandbox/safety certificate.
+review_scopes:
+  - {module: runtime_audit_contract, symbol: verify_runtime_audit_plan, max_lines: 100}
+  - {module: runtime_audit, symbol: execute_runtime_audit, max_lines: 100}
+  - {module: runtime_audit, symbol: execute_proof_agent, max_lines: 100}
+  - {module: runtime_audit, symbol: _proof_agent_scope, max_lines: 60}
+  - {module: runtime_audit, symbol: _proof_agent_receipt, max_lines: 40}
+  - {module: runtime_audit_runner, symbol: run_runtime_audit_plan, max_lines: 100}
+  - {module: runtime_audit_process, symbol: run_bounded_command, max_lines: 100}
 dependencies:
   - from: runtime_audit_runner
     to: runtime_audit_contract

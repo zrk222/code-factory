@@ -958,6 +958,31 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun testDeclarationDraftIsExplicitlyUnapprovedAndBounded() {
+        val python = "class Sample:\n    def test_guard(self):\n        pass\n"
+        assertEquals(TestDeclaration(1, "test_guard"), TestProofDraft.declarationAt(python, "Python", python.indexOf("def")))
+        assertNull(TestProofDraft.declarationAt("describe('suite', fn)", "Ruby", 0))
+        assertEquals(TestDeclaration(0, "works"), TestProofDraft.declarationAt("it('works', () => {})", "TypeScript", 0))
+
+        val root = Files.createTempDirectory("factoryline-test-proof")
+        val source = Files.createDirectories(root.resolve("tests")).resolve("sample_test.py")
+        Files.writeString(source, python)
+        val draft = TestProofDraft.create(root, "tests/sample_test.py", "test_guard", 1)
+        val text = Files.readString(draft)
+        assertTrue(text.contains("\"state\": \"unapproved\""))
+        assertTrue(text.contains("\"approved_by\": \"\""))
+        assertTrue(text.contains("\"positive\": {\"argv\": []}"))
+        assertTrue(text.contains("\"negative\": {\"argv\": []}"))
+        assertTrue(text.contains("\"artifact_paths\": [\"tests/sample_test.py\"]"))
+        assertFailsWith<java.nio.file.FileAlreadyExistsException> {
+            TestProofDraft.create(root, "tests/sample_test.py", "test_guard", 1)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            TestProofDraft.create(root, "../outside.py", "test_guard", 1)
+        }
+    }
+
+    @Test
     fun workspacePathsCannotEscapeTheProject() {
         val root = Files.createTempDirectory("factoryline-workspace")
         assertEquals(root.resolve("missions/one.json").normalize(), WorkspacePath.resolve(root, "missions/one.json"))
