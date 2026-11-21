@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from setuptools import setup
 from setuptools.command.build_py import build_py as _build_py
 from setuptools.command.sdist import sdist as _sdist
+from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
 
 PACKAGE = "factoryline"
 
@@ -56,4 +58,23 @@ class sdist(_sdist):
         )
 
 
-setup(cmdclass={"build_py": build_py, "sdist": sdist})
+class bdist_wheel(_bdist_wheel):
+    def run(self) -> None:
+        """Never resurrect deleted source or data from previous build outputs."""
+        with TemporaryDirectory(prefix="factoryline-wheel-") as scratch:
+            command = self.reinitialize_command("build", reinit_subcommands=True)
+            command.build_base = str(Path(scratch) / "build")
+            for option in (
+                "build_lib",
+                "build_purelib",
+                "build_platlib",
+                "build_temp",
+                "build_scripts",
+            ):
+                setattr(command, option, None)
+            self.bdist_dir = str(Path(scratch) / "wheel")
+            self.skip_build = False
+            super().run()
+
+
+setup(cmdclass={"build_py": build_py, "sdist": sdist, "bdist_wheel": bdist_wheel})

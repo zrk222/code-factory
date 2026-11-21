@@ -733,6 +733,84 @@ def test_build_provenance_creates_missing_editable_build_directory(
         assert runpy.run_path(str(target))["SOURCE_COMMIT"] == commit
 
 
+@pytest.mark.parametrize("skip_build", [False, True])
+def test_wheel_excludes_stale_modules_and_data_without_deleting_caches(
+    tmp_path, monkeypatch, skip_build
+):
+    import runpy
+    import setuptools
+
+    commands = {}
+    monkeypatch.setattr(setuptools, "setup", lambda **kwargs: commands.update(kwargs))
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "setup.py"))
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "factoryline"
+    source.mkdir()
+    (source / "__init__.py").write_bytes(b"VALUE = 42\n")
+    stale = []
+    for directory in (
+        tmp_path / "build/lib/factoryline",
+        tmp_path / "old-stage/factoryline",
+    ):
+        directory.mkdir(parents=True)
+        for name in ("retired.py", "retired.json"):
+            path = directory / name
+            path.write_bytes(b"STALE_SENTINEL")
+            stale.append(path)
+    distribution = setuptools.Distribution(
+        dict(
+            name="wheel-isolation-control",
+            version="1.0.0",
+            packages=["factoryline"],
+            **commands,
+        )
+    )
+    distribution.script_name = "setup.py"
+    build = distribution.get_command_obj("build")
+    build.build_lib = str(tmp_path / "build/lib")
+    build.ensure_finalized()
+    command = distribution.get_command_obj("bdist_wheel")
+    command.dist_dir = str(tmp_path / "dist")
+    command.ensure_finalized()
+    command.bdist_dir = str(tmp_path / "old-stage")
+    command.skip_build = skip_build
+    command.run()
+    wheels = list((tmp_path / "dist").glob("*.whl"))
+    assert len(wheels) == 1
+    with zipfile.ZipFile(wheels[0]) as wheel:
+        assert not any("retired" in name for name in wheel.namelist())
+        assert wheel.read("factoryline/__init__.py") == b"VALUE = 42\n"
+    assert all(path.read_bytes() == b"STALE_SENTINEL" for path in stale)
+    assert (source / "__init__.py").read_bytes() == b"VALUE = 42\n"
+    assert not Path(build.build_base).exists()
+
+
+def test_wheel_owned_scratch_is_cleaned_after_build_failure(tmp_path, monkeypatch):
+    import runpy
+    import setuptools
+    from setuptools.command.bdist_wheel import bdist_wheel as parent
+
+    commands = {}
+    monkeypatch.setattr(setuptools, "setup", lambda **kwargs: commands.update(kwargs))
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "setup.py"))
+    monkeypatch.chdir(tmp_path)
+    distribution = setuptools.Distribution(
+        dict(name="wheel-failure-control", **commands)
+    )
+    command = distribution.get_command_obj("bdist_wheel")
+    observed = []
+
+    def fail(self):
+        observed.append(Path(self.bdist_dir).parent)
+        assert observed[-1].is_dir()
+        raise RuntimeError("declared build failure")
+
+    monkeypatch.setattr(parent, "run", fail)
+    with pytest.raises(RuntimeError, match="declared build failure"):
+        command.run()
+    assert len(observed) == 1 and not observed[0].exists()
+
+
 def test_vscode_136_preflight_shell_uses_actual_workspace_root(tmp_path):
     import re
     import shutil
