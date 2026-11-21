@@ -42,7 +42,12 @@ traces, default/review tiers and explicit coverage gaps. Frozen JSON, SARIF
 Signed-observation claims, the bounded Proof Agent and the read-only Devin
 plugin turn agent suggestions into inspectable evidence—not automatic approval.
 
-Fresh Round 7 supported **38/40 decided default-tier alerts = 95.0%**
+Current coverage adds Go/Java/C#/Ruby framework sources and sinks plus wider
+Ruby/Swift trust checks. New request rules are review-tier; the shipped variant
+has no fresh precision score. Round 7 below is the earlier ruleset.
+[Coverage evidence](evidence/polyglot-coverage-round8.json).
+
+Historical Round 7 supported **38/40 decided default-tier alerts = 95.0%**
 (Wilson 95% **83.5–98.6%**), with **12 additional unclear**. Review tier supported
 **23/40 = 57.5%**, with 3 unclear; advisory recall was **0/161**. Six languages
 had insufficient precision samples. AI review labels are not independent human

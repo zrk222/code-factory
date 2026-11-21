@@ -18,6 +18,11 @@ factory scan --root . --static-only
 
 ## A bigger evidence layer for polyglot teams
 
+Current coverage adds Go, Java, C# and Ruby framework sources/sinks plus wider
+Ruby/Swift trust checks. New request coverage is review-tier. Round 7 numbers
+below belong to the earlier ruleset, not a fresh score for the shipped variant.
+[Coverage evidence and limits](docs/evidence/polyglot-coverage-round8.json).
+
 - **12 languages, one review workflow:** the configured native security worker
   covers C, C++, C#, Go, Java, JavaScript, PHP, Python, Ruby, Rust, Swift and
   TypeScript. Thirty rules separate default findings from review-only context;

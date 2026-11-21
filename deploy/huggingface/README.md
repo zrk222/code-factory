@@ -41,7 +41,10 @@ and bounded agent proof into one local-first evidence workflow.
   signed-observation checks and explicit missing evidence.
 - **Fits existing work:** frozen JSON, SARIF 2.1.0, opt-in pre-commit and a
   read-only eight-tool Devin plugin, alongside VS Code and JetBrains 1.3.6.
-- **Measured strengths and gaps:** fresh Round 7 supported **38/40 decided
+- **Current coverage:** Go/Java/C#/Ruby framework sources and sinks plus wider
+  Ruby/Swift trust checks. New request rules are review-tier; the shipped variant
+  has no fresh precision score. Round 7 below is the earlier ruleset.
+- **Historical strengths and gaps:** Round 7 supported **38/40 decided
   default-tier alerts (95%; Wilson 83.5–98.6%)**, plus 12 unclear; review tier
   **23/40 (57.5%)**, plus 3 unclear. Advisory recall was **0/161**. Six languages
   had insufficient precision samples; AI labels do not establish twelve-language

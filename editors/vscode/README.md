@@ -53,7 +53,12 @@ This documentation-only update does not change extension runtime behavior.
 
 ### Precision and product walkthrough
 
-Fresh Round 7 supported **38/40 decided default-tier alerts (95%; Wilson
+Current coverage adds Go/Java/C#/Ruby framework sources and sinks plus wider
+Ruby/Swift trust checks. New request rules are review-tier; the shipped variant
+has no fresh precision score. Round 7 below is the earlier ruleset.
+[Coverage evidence](../../docs/evidence/polyglot-coverage-round8.json).
+
+Historical Round 7 supported **38/40 decided default-tier alerts (95%; Wilson
 83.5–98.6%)**, with **12 additional unclear**; review tier **23/40 (57.5%)**,
 with 3 unclear. Advisory recall was **0/161**; six languages had insufficient
 precision samples. AI labels are not twelve-language accuracy or independent

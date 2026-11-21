@@ -10,7 +10,12 @@ polyglot developers—not another agent that approves its own work.
   default and review tiers, native source-to-sink traces where observed, SARIF
   normalization and 30 rule-removal challenges. Native workers require setup;
   the local static quick scan remains Python-only.
-- **Measured:** fresh Round 7 supported 38/40 decided default-tier alerts
+- **Coverage:** framework sources/sinks for Go, Java, C# and Ruby, plus wider
+  Ruby/Swift trust checks. New request rules are review-tier after the fresh
+  Round 8 measured variant returned 37 TP / 28 FP / 5 unclear (56.9% decided).
+  The shipped variant was adjusted afterward; it has no fresh precision score.
+- **Historical measurement:** Round 7 supported 38/40 decided default-tier alerts
+  on the earlier ruleset, not the changed shipped variant
   (95.0%; Wilson 95% 83.5–98.6%), with 12 additional unclear; review tier
   supported 23/40 (57.5%), with 3 unclear. Advisory recall was 0/161; six
   languages have insufficient precision samples. AI labels, tier and language
