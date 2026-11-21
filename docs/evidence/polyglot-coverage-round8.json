@@ -1,0 +1,244 @@
+{
+ "schema": "factory.polyglot-coverage.v1",
+ "measured_ruleset_sha256": "a0a48e180f75e0185dc42c91c7b2c85febd9ef6b4b1e9ccaeea5a814b95197f5",
+ "shipped_ruleset_sha256": "78d065c9db6f5e9f6599dcc4f8cbd5732428c3877da0a0af1d22e5099554f947",
+ "shipped_change": "After round 8, the widened Go/Java/C#/Ruby request rules moved to the review tier, and Go SQL sinks require a database-handle receiver that is not a prepared statement (on the round-8 cases this removes 7 of 11 Go false positives and no supported alert; development evidence, not a fresh measurement).",
+ "precision_round8": {
+  "registration_sha256": "71562e1e294b3e1fd23b836f80d4dd373770c50b97ecd1710ff74255bcbb8964",
+  "labels_scored_sha256": "f969b5800f102867f6313d1c76d5b77980b8ac5f40e7104accfb6836e904c18d",
+  "design": "Fresh repositories unseen in rounds 1-7 and in the v8 development scan; 14 alerts per changed language at every tier, no shortfall fill; two independent review contexts.",
+  "raw_agreement": 0.957,
+  "overall": {
+   "TP": 37,
+   "FP": 28,
+   "UNCLEAR": 5,
+   "decided": 65,
+   "precision": 0.5692307692307692,
+   "wilson95_decided": [
+    0.4483297467424587,
+    0.6824054258436073
+   ]
+  },
+  "by_language_tier": {
+   "csharp/default": {
+    "TP": 9,
+    "FP": 4,
+    "UNCLEAR": 1,
+    "decided": 13,
+    "precision": 0.6923076923076923,
+    "wilson95_decided": [
+     0.42369343180549035,
+     0.8731929634428949
+    ]
+   },
+   "go/default": {
+    "TP": 3,
+    "FP": 11,
+    "UNCLEAR": 0,
+    "decided": 14,
+    "precision": 0.21428571428571427,
+    "wilson95_decided": [
+     0.07571386712693182,
+     0.47589230586600295
+    ]
+   },
+   "java/default": {
+    "TP": 8,
+    "FP": 5,
+    "UNCLEAR": 1,
+    "decided": 13,
+    "precision": 0.6153846153846154,
+    "wilson95_decided": [
+     0.35522891512665694,
+     0.8229029220223743
+    ]
+   },
+   "ruby/default": {
+    "TP": 5,
+    "FP": 2,
+    "UNCLEAR": 0,
+    "decided": 7,
+    "precision": 0.7142857142857143,
+    "wilson95_decided": [
+     0.35893445183261935,
+     0.9177810759959434
+    ]
+   },
+   "ruby/review": {
+    "TP": 5,
+    "FP": 0,
+    "UNCLEAR": 2,
+    "decided": 5,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.5655175352168252,
+     1.0
+    ]
+   },
+   "swift/review": {
+    "TP": 7,
+    "FP": 6,
+    "UNCLEAR": 1,
+    "decided": 13,
+    "precision": 0.5384615384615384,
+    "wilson95_decided": [
+     0.29143795714506004,
+     0.7679393219046168
+    ]
+   }
+  },
+  "by_rule": {
+   "csharp.request-command-injection": {
+    "TP": 1,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 1,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.20654931437723742,
+     1.0
+    ]
+   },
+   "csharp.request-sql-injection": {
+    "TP": 8,
+    "FP": 4,
+    "UNCLEAR": 1,
+    "decided": 12,
+    "precision": 0.6666666666666666,
+    "wilson95_decided": [
+     0.39062208887279953,
+     0.8618799089087867
+    ]
+   },
+   "go.request-command-injection": {
+    "TP": 1,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 1,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.20654931437723742,
+     1.0
+    ]
+   },
+   "go.request-sql-injection": {
+    "TP": 2,
+    "FP": 11,
+    "UNCLEAR": 0,
+    "decided": 13,
+    "precision": 0.15384615384615385,
+    "wilson95_decided": [
+     0.043258178358081205,
+     0.4223463101948253
+    ]
+   },
+   "java.request-command-injection": {
+    "TP": 4,
+    "FP": 3,
+    "UNCLEAR": 1,
+    "decided": 7,
+    "precision": 0.5714285714285714,
+    "wilson95_decided": [
+     0.2504583645276572,
+     0.8417801447485304
+    ]
+   },
+   "java.request-sql-injection": {
+    "TP": 4,
+    "FP": 2,
+    "UNCLEAR": 0,
+    "decided": 6,
+    "precision": 0.6666666666666666,
+    "wilson95_decided": [
+     0.299993315138392,
+     0.9032285888942195
+    ]
+   },
+   "ruby.disabled-tls-verification": {
+    "TP": 5,
+    "FP": 0,
+    "UNCLEAR": 2,
+    "decided": 5,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.5655175352168252,
+     1.0
+    ]
+   },
+   "ruby.request-command-injection": {
+    "TP": 1,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 1,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.20654931437723742,
+     1.0
+    ]
+   },
+   "ruby.request-sql-injection": {
+    "TP": 4,
+    "FP": 2,
+    "UNCLEAR": 0,
+    "decided": 6,
+    "precision": 0.6666666666666666,
+    "wilson95_decided": [
+     0.299993315138392,
+     0.9032285888942195
+    ]
+   },
+   "swift.trust-exceptions": {
+    "TP": 7,
+    "FP": 6,
+    "UNCLEAR": 1,
+    "decided": 13,
+    "precision": 0.5384615384615384,
+    "wilson95_decided": [
+     0.29143795714506004,
+     0.7679393219046168
+    ]
+   }
+  }
+ },
+ "recall": {
+  "api_occurrence_fresh": {
+   "ruby": {
+    "hits": 0,
+    "n": 0,
+    "eligible_note": "no eligible file on the registered pages after exclusions"
+   },
+   "swift": {
+    "hits": 18,
+    "n": 25,
+    "eligible_note": null
+   }
+  },
+  "api_occurrence_round7_files_rescanned_development": {
+   "ruby": {
+    "hits": 9,
+    "n": 25
+   },
+   "swift": {
+    "hits": 15,
+    "n": 25
+   }
+  },
+  "advisory_next_scorable": {
+   "Go": {
+    "scored": 25,
+    "hunk_hits": 0,
+    "file_hits": 0
+   },
+   "Maven": {
+    "scored": 25,
+    "hunk_hits": 0,
+    "file_hits": 0
+   },
+   "RubyGems": {
+    "scored": 13,
+    "hunk_hits": 0,
+    "file_hits": 0
+   }
+  }
+ }
+}
