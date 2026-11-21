@@ -103,7 +103,40 @@ function matchesEndpoints(steps, expected) {
 export const javascriptControlEndpoints = [
   ['command', 4, 9], ['sql', 23, 26], ['html', 36, 38],
   ['path', 55, 59], ['path', 63, 66], ['path', 70, 73], ['path', 99, 101],
+  ['html', 106, 106], ['html', 110, 112], ['html', 116, 118],
 ];
+export const fixedReviewedFindingCounts = Object.freeze({
+  'opt.factory.rules.c.unsafe-gets': 2,
+  'opt.factory.rules.csharp.disabled-certificate-verification': 1,
+  'opt.factory.rules.csharp.request-command-injection': 2,
+  'opt.factory.rules.csharp.request-sql-injection': 2,
+  'opt.factory.rules.go.disabled-tls-verification': 1,
+  'opt.factory.rules.go.request-command-injection': 2,
+  'opt.factory.rules.go.request-sql-injection': 2,
+  'opt.factory.rules.java.disabled-hostname-verification': 1,
+  'opt.factory.rules.java.request-command-injection': 2,
+  'opt.factory.rules.java.request-sql-injection': 2,
+  'opt.factory.rules.javascript.request-command-injection': 4,
+  'opt.factory.rules.javascript.request-html-injection': 12,
+  'opt.factory.rules.javascript.request-path-traversal': 13,
+  'opt.factory.rules.javascript.request-sql-injection': 3,
+  'opt.factory.rules.php.request-command-injection': 13,
+  'opt.factory.rules.php.request-file-inclusion': 2,
+  'opt.factory.rules.php.request-path-traversal': 11,
+  'opt.factory.rules.php.request-sql-injection': 15,
+  'opt.factory.rules.php.request-unsafe-deserialization': 4,
+  'opt.factory.rules.python.disabled-tls-verification': 2,
+  'opt.factory.rules.python.request-command-injection': 2,
+  'opt.factory.rules.python.request-path-traversal': 9,
+  'opt.factory.rules.python.request-sql-injection': 1,
+  'opt.factory.rules.python.subprocess-shell-true': 4,
+  'opt.factory.rules.python.unsafe-deserialization': 1,
+  'opt.factory.rules.ruby.disabled-tls-verification': 1,
+  'opt.factory.rules.ruby.request-command-injection': 2,
+  'opt.factory.rules.ruby.request-sql-injection': 2,
+  'opt.factory.rules.rust.reqwest-disabled-tls-verification': 1,
+  'opt.factory.rules.swift.trust-exceptions': 1,
+});
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
 
@@ -115,8 +148,8 @@ export function javascriptControlManifest() {
   return ['js', 'ts', 'tsx'].flatMap(extension => {
     const path = `semgrep-pattern-limited.${extension}`;
     const additional = extension === 'tsx' ? [
-      { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 106, line: 109 },
-      { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 110, line: 112 },
+      { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 147, line: 150 },
+      { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 151, line: 153 },
     ] : [];
     return [...family, ...additional].map(item => ({ ...item, path }));
   });
@@ -131,8 +164,20 @@ export function verifyJavascriptControlMatrix(manifest) {
 }
 
 export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
-  if (manifest.length !== 106 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30) {
+  const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
+  const observedRuleIds = [...ruleIds].sort();
+  if (manifest.length !== 120 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30 ||
+      JSON.stringify(observedRuleIds) !== JSON.stringify(expectedRuleIds) ||
+      Object.values(fixedReviewedFindingCounts).reduce((sum, count) => sum + count, 0) !== 120) {
     throw new Error('Registered rule/finding control matrix differs');
+  }
+  const observedCounts = new Map(ruleIds.map(rule => [rule, 0]));
+  for (const item of manifest) {
+    if (!observedCounts.has(item.rule)) throw new Error('Unexpected native fixture rule');
+    observedCounts.set(item.rule, observedCounts.get(item.rule) + 1);
+  }
+  if (ruleIds.some(rule => observedCounts.get(rule) !== fixedReviewedFindingCounts[rule])) {
+    throw new Error('Reviewed per-rule positive finding counts differ');
   }
   for (const language of ['go', 'java', 'csharp', 'ruby']) {
     for (const family of ['command', 'sql']) {

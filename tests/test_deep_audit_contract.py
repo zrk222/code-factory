@@ -4526,8 +4526,12 @@ def test_coordinator_cheap_preflight_keeps_signed_identity_without_inventory(
     tmp_path, monkeypatch
 ):
     import factoryline.cli_deep_audit as module
-    from factoryline import deep_audit_io
+    from factoryline import assembly_process, deep_audit_io
 
+    # This is a preflight unit control, not a native process-identity probe.
+    monkeypatch.setattr(
+        assembly_process, "_process_creation_identity", lambda pid: "unit-owner"
+    )
     root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
     full = module._coordinator_preflight(root, request["payload"])
 
@@ -4548,7 +4552,12 @@ def test_coordinator_cheap_preflight_keeps_signed_identity_without_inventory(
 def test_coordinator_owner_check_reuses_runtime_identity(tmp_path, monkeypatch):
     import time
     import factoryline.cli_deep_audit as module
+    from factoryline import assembly_process
 
+    # Keep identity stable on unsupported native hosts without skipping this check.
+    monkeypatch.setattr(
+        assembly_process, "_process_creation_identity", lambda pid: "unit-owner"
+    )
     root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
 
     def forbidden():
