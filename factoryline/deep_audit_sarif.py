@@ -4497,7 +4497,13 @@ def _codeql_result_path(query_path):
     if (
         len(parts) < 4
         or parts[0] != "codeql"
-        or parts[1] not in {"javascript-queries", "python-queries", "actions-queries"}
+        or parts[1]
+        not in {
+            "javascript-queries",
+            "python-queries",
+            "ruby-queries",
+            "actions-queries",
+        }
         or _deep_audit_io.re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", parts[2]) is None
         or not parts[-1].endswith(".ql")
     ):
@@ -4587,6 +4593,13 @@ def _codeql_source_query(profile):
             "",
         ),
         "python": ("python", "Module", "SyntaxError", "e.getFile()", ""),
+        "ruby": (
+            "ruby",
+            "AstNode",
+            "ExtractionError",
+            "e.getLocation().getFile()",
+            "import codeql.ruby.AST\nimport codeql.ruby.Diagnostics\n",
+        ),
         "actions": (
             "actions",
             "YamlDocument",

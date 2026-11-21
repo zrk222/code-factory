@@ -1,0 +1,195 @@
+{
+ "schema": "factory.codeql-recall.v1",
+ "registration_sha256": "dc5ed6467b342b8e6c480f45706224ec0f8d60fbafb29b7e0797805e8da8d5ed",
+ "bundle_sha256": "1ec99cfa9420f04c2330784b4ddb8363a0dd67c3e4471cd93963c50e6c433717",
+ "suites": "stock <language>-security-extended; only class-matching queries executed per advisory (other queries cannot change a class-matched hit)",
+ "by_ecosystem": {
+  "Go": {
+   "sampled": 15,
+   "scored": 11,
+   "extraction_failed": 4,
+   "codeql_hunk_hits": 0,
+   "codeql_file_hits": 0,
+   "pattern_lane_hunk_hits": 0,
+   "codeql_wilson95": [
+    0,
+    0.259
+   ]
+  },
+  "RubyGems": {
+   "sampled": 15,
+   "scored": 15,
+   "extraction_failed": 0,
+   "codeql_hunk_hits": 5,
+   "codeql_file_hits": 5,
+   "pattern_lane_hunk_hits": 0,
+   "codeql_wilson95": [
+    0.152,
+    0.583
+   ]
+  },
+  "npm": {
+   "sampled": 15,
+   "scored": 15,
+   "extraction_failed": 0,
+   "codeql_hunk_hits": 2,
+   "codeql_file_hits": 3,
+   "pattern_lane_hunk_hits": 0,
+   "codeql_wilson95": [
+    0.037,
+    0.379
+   ]
+  },
+  "crates.io": {
+   "sampled": 2,
+   "scored": 2,
+   "extraction_failed": 0,
+   "codeql_hunk_hits": 0,
+   "codeql_file_hits": 0,
+   "pattern_lane_hunk_hits": 0,
+   "codeql_wilson95": [
+    0,
+    0.658
+   ]
+  },
+  "Maven": {
+   "sampled": 15,
+   "scored": 13,
+   "extraction_failed": 2,
+   "codeql_hunk_hits": 0,
+   "codeql_file_hits": 0,
+   "pattern_lane_hunk_hits": 0,
+   "codeql_wilson95": [
+    0,
+    0.228
+   ]
+  },
+  "PyPI": {
+   "sampled": 15,
+   "scored": 15,
+   "extraction_failed": 0,
+   "codeql_hunk_hits": 3,
+   "codeql_file_hits": 4,
+   "pattern_lane_hunk_hits": 0,
+   "codeql_wilson95": [
+    0.07,
+    0.452
+   ]
+  },
+  "NuGet": {
+   "sampled": 9,
+   "scored": 2,
+   "extraction_failed": 7,
+   "codeql_hunk_hits": 0,
+   "codeql_file_hits": 0,
+   "pattern_lane_hunk_hits": 0,
+   "codeql_wilson95": [
+    0,
+    0.658
+   ]
+  }
+ },
+ "offline_lanes_pooled": {
+  "ecosystems": [
+   "PyPI",
+   "npm",
+   "RubyGems"
+  ],
+  "codeql_hunk_hits": 10,
+  "scored": 45,
+  "wilson95": [
+   0.125,
+   0.363
+  ],
+  "pattern_lane_hunk_hits": 0
+ },
+ "hits": {
+  "GHSA-h36j-8vv3-cj52": [
+   [
+    "py/tarslip",
+    "onnx/hub.py",
+    409
+   ]
+  ],
+  "GHSA-fhff-qmm8-h2fp": [
+   [
+    "py/tarslip",
+    "mlflow/pyfunc/dbconnect_artifact_cache.py",
+    143
+   ]
+  ],
+  "GHSA-rp2v-v467-q9vq": [
+   [
+    "py/tarslip",
+    "guarddog/scanners/package_scanner.py",
+    47
+   ]
+  ],
+  "GHSA-jj45-24rw-v6jw": [
+   [
+    "js/incomplete-sanitization",
+    "internal.js",
+    962
+   ]
+  ],
+  "GHSA-mc7w-4cjf-c973": [
+   [
+    "js/indirect-command-line-injection",
+    "utils/find-opencv.js",
+    15
+   ]
+  ],
+  "GHSA-ff6c-w6qf-7xqc": [
+   [
+    "rb/request-without-cert-validation",
+    "lib/css_parser/parser.rb",
+    651
+   ]
+  ],
+  "GHSA-jppv-gw3r-w3q8": [
+   [
+    "rb/non-constant-kernel-open",
+    "lib/rake/file_list.rb",
+    297
+   ]
+  ],
+  "GHSA-hfcp-477w-3wjw": [
+   [
+    "rb/shell-command-constructed-from-input",
+    "lib/rubyipmi/freeipmi/commands/basecommand.rb",
+    30
+   ],
+   [
+    "rb/shell-command-constructed-from-input",
+    "lib/rubyipmi.rb",
+    155
+   ]
+  ],
+  "GHSA-ggxm-pgc9-g7fp": [
+   [
+    "rb/non-constant-kernel-open",
+    "lib/rdoc/rdoc.rb",
+    446
+   ]
+  ],
+  "GHSA-v222-6mr4-qj29": [
+   [
+    "rb/non-constant-kernel-open",
+    "lib/asciidoctor/include_ext/include_processor.rb",
+    116
+   ],
+   [
+    "rb/non-constant-kernel-open",
+    "lib/asciidoctor/include_ext/include_processor.rb",
+    118
+   ]
+  ]
+ },
+ "lane_notes": {
+  "go": "Autobuild failed on 4 of 15 repositories even with module downloads; 0 of 11 detected. The network-less worker would also lose dependency types.",
+  "java": "Build-mode none: 0 of 13 detected, 2 extraction failures; offline extraction also drops framework types (a servlet control produced no finding without dependencies).",
+  "csharp": "Build-mode none needs a .NET SDK the bundle does not ship: 7 of 9 failed, 0 of 2 detected.",
+  "rust": "0 of 2 (TLS advisories)."
+ },
+ "pattern_lane_note": "pattern_lane_hunk_hits are the rounds 7-8 pattern-lane results for the same advisories."
+}

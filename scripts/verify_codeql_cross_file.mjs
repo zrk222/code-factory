@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 
 const [image, output = '.factory/codeql-cross-file-verification.json'] = process.argv.slice(2);
 const variant = process.argv[4] ?? 'javascript';
-if (!['javascript', 'actions'].includes(variant)) throw new Error('Unknown CodeQL control variant');
+if (!['javascript', 'actions', 'ruby'].includes(variant)) throw new Error('Unknown CodeQL control variant');
 if (!image) throw new Error('Usage: node scripts/verify_codeql_cross_file.mjs IMAGE OUTPUT');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const profilePath = `deploy/deep-adapters/profiles/codeql-${variant}-full.json`;
@@ -23,7 +23,8 @@ function docker(args, timeout = 30000) {
 }
 try {
   receipt.source[profilePath] = hash(readFileSync(profilePath));
-  const fixtures = variant === 'actions' ? ['workflow-controls.txt'] : ['route.js', 'service.fixture'];
+  const rubyTargets = { 'ruby-application.fixture': 'app/controllers/application_controller.rb', 'ruby-controller.fixture': 'app/controllers/reports_controller.rb', 'ruby-exporter.fixture': 'lib/exporter.rb' };
+  const fixtures = variant === 'actions' ? ['workflow-controls.txt'] : variant === 'ruby' ? Object.keys(rubyTargets) : ['route.js', 'service.fixture'];
   const vulnerableCall = ['child_process.', 'exec', '(alias)'].join('');
   for (const name of fixtures) receipt.source[`${fixtureRoot}/${name}`] = hash(readFileSync(`${fixtureRoot}/${name}`));
   const id = docker(['image', 'inspect', image, '--format', '{{.Id}}']).trim();
@@ -49,13 +50,14 @@ try {
         content = content.replace('        run: echo "${{ github.event.pull_request.title }}"',
           '        env:\n          PR_TITLE: ${{ github.event.pull_request.title }}\n        run: printf "%s\\n" "$PR_TITLE"');
       }
-      const target = variant === 'actions' ? '.github/workflows/control.yml' : name.replace(/\.fixture$/, '.js');
+      if (!positive && name === 'ruby-exporter.fixture') content = content.replace('system("report-tool --format #{format}")', 'system("report-tool", "--format", format)');
+      const target = variant === 'actions' ? '.github/workflows/control.yml' : variant === 'ruby' ? rubyTargets[name] : name.replace(/\.fixture$/, '.js');
       mkdirSync(dirname(join(source, target)), { recursive: true });
       writeFileSync(join(source, target), content);
-      files.push({ path: target, sha256: hash(Buffer.from(content)), language: variant === 'actions' ? 'configuration' : 'javascript' });
+      files.push({ path: target, sha256: hash(Buffer.from(content)), language: variant === 'actions' ? 'configuration' : variant });
     }
     const candidate = hash(Buffer.from(JSON.stringify(files)));
-    const lane = { id: 'codeql-cross-file-control', family: 'static', languages: variant === 'actions' ? ['configuration'] : ['javascript', 'typescript'],
+    const lane = { id: 'codeql-cross-file-control', family: 'static', languages: variant === 'actions' ? ['configuration'] : variant === 'ruby' ? ['ruby'] : ['javascript', 'typescript'],
       timeout_seconds: 900, memory_mib: 3072, report: 'native.json', coverage: 'coverage.json', challenge_report: 'challenges.json' };
     for (const key of ['engine', 'mode', 'tool_version', 'ruleset_sha256']) lane[key] = profile[key];
     const contract = { schema: 'factory.deep-adapter-input.v1', run_id: 'codeql-cross-file-control', manifest_sha256: 'b'.repeat(64),
@@ -71,13 +73,14 @@ try {
     if (bundle.candidate_sha256 !== candidate || !artifact?.runs?.length) throw new Error('Candidate binding or native report missing');
     const findings = artifact.runs.flatMap(run => run.results ?? []);
     const commands = findings.filter(result => variant === 'actions'
-      ? result.ruleId?.startsWith('actions/code-injection/') : result.ruleId === 'js/command-line-injection');
+      ? result.ruleId?.startsWith('actions/code-injection/') : result.ruleId === (variant === 'ruby' ? 'rb/command-line-injection' : 'js/command-line-injection'));
     const flows = commands.flatMap(result => (result.codeFlows ?? []).flatMap(flow => flow.threadFlows ?? []));
     const orderedFlows = flows.map(flow => (flow.locations ?? []).map(step => step.location?.physicalLocation?.artifactLocation?.uri));
     const paths = new Set(orderedFlows.flat());
     const crossFileFlow = orderedFlows.some(flow => {
-      const sourceIndex = flow.indexOf('route.js');
-      return sourceIndex >= 0 && flow.slice(sourceIndex + 1).includes('service.js');
+      const [from, to] = variant === 'ruby' ? ['app/controllers/reports_controller.rb', 'lib/exporter.rb'] : ['route.js', 'service.js'];
+      const sourceIndex = flow.indexOf(from);
+      return sourceIndex >= 0 && flow.slice(sourceIndex + 1).includes(to);
     });
     const record = { positive, state: 'BLOCKED', candidate_sha256: candidate, source_bindings: files,
       findings: findings.length, command_injection_findings: commands.length, flow_paths: [...paths].filter(Boolean).sort(),

@@ -6018,6 +6018,7 @@ def test_codeql_archived_sources_bounds_archive_read(tmp_path, monkeypatch):
     [
         ("javascript-typescript", "javascript", "TopLevel"),
         ("python", "python", "Module"),
+        ("ruby", "ruby", "AstNode"),
         ("actions", "actions", "YamlDocument"),
     ],
 )

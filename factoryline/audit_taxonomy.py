@@ -34,6 +34,11 @@ _NATIVE_WORKERS = {
                 "profile": "codeql-javascript-full.json",
                 "scope": "JavaScript/TypeScript security-extended suite with modeled cross-file source-to-sink SARIF flows.",
             },
+            "ruby": {
+                "target": "codeql-ruby-worker",
+                "profile": "codeql-ruby-full.json",
+                "scope": "Ruby security-extended: Rails/Rack and library-input cross-file flows; no build.",
+            },
             "github_actions": {
                 "target": "codeql-actions-worker",
                 "profile": "codeql-actions-full.json",
@@ -45,13 +50,6 @@ _NATIVE_WORKERS = {
         "target": "semgrep-worker",
         "profile": "semgrep-pattern-limited.json",
         "version": "1.15.0",
-        "php_rule_ids": [
-            "php.request-command-injection",
-            "php.request-sql-injection",
-            "php.request-path-traversal",
-            "php.request-file-inclusion",
-            "php.request-unsafe-deserialization",
-        ],
         "scope": "OpenGrep OSS: thirty rules across twelve source languages; native source-bound local request-to-sink traces and unsafe API/configuration checks. PHP .php only; callee identity unresolved; PDO/framework/cross-function flows unsupported. No interfile or general accuracy claim. Inline suppression disabled; candidate ignore rules can reduce inspection.",
     },
     "osv": {
@@ -100,7 +98,7 @@ _NATIVE_WORKER_CONTRACT = {
     "agent_action": "Return path, rule, severity, source binding, native/normalized hashes, failures, coverage gaps, repair and exact rerun when available; mark missing fields, accounting and challenges as gaps.",
     "tracing": "Preserve native and normalized digests separately, source binding, deadlines, output exhaustion and cleanup failures. Discover signed optional Python HTTP request-associated tracing in agent_usage_contract.six_lane_review.zap_source_trace; declared routes alone do not prove line execution.",
     "unified_cli": "factory scan --root PATH --deep --worker-config .factory/worker-config.json --json; configure signed manifest, authorization and SHA-pinned trust root before execution.",
-    "selection": "CodeQL: Python for Python, JavaScript for JS/TS, Actions for workflows. Reuse only exact image/candidate-bound evidence; select relevant workers per edit.",
+    "selection": "CodeQL: Python for Python, JavaScript for JS/TS, Ruby for Ruby, Actions for workflows. Reuse only exact image/candidate-bound evidence; select relevant workers per edit.",
 }
 
 
