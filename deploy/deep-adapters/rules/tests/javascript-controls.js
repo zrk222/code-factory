@@ -147,3 +147,9 @@ function containedDownloadSafe(req, res, root) {
   // ok: javascript.request-path-traversal
   return fs.createReadStream(path.join(root, rel));
 }
+
+async function storedDocumentSafe(req, res, Document) {
+  const record = await Document.findById(req.params.id);
+  // ok: javascript.request-path-traversal
+  return fs.readFileSync(path.resolve(record.filePath), "utf-8");
+}

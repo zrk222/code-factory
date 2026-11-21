@@ -134,15 +134,21 @@ framework sources, escaping helpers and cross-file flows require additional
 models or the full CodeQL lane. HTML `send` findings are limited to template
 literals, string concatenation and direct request values; objects serialized as
 JSON, binary buffers and helper results are left to review and the CodeQL lane,
-and findings still require checking the response content type. Shell-enabled
-`subprocess` calls are reported only when the command string is built from a
-non-literal operand (`%`, `.format`, f-strings or concatenation); whole-command
-request passthrough is reported by the request taint rule. Python `verify=False`
+and findings still require checking the response content type. The
+pattern-only `python.subprocess-shell-true` rule is not part of this
+precision profile (2 confirmed of 12 decided across four held-out panels);
+request data reaching a shell is reported by `python.request-command-injection`.
+Python `verify=False`
 and Go `InsecureSkipVerify` are reported only where the call or enclosing
 function carries credentials or session material, so unauthenticated probes are
 not reported; credential evidence is matched as identifiers (token, secret,
 password, Authorization, cookie), not substrings such as `/etc/passwd`.
-`pickle.load` of a file the program opens itself is not reported, and named
+TLS bypasses behind an explicit operator opt-in (`if args.insecure`,
+`if cfg.insecure {}`) are not reported, and Rust clients are reported only
+when the function carries credentials, session or user identity.
+`pickle.load` of a file the program opens itself is not reported, records
+looked up by a request key (`findById`, `findProject`, `resolveSection`) are
+server-side data for JavaScript path traversal, and named
 containment helpers (`safe*`, `sanitize*`, `*within*`) sanitize JavaScript path
 traversal. Every rule skips tests, fixtures, exploit or CVE proof-of-concept
 corpora, generated code, vendored dependencies (`node_modules`, `vendor`,
@@ -151,7 +157,8 @@ files and editor `.history` copies; PHP request rules treat integer casts as
 sanitizers, and the JavaScript SQL rule does not assume helper return values
 carry request text. Copy `rules/tests/php-controls.php` to
 `semgrep-pattern-limited.php` and `rules/tests/go-controls.txt` to
-`semgrep-pattern-limited.go` when running the native rule tests.
+`semgrep-pattern-limited.go`, and `rules/tests/rust-controls.txt` to
+`semgrep-pattern-limited.rs` when running the native rule tests.
 
 Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,

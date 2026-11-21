@@ -1,29 +1,4 @@
 rules:
-  - id: python.subprocess-shell-true
-    message: subprocess invocation enables shell parsing
-    severity: WARNING
-    languages: [python]
-    options:
-      symbolic_propagation: true
-    patterns:
-      # Only commands assembled from a non-literal operand can carry injected shell
-      # syntax; fixed literals and whole-command passthrough wrappers are not reported.
-      - pattern-either:
-          - pattern: subprocess.$FUNC($TEMPLATE % $VALUE, ..., shell=True, ...)
-          - pattern: subprocess.$FUNC($TEMPLATE.format(...), ..., shell=True, ...)
-          - pattern: subprocess.$FUNC(f"...", ..., shell=True, ...)
-          - pattern: subprocess.$FUNC($LEFT + $RIGHT, ..., shell=True, ...)
-      - metavariable-regex:
-          metavariable: $FUNC
-          regex: ^(run|Popen|call|check_call|check_output)$
-      - pattern-not: subprocess.$FUNC("...", ...)
-    paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js"]
-    metadata:
-      category: security
-      confidence: MEDIUM
-      technology: [python]
-      cwe: ["CWE-78"]
   - id: python.request-command-injection
     message: Request data reaches command execution; use argv without shell parsing and validate allowed operations.
     severity: ERROR
@@ -94,6 +69,15 @@ rules:
     severity: WARNING
     languages: [python]
     patterns:
+      # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
+      - pattern-not-inside:
+          patterns:
+            - pattern-inside: |
+                if $OPTIN:
+                  ...
+            - metavariable-regex:
+                metavariable: $OPTIN
+                regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
       - pattern: requests.$METHOD(..., verify=False, ...)
       # Report only connections that carry credentials or session material;
       # unauthenticated probes of public endpoints are not a credential exposure.
@@ -247,6 +231,15 @@ rules:
           - metavariable-regex:
               metavariable: $HELPER
               regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure).*
+      # Records looked up by a request key (findById(id), findProject(id),
+      # resolveSection(project, id)) carry server-side paths, not request text.
+      - patterns:
+          - pattern-either:
+              - pattern: $LOOKUP(...)
+              - pattern: $MODEL.$LOOKUP(...)
+          - metavariable-regex:
+              metavariable: $LOOKUP
+              regex: ^(find|lookup|resolve)(By|One|First|Unique|[A-Z_])[A-Za-z0-9_]*$
     pattern-sinks:
       - patterns:
           - pattern: fs.readFile($PATH, ...)
@@ -493,6 +486,14 @@ rules:
     severity: WARNING
     languages: [go]
     patterns:
+      # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
+      - pattern-not-inside:
+          patterns:
+            - pattern-inside: |
+                if $OPTIN { ... }
+            - metavariable-regex:
+                metavariable: $OPTIN
+                regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
       - pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
       # Report only functions whose traffic carries credentials or session material.
       - pattern-either:
@@ -520,7 +521,31 @@ rules:
     message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
     severity: WARNING
     languages: [rust]
-    pattern: "reqwest::Client::builder().danger_accept_invalid_certs(true)"
+    patterns:
+      # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
+      - pattern-not-inside:
+          patterns:
+            - pattern-inside: |
+                if $OPTIN { ... }
+            - metavariable-regex:
+                metavariable: $OPTIN
+                regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
+      - pattern: "reqwest::Client::builder().danger_accept_invalid_certs(true)"
+      # Report only clients whose traffic carries credentials, session or user identity.
+      - pattern-either:
+          - pattern-inside: |
+              fn $FUNCTION(...) { $...BODY }
+          - pattern-inside: |
+              fn $FUNCTION(...) -> $RESULT { $...BODY }
+          - pattern-inside: |
+              async fn $FUNCTION(...) { $...BODY }
+          - pattern-inside: |
+              async fn $FUNCTION(...) -> $RESULT { $...BODY }
+      - metavariable-pattern:
+          metavariable: $...BODY
+          language: generic
+          patterns:
+            - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\w*user_?id\b|\bidentity\b|\bsession\w*|\baccount_?id\b)
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js"]
     metadata:

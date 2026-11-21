@@ -1,0 +1,12 @@
+async fn login(user_id: &str, password: &str) -> Result<(), reqwest::Error> {
+    // ruleid: rust.reqwest-disabled-tls-verification
+    let client = reqwest::Client::builder().danger_accept_invalid_certs(true).build()?;
+    client.post("https://device.local/login").form(&[("user", user_id), ("pass", password)]).send().await?;
+    Ok(())
+}
+
+async fn health_probe(host: &str) -> bool {
+    // ok: rust.reqwest-disabled-tls-verification
+    let client = reqwest::Client::builder().danger_accept_invalid_certs(true).build().unwrap();
+    client.get(format!("https://{}/", host)).send().await.is_ok()
+}
