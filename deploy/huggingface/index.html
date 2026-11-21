@@ -156,12 +156,22 @@
       </div>
     </div>
 
+    <section aria-labelledby="source-update">
+      <div class="shell">
+        <h2 id="source-update">Source update, separate from the released package</h2>
+        <p>The 0.49.7 package is the released baseline linked here. The changes reviewed in PR 354 add a bounded Proof Agent that runs a human-approved signed proof plan and returns recorded evidence for review, signed execution-observation checks, and a focused Devin profile with eight read-only tools.</p>
+        <p>The publication versions planned after merge are core 0.50.0 and plugins 1.3.6. These version targets are not a claim that those packages or marketplace updates are already released.</p>
+        <p>Source implementation and local tests are not proof that a feature is in your installed package or available through a marketplace. Check your exact release and provider listing. Signed-observation checks do not establish code correctness, current workspace state or release readiness. The Proof Agent does not approve its own result, merge, deploy or release.</p>
+        <p>Source: <a href="https://github.com/zrk222/code-factory/pull/354" target="_blank" rel="noopener noreferrer">PR 354</a></p>
+      </div>
+    </section>
+
     <section aria-labelledby="latest-telemetry">
       <div class="shell">
         <h2 id="latest-telemetry">Earlier precision measurements and release notes</h2>
         <p>The exposed N443-38 replay measured <strong>88.24% decided actionable precision</strong> (30/34), up from 85.71% on the same observed cases. It returned 37 of 38 cases and retained all 30 original true positives. Two labels remained unclear. Case 005 timed out.</p>
         <p>The original sealed reference measured 83.33% among 36 decided alerts and 78.95% across all 38 cases. Two AI reviewers supplied the labels. <a href="https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json" target="_blank" rel="noopener noreferrer">Read the case ledger</a>.</p>
-        <p><a href="https://huggingface.co/spaces/zrk222/code-factory/blob/24d51e618d685618725a850ba34be6a7df88a6d9/factoryline_code_factory-0.49.6-py3-none-any.whl" target="_blank" rel="noopener noreferrer">Get the verified wheel</a> · <a href="https://doi.org/10.5281/zenodo.24029905" target="_blank" rel="noopener noreferrer">Zenodo record</a></p>
+        <p><a href="https://huggingface.co/spaces/zrk222/code-factory/blob/24d51e618d685618725a850ba34be6a7df88a6d9/factoryline_code_factory-0.49.6-py3-none-any.whl" target="_blank" rel="noopener noreferrer">Historical 0.49.6 wheel</a> · <a href="https://doi.org/10.5281/zenodo.24029905" target="_blank" rel="noopener noreferrer">Zenodo record</a></p>
         <h3>What’s new in 0.49.6</h3>
         <ol>
           <li><strong>Pre-PR review.</strong> <code>factory change pre-pr &lt;manifest&gt;</code> combines candidate source, planned checks, oracle evidence, and feature verification in one receipt. Add <code>--execute</code> to run the declared checks.</li>
@@ -313,7 +323,7 @@ factory proofsearch frontier plan frontier.request.json \
       <div class="shell">
         <div class="section-head">
           <h2>Explore the current Factory Studio and Graph Ops views.</h2>
-          <p>These annotated views use the released interface and a fictional local workspace.</p>
+          <p>These annotated captures show a fictional local workspace from an earlier product walkthrough. They are examples, not confirmation that every screen matches the latest source or installed release.</p>
         </div>
         <div class="gallery">
           <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-proof-guide-0496.png" alt="Graph Ops guide for choosing the next proof" width="1440" height="900" loading="lazy">
@@ -485,9 +495,9 @@ factory studio --root .\my-mvp
     <section>
       <div class="shell proof">
         <div>
-          <div class="eyebrow">Launch terms</div>
-          <h2>Clear dates. No surprise paid change.</h2>
-          <p>The GitHub Assurance Seat is free through December 1, 2026, with a $5.95 USD per named seat per month offer scheduled for December 2, 2026. It is built around commit-bound proof review, visible Proof Debt, supplied-policy drift dossiers, governed exceptions, and exportable evidence—not source access or opaque AI-token resale. The separate JetBrains Marketplace plan remains $4.95 USD per month from January 1, 2027, subject to JetBrains approval and a planned 30-day trial. Neither checkout nor entitlement is live; total price, taxes, fees, and billing terms must be shown before any approved purchase.</p>
+          <div class="eyebrow">Current availability</div>
+          <h2>Current availability</h2>
+          <p>The JetBrains Marketplace listing currently marks FactoryLine AI Proof as free. This preview is not a checkout.</p>
         </div>
         <pre><code>Marketplace count: check the current listing
 Unique installs: not exposed by the listing
