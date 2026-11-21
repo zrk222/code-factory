@@ -704,7 +704,7 @@ def _commercial_admission(*, owner: str, binding: dict, verification: dict):
     import hashlib
 
     from . import __version__ as _package_version
-    from .commercial_gate import (
+    from .enterprise_enforcement import (
         CommercialAdmissionError,
         CommercialGate,
         commercial_mode,
@@ -737,7 +737,7 @@ def _commercial_settle(admission, outcome: str) -> None:
         return
     from datetime import datetime, timezone
 
-    from .commercial_gate import CommercialGate
+    from .enterprise_enforcement import CommercialGate
 
     try:
         gate = CommercialGate()
@@ -793,7 +793,9 @@ def execute_proof_agent(
             require_intake=True,
             expected_plan_sha256=verification["payload_sha256"],
         )
-        post_binding = _mission_repair_snapshot(mission_binding_path, mission_root, owner)
+        post_binding = _mission_repair_snapshot(
+            mission_binding_path, mission_root, owner
+        )
         if post_binding != binding:
             raise RuntimeAuditError("E_PROOF_SCOPE", "mission changed during execution")
         receipt = _proof_agent_receipt(result, verification, workspace)

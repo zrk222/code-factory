@@ -26,6 +26,9 @@ function sql_controls($db) {
     pg_query_params($db, 'SELECT * FROM t WHERE id=$1', [$_POST['id']]);
     // ok: php.request-sql-injection
     $db->query($_GET['sql']);
+    $name = preg_replace('/[^A-Za-z0-9 ]/', '', $_POST['name']);
+    // ok: php.request-sql-injection
+    mysqli_query($db, "SELECT * FROM t WHERE name='" . $name . "'");
 }
 function path_controls($obj) {
     // ruleid: php.request-path-traversal

@@ -88,6 +88,11 @@ def _validate_installation_maps(
         )
 
 
+def _append_duplicate_ingress_marker(result: dict[str, Any]) -> None:
+    if result.get("duplicate") is True:
+        result["markers"].append("HOSTED_INGRESS_DUPLICATE_ACCEPTED")
+
+
 def _finish(start_response: Callable, status: str, value: Any) -> list[bytes]:
     body = _json_bytes(value)
     start_response(
@@ -750,7 +755,12 @@ class HostedPRAssuranceService:
         from .control_plane import authorize
 
         authorize(current, "repair.execute", tenant_id)
-        with self.control.hosted_repair_session_lock(tenant_id, repair_id):
+        control = self.control
+        if control is None:
+            raise PRAssuranceError(
+                "E_REPAIR_UNAVAILABLE", "repair dispatch is disabled"
+            )
+        with control.hosted_repair_session_lock(tenant_id, repair_id):
             return self._reconcile_registered_repair_locked(
                 current, resolver, tenant_id, repair_id
             )
@@ -879,7 +889,13 @@ class HostedPRAssuranceService:
             "marker": "JWKS_ROTATION_PINNED",
         }
 
-    def ingest(self, body: bytes, headers: Mapping[str, str]) -> dict[str, Any]:
+    def ingest(
+        self,
+        body: bytes,
+        headers: Mapping[str, str],
+        *,
+        queue_retry: bool = False,
+    ) -> dict[str, Any]:
         """Route by installation, verify HMAC, and commit one tenant PR request."""
         installation_id = _installation_id(body)
         tenant_id = self.store.tenant_for_installation(installation_id)
@@ -908,8 +924,12 @@ class HostedPRAssuranceService:
                 "E_SECRET_UNAVAILABLE", "installation webhook secret is unavailable"
             )
         event = verify_github_webhook(body, headers, secret)
-        result = self.store.ingest(tenant_id, event)
+        if queue_retry:
+            result = self.store.ingest(tenant_id, event, allow_duplicate=True)
+        else:
+            result = self.store.ingest(tenant_id, event)
         result["markers"].append("HOSTED_AUTH_BOUNDARY")
+        _append_duplicate_ingress_marker(result)
         if dynamic:
             result["markers"].append("DYNAMIC_WEBHOOK_SECRET_BOUND")
         self._emit(
@@ -1217,8 +1237,11 @@ class HostedPRAssuranceAPI:
             "X-GitHub-Event": str(environ.get("HTTP_X_GITHUB_EVENT", "")),
             "X-GitHub-Delivery": str(environ.get("HTTP_X_GITHUB_DELIVERY", "")),
         }
+        queue_retry = environ.get("HTTP_X_FACTORY_DELIVERY_MODE") == "queue-retry"
         return _finish(
-            start_response, "202 Accepted", self.service.ingest(body, headers)
+            start_response,
+            "202 Accepted",
+            self.service.ingest(body, headers, queue_retry=queue_retry),
         )
 
     def _approval_route(

@@ -10,6 +10,7 @@ dist-v*/
 output/
 tmp/
 .pytest_cache/
+.hypothesis/
 .venv/
 venv/
 .factory/

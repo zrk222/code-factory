@@ -2,10 +2,11 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import test from "node:test";
 import { escapeHtml, receiptHtml, summarizeReceipt } from "../receipt";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "../runner";
 import { meterHtml, savingsHtml } from "../meter";
-import { createUnapprovedRequirementProofDraft, findRequirementEvidence, MAX_TEST_DECLARATIONS_PER_DOCUMENT, MAX_TEST_PROOF_MANIFEST_BYTES, readTestProofManifest, requirementIds, testDeclarations, testProofId } from "../requirement";
+import { createUnapprovedRequirementProofDraft, findRequirementEvidence, isRequirementId, MAX_TEST_DECLARATIONS_PER_DOCUMENT, MAX_TEST_PROOF_MANIFEST_BYTES, readTestProofManifest, requirementIds, requirementProofManifestPath, testDeclarations, testProofId } from "../requirement";
 import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "../star_prompt";
 
 const receipt = {
@@ -47,6 +48,36 @@ assert.deepEqual(testDeclarations("test('works', fn);\nit(\"also works\", fn);\n
 assert.deepEqual(testDeclarations("describe('suite', fn);", "ruby"), []);
 assert.match(testProofId("tests/a.py", "test good"), /^test-test-good-line-0-[a-f0-9]{16}$/);
 assert.notEqual(testProofId("tests/a.py", "test good", 1), testProofId("tests/a.py", "test good", 2));
+test("isRequirementId accepts safe IDs", function isRequirementIdTest() {
+  assert.equal(isRequirementId("REQ-TRACE_7"), true);
+  assert.equal(isRequirementId("../outside"), false);
+  assert.equal(isRequirementId(""), false);
+});
+test("requirementProofManifestPath rejects path syntax", function requirementProofManifestPathTest() {
+  assert.equal(requirementProofManifestPath("/workspace", "REQ-TRACE_7"), path.join("/workspace", ".factory", "requirement-proofs", "REQ-TRACE_7", "e2e-manifest.json"));
+  assert.throws(() => requirementProofManifestPath("/workspace", "../outside"), /Invalid requirement identifier/);
+});
+test("readTestProofManifest reads a bounded regular manifest", async function readTestProofManifestTest() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cf-proof-read-"));
+  try {
+    const manifest = requirementProofManifestPath(root, "REQ-READ-1");
+    await fs.mkdir(path.dirname(manifest), { recursive: true });
+    await fs.writeFile(manifest, JSON.stringify({ id: "REQ-READ-1" }), { mode: 0o600 });
+    assert.deepEqual(await readTestProofManifest(root, "REQ-READ-1"), { id: "REQ-READ-1" });
+    await assert.rejects(readTestProofManifest(root, "../outside"), /Invalid proof identifier/);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+test("readTestProofManifest checks pre-abort before starting filesystem work", async function preAbortedProofReadTest() {
+  const api = require("node:fs/promises") as { realpath: typeof fs.realpath };
+  const original = api.realpath;
+  let calls = 0;
+  api.realpath = (async () => { calls += 1; throw new Error("unexpected filesystem access"); }) as typeof api.realpath;
+  const controller = new AbortController(); controller.abort();
+  try {
+    await assert.rejects(readTestProofManifest(path.join(os.tmpdir(), "missing-proof-workspace"), "REQ-ABORT-1", controller.signal), /cancelled/);
+    assert.equal(calls, 0);
+  } finally { api.realpath = original; }
+});
 assert.equal(testDeclarations(Array.from({ length: MAX_TEST_DECLARATIONS_PER_DOCUMENT + 1 }, (_, i) => `def test_${i}():`).join("\n"), "python").length, MAX_TEST_DECLARATIONS_PER_DOCUMENT);
 assert.deepEqual(testDeclarations("def test_oversized():\n" + "x".repeat(MAX_TEST_PROOF_MANIFEST_BYTES * 33), "python"), []);
 assert.deepEqual(testDeclarations("def test_multibyte():\n" + "漢".repeat(800_000), "python"), []);

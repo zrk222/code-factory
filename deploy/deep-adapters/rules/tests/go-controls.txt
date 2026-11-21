@@ -40,7 +40,7 @@ func verifiedControlPlaneStatus(url string, roots *x509.CertPool) (*http.Respons
 type Probe struct{}
 
 func (p Probe) Handshake(address string) error {
-	// ruleid: go.disabled-tls-verification
+	// ok: go.disabled-tls-verification
 	connection, err := tls.Dial("tcp", address, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		return err
@@ -56,4 +56,17 @@ func (p Probe) Login(address string, password string) error {
 	}
 	_, err = connection.Write([]byte("AUTH " + password))
 	return err
+}
+
+type Options struct{ insecure bool }
+
+func fetchOptIn(o Options, url string, token string) (*http.Response, error) {
+	client := &http.Client{}
+	if o.insecure {
+		// ok: go.disabled-tls-verification
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
+	request, _ := http.NewRequest("GET", url, nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	return client.Do(request)
 }

@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-
 from .agent_license import normalize_agent_identity
 from .enterprise_receipts import (
     EnterpriseReceiptError,
@@ -24,7 +23,22 @@ from .enterprise_receipts import (
     verify_signed_document,
 )
 from .semantic_authority import verify_semantic_binding
-
+from dataclasses import dataclass
+from datetime import date
+from .enterprise_ops import (
+    CommercialUsageError,
+    Reservation,
+    UsageLedger,
+    default_home,
+)
+from .enterprise_receipts import (
+    PRODUCT,
+    CommercialEntitlementError,
+    covering_entitlement,
+    load_entitlements,
+    verify_entitlement_envelope,
+)
+from .enterprise_ops import RERUN_BINDING_FIELDS
 
 WORKLOAD_IDENTITY_SCHEMA = "factory.workload-identity.v1"
 WORKLOAD_IDENTITY_PAYLOAD_TYPE = "application/vnd.factory.workload-identity.v1+json"
@@ -561,7 +575,7 @@ def _request(value: object) -> dict[str, Any]:
         raise EnterpriseEnforcementError(
             "E_ENFORCEMENT_INPUT", "action_class is unknown"
         )
-    result = {
+    result: dict[str, Any] = {
         "tenant_id": _text(value["tenant_id"], "tenant_id"),
         "workload_id": _text(value["workload_id"], "workload_id"),
         "subject": _text(value["subject"], "subject"),
@@ -909,3 +923,637 @@ def enterprise_enforcement_projection(root: Path) -> dict[str, Any]:
 
     result["runner_admission"] = runner_admission_projection(workspace)
     return result
+
+
+"""factoryline.commercial_policy - approved commercial policy, parsed and applied.
+
+This module records the commercial model approved by the project owner on
+2026-11-21 and turns it into deterministic admission decisions:
+
+- Free: 5 complete proof workflows per person per calendar month (UTC).
+- Paid: 100 workflows per named human seat per month at USD 12.95 per seat,
+  starting 2027-01-01. Everything before that date is PRELAUNCH_FREE.
+- Each workflow includes 2 repair reruns for the same change within 7 days.
+- One seat covers that person's agents and devices; the seat subject is the
+  human owner supplied by the caller, never an AI agent's declared identity.
+- Reading and exporting results is free. Rejected starts and internal tool
+  errors never consume allowance. There are no overage charges: a person over
+  allowance gets UPGRADE_REQUIRED, never a bill.
+
+The bundled DEFAULT_POLICY has activation=False, so even an explicitly enabled
+commercial gate returns PRELAUNCH_FREE for every run. Nothing here restricts,
+bills, phones home, or changes a proof result.
+
+This module decides admission only. It never interrupts an admitted workflow,
+never changes PASS/BLOCKED/INCOMPLETE, and is unrelated to agent_license.py,
+which records agent-autonomy evidence, not paid access.
+"""
+
+
+COMMERCIAL_POLICY_SCHEMA = "factory.commercial.policy.v1"
+
+PRELAUNCH_FREE = "PRELAUNCH_FREE"
+ALLOW = "ALLOW"
+ALLOW_INCLUDED_RERUN = "ALLOW_INCLUDED_RERUN"
+UPGRADE_REQUIRED = "UPGRADE_REQUIRED"
+ENTITLEMENT_INVALID = "ENTITLEMENT_INVALID"
+DISABLED = "DISABLED"
+
+DECISIONS = frozenset(
+    {
+        PRELAUNCH_FREE,
+        ALLOW,
+        ALLOW_INCLUDED_RERUN,
+        UPGRADE_REQUIRED,
+        ENTITLEMENT_INVALID,
+        DISABLED,
+    }
+)
+
+
+class CommercialPolicyError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+
+
+def _commercial_require(condition: bool, code: str, message: str) -> None:
+    if not condition:
+        raise CommercialPolicyError(code, message)
+
+
+def _parse_date(value: Any, field: str) -> date:
+    _commercial_require(
+        isinstance(value, str) and bool(value.strip()),
+        "E_POLICY_FIELD",
+        f"{field} is required",
+    )
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise CommercialPolicyError(
+            "E_POLICY_FIELD", f"{field} must be an ISO calendar date"
+        ) from exc
+
+
+def _require_int(value: Any, field: str, minimum: int) -> int:
+    _commercial_require(
+        isinstance(value, int) and not isinstance(value, bool) and value >= minimum,
+        "E_POLICY_FIELD",
+        f"{field} must be an integer >= {minimum}",
+    )
+    return value
+
+
+@dataclass(frozen=True)
+class Policy:
+    """One immutable, versioned commercial policy revision."""
+
+    revision: str
+    activation: bool
+    prelaunch_free_until: date
+    currency: str
+    seat_monthly_price: float
+    price_effective_from: date
+    free_monthly_workflows: int
+    paid_monthly_workflows: int
+    repair_reruns_per_workflow: int
+    repair_rerun_window_days: int
+
+    def monthly_limit(self, paid: bool) -> int:
+        """Return the configured monthly limit for the selected tier."""
+        return self.paid_monthly_workflows if paid else self.free_monthly_workflows
+
+
+def parse_policy(value: Any) -> Policy:
+    """Validate one policy document or raise CommercialPolicyError fail closed."""
+    _commercial_require(
+        isinstance(value, dict), "E_POLICY_SCHEMA", "policy must be an object"
+    )
+    _commercial_require(
+        value.get("schema") == COMMERCIAL_POLICY_SCHEMA,
+        "E_POLICY_SCHEMA",
+        f"policy schema must be {COMMERCIAL_POLICY_SCHEMA}",
+    )
+    _commercial_require(
+        isinstance(value.get("revision"), str) and value["revision"].strip(),
+        "E_POLICY_FIELD",
+        "revision is required",
+    )
+    _commercial_require(
+        isinstance(value.get("activation"), bool),
+        "E_POLICY_FIELD",
+        "activation must be an explicit boolean",
+    )
+    pricing = value.get("pricing")
+    _commercial_require(
+        isinstance(pricing, dict), "E_POLICY_FIELD", "pricing block is required"
+    )
+    _commercial_require(
+        isinstance(pricing.get("currency"), str) and len(pricing["currency"]) == 3,
+        "E_POLICY_FIELD",
+        "pricing.currency must be a 3-letter code",
+    )
+    price = pricing.get("seat_monthly")
+    _commercial_require(
+        isinstance(price, (int, float)) and not isinstance(price, bool) and price >= 0,
+        "E_POLICY_FIELD",
+        "pricing.seat_monthly must be a non-negative number",
+    )
+    allowances = value.get("allowances")
+    _commercial_require(
+        isinstance(allowances, dict), "E_POLICY_FIELD", "allowances block is required"
+    )
+    return Policy(
+        revision=value["revision"].strip(),
+        activation=value["activation"],
+        prelaunch_free_until=_parse_date(
+            value.get("prelaunch_free_until"), "prelaunch_free_until"
+        ),
+        currency=pricing["currency"].upper(),
+        seat_monthly_price=float(price),
+        price_effective_from=_parse_date(
+            pricing.get("effective_from"), "pricing.effective_from"
+        ),
+        free_monthly_workflows=_require_int(
+            allowances.get("free_monthly_workflows"), "free_monthly_workflows", 0
+        ),
+        paid_monthly_workflows=_require_int(
+            allowances.get("paid_monthly_workflows"), "paid_monthly_workflows", 1
+        ),
+        repair_reruns_per_workflow=_require_int(
+            allowances.get("repair_reruns_per_workflow"),
+            "repair_reruns_per_workflow",
+            0,
+        ),
+        repair_rerun_window_days=_require_int(
+            allowances.get("repair_rerun_window_days"), "repair_rerun_window_days", 1
+        ),
+    )
+
+
+def load_policy(path: str | Path) -> Policy:
+    """Read and validate a local commercial policy document."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise CommercialPolicyError("E_POLICY_IO", str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise CommercialPolicyError("E_POLICY_SCHEMA", f"invalid JSON: {exc}") from exc
+    return parse_policy(raw)
+
+
+DEFAULT_POLICY: dict[str, Any] = {
+    "schema": COMMERCIAL_POLICY_SCHEMA,
+    "revision": "2026-11-21-approved-start",
+    "activation": False,
+    "prelaunch_free_until": "2027-01-01",
+    "pricing": {
+        "currency": "USD",
+        "seat_monthly": 12.95,
+        "effective_from": "2027-01-01",
+        "promotion_end": None,
+    },
+    "allowances": {
+        "free_monthly_workflows": 5,
+        "paid_monthly_workflows": 100,
+        "repair_reruns_per_workflow": 2,
+        "repair_rerun_window_days": 7,
+    },
+    "seat": {"subject": "named_human", "includes": ["agents", "devices"]},
+    "never_charged": [
+        "read_results",
+        "export_receipts",
+        "rejected_starts",
+        "internal_tool_errors",
+    ],
+    "overage": "none_hard_stop",
+}
+
+
+def default_policy() -> Policy:
+    """Parse the bundled inactive commercial policy without side effects."""
+    return parse_policy(DEFAULT_POLICY)
+
+
+def period_for(now: datetime) -> str:
+    """Return the UTC calendar-month period key, e.g. '2026-11'."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(timezone.utc).strftime("%Y-%m")
+
+
+@dataclass(frozen=True)
+class RerunView:
+    """Pre-evaluated repair-rerun eligibility for one candidate admission."""
+
+    requested: bool
+    eligible: bool
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class Decision:
+    outcome: str
+    period: str
+    limit: int | None
+    used: int
+    remaining: int | None
+    reason: str
+    counts_against_allowance: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return the stable JSON-serializable public representation."""
+        return {
+            "outcome": self.outcome,
+            "period": self.period,
+            "limit": self.limit,
+            "used": self.used,
+            "remaining": self.remaining,
+            "reason": self.reason,
+            "counts_against_allowance": self.counts_against_allowance,
+        }
+
+
+def decide(
+    policy: Policy,
+    *,
+    now: datetime,
+    used: int,
+    entitlement_valid: bool,
+    entitlement_invalid_reason: str | None = None,
+    rerun: RerunView | None = None,
+) -> Decision:
+    """Pure admission decision. Quota state is supplied; nothing is mutated here.
+
+    used is the count of allowance-consuming workflows already admitted for the
+    subject in the current period. An invalid presented entitlement rejects the
+    start without consuming allowance; an absent entitlement simply means the
+    free tier applies.
+    """
+    period = period_for(now)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if not policy.activation or now.date() < policy.prelaunch_free_until:
+        return Decision(
+            PRELAUNCH_FREE,
+            period,
+            None,
+            used,
+            None,
+            "commercial policy is not active before 2027-01-01",
+            False,
+        )
+    if entitlement_invalid_reason is not None:
+        return Decision(
+            ENTITLEMENT_INVALID,
+            period,
+            None,
+            used,
+            None,
+            entitlement_invalid_reason,
+            False,
+        )
+    if rerun is not None and rerun.requested and rerun.eligible:
+        return Decision(
+            ALLOW_INCLUDED_RERUN,
+            period,
+            None,
+            used,
+            None,
+            "included repair rerun for the same change",
+            False,
+        )
+    limit = policy.monthly_limit(entitlement_valid)
+    reason_prefix = ""
+    if rerun is not None and rerun.requested and not rerun.eligible:
+        reason_prefix = (
+            f"rerun not eligible ({rerun.reason}); admitted as a new workflow. "
+        )
+    if used < limit:
+        return Decision(
+            ALLOW,
+            period,
+            limit,
+            used,
+            limit - used,
+            reason_prefix + "within monthly allowance",
+            True,
+        )
+    return Decision(
+        UPGRADE_REQUIRED,
+        period,
+        limit,
+        used,
+        0,
+        reason_prefix
+        + f"monthly allowance of {limit} workflows used; no overage charges apply",
+        False,
+    )
+
+
+"""factoryline.enterprise_enforcement - admission orchestration for the commercial model.
+
+The gate combines the versioned policy, the local usage ledger and any imported
+signed entitlements into one admission call used by execution entry points.
+
+Modes (FACTORY_COMMERCIAL_MODE):
+- off (default): fully inert. No files are created, no decision is recorded,
+  admission always returns DISABLED. This is the shipped default.
+- shadow: the decision and hypothetical counts are computed and returned to
+  the caller for inspection, but nothing is persisted and nothing is refused.
+- enforce: soft local enforcement. Over-allowance starts are refused with
+  E_COMMERCIAL_UPGRADE_REQUIRED before dispatch; invalid presented entitlements
+  with E_COMMERCIAL_ENTITLEMENT_INVALID. "Soft" is literal: the ledger is a
+  local file a determined user can reset, and enforcement only covers entry
+  points actually wired to this gate.
+
+Invariants enforced here and by the wiring in runtime_audit:
+- Quota status never changes a proof finding, never skips a check or negative
+  control, and never interrupts an admitted run.
+- Admission happens after safety preflight and before dispatch; settlement
+  happens once, at the terminal result.
+- Internal tool errors and rejected starts release the reservation; only a
+  workflow that actually ran to a terminal result consumes allowance.
+- Payment status never replaces signed-plan verification or human approval.
+"""
+
+
+MODE_ENV = "FACTORY_COMMERCIAL_MODE"
+POLICY_ENV = "FACTORY_COMMERCIAL_POLICY"
+MODES = frozenset({"off", "shadow", "enforce"})
+
+
+class CommercialAdmissionError(RuntimeError):
+    def __init__(self, code: str, message: str, decision: Decision | None = None):
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+        self.decision = decision
+
+
+@dataclass
+class Admission:
+    decision: Decision
+    reservation: Reservation | None = None
+    mode: str = "off"
+    shadow: bool = False
+
+    @property
+    def admitted(self) -> bool:
+        """Report whether this admission permits workflow dispatch."""
+        return (
+            self.decision.outcome
+            in {
+                DISABLED,
+                PRELAUNCH_FREE,
+                ALLOW,
+                ALLOW_INCLUDED_RERUN,
+            }
+            or self.shadow
+        )
+
+
+def commercial_mode(env: dict[str, str] | None = None) -> str:
+    """Read the local opt-in mode, defaulting safely to off."""
+    selected_env = os.environ if env is None else env
+    mode = (selected_env.get(MODE_ENV) or "off").strip().lower()
+    return mode if mode in MODES else "off"
+
+
+def load_configured_policy(env: dict[str, str] | None = None) -> Policy:
+    """Load an explicit policy override or the inactive bundled policy."""
+    selected_env = os.environ if env is None else env
+    override = selected_env.get(POLICY_ENV)
+    if override:
+        return load_policy(override)
+    return default_policy()
+
+
+def _commercial_gate_utc(now: datetime) -> datetime:
+    if now.tzinfo is None:
+        return now.replace(tzinfo=timezone.utc)
+    return now.astimezone(timezone.utc)
+
+
+class CommercialGate:
+    """One admission boundary per execution entry point."""
+
+    def __init__(
+        self,
+        *,
+        policy: Policy | None = None,
+        ledger: UsageLedger | None = None,
+        home: str | Path | None = None,
+        mode: str | None = None,
+    ):
+        self.policy = policy if policy is not None else load_configured_policy()
+        self.mode = commercial_mode() if mode is None else mode
+        self.ledger = ledger if ledger is not None else UsageLedger(home)
+        self.home = Path(home) if home is not None else default_home()
+
+    def _rerun_view(
+        self,
+        *,
+        subject: str,
+        rerun_of: str | None,
+        binding: dict[str, Any],
+        now: datetime,
+        state,
+    ) -> RerunView:
+        if rerun_of is None:
+            return RerunView(requested=False, eligible=False)
+        original = state.find_original(subject, rerun_of)
+        if original is None:
+            return RerunView(
+                requested=True, eligible=False, reason="original workflow not found"
+            )
+        if original.closed_at is None:
+            return RerunView(
+                requested=True,
+                eligible=False,
+                reason="original workflow has no terminal result",
+            )
+        window = timedelta(days=self.policy.repair_rerun_window_days)
+        closed = _commercial_gate_utc(datetime.fromisoformat(original.closed_at))
+        if _commercial_gate_utc(now) > closed + window:
+            return RerunView(
+                requested=True, eligible=False, reason="repair window expired"
+            )
+        for field in RERUN_BINDING_FIELDS:
+            if binding.get(field) != original.binding.get(field):
+                return RerunView(
+                    requested=True,
+                    eligible=False,
+                    reason=f"{field} differs from the original change",
+                )
+        used = state.reruns_used(subject, rerun_of)
+        if used >= self.policy.repair_reruns_per_workflow:
+            return RerunView(
+                requested=True,
+                eligible=False,
+                reason="included repair reruns already used",
+            )
+        return RerunView(requested=True, eligible=True)
+
+    def admit(
+        self,
+        *,
+        subject: str,
+        workflow_id: str,
+        idempotency_key: str,
+        binding: dict[str, Any] | None = None,
+        rerun_of: str | None = None,
+        version: str = "0.0.0",
+        presented_envelope: dict[str, Any] | None = None,
+        presented_trust_root: dict[str, Any] | None = None,
+        now: datetime,
+    ) -> Admission:
+        """Decide and (in enforce mode) atomically reserve one workflow start."""
+        if not subject:
+            raise CommercialAdmissionError(
+                "E_COMMERCIAL_SUBJECT", "a human seat subject is required"
+            )
+        if self.mode == "off":
+            return Admission(
+                Decision(
+                    DISABLED,
+                    period_for(now),
+                    None,
+                    0,
+                    None,
+                    "commercial gate is disabled",
+                    False,
+                ),
+                mode="off",
+            )
+        binding = binding or {}
+        now = _commercial_gate_utc(now)
+        state = self.ledger.load(now)
+        period = period_for(state.effective_now(now))
+        used = state.used(subject, period)
+
+        entitlement_valid = False
+        entitlement_invalid_reason: str | None = None
+        if presented_envelope is not None:
+            try:
+                if presented_trust_root is None:
+                    raise CommercialEntitlementError(
+                        "E_TRUST_ROOT_REQUIRED",
+                        "a presented entitlement needs its commercial trust root",
+                    )
+                presented = verify_entitlement_envelope(
+                    presented_envelope, trust_root=presented_trust_root
+                )
+                entitlement_valid = presented.covers(
+                    subject=subject,
+                    product=PRODUCT,
+                    version=version,
+                    now=state.effective_now(now),
+                )
+                if not entitlement_valid:
+                    entitlement_invalid_reason = "entitlement does not cover this subject, product, version or date"
+            except CommercialEntitlementError as exc:
+                entitlement_invalid_reason = f"{exc.code}: {exc.message}"
+        else:
+            covering = covering_entitlement(
+                load_entitlements(self.home),
+                subject=subject,
+                product=PRODUCT,
+                version=version,
+                now=state.effective_now(now),
+            )
+            entitlement_valid = covering is not None
+
+        rerun = self._rerun_view(
+            subject=subject,
+            rerun_of=rerun_of,
+            binding=binding,
+            now=state.effective_now(now),
+            state=state,
+        )
+        decision = decide(
+            self.policy,
+            now=state.effective_now(now),
+            used=used,
+            entitlement_valid=entitlement_valid,
+            entitlement_invalid_reason=entitlement_invalid_reason,
+            rerun=rerun,
+        )
+
+        if self.mode == "shadow":
+            return Admission(decision, mode="shadow", shadow=True)
+
+        # enforce
+        if decision.outcome == ENTITLEMENT_INVALID:
+            raise CommercialAdmissionError(
+                "E_COMMERCIAL_ENTITLEMENT_INVALID", decision.reason, decision
+            )
+        if decision.outcome in {PRELAUNCH_FREE, DISABLED}:
+            return Admission(decision, mode="enforce")
+        if decision.outcome == ALLOW_INCLUDED_RERUN:
+            reservation = self.ledger.try_reserve(
+                subject=subject,
+                period=period,
+                workflow_id=workflow_id,
+                idempotency_key=idempotency_key,
+                binding=binding,
+                rerun_of=rerun_of,
+                limit=None,
+                now=now,
+            )
+            return Admission(decision, reservation=reservation, mode="enforce")
+        # ALLOW or UPGRADE_REQUIRED: the ledger re-checks the limit atomically.
+        limit = self.policy.monthly_limit(entitlement_valid)
+        reservation = self.ledger.try_reserve(
+            subject=subject,
+            period=period,
+            workflow_id=workflow_id,
+            idempotency_key=idempotency_key,
+            binding=binding,
+            rerun_of=None,
+            limit=limit,
+            now=now,
+        )
+        if reservation is None:
+            refused = Decision(
+                UPGRADE_REQUIRED,
+                period,
+                limit,
+                limit,
+                0,
+                f"monthly allowance of {limit} workflows used; no overage charges apply",
+                False,
+            )
+            raise CommercialAdmissionError(
+                "E_COMMERCIAL_UPGRADE_REQUIRED", refused.reason, refused
+            )
+        if decision.outcome != ALLOW:
+            # The atomic ledger recheck won the race against a stale pre-check.
+            decision = Decision(
+                ALLOW,
+                period,
+                limit,
+                decision.used,
+                None,
+                "within monthly allowance",
+                True,
+            )
+        return Admission(decision, reservation=reservation, mode="enforce")
+
+    def settle(self, admission: Admission, *, outcome: str, now: datetime) -> None:
+        """Settle one admitted workflow at its terminal result.
+
+        completed counts against the allowance; tool_error and rejected release
+        the reservation. Never call this mid-run.
+        """
+        if admission.reservation is None:
+            return
+        try:
+            self.ledger.settle(
+                admission.reservation.reservation_id, outcome=outcome, now=now
+            )
+        except CommercialUsageError:
+            # Settlement must never crash the workflow it meters.
+            pass

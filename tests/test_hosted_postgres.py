@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 import hashlib
 import os
 import uuid
@@ -10,8 +11,8 @@ import pytest
 
 from factoryline.hosted_storage import PostgresAssuranceStore
 from factoryline.hosted_control import PostgresControlStore
-from factoryline.control_plane import ControlPlaneError, Principal
-from factoryline.pr_assurance import PRAssuranceError
+from factoryline.control_plane import ControlPlaneError, Principal, canonical_json
+from factoryline.pr_assurance import PRAssuranceError, PullRequestEvent
 
 
 DSN = os.getenv("FACTORY_TEST_POSTGRES_DSN")
@@ -27,6 +28,147 @@ def test_postgres_installation_binding_is_immutable_and_ready():
     with pytest.raises(PRAssuranceError) as error:
         store.register_installation("integration-b", 99001)
     assert error.value.code == "E_INSTALLATION_TENANT"
+
+
+def _postgres_delivery_fixture(prefix="delivery-retry"):
+    store = PostgresAssuranceStore(DSN)
+    store.initialize()
+    tenant_id = f"{prefix}-{uuid.uuid4().hex[:12]}"
+    installation_id = 2_000_000_000 + int(uuid.uuid4().int % 1_000_000_000)
+    store.register_installation(tenant_id, installation_id)
+    event = PullRequestEvent(
+        delivery_id="delivery-" + uuid.uuid4().hex,
+        repository="acme/assurance",
+        pull_request=17,
+        installation_id=installation_id,
+        head_sha="a" * 40,
+        actor="integration-actor",
+        action="synchronize",
+        payload_sha256=hashlib.sha256(b"authenticated webhook body").hexdigest(),
+    )
+    return store, tenant_id, event
+
+
+def test_postgres_queue_retries_are_idempotent_across_connections_and_default_is_strict():
+    store, tenant_id, event = _postgres_delivery_fixture()
+
+    def retry(_index):
+        # Each call creates an independent PostgreSQL connection via the store.
+        return PostgresAssuranceStore(DSN).ingest(
+            tenant_id, event, allow_duplicate=True
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        results = list(workers.map(retry, range(8)))
+
+    assert len({result["approval_id"] for result in results}) == 1
+    assert len({result["evidence_sha256"] for result in results}) == 1
+    assert sum(result["duplicate"] is False for result in results) == 1
+    assert sum(result["duplicate"] is True for result in results) == 7
+    assert all(result["event"] == event.to_dict() for result in results)
+
+    with pytest.raises(PRAssuranceError) as strict_replay:
+        store.ingest(tenant_id, event)
+    assert strict_replay.value.code == "E_WEBHOOK_REPLAY"
+    with store._transaction(tenant_id) as (_db, cursor):
+        cursor.execute(
+            "SELECT count(*), min(approval_status) FROM factory_pr_deliveries "
+            "WHERE tenant_id=%s AND delivery_id=%s",
+            (tenant_id, event.delivery_id),
+        )
+        assert cursor.fetchone() == (1, "pending")
+        cursor.execute(
+            "SELECT count(*) FROM factory_check_outbox WHERE tenant_id=%s",
+            (tenant_id,),
+        )
+        assert cursor.fetchone()[0] == 0
+
+
+def test_postgres_queue_retry_rejects_changed_bindings_without_disclosure():
+    store, tenant_id, event = _postgres_delivery_fixture("delivery-conflict")
+    original = store.ingest(tenant_id, event)
+    changed_events = (
+        replace(event, payload_sha256="b" * 64),
+        replace(event, installation_id=event.installation_id + 1),
+        replace(event, repository="acme/other"),
+        replace(event, pull_request=event.pull_request + 1),
+        replace(event, head_sha="c" * 40),
+        replace(event, actor="different-actor"),
+        replace(event, action="opened"),
+    )
+    for changed in changed_events:
+        with pytest.raises(PRAssuranceError) as conflict:
+            store.ingest(tenant_id, changed, allow_duplicate=True)
+        expected_code = (
+            "E_INSTALLATION_TENANT"
+            if changed.installation_id != event.installation_id
+            else "E_WEBHOOK_REPLAY"
+        )
+        assert conflict.value.code == expected_code
+        assert original["approval_id"] not in conflict.value.message
+        assert original["evidence_sha256"] not in conflict.value.message
+        assert event.payload_sha256 not in conflict.value.message
+
+    other_tenant = "delivery-other-" + uuid.uuid4().hex[:12]
+    with pytest.raises(PRAssuranceError) as hidden:
+        store.ingest(other_tenant, event, allow_duplicate=True)
+    assert hidden.value.code == "E_INSTALLATION_TENANT"
+    assert original["approval_id"] not in hidden.value.message
+    with store._transaction(other_tenant) as (_db, cursor):
+        cursor.execute(
+            "SELECT approval_id FROM factory_pr_deliveries "
+            "WHERE tenant_id=%s AND delivery_id=%s",
+            (other_tenant, event.delivery_id),
+        )
+        assert cursor.fetchone() is None
+    with store._transaction(tenant_id) as (_db, cursor):
+        cursor.execute(
+            "SELECT count(*), min(approval_status) FROM factory_pr_deliveries "
+            "WHERE tenant_id=%s AND delivery_id=%s",
+            (tenant_id, event.delivery_id),
+        )
+        assert cursor.fetchone() == (1, "pending")
+
+
+def test_postgres_queue_retry_after_decision_preserves_approval_and_outbox_state():
+    store, tenant_id, event = _postgres_delivery_fixture("delivery-decided")
+    original = store.ingest(tenant_id, event)
+    approver = Principal("queue-retry-approver", tenant_id, ("approver",))
+    decision = store.decide(
+        approver,
+        original["approval_id"],
+        issuer="https://id.integration.test",
+        jti=uuid.uuid4().hex,
+        decision="approved",
+        reason="independent integration approval",
+    )
+
+    replay = store.ingest(tenant_id, event, allow_duplicate=True)
+
+    assert replay["duplicate"] is True
+    assert replay["approval_id"] == original["approval_id"]
+    assert replay["evidence_sha256"] == original["evidence_sha256"]
+    with store._transaction(tenant_id) as (_db, cursor):
+        cursor.execute(
+            "SELECT approval_status, approver, decision_reason "
+            "FROM factory_pr_deliveries WHERE tenant_id=%s AND delivery_id=%s",
+            (tenant_id, event.delivery_id),
+        )
+        assert cursor.fetchone() == (
+            "approved",
+            approver.subject,
+            "independent integration approval",
+        )
+        cursor.execute(
+            "SELECT approval_id, state, check_run_id FROM factory_check_outbox "
+            "WHERE tenant_id=%s",
+            (tenant_id,),
+        )
+        outbox = cursor.fetchall()
+        assert len(outbox) == 1
+        assert str(outbox[0][0]) == original["approval_id"]
+        assert outbox[0][1:] == ("pending", None)
+    assert decision["status"] == "approved"
 
 
 def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_overview():
@@ -250,6 +392,106 @@ def test_postgres_workflow_approval_keeps_evidence_independent_and_exactly_repla
         expired_verifier(expired_payload["phase_evidence"])
     assert expired_binding.value.code == "E_APPROVAL_EVIDENCE"
     assert control.overview(platform, tenant_id)["audit"]["valid"] is True
+
+
+def test_postgres_admin_audit_hashes_are_utc_stable_and_legacy_exact_only():
+    assurance = PostgresAssuranceStore(DSN)
+    assurance.initialize()
+    control = PostgresControlStore(assurance)
+    control.initialize()
+    platform = Principal("audit-timezone-platform", "*", ("platform_admin",))
+    tenant_id = "audit-timezone-" + uuid.uuid4().hex[:12]
+    original_clock = control.clock
+    control.clock = lambda: datetime(
+        2026, 11, 21, 12, 30, 0, tzinfo=timezone(timedelta(hours=5, minutes=30))
+    )
+    control.create_tenant(platform, tenant_id, "UTC audit normalization")
+    control.clock = original_clock
+    original_connect = assurance.connect
+
+    def set_session_timezone(zone):
+        def connect(dsn):
+            db = original_connect(dsn)
+            with db.cursor() as cursor:
+                cursor.execute("SELECT set_config('TimeZone', %s, false)", (zone,))
+            return db
+
+        assurance.connect = connect
+
+    def overview_in_timezone(zone):
+        set_session_timezone(zone)
+        return control.overview(platform, tenant_id)
+
+    def audit_row():
+        with assurance._transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "SELECT sequence,action,actor,resource_id,payload_json,previous_hash,event_hash,created_at "
+                "FROM factory_admin_audit WHERE tenant_id=%s ORDER BY sequence",
+                (tenant_id,),
+            )
+            return cursor.fetchone()
+
+    try:
+        original = audit_row()
+        assert original is not None
+        original_hash, original_payload = str(original[6]), original[4]
+        for zone in ("UTC", "America/New_York", "Asia/Kolkata"):
+            assert overview_in_timezone(zone)["audit"]["valid"] is True
+            assert str(audit_row()[6]) == original_hash
+
+        set_session_timezone("America/New_York")
+        legacy = audit_row()
+        legacy_event = {
+            "schema": "factory.hosted.admin-audit.v1",
+            "sequence": int(legacy[0]),
+            "tenant_id": tenant_id,
+            "action": str(legacy[1]),
+            "actor": str(legacy[2]),
+            "resource_id": str(legacy[3]),
+            "payload": legacy[4],
+            "previous_hash": str(legacy[5]),
+            "created_at": legacy[7].astimezone(timezone.utc).isoformat(),
+        }
+        legacy_event["created_at"] = legacy[7].isoformat()
+        legacy_hash = hashlib.sha256(canonical_json(legacy_event)).hexdigest()
+        with assurance._transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "UPDATE factory_admin_audit SET event_hash=%s WHERE tenant_id=%s AND sequence=%s",
+                (legacy_hash, tenant_id, legacy[0]),
+            )
+        assert overview_in_timezone("America/New_York")["audit"]["valid"] is True
+        assert overview_in_timezone("UTC")["audit"]["valid"] is False
+
+        with assurance._transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "UPDATE factory_admin_audit SET event_hash=%s WHERE tenant_id=%s AND sequence=%s",
+                (original_hash, tenant_id, legacy[0]),
+            )
+            cursor.execute(
+                "UPDATE factory_admin_audit SET payload_json=%s::jsonb WHERE tenant_id=%s AND sequence=%s",
+                (
+                    canonical_json({"display_name": "tampered"}).decode(),
+                    tenant_id,
+                    legacy[0],
+                ),
+            )
+        assert overview_in_timezone("Asia/Kolkata")["audit"]["valid"] is False
+    finally:
+        with assurance._transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "UPDATE factory_admin_audit SET event_hash=%s,payload_json=%s::jsonb "
+                "WHERE tenant_id=%s AND sequence=%s",
+                (
+                    original_hash,
+                    canonical_json(original_payload).decode(),
+                    tenant_id,
+                    original[0],
+                ),
+            )
+        assurance.connect = original_connect
+
+    assert overview_in_timezone("UTC")["audit"]["valid"] is True
+    assurance.connect = original_connect
 
 
 def test_postgres_hosted_repair_registry_is_tenant_scoped_immutable_and_single_use():

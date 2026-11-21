@@ -84,7 +84,60 @@ When the packaging assets are rendered, the system shall withhold usage,
 savings, conversion, security, compliance, and availability claims that lack
 their own bound measurement or release evidence.
 
+## Bounded inactive implementation consolidation
+
+When the existing inactive offline commercial implementation is consolidated,
+the system shall preserve all existing policy, usage, DSSE entitlement, CLI and
+runtime-admission tests without changing their parameters or assertions. [R9]
+
+When consolidation runs, the system shall move policy and admission into
+`factoryline/enterprise_enforcement.py`, usage into `factoryline/enterprise_ops.py`,
+entitlement verification into `factoryline/enterprise_receipts.py`, and lazy CLI
+registration and dispatch into `factoryline/cli_enterprise.py`; it shall delete
+the five duplicate implementation modules and four duplicate test modules. [R10]
+
+When the consolidated default runs, the system shall retain mode `off`,
+`activation: false`, no billing or provider activation, and unchanged schemas,
+decisions, error codes, CLI commands, DSSE verification and native locking. [R11]
+
+When documentation is consolidated, the system shall retain the existing local
+implementation limitations in `docs/COMMERCIAL_PACKAGING.md` and remove
+`docs/commercial-model.md`, without granting commercial activation authority. [R12]
+
+This refactor preserves prepared local offline code only. It does not launch a
+service or authorize billing, issuance, production enforcement or activation.
+
+Scenario: Consolidated local code preserves the existing offline boundaries
+  Given the inactive commercial implementation
+  When its duplicate modules and tests are consolidated
+  Then `R9`, `R10`, `R11`, and `R12` retain the exact existing behavior and authority
+
 ## Verification
+
+## Authorized parameters
+
+These are exact inherited local implementation values, not a commercial launch
+or new thresholds. The baseline is commit
+`f057734f8e94fafb7dea15976ab3ee394ab62bd0`; original dirty source bytes and hashes
+are retained in `.factory/commercial-consolidation/before-hashes.json`.
+The change-aware audit compares the six modified production modules to that
+commit, so pre-existing enterprise and CLI parameters are not reauthorized here.
+
+The defaults below preserve the inactive USD seat-month value, free and paid
+workflow allowances, rerun count and days, six-hour TTL factors, and UTC epoch
+initializer. They do not change those existing values.
+
+DEFAULT_POLICY = 12.95
+DEFAULT_POLICY = 5
+DEFAULT_POLICY = 100
+DEFAULT_POLICY = 2
+DEFAULT_POLICY = 7
+RESERVATION_TTL_SECONDS = 6
+RESERVATION_TTL_SECONDS = 60
+max_seen = 1970
+max_seen = 1
+
+## Reproducible verification
 
 When the packaging contract is checked, the system shall return passing results
 for `python -m pytest -q tests/test_commercial_packaging.py`,

@@ -1049,7 +1049,7 @@ def _build_parser(
     from .cli_enterprise import add_parser as add_enterprise_parser
 
     add_enterprise_parser(sub)
-    from .cli_commercial import add_parser as add_commercial_parser
+    from .cli_enterprise import add_commercial_parser
 
     add_commercial_parser(sub)
     from .cli_controls import add_parser as add_control_parser
@@ -2247,7 +2247,6 @@ _DIRECT_ROUTES = {
         ("cli_integrations", "mcp junie issues"),
         ("cli_artifacts", "attest passport verify-passport challenge coverage policy"),
         ("cli_enterprise", "enterprise"),
-        ("cli_commercial", "commercial"),
         ("cli_controls", "control controls"),
         ("cli_assurance", "assurance"),
         ("cli_pr", "pr-pack optimize-pr"),
@@ -2257,6 +2256,7 @@ _DIRECT_ROUTES = {
 }
 _DIRECT_ROUTES.update(
     {
+        "commercial": ("cli_enterprise", "run_commercial"),
         "evidence-audit": ("cli_quality", "run_evidence"),
         "quality-harness": ("cli_quality", "run_quality"),
     }

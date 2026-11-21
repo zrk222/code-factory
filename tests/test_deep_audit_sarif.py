@@ -2396,6 +2396,17 @@ def test_suppression_and_pass_kind_are_preserved_not_accepted_as_canary(tmp_path
     assert finding["kind"] == "pass"
 
 
+@pytest.mark.parametrize("level", ["note", "warning", "error"])
+def test_review_and_default_tier_levels_survive_sarif_ingestion(tmp_path, level):
+    """Review-tier notes stay visible instead of disappearing during ingestion."""
+    payload = report()
+    payload["runs"][0]["results"][0]["level"] = level
+    findings = ingest(tmp_path, payload)["findings"]
+    assert len(findings) == 1
+    assert findings[0]["level"] == level
+    assert findings[0]["suppressed"] is False
+
+
 def test_driver_default_error_is_not_weakened_to_warning(tmp_path):
     payload = report()
     del payload["runs"][0]["results"][0]["level"]

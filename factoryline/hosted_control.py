@@ -313,6 +313,40 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _utc_audit_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("audit clock must return a timezone-aware timestamp")
+    return value.astimezone(timezone.utc)
+
+
+def _admin_audit_event(
+    *,
+    sequence: int,
+    tenant_id: str,
+    action: str,
+    actor: str,
+    resource_id: str,
+    payload: dict[str, Any],
+    previous_hash: str,
+    created_at: datetime,
+) -> dict[str, Any]:
+    return {
+        "schema": "factory.hosted.admin-audit.v1",
+        "sequence": sequence,
+        "tenant_id": tenant_id,
+        "action": action,
+        "actor": actor,
+        "resource_id": resource_id,
+        "payload": payload,
+        "previous_hash": previous_hash,
+        "created_at": _utc_audit_timestamp(created_at).isoformat(),
+    }
+
+
+def _admin_audit_event_hash(event: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_json(event)).hexdigest()
+
+
 def _tenant_id(value: str) -> str:
     normalized = str(value).strip()
     if not TENANT_RE.fullmatch(normalized):
@@ -522,7 +556,7 @@ class PostgresControlStore:
         )
         row = cursor.fetchone()
         previous_hash = str(row[0]) if row else ""
-        created_at = self.clock()
+        created_at = _utc_audit_timestamp(self.clock())
         cursor.execute(
             """INSERT INTO factory_admin_audit
                (tenant_id,action,actor,resource_id,payload_json,previous_hash,event_hash,created_at)
@@ -538,20 +572,19 @@ class PostgresControlStore:
             ),
         )
         sequence = int(cursor.fetchone()[0])
-        event = {
-            "schema": "factory.hosted.admin-audit.v1",
-            "sequence": sequence,
-            "tenant_id": tenant_id,
-            "action": action,
-            "actor": actor,
-            "resource_id": resource_id,
-            "payload": payload,
-            "previous_hash": previous_hash,
-            "created_at": created_at.isoformat(),
-        }
+        event = _admin_audit_event(
+            sequence=sequence,
+            tenant_id=tenant_id,
+            action=action,
+            actor=actor,
+            resource_id=resource_id,
+            payload=payload,
+            previous_hash=previous_hash,
+            created_at=created_at,
+        )
         cursor.execute(
             "UPDATE factory_admin_audit SET event_hash=%s WHERE tenant_id=%s AND sequence=%s",
-            (hashlib.sha256(canonical_json(event)).hexdigest(), tenant_id, sequence),
+            (_admin_audit_event_hash(event), tenant_id, sequence),
         )
 
     @staticmethod
@@ -1555,20 +1588,22 @@ class PostgresControlStore:
         previous = ""
         audit_valid = True
         for row in audit_rows:
-            created_at = row[7].isoformat()
+            created_at = _utc_audit_timestamp(row[7])
             payload = row[4] if isinstance(row[4], dict) else json.loads(row[4])
-            event = {
-                "schema": "factory.hosted.admin-audit.v1",
-                "sequence": int(row[0]),
-                "tenant_id": selected,
-                "action": str(row[1]),
-                "actor": str(row[2]),
-                "resource_id": str(row[3]),
-                "payload": payload,
-                "previous_hash": str(row[5]),
-                "created_at": created_at,
-            }
-            expected = hashlib.sha256(canonical_json(event)).hexdigest()
+            event = _admin_audit_event(
+                sequence=int(row[0]),
+                tenant_id=selected,
+                action=str(row[1]),
+                actor=str(row[2]),
+                resource_id=str(row[3]),
+                payload=payload,
+                previous_hash=str(row[5]),
+                created_at=created_at,
+            )
+            expected = _admin_audit_event_hash(event)
+            if str(row[6]) != expected:
+                legacy_event = {**event, "created_at": row[7].isoformat()}
+                expected = _admin_audit_event_hash(legacy_event)
             audit_valid = (
                 audit_valid and str(row[5]) == previous and str(row[6]) == expected
             )
@@ -1580,7 +1615,7 @@ class PostgresControlStore:
                     "actor": str(row[2]),
                     "resource_id": str(row[3]),
                     "event_hash": str(row[6]),
-                    "created_at": created_at,
+                    "created_at": created_at.isoformat(),
                 }
             )
         return {

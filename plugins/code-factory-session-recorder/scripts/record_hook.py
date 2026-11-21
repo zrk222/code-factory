@@ -5,6 +5,7 @@ environment values.  Use ``factory wrap`` for the admitted execution,
 validator, and Agent License receipts; this trace only makes Claude Code's
 PreToolUse and Stop boundaries visible.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -17,7 +18,9 @@ from datetime import datetime, timezone
 
 
 def canonical(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def digest(value: object) -> str:
@@ -34,7 +37,9 @@ def main() -> int:
         payload = {}
     root = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
     session_id = str(payload.get("session_id", "unidentified"))
-    session_key = hashlib.sha256(session_id.encode("utf-8", errors="replace")).hexdigest()[:24]
+    session_key = hashlib.sha256(
+        session_id.encode("utf-8", errors="replace")
+    ).hexdigest()[:24]
     target = root / ".factory" / "session-recorder" / "claude-hooks" / session_key
     target.mkdir(parents=True, exist_ok=True)
     existing = sorted(target.glob("*.json"))
@@ -45,8 +50,12 @@ def main() -> int:
             previous = prior.get("event_sha256")
         except (OSError, json.JSONDecodeError):
             previous = None
-    tool_name = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
-    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    tool_name = (
+        payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None
+    )
+    tool_input = (
+        payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    )
     core = {
         "schema": "factory.claude-hook-event.v1",
         "event": event,
@@ -55,8 +64,16 @@ def main() -> int:
         "tool_name": tool_name,
         "tool_input_sha256": digest(tool_input),
         "previous_event_sha256": previous,
-        "authority": {"observation": True, "execution": False, "approval": False, "sandboxing": False},
-        "scope_limits": ["No prompt, tool input, tool output, credential, or environment value is retained.", "This hook trace is not a governed run receipt; use factory wrap for admission, validation, and licensing."],
+        "authority": {
+            "observation": True,
+            "execution": False,
+            "approval": False,
+            "sandboxing": False,
+        },
+        "scope_limits": [
+            "No prompt, tool input, tool output, credential, or environment value is retained.",
+            "This hook trace is not a governed run receipt; use factory wrap for admission, validation, and licensing.",
+        ],
     }
     record = {**core, "event_sha256": digest(core)}
     index = len(existing) + 1

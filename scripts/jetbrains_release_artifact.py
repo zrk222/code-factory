@@ -16,9 +16,7 @@ from zipfile import BadZipFile, ZipFile
 
 SCHEMA_VERSION = 1
 EXPECTED_PLUGIN_ID = "app.factoryline"
-TAG_PATTERN = re.compile(
-    r"jetbrains-v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?\Z"
-)
+TAG_PATTERN = re.compile(r"jetbrains-v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?\Z")
 
 
 class ArtifactError(ValueError):
@@ -41,7 +39,9 @@ def _verified_archive_entries(archive: ZipFile, label: str) -> list[str]:
     try:
         corrupted = archive.testzip()
     except (BadZipFile, OSError, RuntimeError, zlib.error) as exc:
-        raise ArtifactError(f"{label} failed its full ZIP integrity read: {exc}") from exc
+        raise ArtifactError(
+            f"{label} failed its full ZIP integrity read: {exc}"
+        ) from exc
     if corrupted is not None:
         raise ArtifactError(f"{label} has a CRC failure in {corrupted!r}.")
     return names
@@ -81,11 +81,20 @@ def _plugin_metadata(archive: Path) -> dict[str, str]:
                             f"Expected plugin id {EXPECTED_PLUGIN_ID!r}, found {plugin_id!r}."
                         )
                     if not version or not name:
-                        raise ArtifactError("plugin.xml must contain non-empty name and version values.")
+                        raise ArtifactError(
+                            "plugin.xml must contain non-empty name and version values."
+                        )
                     plugin = {"id": plugin_id, "name": name, "version": version}
             if plugin is not None:
                 return plugin
-    except (BadZipFile, ET.ParseError, KeyError, OSError, RuntimeError, zlib.error) as exc:
+    except (
+        BadZipFile,
+        ET.ParseError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        zlib.error,
+    ) as exc:
         raise ArtifactError(f"Invalid JetBrains plugin archive: {exc}") from exc
     raise ArtifactError("No plugin JAR containing META-INF/plugin.xml was found.")
 
@@ -142,7 +151,9 @@ def verify_manifest(
         archive, release_ref=release_ref, commit=commit, channel=channel
     )
     if manifest != expected:
-        raise ArtifactError("Marketplace artifact manifest does not match the candidate or release inputs.")
+        raise ArtifactError(
+            "Marketplace artifact manifest does not match the candidate or release inputs."
+        )
     return expected
 
 

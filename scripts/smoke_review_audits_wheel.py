@@ -1,4 +1,5 @@
 """Exercise an installed wheel outside the source checkout using a real bypass."""
+
 import json
 from pathlib import Path
 import tempfile
@@ -20,19 +21,48 @@ def main() -> None:
             encoding="utf-8",
         )
         targets = [{"path": "app.py", "symbol": name} for name in ("safe", "candidate")]
-        policy = {"schema": audits.SCHEMA,
-            "pattern_groups": [{"id": "peers", "origin": "agent_proposed", "members": targets, "required_calls": ["authorize", "delete"]}],
-            "effect_rules": [{"id": "guard", "origin": "agent_proposed", "target": targets[1], "guard_call": "authorize", "effect_call": "delete"}]}
+        policy = {
+            "schema": audits.SCHEMA,
+            "pattern_groups": [
+                {
+                    "id": "peers",
+                    "origin": "agent_proposed",
+                    "members": targets,
+                    "required_calls": ["authorize", "delete"],
+                }
+            ],
+            "effect_rules": [
+                {
+                    "id": "guard",
+                    "origin": "agent_proposed",
+                    "target": targets[1],
+                    "guard_call": "authorize",
+                    "effect_call": "delete",
+                }
+            ],
+        }
         (root / ".factory").mkdir()
-        (root / ".factory/review-audits.json").write_text(json.dumps(policy), encoding="utf-8")
+        (root / ".factory/review-audits.json").write_text(
+            json.dumps(policy), encoding="utf-8"
+        )
         report = audits.audit_code(root)
         assert report["results"][0]["state"] == "no_structural_findings"
         assert report["findings"][0]["code"] == "GUARD_PATH_BYPASS"
-        review = render_github_proof_review(review_change(root, changed=["app.py"]), "a" * 40)
+        review = render_github_proof_review(
+            review_change(root, changed=["app.py"]), "a" * 40
+        )
         assert review["check"]["conclusion"] == "neutral"
         assert "GUARD_PATH_BYPASS" in review["github_comment"]
-        print(json.dumps({"installed_module": module_path, "state": report["state"],
-                          "detected": report["findings"][0]["code"], "github_delivery": "neutral"}))
+        print(
+            json.dumps(
+                {
+                    "installed_module": module_path,
+                    "state": report["state"],
+                    "detected": report["findings"][0]["code"],
+                    "github_delivery": "neutral",
+                }
+            )
+        )
 
 
 if __name__ == "__main__":

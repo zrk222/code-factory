@@ -956,3 +956,55 @@ Durable SpecLine gate receipts for focused feature work.
 
 - [2026-11-17 12:46] GATE spec p1-resumable-factory-mission approver=codex strict=True sha=aa9967b991563221
 - [2026-11-17 12:46] GATE plan p1-resumable-factory-mission approver=codex tasks=5 sha=aa9967b991563221
+- [2026-11-21 06:28] GATE spec hosted-pr-assurance-v1 approver=human strict=True sha=671032cdcada1dea
+- [2026-11-21 06:30] GATE spec hosted-pr-assurance-v1 approver=human strict=True sha=279bc84ec5848677
+- [2026-11-21 06:33] GATE spec hosted-pr-assurance-v1 approver=human strict=True sha=cd1c93eccc3a2d7c
+- [2026-11-21 06:44] GATE spec hosted-pr-assurance-v1 approver=owner strict=True sha=38d54f30b43cb767
+- [2026-11-21 07:05] GATE spec hosted-pr-assurance-v1 approver=owner strict=True sha=d98a7d6fb8444911
+- [2026-11-21 07:11] GATE spec hosted-pr-assurance-v1 approver=owner strict=True sha=a37d4e5090642af2
+- [2026-11-21 07:28] GATE spec hosted-pr-assurance-v1 approver=owner strict=True sha=b734fc504608a087
+- [2026-11-21 08:15] GATE spec hosted-pr-assurance-v1 approver=owner strict=True sha=0ee131a4c955ec92
+- [2026-11-21 08:46] GATE spec commercial-packaging-v1 approver=human strict=True sha=45b08f45bf64bdb4
+- [2026-11-21 08:46] GATE plan commercial-packaging-v1 approver=human tasks=6 sha=45b08f45bf64bdb4
+- [2026-11-21 08:48] GATE spec commercial-packaging-v1 approver=human strict=True sha=69d113226b398a40
+- [2026-11-21 08:49] GATE plan commercial-packaging-v1 approver=human tasks=13 sha=69d113226b398a40
+- [2026-11-21 09:07] GATE plan commercial-packaging-v1 approver=human tasks=13 sha=69d113226b398a40
+- [2026-11-21 09:07] DONE commercial-packaging-v1 T1 verify_pass=true receipt_seal=b6441ceb67a56f4d284df04201353a94a2f0dd842184b2ff73c33efc92e36b17
+- [2026-11-21 09:07] DONE commercial-packaging-v1 T2 verify_pass=true receipt_seal=48f598ce82fede3db8936879727b5ae9add0971db3a8d6b2f9a3fb19e99b2006
+- [2026-11-21 09:07] DONE commercial-packaging-v1 T3 verify_pass=true receipt_seal=3614e8ed2a5f77c4749011054d307fba5fa927afbbc1ef7017624c7172a82c42
+- [2026-11-21 09:07] VERIFY commercial-packaging-v1 T4 status=FAIL verify_pass=false
+- [2026-11-21 09:07] DONE commercial-packaging-v1 T5 verify_pass=true receipt_seal=ff8582690120fefd8d73745022af9d884aa9e475f5611805929bd14d2cc9ed04
+- [2026-11-21 09:07] DONE commercial-packaging-v1 T6 verify_pass=true receipt_seal=8a33509890b3ed15caf90f479bdbac0d8df5c1e96c945910055fe7eec137794b
+- [2026-11-21 09:07] PACKET commercial-packaging-v1 T4 tokens=1924 sha=494566e48ebe8415
+- [2026-11-21 09:10] DONE commercial-packaging-v1 T4 verify_pass=true receipt_seal=87ce5208d6dfccb4f129a04a80822a9bae989496091309528199616957747bfb
+- [2026-11-21 09:10] PACKET commercial-packaging-v1 T7 tokens=1956 sha=c0f725629377806e
+- [2026-11-21 09:18] GATE spec commercial-packaging-v1 approver=human strict=True sha=27ca6a9d0d2dbc90
+- [2026-11-21 09:18] GATE plan commercial-packaging-v1 approver=human tasks=13 sha=27ca6a9d0d2dbc90
+- [2026-11-21 09:18] DONE commercial-packaging-v1 T1 verify_pass=true receipt_seal=c5f6b6d8279df7251514206c14b16848e4686621ca140632787797185506de56
+- [2026-11-21 09:19] DONE commercial-packaging-v1 T2 verify_pass=true receipt_seal=41c5479a89effaab8bc06fe8a573f673a3755fb08be2be29a27f6e0d4421fefd
+- [2026-11-21 09:19] DONE commercial-packaging-v1 T3 verify_pass=true receipt_seal=133765261cfbe7b202a4370b43ced9a4c358cebc8cd4b7f449900ff09715e1ec
+- [2026-11-21 09:19] DONE commercial-packaging-v1 T4 verify_pass=true receipt_seal=404f30a3b653ee23dd8cca8beb37d62f320353a1714c636641b9f3b3226c4073
+- [2026-11-21 09:19] DONE commercial-packaging-v1 T5 verify_pass=true receipt_seal=ce76cb0afccf75ce86e7d1bf796298ea88d39bba7d0b1bddc1d65aa5b314ec89
+- [2026-11-21 09:20] DONE commercial-packaging-v1 T6 verify_pass=true receipt_seal=9f84ad40813acae1fcfce6dc75bd5d3fd8dc85c6b778b1b45ad68484aaf2507e
+- [2026-11-21 09:20] DONE commercial-packaging-v1 T7 verify_pass=true receipt_seal=da9694aec51b3bf35be277b05fccf792db76e5f1aa5cd332ffc0185632a84799
+- [2026-11-21 09:20] DONE commercial-packaging-v1 T8 verify_pass=true receipt_seal=a79ffc5e6baad07591b4986d2b5e46b58bc7b26619418f3a5fa7a9eabb968b57
+- [2026-11-21 09:20] DONE commercial-packaging-v1 T9 verify_pass=true receipt_seal=c227927ddcfa74d3ac34fcb41e731dcdf1c4c09a65280695a109071248c5ab35
+- [2026-11-21 09:20] DONE commercial-packaging-v1 T10 verify_pass=true receipt_seal=57a100bff0d2cf84698ca1d01725b3590f8c0788bc68e9a9291062d44c1f6089
+- [2026-11-21 09:20] DONE commercial-packaging-v1 T11 verify_pass=true receipt_seal=f837c82508ff72c2def2830a718dbfcb4b1264b888ee768a55b41eee97bff586
+- [2026-11-21 09:21] DONE commercial-packaging-v1 T12 verify_pass=true receipt_seal=82187f123d1c140552762604f0a859985b7349148482f7005b75d92707ab242d
+- [2026-11-21 09:21] DONE commercial-packaging-v1 T13 verify_pass=true receipt_seal=20efd64dea1a571fe5ae8eccaed5bdc0f75d383c277117ac4a7fd8f9c87655bc
+- [2026-11-21 09:23] GATE spec commercial-packaging-v1 approver=human strict=True sha=f2eea7b1612d5d8a
+- [2026-11-21 09:23] GATE plan commercial-packaging-v1 approver=human tasks=13 sha=f2eea7b1612d5d8a
+- [2026-11-21 09:23] DONE commercial-packaging-v1 T1 verify_pass=true receipt_seal=c91bff86ff3827d1aea312d3f807ed460a46dcf8acc8960acc979bea0c7023cd
+- [2026-11-21 09:24] DONE commercial-packaging-v1 T2 verify_pass=true receipt_seal=0c7f53b3ba00cd281495441f36718f2bb8e798f937bc6f7040c2cc4261b7d53c
+- [2026-11-21 09:24] DONE commercial-packaging-v1 T3 verify_pass=true receipt_seal=eb7c607569aa3f8f704a7d3c9a174aa4b732eb661c569111b1e79ecaae1ae471
+- [2026-11-21 09:24] DONE commercial-packaging-v1 T4 verify_pass=true receipt_seal=3b5f46a99726abef2aff3bb1b42d779416b2c43abfcc4900d980307fe739944f
+- [2026-11-21 09:24] DONE commercial-packaging-v1 T5 verify_pass=true receipt_seal=139ca86b30895e15766f8b1cceba286d8c131b65d901fb748f6808238f34e706
+- [2026-11-21 09:25] DONE commercial-packaging-v1 T6 verify_pass=true receipt_seal=183d82de64621d822dfcf9d758a76b3fee180ac59db82cc893816ab5e8db369b
+- [2026-11-21 09:25] DONE commercial-packaging-v1 T7 verify_pass=true receipt_seal=da262d93ce07070e17b5fff7b811e0ce299732b4d2ebc80410dca738e9cb5d24
+- [2026-11-21 09:25] DONE commercial-packaging-v1 T8 verify_pass=true receipt_seal=f68e6ea63c4aa3403144ffcdf37c79876391e3dda57e8cf0ad85883c24c6b858
+- [2026-11-21 09:25] DONE commercial-packaging-v1 T9 verify_pass=true receipt_seal=6efd10889f9782de3a6e5267f2f697c006e463c2a39e0948638d6d0bca35d2a7
+- [2026-11-21 09:25] DONE commercial-packaging-v1 T10 verify_pass=true receipt_seal=e4215a91949245be4e9f4afe394e8d52a77cefb5d7d58189f4ade69ff37ec597
+- [2026-11-21 09:25] DONE commercial-packaging-v1 T11 verify_pass=true receipt_seal=8a0b7efdd379bfaa2429cb825d97a41e25964a80dae5474c09fbd6bb58f40624
+- [2026-11-21 09:26] DONE commercial-packaging-v1 T12 verify_pass=true receipt_seal=e55945a9abd4e4ccb00699766e9d09ad6054bad1dfd4f58904401843751365e2
+- [2026-11-21 09:26] DONE commercial-packaging-v1 T13 verify_pass=true receipt_seal=3c27c64a8e9433ffd015b8d69e8507e5e6c1cb658789c2a7840fed7bd4403d34

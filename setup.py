@@ -42,13 +42,17 @@ class build_py(_build_py):
         super().run()
         commit = source_commit()
         if commit:
-            write_provenance(Path(self.build_lib) / PACKAGE / "_build_provenance.py", commit)
+            write_provenance(
+                Path(self.build_lib) / PACKAGE / "_build_provenance.py", commit
+            )
 
 
 class sdist(_sdist):
     def make_release_tree(self, base_dir: str, files: list[str]) -> None:
         super().make_release_tree(base_dir, files)
-        write_provenance(Path(base_dir) / PACKAGE / "_build_provenance.py", source_commit())
+        write_provenance(
+            Path(base_dir) / PACKAGE / "_build_provenance.py", source_commit()
+        )
 
 
 setup(cmdclass={"build_py": build_py, "sdist": sdist})

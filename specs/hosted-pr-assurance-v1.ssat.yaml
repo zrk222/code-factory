@@ -16,30 +16,33 @@ modules:
         args: ["cache: JwksCache"]
         returns: "dict[str, Any]"
         doc: "Return fresh pinned JWKS or fail closed on stale identity data."
-  - name: hosted_github
-    path: factoryline/hosted_github.py
-    imports: [cryptography, httpx]
+  - name: hosted_api
+    path: factoryline/hosted_api.py
+    imports: [factoryline.hosted_storage, factoryline.hosted_identity]
     functions:
       - name: publish_check
         args: ["publisher: GitHubAppPublisher", "installation_id: int", "repository: str", "request: dict[str, Any]"]
         returns: int
         doc: "Publish one bound GitHub Check and return its remote identifier."
-  - name: hosted_api
-    path: factoryline/hosted_api.py
-    imports: [factoryline.hosted_storage, factoryline.hosted_identity, factoryline.hosted_github]
-    functions:
       - name: create_hosted_app
         args: ["service: HostedPRAssuranceService"]
         returns: HostedPRAssuranceAPI
         doc: "Create the authenticated WSGI surface without caller tenant headers."
+  - name: cloudflare_evidence_ingress
+    path: deploy/cloudflare/evidence-app.mjs
+    functions:
+      - name: fetchRequest
+        args: [request, env]
+        returns: Promise<Response>
+        doc: "Authenticate and queue bounded raw webhook transport without a verdict."
+      - name: consumeMessage
+        args: [message, env]
+        returns: "Promise<object | undefined>"
+        doc: "Recheck queued bytes and await authoritative hosted ingress before acknowledgement."
 dependencies:
   - from: hosted_api
     to: hosted_storage
   - from: hosted_api
-    to: hosted_identity
-  - from: hosted_api
-    to: hosted_github
-  - from: hosted_github
     to: hosted_identity
 invariants:
   - name: hosted_api_has_no_direct_sql
@@ -51,6 +54,6 @@ invariants:
   - name: github_publisher_has_no_database_access
     forbid_pattern: "\\b(?:psycopg|sqlite3)\\b"
     scopes:
-      - module: hosted_github
+      - module: hosted_api
         symbol: publish_check
         max_lines: 220

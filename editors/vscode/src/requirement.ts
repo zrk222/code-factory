@@ -1,6 +1,6 @@
 import { type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, type BigIntStats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -74,82 +74,129 @@ export function requirementProofManifestPath(workspace: string, requirementId: s
   return path.join(workspace, ".factory", "requirement-proofs", requirementId, "e2e-manifest.json");
 }
 
-export async function readTestProofManifest(workspace: string, requirementId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  const check = (): void => { if (signal?.aborted) throw new Error("Proof manifest read was cancelled."); };
-  const wait = async <T>(operation: Promise<T>): Promise<T> => { check(); const result = await operation; check(); return result; };
+function checkProofRead(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("Proof manifest read was cancelled.");
+}
+
+async function proofRead<T>(signal: AbortSignal | undefined, operation: () => Promise<T>): Promise<T> {
+  checkProofRead(signal);
+  const result = await operation();
+  checkProofRead(signal);
+  return result;
+}
+
+function validateProofId(requirementId: string): void {
   if (!isRequirementId(requirementId) || requirementId.length > 96) throw new Error("Invalid proof identifier.");
-  const root = await wait(fs.realpath(workspace));
-  const components = [".factory", "requirement-proofs", requirementId];
+}
+
+async function resolveProofDirectory(root: string, signal?: AbortSignal): Promise<string> {
   let current = root;
-  for (const component of components) {
-    current = path.join(current, component);
-    const stat = await wait(fs.lstat(current, { bigint: true }));
-    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Proof path contains a linked or non-directory component.");
-    const real = await wait(fs.realpath(current));
-    const relative = path.relative(root, real);
-    if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) throw new Error("Proof path escaped the workspace.");
+  for (const component of [".factory", "requirement-proofs"]) {
+    current = await verifyProofDirectory(root, path.join(current, component), signal);
   }
-  const manifest = path.join(current, "e2e-manifest.json");
-  const beforePath = await wait(fs.lstat(manifest, { bigint: true }));
-  if (beforePath.isSymbolicLink() || !beforePath.isFile() || beforePath.nlink > 1n || beforePath.size > BigInt(MAX_TEST_PROOF_MANIFEST_BYTES)) {
+  return current;
+}
+
+async function verifyProofDirectory(root: string, candidate: string, signal?: AbortSignal): Promise<string> {
+  const stat = await proofRead(signal, () => fs.lstat(candidate, { bigint: true }));
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Proof path contains a linked or non-directory component.");
+  const real = await proofRead(signal, () => fs.realpath(candidate));
+  const relative = path.relative(root, real);
+  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) throw new Error("Proof path escaped the workspace.");
+  return candidate;
+}
+
+async function verifyProofManifestPath(manifest: string, signal?: AbortSignal) {
+  const stat = await proofRead(signal, () => fs.lstat(manifest, { bigint: true }));
+  const bounded = stat.size <= BigInt(MAX_TEST_PROOF_MANIFEST_BYTES);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink > 1n || !bounded) {
     throw new Error("Proof manifest must be a bounded regular single-link file.");
   }
-  const noFollow = fsConstants.O_NOFOLLOW ?? 0;
-  check();
-  const handle = await fs.open(manifest, fsConstants.O_RDONLY | noFollow);
+  return stat;
+}
+
+function validateOpenedManifest(opened: BigIntStats, pathStat: BigIntStats): void {
+  const bounded = opened.size <= BigInt(MAX_TEST_PROOF_MANIFEST_BYTES);
+  const same = opened.dev === pathStat.dev && opened.ino === pathStat.ino;
+  if (!opened.isFile() || opened.nlink > 1n || !bounded || !same) throw new Error("Proof manifest changed identity or exceeded its size bound.");
+}
+
+async function readProofBytes(handle: Awaited<ReturnType<typeof fs.open>>, signal?: AbortSignal): Promise<{ buffer: Buffer; length: number }> {
+  const buffer = Buffer.alloc(MAX_TEST_PROOF_MANIFEST_BYTES + 1);
+  let length = 0;
+  while (length < buffer.length) {
+    const result = await proofRead(signal, () => handle.read(buffer, length, buffer.length - length, length));
+    if (!result.bytesRead) break;
+    length += result.bytesRead;
+  }
+  return { buffer, length };
+}
+
+function manifestIdentityUnchanged(before: BigIntStats, after: BigIntStats, pathStat: BigIntStats, length: number): boolean {
+  const stableFields = ["dev", "ino", "size", "nlink", "mtimeNs", "ctimeNs"] as const;
+  const stable = stableFields.every((field) => before[field] === after[field]);
+  const samePath = !pathStat.isSymbolicLink() && pathStat.dev === after.dev && pathStat.ino === after.ino;
+  return length <= MAX_TEST_PROOF_MANIFEST_BYTES && after.size <= BigInt(MAX_TEST_PROOF_MANIFEST_BYTES) && stable && samePath;
+}
+
+function parseProofManifest(buffer: Buffer, length: number): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(buffer.toString("utf8", 0, length));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Proof manifest must contain a JSON object.");
+  return parsed as Record<string, unknown>;
+}
+
+export async function readTestProofManifest(workspace: string, requirementId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  validateProofId(requirementId);
+  const root = await proofRead(signal, () => fs.realpath(workspace));
+  const directory = await resolveProofDirectory(root, signal);
+  const requirementDirectory = await verifyProofDirectory(root, path.join(directory, requirementId), signal);
+  const manifest = path.join(requirementDirectory, "e2e-manifest.json");
+  const pathStat = await verifyProofManifestPath(manifest, signal);
+  checkProofRead(signal);
+  const handle = await fs.open(manifest, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   try {
-    check();
-    const before = await wait(handle.stat({ bigint: true }));
-    if (!before.isFile() || before.nlink > 1n || before.size > BigInt(MAX_TEST_PROOF_MANIFEST_BYTES) || before.dev !== beforePath.dev || before.ino !== beforePath.ino) {
-      throw new Error("Proof manifest changed identity or exceeded its size bound.");
-    }
-    const buffer = Buffer.alloc(MAX_TEST_PROOF_MANIFEST_BYTES + 1);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const { bytesRead } = await wait(handle.read(buffer, offset, buffer.length - offset, offset));
-      if (!bytesRead) break;
-      offset += bytesRead;
-    }
-    const after = await wait(handle.stat({ bigint: true }));
-    const afterPath = await wait(fs.lstat(manifest, { bigint: true }));
-    if (offset > MAX_TEST_PROOF_MANIFEST_BYTES || after.size > BigInt(MAX_TEST_PROOF_MANIFEST_BYTES) ||
-        before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.nlink !== after.nlink || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs ||
-        afterPath.isSymbolicLink() || afterPath.dev !== after.dev || afterPath.ino !== after.ino) {
-      throw new Error("Proof manifest changed during bounded read.");
-    }
-    const parsed: unknown = JSON.parse(buffer.toString("utf8", 0, offset));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Proof manifest must contain a JSON object.");
-    return parsed as Record<string, unknown>;
+    const before = await proofRead(signal, () => handle.stat({ bigint: true }));
+    validateOpenedManifest(before, pathStat);
+    const { buffer, length } = await readProofBytes(handle, signal);
+    const after = await proofRead(signal, () => handle.stat({ bigint: true }));
+    const afterPath = await proofRead(signal, () => fs.lstat(manifest, { bigint: true }));
+    if (!manifestIdentityUnchanged(before, after, afterPath, length)) throw new Error("Proof manifest changed during bounded read.");
+    return parseProofManifest(buffer, length);
   } finally {
     await handle.close();
   }
 }
 
+function assertProofPathInside(root: string, target: string, message: string): void {
+  const relative = path.relative(root, target);
+  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(message);
+}
+
+async function createProofDirectoryComponent(current: string): Promise<void> {
+  try {
+    await fs.mkdir(current);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+}
+
+async function verifyCreatedProofDirectory(root: string, current: string): Promise<void> {
+  const stat = await fs.lstat(current);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Requirement proof path contains a linked or non-directory component.");
+  const real = await fs.realpath(current);
+  assertProofPathInside(root, real, "Requirement proof path escaped the workspace.");
+}
+
 async function ensureProofDirectory(workspace: string, requirementId: string, ...children: string[]): Promise<string> {
-  if (!isRequirementId(requirementId) || requirementId.length > 96) throw new Error("Invalid proof identifier.");
+  validateProofId(requirementId);
   const root = await fs.realpath(workspace);
   const base = path.join(root, ".factory", "requirement-proofs", requirementId, ...children);
-  const relative = path.relative(root, base);
-  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error("Requirement proof path escaped the workspace.");
-  }
+  assertProofPathInside(root, base, "Requirement proof path escaped the workspace.");
   let current = root;
-  for (const part of relative.split(path.sep)) {
+  for (const part of path.relative(root, base).split(path.sep)) {
     current = path.join(current, part);
-    try {
-      await fs.mkdir(current);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-    const stat = await fs.lstat(current);
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
-      throw new Error("Requirement proof path contains a linked or non-directory component.");
-    }
-    const real = await fs.realpath(current);
-    const escaped = path.relative(root, real);
-    if (escaped.startsWith(`..${path.sep}`) || path.isAbsolute(escaped)) {
-      throw new Error("Requirement proof path escaped the workspace.");
-    }
+    await createProofDirectoryComponent(current);
+    await verifyCreatedProofDirectory(root, current);
   }
   return current;
 }

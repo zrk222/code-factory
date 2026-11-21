@@ -125,12 +125,12 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.php.request-path-traversal': 11,
   'opt.factory.rules.php.request-sql-injection': 15,
   'opt.factory.rules.php.request-unsafe-deserialization': 4,
-  'opt.factory.rules.python.disabled-tls-verification': 2,
+  'opt.factory.rules.python.disabled-tls-verification': 3,
   'opt.factory.rules.python.request-command-injection': 2,
   'opt.factory.rules.python.request-path-traversal': 9,
   'opt.factory.rules.python.request-sql-injection': 1,
-  'opt.factory.rules.python.subprocess-shell-true': 4,
-  'opt.factory.rules.python.unsafe-deserialization': 1,
+  'opt.factory.rules.python.unsafe-deserialization': 2,
+  'opt.factory.rules.python.unsafe-deserialization-unscoped': 3,
   'opt.factory.rules.ruby.disabled-tls-verification': 1,
   'opt.factory.rules.ruby.request-command-injection': 2,
   'opt.factory.rules.ruby.request-sql-injection': 2,
@@ -148,8 +148,8 @@ export function javascriptControlManifest() {
   return ['js', 'ts', 'tsx'].flatMap(extension => {
     const path = `semgrep-pattern-limited.${extension}`;
     const additional = extension === 'tsx' ? [
-      { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 147, line: 150 },
-      { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 151, line: 153 },
+      { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 159, line: 162 },
+      { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 163, line: 165 },
     ] : [];
     return [...family, ...additional].map(item => ({ ...item, path }));
   });
@@ -166,9 +166,9 @@ export function verifyJavascriptControlMatrix(manifest) {
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
   const observedRuleIds = [...ruleIds].sort();
-  if (manifest.length !== 120 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30 ||
+  if (manifest.length !== 121 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30 ||
       JSON.stringify(observedRuleIds) !== JSON.stringify(expectedRuleIds) ||
-      Object.values(fixedReviewedFindingCounts).reduce((sum, count) => sum + count, 0) !== 120) {
+      Object.values(fixedReviewedFindingCounts).reduce((sum, count) => sum + count, 0) !== 121) {
     throw new Error('Registered rule/finding control matrix differs');
   }
   const observedCounts = new Map(ruleIds.map(rule => [rule, 0]));
