@@ -42,11 +42,13 @@ traces, default/review tiers and explicit coverage gaps. Frozen JSON, SARIF
 Signed-observation claims, the bounded Proof Agent and the read-only Devin
 plugin turn agent suggestions into inspectable evidence—not automatic approval.
 
-The completed default-tier panel scored **54 TP / 6 FP / 0 unclear = 90.0%**
-(60 alerts; Wilson 95% **79.9–95.3%**). It covered **six observed languages**,
-used AI labels and included 15 shortfall fills. Twelve-language precision,
-review-tier precision, general recall and independent human validation remain
-unestablished. Native fixture controls and quality scores are separate evidence.
+Fresh Round 7 supported **38/40 decided default-tier alerts = 95.0%**
+(Wilson 95% **83.5–98.6%**), with **12 additional unclear**. Review tier supported
+**23/40 = 57.5%**, with 3 unclear; advisory recall was **0/161**. Six languages
+had insufficient precision samples. AI review labels are not independent human
+validation or twelve-language accuracy. The earlier Round 6 54/60 (90%) panel
+is a separate study; do not present the different sampling designs as a measured
+improvement. [Per-language evidence](evidence/polyglot-readiness-round7.json).
 SDK imports, strict complexity failures, duplicated implementation files and
 unsafe/unbounded receipt reads were repaired without raising architecture caps.
 No repeatable scan-speed gain is claimed.

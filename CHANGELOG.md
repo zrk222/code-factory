@@ -10,10 +10,15 @@ polyglot developers—not another agent that approves its own work.
   default and review tiers, native source-to-sink traces where observed, SARIF
   normalization and 30 rule-removal challenges. Native workers require setup;
   the local static quick scan remains Python-only.
-- **Measured:** the completed default-tier alert panel returned 54 TP / 6 FP /
-  0 unclear (90.0%; Wilson 95% 79.9–95.3%). It spans six observed languages,
-  uses AI labels and includes 15 shortfall fills. Review-tier precision,
-  twelve-language precision and general recall are not established.
+- **Measured:** fresh Round 7 supported 38/40 decided default-tier alerts
+  (95.0%; Wilson 95% 83.5–98.6%), with 12 additional unclear; review tier
+  supported 23/40 (57.5%), with 3 unclear. Advisory recall was 0/161; six
+  languages have insufficient precision samples. AI labels, tier and language
+  limits remain explicit. The earlier Round 6 54 TP / 6 FP / 0 unclear (90%)
+  panel is a separate study, not a comparable all-language accuracy claim.
+- **Optimized:** exhausted alias-memo entry/pair budgets reject before redundant
+  copying/UTF-8 accounting. Capacity and findings remain unchanged; 2,867 focused
+  controls passed. Helper timing is not an overall scan-speed claim.
 - **Added:** frozen versioned scan JSON, SARIF 2.1.0 and opt-in pre-commit;
   byte-exact historical mutation diffs preserve CRLF, non-UTF-8 bytes and missing
   final newlines. Existing CI and editors can consume evidence without a new

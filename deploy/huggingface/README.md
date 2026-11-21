@@ -41,12 +41,13 @@ and bounded agent proof into one local-first evidence workflow.
   signed-observation checks and explicit missing evidence.
 - **Fits existing work:** frozen JSON, SARIF 2.1.0, opt-in pre-commit and a
   read-only eight-tool Devin plugin, alongside VS Code and JetBrains 1.3.6.
-- **Measured default-tier precision:** 54 TP / 6 FP / 0 unclear across 60 alerts
-  = **90%** (Wilson 95% **79.9–95.3%**). This panel used AI labels and covered
-  **six observed languages**, with 15 shortfall fills. It is not twelve-language
-  precision, review-tier precision, recall or independent human validation.
+- **Measured strengths and gaps:** fresh Round 7 supported **38/40 decided
+  default-tier alerts (95%; Wilson 83.5–98.6%)**, plus 12 unclear; review tier
+  **23/40 (57.5%)**, plus 3 unclear. Advisory recall was **0/161**. Six languages
+  had insufficient precision samples; AI labels do not establish twelve-language
+  accuracy or independent human validation.
 
-[Results and limits](https://github.com/zrk222/code-factory/pull/354).
+[Per-language results and limits](https://github.com/zrk222/code-factory/blob/main/docs/evidence/polyglot-readiness-round7.json).
 
 ## Watch the workflow
 

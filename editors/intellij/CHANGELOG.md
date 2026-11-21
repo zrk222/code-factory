@@ -2,6 +2,9 @@
 
 ## 1.3.6 - 2026-11-21 (candidate; publication gated)
 
+- Include fresh Round 7 per-language precision and recall evidence, distinguishing
+  default/review tiers, unclear labels and insufficient samples. No blanket
+  twelve-language accuracy or vulnerability-recall claim.
 - Pair the JetBrains and VS Code adapters with Code Factory core 0.50.0. The
   local runtime can route external analysis across twelve language families
   where the required worker and toolchain are configured; analyzers are not

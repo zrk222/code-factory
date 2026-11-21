@@ -31,10 +31,14 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
     assert "The quick security scanner inspects Python ASTs" in page
     assert "Core 0.50.0 and plugins 1.3.6 are the prepared release line" in page
     assert "12-language native security" in page
-    assert "six observed languages" in page
-    assert "not twelve-language precision, review-tier precision, recall" in page
-    assert "AI labels and 15 shortfall fills" in page
-    assert "90%" in page and "54 true positives, 6 false positives, 0 unclear" in page
+    assert "Six languages had insufficient precision samples" in page
+    assert (
+        "AI labels are not twelve-language accuracy or independent human validation"
+        in page
+    )
+    assert "38/40 decided default-tier alerts (95%; Wilson 83.5–98.6%)" in page
+    assert "12 additional unclear" in page
+    assert "23/40 (57.5%), plus 3 unclear" in page and "Advisory recall: 0/161" in page
     assert f"Code Factory {__version__} · Static workflow overview" in page
     assert "Provider availability tracked separately" in page
     assert all(name in page for name in ("FactoryLine", "ForgeLine", "SpecLine"))

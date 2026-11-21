@@ -53,11 +53,11 @@ JetBrains plugin 1.3.6 pairs with the separately installed Code Factory CLI
 - Receipt reads fail closed for stale, malformed, oversized, escaped, or
   changing files. Junie remains optional; you control agent handoffs and edits.
 
-The completed default-tier alert panel measured **90% precision** (54 TP / 6 FP /
-0 unclear; 60 alerts; Wilson 95% 79.9–95.3%) in **six observed languages**.
-AI labels and 15 shortfall fills mean this is not twelve-language precision,
-review-tier precision, recall or independent human validation.
-[Inspect the evidence and limits](https://github.com/zrk222/code-factory/pull/354).
+Fresh Round 7 supported **38/40 decided default-tier alerts (95%; Wilson
+83.5–98.6%)**, with **12 additional unclear**; review tier **23/40 (57.5%)**,
+with 3 unclear. Advisory recall was **0/161**; six languages had insufficient
+precision samples. AI labels are not twelve-language accuracy or independent
+human validation. [Per-language results and limits](../../docs/evidence/polyglot-readiness-round7.json).
 
 1. Install the Code Factory CLI in the Python environment your JetBrains IDE uses.
 2. Install **FactoryLine AI Proof** from the [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33009-factoryline) and restart the IDE.

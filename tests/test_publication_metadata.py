@@ -685,12 +685,11 @@ def test_hosted_release_and_editor_versions_are_declared():
     normalized = " ".join(readme.split())
     assert "12 languages, one review workflow" in normalized
     assert "worker setup and coverage gaps remain explicit" in normalized
-    assert "54 true positives / 6 false positives / 0 unclear = 90%" in normalized
-    assert "six observed languages" in normalized
-    assert (
-        "not twelve-language precision, review-tier precision, recall or independent human validation"
-        in normalized
-    )
+    assert "38/40 decided alerts (95%; Wilson 83.5–98.6%)" in normalized
+    assert "12 additional unclear" in normalized
+    assert "23/40 (57.5%)" in normalized and "0/161" in normalized
+    assert "six languages had fewer than five decided alerts" in normalized
+    assert "not twelve-language accuracy or independent human validation" in normalized
     editor_copy = " ".join(vscode_readme.split())
     assert (
         "12 languages** when the required workers and toolchains are configured"
@@ -1009,11 +1008,13 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]
     assert "30 policy and release-risk checks" in metadata["description"]
     assert "12 declared languages" in metadata["description"]
-    assert "90.0% precision" in metadata["description"]
-    assert "six observed languages" in metadata["description"]
-    assert "does not establish twelve-language precision" in metadata["description"]
+    assert "38/40 decided default-tier alerts" in metadata["description"]
+    assert "12 additional unclear" in metadata["description"]
+    assert "23/40 (57.5%)" in metadata["description"]
+    assert "Advisory recall was 0/161" in metadata["description"]
+    assert "Six languages had insufficient precision samples" in metadata["description"]
     assert (
-        "review-tier precision, recall or independent human validation"
+        "do not establish twelve-language accuracy or independent human validation"
         in metadata["description"]
     )
     assert "named human control" in metadata["description"]

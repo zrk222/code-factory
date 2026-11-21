@@ -22,11 +22,12 @@ factory scan --root . --static-only
   covers C, C++, C#, Go, Java, JavaScript, PHP, Python, Ruby, Rust, Swift and
   TypeScript. Thirty rules separate default findings from review-only context;
   worker setup and coverage gaps remain explicit.
-- **Measured precision, not a blanket accuracy promise:** a completed default-tier
-  alert panel scored **54 true positives / 6 false positives / 0 unclear = 90%**
-  (60 alerts; Wilson 95% interval **79.9–95.3%**). It contained **six observed
-  languages**, AI-reviewer labels and shortfall fills—not twelve-language
-  precision, review-tier precision, recall or independent human validation.
+- **Measured strengths and gaps:** the fresh Round 7 default tier supported
+  **38/40 decided alerts (95%; Wilson 83.5–98.6%)**, with **12 additional unclear**.
+  Review tier supported **23/40 (57.5%)**, with 3 unclear. Advisory recall was
+  **0/161**; six languages had fewer than five decided alerts. AI labels and
+  per-language denominators are disclosed—not twelve-language accuracy or
+  independent human validation. [Inspect readiness](docs/evidence/polyglot-readiness-round7.json).
 - **Fits the tools you already use:** frozen JSON output, SARIF 2.1.0, opt-in
   pre-commit, source-bound GitHub proof handoffs and an eight-tool read-only
   Devin MCP profile put evidence beside agent suggestions.

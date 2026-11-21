@@ -53,11 +53,11 @@ This documentation-only update does not change extension runtime behavior.
 
 ### Precision and product walkthrough
 
-The completed default-tier panel measured **90% precision (54 TP / 6 FP /
-0 unclear; 60 alerts; Wilson 95% 79.9–95.3%)** in **six observed languages**.
-AI labels and 15 shortfall fills limit interpretation: this is not twelve-language
-precision, review-tier precision, recall or independent human validation.
-[Result and limits](https://github.com/zrk222/code-factory/pull/354).
+Fresh Round 7 supported **38/40 decided default-tier alerts (95%; Wilson
+83.5–98.6%)**, with **12 additional unclear**; review tier **23/40 (57.5%)**,
+with 3 unclear. Advisory recall was **0/161**; six languages had insufficient
+precision samples. AI labels are not twelve-language accuracy or independent
+human validation. [Per-language results and limits](../../docs/evidence/polyglot-readiness-round7.json).
 
 Historical, exposed replay (not the current ruleset's score):
 
