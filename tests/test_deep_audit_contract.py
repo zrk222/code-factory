@@ -49,7 +49,9 @@ def test_coordinator_smoke_runs_bound_source_and_rejects_noop(
 
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads(
-        (root / "smoke/deep-audit-coordinator-foundation-v1.json").read_text(encoding="utf-8")
+        (root / "smoke/deep-audit-coordinator-foundation-v1.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert len(manifest["checks"]) == 1
     check = manifest["checks"][0]
