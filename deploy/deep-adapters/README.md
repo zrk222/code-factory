@@ -143,6 +143,11 @@ and Go `InsecureSkipVerify` are reported only where the call or enclosing
 function carries credentials or session material, so unauthenticated probes are
 not reported; credential evidence is matched as identifiers (token, secret,
 password, Authorization, cookie), not substrings such as `/etc/passwd`.
+This credential and opt-in scoping replaces the earlier report-every-bypass
+policy on held-out evidence: four pre-registered fresh panels (rounds 1-4,
+177 alerts, two independent review contexts) took emitted-alert precision
+from 44.1% to 69.8% (round 4, Wilson 56.5-80.5%), and blinded checks of
+removed alerts found 34 of 38 decided removals were false positives.
 TLS bypasses behind an explicit operator opt-in (`if args.insecure`,
 `if cfg.insecure {}`) are not reported, and Rust clients are reported only
 when the function carries credentials, session or user identity.

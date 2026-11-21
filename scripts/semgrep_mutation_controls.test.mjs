@@ -90,8 +90,8 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 120);
-  assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 30);
+  assert.equal(balancedReplacement.length, 118);
+  assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 29);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
 });
@@ -103,7 +103,7 @@ test('fixed TSX qualification rejects omitted, substituted and wrong-language co
   assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 10);
   assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 12);
   assert.deepEqual(manifest.filter(item => item.path.endsWith('.tsx')).slice(-2).map(item =>
-    [item.source_line, item.line]), [[147, 150], [151, 153]]);
+    [item.source_line, item.line]), [[159, 162], [163, 165]]);
   assert.deepEqual(manifest.filter(item => item.path.endsWith('.js')).slice(-3).map(item =>
     [item.source_line, item.line]), [[106, 106], [110, 112], [116, 118]]);
   assert.throws(() => verifyJavascriptControlMatrix(manifest.filter(item => !item.path.endsWith('.tsx'))));
@@ -120,8 +120,8 @@ test('reviewed TSX endpoints bind actual JSX, Unicode, imported aliases and rebo
     assert.match(lines[expected.line - 2], /ruleid: javascript\.request-/);
   }
   assert.match(source, /return <section title="é漢字">\{value\}<\/section>/);
-  assert.match(lines[149], /processAlias\.exec\(alias\)/);
-  assert.match(lines[152], /fileAlias\.readFileSync\(path\)/);
+  assert.match(lines[161], /processAlias\.exec\(alias\)/);
+  assert.match(lines[164], /fileAlias\.readFileSync\(path\)/);
   assert.match(source, /safe = "echo fixed"/);
   assert.match(source, /function shadowed\(processAlias, req\)/);
 });
