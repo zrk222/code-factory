@@ -691,6 +691,61 @@ def _proof_agent_scope(binding: dict, verification: dict, workspace: Path) -> No
         )
 
 
+def _commercial_admission(*, owner: str, binding: dict, verification: dict):
+    """Soft commercial admission for one proof run; inert unless explicitly enabled.
+
+    FACTORY_COMMERCIAL_MODE selects off (default, no files, no decisions),
+    shadow (record decisions, never refuse) or enforce (soft local allowance).
+    Admission happens after safety preflight and before dispatch; it can refuse
+    a start, but it never changes a proof result or interrupts a run, and the
+    human seat subject is the run's owner, never an agent identity.
+    """
+    from datetime import datetime, timezone
+    import hashlib
+
+    from . import __version__ as _package_version
+    from .commercial_gate import (
+        CommercialAdmissionError,
+        CommercialGate,
+        commercial_mode,
+    )
+
+    if commercial_mode() == "off":
+        return None
+    gate = CommercialGate()
+    plan_sha = str(verification.get("payload_sha256", ""))
+    binding_sha = str(binding.get("binding_sha256", ""))
+    # Same approved packet + same mission binding retried in the same period
+    # replays under one reservation instead of double charging.
+    idempotency_key = hashlib.sha256(f"{plan_sha}|{binding_sha}".encode()).hexdigest()
+    try:
+        return gate.admit(
+            subject=owner,
+            workflow_id=f"proof-agent:{plan_sha[:16]}",
+            idempotency_key=idempotency_key,
+            binding={"plan_digest": plan_sha, "scope_digest": binding_sha},
+            version=_package_version,
+            now=datetime.now(timezone.utc),
+        )
+    except CommercialAdmissionError as exc:
+        raise RuntimeAuditError(exc.code, exc.message) from exc
+
+
+def _commercial_settle(admission, outcome: str) -> None:
+    """Settle an admission at the terminal result; never mid-run, never raising."""
+    if admission is None:
+        return
+    from datetime import datetime, timezone
+
+    from .commercial_gate import CommercialGate
+
+    try:
+        gate = CommercialGate()
+        gate.settle(admission, outcome=outcome, now=datetime.now(timezone.utc))
+    except Exception:
+        pass
+
+
 def execute_proof_agent(
     plan_path: Path,
     trust_root_path: Path,
@@ -724,20 +779,28 @@ def execute_proof_agent(
         require_intake=True,
     )
     _proof_agent_scope(binding, verification, workspace)
-    result = execute_runtime_audit(
-        plan_path,
-        trust_root_path,
-        trust_root_sha256,
-        workspace,
-        environment_digest,
-        output_root,
-        require_intake=True,
-        expected_plan_sha256=verification["payload_sha256"],
+    admission = _commercial_admission(
+        owner=owner, binding=binding, verification=verification
     )
-    post_binding = _mission_repair_snapshot(mission_binding_path, mission_root, owner)
-    if post_binding != binding:
-        raise RuntimeAuditError("E_PROOF_SCOPE", "mission changed during execution")
-    receipt = _proof_agent_receipt(result, verification, workspace)
+    try:
+        result = execute_runtime_audit(
+            plan_path,
+            trust_root_path,
+            trust_root_sha256,
+            workspace,
+            environment_digest,
+            output_root,
+            require_intake=True,
+            expected_plan_sha256=verification["payload_sha256"],
+        )
+        post_binding = _mission_repair_snapshot(mission_binding_path, mission_root, owner)
+        if post_binding != binding:
+            raise RuntimeAuditError("E_PROOF_SCOPE", "mission changed during execution")
+        receipt = _proof_agent_receipt(result, verification, workspace)
+    except Exception:
+        _commercial_settle(admission, "tool_error")
+        raise
+    _commercial_settle(admission, "completed")
     elapsed = monotonic() - started
     complete = all(lane["state"] != "INCOMPLETE" for lane in receipt["lanes"])
     within_budget = elapsed <= binding["budgets"]["max_wall_seconds"]
