@@ -21,10 +21,20 @@ primary_question: Did the change fulfill approved intent, what could break, and 
 
 ## Current release preview
 
-Core 0.48.1 uses the Production/Stable package classifier. VS Code/Open VSX
-and JetBrains source previews target 1.1.4; these candidates are not published.
-Provider publication is a separate verified event.
-The new source adds native dual-audit evidence views, an OpenCode plugin, and
+The current source version is 0.49.7. The requested next bundle is core 0.50.0
+and VS Code/Open VSX/JetBrains 1.3.6; that bundle is not published. Provider
+publication and approval remain separate verified events, not consequences of
+passing local tests or merging a pull request.
+
+The latest source lets an owner-approved Proof Agent run a sealed six-business-lane
+plan using the existing deterministic runner, challenge it with known-bad controls,
+and preserve the evidence for human review. Changed plans, scope and contradictory
+receipts block success. A canonical read-only `verify_claim` MCP tool checks pinned
+signed execution observations; it does not prove arbitrary code claims. A compact
+Devin profile exposes eight evidence tools. Native all-family qualification,
+representative performance measurements and live integrations remain separate work.
+
+The source also includes native dual-audit evidence views, an OpenCode plugin, and
 the Junie IDE evidence route. The prior 0.46.9 release added Muse Code native
 packages plus a standalone skills/hooks/MCP installation path for Muse builds
 without plugin commands, alongside bounded PRD/spec routing and workflow MCP
@@ -37,7 +47,7 @@ unchanged. The shared public preview is in
 
 ## Native agent-harness source preview
 
-Status: Current source preview only; published Code Factory 0.48.1 remains unchanged. Local-wheel inclusion is not claimed.
+Status: Source functionality, not evidence of a live integration or a newly published bundle.
 
 The native harness keeps incident checkpoints for recovery, binds review
 context shards to source, and compares candidate repairs without applying them.
@@ -51,9 +61,9 @@ Junie while keeping execution and identity limits visible.
 
 ## What it does
 
-**6 mandatory audit lanes. 192 coded rejection conditions. One human-owned release decision.**
+**6 mandatory audit lanes. 199 coded rejection conditions. One human-owned release decision.**
 These source-inventoried counts describe the senior runtime
-assurance path: 88 lane-specific and 104 cross-cutting conditions. They do not
+assurance path: 88 lane-specific and 111 cross-cutting conditions. They do not
 mean every project executes that many tests; observations scale with approved scope.
 
 Code Factory is an engineering audit and orchestration system for human and
