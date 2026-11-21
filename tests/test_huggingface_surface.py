@@ -15,20 +15,16 @@ SPACE = ROOT / "deploy" / "huggingface"
 def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> None:
     page = (SPACE / "index.html").read_text(encoding="utf-8")
     readme = (SPACE / "README.md").read_text(encoding="utf-8")
-    assert "Seeded demonstration" in page
-    assert "Review a finding and a repaired case" in page
-    assert "This seeded local example applies a declared tenant-read contract" in page
+    assert "Seeded finding example:" in page
+    assert "sample tenant-read inputs illustrate a finding and repaired case" in page
     assert (
-        "This seeded local demonstration shows the workflow using a finding and a"
+        "First Proof uses a generated sandbox to check the demonstration, not your repository."
         in readme
     )
-    assert "CI verification is still required" in page
-    assert "human review remains necessary" in page
-    assert "not a live repository scan" in page
-    assert "not a live repository scan, a tenant-isolation proof" in page
-    assert "an accuracy benchmark, or an independent review" in page
+    assert "Candidate CI verification and human review are still required." in page
+    assert "not a live scan, tenant-isolation proof" in page
+    assert "accuracy benchmark or independent review" in page
     assert "Not a customer case or independent certification." in page
-    assert "not a release certification" in page
     assert "does not approve its result" in page
     assert "not code correctness or release readiness" in page
     assert "not a hosted repository scanner" in page
@@ -43,7 +39,7 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
     assert "2 true negatives" not in page + readme
     assert "false positives or false negatives" not in page + readme
     assert "latest local strict ForgeLine report" not in page + readme
-    assert "not subsequent detection fixes" in readme
+    assert "Local tests do not establish live provider support" in readme
     assert f"https://pypi.org/project/factoryline-code-factory/{__version__}/" in page
     assert f"https://github.com/zrk222/code-factory/releases/tag/v{__version__}" in page
 
@@ -66,17 +62,13 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
         f'href="https://github.com/zrk222/code-factory/releases/tag/v{__version__}"'
         in page
     )
-    assert "Specialty AI audit evidence is available" in readme
-    assert (
-        "https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354"
-        in readme
-    )
-    assert "Gitleaks per-file accounting remains incomplete" in readme
+    assert "Audit depth depends on language, policy and supplied evidence." in readme
+    assert "Missing evidence stays incomplete." in readme
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert '<meta name="viewport"' in page
     assert 'id="story-video"' in page
     assert 'aria-label="From requirements to WMM: Code Factory walkthrough"' in page
-    assert 'aria-labelledby="seeded-demo-title"' in page
+    assert 'id="seeded-demo"' in page
     assert 'poster="cf-story-v5-poster.jpg"' in page
     assert 'src="cf-story-v5-narrated.mp4"' in page
     assert (SPACE / "cf-story-v5-poster.jpg").is_file()
@@ -84,21 +76,24 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "57-second narrated walkthrough" in page
     assert "Not a customer case or independent certification." in page
     assert "not a hosted repository scanner" in page
-    assert "Code Factory does not turn an agent's verdict into permission to merge, deploy or release." in page
-    assert "These are different handoff paths, not a claim of universal integration or partnership." in page
-    assert "No native Blitzy or Mastra integration or live compatibility test is claimed here." in page
+    assert "It does not approve its result." in page
     assert (
-        "First Proof is one starter example within the larger audit system." in readme
+        "Local tests do not establish marketplace availability or live provider compatibility."
+        in page
     )
-    # These are historical captures, separate from the current release links above.
-    capture_release = "0.49.6"
-    for name in (
-        "studio-product-mission-0496.png",
-        "graph-ops-proof-guide-0496.png",
-        "graph-ops-findings-0496.png",
-        "graph-ops-finding-detail-0496.png",
-    ):
-        assert f"/releases/download/v{capture_release}/{name}" in readme
+    assert (
+        "No native Blitzy or Mastra integration or live compatibility test is claimed."
+        in page
+    )
+    assert (
+        "First Proof uses a generated sandbox to check the demonstration, not your repository."
+        in readme
+    )
+    # Check the media actually linked by the concise preview, not retired captures.
+    for name in ("cf-operations-pr354-poster.png", "cf-operations-pr354-105s.mp4"):
+        assert f'="{name}"' in page
+        assert (SPACE / name).is_file()
+    assert "not a screen recording or live Devin session" in page
     assert "Skip to product proof" in page
     assert 'class="brand" href="#main"' in page
 

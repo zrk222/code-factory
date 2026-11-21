@@ -609,12 +609,18 @@ def test_signed_test_oracle_value_api_verifies_v3_snapshot_and_rejects_tampering
             **{**kwargs, "trust_root_sha256": sha256_bytes(role_bytes)},
         )
     unsupported = json.loads(receipt_bytes)
-    unsupported["payload"] = base64.urlsafe_b64encode(
-        canonical_bytes({"schema": "factory.test-oracle-attestation.v99"})
-    ).decode("ascii").rstrip("=")
+    unsupported["payload"] = (
+        base64.urlsafe_b64encode(
+            canonical_bytes({"schema": "factory.test-oracle-attestation.v99"})
+        )
+        .decode("ascii")
+        .rstrip("=")
+    )
     unsupported_bytes = canonical_bytes(unsupported)
     with pytest.raises(RuntimeAttestationError, match="E_ORACLE_SCHEMA"):
         verify_signed_test_oracles_value(unsupported_bytes, trust_bytes, **kwargs)
+
+
 def _compiled_frame_qualname(source: str, code_name: str) -> str | None:
     root = compile(source, "frame_qualname_fixture.py", "exec")
     if code_name == "<module>":

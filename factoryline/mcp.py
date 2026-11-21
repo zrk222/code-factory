@@ -238,8 +238,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                         "trust_root_sha256",
                         "candidate_sha256",
                         "plan_sha256",
-                        "source_manifest_sha256", "environment_sha256",
-                        "test_path", "test_symbol", "case_id",
+                        "source_manifest_sha256",
+                        "environment_sha256",
+                        "test_path",
+                        "test_symbol",
+                        "case_id",
                     )
                 },
                 "required": [
@@ -250,8 +253,22 @@ def _tool_definitions() -> list[dict[str, object]]:
                     "trust_root_sha256",
                 ],
                 "oneOf": [
-                    {"properties": {"claim_type": {"const": "execution_observation"}}, "required": ["candidate_sha256", "plan_sha256"]},
-                    {"properties": {"claim_type": {"const": "test_sensitivity"}}, "required": ["source_manifest_sha256", "environment_sha256", "test_path", "test_symbol", "case_id"]},
+                    {
+                        "properties": {
+                            "claim_type": {"const": "execution_observation"}
+                        },
+                        "required": ["candidate_sha256", "plan_sha256"],
+                    },
+                    {
+                        "properties": {"claim_type": {"const": "test_sensitivity"}},
+                        "required": [
+                            "source_manifest_sha256",
+                            "environment_sha256",
+                            "test_path",
+                            "test_symbol",
+                            "case_id",
+                        ],
+                    },
                 ],
                 "additionalProperties": False,
             },
