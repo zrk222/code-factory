@@ -19,6 +19,7 @@ def serve_deep_audit_coordinator(
     """Serve owned signed audits; fresh children wait for verified acknowledgement."""
     import time
     from .agentic_control import CoordinatorRequestStore
+    from .assembly_process import _process_identity_absent
 
     root = Path(root).resolve(strict=True)
     ttl = 300 if lease_seconds is None else lease_seconds
@@ -26,12 +27,12 @@ def serve_deep_audit_coordinator(
         raise ValueError("coordinator lease must be an integer from 1 through 3600")
     _coordinator_hex(session_nonce, 32)
     owner = _coordinator_owner(root, session_nonce)
-    store = CoordinatorRequestStore(root)
+    # Recovery may retire only leases/history whose processes are proven exited.
+    store = CoordinatorRequestStore(root, process_absent=_process_identity_absent)
     store.reconcile_expired(time.monotonic())
-    store.acquire(owner, ttl, time.monotonic())
-    context = dict(
-        store=store, expires_at=time.monotonic() + ttl, stop=False, job=None, root=root
-    )
+    lease = store.acquire(owner, ttl, time.monotonic())
+    context = dict(store=store, owner=owner, ttl=ttl, stop=False, job=None, root=root)
+    context["expires_at"] = lease["expires_monotonic"]
     last = _coordinator_result("OBSERVED", execution_available=False)
     try:
         while not context["stop"]:
@@ -48,6 +49,7 @@ def serve_deep_audit_coordinator(
             try:
                 request = _coordinator_line(raw)
                 last = dispatch_deep_audit_request(root, request, owner, context)
+                _coordinator_renew(context, activity=True)
             except (ValueError, TypeError, KeyError, OSError) as error:
                 last = _coordinator_result(
                     "INCOMPLETE", code=getattr(error, "code", "E_COORDINATOR_REQUEST")
@@ -76,6 +78,7 @@ def _coordinator_readline(stream, context):
 
     buffer = context.setdefault("input_buffer", bytearray())
     while True:
+        _coordinator_renew(context)
         if time.monotonic() >= context["expires_at"]:
             raise AgenticControlError(
                 "E_COORDINATOR_LEASE_EXPIRED", "input lease expired"
@@ -100,6 +103,29 @@ def _coordinator_readline(stream, context):
             buffer.clear()
             return line
         buffer.extend(chunk)
+
+
+def _coordinator_renew(context, activity=False):
+    """Renew the exact live owner while auditing or on accepted requests.
+
+    Idle sessions still expire one TTL after their last request. Renewal never
+    revives an expired lease; contention is retried on the next poll.
+    """
+    import time
+    from .agentic_control import AgenticControlError
+
+    ttl, job = context.get("ttl"), context.get("job")
+    active = job is not None and job["thread"].is_alive()
+    now = time.monotonic()
+    if ttl is None or context["stop"] or not (activity or active):
+        return
+    if now >= context["expires_at"] or context["expires_at"] - now > ttl / 2:
+        return
+    try:
+        lease = context["store"].acquire(context["owner"], ttl, now)
+    except AgenticControlError:
+        return
+    context["expires_at"] = lease["expires_monotonic"]
 
 
 def _coordinator_input_chunk(fd, capacity, context):
@@ -392,7 +418,7 @@ def _coordinator_constant(value):
     return [type(value).__name__, repr(value)]
 
 
-def _coordinator_owner(root, session_nonce):
+def _coordinator_owner(root, session_nonce, runtime_sha256=None):
     import os
     from .assembly_process import _process_creation_identity
 
@@ -403,7 +429,7 @@ def _coordinator_owner(root, session_nonce):
         pid=os.getpid(),
         creation=creation,
         session_nonce=session_nonce,
-        runtime_sha256=_coordinator_runtime_identity(),
+        runtime_sha256=runtime_sha256 or _coordinator_runtime_identity(),
         workspace_sha256=hashlib.sha256(
             str(Path(root).resolve(strict=True)).encode()
         ).hexdigest(),
@@ -416,8 +442,11 @@ def _coordinator_check_owner(root, request, owner, context):
     expiry = context.get("expires_at")
     if type(expiry) not in (int, float) or not 0 < expiry < float("inf"):
         raise ValueError("invalid coordinator expiry")
+    # Cheap native identity per request; loaded-runtime hashing is reserved for
+    # admission and handshake preflight, which compare it to owner exactly.
+    runtime = owner.get("runtime_sha256") if isinstance(owner, dict) else None
     if (
-        owner != _coordinator_owner(root, request["session_nonce"])
+        owner != _coordinator_owner(root, request["session_nonce"], runtime)
         or context.get("stop") is not False
         or time.monotonic() >= expiry
     ):
@@ -425,7 +454,12 @@ def _coordinator_check_owner(root, request, owner, context):
     context["store"].check_owner(owner, time.monotonic())
 
 
-def _coordinator_preflight(root, payload):
+def _coordinator_identity_view(snapshot):
+    """Signed/package/runtime identity without the per-call source inventory digest."""
+    return {key: value for key, value in snapshot.items() if key != "inventory_sha256"}
+
+
+def _coordinator_preflight(root, payload, inventory=True):
     from .deep_audit_contract import load_execution_manifest
     from .deep_audit_attestation import verify_execution_authorization
     from .deep_audit_io import (
@@ -453,6 +487,16 @@ def _coordinator_preflight(root, payload):
         payload["trust_root_sha256"],
         return_envelope_sha256=True,
     )
+    if not inventory:
+        # Source drift is still rejected by the admission and post-ACK full
+        # inventories and by the signed scan's own snapshot comparison.
+        return dict(
+            scanner_sha256=_full_repository_scanner_identity(),
+            candidate_sha256=plan["candidate_sha256"],
+            plan_sha256=digest(plan),
+            authorization_sha256=authorization,
+            runtime_sha256=_coordinator_runtime_identity(),
+        )
     inventory = inventory_candidate(root)
     bound_plan = load_execution_manifest(
         paths["manifest"],
@@ -643,6 +687,8 @@ def _coordinator_execute(root, request, owner, context, job):
 
     directory, result = None, None
     try:
+        # Start with a full renewal window so the ACK deadline is not near expiry.
+        _coordinator_renew(context, activity=True)
         directory = _coordinator_control_directory(root)
         job["directory"] = directory
         config = dict(
@@ -662,7 +708,9 @@ def _coordinator_execute(root, request, owner, context, job):
             args,
             root,
             timeout=remaining + CLEANUP_TIMEOUT_SECONDS,
-            started_observer=lambda facts: job.update(observed=facts),
+            started_observer=lambda facts: _coordinator_launched(
+                request, context, job, facts
+            ),
             heartbeat=lambda: _coordinator_heartbeat(
                 root, request, owner, context, job
             ),
@@ -677,6 +725,19 @@ def _coordinator_execute(root, request, owner, context, job):
         job["cleanup_confirmed"] = not job["launch_attempted"]
     finally:
         _coordinator_settle(root, request, context, job, directory, result)
+
+
+def _coordinator_launched(request, context, job, facts):
+    # Persist the observed child before monitoring so crash recovery can prove
+    # its exit; failure propagates and run_cli_detailed cleans up the launch.
+    job.update(observed=facts)
+    if facts.get("creation") is not None:
+        context["store"].launched(
+            request["session_nonce"],
+            request["request_id"],
+            job["request_sha256"],
+            dict(facts),
+        )
 
 
 def _coordinator_settle(root, request, context, job, directory, result):
@@ -753,7 +814,8 @@ def _coordinator_worker(root, directory, encoded):
     _coordinator_request(root, request)
     if digest(request) != config["request_sha256"]:
         raise ValueError("worker request differs")
-    if _coordinator_preflight(root, request["payload"]) != config["snapshot"]:
+    identity = _coordinator_preflight(root, request["payload"], inventory=False)
+    if identity != _coordinator_identity_view(config["snapshot"]):
         raise ValueError("worker source or runtime differs")
     if time.monotonic() >= config["expires_at"]:
         raise ValueError("worker lease expired")
@@ -889,7 +951,10 @@ def _coordinator_handshake(root, request, owner, context, job):
     if _process_creation_identity(observed["pid"]) != observed["creation"]:
         raise ValueError("worker native identity is stale")
     _coordinator_verify_handshake(request, job, handshake)
-    if _coordinator_preflight(root, request["payload"]) != job["snapshot"]:
+    # Package/runtime hashing without a second source inventory inside the
+    # heartbeat; the worker's post-ACK full preflight still gates every lane.
+    identity = _coordinator_preflight(root, request["payload"], inventory=False)
+    if identity != _coordinator_identity_view(job["snapshot"]):
         raise ValueError("signed inputs or runtime drifted")
     _coordinator_live_lease(root, request, owner, context)
     row = context["store"].bind(

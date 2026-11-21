@@ -43,6 +43,70 @@ def _process_creation_identity(pid) -> str | None:
         return None
 
 
+def _process_identity_absent(pid, creation) -> bool:
+    """Prove a recorded process exited; any ambiguity is False and never signals."""
+    if type(pid) is not int or not 0 < pid <= 0xFFFFFFFF:
+        return False
+    if not isinstance(creation, str) or not 1 <= len(creation) <= 256:
+        return False
+    try:
+        if creation.startswith("linux:") and sys.platform == "linux":
+            return _linux_identity_absent(pid, creation.split(":"))
+        if creation.startswith("windows:") and os.name == "nt":
+            return _windows_identity_absent(pid, creation.split(":"))
+    except (AttributeError, OSError, TypeError, UnicodeError, ValueError):
+        return False
+    return False
+
+
+def _linux_identity_absent(pid: int, parts: list[str]) -> bool:
+    if len(parts) != 4 or parts[2] != str(pid) or not parts[3].isdecimal():
+        return False
+    boot = _bounded_identity_text(Path("/proc/sys/kernel/random/boot_id"), 64)
+    if boot != parts[1]:
+        return True  # A different boot proves every recorded process ended.
+    try:
+        text = _bounded_identity_text(Path(f"/proc/{pid}/stat"), 4096)
+    except FileNotFoundError:
+        return True
+    opening, closing = text.find("("), text.rfind(")")
+    fields = text[closing + 1 :].split()
+    if opening < 1 or closing <= opening or text[:opening].strip() != str(pid):
+        return False
+    if len(fields) < 20 or not fields[19].isdecimal():
+        return False
+    # A later start time proves PID reuse; Z/X proves the recorded process exited.
+    return fields[19] != parts[3] or fields[0] in {"Z", "X", "x"}
+
+
+def _windows_last_error() -> int:
+    return ctypes.get_last_error()
+
+
+def _windows_identity_absent(pid: int, parts: list[str]) -> bool:
+    from ctypes import wintypes
+
+    if len(parts) != 3 or parts[1] != str(pid) or len(parts[2]) != 16:
+        return False
+    kernel32 = _windows_identity_api()
+    handle = kernel32.OpenProcess(0x00101000, False, pid)
+    if not handle:
+        return _windows_last_error() == 87  # ERROR_INVALID_PARAMETER: no such PID.
+    try:
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not kernel32.GetProcessTimes(
+            handle, *(ctypes.byref(item) for item in times)
+        ):
+            return False
+        ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+        if f"{ticks:016x}" != parts[2]:
+            return True
+        return kernel32.WaitForSingleObject(handle, 0) == 0  # Signalled: exited.
+    finally:
+        if not kernel32.CloseHandle(handle):
+            raise OSError("process absence handle closure failed")
+
+
 def _bounded_identity_text(path: Path, limit: int) -> str:
     with path.open("r", encoding="ascii") as stream:
         text = stream.read(limit + 1)

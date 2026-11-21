@@ -3474,13 +3474,18 @@ class CoordinatorRequestStore:
     No payload/result retention or authentication against a hostile local writer.
     Leases never authorize PID signalling or automatic ownership takeover.
     Lock contention fails BUSY; duplicates are readable after the writer commits.
+    An optional read-only process_absent(pid, creation) observer may prove that
+    recorded owner/child processes exited; without it interruption stays blocking.
     """
 
     _metadata_lock = threading.RLock()
+    HISTORY_ROWS = 256
 
-    def __init__(self, root):
+    def __init__(self, root, process_absent=None):
         self.root = Path(root).resolve(strict=True)
         self.path = self.root / ".factory/deep-runs/requests/coordinator-metadata.json"
+        self._process_absent = process_absent
+        self._lease_cache = None
         self._paths()
 
     def _paths(self):
@@ -3551,6 +3556,7 @@ class CoordinatorRequestStore:
                                 "metadata byte bound exceeded",
                             )
                         write_run_json(self.path.parent, self.path.name, value)
+                    self._remember(rows)
             except GraphAuthorizationError as error:
                 if error.code != "GRAPH_AUTHORIZATION_IN_PROGRESS":
                     raise
@@ -3559,6 +3565,50 @@ class CoordinatorRequestStore:
                 ) from error
 
         return transaction()
+
+    def _raw(self):
+        from .deep_audit_io import LIMIT, local_file
+
+        if not self.path.exists() and not self.path.is_symlink():
+            return None
+        self._regular(self.path, directory=False)
+        with local_file(self.path.parent, self.path.name).open("rb") as stream:
+            raw = stream.read(LIMIT + 1)
+        if len(raw) > LIMIT:
+            raise AgenticControlError("E_COORDINATOR_INTEGRITY", "metadata too large")
+        return raw
+
+    def _remember(self, rows):
+        # Cache only the lease decoded from bytes that parse back to these rows.
+        from .deep_audit_io import digest, strict_json
+
+        self._lease_cache = None
+        try:
+            raw = self._raw()
+            value = {"rows": {}} if raw is None else strict_json(raw)
+            if raw is not None and value.pop("sha256", None) != digest(value):
+                return
+            if value != {"rows": rows}:
+                return
+            lease = self._decode("lease", rows["lease"]) if "lease" in rows else None
+        except (AgenticControlError, OSError, ValueError, TypeError, KeyError):
+            return
+        digest = None if raw is None else hashlib.sha256(raw).hexdigest()
+        self._lease_cache = (digest, lease)
+
+    def _cached_lease(self):
+        """Return (hit, lease) without locking when the exact ledger bytes match."""
+        cached = self._lease_cache
+        if cached is None:
+            return False, None
+        try:
+            raw = self._raw()
+        except (AgenticControlError, OSError):
+            return False, None
+        digest = None if raw is None else hashlib.sha256(raw).hexdigest()
+        if digest != cached[0]:
+            return False, None
+        return True, json.loads(json.dumps(cached[1]))
 
     def _snapshot(self, snapshot):
         if set(snapshot) != {"rows"} or not isinstance(snapshot["rows"], dict):
@@ -3633,6 +3683,21 @@ class CoordinatorRequestStore:
             raise AgenticControlError(
                 "E_COORDINATOR_INTEGRITY", "metadata key binding differs"
             )
+        if key != "lease" and isinstance(value, dict):
+            # Verify the original legacy row hash above before exposing its
+            # absent launch identity as unknown. Do not rewrite persisted bytes.
+            legacy_fields = {
+                "session_nonce",
+                "request_id",
+                "request_sha256",
+                "owner_identity",
+                "state",
+                "run_id",
+                "worker_identity",
+                "cleanup_confirmed",
+            }
+            if set(value) == legacy_fields:
+                value = dict(value, launch_identity=None)
         if key == "lease":
             if set(value) != {"owner_identity", "expires_monotonic"}:
                 raise AgenticControlError(
@@ -3684,6 +3749,7 @@ class CoordinatorRequestStore:
                 state="ADMITTED",
                 run_id=None,
                 worker_identity=None,
+                launch_identity=None,
                 cleanup_confirmed=None,
             )
             self._save(db, key, row)
@@ -3692,14 +3758,53 @@ class CoordinatorRequestStore:
     def _idle(self, db):
         rows = [self._decode(key, row) for key, row in db.items() if key != "lease"]
         # Unknown legacy/interrupted states cannot establish an idle workspace.
-        if any(
-            row.get("state") not in {"COMPLETE", "INCOMPLETE"}
-            or row.get("cleanup_confirmed") is not True
-            for row in rows
-        ):
+        if any(self._blocking(row) for row in rows):
             raise AgenticControlError(
                 "E_COORDINATOR_BUSY", "retained request requires reconciliation"
             )
+
+    def _blocking(self, row):
+        if row.get("state") not in {"COMPLETE", "INCOMPLETE"}:
+            return True
+        # Process exit cannot establish lane/container cleanup. Only an explicit
+        # terminal cleanup observation makes retained history nonblocking.
+        return row.get("cleanup_confirmed") is not True
+
+    def launched(self, session_nonce, request_id, request_sha256, launch_identity):
+        """Record the observed child before monitoring so recovery can verify it."""
+        key = self._key(session_nonce, request_id)
+        launch = self._launch(launch_identity)
+        with self._connect() as db:
+            row = self._load(db, key)
+            self._match(row, request_sha256)
+            if row["launch_identity"] is not None:
+                if row["launch_identity"] != launch:
+                    raise AgenticControlError(
+                        "E_COORDINATOR_BINDING", "launch identity is immutable"
+                    )
+                return row
+            if row["state"] != "ADMITTED" or row["run_id"] is not None:
+                raise AgenticControlError(
+                    "E_COORDINATOR_BINDING", "only an admitted request can launch"
+                )
+            row.update(launch_identity=launch)
+            self._save(db, key, row)
+            return row
+
+    @staticmethod
+    def _launch(value):
+        if not isinstance(value, dict) or set(value) != {"pid", "creation"}:
+            raise AgenticControlError(
+                "E_COORDINATOR_IDENTITY", "exact launch fields required"
+            )
+        if type(value["pid"]) is not int or value["pid"] <= 0:
+            raise AgenticControlError("E_COORDINATOR_IDENTITY", "positive PID required")
+        creation = value["creation"]
+        if not isinstance(creation, str) or not 1 <= len(creation) <= 256:
+            raise AgenticControlError(
+                "E_COORDINATOR_IDENTITY", "bounded creation identity required"
+            )
+        return dict(value)
 
     def abandon(self, session_nonce, request_id, request_sha256, cleanup_confirmed):
         """Retain an unbound admission as incomplete without authorizing replay."""
@@ -3741,6 +3846,14 @@ class CoordinatorRequestStore:
                     raise AgenticControlError(
                         "E_COORDINATOR_BINDING", "worker provenance differs"
                     )
+            launch = row["launch_identity"]
+            if launch is not None and launch != {
+                "pid": worker["pid"],
+                "creation": worker["creation"],
+            }:
+                raise AgenticControlError(
+                    "E_COORDINATOR_BINDING", "worker differs from launched child"
+                )
             if row["run_id"] is not None:
                 if (row["run_id"], row["worker_identity"]) != (run_id, worker):
                     raise AgenticControlError(
@@ -3826,8 +3939,13 @@ class CoordinatorRequestStore:
     def check_owner(self, owner_identity, now_monotonic):
         """Require the exact persisted owner and an unexpired monotonic lease."""
         owner, now = self._identity(owner_identity), self._clock(now_monotonic)
-        with self._connect() as db:
-            return self._owner_lease(self._load(db, "lease"), owner, now)
+        # Heartbeats reuse the lease decoded from these exact ledger bytes; any
+        # byte change, including an out-of-band write, forces the locked path.
+        hit, lease = self._cached_lease()
+        if not hit:
+            with self._connect() as db:
+                lease = self._load(db, "lease")
+        return self._owner_lease(lease, owner, now)
 
     @staticmethod
     def _reconciliation_request(row):
@@ -3839,6 +3957,7 @@ class CoordinatorRequestStore:
             "state",
             "run_id",
             "worker_identity",
+            "launch_identity",
             "cleanup_confirmed",
         }
         if set(row) != fields:
@@ -3863,11 +3982,27 @@ class CoordinatorRequestStore:
             )
         elif row["worker_identity"] is not None or row["state"] == "RUNNING":
             valid = False
-        if not valid:
+        if not valid or not CoordinatorRequestStore._launch_binding(row):
             raise AgenticControlError(
                 "E_COORDINATOR_INTEGRITY", "invalid request binding"
             )
         return row
+
+    @staticmethod
+    def _launch_binding(row):
+        launch = row["launch_identity"]
+        if launch is None:
+            return True
+        launch = CoordinatorRequestStore._launch(launch)
+        worker = row["worker_identity"]
+        return (
+            worker is None
+            or {
+                "pid": worker["pid"],
+                "creation": worker["creation"],
+            }
+            == launch
+        )
 
     def reconcile_expired(self, now_monotonic):
         """Account for interruption, retaining unknown cleanup and blocked ownership."""
@@ -3891,15 +4026,40 @@ class CoordinatorRequestStore:
                     row.update(state="INCOMPLETE", cleanup_confirmed=False)
                     self._save(db, key, row)
                     changed += 1
+            retired = expired and self._retire_lease(db, rows, lease)
             return dict(
                 state="OBSERVED",
                 phase="expired-run-reconciliation",
                 observed=len(requests),
                 reconciled=changed,
+                retired_lease=retired,
                 before_sha256=before,
                 after_sha256=_sha(rows),
                 authority="none",
             )
+
+    def _retire_lease(self, db, rows, lease):
+        # Only a proven-exited expired owner loses its lease; nothing is signalled.
+        owner = lease["owner_identity"]
+        absent = self._process_absent
+        if absent is None or absent(owner["pid"], owner["creation"]) is not True:
+            return False
+        del db["lease"]
+        del rows["lease"]
+        return True
+
+    def _compact(self, db, owner):
+        # Bound heartbeat/readback cost: drop settled history of other sessions
+        # once it exceeds HISTORY_ROWS. Run directories keep the evidence.
+        keys = [key for key in db if key != "lease"]
+        if len(keys) <= self.HISTORY_ROWS:
+            return
+        for key in keys:
+            row = self._decode(key, db[key])
+            if row["session_nonce"] != owner["session_nonce"] and not self._blocking(
+                row
+            ):
+                del db[key]
 
     def acquire(self, owner_identity, lease_seconds, now_monotonic):
         """Acquire or renew a bounded lease without taking over stale ownership."""
@@ -3913,6 +4073,8 @@ class CoordinatorRequestStore:
             prior = self._load(db, "lease")
             if prior is not None:
                 self._owner_lease(prior, owner, now_monotonic)
+            else:
+                self._compact(db, owner)
             row = dict(
                 owner_identity=owner, expires_monotonic=now_monotonic + lease_seconds
             )

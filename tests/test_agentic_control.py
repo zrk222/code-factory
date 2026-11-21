@@ -119,6 +119,222 @@ def test_coordinator_store_corruption_and_concurrent_admission(tmp_path):
         store.read(args[0], args[1])
 
 
+def _absent_only(*dead):
+    return lambda pid, creation: pid in dead
+
+
+def test_coordinator_store_launch_identity_binds_the_worker(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    nonce, request, seal = "a" * 32, "d" * 32, "e" * 64
+    store.acquire(owner, 300, 10)
+    store.admit(nonce, request, seal, owner)
+    launch = {"pid": 456, "creation": "boot:123"}
+    assert store.launched(nonce, request, seal, launch)["launch_identity"] == launch
+    assert store.launched(nonce, request, seal, launch)["launch_identity"] == launch
+    for bad in (
+        {"pid": 457, "creation": "boot:123"},
+        {"pid": 456},
+        {"pid": True, "creation": "x"},
+        {"pid": 456, "creation": ""},
+    ):
+        with pytest.raises(AgenticControlError):
+            store.launched(nonce, request, seal, bad)
+    with pytest.raises(AgenticControlError, match="launched child"):
+        store.bind(nonce, request, seal, "f" * 32, _coordinator_identity(pid=457))
+    bound = store.bind(nonce, request, seal, "f" * 32, _coordinator_identity(pid=456))
+    assert bound["state"] == "RUNNING" and bound["launch_identity"] == launch
+    with pytest.raises(AgenticControlError, match="immutable"):
+        store.launched(nonce, request, seal, {"pid": 9, "creation": "boot:9"})
+
+
+@pytest.mark.parametrize(
+    "dead,child",
+    [
+        ((), None),
+        ((123,), None),
+        ((123,), "launch"),
+        ((123, 456), "launch"),
+        ((123,), "worker"),
+        ((123, 456), "worker"),
+    ],
+)
+def test_coordinator_restart_keeps_unconfirmed_history_blocking(tmp_path, dead, child):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    old, new = _coordinator_identity(), _coordinator_identity("1" * 32, pid=789)
+    store = CoordinatorRequestStore(tmp_path, process_absent=_absent_only(*dead))
+    store.acquire(old, 1, 10)
+    store.admit("a" * 32, "d" * 32, "e" * 64, old)
+    if child is not None:
+        store.launched("a" * 32, "d" * 32, "e" * 64, {"pid": 456, "creation": "c"})
+    if child == "worker":
+        worker = _coordinator_identity(pid=456) | {"creation": "c"}
+        store.bind("a" * 32, "d" * 32, "e" * 64, "f" * 32, worker)
+    result = store.reconcile_expired(11)
+    assert result["reconciled"] == 1
+    assert result["retired_lease"] is (123 in dead)
+    if 123 not in dead:
+        with pytest.raises(AgenticControlError) as error:
+            store.acquire(new, 300, 12)
+        assert error.value.code == "E_COORDINATOR_OWNER"
+        return
+    store.acquire(new, 300, 12)
+    row = store.read("a" * 32, "d" * 32)
+    assert row["state"] == "INCOMPLETE" and row["cleanup_confirmed"] is False
+    with pytest.raises(AgenticControlError) as error:
+        store.admit("1" * 32, "2" * 32, "e" * 64, new)
+    assert error.value.code == "E_COORDINATOR_BUSY"
+    assert store.read("a" * 32, "d" * 32) == row
+
+
+def test_coordinator_restart_retires_expired_lease_without_request_history(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    old = _coordinator_identity()
+    new = _coordinator_identity("1" * 32, pid=789)
+    store = CoordinatorRequestStore(tmp_path, process_absent=_absent_only(123))
+    store.acquire(old, 1, 10)
+    result = store.reconcile_expired(11)
+    assert result["observed"] == 0 and result["retired_lease"] is True
+    store.acquire(new, 300, 12)
+    with store._connect() as db:
+        assert set(db) == {"lease"}
+
+
+def test_coordinator_legacy_row_hash_validates_without_rewriting(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    nonce, request, seal = "a" * 32, "d" * 32, "e" * 64
+    store.acquire(owner, 300, 10)
+    current = store.admit(nonce, request, seal, owner)
+    legacy = {key: value for key, value in current.items() if key != "created"}
+    legacy.pop("launch_identity")
+    key = nonce + ":" + request
+    with store._connect() as db:
+        store._save(db, key, legacy)
+    stored_before = store.path.read_bytes()
+
+    observed = store.read(nonce, request)
+    assert observed["launch_identity"] is None
+    assert observed["cleanup_confirmed"] is None
+    assert store.reconcile_expired(11)["reconciled"] == 0
+    assert store.path.read_bytes() == stored_before
+
+    # A genuine state transition writes a new-schema row with its own valid hash.
+    store.reconcile_expired(311)
+    raw = json.loads(store.path.read_text(encoding="utf-8"))
+    encoded, seal_hash = raw["rows"][key]
+    upgraded = json.loads(encoded)
+    from factoryline.agentic_control import _sha
+
+    assert upgraded["launch_identity"] is None
+    assert upgraded["cleanup_confirmed"] is False
+    assert seal_hash == _sha(upgraded)
+    assert store.read(nonce, request)["cleanup_confirmed"] is False
+
+
+def test_coordinator_live_owner_keeps_expired_lease_and_history(tmp_path):
+    import os
+    from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline.assembly_process import (
+        _process_creation_identity,
+        _process_identity_absent,
+    )
+
+    creation = _process_creation_identity(os.getpid())
+    if creation is None:
+        pytest.skip("native process identity unsupported")
+    owner = _coordinator_identity() | {"pid": os.getpid(), "creation": creation}
+    store = CoordinatorRequestStore(tmp_path, process_absent=_process_identity_absent)
+    store.acquire(owner, 1, 10)
+    store.admit("a" * 32, "d" * 32, "e" * 64, owner)
+    assert store.reconcile_expired(11)["retired_lease"] is False
+    with pytest.raises(AgenticControlError) as error:
+        store.acquire(_coordinator_identity("1" * 32, pid=789), 300, 12)
+    assert error.value.code == "E_COORDINATOR_OWNER"
+
+
+def test_coordinator_cached_lease_detects_any_ledger_byte_change(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline.deep_audit_io import read_run_json, write_run_json
+
+    store, owner = CoordinatorRequestStore(tmp_path), _coordinator_identity()
+    store.acquire(owner, 300, 10)
+    calls = []
+    original = store._connect
+    store._connect = lambda: calls.append(1) or original()
+    for _ in range(20):
+        assert store.check_owner(owner, 11)["expires_monotonic"] == 310
+    assert calls == []
+    snapshot = read_run_json(store.path.parent, store.path.name)
+    del snapshot["rows"]["lease"]
+    write_run_json(store.path.parent, store.path.name, snapshot)
+    with pytest.raises(AgenticControlError, match="exact current owner"):
+        store.check_owner(owner, 11)
+    assert calls == [1]
+    assert store._cached_lease() == (True, None)
+
+
+def test_coordinator_new_session_compacts_settled_history(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store = CoordinatorRequestStore(tmp_path, process_absent=_absent_only(123))
+    store.HISTORY_ROWS = 3
+    old = _coordinator_identity()
+    store.acquire(old, 300, 10)
+    for index in range(5):
+        request = f"{index:032x}"
+        store.admit("a" * 32, request, "e" * 64, old)
+        store.abandon("a" * 32, request, "e" * 64, True)
+    store.release(old)
+    new = _coordinator_identity("1" * 32, pid=789)
+    store.acquire(new, 300, 10)
+    with store._connect() as db:
+        assert set(db) == {"lease"}
+    store.release(new)
+    again = _coordinator_identity("2" * 32, pid=790)
+    store.acquire(again, 300, 10)
+    store.admit("2" * 32, "d" * 32, "e" * 64, again)
+    with store._connect() as db:
+        assert len(db) == 2
+
+
+def test_coordinator_compaction_never_drops_unconfirmed_cleanup(tmp_path):
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    store = CoordinatorRequestStore(tmp_path, process_absent=_absent_only(123, 456))
+    store.HISTORY_ROWS = 1
+    old = _coordinator_identity()
+    store.acquire(old, 300, 10)
+    unconfirmed = store.admit("a" * 32, "d" * 32, "e" * 64, old)
+    store.abandon("a" * 32, "d" * 32, "e" * 64, False)
+    settled = dict(
+        {key: value for key, value in unconfirmed.items() if key != "created"},
+        session_nonce="2" * 32,
+        request_id="3" * 32,
+        owner_identity=_coordinator_identity("2" * 32),
+        state="INCOMPLETE",
+        cleanup_confirmed=True,
+    )
+    unconfirmed_key = "a" * 32 + ":" + "d" * 32
+    settled_key = "2" * 32 + ":" + "3" * 32
+    with store._connect() as db:
+        store._save(db, settled_key, settled)
+    store.release(old)
+
+    new = _coordinator_identity("1" * 32, pid=789)
+    store.acquire(new, 300, 12)
+    with store._connect() as db:
+        assert unconfirmed_key in db
+        assert settled_key not in db
+    with pytest.raises(AgenticControlError) as error:
+        store.admit("1" * 32, "4" * 32, "e" * 64, new)
+    assert error.value.code == "E_COORDINATOR_BUSY"
+
+
 def test_coordinator_store_rejects_copied_rows_and_changed_lease(tmp_path):
     from factoryline.agentic_control import CoordinatorRequestStore
 
@@ -469,8 +685,10 @@ def test_coordinator_store_atomic_failure_and_stale_lock(tmp_path, monkeypatch):
             store.admit("a" * 32, "d" * 32, "e" * 64, owner)
     assert store.path.read_bytes() == before
     with _authorization_lock(store.path):
+        # Heartbeats verify unchanged ledger bytes without contending for the lock.
+        assert store.check_owner(owner, 11)["owner_identity"] == owner
         with pytest.raises(AgenticControlError) as error:
-            store.check_owner(owner, 11)
+            CoordinatorRequestStore(tmp_path).check_owner(owner, 11)
         assert error.value.code == "E_COORDINATOR_BUSY"
     lock = store.path.with_suffix(".json.lock")
     lock.write_text("unknown crashed owner", encoding="utf-8")

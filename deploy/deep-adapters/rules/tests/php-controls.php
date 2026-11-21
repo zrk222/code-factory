@@ -166,3 +166,15 @@ function named_controls($db, $obj) {
     // ok: php.request-command-injection
     shell_exec(command: 'fixed');
 }
+
+function readIntegerIdSafe() {
+    $id = (int) $_GET["id"];
+    // ok: php.request-path-traversal
+    readfile("/srv/attachments/" . $id);
+}
+
+function readNamedFileBad() {
+    $name = $_GET["name"];
+    // ruleid: php.request-path-traversal
+    readfile("/srv/attachments/" . $name);
+}
