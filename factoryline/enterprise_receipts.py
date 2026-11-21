@@ -541,10 +541,30 @@ def verify_signed_document(
     the supplied local trust root; it does not perform OIDC federation,
     network key discovery, authorization, or runtime enforcement.
     """
-    trust_root = _validate_trust_root(_read_json(Path(trust_root_path)))
-    payload, signature = _verify_signed_document(
-        Path(path), payload_type=payload_type, schema=schema, trust_root=trust_root
+    return verify_signed_document_value(
+        _read_json(Path(path)),
+        payload_type=payload_type,
+        schema=schema,
+        trust_root=_read_json(Path(trust_root_path)),
+        required_key_role=required_key_role,
     )
+
+
+def verify_signed_document_value(
+    envelope: dict,
+    *,
+    payload_type: str,
+    schema: str,
+    trust_root: dict,
+    required_key_role: str | None = None,
+) -> dict:
+    """Verify already captured snapshots without reopening mutable file paths."""
+    trust_root = _validate_trust_root(trust_root)
+    payload, signature, _ = _verify_envelope(
+        envelope, expected_payload_type=payload_type, trust_root=trust_root
+    )
+    if payload.get("schema") != schema:
+        raise EnterpriseReceiptError("E_INVALID_PAYLOAD", f"expected {schema}")
     if required_key_role is not None:
         _require_key_role(signature, trust_root, required_key_role)
     return {

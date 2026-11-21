@@ -12,7 +12,7 @@ Install the published package in the same environment that the client can
 launch, then verify the workspace boundary:
 
 ```powershell
-python -m pip install factoryline-code-factory==0.46.4
+python -m pip install factoryline-code-factory==0.49.7
 factory mcp status --root C:\work\my-mvp --json
 factory mcp config --client generic --root C:\work\my-mvp --json
 ```
@@ -42,6 +42,33 @@ connectors, or provider calls are performed. Use `factory mcp serve` when a
 long-lived stdio connection is wanted.
 
 ## Any MCP-capable coding assistant
+
+### Devin evidence profile — 0.50.0 release candidate
+
+This checkout adds `factory mcp config --client devin --root <project> --json`
+and `factory mcp serve --profile devin --root <project>`. They are not present
+in the currently published 0.49.7 package. The eight-tool profile prioritizes
+claim verification, rule discovery, sealed mission context and proof gaps.
+Calls to omitted tools and resource endpoints are rejected, not merely hidden.
+Other clients retain the full read-only inventory.
+
+The native plugin candidate lives at `plugins/code-factory-devin`; its single
+manifest follows the [Devin plugin format](https://docs.devin.ai/cli/extensibility/plugins/overview).
+Install CF in Devin's own execution environment and set `FACTORY_WORKSPACE_ROOT`
+to the project there before enabling it. An unresolved variable fails closed;
+it must not fall back to the plugin directory or this PC's loopback server.
+The copy-only renderer supplies a concrete path when manual configuration is
+preferred. Local protocol checks are not a live Devin installation, marketplace
+listing or provider acceptance. No auto-install, credentials or hooks are added.
+
+`verify_claim` currently supports `execution_observation`: supply exact
+`attestation_path`, `attestation_sha256`, `trust_root_path`, `trust_root_sha256`,
+`candidate_sha256` and `plan_sha256`, plus `claim_type`. It verifies the captured
+DSSE snapshot against caller-pinned local trust and the declared bindings.
+`PASS` applies only to that predicate; code correctness, test sensitivity,
+workspace currentness, revocation checks and replay admission are not inferred.
+Unsupported claim types return `INCOMPLETE`; invalid evidence returns `BLOCKED`.
+The tool never starts tests, writes receipts, approves, merges or releases.
 
 Use the generic renderer whenever the assistant accepts a local stdio MCP
 command but is not listed below:

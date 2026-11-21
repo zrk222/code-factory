@@ -13,7 +13,11 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
-from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
+from .enterprise_receipts import (
+    EnterpriseReceiptError,
+    verify_signed_document,
+    verify_signed_document_value,
+)
 from .runtime_audit_common import (
     canonical_bytes,
     exact_keys,
@@ -355,6 +359,28 @@ def verify_signed_execution_attestation(
         )
     except EnterpriseReceiptError as exc:
         raise ExecutionAttestationError(exc.code, exc.message) from exc
+    return _execution_verification(
+        verified,
+        candidate_sha256=candidate_sha256,
+        plan_sha256=plan_sha256,
+        now=now,
+        seen_nonces=seen_nonces,
+        revoked_keyids=revoked_keyids,
+        revoked_identities=revoked_identities,
+    )
+
+
+def _execution_verification(
+    verified: dict,
+    *,
+    candidate_sha256: str | None,
+    plan_sha256: str | None,
+    now: datetime | None = None,
+    seen_nonces: Iterable[str] = (),
+    revoked_keyids: Iterable[str] = (),
+    revoked_identities: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Apply the same observation and revocation checks to one verified snapshot."""
     signature = verified["signature"]
     if signature.get("keyid") in set(revoked_keyids) or signature.get(
         "identity"
@@ -382,4 +408,87 @@ def verify_signed_execution_attestation(
         "assurance_level": payload["assurance_level"],
         "authority": "none",
         "release_approval": False,
+    }
+
+
+def _claim_document(root: Path, path: object, digest: object) -> dict:
+    from .deep_audit_io import relative_path, strict_json
+    from .runtime_audit_common import RuntimeAuditError, _bounded_file
+
+    expected = require_digest(digest, "evidence SHA-256")
+    raw = _bounded_file(Path(relative_path(path)), root=root)
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise RuntimeAuditError("E_CLAIM_EVIDENCE_DRIFT", "evidence hash mismatch")
+    return strict_json(raw)
+
+
+def verify_claim(root: Path | str, request: object) -> dict[str, Any]:
+    """Authenticate a typed observation; never infer code correctness from a signature."""
+    from .runtime_audit_common import RuntimeAuditError
+
+    result: dict[str, Any] = {
+        "schema": "factory.claim-verification.v1",
+        "state": "BLOCKED",
+        "authority": "none",
+        "release_approval": False,
+        "workspace_currentness": "NOT_CHECKED",
+        "test_sensitivity": "NOT_CHECKED",
+        "revocation_status": "NOT_CHECKED",
+        "claim_boundary": "Only signed execution observation bindings against caller-pinned local trust are checked; no code correctness, fresh workspace, external identity, replay admission or release decision is inferred.",
+    }
+    try:
+        if not isinstance(request, dict):
+            raise ExecutionAttestationError("E_CLAIM_SCHEMA", "object required")
+        _exact(
+            request,
+            {
+                "claim_type",
+                "attestation_path",
+                "attestation_sha256",
+                "trust_root_path",
+                "trust_root_sha256",
+                "candidate_sha256",
+                "plan_sha256",
+            },
+            "E_CLAIM_SCHEMA",
+        )
+        if request["claim_type"] != "execution_observation":
+            return {**result, "state": "INCOMPLETE", "finding": "E_CLAIM_UNSUPPORTED"}
+        candidate = require_digest(request["candidate_sha256"], "candidate_sha256")
+        plan = require_digest(request["plan_sha256"], "plan_sha256")
+        workspace = Path(root).resolve(strict=True)
+        envelope = _claim_document(
+            workspace, request["attestation_path"], request["attestation_sha256"]
+        )
+        trust = _claim_document(
+            workspace, request["trust_root_path"], request["trust_root_sha256"]
+        )
+        verified = verify_signed_document_value(
+            envelope,
+            payload_type=PAYLOAD_TYPE,
+            schema=SCHEMA,
+            trust_root=trust,
+        )
+        verification = _execution_verification(
+            verified,
+            candidate_sha256=candidate,
+            plan_sha256=plan,
+        )
+    except (
+        ExecutionAttestationError,
+        EnterpriseReceiptError,
+        RuntimeAuditError,
+    ) as exc:
+        return {**result, "finding": exc.code}
+    except OSError:
+        return {**result, "finding": "E_CLAIM_INPUT_UNAVAILABLE"}
+    return {
+        **result,
+        "state": "PASS",
+        "verified_predicate": "execution_observation_binding",
+        "evidence_sha256": request["attestation_sha256"],
+        "trust_root_sha256": request["trust_root_sha256"],
+        "candidate_sha256": candidate,
+        "plan_sha256": plan,
+        "verification": verification,
     }

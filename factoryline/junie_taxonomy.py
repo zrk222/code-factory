@@ -101,6 +101,7 @@ _STAGES: tuple[dict[str, object], ...] = (
         "default": True,
         "when": "After a proposed change or when deciding what must be rerun.",
         "tools": (
+            "verify_claim",
             "factory.graph_ops",
             "factory.graph_impact",
             "factory.junie_review",

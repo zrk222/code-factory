@@ -38,6 +38,118 @@ def _files(root: Path) -> dict[str, bytes]:
     }
 
 
+def test_devin_profile_is_compact_and_preserves_full_inventory(tmp_path):
+    from factoryline.mcp_setup import DEVIN_TOOLS
+
+    request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    inputs, outputs = StringIO(json.dumps(request) + "\n"), StringIO()
+    assert (
+        serve_stdio(
+            tmp_path, input_stream=inputs, output_stream=outputs, profile="devin"
+        )
+        == 0
+    )
+    tools = json.loads(outputs.getvalue())["result"]["tools"]
+    assert len(tools) == 8 and {tool["name"] for tool in tools} == set(DEVIN_TOOLS)
+    assert all(tool["annotations"]["readOnlyHint"] for tool in tools)
+    full = dispatch(request, tmp_path)["result"]["tools"]
+    assert len(full) > len(tools)
+    assert tools == [tool for tool in full if tool["name"] in DEVIN_TOOLS]
+
+
+@pytest.mark.parametrize(
+    "method,params",
+    [
+        ("tools/call", {"name": "factory.github_overview", "arguments": {}}),
+        ("tools/call", {"name": "factory.execute_audit_lane", "arguments": {}}),
+        ("resources/read", {"uri": "factory://graph"}),
+        ("resources/list", {}),
+    ],
+)
+def test_devin_profile_rejects_omitted_operations_before_dispatch(
+    tmp_path, monkeypatch, method, params
+):
+    from factoryline.mcp_setup import dispatch_evidence_profile
+
+    def forbidden(*args):
+        pytest.fail("hidden operation reached full dispatcher")
+
+    monkeypatch.setattr(mcp, "dispatch", forbidden)
+    response = dispatch_evidence_profile(
+        {"jsonrpc": "2.0", "id": 2, "method": method, "params": params}, tmp_path
+    )
+    assert response["error"]["data"]["marker"] == "MCP_PROFILE_REJECTED"
+
+
+def test_devin_profile_status_and_initialize_match_enforced_surface(tmp_path):
+    from factoryline.mcp_setup import DEVIN_TOOLS, dispatch_evidence_profile
+
+    status = dispatch_evidence_profile(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "factory.status", "arguments": {}},
+        },
+        tmp_path,
+    )
+    assert _content(status)["tools"] == list(DEVIN_TOOLS)
+    assert _content(status)["resources"] == []
+    initialized = dispatch_evidence_profile(
+        {"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}}, tmp_path
+    )
+    assert initialized["result"]["capabilities"] == {"tools": {}}
+    invalid = dispatch_evidence_profile({"method": "tools/list"}, tmp_path)
+    assert "error" in invalid
+
+
+def test_devin_setup_and_native_plugin_are_copy_only_and_workspace_explicit(tmp_path):
+    before = _files(tmp_path)
+    setup = mcp_connection_config(tmp_path, "devin")
+    assert setup["connection"]["args"][-2:] == ["--profile", "devin"]
+    assert str(tmp_path.resolve()) in setup["connection"]["args"]
+    assert not setup["writes"] and before == _files(tmp_path)
+    root = Path(__file__).resolve().parents[1]
+    plugin = json.loads(
+        (root / "plugins/code-factory-devin/.devin-plugin/plugin.json").read_text()
+    )
+    server = plugin["mcpServers"]["code-factory"]
+    assert plugin["skills"] == [] and server["command"] == "factory"
+    assert "${FACTORY_WORKSPACE_ROOT}" in server["args"]
+    assert server["args"][-2:] == ["--profile", "devin"]
+
+
+def test_devin_config_cli_routes_profile_without_installation(tmp_path, capsys):
+    before = _files(tmp_path)
+    assert (
+        main(["mcp", "config", "--root", str(tmp_path), "--client", "devin", "--json"])
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["connection"]["args"][-2:] == [
+        "--profile",
+        "devin",
+    ]
+    assert before == _files(tmp_path)
+
+
+@pytest.mark.parametrize("profile", ["full", "devin"])
+def test_real_mcp_cli_stdio_never_records_lifecycle(
+    tmp_path, monkeypatch, capsys, profile
+):
+    import sys
+    from factoryline.ops_telemetry import is_read_only_command
+
+    before = _files(tmp_path)
+    request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(request) + "\n"))
+    argv = ["mcp", "serve", "--root", str(tmp_path), "--profile", profile]
+    assert is_read_only_command(argv)
+    assert not is_read_only_command(["mcp", "install", "--root", str(tmp_path)])
+    assert main(argv) == 0
+    assert "result" in json.loads(capsys.readouterr().out)
+    assert before == _files(tmp_path)
+
+
 def test_mcp_status_declares_default_stdio_and_zero_authority_boundary(tmp_path: Path):
     status = mcp_status(tmp_path)
 
@@ -52,6 +164,7 @@ def test_mcp_status_declares_default_stdio_and_zero_authority_boundary(tmp_path:
     assert status["server"]["streamable_http_protocol_version"] == "2026-07-28"
     assert status["workspace_root"] == str(tmp_path.resolve())
     assert status["tools"] == [
+        "verify_claim",
         "factory.status",
         "factory.first_lap_status",
         "factory.agui_review_events",
@@ -1688,11 +1801,7 @@ def test_mcp_protocol_metadata_real_stdio_process(tmp_path):
     status = _content(replies[2])
     assert status["workspace_root"] == str(tmp_path.resolve())
     assert not any(status["authority"].values())
-    files = _files(tmp_path)
-    assert len(files) == 1
-    name, data = next(iter(files.items()))
-    assert name.startswith(".factory/ops/lifecycle/") and name.endswith(".json")
-    assert json.loads(data)["command_family"] == "mcp"
+    assert _files(tmp_path) == {}
 
 
 def test_release_gate_input_required_is_deterministic_and_authority_free() -> None:

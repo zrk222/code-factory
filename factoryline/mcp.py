@@ -222,24 +222,50 @@ def _workspace_root(root: Path | str) -> Path:
 
 def _tool_definitions() -> list[dict[str, object]]:
     no_args = {"type": "object", "properties": {}, "additionalProperties": False}
-    return [
+    tools = [
+        {
+            "name": "verify_claim",
+            "description": "Verify a pinned signed execution observation against explicit local trust, candidate and plan hashes. Does not prove code correctness, test sensitivity, workspace freshness or release readiness; unsupported claims stay INCOMPLETE. Read only, no execution.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    key: {"type": "string", "maxLength": 512}
+                    for key in (
+                        "claim_type",
+                        "attestation_path",
+                        "attestation_sha256",
+                        "trust_root_path",
+                        "trust_root_sha256",
+                        "candidate_sha256",
+                        "plan_sha256",
+                    )
+                },
+                "required": [
+                    "claim_type",
+                    "attestation_path",
+                    "attestation_sha256",
+                    "trust_root_path",
+                    "trust_root_sha256",
+                    "candidate_sha256",
+                    "plan_sha256",
+                ],
+                "additionalProperties": False,
+            },
+        },
         {
             "name": "factory.status",
             "description": "Return the local Code Factory MCP boundary, version, workspace root, and tool inventory. Read only.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.first_lap_status",
             "description": "Read the initialized First Lap contract, generated-file integrity, and next deterministic CLI steps. It never executes journeys, opens holdouts, changes source, or grants release authority.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.agui_review_events",
             "description": "Return a bounded, deterministic AGUI-style controlled review event stream for Mission Control and IDE cards. It maps existing local status only; it never executes work, captures prompts, grants approval, or contacts a provider.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.graph_ops",
@@ -255,13 +281,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.journey_status",
             "description": "Return only hash-verified local Journey Reality, failure capsule, workflow, healing, and agent-audit receipts. It never executes an agent or provider.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.evaluate_trace",
@@ -289,7 +313,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["request_path", "request_sha256", "kind"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.graph_impact",
@@ -307,7 +330,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["changed_paths"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.developer_memory",
@@ -325,7 +347,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.intent_ledger",
@@ -345,13 +366,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["change_list"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.judgment_status",
             "description": "Return the tracked human-proposed and human-promoted engineering-decision Capsules. Read only; it never promotes, waives, or infers a decision.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.judgment_safety_case",
@@ -379,7 +398,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["changed_paths"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.langgraph_assurance",
@@ -393,13 +411,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["reference", "resumed"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.next_action",
             "description": "Read the shared daily action and legacy Graph Ops recommendation without executing either.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.list_receipts",
@@ -417,7 +433,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.get_receipt",
@@ -430,7 +445,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.verifier_status",
@@ -443,7 +457,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.proof_reuse",
@@ -461,7 +474,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["gate"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.proof_delta_status",
@@ -473,7 +485,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.cdte_status",
@@ -485,7 +496,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.prd_grill_status",
@@ -498,7 +508,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["prd_path"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.intake_status",
@@ -513,7 +522,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.gauntlet_status",
@@ -525,7 +533,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.agent_license_status",
@@ -550,31 +557,26 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.combine_status",
             "description": "Read locally verified Combine scoreboards that compare completed governed run evidence. It never launches agents, estimates quality, or creates a vendor ranking.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.workspace_advisor",
             "description": "Measure bounded local workspace shape and a path-only Remote/WSL preflight. It does not query the IDE, connect remotely, change caches, indexes, inspections, or settings, and is not a performance diagnosis.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.ide_playbook",
             "description": "Read the plain-language Code Factory operating map for IDEs and coding agents. It never controls an IDE or runs an agent.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.revenue_status",
             "description": "Return hash-verified local RevenueForge build and evidence status. It never contacts Apple, changes pricing, replies to testers, or publishes.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.revenue_memory",
@@ -589,13 +591,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["app_id", "journey"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_status",
             "description": "Return hash-verified local AppForge design-contract status. It never creates, approves, renders, or releases a design.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.project_scope_review",
@@ -614,43 +614,36 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["source_paths"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.oracle_firewall_status",
             "description": "Read sealed original-intent handoffs, provenance contracts, independent challenge plans, and blocked weakening facts. It never alters an oracle, code, agent, or release.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.semantic_authority_status",
             "description": "Read hash-sealed agent handoffs, expiring scoped leases, and local admission receipts. It never sends a message, calls a tool, grants authority, or executes work.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.enterprise_enforcement_status",
             "description": "Read signed local workload-policy admission receipts and any exact decision-bound runner packet. It does not authenticate a cloud workload, execute argv, or enforce a network boundary.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.atomic_status",
             "description": "Read imported Atomic workflow DAG, capability handoff, checkpoint, and source-precondition facts bound to a sealed Oracle Contract. It never invokes Atomic, resumes a checkpoint, or grants authority.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.operations_control_status",
             "description": "Read local verified-isolation, repro-budget, change-envelope, proof-tier, architecture-zone, and coordination receipt facts. It never creates a worktree, dispatches a task, or approves work.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.agentic_control_status",
             "description": "Read deterministic role, capability-registry, durable-task-card, route-trace, cookbook, workflow, and sandbox-boundary metadata. Read only; no model, execution, source, approval, merge, publication, deployment, signing, credential, or connector action.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.model_route_audit",
@@ -728,7 +721,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["route"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.task_board_status",
@@ -738,7 +730,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "properties": {"paths": {"type": "array", "items": {"type": "string"}}},
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.task_handoff_status",
@@ -752,7 +743,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["task_card_path", "handoff_path"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.candidate_alignment_status",
@@ -773,7 +763,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 ],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.task_evidence_status",
@@ -788,7 +777,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["task_card_path", "evidence_path"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.senior_control_status",
@@ -798,13 +786,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "properties": {"bundle_path": {"type": "string"}},
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.blueprint_status",
             "description": "Read local AI-native blueprint receipts for provenance-aware memory, librarian stages, signal-to-intent proposals, access declarations, and typed team plans. It never calls a model, provider, runtime, task dispatcher, or release authority.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.update_status",
@@ -818,37 +804,31 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.lifecycle_status",
             "description": "Read local hash-linked harness lifecycle summaries. It does not broadcast, contact an agent, resume a run, or grant authority.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.repair_loop_status",
             "description": "Read exact failure, human-authored consequence, candidate, and independent re-check packet facts. It never executes a repair or approves work.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.mission_control_status",
             "description": "Read one bounded human/agent control-plane status built from local intent, operations, session, and repair evidence. It never grants authority.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.context_efficiency_status",
             "description": "Read bounded context-packet cache metadata and estimated token budgets. It never executes sources, changes intent, or grants authority.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.intake_parameters_status",
             "description": "Read bounded intake operating parameters, provenance, expiry, and canonical six-lane coverage. It never changes intent, authorizes execution, or grants provider access.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.deep_audit_status",
@@ -860,13 +840,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.runtime_audit_status",
             "description": "Read the latest self-hash-verified six-lane runtime assurance result and actionable findings. It never runs an audit or grants release authority.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.search_audit_rules",
@@ -902,7 +880,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["query"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.audit_convergence_status",
@@ -921,13 +898,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": [],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.agent_bridge_status",
             "description": "Read imported Eve, Junie, Grok Build, CodeRabbit, Devin, or generic hash-only handoff receipts bound to a sealed Oracle Contract. It never starts an agent, contacts a provider, resumes a checkpoint, or grants authority.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.agent_handoff_brief",
@@ -940,13 +915,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["contract"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.proof_worklog_status",
             "description": "Read local, review-required proof worklog drafts. It never posts to a tracker, chat, repository, or service.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.codex_metadata_audit",
@@ -963,49 +936,41 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_oracle_status",
             "description": "Read candidate-bound AppForge policy and user-intent authority receipts. It never contacts Apple, changes a candidate, or claims review readiness.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_device_reality_status",
             "description": "Read sealed AppForge Device Reality intent and supervised-capture receipts. It never starts Phone Harness, controls a device, accesses credentials, or contacts Apple.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_release_rehearsal_status",
             "description": "Read local candidate-bound Fastlane, App Store Connect CLI, Cider, Swiftlane, or Zealot rehearsal receipts. It never invokes a provider, accesses credentials, uploads a build, contacts Apple, or submits a release.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_native_surface_status",
             "description": "Read candidate-bound AppForge adaptive native-surface receipts. It never builds, runs, renders, downloads Apple assets, accesses credentials, contacts Apple, uploads media, or submits a release.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_surface_matrix_status",
             "description": "Read candidate-bound AppForge iPhone/iPad accessibility configuration plans. It never starts a simulator, controls hardware, accesses credentials, contacts Apple, uploads media, or submits a release.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_mobile_evidence_status",
             "description": "Read candidate-bound iOS/Android tool-evidence receipts for visual truth, privacy-to-store consistency, release-chain state, design conformance, production signals, and Android parity. It never runs a tool, device, telemetry vendor, store console, or release.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.release_readiness",
             "description": "Project every local release contract through the strict Oracle-bound gate and expose exact blockers. It never executes, signs, publishes, deploys, or contacts a provider.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.release_decision",
@@ -1057,37 +1022,31 @@ def _tool_definitions() -> list[dict[str, object]]:
                 ],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_storefront_story_status",
             "description": "Read candidate-bound AppForge Store screenshot story and local claim-reference receipts. It never generates images, downloads Apple assets, uploads Store media, contacts Apple, or submits a release.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_fastlane_capture_status",
             "description": "Read candidate-bound Fastlane Snapshot capture contracts. It never starts Xcode, controls a simulator or device, runs Fastlane, accesses credentials, uploads media, contacts Apple, or submits a release.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.appforge_submission_integrity_status",
             "description": "Read whether AppForge capture requirements are explicit, candidate-bound, correctly covered, and classified as native signed-build evidence. It never creates media, controls a device, contacts Apple, or submits a release.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.proof_continuity_status",
             "description": "Read hash-bound senior-engineering audit continuity and reopened incidents. It never runs a test, changes a candidate, contacts a provider, revokes credentials, releases, or approves work.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.saas_status",
             "description": "Return hash-verified local, provider-neutral OAuth/OIDC-to-entitlement proof status. It never contacts an identity, billing, or deployment provider.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.github_overview",
@@ -1110,7 +1069,6 @@ def _tool_definitions() -> list[dict[str, object]]:
             "name": "factory.audit_taxonomy",
             "description": "Return the canonical CF/ForgeLine measurement taxonomy and agent-use contract for any MCP-enabled coding agent. Use its stable measurement IDs, applicability rules, specialist roles, evidence fields, and status semantics; this read-only discovery does not run an audit or approve work.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.audit_agent_context",
@@ -1126,13 +1084,11 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.junie_taxonomy",
             "description": "Return the complete progressive FactoryLine taxonomy for a Junie project. It is local, read-only guidance and never enables, starts, or controls Junie.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.junie_contribution",
@@ -1192,7 +1148,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 ],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.junie_review",
@@ -1215,7 +1170,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["source", "changed_paths"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.runtime_coverage_status",
@@ -1228,7 +1182,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 },
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.agent_proof_mission",
@@ -1247,7 +1200,6 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["scope"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.jetbrains_handshake",
@@ -1285,15 +1237,14 @@ def _tool_definitions() -> list[dict[str, object]]:
                 "required": ["scope", "changed_paths"],
                 "additionalProperties": False,
             },
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
             "name": "factory.jetbrains_handshake_status",
             "description": "Read the latest hash-valid local agent-analyzer-FactoryLine handshake receipt. It never reruns or approves it.",
             "inputSchema": no_args,
-            "annotations": _READ_ONLY_ANNOTATIONS,
         },
     ]
+    return [{"annotations": _READ_ONLY_ANNOTATIONS, **tool} for tool in tools]
 
 
 def mcp_status(root: Path | str) -> dict[str, object]:
@@ -3390,6 +3341,10 @@ def _jetbrains_handshake_status(root: Path, arguments: object) -> dict[str, obje
 def _tool_call_dispatch_1(
     root: Path, name: str, arguments: object
 ) -> dict[str, object] | None:
+    if name == "verify_claim":
+        from .independent_execution import verify_claim
+
+        return _content(verify_claim(root, arguments))
     if name == "factory.status":
         if arguments != {}:
             raise McpError("factory.status accepts no arguments")
@@ -3936,11 +3891,18 @@ def serve_stdio(
     *,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
+    profile: str = "full",
 ) -> int:
     """Serve newline-delimited JSON-RPC requests over stdio and return 0 at EOF."""
     _workspace_root(root)
+    if profile not in {"full", "devin"}:
+        raise McpError("unknown MCP profile")
+    from .mcp_setup import dispatch_evidence_profile
+
+    dispatcher = dispatch_evidence_profile if profile == "devin" else dispatch
     input_stream = input_stream or sys.stdin
     output_stream = output_stream or sys.stdout
+    response: dict[str, object] | None
     for raw in input_stream:
         try:
             request = json.loads(raw)
@@ -3949,7 +3911,7 @@ def serve_stdio(
                 None, -32602, "invalid JSON-RPC request", "MCP_INVALID_PARAMS_REJECTED"
             )
         else:
-            response = dispatch(request, root)
+            response = dispatcher(request, root)
         if response is not None:
             output_stream.write(_canonical(response) + "\n")
             output_stream.flush()
