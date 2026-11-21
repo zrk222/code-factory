@@ -62,7 +62,8 @@
     "onCommand:factoryline.openStudio",
     "onCommand:factoryline.openProductMissions",
     "onCommand:factoryline.openGraphOps",
-    "onCommand:factoryline.openRequirementEvidence"
+    "onCommand:factoryline.openRequirementEvidence",
+    "onCommand:factoryline.draftTestProof"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -138,6 +139,10 @@
       {
         "command": "factoryline.openRequirementEvidence",
         "title": "FactoryLine: Open Requirement Evidence"
+      },
+      {
+        "command": "factoryline.draftTestProof",
+        "title": "FactoryLine: Draft Unapproved Test Proof"
       }
     ],
     "configuration": {

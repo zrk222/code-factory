@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { escapeHtml, receiptHtml, summarizeReceipt } from "../receipt";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "../runner";
 import { meterHtml, savingsHtml } from "../meter";
-import { findRequirementEvidence, requirementIds } from "../requirement";
+import { createUnapprovedRequirementProofDraft, findRequirementEvidence, MAX_TEST_DECLARATIONS_PER_DOCUMENT, MAX_TEST_PROOF_MANIFEST_BYTES, readTestProofManifest, requirementIds, testDeclarations, testProofId } from "../requirement";
 import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "../star_prompt";
 
 const receipt = {
@@ -38,6 +38,18 @@ assert.equal(isFeatureName("editor layer; rm"), false);
 assert.equal(factoryStudioUrl("marker: STUDIO_STARTED\nFactory Studio: http://127.0.0.1:43117/\n"), "http://127.0.0.1:43117/");
 assert.equal(factoryStudioUrl("Factory Studio: http://0.0.0.0:43117/"), undefined);
 assert.deepEqual(requirementIds("FR-101 maps to NFR-A11Y and FR-101."), ["FR-101", "NFR-A11Y"]);
+assert.deepEqual(testDeclarations("def test_one():\nasync def test_two():\n", "python"), [
+  { line: 0, name: "test_one" }, { line: 1, name: "test_two" },
+]);
+assert.deepEqual(testDeclarations("test('works', fn);\nit(\"also works\", fn);\ntest(name, fn);", "typescript"), [
+  { line: 0, name: "works" }, { line: 1, name: "also works" },
+]);
+assert.deepEqual(testDeclarations("describe('suite', fn);", "ruby"), []);
+assert.match(testProofId("tests/a.py", "test good"), /^test-test-good-line-0-[a-f0-9]{16}$/);
+assert.notEqual(testProofId("tests/a.py", "test good", 1), testProofId("tests/a.py", "test good", 2));
+assert.equal(testDeclarations(Array.from({ length: MAX_TEST_DECLARATIONS_PER_DOCUMENT + 1 }, (_, i) => `def test_${i}():`).join("\n"), "python").length, MAX_TEST_DECLARATIONS_PER_DOCUMENT);
+assert.deepEqual(testDeclarations("def test_oversized():\n" + "x".repeat(MAX_TEST_PROOF_MANIFEST_BYTES * 33), "python"), []);
+assert.deepEqual(testDeclarations("def test_multibyte():\n" + "漢".repeat(800_000), "python"), []);
 const requirementChecks = (async () => {
 const requirementRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cf-requirement-"));
 try {
@@ -54,6 +66,59 @@ try {
     [path.join("tests", "case.md"), 1],
   ]);
   assert.match(matches[1].preview, /is asserted here/);
+  const draftId = testProofId("tests/case.md", "test sensitive behavior");
+  const draftPath = await createUnapprovedRequirementProofDraft(requirementRoot, draftId, "tests/case.md");
+  assert.equal((await readTestProofManifest(requirementRoot, draftId)).id, draftId);
+  const fileApi = require("node:fs/promises") as { open: typeof fs.open };
+  const open = fileApi.open;
+  const cancelled = new AbortController();
+  const captured: { handle?: Awaited<ReturnType<typeof fs.open>> } = {};
+  fileApi.open = async (...args) => {
+    const handle = await open(...args);
+    captured.handle = handle;
+    cancelled.abort();
+    return handle;
+  };
+  try {
+    await assert.rejects(readTestProofManifest(requirementRoot, draftId, cancelled.signal), /cancelled/);
+    assert.ok(captured.handle);
+    await assert.rejects(captured.handle.stat(), { code: "EBADF" });
+  } finally {
+    fileApi.open = open;
+  }
+  const draft = JSON.parse(await fs.readFile(draftPath, "utf8"));
+  assert.deepEqual(draft, {
+    schema: "factory.e2e_proof_manifest.v1",
+    id: draftId,
+    approval: { state: "unapproved", approved_by: "" },
+    working_directory: ".",
+    timeout_seconds: 120,
+    network_egress: "not_granted",
+    positive: { argv: [] },
+    negative: { argv: [] },
+    artifact_paths: ["tests/case.md"],
+  });
+  await assert.rejects(createUnapprovedRequirementProofDraft(requirementRoot, draftId, "tests/case.md"), { code: "EEXIST" });
+  await assert.rejects(createUnapprovedRequirementProofDraft(requirementRoot, testProofId("tests/case.md", "linked"), "../outside.py"), /inside the workspace/);
+  await fs.writeFile(draftPath, "not-json");
+  await assert.rejects(readTestProofManifest(requirementRoot, draftId), SyntaxError);
+  const oversizedId = testProofId("tests/case.md", "oversized");
+  const oversizedDir = path.join(requirementRoot, ".factory", "requirement-proofs", oversizedId);
+  await fs.mkdir(oversizedDir, { recursive: true });
+  await fs.writeFile(path.join(oversizedDir, "e2e-manifest.json"), " ".repeat(MAX_TEST_PROOF_MANIFEST_BYTES + 1));
+  await assert.rejects(readTestProofManifest(requirementRoot, oversizedId), /bounded regular single-link/);
+  const linkedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cf-requirement-linked-"));
+  const outsideProofs = await fs.mkdtemp(path.join(os.tmpdir(), "cf-requirement-outside-"));
+  try {
+    await fs.mkdir(path.join(linkedRoot, ".factory"));
+    await fs.symlink(outsideProofs, path.join(linkedRoot, ".factory", "requirement-proofs"), "junction");
+    await assert.rejects(readTestProofManifest(linkedRoot, draftId), /linked or non-directory/);
+  } catch (error) {
+    if (!(["EPERM", "EACCES", "ENOTSUP"].includes((error as NodeJS.ErrnoException).code ?? ""))) throw error;
+  } finally {
+    await fs.rm(linkedRoot, { recursive: true, force: true });
+    await fs.rm(outsideProofs, { recursive: true, force: true });
+  }
 } finally {
   await fs.rm(requirementRoot, { recursive: true, force: true });
 }
@@ -75,6 +140,11 @@ const originalRealpath = fsPromises.realpath;
 const registeredCommands = new Map<string, (...args: unknown[]) => unknown>();
 const warningMessages: string[] = [];
 const registeredProviders: string[] = [];
+const workspaceEvents = new Map<string, (value?: any) => void>();
+const diagnosticEntries = new Map<string, unknown[]>();
+let workspaceTrusted = true;
+let activeDocument: any;
+const workspaceRoot = path.resolve(os.tmpdir(), "cf-evidence");
 let openedDocuments = 0;
 let disposedResources = 0;
 const disposable = { dispose() { disposedResources += 1; } };
@@ -93,14 +163,21 @@ const fakeVscode = {
   EventEmitter: FakeEventEmitter,
   workspace: {
     createFileSystemWatcher: () => fakeWatcher,
-    onDidChangeTextDocument: () => disposable,
+    onDidChangeTextDocument: (handler: (event: any) => void) => { workspaceEvents.set("change", handler); return disposable; },
     onDidChangeWorkspaceFolders: () => disposable,
+    onDidOpenTextDocument: (handler: (document: any) => void) => { workspaceEvents.set("open", handler); return disposable; },
+    onDidCloseTextDocument: (handler: (document: any) => void) => { workspaceEvents.set("close", handler); return disposable; },
+    onDidGrantWorkspaceTrust: (handler: () => void) => { workspaceEvents.set("trust", handler); return disposable; },
+    textDocuments: [],
+    get isTrusted() { return workspaceTrusted; },
+    getWorkspaceFolder: (uri: any) => uri.scheme === "file" ? { uri: { scheme: "file", fsPath: workspaceRoot } } : undefined,
   },
   window: {
     createOutputChannel: () => outputChannel,
     registerTreeDataProvider: (id: string) => { registeredProviders.push(id); return disposable; },
-    showWarningMessage: (message: string) => warningMessages.push(message),
+    showWarningMessage: async (message: string) => { warningMessages.push(message); return undefined; },
     showTextDocument: async () => { openedDocuments += 1; },
+    get activeTextEditor() { return activeDocument ? { document: activeDocument } : undefined; },
   },
   commands: {
     registerCommand: (name: string, callback: (...args: unknown[]) => unknown) => {
@@ -108,7 +185,17 @@ const fakeVscode = {
       return disposable;
     },
   },
-  languages: { registerCodeLensProvider: () => disposable },
+  languages: {
+    registerCodeLensProvider: () => disposable,
+    createDiagnosticCollection: () => ({
+      set: (uri: any, diagnostics: unknown[]) => diagnosticEntries.set(uri.toString(), diagnostics),
+      delete: (uri: any) => diagnosticEntries.delete(uri.toString()),
+      dispose() { disposedResources += 1; },
+    }),
+  },
+  Diagnostic: class { constructor(..._args: unknown[]) {} },
+  DiagnosticSeverity: { Warning: 2, Information: 3 },
+  Uri: { file: (fsPath: string) => ({ scheme: "file", fsPath, toString: () => `file://${fsPath}` }) },
   CodeLens: class { constructor(..._args: unknown[]) {} },
   Range: class { constructor(..._args: unknown[]) {} },
 };
@@ -154,12 +241,40 @@ void (async () => {
       activate: (context: { subscriptions: unknown[] }) => void;
       deactivate: () => void;
     };
+    const docPath = path.join(root, "tests", "event-lifecycle.test.py");
+    const docUri = { scheme: "file", fsPath: docPath, toString: () => `file://${docPath}` };
+    const doc = { uri: docUri, languageId: "python", version: 1, getText: () => "def test_lifecycle():\n    pass\n", lineAt: () => ({ text: "def test_lifecycle():" }) };
+    (fakeVscode.workspace.textDocuments as unknown[]).push(doc);
+    activeDocument = doc;
     const context = { subscriptions: [] as unknown[] };
     activate(context);
     assert.ok(registeredProviders.includes("factorylineEvidence"));
     assert.ok(registeredCommands.has("factoryline.assemble"));
     assert.ok(registeredCommands.has("factoryline.openRequirementEvidence"));
+    assert.ok(registeredCommands.has("factoryline.draftTestProof"));
     assert.ok(context.subscriptions.length >= 18);
+    const openEvent = workspaceEvents.get("open");
+    const changeEvent = workspaceEvents.get("change");
+    const trustEvent = workspaceEvents.get("trust");
+    const closeEvent = workspaceEvents.get("close");
+    assert.ok(openEvent && changeEvent && trustEvent && closeEvent);
+    openEvent(doc);
+    await new Promise(resolve => setTimeout(resolve, 180));
+    assert.equal(diagnosticEntries.get(docUri.toString())?.length, 1, "opening a test document should produce its missing-draft diagnostic");
+    workspaceTrusted = false;
+    changeEvent({ document: doc });
+    await new Promise(resolve => setTimeout(resolve, 180));
+    assert.equal(diagnosticEntries.has(docUri.toString()), false, "untrusted workspaces must clear test-proof diagnostics");
+    const draftCommand = registeredCommands.get("factoryline.draftTestProof");
+    assert.ok(draftCommand);
+    await draftCommand(docUri, 0, "test_lifecycle");
+    assert.match(warningMessages.at(-1) || "", /trusted workspace/);
+    workspaceTrusted = true;
+    trustEvent();
+    await new Promise(resolve => setTimeout(resolve, 180));
+    assert.equal(diagnosticEntries.get(docUri.toString())?.length, 1, "trust grant should refresh open-document diagnostics");
+    closeEvent(doc);
+    assert.equal(diagnosticEntries.has(docUri.toString()), false, "closing a document should remove its diagnostics");
     const beforeDeactivate = disposedResources;
     deactivate();
     assert.equal(disposedResources, beforeDeactivate + 1);

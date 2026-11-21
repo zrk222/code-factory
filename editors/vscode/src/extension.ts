@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import { receiptHtml } from "./receipt";
 import { meterHtml, savingsHtml } from "./meter";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "./runner";
-import { findRequirementEvidence, requirementIds } from "./requirement";
+import { createUnapprovedRequirementProofDraft, findRequirementEvidence, MAX_TEST_DECLARATIONS_PER_DOCUMENT, MAX_TEST_PROOF_DOCUMENT_BYTES, MAX_TEST_PROOF_DOCUMENT_CHARS, readTestProofManifest, requirementIds, testDeclarations, testProofId } from "./requirement";
 import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "./star_prompt";
 import { registerEvidence } from "./evidence";
 import { runCommand } from "@factoryline/proof-client";
@@ -29,7 +29,120 @@ class RequirementCodeLensProvider implements vscode.CodeLensProvider {
         }));
       }
     }
+    for (const test of testDeclarations(document.getText(), document.languageId)) {
+      lenses.push(new vscode.CodeLens(new vscode.Range(test.line, 0, test.line, document.lineAt(test.line).text.length), {
+        command: "factoryline.draftTestProof",
+        title: `FactoryLine: draft unapproved proof for ${test.name} (line ${test.line + 1})`,
+        arguments: [document.uri, test.line, test.name],
+      }));
+    }
     return lenses;
+  }
+}
+
+const testProofDiagnostics = vscode.languages.createDiagnosticCollection("factoryline-test-proof");
+interface DiagnosticRefreshState { version: number; timer?: NodeJS.Timeout; controller?: AbortController }
+const diagnosticRefreshes = new Map<string, DiagnosticRefreshState>();
+
+function refreshTestProofDiagnostics(document: vscode.TextDocument): void {
+  const key = document.uri.toString();
+  const state = diagnosticRefreshes.get(key) ?? { version: 0 };
+  state.version += 1;
+  const version = state.version;
+  const documentVersion = document.version;
+  state.controller?.abort();
+  if (state.timer) clearTimeout(state.timer);
+  if (document.uri.scheme !== "file") { testProofDiagnostics.delete(document.uri); diagnosticRefreshes.delete(key); return; }
+  const workspace = vscode.workspace.getWorkspaceFolder(document.uri);
+  if (!workspace || workspace.uri.scheme !== "file") { testProofDiagnostics.delete(document.uri); diagnosticRefreshes.delete(key); return; }
+  const root = workspace.uri.fsPath;
+  const relativeFile = path.relative(root, document.uri.fsPath);
+  if (!relativeFile || relativeFile.startsWith(`..${path.sep}`) || relativeFile === ".." || path.isAbsolute(relativeFile)) { testProofDiagnostics.delete(document.uri); diagnosticRefreshes.delete(key); return; }
+  diagnosticRefreshes.set(key, state);
+  if (!vscode.workspace.textDocuments.includes(document)) { testProofDiagnostics.delete(document.uri); return; }
+  if (!vscode.workspace.isTrusted) { testProofDiagnostics.delete(document.uri); return; }
+  const text = document.getText();
+  if (text.length > MAX_TEST_PROOF_DOCUMENT_CHARS || Buffer.byteLength(text, "utf8") > MAX_TEST_PROOF_DOCUMENT_BYTES) {
+    testProofDiagnostics.set(document.uri, [new vscode.Diagnostic(new vscode.Range(0, 0, 0, 0), `Test-proof diagnostics skipped: document exceeds ${MAX_TEST_PROOF_DOCUMENT_CHARS} characters or ${MAX_TEST_PROOF_DOCUMENT_BYTES} bytes.`, vscode.DiagnosticSeverity.Information)]);
+    return;
+  }
+  state.controller = new AbortController();
+  state.timer = setTimeout(() => { void readTestProofDiagnostics(document, root, relativeFile, state, version, documentVersion, state.controller!); }, 150);
+}
+
+function isCurrentDiagnosticRead(document: vscode.TextDocument, state: DiagnosticRefreshState, version: number, documentVersion: number, controller?: AbortController): boolean {
+  return vscode.workspace.isTrusted && diagnosticRefreshes.get(document.uri.toString()) === state && state.version === version &&
+    document.version === documentVersion && vscode.workspace.textDocuments.includes(document) && !controller?.signal.aborted;
+}
+
+async function readTestProofDiagnostics(document: vscode.TextDocument, root: string, relativeFile: string, state: DiagnosticRefreshState, version: number, documentVersion: number, controller: AbortController): Promise<void> {
+  const diagnostics: vscode.Diagnostic[] = [];
+  if (!isCurrentDiagnosticRead(document, state, version, documentVersion, controller)) return;
+  const text = document.getText();
+  if (text.length > MAX_TEST_PROOF_DOCUMENT_CHARS || Buffer.byteLength(text, "utf8") > MAX_TEST_PROOF_DOCUMENT_BYTES) return;
+  const declarations = testDeclarations(text, document.languageId);
+  for (const test of declarations) {
+    if (!isCurrentDiagnosticRead(document, state, version, documentVersion, controller)) return;
+    const id = testProofId(relativeFile, test.name, test.line);
+    let message = "Test proof draft is missing; use the CodeLens to create an unapproved draft. No test was run.";
+    try {
+      const parsed = await readTestProofManifest(root, id, controller.signal) as {
+        schema?: unknown; id?: unknown; approval?: { state?: unknown }; positive?: { argv?: unknown }; negative?: { argv?: unknown };
+      };
+      if (!isCurrentDiagnosticRead(document, state, version, documentVersion, controller)) return;
+      if (parsed.schema !== "factory.e2e_proof_manifest.v1") message = "Test proof manifest schema is invalid; no proof is asserted.";
+      else if (parsed.id !== id) message = "Test proof manifest identity does not match this test; no proof is asserted.";
+      else if (parsed.approval?.state !== "approved" || !Array.isArray(parsed.positive?.argv) || !parsed.positive.argv.length || !Array.isArray(parsed.negative?.argv) || !parsed.negative.argv.length) {
+        message = "Test proof draft is unapproved or incomplete; execution is not enabled. No test was run.";
+      } else {
+        message = "Manifest is configured, but this editor has no test-bound execution receipt to verify; no pass is asserted.";
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") message = "Test proof manifest is unreadable or invalid; no proof is asserted.";
+    }
+    diagnostics.push(new vscode.Diagnostic(
+      new vscode.Range(test.line, 0, test.line, document.lineAt(test.line).text.length),
+      message,
+      vscode.DiagnosticSeverity.Warning,
+    ));
+  }
+  if (declarations.length >= MAX_TEST_DECLARATIONS_PER_DOCUMENT) {
+    diagnostics.push(new vscode.Diagnostic(new vscode.Range(0, 0, 0, 0), `Test-proof diagnostics are capped at ${MAX_TEST_DECLARATIONS_PER_DOCUMENT} declarations per document.`, vscode.DiagnosticSeverity.Information));
+  }
+  if (!isCurrentDiagnosticRead(document, state, version, documentVersion, controller)) return;
+  testProofDiagnostics.set(document.uri, diagnostics);
+}
+
+async function draftTestProof(uri: vscode.Uri, line: number, testName: string): Promise<void> {
+  if (!vscode.workspace.isTrusted) {
+    void vscode.window.showWarningMessage("FactoryLine commands require a trusted workspace.");
+    return;
+  }
+  const folder = uri.scheme === "file" ? vscode.workspace.getWorkspaceFolder(uri) : undefined;
+  if (!folder || folder.uri.scheme !== "file") {
+    void vscode.window.showWarningMessage("Open the selected test inside a trusted local workspace.");
+    return;
+  }
+  const root = folder.uri.fsPath;
+  const relativeFile = path.relative(root, uri.fsPath);
+  if (!relativeFile || relativeFile.startsWith(`..${path.sep}`) || relativeFile === ".." || path.isAbsolute(relativeFile)) {
+    void vscode.window.showWarningMessage("The selected test must be inside the trusted workspace.");
+    return;
+  }
+  const id = testProofId(relativeFile, testName, line);
+  const confirmed = await vscode.window.showWarningMessage(
+    `Create a blank, unapproved E2E proof draft for ${path.relative(root, uri.fsPath)} :: ${testName} (line ${line + 1})? This does not discover commands, run tests, approve the proof, or assert sensitivity.`,
+    { modal: true },
+    "Create unapproved draft",
+  );
+  if (confirmed !== "Create unapproved draft") return;
+  try {
+    const manifest = await createUnapprovedRequirementProofDraft(root, id, relativeFile);
+    void vscode.window.showInformationMessage(`Created unapproved test-proof draft: ${path.relative(root, manifest)}. Edit both command arrays and review it manually; execution is not available from this action.`);
+    const document = await vscode.workspace.openTextDocument(uri);
+    await refreshTestProofDiagnostics(document);
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Could not create the test-proof draft: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -374,9 +487,16 @@ async function openFactoryStudio(view: StudioView = "studio"): Promise<void> {
 
 export function activate(context: vscode.ExtensionContext): void {
   registerEvidence(context);
+  vscode.workspace.textDocuments.forEach(document => refreshTestProofDiagnostics(document));
   context.subscriptions.push(
     output,
+    testProofDiagnostics,
     vscode.languages.registerCodeLensProvider({ scheme: "file" }, new RequirementCodeLensProvider()),
+    vscode.workspace.onDidOpenTextDocument(document => refreshTestProofDiagnostics(document)),
+    vscode.workspace.onDidChangeTextDocument(event => refreshTestProofDiagnostics(event.document)),
+    vscode.workspace.onDidCloseTextDocument(document => { const key = document.uri.toString(); const state = diagnosticRefreshes.get(key); state?.controller?.abort(); if (state?.timer) clearTimeout(state.timer); diagnosticRefreshes.delete(key); testProofDiagnostics.delete(document.uri); }),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => vscode.workspace.textDocuments.forEach(document => refreshTestProofDiagnostics(document))),
+    { dispose: () => { for (const [key, state] of diagnosticRefreshes) { state.controller?.abort(); if (state.timer) clearTimeout(state.timer); diagnosticRefreshes.delete(key); } } },
     vscode.commands.registerCommand("factoryline.assemble", () => runFeature(context, "assemble")),
     vscode.commands.registerCommand("factoryline.continue", () => continueAssembly(context)),
     vscode.commands.registerCommand("factoryline.verify", () => runFeature(context, "verify")),
@@ -387,6 +507,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("factoryline.openProductMissions", () => openFactoryStudio("product")),
     vscode.commands.registerCommand("factoryline.openGraphOps", () => openFactoryStudio("graph")),
     vscode.commands.registerCommand("factoryline.openRequirementEvidence", openRequirementEvidence),
+    vscode.commands.registerCommand("factoryline.draftTestProof", draftTestProof),
     { dispose: () => { if (studioProcess?.exitCode === null) { studioProcess.kill(); } } },
   );
 }
