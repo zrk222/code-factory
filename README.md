@@ -1,18 +1,48 @@
 # Code Factory
 
+**Your AI writes the change. Code Factory shows what was actually checked.**
 Review agent-written code by collecting local software review evidence:
-trace findings to their source and record which checks support your decision.
-Code Factory does not certify software.
+trace findings to their source, challenge weak tests, and keep the release
+decision with your team. Code Factory does not certify software.
 
-**Code Factory core 0.49.7 · VS Code and Open VSX 1.3.5 · JetBrains 1.3.5**
+**0.50.0 release line · VS Code / Open VSX / JetBrains / Devin plugin 1.3.6**
+Channel availability is verified separately; prepared packages are not publication.
 
-[Release downloads](https://github.com/zrk222/code-factory/releases/tag/v0.49.7) ·
+[Release downloads](https://github.com/zrk222/code-factory/releases) ·
 [Quick guide](docs/START_HERE.md) · [Screenshots](#product-walkthrough)
 
 ```powershell
 python -m pip install factoryline-code-factory
 factory scan --root . --static-only
 ```
+
+## A bigger evidence layer for polyglot teams
+
+Current coverage adds Go, Java, C# and Ruby framework sources/sinks plus wider
+Ruby/Swift trust checks. New request coverage is review-tier. Round 7 numbers
+below belong to the earlier ruleset, not a fresh score for the shipped variant.
+[Coverage evidence and limits](docs/evidence/polyglot-coverage-round8.json).
+
+- **12 languages, one review workflow:** the configured native security worker
+  covers C, C++, C#, Go, Java, JavaScript, PHP, Python, Ruby, Rust, Swift and
+  TypeScript. Thirty rules separate default findings from review-only context;
+  worker setup and coverage gaps remain explicit.
+- **Measured strengths and gaps:** the fresh Round 7 default tier supported
+  **38/40 decided alerts (95%; Wilson 83.5–98.6%)**, with **12 additional unclear**.
+  Review tier supported **23/40 (57.5%)**, with 3 unclear. Advisory recall was
+  **0/161**; six languages had fewer than five decided alerts. AI labels and
+  per-language denominators are disclosed—not twelve-language accuracy or
+  independent human validation. [Inspect readiness](docs/evidence/polyglot-readiness-round7.json).
+- **Fits the tools you already use:** frozen JSON output, SARIF 2.1.0, opt-in
+  pre-commit, source-bound GitHub proof handoffs and an eight-tool read-only
+  Devin MCP profile put evidence beside agent suggestions.
+- **Review the exact change:** signed-observation `verify_claim`, a bounded
+  owner-approved Proof Agent and byte-exact mutation diffs show what was checked,
+  what is missing and what to do next. Neither agents nor receipts self-approve.
+
+[Changes and fixes](CHANGELOG.md#0500--2026-11-21-release-candidate-publication-gated) ·
+[Panel results and limits](https://github.com/zrk222/code-factory/pull/354) ·
+[Native worker controls](https://github.com/zrk222/code-factory/actions/runs/44893613016)
 
 | What you need | Command |
 | --- | --- |
@@ -38,7 +68,7 @@ coordinates execution, and **FactoryLine** records the proof and next action.
 **HSF** (Harness Software Factory) compiles selected rules into repeatable logic.
 **Prestige** checks design where applicable. **AppForge** handles app and mobile
 delivery inside Code Factory.
-Core 0.49.7 connects these steps in a resumable local mission with recorded
+Core 0.50.0 connects these steps in a resumable local mission with recorded
 recovery and resource-aware checks.
 [Install the full toolchain](docs/START_HERE.md#install-the-full-toolchain) or see
 the [proof workflow](docs/PROOF_REVIEW_WORKFLOW.md).

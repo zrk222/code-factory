@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.50.0 — 2026-11-21 (release candidate; publication gated)
+
+Your AI can propose a repair. Your team needs evidence before trusting it.
+This release makes Code Factory a broader, tool-friendly evidence layer for
+polyglot developers—not another agent that approves its own work.
+
+- **Expanded:** 30 native security rules across 12 declared languages, with
+  default and review tiers, native source-to-sink traces where observed, SARIF
+  normalization and 30 rule-removal challenges. Native workers require setup;
+  the local static quick scan remains Python-only.
+- **Coverage:** framework sources/sinks for Go, Java, C# and Ruby, plus wider
+  Ruby/Swift trust checks. New request rules are review-tier after the fresh
+  Round 8 measured variant returned 37 TP / 28 FP / 5 unclear (56.9% decided).
+  The shipped variant was adjusted afterward; it has no fresh precision score.
+- **Historical measurement:** Round 7 supported 38/40 decided default-tier alerts
+  on the earlier ruleset, not the changed shipped variant
+  (95.0%; Wilson 95% 83.5–98.6%), with 12 additional unclear; review tier
+  supported 23/40 (57.5%), with 3 unclear. Advisory recall was 0/161; six
+  languages have insufficient precision samples. AI labels, tier and language
+  limits remain explicit. The earlier Round 6 54 TP / 6 FP / 0 unclear (90%)
+  panel is a separate study, not a comparable all-language accuracy claim.
+- **Optimized:** exhausted alias-memo entry/pair budgets reject before redundant
+  copying/UTF-8 accounting. Capacity and findings remain unchanged; 2,867 focused
+  controls passed. Helper timing is not an overall scan-speed claim.
+- **Added:** frozen versioned scan JSON, SARIF 2.1.0 and opt-in pre-commit;
+  byte-exact historical mutation diffs preserve CRLF, non-UTF-8 bytes and missing
+  final newlines. Existing CI and editors can consume evidence without a new
+  review ritual.
+- **Connected:** read-only signed-observation `verify_claim`, the eight-tool
+  Devin evidence profile/plugin and an owner-admitted bounded Proof Agent link
+  approved scope, actual checks and persisted receipts. A valid binding is not
+  code correctness, live provider acceptance or automatic merge authority.
+- **Hardened:** coordinator crash/stop controls, executable-bound proof reuse,
+  bounded generated-report capture, path/link-safe IDE receipt reads and
+  tenant-scoped hosted evidence replay/recovery controls.
+- **Fixed:** the combined SDK worker's eager import regression, strict
+  complexity failures and duplicate commercial implementation files. Existing
+  architecture caps remain unchanged; no measured scan-speed gain is claimed.
+- **Aligned:** core 0.50.0 and editor/Devin plugin 1.3.6. Marketplace upload,
+  moderation and publication are reported separately for each channel.
+
 ## 0.49.7 — 2026-11-17
 
 - Bind approved SpecLine intent, registered ForgeLine actions, and FactoryLine proof to one resumable local mission.

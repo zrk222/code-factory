@@ -170,7 +170,7 @@ Rules are split into two tiers so that tiering, not suppression, carries
 precision. Default-tier rules (severity ERROR/WARNING, SARIF error/warning,
 finding severity high/medium) are the high-confidence lane. Context-dependent
 rules carry `metadata.tier: review` and severity INFO (SARIF note, finding
-severity low): JavaScript request taint (command, SQL, HTML, path), TLS and
+severity low): JavaScript, Go, Java, C# and Ruby request taint, TLS and
 trust bypasses (Go, Python, Rust, Java hostname, Ruby, Swift), unscoped Python
 deserialization (`python.unsafe-deserialization-unscoped`, any pickle/YAML
 source) and PHP file inclusion. Review-tier findings stay in the report; they
@@ -198,6 +198,62 @@ passed controls across twelve declared languages, all thirty detector-removal
 challenges, and source-bound SARIF normalization. Its 121 synthetic findings
 include 45 review-tier notes retained by the normalizer. Native control
 readiness and held-out panel precision are separate measurements.
+
+Polyglot readiness ([evidence](../../docs/evidence/polyglot-readiness-round7.json))
+was measured on the same ruleset with two pre-registered studies. Round 7
+sampled up to 14 fresh alerts per declared language at every tier (no
+shortfall fill; two independent review contexts, 96.8% raw agreement). Recall
+was measured on fixed GitHub-reviewed advisories and on real uses of the
+dangerous APIs the explicit-API rules target.
+
+| Language | Round 7 supported / decided (tier) | Alert pool | API-occurrence recall |
+|---|---|---:|---|
+| C | 7/8 (default) | 160 | 17/25 (all 17 libc `gets` calls) |
+| C++ | 8/8 (default) | 759 | 8/25 (all 8 libc `gets` calls) |
+| PHP | 10/11 default, 3/3 review | 1,175 | - |
+| Python | 7/7 default, 5/6 review | 228 | 4/25 `verify=False` |
+| JavaScript | 7/13 (review) | 96 | - |
+| TypeScript | 6/14 (review) | 43 | - |
+| C# | 4/4 (default), insufficient | 31 | - |
+| Go | 1/1 default, 2/2 review, insufficient | 5 | 7/25 `InsecureSkipVerify` |
+| Java | 1/1 (default), insufficient | 1 | - |
+| Rust | 0/2 (review), insufficient | 3 | 3/25 `danger_accept_invalid_certs` |
+| Ruby | no alerts found | 0 | 0/25 `VERIFY_NONE` |
+| Swift | no alerts found | 0 | 0/25 trust overrides |
+
+Default tier: 38 of 40 decided alerts supported, 95.0% (Wilson 83.5-98.6%),
+with 12 unclear `gets` cases in contest code. Review tier: 23 of 40, 57.5%
+(Wilson 42.2-71.5%). Six languages had fewer than five decided alerts, so they
+have native controls but no measured precision. Ruby and Swift produced no
+alerts from fresh repositories: their trust rules match one call shape each
+(`SSLContext.new.verify_mode =` and `SecTrustSetExceptions`). None of 161 fixed
+advisories in rule-scope CWEs (25 per ecosystem; 9 NuGet, 2 crates.io) was
+detected in its fix hunks or anywhere in its changed files (0%, Wilson 0-2.3%):
+the rules see request-to-sink flows inside one web handler, while published
+advisories are mostly library APIs whose input arrives as function parameters.
+This lane is a high-precision local web-handler and unsafe-API detector; it is
+not a vulnerability-recall claim.
+
+Coverage round ([evidence](../../docs/evidence/polyglot-coverage-round8.json)):
+the Go, Java, C# and Ruby request rules now read framework sources (Go
+`net/http` query, form and `mux` values plus Gin and Echo context getters;
+Jakarta servlets and Spring `@RequestParam`/`@PathVariable`; WebForms and MVC
+`Request.QueryString`/`Form`/`Params`; Rails, Sinatra and Grape `params`) and
+common sinks (Go `QueryRow`/`*Context`/GORM `Raw` and shell or request-chosen
+programs; `Connection.prepareStatement`, `JdbcTemplate`, `EntityManager` and
+`Runtime.exec`; ADO.NET providers and EF `FromSqlRaw`/`ExecuteSqlRaw`; `system`,
+`exec`, `IO.popen`, `Open3`, `find_by_sql` and string `where`). Ruby trust
+checks cover `verify_mode` assignments and `VERIFY_NONE`/`verify: false`
+options, and Swift checks cover delegates that return `URLCredential(trust:)`
+without evaluating or pinning the trust. A fresh pre-registered panel (round 8,
+14 alerts per changed language) measured the widened request rules at 25 of 47
+decided alerts supported (53%; Go SQL 2 of 13, prepared statements and
+allowlisted `ORDER BY` fragments), so they joined the review tier, and Go SQL
+sinks now need a database-handle receiver that is not a prepared statement.
+Review-tier trust rules measured Ruby 5 of 5 and Swift 7 of 13. Swift
+trust-override recall on fresh files rose from 0 of 25 to 18 of 25; Ruby had no
+eligible fresh file (re-scanning the round-7 files: 0 to 9 of 25). The next 63
+fixed Go, Maven and RubyGems advisories were still not detected.
 
 Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.6 - 2026-11-21 (candidate; publication gated)
+
+- Include fresh Round 7 per-language precision and recall evidence, distinguishing
+  default/review tiers, unclear labels and insufficient samples. No blanket
+  twelve-language accuracy or vulnerability-recall claim.
+- Pair the editor adapters with Code Factory core 0.50.0. The local runtime can
+  route external analysis across twelve language families where the required
+  worker and toolchain are configured; the editor does not bundle analyzers.
+- Connect review to source-bound claim verification and a bounded Proof Agent,
+  with optional SARIF and pre-commit outputs plus read-only mutation-diff
+  inspection. Evidence remains review input, not a correctness or release claim.
+- Keep Junie optional and human-controlled; harden IDE receipt reads against
+  stale, malformed, oversized, escaped, or changing files.
+
 ## 1.3.5 - 2026-11-17 (candidate; publication gated)
 
 - Align the VS Code and Open VSX package version with the JetBrains plugin.

@@ -23,8 +23,8 @@ const polyglotControls = {
   c: ['c.unsafe-gets', 'void controls() { char buffer[64];\n// ruleid: c.unsafe-gets\ngets(buffer);\n// ok: c.unsafe-gets\nfgets(buffer, sizeof(buffer), stdin);\n}'],
   cpp: ['c.unsafe-gets', 'void controls() { char buffer[64];\n// ruleid: c.unsafe-gets\ngets(buffer);\n// ok: c.unsafe-gets\nfgets(buffer, sizeof(buffer), stdin);\n}'],
   cs: ['csharp.disabled-certificate-verification', 'class Controls { void Run() {\n// ruleid: csharp.disabled-certificate-verification\nSystem.Net.ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, errors) => true;\n// ok: csharp.disabled-certificate-verification\nSystem.Net.ServicePointManager.ServerCertificateValidationCallback = (sender, cert, chain, errors) => false;\n}}'],
-  rb: ['ruby.disabled-tls-verification', '# ruleid: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_NONE\n# ok: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_PEER'],
-  swift: ['swift.trust-exceptions', 'func controls(trust: SecTrust) {\n// ruleid: swift.trust-exceptions\nSecTrustSetExceptions(trust, SecTrustCopyExceptions(trust))\n// ok: swift.trust-exceptions\nSecTrustEvaluateWithError(trust, nil)\n}'],
+  rb: ['ruby.disabled-tls-verification', '# ruleid: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_NONE\n# ok: ruby.disabled-tls-verification\nOpenSSL::SSL::SSLContext.new.verify_mode = OpenSSL::SSL::VERIFY_PEER\n# ruleid: ruby.disabled-tls-verification\nhttp.verify_mode = OpenSSL::SSL::VERIFY_NONE'],
+  swift: ['swift.trust-exceptions', readFileSync('deploy/deep-adapters/rules/tests/swift-trust-controls.txt', 'utf8')],
 };
 
 // Each annotated sink is an explicit fixture expectation, not an inferred detector.
@@ -70,51 +70,26 @@ value := req.FormValue("query")
 // ok: go.request-sql-injection
 db.Query(value)
 }
-`,
-  java: `
-class FlowControls {
-void direct(javax.servlet.http.HttpServletRequest req, java.sql.Statement db) {
-// source: java.request-command-injection
-String value = req.getParameter("command");
-// ruleid: java.request-command-injection
-new java.lang.ProcessBuilder("sh", "-c", value);
-// source: java.request-sql-injection
-String query = req.getParameter("query");
-// ruleid: java.request-sql-injection
-db.executeQuery(query);
+func frameworks(c *gin.Context, r *http.Request) {
+// source: go.request-sql-injection
+query := r.URL.Query().Get("q")
+// ruleid: go.request-sql-injection
+store.db.Query("SELECT * FROM t WHERE q='" + query + "'")
+// source: go.request-command-injection
+tool := c.Param("tool")
+// ruleid: go.request-command-injection
+exec.Command(tool)
+// ok: go.request-sql-injection
+stmt.Exec(query)
 }
-void aliases(javax.servlet.http.HttpServletRequest req, java.sql.Statement db) {
-// source: java.request-command-injection
-String value = req.getParameter("command");
-String alias = "echo " + value;
-// ruleid: java.request-command-injection
-new java.lang.ProcessBuilder("/bin/sh", "-c", alias);
-// source: java.request-sql-injection
-String name = req.getParameter("name");
-String query = "SELECT * FROM users WHERE name='" + name + "'";
-// ruleid: java.request-sql-injection
-db.execute(query);
-// ok: java.request-command-injection
-new java.lang.ProcessBuilder("echo", value);
-// ok: java.request-command-injection
-new java.lang.ProcessBuilder("sh", "-c", "echo fixed");
-// ok: java.request-sql-injection
-new java.sql.PreparedStatement("SELECT * FROM users WHERE name=?").setString(1, name);
-}
-void unrelated(LocalRequest req, LocalStatement db) {
-String value = req.getParameter("command");
-// ok: java.request-command-injection
-new java.lang.ProcessBuilder("sh", "-c", value);
-// ok: java.request-sql-injection
-db.executeQuery(value);
-}
-void wrongProvider(javax.servlet.http.HttpServletRequest req, LocalStatement db) {
-String value = req.getParameter("query");
-// ok: java.request-sql-injection
-db.executeQuery(value);
-}
+func typedReceiver(r *http.Request, d *sql.DB) {
+// source: go.request-sql-injection
+query := r.FormValue("query")
+// ruleid: go.request-sql-injection
+d.Query(query)
 }
 `,
+  java: readFileSync('deploy/deep-adapters/rules/tests/java-flow-controls.txt', 'utf8'),
   cs: `
 class FlowControls {
 void Direct(Microsoft.AspNetCore.Http.HttpRequest req) {
@@ -154,6 +129,18 @@ var value = req.Query["command"];
 System.Diagnostics.Process.Start("/bin/sh", "-c " + value);
 // ok: csharp.request-sql-injection
 new System.Data.SqlClient.SqlCommand(value, connection);
+}
+}
+class UsersController : Controller {
+void Classic() {
+// source: csharp.request-sql-injection
+var name = Request.QueryString["name"];
+// ruleid: csharp.request-sql-injection
+new System.Data.SqlClient.SqlCommand("SELECT * FROM t WHERE n='" + name + "'", connection);
+// source: csharp.request-command-injection
+var host = Request.Form["host"];
+// ruleid: csharp.request-command-injection
+System.Diagnostics.Process.Start("cmd.exe", "/c ping " + host);
 }
 }
 `,
@@ -199,6 +186,26 @@ class Unrelated
     ActiveRecord::Base.connection.execute(value)
   end
 end
+class UsersController < ApplicationController
+  def show
+    # source: ruby.request-sql-injection
+    name = params[:name]
+    # ruleid: ruby.request-sql-injection
+    User.where("name = '#{name}'")
+    # ok: ruby.request-sql-injection
+    User.where(name: name)
+    # ok: ruby.request-sql-injection
+    User.find_by_sql(["SELECT * FROM users WHERE name = ?", name])
+    # source: ruby.request-sql-injection
+    template = params[:query]
+    # ruleid: ruby.request-sql-injection
+    User.find_by_sql([template, name])
+    # source: ruby.request-command-injection
+    host = params.fetch(:host)
+    # ruleid: ruby.request-command-injection
+    system("ping #{host}")
+  end
+end
 `,
 };
 function fixtureExpectations(extension, content) {
@@ -228,6 +235,8 @@ try {
   for (const path of [rulesPath, 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json',
     'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js',
     'deploy/deep-adapters/rules/tests/tsx-controls.txt', 'deploy/deep-adapters/rules/tests/php-controls.php',
+    'deploy/deep-adapters/rules/tests/java-flow-controls.txt',
+    'deploy/deep-adapters/rules/tests/swift-trust-controls.txt',
     'scripts/verify_semgrep_surface.mjs', 'scripts/semgrep_mutation_controls.mjs',
     'deploy/deep-adapters/Dockerfile', 'factoryline/deep_audit_attestation.py',
     'factoryline/deep_audit_loop.py', 'factoryline/deep_audit_sarif.py', 'factoryline/audit_taxonomy.py']) {

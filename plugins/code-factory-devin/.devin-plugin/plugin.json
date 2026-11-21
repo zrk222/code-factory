@@ -1,7 +1,17 @@
 {
   "name": "code-factory-evidence",
+  "displayName": "Code Factory Evidence",
   "version": "1.3.6",
-  "description": "Check signed evidence, discover relevant audit rules and hand back explicit proof gaps. Eight read-only tools; no execution, self-approval, merge or release. Requires Code Factory 0.50.0 and FACTORY_WORKSPACE_ROOT set to the project inside Devin's environment.",
+  "description": "Inspect signed claims and polyglot audit evidence while keeping release decisions human-owned",
+  "shortDescription": "Read-only proof for AI-written code",
+  "setup": {
+    "notice": "Eight read-only tools inspect existing local evidence; they cannot run audits, approve, merge or release. Polyglot evidence requires separately configured native workers.",
+    "steps": [
+      "Install factoryline-code-factory 0.50.0 in the environment where Devin runs tools.",
+      "Set FACTORY_WORKSPACE_ROOT to that environment's project directory.",
+      "Start a new session and ask Devin to list the Code Factory audit rules and inspect a signed claim."
+    ]
+  },
   "author": {"name": "Richard Katz"},
   "repository": "https://github.com/zrk222/code-factory",
   "homepage": "https://github.com/zrk222/code-factory",

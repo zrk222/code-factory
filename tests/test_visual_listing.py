@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 from pathlib import Path
 
@@ -109,10 +110,17 @@ def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> No
     )
 
     assert metadata["version"] == __version__
-    assert metadata["publication_date"] == "2026-11-17"
-    assert "Graph Ops mission-control storyboard" in metadata["description"]
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    released = re.search(
+        rf"^## {re.escape(__version__)}\s+[^\r\n]*?(\d{{4}}-\d{{2}}-\d{{2}})",
+        changelog,
+        re.MULTILINE,
+    )
+    assert released is not None
+    assert metadata["publication_date"] == released.group(1)
+    assert "Your AI writes the change" in metadata["description"]
     assert (
-        "designed to reduce avoidable App Review rework and waiting time"
+        "Review exact mutation diffs, source-bound receipts and actionable gaps"
         in metadata["description"]
     )
     assert "does not guarantee approval" in metadata["description"]

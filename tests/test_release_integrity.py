@@ -18,8 +18,8 @@ from factoryline import release_candidate as candidate
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/publish.yml"
 
 
-def _snippet(marker):
-    text = WORKFLOW.read_text(encoding="utf-8")
+def _snippet(marker, workflow=WORKFLOW):
+    text = workflow.read_text(encoding="utf-8")
     section = text.split(marker, 1)[1]
     return textwrap.dedent(
         section.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0]
@@ -187,9 +187,11 @@ def test_publish_0495_protected_exception_round_trips_exact_source_run(
     ],
 )
 @pytest.mark.parametrize("recent_count", [1, 4])
+@pytest.mark.parametrize("opt_in_version", ["0.49.6", "0.50.0"])
 def test_publish_0496_guard_keeps_cooldown_cap_and_exact_owner(
-    tmp_path, monkeypatch, tag, actor, opt_in, accepted, recent_count
+    tmp_path, monkeypatch, tag, actor, opt_in, accepted, recent_count, opt_in_version
 ):
+    tag = "v" + opt_in_version if tag == "v0.49.6" else tag
     monkeypatch.chdir(tmp_path)
     now = datetime.now(timezone.utc)
     Path("release-train.json").write_text(
@@ -223,7 +225,8 @@ def test_publish_0496_guard_keeps_cooldown_cap_and_exact_owner(
         "CORE_0481_EXCEPTION": "false",
         "CORE_0482_EXCEPTION": "false",
         "CORE_0495_EXCEPTION": "false",
-        "CORE_0496_EXCEPTION": opt_in,
+        "CORE_0496_EXCEPTION": opt_in if opt_in_version == "0.49.6" else "false",
+        "CORE_0500_EXCEPTION": opt_in if opt_in_version == "0.50.0" else "false",
     }.items():
         monkeypatch.setenv(key, value)
     code = _snippet(
@@ -236,8 +239,9 @@ def test_publish_0496_guard_keeps_cooldown_cap_and_exact_owner(
             exec(compile(code, str(WORKFLOW), "exec"), {})
 
 
+@pytest.mark.parametrize("version", ["0.49.6", "0.50.0"])
 def test_publish_0496_exception_record_binds_request_and_candidate_sha(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, version
 ):
     monkeypatch.chdir(tmp_path)
     Path(".factory").mkdir()
@@ -247,7 +251,7 @@ def test_publish_0496_exception_record_binds_request_and_candidate_sha(
     )
     for key, value in {
         "RELEASE_CONTRACT_PATH": "contract.json",
-        "RELEASE_TAG": "v0.49.6",
+        "RELEASE_TAG": "v" + version,
         "GITHUB_ACTOR": "zrk222",
         "GITHUB_ACTIONS": "true",
         "GITHUB_RUN_ID": "12345",
@@ -255,7 +259,8 @@ def test_publish_0496_exception_record_binds_request_and_candidate_sha(
         "CORE_0481_EXCEPTION": "false",
         "CORE_0482_EXCEPTION": "false",
         "CORE_0495_EXCEPTION": "false",
-        "CORE_0496_EXCEPTION": "true",
+        "CORE_0496_EXCEPTION": "true" if version == "0.49.6" else "false",
+        "CORE_0500_EXCEPTION": "true" if version == "0.50.0" else "false",
     }.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "c" * 40)
@@ -263,22 +268,73 @@ def test_publish_0496_exception_record_binds_request_and_candidate_sha(
         "- name: Require sealed release candidate preflight before external publication"
     )
     exec(compile(code, str(WORKFLOW), "exec"), {})
-    path = Path(".factory/core-0496-cadence-exception.json")
+    path = Path(".factory/core-" + version.replace(".", "") + "-cadence-exception.json")
     value = json.loads(path.read_text(encoding="utf-8"))
     result = candidate._cadence_exception_payload(
         tmp_path,
         path,
-        {"version": "0.49.6", "commit": "c" * 40},
+        {"version": version, "commit": "c" * 40},
         "core",
-        "v0.49.6",
+        "v" + version,
         {"approved_by": "zrk222"},
     )
     assert result["monthly_cap_exception"] is True
-    assert result["one_time_version_opt_in"] == "0.49.6"
+    assert result["one_time_version_opt_in"] == version
     assert value["owner_request_record"]["request"] == "published now"
     assert value["owner_request_record"]["candidate_sha"] == "c" * 40
     assert value["source_commit"] == "c" * 40
     assert "signed_receipts fetch-ci" in WORKFLOW.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "workflow_name,channel,environment",
+    [
+        ("openvsx", "vscode", "openvsx"),
+        ("vscode-marketplace", "vscode", "vscode-marketplace"),
+        ("jetbrains-marketplace", "jetbrains", "jetbrains-marketplace"),
+    ],
+)
+def test_editor_136_dispatch_receipt_matches_runtime_policy(
+    tmp_path, monkeypatch, workflow_name, channel, environment
+):
+    workflow = WORKFLOW.with_name(workflow_name + ".yml")
+    marker = "- name: Require the sealed candidate preflight"
+    code = _snippet(marker, workflow)
+    monkeypatch.chdir(tmp_path)
+    Path(".factory").mkdir()
+    Path("contract.json").write_text(json.dumps({"approved_by": "zrk222"}))
+    Path("release-train.json").write_text(
+        json.dumps({"cadence": {"exceptions_enabled": False}})
+    )
+    tag = channel + "-v1.3.6"
+    for key, value in {
+        "EXCEPTION_VERSION": "1.3.6",
+        "EXCEPTION_REASON": "Exact owner-approved release",
+        "RELEASE_REF": tag,
+        "RELEASE_CONTRACT_PATH": "contract.json",
+        "GITHUB_ACTOR": "zrk222",
+        "GITHUB_ACTIONS": "true",
+        "GITHUB_RUN_ID": "12345",
+        "GITHUB_RUN_ATTEMPT": "2",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "d" * 40)
+    exec(compile(code, str(workflow), "exec"), {})
+    result = candidate._cadence_exception_payload(
+        tmp_path,
+        Path(".factory/release-cadence-exception.json"),
+        {
+            "commit": "d" * 40,
+            "platform_versions": {"vscode": "1.3.6", "intellij": "1.3.6"},
+        },
+        channel,
+        tag,
+        {"approved_by": "zrk222"},
+    )
+    payload = json.loads(Path(".factory/release-cadence-exception.json").read_text())
+    assert payload["environment"] == environment
+    assert result["one_time_version_opt_in"] == "1.3.6"
+    assert result["source_commit"] == "d" * 40
 
 
 @pytest.fixture
@@ -660,3 +716,59 @@ def test_recovery_checks_actual_bytes_and_isolated_tooling(
             receipt["installed_metadata_sha256"]
             == hashlib.sha256(installed.read_bytes()).hexdigest()
         )
+
+
+def test_build_provenance_creates_missing_editable_build_directory(
+    tmp_path, monkeypatch
+):
+    import runpy
+    import setuptools
+
+    monkeypatch.setattr(setuptools, "setup", lambda **kwargs: None)
+    hooks = runpy.run_path(str(Path(__file__).resolve().parents[1] / "setup.py"))
+    target = tmp_path / "editable-build" / "factoryline" / "_build_provenance.py"
+    assert not target.parent.exists()
+    for commit in ("a" * 40, None):
+        hooks["write_provenance"](target, commit)
+        assert runpy.run_path(str(target))["SOURCE_COMMIT"] == commit
+
+
+def test_vscode_136_preflight_shell_uses_actual_workspace_root(tmp_path):
+    import re
+    import shutil
+    import os
+
+    import yaml
+
+    workflow = WORKFLOW.with_name("vscode-marketplace.yml")
+    payload = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    steps = [step for job in payload["jobs"].values() for step in job.get("steps", [])]
+    step = next(
+        s for s in steps if s.get("name") == "Require the sealed candidate preflight"
+    )
+    assert step["working-directory"] == "${{ github.workspace }}"
+    branch = (
+        step["run"]
+        .split('elif [[ "$EXCEPTION_VERSION" == "1.3.6" ]]; then', 1)[1]
+        .split("elif", 1)[0]
+    )
+    command = next(line.strip() for line in branch.splitlines() if "node -p" in line)
+    assert re.fullmatch(r'test "\$\(node -p ".+"\)" = 1\.3\.6', command)
+    manifest = tmp_path / "editors" / "vscode" / "package.json"
+    manifest.parent.mkdir(parents=True)
+    bash = (
+        str(
+            Path(os.environ.get("ProgramFiles", "C:/Program Files"))
+            / "Git/bin/bash.exe"
+        )
+        if os.name == "nt"
+        else shutil.which("bash")
+    )
+    assert bash is not None
+    assert Path(bash).is_file()
+    for version, accepted in (("1.3.6", True), ("1.3.5", False)):
+        manifest.write_text(json.dumps({"version": version}), encoding="utf-8")
+        result = subprocess.run(
+            [bash, "-c", command], cwd=tmp_path, capture_output=True
+        )
+        assert (result.returncode == 0) is accepted

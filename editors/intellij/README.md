@@ -39,8 +39,30 @@ workspace against subsequent edits. See the [JetBrains VFS persistence guidance]
 
 ## Install
 
-JetBrains plugin 1.3.5 pairs with the separately installed Code Factory CLI
-0.49.7. VS Code and Open VSX share the same editor release version.
+JetBrains plugin 1.3.6 pairs with the separately installed Code Factory CLI
+0.50.0. VS Code and Open VSX share the same editor release version.
+
+### What's new in 1.3.6
+
+- Review source-bound claims and bounded Proof Agent evidence alongside your
+  change; verification binds an observation, not code correctness or release
+  readiness.
+- Use optional SARIF and pre-commit outputs, and inspect local mutation diffs
+  without changing them. The separately installed runtime can use external
+  analysis workers with 30 native rules across 12 languages when their tools are set up.
+- Receipt reads fail closed for stale, malformed, oversized, escaped, or
+  changing files. Junie remains optional; you control agent handoffs and edits.
+
+Current coverage adds Go/Java/C#/Ruby framework sources and sinks plus wider
+Ruby/Swift trust checks. New request rules are review-tier; the shipped variant
+has no fresh precision score. Round 7 below is the earlier ruleset.
+[Coverage evidence](../../docs/evidence/polyglot-coverage-round8.json).
+
+Historical Round 7 supported **38/40 decided default-tier alerts (95%; Wilson
+83.5–98.6%)**, with **12 additional unclear**; review tier **23/40 (57.5%)**,
+with 3 unclear. Advisory recall was **0/161**; six languages had insufficient
+precision samples. AI labels are not twelve-language accuracy or independent
+human validation. [Per-language results and limits](../../docs/evidence/polyglot-readiness-round7.json).
 
 1. Install the Code Factory CLI in the Python environment your JetBrains IDE uses.
 2. Install **FactoryLine AI Proof** from the [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33009-factoryline) and restart the IDE.

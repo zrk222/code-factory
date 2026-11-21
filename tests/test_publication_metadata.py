@@ -169,7 +169,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
     }
     assert (
         project["description"]
-        == "Audit AI-built code with six evidence lanes, intent-to-proof traces, agent workflow receipts, and human-owned release gates."
+        == "Local evidence for AI-built code: 12-language native security rules, SARIF review, signed claims and human-owned release decisions."
     )
     assert {
         "mvp",
@@ -648,6 +648,8 @@ def test_hosted_release_and_editor_versions_are_declared():
     )
 
     assert project["version"] == __version__
+    assert project["version"] == "0.50.0"
+    assert vscode["version"] == "1.3.6"
     assert "hosted" in project["optional-dependencies"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", vscode["version"])
     assert vscode_lock["version"] == vscode["version"]
@@ -677,9 +679,23 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert f'version = "{intellij_version}"' in gradle
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert (
-        f"Code Factory core {__version__} · VS Code and Open VSX {vscode['version']}"
-        f" · JetBrains {intellij_version}" in readme
+        f"{__version__} release line · VS Code / Open VSX / JetBrains / Devin plugin {vscode['version']}"
+        in readme
     )
+    normalized = " ".join(readme.split())
+    assert "12 languages, one review workflow" in normalized
+    assert "worker setup and coverage gaps remain explicit" in normalized
+    assert "38/40 decided alerts (95%; Wilson 83.5–98.6%)" in normalized
+    assert "12 additional unclear" in normalized
+    assert "23/40 (57.5%)" in normalized and "0/161" in normalized
+    assert "six languages had fewer than five decided alerts" in normalized
+    assert "not twelve-language accuracy or independent human validation" in normalized
+    editor_copy = " ".join(vscode_readme.split())
+    assert (
+        "12 languages** when the required workers and toolchains are configured"
+        in editor_copy
+    )
+    assert "this extension does not bundle analyzers" in editor_copy
     assert f"factoryline-intellij-{intellij_version}.zip" in release_channels
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
@@ -986,11 +1002,21 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         == "https://github.com/zrk222/code-factory"
     )
     assert metadata["version"] == __version__
-    assert metadata["publication_date"] == "2026-11-17"
+    assert metadata["publication_date"] == "2026-11-21"
     assert "read-only Agent Proof Bridge" in metadata["description"]
     assert "Proof Worklog" in metadata["description"]
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]
     assert "30 policy and release-risk checks" in metadata["description"]
+    assert "12 declared languages" in metadata["description"]
+    assert "38/40 decided default-tier alerts" in metadata["description"]
+    assert "12 additional unclear" in metadata["description"]
+    assert "23/40 (57.5%)" in metadata["description"]
+    assert "Advisory recall was 0/161" in metadata["description"]
+    assert "Six languages had insufficient precision samples" in metadata["description"]
+    assert (
+        "do not establish twelve-language accuracy or independent human validation"
+        in metadata["description"]
+    )
     assert "named human control" in metadata["description"]
     assert "Expertise.ai" not in metadata["description"]
     assert "conceptual visual walkthrough" not in metadata["description"]

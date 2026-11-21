@@ -1,0 +1,526 @@
+{
+ "schema": "factory.polyglot-readiness.v1",
+ "ruleset_sha256": "547ebcbc6b67471010e35052c57dd0b743e1a30d05620d9cd816bd187a73ecc8",
+ "precision_round7": {
+  "registration_sha256": "54208083e31538e80a7e7c3ce9825cdbfb7c50cfab5c9742af9c65ae0592a2ff",
+  "labels_scored_sha256": "a48dcd442c67ad24804934faec31121a2323ade3565d59b5ec340b36cc8a3ba8",
+  "design": "Fresh repositories unseen in rounds 1-6; 14 alerts per declared language at every tier, no shortfall fill; two independent review contexts, consensus labels; Wilson 95% on decided alerts.",
+  "raw_agreement": 0.968,
+  "overall": {
+   "TP": 61,
+   "FP": 19,
+   "UNCLEAR": 15,
+   "decided": 80,
+   "precision": 0.7625,
+   "wilson95_decided": [
+    0.6585922106615943,
+    0.8423532713322538
+   ]
+  },
+  "by_tier": {
+   "default": {
+    "TP": 38,
+    "FP": 2,
+    "UNCLEAR": 12,
+    "decided": 40,
+    "precision": 0.95,
+    "wilson95_decided": [
+     0.8349612263085904,
+     0.9861793326138516
+    ]
+   },
+   "review": {
+    "TP": 23,
+    "FP": 17,
+    "UNCLEAR": 3,
+    "decided": 40,
+    "precision": 0.575,
+    "wilson95_decided": [
+     0.4219506854199107,
+     0.7149060744004961
+    ]
+   }
+  },
+  "by_language": {
+   "c": {
+    "TP": 7,
+    "FP": 1,
+    "UNCLEAR": 6,
+    "decided": 8,
+    "precision": 0.875,
+    "wilson95_decided": [
+     0.5291118177871466,
+     0.9775825085499433
+    ],
+    "alert_pool": 160,
+    "evidence": "measured"
+   },
+   "cpp": {
+    "TP": 8,
+    "FP": 0,
+    "UNCLEAR": 6,
+    "decided": 8,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.6755924351161198,
+     1.0
+    ],
+    "alert_pool": 759,
+    "evidence": "measured"
+   },
+   "csharp": {
+    "TP": 4,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 4,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.5101091635454027,
+     1.0
+    ],
+    "alert_pool": 31,
+    "evidence": "insufficient"
+   },
+   "go": {
+    "TP": 3,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 3,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.4385029682449545,
+     1.0
+    ],
+    "alert_pool": 5,
+    "evidence": "insufficient"
+   },
+   "java": {
+    "TP": 1,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 1,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.20654931437723742,
+     1.0
+    ],
+    "alert_pool": 1,
+    "evidence": "insufficient"
+   },
+   "javascript": {
+    "TP": 7,
+    "FP": 6,
+    "UNCLEAR": 1,
+    "decided": 13,
+    "precision": 0.5384615384615384,
+    "wilson95_decided": [
+     0.29143795714506004,
+     0.7679393219046168
+    ],
+    "alert_pool": 96,
+    "evidence": "measured"
+   },
+   "typescript": {
+    "TP": 6,
+    "FP": 8,
+    "UNCLEAR": 0,
+    "decided": 14,
+    "precision": 0.42857142857142855,
+    "wilson95_decided": [
+     0.2138079890447412,
+     0.6740935542034925
+    ],
+    "alert_pool": 43,
+    "evidence": "measured"
+   },
+   "php": {
+    "TP": 13,
+    "FP": 1,
+    "UNCLEAR": 0,
+    "decided": 14,
+    "precision": 0.9285714285714286,
+    "wilson95_decided": [
+     0.6853129557584889,
+     0.9872777847521091
+    ],
+    "alert_pool": 1175,
+    "evidence": "measured"
+   },
+   "python": {
+    "TP": 12,
+    "FP": 1,
+    "UNCLEAR": 1,
+    "decided": 13,
+    "precision": 0.9230769230769231,
+    "wilson95_decided": [
+     0.6668604907890041,
+     0.9862895787574434
+    ],
+    "alert_pool": 228,
+    "evidence": "measured"
+   },
+   "ruby": {
+    "alert_pool": 0,
+    "evidence": "no alerts found"
+   },
+   "rust": {
+    "TP": 0,
+    "FP": 2,
+    "UNCLEAR": 1,
+    "decided": 2,
+    "precision": 0.0,
+    "wilson95_decided": [
+     0.0,
+     0.6576197724933469
+    ],
+    "alert_pool": 3,
+    "evidence": "insufficient"
+   },
+   "swift": {
+    "alert_pool": 0,
+    "evidence": "no alerts found"
+   }
+  },
+  "by_language_tier": {
+   "c/default": {
+    "TP": 7,
+    "FP": 1,
+    "UNCLEAR": 6,
+    "decided": 8,
+    "precision": 0.875,
+    "wilson95_decided": [
+     0.5291118177871466,
+     0.9775825085499433
+    ]
+   },
+   "cpp/default": {
+    "TP": 8,
+    "FP": 0,
+    "UNCLEAR": 6,
+    "decided": 8,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.6755924351161198,
+     1.0
+    ]
+   },
+   "csharp/default": {
+    "TP": 4,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 4,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.5101091635454027,
+     1.0
+    ]
+   },
+   "go/default": {
+    "TP": 1,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 1,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.20654931437723742,
+     1.0
+    ]
+   },
+   "go/review": {
+    "TP": 2,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 2,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.3423802275066531,
+     1.0
+    ]
+   },
+   "java/default": {
+    "TP": 1,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 1,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.20654931437723742,
+     1.0
+    ]
+   },
+   "javascript/review": {
+    "TP": 7,
+    "FP": 6,
+    "UNCLEAR": 1,
+    "decided": 13,
+    "precision": 0.5384615384615384,
+    "wilson95_decided": [
+     0.29143795714506004,
+     0.7679393219046168
+    ]
+   },
+   "php/default": {
+    "TP": 10,
+    "FP": 1,
+    "UNCLEAR": 0,
+    "decided": 11,
+    "precision": 0.9090909090909091,
+    "wilson95_decided": [
+     0.6226415635484044,
+     0.9837678271141151
+    ]
+   },
+   "php/review": {
+    "TP": 3,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 3,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.4385029682449545,
+     1.0
+    ]
+   },
+   "python/default": {
+    "TP": 7,
+    "FP": 0,
+    "UNCLEAR": 0,
+    "decided": 7,
+    "precision": 1.0,
+    "wilson95_decided": [
+     0.6456695649333126,
+     1.0
+    ]
+   },
+   "python/review": {
+    "TP": 5,
+    "FP": 1,
+    "UNCLEAR": 1,
+    "decided": 6,
+    "precision": 0.8333333333333334,
+    "wilson95_decided": [
+     0.4364971778135299,
+     0.9699466302516934
+    ]
+   },
+   "rust/review": {
+    "TP": 0,
+    "FP": 2,
+    "UNCLEAR": 1,
+    "decided": 2,
+    "precision": 0.0,
+    "wilson95_decided": [
+     0.0,
+     0.6576197724933469
+    ]
+   },
+   "typescript/review": {
+    "TP": 6,
+    "FP": 8,
+    "UNCLEAR": 0,
+    "decided": 14,
+    "precision": 0.42857142857142855,
+    "wilson95_decided": [
+     0.2138079890447412,
+     0.6740935542034925
+    ]
+   }
+  }
+ },
+ "recall": {
+  "registration_sha256": "3d368b11f8d8ccbd36bef37642a2045dfa0d174d80edcbd1c33d0700a51fff41",
+  "advisory_recall": {
+   "Go": {
+    "eligible": 154,
+    "attempted": 27,
+    "scored": 25,
+    "unscorable": 2,
+    "hunk_hit_all": 0,
+    "hunk_hit_default": 0,
+    "file_hit_all": 0,
+    "file_hit_default": 0,
+    "wilson95_hunk_all": [
+     1.2029374011637166e-17,
+     0.1331922509390485
+    ]
+   },
+   "Maven": {
+    "eligible": 126,
+    "attempted": 32,
+    "scored": 25,
+    "unscorable": 7,
+    "hunk_hit_all": 0,
+    "hunk_hit_default": 0,
+    "file_hit_all": 0,
+    "file_hit_default": 0,
+    "wilson95_hunk_all": [
+     1.2029374011637166e-17,
+     0.1331922509390485
+    ]
+   },
+   "NuGet": {
+    "eligible": 11,
+    "attempted": 11,
+    "scored": 9,
+    "unscorable": 2,
+    "hunk_hit_all": 0,
+    "hunk_hit_default": 0,
+    "file_hit_all": 0,
+    "file_hit_default": 0,
+    "wilson95_hunk_all": [
+     0,
+     0.2991450484195441
+    ]
+   },
+   "Packagist": {
+    "eligible": 422,
+    "attempted": 27,
+    "scored": 25,
+    "unscorable": 2,
+    "hunk_hit_all": 0,
+    "hunk_hit_default": 0,
+    "file_hit_all": 0,
+    "file_hit_default": 0,
+    "wilson95_hunk_all": [
+     1.2029374011637166e-17,
+     0.1331922509390485
+    ]
+   },
+   "PyPI": {
+    "eligible": 675,
+    "attempted": 27,
+    "scored": 25,
+    "unscorable": 2,
+    "hunk_hit_all": 0,
+    "hunk_hit_default": 0,
+    "file_hit_all": 0,
+    "file_hit_default": 0,
+    "wilson95_hunk_all": [
+     1.2029374011637166e-17,
+     0.1331922509390485
+    ]
+   },
+   "RubyGems": {
+    "eligible": 39,
+    "attempted": 26,
+    "scored": 25,
+    "unscorable": 1,
+    "hunk_hit_all": 0,
+    "hunk_hit_default": 0,
+    "file_hit_all": 0,
+    "file_hit_default": 0,
+    "wilson95_hunk_all": [
+     1.2029374011637166e-17,
+     0.1331922509390485
+    ]
+   },
+   "crates.io": {
+    "eligible": 2,
+    "attempted": 2,
+    "scored": 2,
+    "unscorable": 0,
+    "hunk_hit_all": 0,
+    "hunk_hit_default": 0,
+    "file_hit_all": 0,
+    "file_hit_default": 0,
+    "wilson95_hunk_all": [
+     0,
+     0.6576197724933469
+    ]
+   },
+   "npm": {
+    "eligible": 1034,
+    "attempted": 27,
+    "scored": 25,
+    "unscorable": 2,
+    "hunk_hit_all": 0,
+    "hunk_hit_default": 0,
+    "file_hit_all": 0,
+    "file_hit_default": 0,
+    "wilson95_hunk_all": [
+     1.2029374011637166e-17,
+     0.1331922509390485
+    ]
+   },
+   "pooled": {
+    "n": 161,
+    "hunk_all": 0,
+    "hunk_default": 0,
+    "file_all": 0,
+    "file_default": 0,
+    "wilson95_hunk_all": [
+     0,
+     0.023303960351823035
+    ]
+   },
+   "design": "GitHub-reviewed advisories in rule-scope CWEs with a GitHub fix commit; pre-fix changed files scanned; hit = class-matching finding in a -U5 hunk (file hit: anywhere in a changed file). 25 per ecosystem in salted order (all of NuGet and crates.io)."
+  },
+  "api_occurrence_recall": {
+   "c": {
+    "hits": 17,
+    "n": 25,
+    "recall": 0.68,
+    "wilson95": [
+     0.4841026927310224,
+     0.8279480969309202
+    ]
+   },
+   "cpp": {
+    "hits": 8,
+    "n": 25,
+    "recall": 0.32,
+    "wilson95": [
+     0.1720519030690798,
+     0.5158973072689776
+    ]
+   },
+   "go": {
+    "hits": 7,
+    "n": 25,
+    "recall": 0.28,
+    "wilson95": [
+     0.14283853850956563,
+     0.47576605190361576
+    ]
+   },
+   "python": {
+    "hits": 4,
+    "n": 25,
+    "recall": 0.16,
+    "wilson95": [
+     0.0640345145667644,
+     0.3465362160717886
+    ]
+   },
+   "ruby": {
+    "hits": 0,
+    "n": 25,
+    "recall": 0.0,
+    "wilson95": [
+     1.2029374011637166e-17,
+     0.1331922509390485
+    ]
+   },
+   "rust": {
+    "hits": 3,
+    "n": 25,
+    "recall": 0.12,
+    "wilson95": [
+     0.04166817150440358,
+     0.29955793920927326
+    ]
+   },
+   "swift": {
+    "hits": 0,
+    "n": 25,
+    "recall": 0.0,
+    "wilson95": [
+     1.2029374011637166e-17,
+     0.1331922509390485
+    ]
+   },
+   "design": "25 fresh files per language containing the dangerous API (registered regex, first non-comment occurrence); hit = the language's rule reports the line (+/-2).",
+   "adjudication_note": "Post hoc: every C/C++ miss was a user-defined gets function or method, a declaration, a comment or invalid code; no one-argument libc gets() call was missed (c 17/17, cpp 8/8 libc calls)."
+  }
+ }
+}

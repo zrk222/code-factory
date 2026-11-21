@@ -28,8 +28,17 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
     assert "does not approve its result" in page
     assert "not code correctness or release readiness" in page
     assert "not a hosted repository scanner" in page
-    assert "The security scanner inspects Python ASTs" in page
-    assert "Core 0.50.0 and plugins 1.3.6 are publication targets after merge" in page
+    assert "The quick security scanner inspects Python ASTs" in page
+    assert "Core 0.50.0 and plugins 1.3.6 are the prepared release line" in page
+    assert "12-language native security" in page
+    assert "Six languages had insufficient precision samples" in page
+    assert (
+        "AI labels are not twelve-language accuracy or independent human validation"
+        in page
+    )
+    assert "38/40 decided default-tier alerts (95%; Wilson 83.5–98.6%)" in page
+    assert "12 additional unclear" in page
+    assert "23/40 (57.5%), plus 3 unclear" in page and "Advisory recall: 0/161" in page
     assert f"Code Factory {__version__} · Static workflow overview" in page
     assert "Provider availability tracked separately" in page
     assert all(name in page for name in ("FactoryLine", "ForgeLine", "SpecLine"))
@@ -131,14 +140,14 @@ def test_huggingface_metadata_inspection_rejects_the_remote_api_limit_locally(
     valid_result = inspect(SPACE / "README.md")
     assert valid_result["ok"] is True
     assert valid_result["marker"] == "HUGGINGFACE_SPACE_METADATA_VALID"
-    assert valid_result["short_description_length"] == 49
+    assert valid_result["short_description_length"] == 45
 
     invalid_readme = tmp_path / "README.md"
     invalid_readme.write_text(
         (SPACE / "README.md")
         .read_text(encoding="utf-8")
         .replace(
-            "short_description: Audit code, review evidence, and resolve defects.",
+            "short_description: Polyglot code evidence for AI-assisted teams.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",
@@ -167,7 +176,7 @@ def test_huggingface_metadata_preflight_cli_reports_the_local_result(
         (SPACE / "README.md")
         .read_text(encoding="utf-8")
         .replace(
-            "short_description: Audit code, review evidence, and resolve defects.",
+            "short_description: Polyglot code evidence for AI-assisted teams.",
             f"short_description: {'x' * 61}",
         ),
         encoding="utf-8",

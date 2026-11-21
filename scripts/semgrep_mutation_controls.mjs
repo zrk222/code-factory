@@ -108,14 +108,14 @@ export const javascriptControlEndpoints = [
 export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.c.unsafe-gets': 2,
   'opt.factory.rules.csharp.disabled-certificate-verification': 1,
-  'opt.factory.rules.csharp.request-command-injection': 2,
-  'opt.factory.rules.csharp.request-sql-injection': 2,
+  'opt.factory.rules.csharp.request-command-injection': 3,
+  'opt.factory.rules.csharp.request-sql-injection': 3,
   'opt.factory.rules.go.disabled-tls-verification': 1,
-  'opt.factory.rules.go.request-command-injection': 2,
-  'opt.factory.rules.go.request-sql-injection': 2,
+  'opt.factory.rules.go.request-command-injection': 3,
+  'opt.factory.rules.go.request-sql-injection': 4,
   'opt.factory.rules.java.disabled-hostname-verification': 1,
-  'opt.factory.rules.java.request-command-injection': 2,
-  'opt.factory.rules.java.request-sql-injection': 2,
+  'opt.factory.rules.java.request-command-injection': 3,
+  'opt.factory.rules.java.request-sql-injection': 3,
   'opt.factory.rules.javascript.request-command-injection': 4,
   'opt.factory.rules.javascript.request-html-injection': 12,
   'opt.factory.rules.javascript.request-path-traversal': 13,
@@ -131,11 +131,11 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.request-sql-injection': 1,
   'opt.factory.rules.python.unsafe-deserialization': 2,
   'opt.factory.rules.python.unsafe-deserialization-unscoped': 3,
-  'opt.factory.rules.ruby.disabled-tls-verification': 1,
-  'opt.factory.rules.ruby.request-command-injection': 2,
-  'opt.factory.rules.ruby.request-sql-injection': 2,
+  'opt.factory.rules.ruby.disabled-tls-verification': 2,
+  'opt.factory.rules.ruby.request-command-injection': 3,
+  'opt.factory.rules.ruby.request-sql-injection': 4,
   'opt.factory.rules.rust.reqwest-disabled-tls-verification': 1,
-  'opt.factory.rules.swift.trust-exceptions': 1,
+  'opt.factory.rules.swift.trust-exceptions': 3,
 });
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
@@ -166,9 +166,9 @@ export function verifyJavascriptControlMatrix(manifest) {
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
   const observedRuleIds = [...ruleIds].sort();
-  if (manifest.length !== 121 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30 ||
+  if (manifest.length !== 134 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30 ||
       JSON.stringify(observedRuleIds) !== JSON.stringify(expectedRuleIds) ||
-      Object.values(fixedReviewedFindingCounts).reduce((sum, count) => sum + count, 0) !== 121) {
+      Object.values(fixedReviewedFindingCounts).reduce((sum, count) => sum + count, 0) !== 134) {
     throw new Error('Registered rule/finding control matrix differs');
   }
   const observedCounts = new Map(ruleIds.map(rule => [rule, 0]));
@@ -186,9 +186,10 @@ export function verifyFlowControlMatrix(manifest, safeCounts, ruleIds) {
   for (const language of ['go', 'java', 'csharp', 'ruby']) {
     for (const family of ['command', 'sql']) {
       const rule = `opt.factory.rules.${language}.request-${family}-injection`;
+      const required = family === 'sql' && ['go', 'ruby'].includes(language) ? 4 : 3;
       if (!ruleIds.includes(rule) || manifest.filter(item => item.rule === rule &&
-          Number.isInteger(item.source_line)).length !== 2 || safeCounts[rule] !== 3) {
-        throw new Error('Missing direct, alias, safe or provider-mismatch flow control');
+          Number.isInteger(item.source_line)).length !== required || !(safeCounts[rule] >= 3)) {
+        throw new Error('Missing direct, alias, framework, safe or provider-mismatch flow control');
       }
     }
   }

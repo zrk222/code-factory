@@ -28,6 +28,7 @@ def source_commit() -> str | None:
 
 
 def write_provenance(path: Path, commit: str | None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         '"""Generated build provenance. Do not edit.\n\n'
         "This file is rewritten while creating source distributions from a Git checkout.\n"

@@ -580,6 +580,10 @@ def test_disabled_release_policy_rejects_otherwise_valid_exception(
 @pytest.mark.parametrize(
     ("channel", "version", "tag", "environment"),
     [
+        ("core", "0.50.0", "v0.50.0", "pypi"),
+        ("vscode", "1.3.6", "vscode-v1.3.6", "openvsx"),
+        ("vscode", "1.3.6", "vscode-v1.3.6", "vscode-marketplace"),
+        ("jetbrains", "1.3.6", "jetbrains-v1.3.6", "jetbrains-marketplace"),
         ("core", "0.48.2", "v0.48.2", "pypi"),
         ("core", "0.49.5", "v0.49.5", "pypi"),
         ("core", "0.49.6", "v0.49.6", "pypi"),
@@ -620,7 +624,7 @@ def test_exact_current_version_opt_in_allows_disabled_policy_monthly_cap(
         "monthly_cap_exception": True,
         "one_time_version_opt_in": version,
     }
-    if version in {"0.49.6", "1.3.3", "1.3.4"}:
+    if version in {"0.49.6", "1.3.3", "1.3.4", "0.50.0", "1.3.6"}:
         value["owner_request_record"] = {
             "request": "published now",
             "recorded_at": issued.isoformat(),
@@ -631,6 +635,12 @@ def test_exact_current_version_opt_in_allows_disabled_policy_monthly_cap(
             ],
             "candidate_sha": "a" * 40,
         }
+        if version in {"0.50.0", "1.3.6"}:
+            value["owner_request_record"]["scope"] = [
+                "core 0.50.0",
+                "VS Code/Open VSX 1.3.6",
+                "JetBrains 1.3.6",
+            ]
     path.write_text(json.dumps(value), encoding="utf-8")
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GITHUB_ACTOR", "zrk222")
@@ -685,7 +695,7 @@ def test_exact_current_version_opt_in_allows_disabled_policy_monthly_cap(
             )
     path.write_text(json.dumps(value), encoding="utf-8")
 
-    if version in {"0.49.6", "1.3.3", "1.3.4"}:
+    if version in {"0.49.6", "1.3.3", "1.3.4", "0.50.0", "1.3.6"}:
         for request_record in [
             None,
             {**value["owner_request_record"], "request": "unrecorded"},

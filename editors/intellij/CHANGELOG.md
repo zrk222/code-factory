@@ -1,5 +1,21 @@
 # FactoryLine for IntelliJ Changelog
 
+## 1.3.6 - 2026-11-21 (candidate; publication gated)
+
+- Include fresh Round 7 per-language precision and recall evidence, distinguishing
+  default/review tiers, unclear labels and insufficient samples. No blanket
+  twelve-language accuracy or vulnerability-recall claim.
+- Pair the JetBrains and VS Code adapters with Code Factory core 0.50.0. The
+  local runtime can route external analysis across twelve language families
+  where the required worker and toolchain are configured; analyzers are not
+  bundled in the plugin.
+- Add source-bound claim verification and a bounded Proof Agent review path,
+  with optional SARIF/pre-commit outputs and read-only mutation-diff inspection.
+  These receipts support review; they do not establish code correctness or
+  release readiness.
+- Keep Junie optional and human-controlled; reject stale, malformed, oversized,
+  escaped, or changing IDE receipt files.
+
 ## 1.3.5 - 2026-11-17 (candidate; publication gated)
 
 - Align the JetBrains plugin version with VS Code and Open VSX. This release
