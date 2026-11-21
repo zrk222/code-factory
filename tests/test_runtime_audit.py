@@ -1345,6 +1345,7 @@ def _writer(root: Path, monkeypatch, commit: str, outcome: str):
 
 def test_ci_runtime_coverage_keeps_default_data_file_in_ignored_reports_dir() -> None:
     import yaml
+    from factoryline.runtime_coverage import CI_COVERAGE_COMMAND
 
     workflow_path = Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml"
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
@@ -1355,6 +1356,11 @@ def test_ci_runtime_coverage_keeps_default_data_file_in_ignored_reports_dir() ->
     )
 
     assert runtime_step["env"]["COVERAGE_FILE"] == ".factory/test-reports/.coverage"
+    assert " ".join(runtime_step["run"].split()) == CI_COVERAGE_COMMAND
+    assert " -n 3 " in CI_COVERAGE_COMMAND
+    assert "--cov=factoryline --cov-branch" in CI_COVERAGE_COMMAND
+    assert "--factory-ci-shard" not in CI_COVERAGE_COMMAND
+    assert "&& 30 ||" in workflow["jobs"]["test"]["timeout-minutes"]
 
 
 def test_ci_receipt_binds_clean_commit_exact_command_and_required_artifacts(
