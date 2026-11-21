@@ -23,31 +23,29 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
         in readme
     )
     assert "CI verification is still required" in page
-    assert "published Code Factory 0.48.1 remains unchanged" not in readme
-    assert "published Code Factory 0.48.2 remains unchanged" not in page
-    assert f"<strong>Code Factory {__version__}</strong>" in page
-    assert f"Code Factory {__version__} is published" not in page
+    assert "human review remains necessary" in page
+    assert "not a live repository scan" in page
+    assert "not a live repository scan, a tenant-isolation proof" in page
+    assert "an accuracy benchmark, or an independent review" in page
+    assert "Not a customer case or independent certification." in page
+    assert "not a release certification" in page
+    assert "does not approve its result" in page
+    assert "not code correctness or release readiness" in page
+    assert "not a hosted repository scanner" in page
+    assert "The security scanner inspects Python ASTs" in page
+    assert "Core 0.50.0 and plugins 1.3.6 are publication targets after merge" in page
+    assert f"Code Factory {__version__} · Static workflow overview" in page
     assert "Provider availability tracked separately" in page
-    assert "retained all 30 original true positives" in page
-    assert "returned 37 of 38 cases" in page
-    assert "Case 005 timed out" in page
-    for surface in (page, readme):
-        assert "88.24% decided actionable precision" in surface
-        assert "83.33% among 36 decided alerts" in surface
-        assert "JetBrains 1.3.4" in surface
-        assert "The complete factory" in surface
-        assert all(name in surface for name in ("FactoryLine", "ForgeLine", "SpecLine"))
-        assert "415 targeted tests passed" not in surface
-        assert "1.1.4 candidate" not in surface
-    assert f"https://pypi.org/project/factoryline-code-factory/{__version__}/" in page
-    assert f"https://github.com/zrk222/code-factory/releases/tag/v{__version__}" in page
-    assert "Code Factory 0.48.1 candidate" not in page
+    assert all(name in page for name in ("FactoryLine", "ForgeLine", "SpecLine"))
+    assert "88.24% decided actionable precision" not in page
+    assert "83.33% among 36 decided alerts" not in page
     assert "6 true positives" not in page + readme
     assert "2 true negatives" not in page + readme
     assert "false positives or false negatives" not in page + readme
-    assert "not authenticate tenants or prove runtime isolation" in page
-    assert "not subsequent detection fixes" in readme
     assert "latest local strict ForgeLine report" not in page + readme
+    assert "not subsequent detection fixes" in readme
+    assert f"https://pypi.org/project/factoryline-code-factory/{__version__}/" in page
+    assert f"https://github.com/zrk222/code-factory/releases/tag/v{__version__}" in page
 
 
 def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> None:
@@ -68,52 +66,30 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
         f'href="https://github.com/zrk222/code-factory/releases/tag/v{__version__}"'
         in page
     )
-    assert "Specialty AI audit evidence is available" in page
+    assert "Specialty AI audit evidence is available" in readme
     assert (
         "https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354"
-        in page
+        in readme
     )
-    assert "Gitleaks input accounting" in page
+    assert "Gitleaks per-file accounting remains incomplete" in readme
     assert "doi.org/10.5281/zenodo.21381405" in page
-    assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
-    assert "Audit code.<br>Review evidence.<br>Resolve defects." in page
-    assert "Your agent has finished a change. Your review comes next." in page
-    assert "This static preview shows the workflow" in page
-    assert "it does not scan or upload your repository" in page
-    assert "Explore the audit workflow" in page
+    assert 'id="story-video"' in page
+    assert 'aria-label="From requirements to WMM: Code Factory walkthrough"' in page
+    assert 'aria-labelledby="seeded-demo-title"' in page
+    assert 'poster="cf-story-v5-poster.jpg"' in page
+    assert 'src="cf-story-v5-narrated.mp4"' in page
+    assert (SPACE / "cf-story-v5-poster.jpg").is_file()
+    assert (SPACE / "cf-story-v5-narrated.mp4").is_file()
+    assert "57-second narrated walkthrough" in page
+    assert "Not a customer case or independent certification." in page
+    assert "not a hosted repository scanner" in page
+    assert "Code Factory does not turn an agent's verdict into permission to merge, deploy or release." in page
+    assert "These are different handoff paths, not a claim of universal integration or partnership." in page
+    assert "No native Blitzy or Mastra integration or live compatibility test is claimed here." in page
     assert (
         "First Proof is one starter example within the larger audit system." in readme
     )
-    assert "Run a safe negative-control demonstration, receive a local receipt" in page
-    assert "Read or star on GitHub" in page
-    assert (
-        "thumbnail: https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/github-social-preview-1280x640.png"
-        in readme
-    )
-    assert "developer-tools" in readme
-    assert "ai-agents" in readme
-    assert "devops" in readme
-    assert "design-review" in readme
-    assert "ui-quality" in readme
-    assert "model-context-protocol" in readme
-    assert "cursor" in readme
-    assert "opencode" in readme
-    assert "Cursor or OpenCode" in readme
-    assert "Observed Marketplace downloads: 46" not in page
-    assert "Unique installs: not exposed by the listing" in page
-    assert 'id="first-run"' in page
-    assert "Run your first local proof" in page
-    assert "See actual Factory Studio" in page
-    assert "Explore FactoryLine for JetBrains" in page
-    assert "JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md" in page
-    assert "Local by default" in page
-    assert "No source upload" in page
-    assert "Human decides what may be applied" in page
-    assert "Unified Graph Ops" in page
-    assert "factory graph ops --root . --json" in page
-    assert "PRD Grill" in readme
-    assert "factory prd grill PRD.md --root . --mode quick" in page
     # These are historical captures, separate from the current release links above.
     capture_release = "0.49.6"
     for name in (
@@ -122,34 +98,9 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
         "graph-ops-findings-0496.png",
         "graph-ops-finding-detail-0496.png",
     ):
-        assert f"/releases/download/v{capture_release}/{name}" in page
         assert f"/releases/download/v{capture_release}/{name}" in readme
-    assert "graph-ops-dashboard-current.png" not in page
-    assert "graph-ops-audit-telemetry-current.png" not in page
-    assert "factoryline-logo-480.png" in page
-    assert "code-factory-quickstart-v0171.mp4" not in page
-    assert "how-it-works/" not in page
-    assert "New in 0." not in page
-    assert "pip install factoryline-code-factory==0.31.0" not in page
-    assert "prefers-reduced-motion" in page
     assert "Skip to product proof" in page
     assert 'class="brand" href="#main"' in page
-    assert "Use AI review suggestions and deterministic proof on the same PR." in page
-    assert "CodeRabbit or another reviewer" in page
-    assert "GitHub Proof Review" in readme
-    assert "LangGraph Assurance Bridge" in readme
-    assert "factory langgraph replay-verify" in page
-    assert "Prestige Design Review" in readme
-    assert "Design is part of the review" in page
-    assert "See the design review lane" in page
-    assert "Supervised proof of survival" in page
-    assert "Gauntlet" in page
-    assert "Survival Card" in page
-    assert "Journey proof · audited healing" in page
-    assert "Prove the real journey. Audit the agent that repairs it." in page
-    assert "factory journey heal-verify" in page
-    assert "positive proof passes" in page
-    assert "negative control fails" in page
 
     external_anchors = re.findall(r'<a\b[^>]*href="https://[^>]+>', page)
     assert external_anchors
