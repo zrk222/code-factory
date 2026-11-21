@@ -4600,8 +4600,12 @@ def _security_store_request_alias_bindings(memo, key, alias_items, resolved):
 
     if key in memo["values"]:
         return
+    if len(memo["values"]) >= request_contracts._SECURITY_REQUEST_ALIAS_MAX_ENTRIES:
+        return
     value = dict(resolved)
     pair_count = len(alias_items) + len(value)
+    if memo["pairs"] + pair_count > request_contracts._SECURITY_REQUEST_ALIAS_MAX_PAIRS:
+        return
     byte_count = sum(
         len(str(k).encode("utf-8")) + len(str(v).encode("utf-8"))
         for k, v in alias_items
@@ -4610,10 +4614,6 @@ def _security_store_request_alias_bindings(memo, key, alias_items, resolved):
         len(str(k).encode("utf-8")) + len(str(v).encode("utf-8"))
         for k, v in value.items()
     )
-    if len(memo["values"]) >= request_contracts._SECURITY_REQUEST_ALIAS_MAX_ENTRIES:
-        return
-    if memo["pairs"] + pair_count > request_contracts._SECURITY_REQUEST_ALIAS_MAX_PAIRS:
-        return
     if memo["bytes"] + byte_count > request_contracts._SECURITY_REQUEST_ALIAS_MAX_BYTES:
         return
     memo["values"][key] = value

@@ -1286,6 +1286,29 @@ def test_request_alias_memo_copies_results_tracks_alias_mutation_and_bounds(
             intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
 
 
+@pytest.mark.parametrize(
+    "limit",
+    ["_SECURITY_REQUEST_ALIAS_MAX_ENTRIES", "_SECURITY_REQUEST_ALIAS_MAX_PAIRS"],
+)
+def test_exhausted_request_alias_budget_skips_string_encoding(monkeypatch, limit):
+    from factoryline import semantic_credential_sensor as sensor
+
+    encodings = []
+
+    def counted_string(value):
+        encodings.append(value)
+        return str(value)
+
+    monkeypatch.setattr(sensor, "str", counted_string, raising=False)
+    monkeypatch.setattr(intent_quality_module, limit, 0)
+    memo = intent_quality_module._new_security_request_alias_memo(ast.parse("pass"))
+    sensor._security_store_request_alias_bindings(
+        memo, ("new",), (("client", "requests"),), {"client": "requests"}
+    )
+    assert encodings == []
+    assert memo["values"] == {} and memo["pairs"] == memo["bytes"] == 0
+
+
 def test_request_alias_memo_is_tree_scoped_and_exception_safe(monkeypatch):
     from factoryline import review_integrity
 
