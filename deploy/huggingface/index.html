@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="A local-first code audit system connecting requirements, architecture, security checks, behavioral evidence, specialty AI review, and actionable repairs.">
-  <title>Code Factory — Audit code. Review evidence. Resolve defects.</title>
+  <title>Code Factory | From intent to a product you can inspect</title>
   <style>
     :root {
       --ink: #171610;
@@ -33,8 +33,8 @@
     }
     a { color: inherit; }
     a:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
-    .skip-link { position: fixed; left: 16px; top: -80px; z-index: 20; padding: .9rem 1.2rem; border-radius: 12px; background: var(--ink); color: white; }
-    .skip-link:focus { top: 16px; }
+    .skip-link { position: fixed; left: 16px; top: 16px; transform:translateY(-200%); visibility:hidden; z-index: 20; padding: .9rem 1.2rem; border-radius: 12px; background: var(--ink); color: white; }
+    .skip-link:focus { top:16px; transform:none; visibility:visible; }
     .shell { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
     header { display: flex; align-items: center; justify-content: space-between; padding: 24px 0; }
     .brand { display: flex; align-items: center; gap: 12px; font-weight: 850; letter-spacing: -.02em; text-decoration: none; }
@@ -94,6 +94,28 @@
       .button { transition: none; }
       .button:hover { transform: none; }
     }
+
+    .hero { grid-template-columns: 1fr; gap: 28px; padding: 36px 0 64px; }
+    h1 { max-width: 22ch; font-size: clamp(2.7rem, 5.5vw, 4.6rem); line-height: 1.04; letter-spacing: -.05em; margin: 14px 0 20px; }
+    .lede { max-width: 76ch; font-size: 1.12rem; margin-bottom: 18px; }
+    .module-flow { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin: 20px 0 24px; }
+    .module-flow p { margin: 0; padding: 16px; background: rgba(255,255,255,.65); border: 1px solid var(--line); border-radius: 14px; }
+    .module-flow strong { display: block; }
+    .story { width: min(960px,100%); margin: 0; scroll-margin-top: 24px; }
+    .section-head { grid-template-columns:1.3fr .7fr; align-items:start; } .section-head h2 { font-size:clamp(2rem,3.6vw,3.25rem); line-height:1.1; } @media(max-width:50rem) { .section-head { grid-template-columns:1fr; } }
+    .section-head .eyebrow { grid-column:1/-1; } #ai-tools .grid { grid-template-columns:repeat(3,minmax(0,1fr)); } @media(max-width:50rem) { #ai-tools .grid { grid-template-columns:1fr; } }
+    details { margin:24px 0; padding:20px; border:1px solid #d8d2c8; border-radius:16px; } summary { cursor:pointer; min-height:44px; font-weight:700; } details p { max-width:78ch; }
+    .story video { display: block; width: 100%; aspect-ratio: 16/9; background: #111; object-fit: contain; }
+    .story-limit { color: var(--muted); font-size: .93rem; max-width: 85ch; margin: 16px 0 0; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    @media(max-width:50rem) { .module-flow { grid-template-columns:1fr; gap:10px; } .hero { padding-top:24px; } }
+    .story-layout { display:grid; grid-template-columns:minmax(240px,390px) minmax(0,1fr); gap:40px; align-items:center; margin-top:28px; }
+    .section-head { grid-template-columns:1.3fr .7fr; align-items:start; } .section-head h2 { font-size:clamp(2rem,3.6vw,3.25rem); line-height:1.1; } @media(max-width:50rem) { .section-head { grid-template-columns:1fr; } }
+    .section-head .eyebrow { grid-column:1/-1; } #ai-tools .grid { grid-template-columns:repeat(3,minmax(0,1fr)); } @media(max-width:50rem) { #ai-tools .grid { grid-template-columns:1fr; } }
+    details { margin:24px 0; padding:20px; border:1px solid #d8d2c8; border-radius:16px; } summary { cursor:pointer; min-height:44px; font-weight:700; } details p { max-width:78ch; }
+    .story video { aspect-ratio:9/16; }
+    .module-flow { grid-template-columns:1fr; }
+    @media(max-width:50rem) { .story-layout { grid-template-columns:1fr; gap:20px; } .story { max-width:340px; margin:auto; } h1 { font-size:2.6rem; } .lede { font-size:1rem; } }
   </style>
 </head>
 <body>
@@ -103,9 +125,9 @@
     <header>
       <a class="brand" href="#main" aria-label="Code Factory home"><span class="mark">CF</span> Code Factory</a>
       <nav aria-label="Primary navigation">
-        <a href="#tour">Product tour</a>
+        <a href="#story-video">Product tour</a>
         <a href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">GitHub source</a>
-        <a class="button" href="#audit-update">Explore audits</a>
+        <a class="button" href="#enterprise">Enterprise outcomes</a>
       </nav>
     </header>
   </div>
@@ -113,390 +135,60 @@
   <main id="main">
     <div class="shell hero">
       <div>
-        <div class="eyebrow">Governance infrastructure for high-stakes agentic workloads</div>
-        <h1>Audit code.<br>Review evidence.<br>Resolve defects.</h1>
-        <p class="lede"><strong>Your agent has finished a change. Your review comes next.</strong> Follow a local finding back to its source, inspect the recorded checks, and choose the repair you want to make. Rerun the affected checks and keep the evidence with the change before deciding what to accept. This static preview shows the workflow; it does not scan or upload your repository.</p>
-        <p class="boundary"><strong>Code Factory 0.49.7</strong> connects SpecLine intent, registered ForgeLine actions, and FactoryLine proof in a resumable mission. <a href="https://pypi.org/project/factoryline-code-factory/0.49.7/" target="_blank" rel="noopener noreferrer">PyPI package 0.49.7</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.49.7" target="_blank" rel="noopener noreferrer">GitHub release 0.49.7</a>.</p>
-        <div class="actions">
-          <a class="button primary" href="#audit-update">Explore the audit workflow</a>
-          <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md" target="_blank" rel="noopener noreferrer">See actual Factory Studio</a>
-        </div>
-        <div class="trust" id="release-proof" aria-label="Local proof boundaries">
-          <span>✓ Local by default</span>
-          <span>✓ No source upload</span>
-          <span>✓ No model account required</span>
-          <span>✓ Human decides what may be applied</span>
-          <span>✓ Missing evidence stays visible</span>
+        <div class="eyebrow">Code Factory: from requirement to working software</div>
+        <h1>From intent to a product you can inspect.</h1>
+        <p class="lede"><strong>WMM is a real product Code Factory helped assemble, not simply check afterward.</strong> Turn a requirement into a bounded change, challenge the checks, then repair and recheck with an inspectable trail back to the requirement.</p>
+        <div class="story-layout">
+          <figure class="visual story" id="story-video">
+            <video controls preload="metadata" playsinline poster="cf-story-v5-poster.jpg" aria-label="From requirements to WMM: Code Factory walkthrough">
+              <source src="cf-story-v5-narrated.mp4" type="video/mp4">
+              Your browser does not support embedded video. <a href="cf-story-v5-narrated.mp4">Open the walkthrough video</a>.
+            </video>
+            <figcaption>57-second narrated walkthrough. WMM screens use example data; process illustrations are labeled. Not a customer case or independent certification.</figcaption>
+          </figure>
+          <div class="story-explanation">
+            <div class="module-flow" aria-label="How the modules work together">
+              <p><strong>SpecLine</strong> defines the requirements and acceptance checks.</p>
+              <p><strong>ForgeLine</strong> builds scoped changes and challenges their checks.</p>
+              <p><strong>FactoryLine</strong> connects the work, recorded evidence and human review.</p>
+            </div>
+            <div class="actions">
+              <a class="button primary" href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">Explore Code Factory</a>
+              <a class="button" href="#enterprise">See enterprise outcomes</a>
+            </div>
+            <p class="story-limit">Missing evidence stays explicit. A completed change is not a release certification. This is a static product preview, not a hosted repository scanner.</p>
+          </div>
         </div>
       </div>
-      <figure class="visual">
-        <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/studio-product-mission-0496.png" alt="Factory Studio Product Mission draft with intent and review callouts" width="1440" height="900" loading="lazy">
-        <figcaption>Factory Studio Product Mission with fictional example input.</figcaption>
-      </figure>
     </div>
 
-    <section aria-labelledby="latest-telemetry">
+    <section id="enterprise" aria-labelledby="enterprise-title">
       <div class="shell">
-        <h2 id="latest-telemetry">Earlier precision measurements and release notes</h2>
-        <p>The exposed N443-38 replay measured <strong>88.24% decided actionable precision</strong> (30/34), up from 85.71% on the same observed cases. It returned 37 of 38 cases and retained all 30 original true positives. Two labels remained unclear. Case 005 timed out.</p>
-        <p>The original sealed reference measured 83.33% among 36 decided alerts and 78.95% across all 38 cases. Two AI reviewers supplied the labels. <a href="https://github.com/zrk222/code-factory/releases/download/v0.49.6/original38-regression-0.49.6.json" target="_blank" rel="noopener noreferrer">Read the case ledger</a>.</p>
-        <p><a href="https://huggingface.co/spaces/zrk222/code-factory/blob/24d51e618d685618725a850ba34be6a7df88a6d9/factoryline_code_factory-0.49.6-py3-none-any.whl" target="_blank" rel="noopener noreferrer">Get the verified wheel</a> · <a href="https://doi.org/10.5281/zenodo.24029905" target="_blank" rel="noopener noreferrer">Zenodo record</a></p>
-        <h3>What’s new in 0.49.6</h3>
-        <ol>
-          <li><strong>Pre-PR review.</strong> <code>factory change pre-pr &lt;manifest&gt;</code> combines candidate source, planned checks, oracle evidence, and feature verification in one receipt. Add <code>--execute</code> to run the declared checks.</li>
-          <li><strong>Repair continuity.</strong> <code>factory senior fix</code> returns <code>NO_PROGRESS</code> for a repeated failed candidate and <code>STEP_BACK</code> when the round budget is spent. The default budget stops before a fourth round.</li>
-          <li><strong>Incident intake.</strong> Reviewed incidents produce source-bound regression packets marked <code>EXPOSED_NOT_EXECUTED</code>. Replay evidence records what was exercised.</li>
-          <li><strong>Scan evidence.</strong> Native scans bind collection receipts before sealing. Collection drift marks the evidence incomplete and requires a fresh seal.</li>
-          <li><strong>CLI and editors.</strong> <code>factory home</code> prints a local invitation to star the repo. Editor releases are VS Code and Open VSX 1.3.3 and JetBrains 1.3.4.</li>
-        </ol>
-        <h3>The complete factory</h3>
-        <ul>
-          <li><strong>FactoryLine</strong> Coordinates local audits, evidence, and review decisions.</li>
-          <li><strong>ForgeLine</strong> Builds scoped changes and challenges their checks.</li>
-          <li><strong>SpecLine</strong> Defines the intent, requirements, and acceptance criteria those checks must prove.</li>
-        </ul>
-      </div>
-    </section>
-    <section id="audit-update" aria-labelledby="audit-update-title">
-      <div class="shell">
-        <div class="section-head">
-          <h2 id="audit-update-title">Coordinated code audits with visible evidence and limits</h2>
-          <p>Inspect progress, findings, and repair tasks from one candidate-bound run. This static preview explains the workflow; it does not scan or upload your repository.</p>
-        </div>
-        <div class="boundary"><strong>Workflow boundary:</strong> Native-harness evidence is separate from package inclusion and provider availability.</div>
-        <div class="grid native-harness-grid" aria-label="Native agent-harness source preview">
-          <article class="card"><span>Keep useful context</span><h3>Resume incident reviews and compare fixes</h3><p>The native harness keeps incident checkpoints for recovery, binds review context shards to source, and compares candidate repairs without applying them. Budgeted Jev triage keeps unprocessed incidents visible as pending, not assessed.</p></article>
-          <article class="card"><span>Explicit controls</span><h3>Choose when parallel audits and hooks run</h3><p>Parallel audits are opt-in and require a signed policy declaring work non-mutating and resource-safe; serial remains the default, and the declaration does not prove isolation. Optional activation experiments call only hooks explicitly registered by the caller. Their observations are experimental, not model certification or accuracy evidence. The source taxonomy and manifest define the same routes for Junie while keeping execution and identity limits visible.</p></article>
-        </div>
-        <div class="grid" aria-label="What changed in the audit workflow">
-          <article class="card"><span>Fixed</span><h3>Missing audit status</h3><p>Native editor views distinguish unavailable, incomplete, failed, stale, and not-run checks. A static inventory no longer looks like a completed audit.</p></article>
-          <article class="card"><span>Changed</span><h3>Review the evidence route</h3><p>Junie's taxonomy now directs reviewers from intent and diff through bounded checks, concrete repairs, reruns, and independent specialty AI review.</p></article>
-          <article class="card"><span>Added</span><h3>Project-neutral workflow audit</h3><p><code>factory audit workflows</code> evaluates declared checks and profiles against hash-bound candidate and execution evidence. Missing or stale evidence blocks a complete result.</p></article>
-          <article class="card"><span>Candidate fixes</span><h3>Hollow assertions and tenant-read contracts</h3><p>The Python scanner flags missing local assertions, constant-true assertions, and reflexive comparisons. Explicit tenant-read contracts check the declared tenant parameter binding; they do not authenticate tenants or prove runtime isolation.</p></article>
-          <article class="card"><span>Seeded demonstration</span><h3>Review a finding and a repaired case</h3><p>This seeded local example applies a declared tenant-read contract to sample inputs and presents the review workflow. It is illustrative only, not a release certification. CI verification is still required.</p></article>
-        </div>
+        <div class="section-head"><div class="eyebrow">For enterprise engineering teams</div><h2 id="enterprise-title">AI writes the change. Your team owns the decision.</h2><p>Code Factory connects requirements, code changes and recorded checks so reviewers can see what was tested, what is missing and what needs fixing.</p></div>
         <div class="grid">
-          <article class="card"><span>Current editor releases</span><h3>Review evidence in your IDE</h3><p>VS Code and Open VSX 1.3.5 show local evidence and source locations in Explorer. JetBrains 1.3.5 carries forward saved-file synchronization before local commands and starts Factory Studio in the background.</p></article>
-          <article class="card"><span>During a run</span><h3>Progress with evidence</h3><p>Deep-audit execution records lane progress, cancellation, source bindings, and coverage gaps. Unsupported or missing evidence remains incomplete.</p></article>
-          <article class="card"><span>After a run</span><h3>Actionable repair tasks</h3><p>Findings include source locations and remediation guidance. Fresh candidate evidence is required after a repair; a disappearing finding alone does not prove a fix.</p></article>
-          <article class="card"><span>Agent review</span><h3>A separate specialty reviewer</h3><p>Specialty AI audit evidence is available: source reviews, identified defects, and reviewed corrections. <a href="https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354" target="_blank" rel="noopener noreferrer">Open the agent review and evidence →</a> Test and CI receipts remain separately identified.</p></article>
+          <article class="card"><span>Before development</span><h3>Agree on what success means</h3><p>Turn requirements into a scoped plan and acceptance checks before an agent starts changing code.</p></article>
+          <article class="card"><span>Before approval</span><h3>Inspect more than a green check</h3><p>Review source-bound receipts and challenge declared checks. Missing or stale evidence stays visible.</p></article>
+          <article class="card"><span>After a finding</span><h3>Give the team a clear next step</h3><p>Keep source locations, repair guidance and fresh rerun evidence together. Repeated failed repairs can stop rather than loop.</p></article>
+          <article class="card"><span>At handoff</span><h3>Keep the decision with people</h3><p>Bring the evidence to review. Code Factory does not turn an agent's verdict into permission to merge, deploy or release.</p></article>
         </div>
-        <p class="boundary"><strong>Current limits:</strong> CF pattern and guard-path audits require a project policy; its security scan inspects Python ASTs. ForgeLine repo-wide QA is a static inventory. Native Gitleaks input accounting and full-depth certification remain incomplete. Muse catalogues and workflows do not establish Meta marketplace approval.</p>
-        <p class="boundary"><a href="https://github.com/zrk222/code-factory/blob/main/docs/DEEP_DEFECT_COMPLETION.md" target="_blank" rel="noopener noreferrer">Read the audit implementation and limits →</a></p>
-        <p class="boundary">JUnit cases appear after a local test runner writes <code>.factory/test-reports/pytest.xml</code>. Reports over 10,000 cases or malformed inputs are marked incomplete.</p>
       </div>
     </section>
-    <section id="proof">
+    <section id="ai-tools" aria-labelledby="ai-tools-title">
       <div class="shell">
-        <div class="section-head">
-          <h2>Useful before code, during review, and when tests say green.</h2>
-          <p>Choose the smallest proof surface that answers the question in front of you. A fresh starter stays blocked until product-specific checks replace hollow coverage.</p>
-        </div>
+        <div class="section-head"><h2 id="ai-tools-title">Keep your AI tools. Inspect the evidence.</h2><p>For teams using CodeRabbit, Devin, Blitzy, Mastra or other AI development tools, the question is the same: what evidence supports this exact change?</p></div>
         <div class="grid">
-          <article class="card"><span>01 · Decide</span><h3>Pin down intent</h3><p>Bind the human-chosen framework, outcome, acceptance evidence, and external-effects boundary to exact PRD bytes.</p></article>
-          <article class="card"><span>02 · Clarify</span><h3>Grill the PRD</h3><p>Surface source-bound questions and incompatible requirements before code exists.</p></article>
-          <article class="card"><span>03 · Review</span><h3>Challenge the green check</h3><p>Delete, invert, and corrupt declared controls. A surviving mutation blocks the claim.</p></article>
-          <article class="card"><span>04 · Retry only with evidence</span><h3>Stop repeated failures</h3><p>Require a changed candidate and fresh evidence for a supervised retry, or deliberately halt.</p></article>
+          <article class="card"><span>CodeRabbit</span><h3>Put proof facts beside the review</h3><p>Code Factory prepares a neutral GitHub Check request containing changed scope, findings and evidence gaps. CodeRabbit can read completed Check output when its own GitHub Checks integration is enabled.</p></article>
+          <article class="card"><span>Devin</span><h3>Give the agent bounded proof context</h3><p>The PR 354 candidate adds an eight-tool, read-only evidence profile. Your team still installs and approves it in Devin's execution environment.</p></article>
+          <article class="card"><span>Blitzy, Mastra and other tools</span><h3>Review the resulting work</h3><p>Use Code Factory's local CLI to inspect the repository and recorded evidence. No native Blitzy or Mastra integration or live compatibility test is claimed here.</p></article>
         </div>
+        <p class="boundary">These are different handoff paths, not a claim of universal integration or partnership. Code Factory does not log in to these providers or accept their verdicts as release approval.</p>
       </div>
     </section>
-
-    <section id="gauntlet">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Supervised proof of survival</div>
-          <h2>Can this behavior survive the exact failure you are worried about?</h2>
-          <p>Gauntlet turns human-written E2E sabotage cases into one inspectable batch. A named reviewer admits one current local run; the resulting Survival Card shows every declared case as survived, hollow, or blocked. A green card is not a production, security, coverage, performance, quality, or release certificate.</p>
-          <div class="actions">
-            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/GAUNTLET.md" target="_blank" rel="noopener noreferrer">Read the Gauntlet guide</a>
-          </div>
-        </div>
-        <pre><code>factory gauntlet plan --root . --source gauntlet.json --json
-# Review the exact local E2E pairs, then make a named one-run admission.
-factory gauntlet run .factory/gauntlets/&lt;source&gt;/&lt;proposal&gt;.proposal.json \
-  --root . --admission .factory/gauntlets/&lt;source&gt;/&lt;admission&gt;.admission.json --json
-factory gauntlet card verify .factory/gauntlets/&lt;source&gt;/&lt;card&gt;.card.json --json</code></pre>
-      </div>
-    </section>
-
-    <section id="review-tools">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Your reviewer stays in control</div>
-          <h2>Use AI review suggestions and deterministic proof on the same PR.</h2>
-          <p>Code Factory complements CodeRabbit or another reviewer with one neutral, commit-bound proof walkthrough: exact scope, declared proof gaps, and the next fact-derived action. It does not need their account, copy their comments into receipts, approve, or merge code.</p>
-          <div class="actions">
-            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/GITHUB_PROOF_REVIEW.md" target="_blank" rel="noopener noreferrer">See the GitHub Proof Review</a>
-          </div>
-        </div>
-        <pre aria-label="GitHub Proof Review command">factory github proof-review \
-  --root . \
-  --base origin/main \
-  --head-sha &lt;pull-request-head-sha&gt; \
-  --json</pre>
-      </div>
-    </section>
-
-    <section id="langgraph">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">LangGraph resume assurance</div>
-          <h2>Compare the reference path with a resume, before review.</h2>
-          <p>Record transitions in your own LangGraph test harness, then compare sealed, hash-only reference and resumed lineages. The assurance bridge reports parity only when supplied transitions match and no deterministic stale state, duplicate completed effect, or unsafe parallel write is present. A divergence produces a Mermaid incident capsule with the first divergent node and a review-only causal cone. It never invokes a graph or replays an effect.</p>
-          <div class="actions">
-            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/LANGGRAPH_ASSURANCE.md" target="_blank" rel="noopener noreferrer">Read the LangGraph guide</a>
-          </div>
-        </div>
-        <pre><code>factory langgraph replay-verify \
-  --root . \
-  --reference .factory/langgraph/reference.json \
-  --resumed .factory/langgraph/resumed.json \
-  --out .factory/langgraph/assurance.json --json</code></pre>
-      </div>
-    </section>
-
-    <section id="journey-proof">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Journey proof · audited healing</div>
-          <h2>Prove the real journey. Audit the agent that repairs it.</h2>
-          <p>Journey Reality compares declared and observed states, transitions, requirements, and outcomes without turning missing evidence into success. Failure Capsules keep the failed step and adjacent evidence bounded. Stateful Workflow Proof checks producer and consumer state, cleanup, and idempotency. Healing stays human-controlled or supervised-auto, and a candidate is accepted only when its positive proof passes, its negative control fails, and the repairing agent passes an independent scope-and-evidence audit.</p>
-          <p>BYOK and local execution remain the default. A future managed tier must use the same verifier. No mode grants approval, merge, release, credential, or production authority.</p>
-        </div>
-        <pre><code>factory journey reality declared.json observed.json --root . --json
-factory journey capsule failure.json --root . --json
-factory journey workflow-proof workflow.json --root . --json
-factory journey heal-verify request.json --root . --json</code></pre>
-      </div>
-    </section>
-
-    <section id="proofsearch">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Verified counterfactual repair</div>
-          <h2>Compare every plausible fix. Accept only the proven winner.</h2>
-          <p>Graph Forensics identifies the first semantic divergence. ProofSearch binds its exact proof slice to 2–12 local candidates, rejects failed proofs, surviving mutants, scope escapes, test weakening, and error suppression, then explains the minimum-risk and minimum-scope winner. Evidence Frontier ranks supplied, non-executing checks by how many viable repair pairs they separate. Predictions are hypotheses, never proof or authority. Time, token, and cost savings stay unavailable until paired measurements exist.</p>
-        </div>
-        <pre><code>factory proofsearch plan --root . \
-  --baseline baseline.lineage.json \
-  --candidate failed.lineage.json \
-  --changed src/service.py --out repair.plan.json
-factory proofsearch evaluate candidates.json \
-  --root . --out repair.evaluation.json --json
-factory proofsearch frontier plan frontier.request.json \
-  --root . --out frontier.json --json</code></pre>
-      </div>
-    </section>
-
-    <section id="tour">
-      <div class="shell">
-        <div class="section-head">
-          <h2>Explore the current Factory Studio and Graph Ops views.</h2>
-          <p>These annotated views use the released interface and a fictional local workspace.</p>
-        </div>
-        <div class="gallery">
-          <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-proof-guide-0496.png" alt="Graph Ops guide for choosing the next proof" width="1440" height="900" loading="lazy">
-          <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-findings-0496.png" alt="Graph Ops local scan with source coverage and incomplete evidence" width="1440" height="900" loading="lazy">
-          <img src="https://github.com/zrk222/code-factory/releases/download/v0.49.6/graph-ops-finding-detail-0496.png" alt="Expanded Graph Ops finding with its source line and rationale" width="1440" height="900" loading="lazy">
-
-          <article class="card"><span>First local run</span><h3>Run First Proof</h3><p>Run one local command in a disposable sandbox. The healthy control passes; the hollow negative control is caught and bound to a privacy-safe Proof Card.</p><p><a href="#first-run">Run the demo →</a> · <a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md" target="_blank" rel="noopener noreferrer">Marketplace kit</a></p></article>
-        </div>
-      </div>
-    </section>
-
-    <section id="personal-case">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Observed creator use</div>
-          <h2>One 60-day case, with the estimate separated from the evidence.</h2>
-          <p>Local Codex metadata identified 25 FactoryLine-related tasks, 133 completed turns, 2,710 command runs, 785 MCP or app calls, and 555 file-change events. A transparent counterfactual model estimates 30–110 hours of gross manual-equivalent capacity over 60 days after a 50% overlap haircut. This is a one-user case, not a benchmark or guaranteed ROI; net savings must subtract tool cost and human oversight.</p>
-          <div class="actions">
-            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/OUTCOMES_MODEL.md" target="_blank" rel="noopener noreferrer">Inspect the assumptions</a>
-          </div>
-        </div>
-        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/code-factory-60-day-personal-case-study.png" alt="Code Factory 60-day personal case study separating observed local Codex metadata from a modeled capacity range.">
-      </div>
-    </section>
-
-    <section id="first-run">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Starter example · one check in the audit system</div>
-          <h2>See Code Factory catch a hollow test in under two minutes.</h2>
-          <p>Run a safe negative-control demonstration, receive a local receipt, and explore one small part of the audit system. The demo runs only in a generated local sandbox. It proves the positive control can pass, catches the hollow negative control as <code>HOLLOW_E2E_TEST</code>, and writes a privacy-safe Proof Card. No account, model key, or source upload is required.</p>
-        </div>
-        <pre><code>pip install factoryline-code-factory
-factory first-proof --root .
-
-# Then use it on real work:
-factory mvp "Build an approval tracker" --root .
-factory coverage --root .\my-mvp --json
-factory graph ops --root .\my-mvp --json</code></pre>
-      </div>
-    </section>
-
-    <section id="saas-reality">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">SaaS Reality · provider-neutral local proof</div>
-          <h2>Did the customer who paid receive the right access?</h2>
-          <p>A successful login is not authorization, and a successful checkout is not entitlement proof. Code Factory follows supplied local evidence from OAuth/OIDC identity and tenant role through checkout, verified webhook, entitlement, feature access, and revocation. It works across standards-compliant providers, keeps unknowns blocked, rejects raw credentials, and never contacts or mutates the provider.</p>
-          <div class="actions">
-            <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/SAAS_PROOF.md" target="_blank" rel="noopener noreferrer">Review the SaaS proof contract</a>
-          </div>
-        </div>
-        <pre><code>factory saas verify --root . \
-  --contract saas-contract.json \
-  --evidence observed-events.json \
-  --json</code></pre>
-      </div>
-    </section>
-
-    <section id="appforge-review">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">AppForge · catch the review gap early</div>
-          <h2>Improve your app before Apple finds the missing proof.</h2>
-          <p>Move from a story-led iOS storyboard to 30 exact-build checks spanning completeness, purchases and restore, iPad navigation, authentic screenshots, accessibility, privacy, metadata, reviewer access, and export compliance. Conditional rules must be explicitly required or not applicable with a named reviewer—omission never becomes green.</p>
-          <p>AppForge is designed to save avoidable rework and days of review waiting by surfacing preventable gaps before submission. It does not guarantee Apple approval.</p>
-          <div class="actions"><a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/APPFORGE_APP_REVIEW_GATE.md" target="_blank" rel="noopener noreferrer">Open the AppForge gate</a></div>
-        </div>
-        <pre><code>factory revenue appforge-design --root . \
-  --brief appforge-design-brief.json --json
-
-factory revenue app-review-gate --root . \
-  --contract app-review-contract.json \
-  --evidence app-review-evidence.json --json</code></pre>
-      </div>
-    </section>
-
-    <section id="atomic-proof">
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Agent workflows · verify the path</div>
-          <h2>Keep the workflow. Independently verify every handoff.</h2>
-          <p>Import a secret-free workflow envelope and check its typed stage graph, scoped capabilities and handoffs, checkpoint continuity, exact source bytes, resume lineage, and sealed intent binding. Code Factory rejects drift without starting the workflow or inheriting its authority.</p>
-          <div class="actions"><a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/ATOMIC_PROOF_ADAPTER.md" target="_blank" rel="noopener noreferrer">Review the proof contract</a></div>
-        </div>
-        <pre><code>factory atomic import --root . \
-  --envelope .factory/atomic/run-envelope.json --json
-
-factory atomic status --root . --json</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">See the proof state</div>
-          <h2>Follow the proof path without giving it authority.</h2>
-          <p>Unified Graph Ops connects the local Product Graph, value slices, missions, approvals, completions, proofs, gate plans, traces, receipts, supplied-policy dossiers, and artifacts into one bounded visual result. Its Proof Observatory makes current coverage, blocked gates, and supplied-policy drift legible in a responsive graph, bar, and donut view. It recommends one next action from current facts and never executes a gate or release action.</p>
-        </div>
-        <pre><code>factory graph ops --root . --json
-factory graph ops --root . --mermaid
-factory studio --root .</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Independent verification</div>
-          <h2>Keep the builder and verifier separate.</h2>
-          <p>Proof Review, Verified Repair Sandbox, and Workspace Load Advisor make the local handoff visible before a repair or environment change. The Verifier Plane binds a worker receipt to distinct verifier evidence, immutable check files, deterministic checks, and hard budgets. These surfaces never edit code, call a model, or claim a production sandbox. Start with <code>factory prd grill PRD.md --root . --mode quick</code>.</p>
-        </div>
-        <pre><code>factory verifier session .factory/missions/&lt;mission&gt;/mission.json ./candidate \
-  --bundle ./verification/checks.json --owner engineering-owner --root .
-factory verifier verify ./session.json ./worker-result.json ./verifier-result.json --root . --json
-factory verifier progress ./attempts.json --json</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Design is part of the review</div>
-          <h2>Make UI quality visible before a human says yes.</h2>
-          <p>For UI-scoped work, the optional Prestige Design Review adds a purpose-led brief and reviewer-visible checks for hierarchy, responsive behavior, affordances, consistency, and declared design tokens. Deterministic findings can inform a gate; heuristic critique stays a human prompt. It does not claim conversion, WCAG certification, or production readiness.</p>
-          <div class="actions">
-            <a class="button secondary" href="https://github.com/zrk222/code-factory/blob/main/docs/PRESTIGE_DESIGN.md" target="_blank" rel="noopener noreferrer">See the design review lane</a>
-          </div>
-        </div>
-        <pre><code>pip install code-factory-4-design
-prestige init --root .
-prestige pr app.html --design DESIGN.md --root . --out-dir .prestige/pr</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Proof reuse</div>
-          <h2>Reuse evidence only when the inputs still match.</h2>
-          <p>Content-addressed receipts route read-only gates to RUN, REUSE, SKIP, or BLOCK. Exact reuse verifies every bound input and output; ambiguity runs again, and side effects stay blocked.</p>
-        </div>
-        <pre><code>factory proofs record proofs.json \
-  --gate python-tests --elapsed-ms 600000 --root .
-factory proofs plan proofs.json --changed src/app.py \
-  --auto-savings --out proof-plan.json --root .</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">First local run</div>
-          <h2>Start locally. See the next proof gap immediately.</h2>
-          <p>Create a contained MVP, then let Graph Ops reveal the requirement or receipt that needs evidence. A starter is useful starting state, not a readiness claim.</p>
-          <div class="actions">
-            <a class="button" href="https://pypi.org/project/factoryline-code-factory/" target="_blank" rel="noopener noreferrer">Run your first local proof</a>
-            <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md" target="_blank" rel="noopener noreferrer">See actual Factory Studio</a>
-            <a class="button" href="https://plugins.jetbrains.com/plugin/33009-factoryline-ai-proof" target="_blank" rel="noopener noreferrer">Explore FactoryLine for JetBrains</a>
-          </div>
-        </div>
-        <pre><code>pip install factoryline-code-factory
-factory mvp "Build an approval tracker" --root .
-factory studio --root .\my-mvp
-# Open Graph Ops in the local Studio</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <div class="shell proof">
-        <div>
-          <div class="eyebrow">Launch terms</div>
-          <h2>Clear dates. No surprise paid change.</h2>
-          <p>The GitHub Assurance Seat is free through December 1, 2026, with a $5.95 USD per named seat per month offer scheduled for December 2, 2026. It is built around commit-bound proof review, visible Proof Debt, supplied-policy drift dossiers, governed exceptions, and exportable evidence—not source access or opaque AI-token resale. The separate JetBrains Marketplace plan remains $4.95 USD per month from January 1, 2027, subject to JetBrains approval and a planned 30-day trial. Neither checkout nor entitlement is live; total price, taxes, fees, and billing terms must be shown before any approved purchase.</p>
-        </div>
-        <pre><code>Marketplace count: check the current listing
-Unique installs: not exposed by the listing
-Adapter publication status: consult each Marketplace listing
-
-Never substitute CI or repository traffic for installs.</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <div class="shell">
-        <div class="section-head">
-          <h2>Creator case study and visual identity.</h2>
-          <p>The 60-day creator case documents one historical workflow.</p>
-        </div>
-        <div class="gallery">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/code-factory-60-day-personal-case-study.png" alt="One-user 60-day Code Factory case study with observed metadata and modeled capacity clearly separated.">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/factoryline-logo-480.png" alt="Current FactoryLine blue logo with a green verification check.">
-        </div>
-        <p class="boundary">Actual product capture set. The interface captures show actual product behavior. The case-study image separates observed metadata from an assumption-based capacity model; it is not universal productivity, cash-savings, conversion, Marketplace approval, or production-readiness evidence. <a href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md" target="_blank" rel="noopener noreferrer">Open the visual policy →</a></p>
-      </div>
-    </section>
-
-    <section class="final">
-      <div class="shell">
-        <h2>Make the next change carry its own proof.</h2>
-        <div class="actions actions-center">
-          <a class="button" href="https://pypi.org/project/factoryline-code-factory/" target="_blank" rel="noopener noreferrer">Run your first local proof</a>
-          <a class="button" href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">Read or star on GitHub</a>
-        </div>
+    <section id="start" aria-labelledby="start-title">
+      <div class="shell"><div class="section-head"><h2 id="start-title">Start with one change that matters.</h2><p>Choose a small repository change. Define the outcome, run the declared checks and review the evidence before deciding what ships.</p></div>
+        <div class="actions"><a class="button primary" href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">Get Code Factory</a><a class="button" href="https://github.com/zrk222/code-factory/pull/354" target="_blank" rel="noopener noreferrer">Inspect PR 354</a></div>
+        <p>The JetBrains Marketplace listing currently marks FactoryLine AI Proof as free. This preview is not a checkout.</p>
+        <details><summary>Release status and technical limits</summary><p>The released baseline reviewed here is core 0.49.7. Core 0.50.0 and plugins 1.3.6 are publication targets after merge, not a claim of current availability. PR 354 adds the bounded Proof Agent, signed execution-observation checks and Devin evidence profile.</p><p>The Proof Agent runs a human-approved signed plan and records evidence for review. It does not approve its result. Signed-observation checks establish the declared observation binding, not code correctness or release readiness. Local tests do not establish marketplace availability or live provider compatibility.</p><p>Audit depth depends on language, project policy and supplied evidence. The security scanner inspects Python ASTs; static inventory is not runtime proof. This is a static preview, not a hosted repository scanner.</p><p><a href="https://github.com/zrk222/code-factory/blob/codex/coordinator-crash-controls-20261120/docs/AI_CLIENTS.md" target="_blank" rel="noopener noreferrer">Client setup and boundaries</a> · <a href="https://github.com/zrk222/code-factory/blob/codex/coordinator-crash-controls-20261120/docs/CODERABBIT_INTEROP.md" target="_blank" rel="noopener noreferrer">CodeRabbit handoff</a></p></details>
       </div>
     </section>
   </main>
