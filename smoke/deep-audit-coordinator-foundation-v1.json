@@ -1,5 +1,5 @@
 {
-  "scope": "Foreground ownership, input and idle-stop foundation only; not full native-family qualification, crash recovery, paired timing or public command readiness.",
+  "scope": "Foundation-only smoke, deliberately separate from the blocked full coordinator gate; not native-family qualification, crash recovery, paired timing or public command readiness.",
   "checks": [
     {
       "name": "coordinator_owned_foreground_and_invalid_ttl",
