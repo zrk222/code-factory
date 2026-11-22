@@ -23,6 +23,15 @@ Ruby/Swift trust checks. New request coverage is review-tier. Round 7 numbers
 below belong to the earlier ruleset, not a fresh score for the shipped variant.
 [Coverage evidence and limits](docs/evidence/polyglot-coverage-round8.json).
 
+**New in this release:** retrieve trusted evidence across topics without loading
+the whole history, check visible behavior against approved pixels and Prestige
+tokens, and operate a foreground coordinator with signed fresh-worker handoffs.
+Missing evidence stays visible; your team retains the release decision.
+The newer advisory study records CodeQL detections in **15/91 analyzed cases**,
+with **70/161 not executed**. Pattern replay found **6/161 on exposed cases**;
+the lanes are not interchangeable and neither number is whole-CF blind recall.
+[Inspect the lane-separated record](docs/evidence/advisory-recall-factory-20261121.json).
+
 - **12 languages, one review workflow:** the configured native security worker
   covers C, C++, C#, Go, Java, JavaScript, PHP, Python, Ruby, Rust, Swift and
   TypeScript. Thirty rules separate default findings from review-only context;

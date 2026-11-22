@@ -6,6 +6,16 @@ Your AI can propose a repair. Your team needs evidence before trusting it.
 This release makes Code Factory a broader, tool-friendly evidence layer for
 polyglot developers—not another agent that approves its own work.
 
+- **Latest advisory evidence:** the retained 161-case study records CodeQL
+  detections in 15/91 analyzed cases, with 70 not executed. Pattern replay
+  detected 6/161 on exposed cases. These lane-separated observations do not
+  establish blind recall for the entire release; the historical figures below
+  remain tied to their earlier ruleset.
+- **Final integration fixes:** register the opt-in foreground coordinator with
+  real signed-child, replay, restart-owner and cleanup controls; fix the native
+  Gitleaks SARIF build version, pin the browser acceptance OS, reduce verifier
+  complexity without relaxing limits, and correct the JetBrains archive path.
+
 - **Expanded:** 30 native security rules across 12 declared languages, with
   default and review tiers, native source-to-sink traces where observed, SARIF
   normalization and 30 rule-removal challenges. Native workers require setup;

@@ -20,6 +20,14 @@ Start with **FactoryLine: Run CF + ForgeLine Audits**.
   read-only mutation-diff inspection does not change the captured diff.
 - IDE receipt reads fail closed for stale, malformed, oversized, escaped, or
   changing files. Junie is optional, and applying changes remains your choice.
+- The optional runtime adds topic-based trusted evidence recall, visual/Prestige
+  checks and a foreground signed-worker coordinator. Missing evidence remains
+  explicit; none of these checks grants merge or release approval.
+
+The newer advisory record reports CodeQL **15/91 analyzed**, with **70/161 not
+executed**; pattern replay reports **6/161 exposed cases**. These are distinct
+lanes, not whole-CF blind recall or a new twelve-language precision score.
+[Inspect the evidence](../../docs/evidence/advisory-recall-factory-20261121.json).
 
 **Run First Proof** is a setup demonstration that checks the local
 CLI; it does not assess repository code. For a repository assessment, run

@@ -51,6 +51,14 @@ exhaustive accessibility testing or release approval. Topic-based evidence recal
 also shares corpus preparation, preserving exact receipts and fresh trust checks;
 its measured ranking gains are not a full-audit or detector-accuracy claim.
 
+Final integration adds the foreground coordinator's signed fresh-worker handoff,
+request replay and owned cleanup, corrects Gitleaks' native report version and
+the JetBrains artifact path, and fixes browser CI compatibility without raising
+quality limits. The newer advisory record separates CodeQL **15/91 analyzed**
+from **70/161 not executed**, and pattern replay **6/161 exposed**. These are
+not whole-CF blind recall or a replacement for the historical precision study.
+[Lane-separated evidence](evidence/advisory-recall-factory-20261121.json).
+
 Current coverage adds Go/Java/C#/Ruby framework sources and sinks plus wider
 Ruby/Swift trust checks. New request rules are review-tier; the shipped variant
 has no fresh precision score. Round 7 below is the earlier ruleset.

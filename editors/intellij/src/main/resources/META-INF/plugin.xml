@@ -10,6 +10,8 @@
 <p><strong>Current coverage:</strong> Go/Java/C#/Ruby framework sources and sinks plus wider Ruby/Swift trust checks. New request rules are review-tier; the shipped variant has no fresh precision score. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/polyglot-coverage-round8.json">Coverage evidence</a>.</p>
 <p><strong>Historical Round 7, the earlier ruleset:</strong> 38/40 decided default-tier alerts supported (95%; Wilson 83.5–98.6%), with 12 additional unclear. Review tier: 23/40 (57.5%), plus 3 unclear. Advisory recall: 0/161. Six languages had insufficient precision samples. AI labels are not twelve-language accuracy or independent human validation. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/polyglot-readiness-round7.json">Per-language evidence</a>.</p>
 <p>Review source-bound claim verification and bounded Proof Agent evidence, with optional SARIF and pre-commit outputs and read-only mutation-diff inspection. Verification binds an observation; it does not prove code correctness or release readiness.</p>
+<p><strong>Also in this release:</strong> topic-based trusted evidence recall, optional visual/Prestige checks and a foreground signed-worker coordinator. Missing evidence stays explicit. Final integration repairs native report identity and release packaging without relaxing quality limits.</p>
+<p><strong>Newer advisory evidence:</strong> CodeQL detected 15/91 analyzed cases; 70/161 were not executed. Pattern replay detected 6/161 exposed cases. These distinct lanes are not whole-CF blind recall or twelve-language precision. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/advisory-recall-factory-20261121.json">Inspect the record</a>.</p>
 <p>IDE receipt reads fail closed for stale, malformed, oversized, escaped, or changing files. Junie is optional and human-controlled.</p>
 <h4>Start in your repository</h4>
 <p>Run <code>factory guide</code>, then <code>factory scan --root .</code>. Use Graph Ops to inspect evidence and choose the next action.</p>
@@ -18,7 +20,7 @@
 <p><a href="https://github.com/zrk222/code-factory">Documentation</a> | <a href="https://github.com/zrk222/code-factory/issues">Report an issue</a></p>
     ]]></description>
     <change-notes><![CDATA[
-<p><strong>1.3.6:</strong> Pair the editor adapters with Code Factory CLI 0.50.0; connect source-bound claim verification and bounded Proof Agent evidence to local IDE review, with optional SARIF/pre-commit outputs and read-only mutation-diff inspection. Junie remains optional; receipts do not certify correctness or release readiness.</p>
+<p><strong>1.3.6:</strong> Pair the editor adapters with Code Factory CLI 0.50.0; connect source-bound claim verification, bounded Proof Agent evidence, trusted recall and optional visual/Prestige checks to local review. Native report identity, coordinator lifecycle and packaging were repaired without relaxing limits. Junie remains optional; receipts do not certify correctness or release readiness.</p>
 <p><a href="https://github.com/zrk222/code-factory/blob/main/editors/intellij/CHANGELOG.md">Earlier release notes</a></p>
     ]]></change-notes>
 
