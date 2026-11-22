@@ -92,8 +92,8 @@ _NATIVE_WORKERS = {
     },
 }
 _NATIVE_WORKER_CONTRACT = {
-    "discovery": "deploy/deep-adapters/README.md and profiles; Linux/amd64. Profiles are inventory, not readiness/execution/coverage/PASS. Preserve unsupported/incomplete/unavailable states.",
-    "execution": "Authorized CLI execution only; MCP status is read-only and never launches workers.",
+    "discovery": "deploy/deep-adapters/README.md and profiles; Linux/amd64. Profiles are inventory, not readiness, execution, coverage or PASS. Preserve unsupported/incomplete/unavailable states.",
+    "execution": "Authorized CLI execution only; read-only MCP tools never launch workers.",
     "isolation": "Image-owned Python -I startup; network none for ordinary workers, private internal network for signed ZAP app/worker targets; read-only source, non-root, bounded memory/time/output and cleanup.",
     "evidence": "Candidate and source hashes, exact image digest, tool/rules versions, invocation facts, native report digest, source-bound normalized findings and runtime counts.",
     "admission": "Successful native execution is INCOMPLETE until source accounting, applicable obligations and independent challenges are validated; never infer complete=true.",
