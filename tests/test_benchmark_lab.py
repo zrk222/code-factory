@@ -1338,3 +1338,93 @@ def test_advisory_recall_prefix_cache_digest_mismatch_is_rejected(
 
 def test_advisory_recall_cli_reports_verified_record():
     assert _gain["recall_main"]([str(_RECALL_RECORD)]) == 0
+
+
+def _recall_detected_case(recall_record):
+    case = next(c for c in recall_record["cases"] if c["pattern"]["detections"])
+    return copy.deepcopy(case), dict(recall_record, cases=[case])
+
+
+def test_advisory_recall_summarize_recall_counts_lanes_and_overlap(recall_record):
+    case, _ = _recall_detected_case(recall_record)
+    both = copy.deepcopy(case)
+    both["codeql"].update(
+        status="detected", detections=[{"rule": "q", "path": "p", "line": 1}]
+    )
+    neither = copy.deepcopy(case)
+    neither["pattern"].update(status="not_detected", detections=[])
+    neither["codeql"].update(status="no_extractor", detections=[])
+    summary = _gain["summarize_recall"]({"cases": [both, neither]})
+    total = summary["total"]
+    assert (total["cases"], total["pattern_detected"], total["codeql_detected"]) == (
+        2,
+        1,
+        1,
+    )
+    assert (total["combined_detected"], total["overlap"]) == (1, 1)
+    assert (total["codeql_analyzed"], total["codeql_state_no_extractor"]) == (1, 1)
+    assert summary["combined_not_held_out"]["overlap"] == 1
+
+
+def test_advisory_recall_fetch_cache_writes_each_bound_prefix_file(
+    recall_record, tmp_path, monkeypatch
+):
+    case, subset = _recall_detected_case(recall_record)
+    calls = []
+
+    def fake_run(argv, check, capture_output):
+        calls.append(argv)
+        stdout = b""
+        if argv[3] == "show":
+            stdout = f"bytes of {argv[4]}".encode()
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout)
+
+    monkeypatch.setattr(_gain["subprocess"], "run", fake_run)
+    _gain["fetch_cache"](subset, tmp_path / "cache", tmp_path / "work")
+    fetched = [argv for argv in calls if argv[3] == "fetch"]
+    assert [argv[-1] for argv in fetched] == [fix["fix"] for fix in case["fixes"]]
+    assert all(
+        "--depth=2" in argv
+        and argv[-2] == f"https://github.com/{case['repository']}.git"
+        for argv in fetched
+    )
+    for item in case["prefix_files"]:
+        written = _gain["_cache_path"](tmp_path / "cache", case, item)
+        assert (
+            written.read_bytes() == f"bytes of {item['parent']}:{item['path']}".encode()
+        )
+
+
+def test_advisory_recall_replay_pattern_requires_identical_detections(
+    recall_record, tmp_path, monkeypatch
+):
+    _, subset = _recall_detected_case(recall_record)
+    case = subset["cases"][0]
+    ruleset = _ROOT / "deploy/deep-adapters/rules/semgrep-pattern-limited.yml"
+    cache = tmp_path / "cache"
+    results = [
+        {
+            "path": str(cache / case["ghsa"] / hit["parent"][:12] / hit["path"]),
+            "check_id": f"deploy.deep-adapters.rules.{hit['rule']}",
+            "start": {"line": hit["line"]},
+        }
+        for hit in case["pattern"]["detections"]
+    ]
+
+    def fake_run(argv, env, capture_output, text):
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=json.dumps({"results": results})
+        )
+
+    monkeypatch.setattr(_gain["subprocess"], "run", fake_run)
+    _gain["replay_pattern"](subset, cache, "opengrep", ruleset)
+    results.append(
+        dict(results[0], start={"line": results[0]["start"]["line"] + 10**6})
+    )
+    results[0] = dict(results[0], start={"line": results[0]["start"]["line"] + 10**6})
+    with pytest.raises(ValueError, match="pattern replay differs"):
+        _gain["replay_pattern"](subset, cache, "opengrep", ruleset)
+    altered = tmp_path / "ruleset.yml"
+    altered.write_bytes(ruleset.read_bytes() + b"\n# altered\n")
+    with pytest.raises(ValueError, match="ruleset bytes differ"):
+        _gain["replay_pattern"](subset, cache, "opengrep", altered)

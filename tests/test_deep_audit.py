@@ -2723,8 +2723,12 @@ def _assert_worker_image_imports(
     assert _WORKER_IMPORT_MODULES <= copied
     assert "COPY factoryline/data/junie_pack.json " not in dockerfile
     _copy_worker_modules(Path.cwd(), package_root, copied)
-    closure_bytes = sum((Path.cwd() / source).stat().st_size for source in copied)
-    closure_bytes += (package_root / "factoryline/data/junie_pack.json").stat().st_size
+    # Images are built from LF sources; a Windows CRLF checkout must not count.
+    closure_bytes = sum(
+        len(path.read_bytes().replace(b"\r\n", b"\n"))
+        for path in [Path.cwd() / source for source in copied]
+        + [package_root / "factoryline/data/junie_pack.json"]
+    )
     assert closure_bytes <= 1_250_000
     result = _run_worker_import(package_root)
     assert result.returncode == 0, result.stderr

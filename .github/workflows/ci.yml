@@ -393,6 +393,28 @@ jobs:
           SHARD_RESULT: ${{ needs.windows-shards.result }}
         run: test "$SHARD_RESULT" = success
 
+  windows-visual-acceptance:
+    name: Windows visual behavior and Prestige acceptance
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install pinned optional browser and Prestige tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" "code-factory-4-design==0.8.0" "playwright==1.63.0"
+          python -m playwright install chromium
+      - name: Run the real-browser acceptance; missing tooling fails, never skips
+        env:
+          FACTORY_VISUAL_ACCEPTANCE: "1"
+        run: >-
+          python -m pytest -q -o addopts= -rs
+          tests/test_full_stack_ux_harness.py::test_visual_real_browser_pixels_semantics_runtime_and_prestige
+
   native-process-parity:
     strategy:
       fail-fast: false

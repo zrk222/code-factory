@@ -762,7 +762,8 @@ def replay_pattern(record: dict, cache: Path, opengrep: str, ruleset: Path) -> N
     cases = {case["ghsa"]: case for case in record["cases"]}
     observed = set()
     for result in report["results"]:
-        ghsa, prefix, path = os.path.relpath(result["path"], cache).split("/", 2)
+        ghsa, prefix, *parts = Path(os.path.relpath(result["path"], cache)).parts
+        path = "/".join(parts)
         case = cases[ghsa]
         rule = ".".join(result["check_id"].split(".")[-2:])
         wanted = {families.get(cwe) for cwe in case["cwes"]} - {None}
@@ -839,8 +840,6 @@ def recall_main(argv: list[str]) -> int:
 
 def main() -> int:
     """Verify sealed precision inputs and write a receipt for the operator."""
-    if sys.argv[1:2] == ["advisory-recall"]:
-        return recall_main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("contract", type=Path)
     parser.add_argument("--out", type=Path, required=True)
@@ -898,4 +897,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        recall_main(sys.argv[2:]) if sys.argv[1:2] == ["advisory-recall"] else main()
+    )
