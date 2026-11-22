@@ -1079,6 +1079,13 @@ def add_parser(sub: Any) -> None:
         help="evaluate signed analyzer evidence or read local repair guidance; never release approval",
     )
     deep_sub = deep.add_subparsers(required=True, dest="deep_cmd")
+    coordinator = deep_sub.add_parser(
+        "coordinator",
+        help="serve opt-in foreground signed audit requests over owned raw stdin",
+    )
+    coordinator.add_argument("--root", default=".")
+    coordinator.add_argument("--session-nonce", required=True)
+    coordinator.add_argument("--lease-seconds", type=int, default=300)
     _add_execution_parsers(deep_sub)
     for action in ("evaluate", "status", "compare", "attestation"):
         command = deep_sub.add_parser(action)
@@ -1476,6 +1483,8 @@ def _deep_evaluate(args: Any, root: Path, execute: Any) -> tuple[dict[str, Any],
 
 
 def _run_deep(args: Any) -> int:
+    if args.deep_cmd == "coordinator":
+        return _run_coordinator(args)
     if args.deep_cmd in {
         "inventory",
         "scan",
@@ -1522,6 +1531,32 @@ def _run_deep(args: Any) -> int:
             2,
         )
     return _emit(result, code)
+
+
+def _run_coordinator(args: Any) -> int:
+    """Hand exclusive raw stdin to the existing foreground coordinator."""
+    import io
+    from .agentic_control import AgenticControlError
+
+    try:
+        stream = getattr(sys.stdin, "buffer", None)
+        stream = getattr(stream, "raw", stream)
+        if not isinstance(stream, io.FileIO):
+            raise ValueError("exclusive raw stdin pipe or file required")
+        result = serve_deep_audit_coordinator(
+            Path(args.root), args.lease_seconds, args.session_nonce, stream, sys.stdout
+        )
+        return 0 if result["state"] in {"OBSERVED", "STOPPED"} else 1
+    except (AgenticControlError, ValueError, TypeError, KeyError, OSError) as error:
+        _coordinator_emit(
+            sys.stdout,
+            _coordinator_result(
+                "INCOMPLETE",
+                code=getattr(error, "code", "E_COORDINATOR_INPUT"),
+                execution_available=False,
+            ),
+        )
+        return 2
 
 
 def _run_runtime(args: Any) -> int:

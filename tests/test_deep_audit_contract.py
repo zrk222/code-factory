@@ -28,6 +28,236 @@ def _coordinator_test_request(root, operation="status"):
     )
 
 
+def _coordinator_cli_argv(root, *extra):
+    import sys
+    import factoryline.cli_deep_audit as module
+
+    package = str(Path(module.__file__).resolve().parent.parent)
+    bootstrap = (
+        "import sys;sys.path.insert(0,"
+        + repr(package)
+        + ");from factoryline.cli import main;sys.exit(main(sys.argv[1:]))"
+    )
+    return [
+        sys.executable,
+        "-I",
+        "-c",
+        bootstrap,
+        "deep-audit",
+        "coordinator",
+        "--root",
+        str(root),
+        "--session-nonce",
+        "a" * 32,
+        *extra,
+    ]
+
+
+def test_coordinator_public_cli_status_stop_ndjson(tmp_path):
+    import subprocess
+
+    requests = [
+        _coordinator_test_request(tmp_path, operation)
+        for operation in ("status", "stop")
+    ]
+    requests[1]["request_id"] = "c" * 32
+    result = subprocess.run(
+        _coordinator_cli_argv(tmp_path),
+        input="".join(json.dumps(row) + "\n" for row in requests).encode(),
+        capture_output=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    assert len(rows) == 2 and rows[-1]["state"] == "STOPPED"
+    assert all(
+        row["authority"] == "none" and row["release_approval"] is False for row in rows
+    )
+    assert all(row.get("execution_available", False) is False for row in rows)
+
+
+@pytest.mark.parametrize("ttl", ["0", "3601", "-1", "invalid"])
+def test_coordinator_public_cli_rejects_invalid_lease(tmp_path, ttl):
+    import subprocess
+
+    result = subprocess.run(
+        _coordinator_cli_argv(tmp_path, "--lease-seconds", ttl),
+        input=b"",
+        capture_output=True,
+        timeout=20,
+    )
+    assert result.returncode != 0
+    assert not (tmp_path / ".factory/deep-runs/requests").exists()
+
+
+@pytest.mark.parametrize("fault", ["nonce", "operation", "duplicate_json", "workspace"])
+def test_coordinator_public_cli_protocol_refusal(tmp_path, fault):
+    import subprocess
+
+    request = _coordinator_test_request(tmp_path)
+    changes = {
+        "nonce": {"session_nonce": "c" * 32},
+        "operation": {"operation": "unexpected"},
+        "workspace": {"workspace": str(tmp_path.parent)},
+    }
+    request.update(changes.get(fault, {}))
+    raw = json.dumps(request)
+    if fault == "duplicate_json":
+        raw = raw[:-1] + ',"operation":"status"}'
+    result = subprocess.run(
+        _coordinator_cli_argv(tmp_path),
+        input=(raw + "\n").encode(),
+        capture_output=True,
+        timeout=20,
+    )
+    assert result.returncode == 1
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    assert len(rows) == 1 and rows[0]["state"] == "INCOMPLETE"
+    assert rows[0]["authority"] == "none" and rows[0]["release_approval"] is False
+
+
+def test_coordinator_public_cli_rejects_buffered_input_without_closing(
+    monkeypatch, tmp_path, capsys
+):
+    import io
+    from types import SimpleNamespace
+    import factoryline.cli_deep_audit as module
+
+    stream = io.BytesIO()
+    monkeypatch.setattr(module.sys, "stdin", SimpleNamespace(buffer=stream))
+    result = module._run_coordinator(
+        SimpleNamespace(root=tmp_path, lease_seconds=300, session_nonce="a" * 32)
+    )
+    assert result == 2 and not stream.closed
+    assert json.loads(capsys.readouterr().out)["state"] == "INCOMPLETE"
+
+
+def test_coordinator_public_cli_signed_child_owned_stop(tmp_path):
+    import subprocess
+    import time
+
+    root, request, owner, context, inventory = _coordinator_signed_fixture(tmp_path)
+    context["store"].release(owner)
+    child = subprocess.Popen(
+        _coordinator_cli_argv(root, "--lease-seconds", "90"),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    handshake = None
+    try:
+        child.stdin.write((json.dumps(request) + "\n").encode())
+        child.stdin.flush()
+        deadline = time.monotonic() + 45
+        while child.poll() is None and time.monotonic() < deadline:
+            for path in (root / ".factory/deep-runs/requests").glob("*/handshake.json"):
+                try:
+                    handshake = json.loads(path.read_bytes())
+                except (OSError, ValueError):
+                    continue
+            if handshake:
+                break
+            time.sleep(0.02)
+        assert handshake, "public CLI did not observe a fresh signed child handshake"
+        assert handshake["worker_identity"]["pid"] != child.pid
+        assert handshake["request_id"] == request["request_id"]
+        stop = _coordinator_test_request(root, "stop")
+        stop["request_id"] = "d" * 32
+        output, error = child.communicate(
+            (json.dumps(stop) + "\n").encode(), timeout=30
+        )
+        assert child.returncode == 0, error
+        rows = [json.loads(line) for line in output.splitlines()]
+        assert rows[0]["state"] == "ADMITTED"
+        assert rows[-1]["state"] == "STOPPED" and rows[-1]["cleanup_confirmed"] is True
+        assert all(row.get("execution_available", False) is False for row in rows)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=10)
+
+
+def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
+    import subprocess
+    import time
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
+    context["store"].release(owner)
+    child = subprocess.Popen(
+        _coordinator_cli_argv(root, "--lease-seconds", "120"),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        child.stdin.write((json.dumps(request) + "\n").encode())
+        child.stdin.flush()
+        terminal = _coordinator_cli_wait_terminal(
+            root, request, child, time.monotonic() + 100
+        )
+        assert terminal["run_id"] and terminal["cleanup_confirmed"] is True
+        changed = {
+            **request,
+            "payload": {**request["payload"], "manifest_sha256": "0" * 64},
+        }
+        stop = _coordinator_test_request(root, "stop")
+        stop["request_id"] = "d" * 32
+        output, error = child.communicate(
+            "".join(
+                json.dumps(row) + "\n" for row in (request, changed, stop)
+            ).encode(),
+            timeout=20,
+        )
+        assert child.returncode == 0, error
+        rows = [json.loads(line) for line in output.splitlines()]
+        assert len(rows) == 4 and rows[0]["state"] == "ADMITTED"
+        assert (
+            rows[1]["run_id"] == terminal["run_id"]
+            and rows[1]["state"] == terminal["state"]
+        )
+        assert (
+            rows[2]["state"] == "INCOMPLETE"
+            and rows[2]["code"] == "E_COORDINATOR_REQUEST"
+        )
+        assert rows[3]["state"] == "STOPPED"
+        restarted = subprocess.run(
+            _coordinator_cli_argv(root),
+            input=(json.dumps(request) + "\n").encode(),
+            capture_output=True,
+            timeout=20,
+        )
+        assert restarted.returncode == 1
+        assert json.loads(restarted.stdout)["code"] == "E_COORDINATOR_OWNER"
+        assert (
+            CoordinatorRequestStore(root).read(
+                request["session_nonce"], request["request_id"]
+            )["run_id"]
+            == terminal["run_id"]
+        )
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=10)
+
+
+def _coordinator_cli_wait_terminal(root, request, child, deadline):
+    import time
+    from factoryline.agentic_control import CoordinatorRequestStore, AgenticControlError
+
+    while child.poll() is None and time.monotonic() < deadline:
+        try:
+            row = CoordinatorRequestStore(root).read(
+                request["session_nonce"], request["request_id"]
+            )
+            if row["state"] not in {"ADMITTED", "RUNNING"}:
+                return row
+        except AgenticControlError:
+            pass
+        time.sleep(0.05)
+    pytest.fail("CLI did not retain bounded terminal request history")
+
+
 def _coordinator_test_payload(root):
     for name in ("manifest.json", "authorization.json", "trust.json"):
         (root / name).write_text("{}", encoding="utf-8")
@@ -503,13 +733,14 @@ def test_coordinator_native_open_stdin_expires_and_releases_lease(tmp_path, part
     package = str(Path(module.__file__).resolve().parent.parent)
     bootstrap = (
         "import sys;sys.path.insert(0," + repr(package) + ");"
-        "from factoryline.cli_deep_audit import serve_deep_audit_coordinator;"
+        "from factoryline.cli import main;"
+        "import platform;platform.platform();"
         'exec("def no_child(event,args):\\n'
-        " if event=='subprocess.Popen':\\n"
+        " if event=='subprocess.Popen' and '-I' in args[1]:\\n"
         "  print('UNEXPECTED_AUDIT_CHILD',file=sys.stderr,flush=True)\\n"
         "  raise RuntimeError('unexpected audit child')\");"
         "sys.addaudithook(no_child);"
-        "serve_deep_audit_coordinator(sys.argv[1],2,'a'*32,sys.stdin.buffer.raw,sys.stdout)"
+        "sys.exit(main(['deep-audit','coordinator','--root',sys.argv[1],'--lease-seconds','2','--session-nonce','a'*32]))"
     )
     started = time.monotonic()
     child = subprocess.Popen(
@@ -528,7 +759,7 @@ def test_coordinator_native_open_stdin_expires_and_releases_lease(tmp_path, part
         assert not child.stdin.closed, "the writer must remain open through expiry"
         output = child.stdout.read().decode("utf-8")
         error = child.stderr.read().decode("utf-8")
-        assert child.returncode == 0, error
+        assert child.returncode == 1, error
         assert "UNEXPECTED_AUDIT_CHILD" not in error
         rows = [json.loads(line) for line in output.splitlines()]
         assert len(rows) == 1
