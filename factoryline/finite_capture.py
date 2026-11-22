@@ -1,5 +1,6 @@
 """Bounded source-origin capture for finite templates."""
 
+from itertools import islice
 import ast
 from .import_context import (
     security_literal_branch_blocks as security_literal_branch_blocks,
@@ -401,7 +402,7 @@ def _security_helper_binding(call, function):
     module = flow._security_module_scope(function)
     if module is None or getattr(module, "_security_helper_flow_depth", 0) >= 8:
         return None
-    if sum(1 for _ in ast.walk(function)) > 512:
+    if next(islice(ast.walk(function), 512, None), None) is not None:
         return None
     if not _security_helper_definition_supported(function):
         return None
