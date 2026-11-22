@@ -75,8 +75,14 @@ Project record_id into ruleId/name, summary into description and evidence paths
 joined by spaces into sourceModule; other rule fields are empty. Do not read or
 index evidence contents. Every query ranks positive-score records descending,
 then record_id ascending. Each query is a caller-declared topic, not a semantic
-decomposition inferred by a model. Records can match on any query term; a hit
-is lexical evidence, not proof all terms or semantic requirements are satisfied.
+decomposition inferred by a model. Records can match on any query term except
+the fixed filler words in engineering_memory._FILLER (articles, auxiliaries and
+question words, after WizeMe's hop stopwords): a record ranks for a topic only
+with a positive score and at least 1 shared non-filler term. Filler terms still
+contribute to the unchanged score. A topic phrased "how is the cache invalidated"
+therefore reports no_admissible_lexical_match instead of matching every summary
+containing "the". A hit is lexical evidence, not proof all terms or semantic
+requirements are satisfied.
 Exact BM25F: lowercase and tokenize with `[a-z0-9]+`, using sorted unique query
 terms (repetition adds no weight). N is the admitted document count. df counts
 documents containing a term in any field. For each active field, count=tf;
@@ -88,7 +94,12 @@ Round total score to8 decimal places before filtering positive scores. Empty
 inventories yield empty rankings. Scores are selection inputs, not probabilities.
 
 Allocate unique records in round-robin query order: each query selects its next
-unselected ranked ID in the same turn. Stop at limit or exhausted rankings.
+unselected ranked ID in the same turn, preferring the first whose evidence-path
+set is not yet cited by a selected record (admitted evidence is hash-current, so
+equal paths mean equal bytes) and otherwise its next unselected ID. This adapts
+WizeMe's source-diversity term without its weights: duplicates citing the same
+evidence cannot fill the budget while new evidence is ranked. Stop at limit or
+exhausted rankings.
 Thus another topic gets its first slot before one topic's second candidate.
 A selected record can support multiple query traces. Return only selected
 records and their existing influence edges. Excluded records remain content-free

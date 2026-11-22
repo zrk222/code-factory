@@ -160,8 +160,17 @@ def _recall_queries(queries, limit):
     return [query.strip() for query in queries], limit
 
 
+# Question words and articles never establish a topic match (as in WizeMe's hop
+# tokens); they still contribute to BM25F scores, which stay unchanged.
+_FILLER = frozenset(
+    "a an and are as at be been both but by did do does for from had has have how"
+    " i in is it me my of on or our that the their them then there they this to"
+    " was were what when where which who why with you your".split()
+)
+
+
 def _recall_rankings(records, queries):
-    from .audit_rule_search import _bm25_scores_batch
+    from .audit_rule_search import _bm25_scores_batch, _tokens
 
     documents = [
         {
@@ -172,11 +181,24 @@ def _recall_rankings(records, queries):
         }
         for row in records
     ]
+    words = {
+        doc["ruleId"]: set(
+            _tokens([doc["name"], doc["description"], doc["sourceModule"]])
+        )
+        for doc in documents
+    }
     rankings = []
-    for scores in _bm25_scores_batch(documents, queries, fielded=True):
+    for query, scores in zip(
+        queries, _bm25_scores_batch(documents, queries, fielded=True)
+    ):
+        content = set(_tokens(query)) - _FILLER
         rankings.append(
             sorted(
-                (key for key, score in scores.items() if score > 0),
+                (
+                    key
+                    for key, score in scores.items()
+                    if score > 0 and content & words[key]
+                ),
                 key=lambda key: (-scores[key], key),
             )
         )
@@ -186,13 +208,22 @@ def _recall_rankings(records, queries):
 def _balanced_recall(records, selection):
     queries, limit = selection
     rankings = _recall_rankings(records, queries)
-    selected = []
+    # Admitted evidence is hash-current, so equal paths mean equal bytes.
+    evidence = {
+        row["record_id"]: frozenset(item["path"] for item in row.get("evidence", ()))
+        for row in records
+    }
+    selected, cited = [], set()
     for _ in range(limit):
         before = len(selected)
         for ranked in rankings:
-            key = next((key for key in ranked if key not in selected), None)
+            fresh = (key for key in ranked if key not in selected)
+            key = next(
+                (key for key in fresh if evidence[key] not in cited), None
+            ) or next((key for key in ranked if key not in selected), None)
             if len(selected) < limit and key is not None:
                 selected.append(key)
+                cited.add(evidence[key])
         if len(selected) in {before, limit}:
             break
     per_query = [[key for key in selected if key in ranked] for ranked in rankings]
