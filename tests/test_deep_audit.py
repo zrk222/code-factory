@@ -7295,7 +7295,14 @@ def test_codeql_replay_receipt_accepts_bound_success():
 
 
 @pytest.mark.parametrize(
-    "sabotage", ["invalid_facts", "cancelled", "stdout_hash_drift", "binding_drift"]
+    "sabotage",
+    [
+        "invalid_facts",
+        "cancelled",
+        "stdout_hash_drift",
+        "stdout_size_drift",
+        "binding_drift",
+    ],
 )
 def test_codeql_replay_receipt_rejects_execution_or_binding_drift(sabotage):
     from factoryline.deep_audit import _codeql_replay_receipt
@@ -7307,6 +7314,8 @@ def test_codeql_replay_receipt_rejects_execution_or_binding_drift(sabotage):
         facts["cancelled"] = True
     elif sabotage == "stdout_hash_drift":
         facts["stdout_sha256"] = "0" * 64
+    elif sabotage == "stdout_size_drift":
+        facts["stdout_bytes"] += 1
     else:
         request["inventory"]["candidate_sha256"] = "0" * 64
     with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):

@@ -78,13 +78,12 @@ def _source_families(language: str) -> set[str]:
     return families
 
 
-# Measured static routing: CodeQL where an offline interprocedural worker exists
-# (library-level recall), the pattern lane for local web-handler and unsafe-API checks.
+# Available signed profile names, not installed or executed worker claims.
 _STATIC_PROFILES = {
-    "python": "codeql-python-full.json and semgrep-pattern-limited.json",
-    "javascript": "codeql-javascript-full.json and semgrep-pattern-limited.json",
-    "typescript": "codeql-javascript-full.json and semgrep-pattern-limited.json",
-    "ruby": "codeql-ruby-full.json and semgrep-pattern-limited.json",
+    "python": "python",
+    "javascript": "javascript",
+    "typescript": "javascript",
+    "ruby": "ruby",
 }
 
 
@@ -92,8 +91,11 @@ def _gap_repair(family: str, language: str) -> str:
     repair = f"Add a {family} analyzer and source-bound obligation for {language}."
     if family != "static":
         return repair
-    profile = _STATIC_PROFILES.get(
-        language, "semgrep-pattern-limited.json (no offline interprocedural worker)"
+    codeql = _STATIC_PROFILES.get(language)
+    profile = (
+        f"codeql-{codeql}-full.json and semgrep-pattern-limited.json"
+        if codeql
+        else "semgrep-pattern-limited.json (no offline interprocedural worker)"
     )
     return (
         f"{repair} Supported profiles for a signed lane: {profile}; "
@@ -1981,25 +1983,10 @@ def _replay_fuzz_lane(
 
 def _fuzz_replay_receipt(raw, facts, request):
     from .deep_audit_io import _fuzz_replay_expected
-    from .runtime_audit_common import (
-        _validate_runner_facts,
-        require_digest,
-        require_int,
-    )
+    from .runtime_audit_common import require_int
 
-    _validate_runner_facts(facts, facts["timeout_seconds"])
-    if not _osv_replay_process_valid(raw, facts):
-        raise RuntimeAuditError("E_FUZZ_REPLAY", "native replay execution failed")
-    replay = strict_json(raw)
-    expected = _fuzz_replay_expected(request)
-    if not isinstance(replay, dict) or set(replay) != set(expected) | {
-        "native_execution_sha256"
-    }:
-        raise RuntimeAuditError("E_FUZZ_REPLAY", "native replay fields differ")
-    if any(replay.get(key) != value for key, value in expected.items()):
-        raise RuntimeAuditError("E_FUZZ_REPLAY", "native replay binding differs")
+    replay = _native_bound_receipt(raw, facts, _fuzz_replay_expected(request), "FUZZ")
     require_int(replay["replayed_inputs"], "replayed inputs", minimum=1, maximum=4096)
-    require_digest(replay["native_execution_sha256"], "native replay invocation hash")
     return replay
 
 
@@ -2476,15 +2463,7 @@ def _codeql_replay_receipt(raw, facts, request):
     from .runtime_audit_common import _validate_runner_facts
 
     _validate_runner_facts(facts, facts["timeout_seconds"])
-    if (
-        facts["exit_code"] != 0
-        or facts["timed_out"]
-        or facts["launch_error"]
-        or facts["output_limit_exceeded"]
-        or not facts["cleanup_confirmed"]
-        or facts.get("cancelled")
-        or sha256_bytes(raw) != facts["stdout_sha256"]
-    ):
+    if not _osv_replay_process_valid(raw, facts):
         raise RuntimeAuditError("E_CODEQL_REPLAY", "native replay execution failed")
     replay = strict_json(raw)
     if any(
@@ -2512,19 +2491,22 @@ def _codeql_replay_expected(request):
 
 
 def _osv_replay_receipt(raw, facts, request):
+    return _native_bound_receipt(raw, facts, _osv_replay_expected(request), "OSV")
+
+
+def _native_bound_receipt(raw, facts, expected, engine):
     from .runtime_audit_common import _validate_runner_facts, require_digest
 
     _validate_runner_facts(facts, facts["timeout_seconds"])
     if not _osv_replay_process_valid(raw, facts):
-        raise RuntimeAuditError("E_OSV_REPLAY", "native replay execution failed")
+        raise RuntimeAuditError(f"E_{engine}_REPLAY", "native replay execution failed")
     replay = strict_json(raw)
-    expected = _osv_replay_expected(request)
     if not isinstance(replay, dict) or set(replay) != set(expected) | {
         "native_execution_sha256"
     }:
-        raise RuntimeAuditError("E_OSV_REPLAY", "native replay fields differ")
+        raise RuntimeAuditError(f"E_{engine}_REPLAY", "native replay fields differ")
     if any(replay.get(key) != value for key, value in expected.items()):
-        raise RuntimeAuditError("E_OSV_REPLAY", "native replay binding differs")
+        raise RuntimeAuditError(f"E_{engine}_REPLAY", "native replay binding differs")
     require_digest(replay["native_execution_sha256"], "native replay invocation hash")
     return replay
 
