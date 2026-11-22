@@ -29,6 +29,12 @@ polyglot developers—not another agent that approves its own work.
   1,000-record synthetic runs, four/eight-topic selection medians fell from
   46.43/95.09 to 20.97/34.50 ms; no reliable full-API speedup or detector-recall
   improvement is claimed. No new dependency, memory store or persistent cache.
+- **Visual evidence:** optional fixture-only browser execution links reviewed
+  screenshots, accessible controls, terminal state and a request-correlated API
+  response, with explicit deadlines and process cleanup. Prestige token reports
+  and token-removal challenges are rechecked on replay; stale, missing or failed
+  visual evidence blocks its requested quality-harness inclusion. Legacy use
+  stays compatible, and human release authority is unchanged.
 - **Added:** frozen versioned scan JSON, SARIF 2.1.0 and opt-in pre-commit;
   byte-exact historical mutation diffs preserve CRLF, non-UTF-8 bytes and missing
   final newlines. Existing CI and editors can consume evidence without a new

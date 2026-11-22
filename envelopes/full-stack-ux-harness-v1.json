@@ -1,14 +1,14 @@
 {
   "schema": "factoryline.intent-envelope.v1",
   "feature": "full-stack-ux-harness-v1",
-  "sealed_hash": "6d7d53d4f39dec3289b8da6858a30f92eecc4304db583a0d628b700f68d12413",
+  "sealed_hash": "33ac07824b62edaaacd79f6398e49c577e0742e45412ed6982e98ce94095ccdc",
   "coherence_score": 100,
   "source": "specs/full-stack-ux-harness-v1.md",
   "intent": "Bind full-stack and product-facing UI evidence to a closed review contract, preserve human judgment, and deny the verifier release authority.",
   "assumptions": [
     "Authentication identity is not assumed from local reviewer metadata; consequential release decisions require the repository's trusted approval and receipt path.",
-    "Native tool dependency availability is not assumed: output is supplied as evidence and is not executed by the quality-harness verifier."
+    "Native tool availability is not assumed: legacy verify consumes evidence; optional visual execution requires an explicit pinned fixture contract and --execute."
   ],
   "seal_timing": "pre-commit implementation review",
-  "coherence_basis": "SpecLine strict: zero warnings; all nine requirement mutations killed; ForgeLine smoke rejects a weakened stub. Not product certification or measured outcome proof."
+  "coherence_basis": "Owner requested optional optical/Prestige integration. SpecLine strict and all15 requirement mutations passed before implementation; final Forge/browser/workflow evidence remains required. Not product certification or measured outcome proof."
 }

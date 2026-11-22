@@ -39,6 +39,11 @@ below belong to the earlier ruleset, not a fresh score for the shipped variant.
 - **Review the exact change:** signed-observation `verify_claim`, a bounded
   owner-approved Proof Agent and byte-exact mutation diffs show what was checked,
   what is missing and what to do next. Neither agents nor receipts self-approve.
+- **Check visible behavior too:** an optional, explicitly admitted local-browser
+  gate compares reviewed pixels, accessible control identity, terminal UI state
+  and correlated API responses. Prestige token checks and token-removal
+  challenges use the same source-bound receipt. Missing tooling or evidence
+  stays incomplete; this is not a native-device or release certificate.
 
 [Changes and fixes](CHANGELOG.md#0500--2026-11-21-release-candidate-publication-gated) ·
 [Panel results and limits](https://github.com/zrk222/code-factory/pull/354) ·
