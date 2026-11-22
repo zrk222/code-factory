@@ -78,6 +78,26 @@ def _source_families(language: str) -> set[str]:
     return families
 
 
+# Measured static routing: CodeQL where an offline interprocedural worker exists
+# (library-level recall), the pattern lane for local web-handler and unsafe-API checks.
+_STATIC_PROFILES = {
+    "python": "codeql-python-full.json and semgrep-pattern-limited.json",
+    "javascript": "codeql-javascript-full.json and semgrep-pattern-limited.json",
+    "typescript": "codeql-javascript-full.json and semgrep-pattern-limited.json",
+    "ruby": "codeql-ruby-full.json and semgrep-pattern-limited.json",
+}
+
+
+def _gap_repair(family: str, language: str) -> str:
+    repair = f"Add a {family} analyzer and source-bound obligation for {language}."
+    if family != "static":
+        return repair
+    profile = _STATIC_PROFILES.get(
+        language, "semgrep-pattern-limited.json (no offline interprocedural worker)"
+    )
+    return f"{repair} Recommended profiles: {profile}."
+
+
 def _source_gaps(
     files: dict[str, dict],
     language_lanes: dict[str, set[str]],
@@ -94,7 +114,7 @@ def _source_gaps(
                 gaps.append(
                     _execution_gap(
                         "UNCOVERED_SOURCE",
-                        f"Add a {family} analyzer and source-bound obligation for {language}.",
+                        _gap_repair(family, language),
                         path,
                     )
                 )

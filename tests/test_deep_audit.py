@@ -224,6 +224,23 @@ def _capture_scope_gap_control(
     return deep_audit, args, state, counters
 
 
+@pytest.mark.parametrize(
+    ("language", "profile"),
+    [
+        ("ruby", "codeql-ruby-full.json and semgrep-pattern-limited.json"),
+        ("go", "semgrep-pattern-limited.json (no offline interprocedural worker)"),
+    ],
+)
+def test_uncovered_static_source_names_measured_profiles(language, profile):
+    from factoryline.deep_audit import _source_gaps
+
+    files = {f"app.{language}": {"language": language}}
+    gaps = _source_gaps(files, {}, [])
+    [static] = [gap for gap in gaps if gap["action"].startswith("Add a static ")]
+    assert static["action"].endswith(f"Recommended profiles: {profile}.")
+    assert all("Recommended" not in gap["action"] for gap in gaps if gap is not static)
+
+
 @pytest.mark.parametrize("code", ["UNCOVERED_SOURCE", "DEPENDENCY_DEPTH"])
 def test_capture_retains_authorized_static_observations_despite_other_scope_gaps(
     tmp_path, monkeypatch, code
