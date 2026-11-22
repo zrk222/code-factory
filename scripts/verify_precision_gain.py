@@ -839,8 +839,6 @@ def recall_main(argv: list[str]) -> int:
 
 def main() -> int:
     """Verify sealed precision inputs and write a receipt for the operator."""
-    if sys.argv[1:2] == ["advisory-recall"]:
-        return recall_main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("contract", type=Path)
     parser.add_argument("--out", type=Path, required=True)
@@ -898,4 +896,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(
+        recall_main(sys.argv[2:]) if sys.argv[1:2] == ["advisory-recall"] else main()
+    )
