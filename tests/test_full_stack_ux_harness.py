@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -472,10 +473,14 @@ def test_visual_file_budget_is_bounded_before_reading_all_bytes(
 
 
 def _visual_browser_identity():
-    # Windows acceptance must actually run; dependency absence must fail here.
-    if sys.platform == "win32":
+    # The Windows visual-acceptance CI job installs the pinned browser tooling
+    # and sets FACTORY_VISUAL_ACCEPTANCE=1: there, absence must fail. Elsewhere
+    # the optional Playwright/Prestige tooling (spec: no installs) may skip.
+    if os.environ.get("FACTORY_VISUAL_ACCEPTANCE") == "1":
+        import prestige_design  # noqa: F401
         from playwright.sync_api import sync_playwright
     else:
+        pytest.importorskip("prestige_design")
         sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
     with sync_playwright() as playwright:
         executable = playwright.chromium.executable_path
