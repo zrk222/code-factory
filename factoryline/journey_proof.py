@@ -12,6 +12,7 @@ from typing import Any
 
 from .attribution import FailureClass
 from .e2e_proof import run_supervised_command
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _digest
 
 

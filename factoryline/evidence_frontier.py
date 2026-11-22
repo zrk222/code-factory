@@ -16,6 +16,7 @@ import json
 import re
 
 from .proofsearch import _write, verify_proofsearch_evaluation
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _digest
 from . import CodedError
 

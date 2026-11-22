@@ -25,6 +25,7 @@ from .appforge_oracle import (
     RECEIPT_SCHEMA as ORACLE_AUTHORITY_RECEIPT_SCHEMA,
     verify_appforge_oracle_authority,
 )
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_sha as _sha
 
 

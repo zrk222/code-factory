@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any, Iterable
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_or_bytes_sha as _sha
 from . import PrefixedCodedError
 

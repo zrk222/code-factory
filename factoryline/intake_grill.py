@@ -23,6 +23,7 @@ from typing import Any
 from .product_missions import ProductMissionError, analyze_product_text
 from .intent_quality import IntentQualityError, require_clear
 from . import utc_iso as _now
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_sha as _sha
 from . import sha256_hex as _sha_bytes
 

@@ -21,6 +21,7 @@ from .appforge_oracle import verify_appforge_oracle_authority
 from .oracle_firewall import AUTHORITY_ORIGINS, verify_oracle_contract
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import file_sha256 as _file_sha
 

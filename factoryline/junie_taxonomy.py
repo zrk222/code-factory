@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from .audit_taxonomy import audit_taxonomy
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_sha as _sha
 
 TAXONOMY_SCHEMA = "factory.junie-taxonomy.v1"

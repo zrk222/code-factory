@@ -14,6 +14,7 @@ from .appforge_evidence_kit import _read_candidate
 from .appforge_store_media import RECEIPT_SCHEMA as MEDIA_RECEIPT_SCHEMA
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import file_sha256 as _file_sha
 

@@ -19,6 +19,7 @@ from .e2e_proof import E2EProofError, validate_e2e_proof_receipt
 from .intent_ledger import IntentLedgerError, inspect_intent_ledger
 from .repair_sandbox import RepairSandboxError, validate_repair_scope_envelope
 from .saas_proof import saas_proof_projection
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_sha as _sha
 from . import CodedError
 

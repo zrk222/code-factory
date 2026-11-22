@@ -24,6 +24,7 @@ from .oracle_firewall import (
     OracleFirewallError,
     verify_oracle_contract,
 )
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import CodedError
 

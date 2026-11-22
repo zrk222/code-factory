@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
+from . import canonical_ascii_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import ascii_compat_sha as _sha
 
 

@@ -29,6 +29,7 @@ from .e2e_proof import (
 )
 from .review_audits import MAX_SECURITY_SOURCE_FILES
 from .cli_foundations import _SCRIPT_LANGUAGE_SUFFIXES
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import CodedError
 

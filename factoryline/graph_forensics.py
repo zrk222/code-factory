@@ -14,6 +14,7 @@ from typing import Any
 import json
 import re
 import tempfile
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _digest
 from . import CodedError
 

@@ -16,6 +16,7 @@ from typing import Any
 
 from .oracle_firewall import verify_oracle_contract
 from .protocol import ASSEMBLY_STAGE_KEYS
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_sha as _sha
 
 

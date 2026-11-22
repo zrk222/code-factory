@@ -18,6 +18,7 @@ from .graph_ops import graph_ops_impact
 from .proof import git_changed_paths, risk_for_paths
 from .review_audits import ReviewAuditError, audit_code
 from .revenueforge import AUTHORITY as _CR_RECEIPT_AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import atomic_text as _atomic_text
 from . import CodedError

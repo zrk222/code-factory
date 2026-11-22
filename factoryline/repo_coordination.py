@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 from typing import Any
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_sha as _sha
 from . import CodedError
 

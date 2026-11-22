@@ -20,6 +20,7 @@ from .revenueforge import (
     RevenueForgeError,
     validate_products,
 )
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import sha256_hex as _sha_bytes
 

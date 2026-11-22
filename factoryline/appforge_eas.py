@@ -18,6 +18,7 @@ from typing import Any
 from .appforge_evidence_kit import _read_candidate
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 
 

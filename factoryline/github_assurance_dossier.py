@@ -18,6 +18,7 @@ from .github_proof_review import (
     GITHUB_PROOF_REVIEW_SCHEMA,
     validate_github_proof_review_payload,
 )
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import CodedError
 

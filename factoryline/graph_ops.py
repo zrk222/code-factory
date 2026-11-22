@@ -62,6 +62,7 @@ from .mission_control_status import mission_control_status
 from .senior_engineering import senior_engineering_projection
 from .continuous_controls import continuous_controls_projection, build_control_graph
 from .agentic_control import agentic_control_projection
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import is_sha256_hex as _adapter_digest_valid
 

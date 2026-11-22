@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 from typing import Any
 from . import utc_stamp as _now
+from . import canonical_ascii_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import ascii_compat_sha as _sha
 from . import CodedError
 

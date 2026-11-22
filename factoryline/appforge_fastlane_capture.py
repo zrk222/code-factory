@@ -20,6 +20,7 @@ from .appforge_surface_matrix import RECEIPT_SCHEMA as MATRIX_SCHEMA
 from .appforge_storefront_story import RECEIPT_SCHEMA as STORY_SCHEMA
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import file_sha256 as _file_sha
 

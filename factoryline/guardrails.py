@@ -15,6 +15,7 @@ from .continuity import (
     _is_expired,
     recall_continuity_metadata_read_only,
 )
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import CodedError
 

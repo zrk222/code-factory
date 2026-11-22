@@ -15,6 +15,7 @@ from .plan_proof_review import (
     review_plan_proof,
     validate_plan_proof_review,
 )
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
 from . import atomic_text as _atomic_text
 from . import CodedError

@@ -13,6 +13,7 @@ import tempfile
 from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
 from .failure_guidance import explain_failure
 from . import utc_iso as _now
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_or_bytes_sha as _sha
 
 

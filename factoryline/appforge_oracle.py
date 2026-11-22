@@ -21,6 +21,7 @@ from .oracle_firewall import (
 )
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import RevenueForgeError
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_sha as _sha
 
 
