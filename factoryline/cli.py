@@ -1068,6 +1068,12 @@ def _build_parser(
     engineering_memory.add_argument("--purpose", required=True)
     engineering_memory.add_argument("--scope", required=True)
     engineering_memory.add_argument(
+        "--query", action="append", help="repeat for each required recall topic"
+    )
+    engineering_memory.add_argument(
+        "--limit", type=int, help="query result budget, 1..20; default 5"
+    )
+    engineering_memory.add_argument(
         "--sender", choices=sorted(_lazy_import("contract", "MODULES"))
     )
     engineering_memory.add_argument(
@@ -4184,6 +4190,10 @@ def _dispatch_route_group_37(a, capture_command, p):
             from .deep_audit_io import local_file, strict_json, LIMIT
 
             args = (Path(a.root), principal, a.tenant, a.purpose, a.scope)
+            if (a.query is not None or a.limit is not None) and (
+                a.accept or a.sender or a.receiver
+            ):
+                raise ValueError("query selection cannot narrow a knowledge handoff")
             if a.accept:
                 with local_file(Path(a.root).resolve(), a.accept).open("rb") as stream:
                     packet = strict_json(stream.read(LIMIT + 1))
@@ -4191,7 +4201,9 @@ def _dispatch_route_group_37(a, capture_command, p):
             elif a.sender or a.receiver:
                 result = create_knowledge_handoff(*args, a.sender, a.receiver)
             else:
-                result = recall_engineering_memory(*args)
+                result = recall_engineering_memory(
+                    *args, queries=a.query, limit=a.limit
+                )
         except (
             ValueError,
             OSError,
