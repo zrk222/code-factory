@@ -270,6 +270,46 @@ def _coordinator_test_payload(root):
     )
 
 
+@pytest.mark.parametrize("empty_implementation", [False, True])
+def test_coordinator_smoke_runs_bound_source_and_rejects_noop(
+    tmp_path, empty_implementation
+):
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "smoke/deep-audit-coordinator-foundation-v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert len(manifest["checks"]) == 1
+    check = manifest["checks"][0]
+    assert check["kind"] == "python" and check["must_fail_on_stub"] is True
+    assert 0 < check["timeout_s"] <= 30 and check["expect_exit"] == 0
+    if empty_implementation:
+        root = tmp_path
+        source = root / "factoryline/cli_deep_audit.py"
+        source.parent.mkdir()
+        source.write_text(
+            "def serve_deep_audit_coordinator(*args, **kwargs):\n    return None\n",
+            encoding="utf-8",
+        )
+    result = subprocess.run(
+        [sys.executable, "-c", check["run"]],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=check["timeout_s"],
+    )
+    if empty_implementation:
+        assert result.returncode != 0 and "invalid TTL admitted" in result.stderr
+        assert check["expect_stdout"] not in result.stdout
+    else:
+        assert result.returncode == 0, result.stderr
+        assert check["expect_stdout"] in result.stdout
+
+
 @pytest.mark.parametrize("unicode_text", [False, True])
 def test_coordinator_line_exact_utf8_byte_boundary(unicode_text):
     from factoryline.cli_deep_audit import _coordinator_line
