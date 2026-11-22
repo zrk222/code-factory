@@ -393,11 +393,7 @@ def verify_quality_harness(
 ) -> dict[str, Any]:
     """Verify declared evidence and human judgment; never execute checks or release work."""
     workspace = Path(root).resolve()
-    manifest_input = Path(manifest_path)
-    manifest_source = (
-        manifest_input if manifest_input.is_absolute() else workspace / manifest_input
-    ).resolve()
-    manifest, source = _load_manifest(workspace, manifest_input)
+    manifest, source = _load_manifest(workspace, Path(manifest_path))
     check_findings, checks = _check_findings(workspace, manifest)
     judgment_findings, review = _judgment_findings(manifest)
     findings = [*check_findings, *judgment_findings]
@@ -446,6 +442,14 @@ def verify_quality_harness(
             "path": str(visual_receipt),
         }
     receipt = {**core, "receipt_sha256": _sha(core), "generated_at": _now()}
+    destination = _quality_receipt_destination(workspace, manifest_path, optical, out)
+    _atomic_json(destination, receipt)
+    return {**receipt, "path": str(destination)}
+
+
+def _quality_receipt_destination(workspace, manifest_path, optical, out):
+    """Resolve the output below the workspace and protect both evidence inputs."""
+    manifest_source = (workspace / Path(manifest_path)).resolve()
     destination = (
         Path(out)
         if out
@@ -470,8 +474,7 @@ def verify_quality_harness(
             "E_UX_RECEIPT_PATH",
             "receipt destination must differ from its inputs",
         )
-    _atomic_json(destination, receipt)
-    return {**receipt, "path": str(destination)}
+    return destination
 
 
 def run_visual_behavior_gate(
