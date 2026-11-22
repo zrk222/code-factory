@@ -78,6 +78,14 @@ COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-actions-full.json /o
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="actions"
 
+FROM codeql-python-worker AS codeql-ruby-worker
+USER 0:0
+RUN chmod -R a+rX /opt/codeql/codeql/qlpacks/codeql/ruby-queries/1.6.11
+RUN /opt/codeql/codeql/codeql resolve queries --format=json /opt/codeql/codeql/qlpacks/codeql/ruby-queries/1.6.11/codeql-suites/ruby-security-extended.qls > /tmp/native-queries.json && python -c 'import json,pathlib; q=json.load(open("/tmp/native-queries.json")); assert q and all(pathlib.Path(p).with_suffix(".qlx").is_file() for p in q); print("Verified bundled compiled queries:",len(q))' && rm /tmp/native-queries.json
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-ruby-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="ruby"
+
 # Go 1.27.2 OCI index digest verified from Docker Registry; build is linux/amd64.
 FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS osv-build
 ADD --checksum=sha256:1ce45371bd4b6480ac512156c2ea70d563753eba62283d160360bfe3cf94a7ab https://github.com/google/osv-scanner/archive/a14aa98ab8408547083d4411091c5fbaf5b47d8e.tar.gz /tmp/osv-scanner.tar.gz

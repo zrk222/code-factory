@@ -10,6 +10,7 @@ timeouts, memory limits, challenge outcomes, and report completeness.
 | `codeql-python-worker` | CodeQL 2.27.1 Python bundle | SARIF | Full interprocedural Python query suite; this target covers Python only. |
 | `codeql-javascript-worker` | CodeQL 2.27.1, JavaScript queries 2.4.6 | SARIF with source-bound code flows | Full JavaScript/TypeScript security-extended suite, including modeled cross-module flows. Candidate extraction and framework models determine coverage. |
 | `codeql-actions-worker` | CodeQL 2.27.1, Actions queries 0.6.36 | SARIF with workflow source-to-sink flows | Full GitHub Actions security-extended suite; workflow injection and trust-boundary models depend on extracted YAML. This does not execute workflows or prove external actions safe. |
+| `codeql-ruby-worker` | CodeQL 2.27.1, Ruby queries 1.6.11 | SARIF with source-bound code flows | Full Ruby security-extended suite with modeled Rails/Rack sources and library-input queries; no build or dependency installation. |
 | `semgrep-worker` | OpenGrep OSS 1.15.0 (Semgrep-compatible), thirty rules across twelve source languages | SARIF with source-bound local flows | Request-to-shell/SQL checks cover Python, JS/TS, PHP, Go, Java, C# and Ruby; explicit unsafe API/trust checks also cover Rust, C/C++ and Swift. Native controls verify safe counterparts, aliases, trace endpoints and detector removal. Pattern-limited only; no interfile or `interprocedural-full` claim. Candidate `.semgrepignore` still requires native source accounting. |
 | `osv-worker` | OSV-Scanner 2.2.0 + immutable PyPI database snapshot | OSV JSON | Offline PyPI dependency scanning only; the pinned database snapshot ages and does not cover other ecosystems. |
 | `syft-worker` | Syft 1.33.0 | Syft JSON | Inventory only; this is not a vulnerability scan. |
@@ -84,6 +85,27 @@ control. A native injection finding at the exact workflow source location is req
 the vulnerable variant; the safe variant must produce no findings.
 The one-location Actions control may emit no code-flow array; that is recorded
 as `NOT_EMITTED`, never synthesized as an observed trace.
+
+The Ruby target verifies all 50 selected compiled query artifacts the same way.
+Use `profiles/codeql-ruby-full.json` with the signed lane's `ruby` language;
+Ruby extraction needs no build, network or installed gems. Run
+`node scripts/verify_codeql_cross_file.mjs factory-codeql-ruby-worker:<tag>
+<receipt.json> ruby`: `params` in a Rails controller reaches a shell string in
+`lib/exporter.rb`; the safe variant passes an argument vector. The vulnerable
+report must hold an ordered flow from the controller into the exporter, and the
+safe control must have no findings.
+
+Library-level recall ([evidence](../../docs/evidence/codeql-recall-20261121.json)):
+stock CodeQL 2.27.1 security-extended suites, unmodified, ran on 86 fixed
+advisories (15 per ecosystem, registered before the first scan) that the
+pattern lane detected 0 times. In fix hunks it found Ruby 5 of 15, Python 3 of
+15 and JavaScript/TypeScript 2 of 15: 10 of 45 (22%, Wilson 12.5-36.3%) for
+the three network-free lanes, against 0 of 45 for the pattern lane. Go (0 of 11,
+4 autobuild failures), Java (0 of 13), C# (0 of 2; 7 failed without a .NET SDK)
+and Rust (0 of 2) found nothing, so no worker is added for them: their
+extraction needs dependency resolution that network-less workers cannot do.
+Route library-level findings to the CodeQL lanes; the pattern lane stays a
+local web-handler and unsafe-API detector.
 
 ## Efficient unified operation
 
@@ -254,6 +276,18 @@ Review-tier trust rules measured Ruby 5 of 5 and Swift 7 of 13. Swift
 trust-override recall on fresh files rose from 0 of 25 to 18 of 25; Ruby had no
 eligible fresh file (re-scanning the round-7 files: 0 to 9 of 25). The next 63
 fixed Go, Maven and RubyGems advisories were still not detected.
+
+Trust coverage ([evidence](../../docs/evidence/trust-coverage-round9.json)):
+the Java rule also reports `setHostnameVerifier((h, s) -> true)`, Apache
+`NoopHostnameVerifier`, `ALLOW_ALL_HOSTNAME_VERIFIER`, `TrustAllStrategy`,
+accept-all `loadTrustMaterial` lambdas, `verify(...)` returning `true` and
+empty `checkServerTrusted` trust managers; the Go rule also reports
+`InsecureSkipVerify = true` assignments. On all 79 scorable, previously untried
+Maven, Go and PyPI trust advisories, fix-hunk recall rose from 2 to 10 (12.7%,
+Wilson 7.0-21.8%; Maven 0 to 6 of 28, Go 1 to 3 of 22). A fresh panel of 20
+Java trust alerts had 7 of 9 decided alerts supported and 11 unclear (trust-all
+code reviewers could not tie to security-relevant traffic), which is why the
+rule stays in the review tier.
 
 Reproduce the native rule tests in a temporary folder by copying
 `rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,

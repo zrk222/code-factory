@@ -948,6 +948,13 @@ def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
         "runtime",
         "atheris",
     }
+    assert workers["semgrep"]["php_rule_ids"] == [
+        "php.request-command-injection",
+        "php.request-sql-injection",
+        "php.request-path-traversal",
+        "php.request-file-inclusion",
+        "php.request-unsafe-deserialization",
+    ]
     repository = Path(__file__).resolve().parents[1]
     for engine, worker in workers.items():
         profile = json.loads(
@@ -961,7 +968,7 @@ def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
     manifest = junie_manifest(tmp_path)
     assert manifest["native_workers"] == workers
     variants = workers["codeql"]["variants"]
-    assert set(variants) == {"javascript_typescript", "github_actions"}
+    assert set(variants) == {"javascript_typescript", "ruby", "github_actions"}
     for variant in variants.values():
         profile = json.loads(
             (
@@ -977,7 +984,7 @@ def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
     assert not any(manifest["authority"].values())
 
 
-@pytest.mark.parametrize("language", ["python", "javascript", "actions"])
+@pytest.mark.parametrize("language", ["python", "javascript", "ruby", "actions"])
 def test_codeql_profile_preserves_raw_hash_and_rejects_rule_extensions(
     tmp_path, language
 ):
@@ -1113,7 +1120,7 @@ def test_native_worker_dependency_locks_and_entrypoints():
     assert "Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg" in dockerfile
     assert "trusted=yes" not in dockerfile
     assert "allow-unauthenticated" not in dockerfile
-    assert dockerfile.count("RUN chmod -R a+rX /opt/codeql/codeql/qlpacks/codeql/") == 2
+    assert dockerfile.count("RUN chmod -R a+rX /opt/codeql/codeql/qlpacks/codeql/") == 3
     for family in ("runtime", "fuzz", "codeql", "bootstrap"):
         lock = f"requirements-{family}.txt"
         requirements = (recipes / lock).read_text().splitlines()

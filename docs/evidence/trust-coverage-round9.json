@@ -1,0 +1,73 @@
+{
+ "schema": "factory.trust-coverage.v1",
+ "registration_sha256": "1a7688a863cf9c5c3070733b687e77f4e71f7ca7d94c57655cbedfa7d57dbb4d",
+ "candidate_ruleset_sha256": "34c22d94453328985d056ec34bbc3d61fb0a80c3df52c5b42a56af3ce247333c",
+ "baseline_ruleset_sha256": "4951e57995a37384582949de9993a771d70f1ef14239c24acfdff620e8749cf4",
+ "advisory_recall": {
+  "population": "All 87 untried GitHub-reviewed Maven, Go and PyPI advisories with CWE-295/297 and a fix commit; 79 scorable.",
+  "baseline": {
+   "Maven": {
+    "scored": 28,
+    "hunk_hits": 0,
+    "file_hits": 0
+   },
+   "Go": {
+    "scored": 22,
+    "hunk_hits": 1,
+    "file_hits": 1
+   },
+   "PyPI": {
+    "scored": 29,
+    "hunk_hits": 1,
+    "file_hits": 1
+   }
+  },
+  "candidate": {
+   "Maven": {
+    "scored": 28,
+    "hunk_hits": 6,
+    "file_hits": 8
+   },
+   "Go": {
+    "scored": 22,
+    "hunk_hits": 3,
+    "file_hits": 3
+   },
+   "PyPI": {
+    "scored": 29,
+    "hunk_hits": 1,
+    "file_hits": 1
+   }
+  },
+  "pooled": {
+   "baseline": [
+    2,
+    79
+   ],
+   "candidate": [
+    10,
+    79
+   ],
+   "candidate_wilson95": [
+    0.07,
+    0.218
+   ]
+  }
+ },
+ "java_trust_precision": {
+  "labels_scored_sha256": "29b385a05bf7185870c6e01a1a03d97754869ffd9e43f7289e7e620d12b5ad6c",
+  "raw_agreement": 0.8,
+  "overall": {
+   "TP": 7,
+   "FP": 2,
+   "UNCLEAR": 11,
+   "decided": 9,
+   "precision": 0.7777777777777778,
+   "wilson95_decided": [
+    0.45258896910698887,
+    0.9367748928821533
+   ]
+  },
+  "note": "11 of 20 unclear: trust-all code that reviewers could not tie to security-relevant traffic (tutorials, operator opt-ins, public scraping)."
+ }
+}

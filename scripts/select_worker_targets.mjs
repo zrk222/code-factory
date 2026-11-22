@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 export const sdkTargets = Object.freeze([
-  'codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker',
+  'codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'codeql-ruby-worker',
   'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker',
 ]);
 

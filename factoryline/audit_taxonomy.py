@@ -13,13 +13,8 @@ from typing import Any
 
 AUDIT_TAXONOMY_SCHEMA = "factory.audit-domain-taxonomy.v1"
 _DETECTION_ATTRIBUTION_RULE = "Attribute every distinct useful CF/FL/SL detection surfaced in inspected evidence with its module, exact rule/finding ID, source path and line, evidence path and SHA-256, issue/check, and verification state. Mark missing details unavailable or unverified; state repair/outcome only when measured; deduplicate only the same ID at the same location; never invent findings."
-MEASUREMENT_STATES = (
-    "MEASURED",
-    "NOT_MEASURED",
-    "UNSUPPORTED",
-    "NOT_APPLICABLE",
-    "UNMEASURABLE",
-    "BLOCKED",
+MEASUREMENT_STATES = tuple(
+    "MEASURED NOT_MEASURED UNSUPPORTED NOT_APPLICABLE UNMEASURABLE BLOCKED".split()
 )
 
 _NATIVE_WORKERS = {
@@ -27,17 +22,22 @@ _NATIVE_WORKERS = {
         "target": "codeql-python-worker",
         "profile": "codeql-python-full.json",
         "version": "2.27.1",
-        "scope": "Full Python security-extended query suite; Python only; precompiled in image.",
+        "scope": "Full Python security-extended suite, precompiled.",
         "variants": {
             "javascript_typescript": {
                 "target": "codeql-javascript-worker",
                 "profile": "codeql-javascript-full.json",
-                "scope": "JavaScript/TypeScript security-extended suite with modeled cross-file source-to-sink SARIF flows.",
+                "scope": "JS/TS security-extended suite; modeled cross-file source-to-sink SARIF flows.",
+            },
+            "ruby": {
+                "target": "codeql-ruby-worker",
+                "profile": "codeql-ruby-full.json",
+                "scope": "Ruby security-extended: Rails/Rack/library cross-file flows; no build.",
             },
             "github_actions": {
                 "target": "codeql-actions-worker",
                 "profile": "codeql-actions-full.json",
-                "scope": "GitHub Actions security-extended suite: workflow injection and modeled trust boundaries; configuration inputs only.",
+                "scope": "Actions security-extended: workflow injection and modeled trust; configuration only.",
             },
         },
     },
@@ -58,7 +58,7 @@ _NATIVE_WORKERS = {
         "target": "osv-worker",
         "profile": "osv.json",
         "version": "2.2.0",
-        "scope": "Offline immutable PyPI advisory snapshot; other ecosystems unsupported; snapshot ages.",
+        "scope": "Immutable offline PyPI advisory snapshot; no other ecosystems; snapshot ages.",
     },
     "syft": {
         "target": "syft-worker",
@@ -92,15 +92,15 @@ _NATIVE_WORKERS = {
     },
 }
 _NATIVE_WORKER_CONTRACT = {
-    "discovery": "deploy/deep-adapters/README.md and profiles; Linux/amd64 targets. Profiles are inventory, not readiness, execution, coverage or PASS. Preserve unsupported, incomplete and unavailable states.",
-    "execution": "Explicit authorized CLI execution; MCP status tools are read-only and never launch workers.",
+    "discovery": "deploy/deep-adapters/README.md and profiles; Linux/amd64. Profiles are inventory, not readiness/execution/coverage/PASS. Preserve unsupported/incomplete/unavailable states.",
+    "execution": "Authorized CLI execution only; MCP status is read-only and never launches workers.",
     "isolation": "Image-owned Python -I startup; network none for ordinary workers, private internal network for signed ZAP app/worker targets; read-only source, non-root, bounded memory/time/output and cleanup.",
     "evidence": "Candidate and source hashes, exact image digest, tool/rules versions, invocation facts, native report digest, source-bound normalized findings and runtime counts.",
     "admission": "Successful native execution is INCOMPLETE until source accounting, applicable obligations and independent challenges are validated; never infer complete=true.",
-    "agent_action": "Return path, rule, severity, source binding, native/normalized hashes, failures, coverage gaps, repair and exact rerun when available; mark missing fields, accounting and challenges as gaps.",
-    "tracing": "Preserve native and normalized digests separately, source binding, deadlines, output exhaustion and cleanup failures. Discover signed optional Python HTTP request-associated tracing in agent_usage_contract.six_lane_review.zap_source_trace; declared routes alone do not prove line execution.",
+    "agent_action": "Return path, rule, severity, source binding, native/normalized hashes, failures, coverage gaps, repair and exact rerun; mark absent fields/accounting/challenges as gaps.",
+    "tracing": "Preserve separate native/normalized digests, source binding and deadline/output/cleanup failures. Optional signed Python HTTP request-associated tracing: agent_usage_contract.six_lane_review.zap_source_trace; declared routes do not prove line execution.",
     "unified_cli": "factory scan --root PATH --deep --worker-config .factory/worker-config.json --json; configure signed manifest, authorization and SHA-pinned trust root before execution.",
-    "selection": "CodeQL: Python for Python, JavaScript for JS/TS, Actions for workflows. Reuse only exact image/candidate-bound evidence; select relevant workers per edit.",
+    "selection": "CodeQL: Python, JS/TS, Ruby or Actions by source. Reuse only exact image/candidate-bound evidence; select per edit.",
 }
 
 

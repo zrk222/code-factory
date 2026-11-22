@@ -1,0 +1,5 @@
+class Exporter
+  def self.run(format)
+    system("report-tool --format #{format}")
+  end
+end

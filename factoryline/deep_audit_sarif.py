@@ -11,6 +11,7 @@ from pathlib import Path
 from pathlib import PureWindowsPath, PurePosixPath
 from urllib.parse import urlsplit, unquote
 from copy import deepcopy
+from typing import Any, cast
 import re
 
 from .deep_audit_io import bound_bytes, digest, relative_path, sha256_bytes, strict_json
@@ -493,7 +494,7 @@ def _execution_sarif(report: dict, lane: dict, sources: dict) -> list:
     findings = []
     for run_index, run in enumerate(_list(report.get("runs"), 1, 16)):
         findings.extend(_sarif_run_findings(run, lane, sources, run_index=run_index))
-    unique = {}
+    unique: dict[str, dict] = {}
     for finding in findings:
         occurrences = finding.pop("native_occurrences")
         identity = finding["finding_id"]
@@ -1579,7 +1580,7 @@ def _verify_zap_native_rule_ledger(raw: bytes, lane: dict, bindings: dict) -> di
     )
     _zap_ledger_bindings(bindings)
     expected_plugins = _zap_ledger_plugins(lane)
-    plugin_state = {
+    plugin_state: dict[str, dict[str, Any]] = {
         plugin_id: {"name": None, "terminal": None, "started": {}, "returned": set()}
         for plugin_id in expected_plugins
     }
@@ -4497,7 +4498,13 @@ def _codeql_result_path(query_path):
     if (
         len(parts) < 4
         or parts[0] != "codeql"
-        or parts[1] not in {"javascript-queries", "python-queries", "actions-queries"}
+        or parts[1]
+        not in {
+            "javascript-queries",
+            "python-queries",
+            "ruby-queries",
+            "actions-queries",
+        }
         or _deep_audit_io.re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", parts[2]) is None
         or not parts[-1].endswith(".ql")
     ):
@@ -4587,6 +4594,13 @@ def _codeql_source_query(profile):
             "",
         ),
         "python": ("python", "Module", "SyntaxError", "e.getFile()", ""),
+        "ruby": (
+            "ruby",
+            "AstNode",
+            "ExtractionError",
+            "e.getLocation().getFile()",
+            "import codeql.ruby.AST\nimport codeql.ruby.Diagnostics\n",
+        ),
         "actions": (
             "actions",
             "YamlDocument",
@@ -4888,7 +4902,7 @@ def _zap_trace_document(raw: bytes, request: dict, inventory: dict):
         raise _deep_audit_io.RuntimeAuditError(
             "E_ZAP_SOURCE_TRACE", "complete trace and request required"
         )
-    target = request.get("target")
+    target = cast(dict, request.get("target"))
     _validate_zap_target(target, inventory)
     config = target.get("source_trace", {})
     sources = _deep_audit_io._zap_trace_sources(inventory)
