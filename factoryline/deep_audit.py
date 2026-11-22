@@ -2230,6 +2230,36 @@ def _completion_replay_binding(
         raise RuntimeAuditError("E_NATIVE_COMPLETION", "host replay binding differs")
 
 
+def apply_retained_native_completion(
+    result, saved, lane, bundle, inventory, obligations, run_id
+):
+    """Reapply independently bound host replay when reading the original bundle."""
+    engine = lane["engine"]
+    if engine == "codeql" and saved.get("codeql_replay"):
+        replay = saved["codeql_replay"]
+        coverage = bundle["artifacts"][lane["coverage"]]
+        report = bundle["artifacts"][lane["report"]]
+        _completion_replay_binding(
+            replay, lane, inventory, coverage, report, bundle, obligations
+        )
+        result["gaps"] = [
+            gap for gap in result["gaps"] if gap != "CODEQL_NATIVE_REPLAY_REQUIRED"
+        ]
+    elif (
+        engine == "atheris"
+        and saved.get("fuzz_replay")
+        and has_fuzz_controls(lane, inventory, obligations)
+    ):
+        replay = saved["fuzz_replay"]
+        apply_fuzz_control_replay(result, replay, lane, bundle, inventory, obligations)
+    else:
+        return
+    _reconcile_native_completion(
+        result, replay, lane, bundle, inventory, obligations, run_id
+    )
+    result["state"] = "INCOMPLETE" if result["gaps"] else "OBSERVED"
+
+
 def _codeql_replay_runtime(scratch):
     root, package = scratch / "runtime", Path(__file__).parent
     records, total = {}, 0
@@ -3233,6 +3263,16 @@ def _lineage_normalization(
             run_id,
             plan.get("obligations", []),
         )
+        if result.get("state") == "OBSERVED":
+            apply_retained_native_completion(
+                normalized,
+                result,
+                definition,
+                bundle,
+                inventory,
+                plan.get("obligations", []),
+                run_id,
+            )
         saved_findings = [
             {key: value for key, value in finding.items() if key != "rerun"}
             for finding in result.get("findings", [])

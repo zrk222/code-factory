@@ -950,9 +950,11 @@ def _recall_result_path(value, cache):
     from factoryline.deep_audit_io import relative_path, local_file
 
     path = Path(value)
+    cache = cache.absolute()
     if not path.is_absolute():
-        path = cache.absolute() / path
-    parts = path.absolute().relative_to(cache.absolute()).parts
+        absolute = path.absolute()
+        path = absolute if absolute.is_relative_to(cache) else cache / path
+    parts = path.relative_to(cache).parts
     if len(parts) < 3:
         raise ValueError("native result lacks source identity")
     source = relative_path(Path(*parts[2:]).as_posix())

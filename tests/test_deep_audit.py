@@ -7061,6 +7061,46 @@ def test_native_completion_codeql_host_wrapper_finalizes_only_reconciled_result(
     assert result["gaps"] == []
     assert bundle == original
 
+    normalized = {
+        **result,
+        "findings": [],
+        "state": "INCOMPLETE",
+        "gaps": ["ANALYZER_INCOMPLETE", "CODEQL_NATIVE_REPLAY_REQUIRED"],
+    }
+    gaps = []
+    monkeypatch.setattr(
+        sarif, "normalize_execution_bundle", lambda *args: deepcopy(normalized)
+    )
+    assert (
+        module._lineage_normalization(
+            bundle,
+            lane,
+            inventory,
+            "completion-test",
+            result,
+            lane["id"],
+            gaps,
+            {"obligations": obligations},
+        )["state"]
+        == "OBSERVED"
+    )
+    assert gaps == []
+    altered = {**result, "codeql_replay": {**replay, "candidate_sha256": "0" * 64}}
+    assert (
+        module._lineage_normalization(
+            bundle,
+            lane,
+            inventory,
+            "completion-test",
+            altered,
+            lane["id"],
+            gaps,
+            {"obligations": obligations},
+        )
+        is None
+    )
+    assert gaps == [f"LANE_NORMALIZATION_FAILED:{lane['id']}"]
+
 
 @pytest.mark.parametrize(
     "damage", [None, "missing_source", "source_drift", "empty_source", "corrupt_corpus"]
