@@ -565,10 +565,10 @@ def test_reuse_wiring_preserves_protected_normal_and_isolated_recovery_paths():
     import yaml
 
     jobs = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
-    for name in ("validate_python", "validate_vscode", "validate_intellij"):
-        assert (
-            jobs[name]["if"] == "${{ needs.guard.outputs.verified_reuse_run_id == '' }}"
-        )
+    fresh = "needs.guard.outputs.verified_reuse_run_id == ''"
+    assert jobs["validate_python"]["if"] == f"${{{{ {fresh} }}}}"
+    for name in ("validate_vscode", "validate_intellij"):
+        assert jobs[name]["if"] == f"${{{{ !inputs.core_only && {fresh} }}}}"
     publisher = jobs["publish"]
     assert publisher["environment"] == "pypi"
     assert (
@@ -585,6 +585,8 @@ def test_reuse_wiring_preserves_protected_normal_and_isolated_recovery_paths():
         if "actions/download-artifact@" in step.get("uses", "")
     ]
     assert len(downloads) == 3
+    assert downloads[0].get("if") is None
+    assert all(step["if"] == "${{ !inputs.core_only }}" for step in downloads[1:])
     assert all(
         step["with"]["run-id"]
         == "${{ needs.guard.outputs.verified_reuse_run_id || github.run_id }}"
@@ -601,6 +603,43 @@ def test_reuse_wiring_preserves_protected_normal_and_isolated_recovery_paths():
     assert scripts.index("Downloaded artifact files differ") < scripts.index(
         "preflight_args=("
     )
+
+
+def test_core_only_dispatch_requires_python_success_and_excludes_editor_artifacts():
+    import yaml
+
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    option = workflow["on"]["workflow_dispatch"]["inputs"]["core_only"]
+    assert (option["type"], option["default"]) == ("boolean", "false")
+    jobs = workflow["jobs"]
+    publisher = jobs["publish"]
+    assert (
+        "inputs.core_only && needs.validate_python.result == 'success' "
+        "&& needs.validate_vscode.result == 'skipped' "
+        "&& needs.validate_intellij.result == 'skipped'" in publisher["if"]
+    )
+    assert (
+        "!inputs.core_only && (needs.guard.outputs.verified_reuse_run_id"
+        in publisher["if"]
+    )
+    guard = next(
+        step for step in jobs["guard"]["steps"] if step.get("id") == "candidate"
+    )
+    assert '[[ "$CORE_ONLY" == "true" && -n "$VALIDATED_RUN_ID" ]]' in guard["run"]
+    steps = {step.get("name"): step for step in publisher["steps"]}
+    preflight = steps[
+        "Require sealed release candidate preflight before external publication"
+    ]
+    upload = steps["Attach distributions to GitHub release"]
+    for step, statement in (
+        (preflight, "preflight_args+=(--artifact-dir release-bundle/editors)"),
+        (upload, "editor_assets=(release-bundle/editors/*)"),
+    ):
+        assert step["env"]["CORE_ONLY"] == "${{ inputs.core_only }}"
+        assert (
+            f'if [[ "$CORE_ONLY" != "true" ]]; then\n  {statement}\nfi' in step["run"]
+        )
+    assert 'release-bundle/python/* "${editor_assets[@]}"' in upload["run"]
 
 
 @pytest.fixture

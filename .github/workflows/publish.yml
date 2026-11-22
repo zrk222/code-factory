@@ -12,6 +12,11 @@ on:
         required: false
         default: ''
         type: string
+      core_only:
+        description: Publish the Python package and core GitHub release while editor uploads are handled separately
+        required: false
+        default: false
+        type: boolean
       core_0481_cadence_exception:
         description: Explicit owner-approved one-time cooldown exception for v0.48.1 only
         required: false
@@ -71,12 +76,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          CORE_ONLY: ${{ inputs.core_only }}
+          VALIDATED_RUN_ID: ${{ inputs.validated_run_id }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
             echo "Dispatch publication from protected main so the reviewed workflow definition is used." >&2
             exit 1
           }
+          if [[ "$CORE_ONLY" == "true" && -n "$VALIDATED_RUN_ID" ]]; then
+            echo "Core-only publication requires a fresh Python build." >&2
+            exit 1
+          fi
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
             echo "RELEASE_TAG must use vMAJOR.MINOR.PATCH." >&2
             exit 1
@@ -309,7 +320,7 @@ jobs:
   validate_vscode:
     name: validate VS Code release artifact
     needs: [guard]
-    if: ${{ needs.guard.outputs.verified_reuse_run_id == '' }}
+    if: ${{ !inputs.core_only && needs.guard.outputs.verified_reuse_run_id == '' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -347,7 +358,7 @@ jobs:
   validate_intellij:
     name: validate JetBrains release artifact
     needs: [guard]
-    if: ${{ needs.guard.outputs.verified_reuse_run_id == '' }}
+    if: ${{ !inputs.core_only && needs.guard.outputs.verified_reuse_run_id == '' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -380,7 +391,7 @@ jobs:
   publish:
     name: publish verified release
     needs: [guard, validate_python, validate_vscode, validate_intellij]
-    if: ${{ !cancelled() && needs.guard.result == 'success' && (needs.guard.outputs.verified_reuse_run_id != '' || (needs.validate_python.result == 'success' && needs.validate_vscode.result == 'success' && needs.validate_intellij.result == 'success')) }}
+    if: ${{ !cancelled() && needs.guard.result == 'success' && ((inputs.core_only && needs.validate_python.result == 'success' && needs.validate_vscode.result == 'skipped' && needs.validate_intellij.result == 'skipped') || (!inputs.core_only && (needs.guard.outputs.verified_reuse_run_id != '' || (needs.validate_python.result == 'success' && needs.validate_vscode.result == 'success' && needs.validate_intellij.result == 'success')))) }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -401,6 +412,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: ${{ !inputs.core_only }}
         with:
           name: release-vscode-${{ inputs.release_tag }}
           path: release-bundle/editors
@@ -408,6 +420,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: ${{ !inputs.core_only }}
         with:
           name: release-intellij-${{ inputs.release_tag }}
           path: release-bundle/editors
@@ -521,6 +534,7 @@ jobs:
 
       - name: Require sealed release candidate preflight before external publication
         env:
+          CORE_ONLY: ${{ inputs.core_only }}
           RELEASE_CONTRACT_PATH: .factory/release-contracts/release.json
           RELEASE_TAG: ${{ inputs.release_tag }}
           CORE_0481_EXCEPTION: ${{ inputs.core_0481_cadence_exception }}
@@ -597,11 +611,13 @@ jobs:
             --candidate-tag "$RELEASE_TAG" \
             --contract "$RELEASE_CONTRACT_PATH" \
             --artifact-dir release-bundle/python \
-            --artifact-dir release-bundle/editors \
             --metadata-path context/PROGRESS.md \
             "${exception_args[@]}" \
             --out release-bundle/release-preflight.json \
             --json )
+          if [[ "$CORE_ONLY" != "true" ]]; then
+            preflight_args+=(--artifact-dir release-bundle/editors)
+          fi
           if [[ -n "$VERIFIED_REUSE_RUN_ID" ]]; then
             python -I -m factoryline.cli release preflight "${preflight_args[@]}"
           else
@@ -621,6 +637,7 @@ jobs:
 
       - name: Attach distributions to GitHub release
         env:
+          CORE_ONLY: ${{ inputs.core_only }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           EXPECTED_COMMIT: ${{ needs.guard.outputs.candidate_commit }}
@@ -631,7 +648,11 @@ jobs:
             echo "Release tag moved after candidate validation." >&2
             exit 1
           }
-          gh release upload "$RELEASE_TAG" release-bundle/python/* release-bundle/editors/* docs/assets/factoryline-logo-480.png docs/assets/marketplace/factoryline-0.44-live-dashboard.png docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg docs/assets/marketplace/factoryline-60-day-personal-case-study.png docs/assets/marketplace/code-factory-60-day-personal-case-study.png docs/assets/marketplace/factory-studio-mvp-1280x800.png docs/assets/marketplace/graph-ops-studio-1280x800.png docs/assets/marketplace/graph-ops-proofsearch.png docs/assets/marketplace/graph-ops-proofsearch-controls.png docs/assets/marketplace/graph-ops-evidence-frontier.png docs/assets/*.svg docs/assets/verify-policy.gif --clobber
+          editor_assets=()
+          if [[ "$CORE_ONLY" != "true" ]]; then
+            editor_assets=(release-bundle/editors/*)
+          fi
+          gh release upload "$RELEASE_TAG" release-bundle/python/* "${editor_assets[@]}" docs/assets/factoryline-logo-480.png docs/assets/marketplace/factoryline-0.44-live-dashboard.png docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg docs/assets/marketplace/factoryline-60-day-personal-case-study.png docs/assets/marketplace/code-factory-60-day-personal-case-study.png docs/assets/marketplace/factory-studio-mvp-1280x800.png docs/assets/marketplace/graph-ops-studio-1280x800.png docs/assets/marketplace/graph-ops-proofsearch.png docs/assets/marketplace/graph-ops-proofsearch-controls.png docs/assets/marketplace/graph-ops-evidence-frontier.png docs/assets/*.svg docs/assets/verify-policy.gif --clobber
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
