@@ -12,6 +12,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  visual-behavior-native:
+    name: native optical and Prestige evidence (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zrk222/code-factory-4-design
+          ref: 4d48b698e78a4a1a45b2c7b6c7c6c9af6e3c0d32
+          path: .integration/prestige
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.11"
+      - name: Install optional native acceptance tools
+        run: python -m pip install -e ".[dev]" ./.integration/prestige pytest playwright==1.57.0
+      - name: Install the pinned Playwright browser
+        run: python -m playwright install --with-deps chromium
+      - name: Require actual browser and Prestige execution
+        env:
+          FACTORY_REQUIRE_NATIVE_VISUAL: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: >-
+          python -m pytest -q -o addopts=
+          tests/test_full_stack_ux_harness.py::test_visual_real_browser_pixels_semantics_runtime_and_prestige
+          --junitxml=native-visual-behavior.xml
+      - name: Reject skipped or incomplete native acceptance
+        if: always()
+        run: >-
+          python -c "import xml.etree.ElementTree as E; s=list(E.parse('native-visual-behavior.xml').iter('testsuite'));
+          assert sum(int(x.get('tests','0')) for x in s)==1;
+          assert not any(int(x.get(k,'0')) for x in s for k in ('skipped','failures','errors'));
+          print('Actual fixture browser/Prestige case executed; not device certification or release approval')"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: native-visual-behavior-${{ matrix.os }}
+          path: native-visual-behavior.xml
+          if-no-files-found: error
+
   python313-type-transfer:
     name: Python 3.13 type-transfer regression
     runs-on: ubuntu-latest

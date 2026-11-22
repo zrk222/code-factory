@@ -28,6 +28,316 @@ def _coordinator_test_request(root, operation="status"):
     )
 
 
+def _coordinator_cli_argv(root, *extra):
+    import sys
+    import factoryline.cli_deep_audit as module
+
+    package = str(Path(module.__file__).resolve().parent.parent)
+    bootstrap = (
+        "import sys;sys.path.insert(0,"
+        + repr(package)
+        + ");from factoryline.cli import main;sys.exit(main(sys.argv[1:]))"
+    )
+    return [
+        sys.executable,
+        "-I",
+        "-c",
+        bootstrap,
+        "deep-audit",
+        "coordinator",
+        "--root",
+        str(root),
+        "--session-nonce",
+        "a" * 32,
+        *extra,
+    ]
+
+
+def test_coordinator_public_cli_status_stop_ndjson(tmp_path):
+    import subprocess
+    import sys
+
+    requests = [
+        _coordinator_test_request(tmp_path, operation)
+        for operation in ("status", "stop")
+    ]
+    requests[1]["request_id"] = "c" * 32
+    result = subprocess.run(
+        _coordinator_cli_argv(tmp_path),
+        input="".join(json.dumps(row) + "\n" for row in requests).encode(),
+        capture_output=True,
+        timeout=20,
+    )
+    if sys.platform not in {"win32", "linux"}:
+        _coordinator_cli_assert_unsupported(result, tmp_path)
+        return
+    assert result.returncode == 0, result.stderr
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    assert len(rows) == 2 and rows[-1]["state"] == "STOPPED"
+    assert all(
+        row["authority"] == "none" and row["release_approval"] is False for row in rows
+    )
+    assert all(row.get("execution_available", False) is False for row in rows)
+
+
+@pytest.mark.parametrize("ttl", ["0", "3601", "-1", "invalid"])
+def test_coordinator_public_cli_rejects_invalid_lease(tmp_path, ttl):
+    import subprocess
+
+    result = subprocess.run(
+        _coordinator_cli_argv(tmp_path, "--lease-seconds", ttl),
+        input=b"",
+        capture_output=True,
+        timeout=20,
+    )
+    assert result.returncode != 0
+    assert not (tmp_path / ".factory/deep-runs/requests").exists()
+
+
+@pytest.mark.parametrize("fault", ["nonce", "operation", "duplicate_json", "workspace"])
+def test_coordinator_public_cli_protocol_refusal(tmp_path, fault):
+    import subprocess
+    import sys
+
+    request = _coordinator_test_request(tmp_path)
+    changes = {
+        "nonce": {"session_nonce": "c" * 32},
+        "operation": {"operation": "unexpected"},
+        "workspace": {"workspace": str(tmp_path.parent)},
+    }
+    request.update(changes.get(fault, {}))
+    raw = json.dumps(request)
+    if fault == "duplicate_json":
+        raw = raw[:-1] + ',"operation":"status"}'
+    result = subprocess.run(
+        _coordinator_cli_argv(tmp_path),
+        input=(raw + "\n").encode(),
+        capture_output=True,
+        timeout=20,
+    )
+    if sys.platform not in {"win32", "linux"}:
+        _coordinator_cli_assert_unsupported(result, tmp_path)
+        return
+    assert result.returncode == 1
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    assert len(rows) == 1 and rows[0]["state"] == "INCOMPLETE"
+    assert rows[0]["authority"] == "none" and rows[0]["release_approval"] is False
+
+
+def test_coordinator_public_cli_rejects_buffered_input_without_closing(
+    monkeypatch, tmp_path, capsys
+):
+    import io
+    from types import SimpleNamespace
+    import factoryline.cli_deep_audit as module
+
+    stream = io.BytesIO()
+    monkeypatch.setattr(module.sys, "stdin", SimpleNamespace(buffer=stream))
+    result = module._run_coordinator(
+        SimpleNamespace(root=tmp_path, lease_seconds=300, session_nonce="a" * 32)
+    )
+    assert result == 2 and not stream.closed
+    assert json.loads(capsys.readouterr().out)["state"] == "INCOMPLETE"
+
+
+def test_coordinator_public_cli_signed_child_owned_stop(tmp_path):
+    import subprocess
+    import time
+    import sys
+
+    if sys.platform not in {"win32", "linux"}:
+        pytest.skip(
+            "NOT_RUN: native signed child identity supported on Windows/Linux only; refusal tested separately"
+        )
+
+    root, request, owner, context, inventory = _coordinator_signed_fixture(tmp_path)
+    context["store"].release(owner)
+    child = subprocess.Popen(
+        _coordinator_cli_argv(root, "--lease-seconds", "90"),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    handshake = None
+    try:
+        child.stdin.write((json.dumps(request) + "\n").encode())
+        child.stdin.flush()
+        deadline = time.monotonic() + 45
+        while child.poll() is None and time.monotonic() < deadline:
+            for path in (root / ".factory/deep-runs/requests").glob("*/handshake.json"):
+                try:
+                    handshake = json.loads(path.read_bytes())
+                except (OSError, ValueError):
+                    continue
+            if handshake:
+                break
+            time.sleep(0.02)
+        assert handshake, "public CLI did not observe a fresh signed child handshake"
+        assert handshake["worker_identity"]["pid"] != child.pid
+        assert handshake["request_id"] == request["request_id"]
+        stop = _coordinator_test_request(root, "stop")
+        stop["request_id"] = "d" * 32
+        output, error = child.communicate(
+            (json.dumps(stop) + "\n").encode(), timeout=30
+        )
+        assert child.returncode == 0, error
+        rows = [json.loads(line) for line in output.splitlines()]
+        assert rows[0]["state"] == "ADMITTED"
+        assert rows[-1]["state"] == "STOPPED" and rows[-1]["cleanup_confirmed"] is True
+        assert all(row.get("execution_available", False) is False for row in rows)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=10)
+
+
+def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
+    import subprocess
+    import time
+    import os
+    import shutil
+    import sys
+    from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline.deep_audit import deep_run_status
+
+    if sys.platform not in {"win32", "linux"}:
+        pytest.skip(
+            "NOT_RUN: native signed child identity supported on Windows/Linux only; refusal tested separately"
+        )
+    root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
+    context["store"].release(owner)
+    # This is terminal-history transport acceptance, not analyzer qualification.
+    # Retain real Git inventory and a signed fresh child, but deliberately omit
+    # Docker so placeholder lanes fail closed without host-dependent daemon waits.
+    git_directory = Path(shutil.which("git")).parent
+    if sys.platform == "linux":
+        # /usr/bin commonly contains both Git and Docker on hosted runners.
+        git_directory = tmp_path / "git-only"
+        git_directory.mkdir()
+        shutil.copy2(shutil.which("git"), git_directory / "git")
+    test_path = os.pathsep.join([str(git_directory), str(Path(sys.executable).parent)])
+    assert shutil.which("git", path=test_path)
+    assert shutil.which("docker", path=test_path) is None
+    child = subprocess.Popen(
+        _coordinator_cli_argv(root, "--lease-seconds", "120"),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PATH": test_path},
+    )
+    try:
+        child.stdin.write((json.dumps(request) + "\n").encode())
+        child.stdin.flush()
+        terminal = _coordinator_cli_wait_terminal(
+            root, request, child, time.monotonic() + 100
+        )
+        assert terminal["run_id"] and terminal["cleanup_confirmed"] is True
+        assert terminal["state"] == "INCOMPLETE"
+        status = deep_run_status(root, terminal["run_id"])
+        assert status["analysis_complete"] is False
+        failures = [
+            json.loads(path.read_bytes())
+            for path in (root / ".factory/deep-runs" / terminal["run_id"]).glob(
+                "event-*.json"
+            )
+        ]
+        assert any(
+            row["kind"] == "failure_recorded"
+            and row["details"].get("code") == "E_DOCKER_UNAVAILABLE"
+            for row in failures
+        )
+        changed = {
+            **request,
+            "payload": {**request["payload"], "manifest_sha256": "0" * 64},
+        }
+        stop = _coordinator_test_request(root, "stop")
+        stop["request_id"] = "d" * 32
+        output, error = child.communicate(
+            "".join(
+                json.dumps(row) + "\n" for row in (request, changed, stop)
+            ).encode(),
+            timeout=20,
+        )
+        assert child.returncode == 0, error
+        rows = [json.loads(line) for line in output.splitlines()]
+        assert len(rows) == 4 and rows[0]["state"] == "ADMITTED"
+        assert (
+            rows[1]["run_id"] == terminal["run_id"]
+            and rows[1]["state"] == terminal["state"]
+        )
+        assert (
+            rows[2]["state"] == "INCOMPLETE"
+            and rows[2]["code"] == "E_COORDINATOR_REQUEST"
+        )
+        assert rows[3]["state"] == "STOPPED"
+        restarted = subprocess.run(
+            _coordinator_cli_argv(root),
+            input=(json.dumps(request) + "\n").encode(),
+            capture_output=True,
+            timeout=20,
+        )
+        assert restarted.returncode == 1
+        assert json.loads(restarted.stdout)["code"] == "E_COORDINATOR_OWNER"
+        assert (
+            CoordinatorRequestStore(root).read(
+                request["session_nonce"], request["request_id"]
+            )["run_id"]
+            == terminal["run_id"]
+        )
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=10)
+
+
+def _coordinator_cli_wait_terminal(root, request, child, deadline):
+    import time
+    from factoryline.agentic_control import CoordinatorRequestStore
+
+    while child.poll() is None and time.monotonic() < deadline:
+        try:
+            # Observe atomic snapshots without repeatedly competing for the
+            # production coordinator's exclusive metadata lock during launch.
+            metadata = json.loads(
+                (
+                    root / ".factory/deep-runs/requests/coordinator-metadata.json"
+                ).read_bytes()
+            )
+            key = request["session_nonce"] + ":" + request["request_id"]
+            row = json.loads(metadata["rows"][key][0])
+            if row["state"] not in {"ADMITTED", "RUNNING"}:
+                return CoordinatorRequestStore(root).read(
+                    request["session_nonce"], request["request_id"]
+                )
+        except (OSError, ValueError, KeyError):
+            pass
+        time.sleep(0.05)
+    pytest.fail("CLI did not retain bounded terminal request history")
+
+
+def _coordinator_cli_assert_unsupported(result, root):
+    assert result.returncode == 2, result.stderr
+    row = json.loads(result.stdout)
+    assert row["state"] == "INCOMPLETE" and row["code"] == "E_COORDINATOR_INPUT"
+    assert row["authority"] == "none" and row["release_approval"] is False
+    assert row["execution_available"] is False
+    assert not (root / ".factory/deep-runs/requests/coordinator-metadata.json").exists()
+
+
+def test_coordinator_public_cli_unsupported_identity_refuses_before_metadata(tmp_path):
+    import subprocess
+
+    argv = _coordinator_cli_argv(tmp_path)
+    # Force only the existing identity observation to be unavailable, not the
+    # parser, coordinator dispatcher, process cleanup or emitted refusal.
+    argv[3] = argv[3].replace(
+        "sys.exit(main(sys.argv[1:]))",
+        "import factoryline.assembly_process as assembly;assembly._process_creation_identity=lambda pid:None;sys.exit(main(sys.argv[1:]))",
+    )
+    result = subprocess.run(argv, input=b"", capture_output=True, timeout=20)
+    _coordinator_cli_assert_unsupported(result, tmp_path)
+
+
 def _coordinator_test_payload(root):
     for name in ("manifest.json", "authorization.json", "trust.json"):
         (root / name).write_text("{}", encoding="utf-8")
@@ -38,6 +348,46 @@ def _coordinator_test_payload(root):
         trust_root="trust.json",
         trust_root_sha256="d" * 64,
     )
+
+
+@pytest.mark.parametrize("empty_implementation", [False, True])
+def test_coordinator_smoke_runs_bound_source_and_rejects_noop(
+    tmp_path, empty_implementation
+):
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "smoke/deep-audit-coordinator-foundation-v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert len(manifest["checks"]) == 1
+    check = manifest["checks"][0]
+    assert check["kind"] == "python" and check["must_fail_on_stub"] is True
+    assert 0 < check["timeout_s"] <= 30 and check["expect_exit"] == 0
+    if empty_implementation:
+        root = tmp_path
+        source = root / "factoryline/cli_deep_audit.py"
+        source.parent.mkdir()
+        source.write_text(
+            "def serve_deep_audit_coordinator(*args, **kwargs):\n    return None\n",
+            encoding="utf-8",
+        )
+    result = subprocess.run(
+        [sys.executable, "-c", check["run"]],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=check["timeout_s"],
+    )
+    if empty_implementation:
+        assert result.returncode != 0 and "invalid TTL admitted" in result.stderr
+        assert check["expect_stdout"] not in result.stdout
+    else:
+        assert result.returncode == 0, result.stderr
+        assert check["expect_stdout"] in result.stdout
 
 
 @pytest.mark.parametrize("unicode_text", [False, True])
@@ -503,13 +853,14 @@ def test_coordinator_native_open_stdin_expires_and_releases_lease(tmp_path, part
     package = str(Path(module.__file__).resolve().parent.parent)
     bootstrap = (
         "import sys;sys.path.insert(0," + repr(package) + ");"
-        "from factoryline.cli_deep_audit import serve_deep_audit_coordinator;"
+        "from factoryline.cli import main;"
+        "import platform;platform.platform();"
         'exec("def no_child(event,args):\\n'
-        " if event=='subprocess.Popen':\\n"
+        " if event=='subprocess.Popen' and '-I' in args[1]:\\n"
         "  print('UNEXPECTED_AUDIT_CHILD',file=sys.stderr,flush=True)\\n"
         "  raise RuntimeError('unexpected audit child')\");"
         "sys.addaudithook(no_child);"
-        "serve_deep_audit_coordinator(sys.argv[1],2,'a'*32,sys.stdin.buffer.raw,sys.stdout)"
+        "sys.exit(main(['deep-audit','coordinator','--root',sys.argv[1],'--lease-seconds','2','--session-nonce','a'*32]))"
     )
     started = time.monotonic()
     child = subprocess.Popen(
@@ -528,7 +879,7 @@ def test_coordinator_native_open_stdin_expires_and_releases_lease(tmp_path, part
         assert not child.stdin.closed, "the writer must remain open through expiry"
         output = child.stdout.read().decode("utf-8")
         error = child.stderr.read().decode("utf-8")
-        assert child.returncode == 0, error
+        assert child.returncode == 1, error
         assert "UNEXPECTED_AUDIT_CHILD" not in error
         rows = [json.loads(line) for line in output.splitlines()]
         assert len(rows) == 1
@@ -1158,8 +1509,16 @@ def _coordinator_signed_fixture(tmp_path):
     )
     owner = module._coordinator_owner(root, request["session_nonce"])
     store = CoordinatorRequestStore(root)
-    store.acquire(owner, 45, time.monotonic())
-    context = dict(store=store, expires_at=time.monotonic() + 45, stop=False, job=None)
+    lease = store.acquire(owner, 45, time.monotonic())
+    context = dict(
+        store=store,
+        owner=owner,
+        root=root,
+        ttl=45,
+        expires_at=lease["expires_monotonic"],
+        stop=False,
+        job=None,
+    )
     return root, request, owner, context, inventory
 
 
@@ -1188,6 +1547,10 @@ def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_ch
             module.dispatch_deep_audit_request(root, other, owner, context)
         deadline = time.monotonic() + 50
         while job["thread"].is_alive() and time.monotonic() < deadline:
+            # Direct dispatch must service the same active lease as the server.
+            # Renewal deliberately cannot revive an already expired owner.
+            assert time.monotonic() < context["expires_at"]
+            module._coordinator_renew(context)
             directory = job.get("directory")
             if directory:
                 assert not (directory / "input.json").exists()
@@ -1243,9 +1606,93 @@ def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_ch
         status = module._coordinator_status(_coordinator_test_request(root), context)
         assert status["audit_state"] == row["state"]
         assert status["authority"] == "none" and status["release_approval"] is False
+        phases = {p["phase"]: p for p in status["phase_timings"]["phases"]}
+        assert set(phases) == {"child_launch", "child_wait", "child_cleanup"}
+        assert all(p["calls"] == p["completed"] == 1 for p in phases.values())
+        assert all(p["elapsed_ms"] >= 0 for p in phases.values())
+        assert status["phase_timings"]["status"] == "complete"
+        assert status["execution_available"] is False
+        assert str(root) not in json.dumps(status["phase_timings"])
     finally:
         assert module._coordinator_shutdown(context)
         context["store"].release(owner)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_coordinator_phase_recorders_are_job_local_private_and_preserve_errors(
+    tmp_path, monkeypatch, fail
+):
+    import threading
+    import factoryline.cli_deep_audit as module
+    from factoryline.ops_telemetry import _measure_call, _phase_telemetry
+
+    secret = "private-arguments-output-and-exception"
+    error = RuntimeError(secret)
+    errors, jobs = [], []
+
+    def execute(*args):
+        _measure_call("child_launch", lambda: secret)
+        assert "phase_timings" not in args[-1]
+        try:
+
+            def wait():
+                if fail:
+                    raise error
+                return secret
+
+            _measure_call("child_wait", wait)
+        finally:
+            _measure_call("child_cleanup", lambda: None)
+
+    def worker(job):
+        try:
+            module._coordinator_execute(tmp_path, {}, {}, {}, job)
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(module, "_coordinator_execute_job", execute)
+    with _phase_telemetry(0) as parent:
+        _measure_call("source_read", lambda: secret)
+        for _ in range(2):
+            job = {}
+            thread = threading.Thread(target=worker, args=(job,))
+            thread.start()
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+            jobs.append(job)
+        assert [p["phase"] for p in parent.snapshot()["phases"]] == ["source_read"]
+    assert errors == ([error, error] if fail else [])
+    for job in jobs:
+        telemetry = job["phase_timings"]
+        assert set(telemetry) == {
+            "status",
+            "phases",
+            "dropped_calls",
+            "dropped_phase_names",
+        }
+        assert telemetry["status"] == ("incomplete" if fail else "complete")
+        assert telemetry["dropped_calls"] == 0
+        assert telemetry["dropped_phase_names"] == []
+        assert secret not in json.dumps(telemetry) and str(tmp_path) not in json.dumps(
+            telemetry
+        )
+        phases = {p["phase"]: p for p in telemetry["phases"]}
+        assert set(phases) == {"child_launch", "child_wait", "child_cleanup"}
+        assert all(p["calls"] == 1 and p["elapsed_ms"] >= 0 for p in phases.values())
+        assert phases["child_wait"]["incomplete"] == int(fail)
+    assert jobs[0]["phase_timings"] is not jobs[1]["phase_timings"]
+
+
+def test_coordinator_runtime_identity_binds_loaded_telemetry(monkeypatch):
+    import factoryline.cli_deep_audit as module
+    import factoryline.ops_telemetry as telemetry
+
+    before = module._coordinator_runtime_identity()
+    assert before == module._coordinator_runtime_identity()
+    monkeypatch.setattr(
+        telemetry._PhaseTelemetry, "record", lambda *args, **kwargs: None
+    )
+    assert before != module._coordinator_runtime_identity()
 
 
 @pytest.mark.parametrize("fault", ["bad_ack", "candidate_drift"])
@@ -1407,6 +1854,12 @@ def test_coordinator_unit_prelaunch_bounds_failure_cleans_control(
     module._coordinator_execute(tmp_path, request, {}, context, job)
     assert job["launch_attempted"] is False
     assert job["cleanup_confirmed"] is True
+    assert job["phase_timings"] == {
+        "status": "not_observed",
+        "phases": [],
+        "dropped_calls": 0,
+        "dropped_phase_names": [],
+    }
     assert not job["directory"].exists()
     assert recorded == [
         (request["session_nonce"], request["request_id"], "c" * 64, True)

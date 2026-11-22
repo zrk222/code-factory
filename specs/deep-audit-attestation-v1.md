@@ -92,6 +92,19 @@ The existing evaluate, compare and attestation entry points retain their read-on
 ### Requirements (EARS)
 
 
+Host replay reconciliation is separate from immutable worker coverage. CodeQL and
+Atheris may retain `complete: false` with exactly
+`NATIVE_SOURCE_ACCOUNTING_REQUIRED` and `NATIVE_CHALLENGES_REQUIRED` while awaiting
+independent replay. The host may remove the final `ANALYZER_INCOMPLETE` gap only
+after re-normalizing the original bundle, verifying a nonempty complete source
+inventory and retained native artifacts, validating nonempty signed control
+triplets and their obligation coverage, and checking the host replay's candidate,
+lane, coverage, image, process and cleanup bindings. Fuzz additionally requires
+its independent signed-control replay. The worker bundle is never rewritten.
+Unknown worker errors, unrelated gaps, incomplete extraction/coverage, missing or
+tampered controls, failed replay, cancellation and expired deadlines remain
+incomplete. This reconciliation grants no review, merge or release authority.
+
 ```gherkin
 Scenario: Account for complete candidate source
   Given REQ_EXECUTION_INVENTORY covers tracked and nonignored untracked inputs

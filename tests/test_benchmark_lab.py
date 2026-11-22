@@ -1233,3 +1233,569 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+_ROOT = Path(__file__).resolve().parents[1]
+_RECALL_RECORD = _ROOT / "docs/evidence/advisory-recall-factory-20261121.json"
+
+
+@pytest.fixture(scope="module")
+def recall_record():
+    return json.loads(_RECALL_RECORD.read_text(encoding="utf-8"))
+
+
+def test_advisory_recall_record_recomputes_lane_separated_summary(recall_record):
+    summary = _gain["verify_recall"](recall_record)
+    assert summary["total"] == {
+        "cases": 161,
+        "pattern_detected": 6,
+        "codeql_detected": 15,
+        "combined_detected": 20,
+        "overlap": 1,
+        "codeql_analyzed": 91,
+        "codeql_state_extraction_failed": 10,
+        "codeql_state_no_class_query": 2,
+        "codeql_state_not_run": 33,
+        "codeql_state_no_extractor": 25,
+    }
+    assert summary["codeql_untuned"]["wilson_95_over_analyzed"] == [0.102513, 0.254309]
+    assert "wilson_95_descriptive_only" in summary["combined_not_held_out"]
+    assert "NOT held out" in recall_record["claim"]
+    assert recall_record["exposure"]["pattern"].startswith("Exposed")
+
+
+def test_advisory_recall_record_binds_revisions_files_and_tools(recall_record):
+    candidate = recall_record["candidate"]
+    assert candidate["measured_commit"].startswith("dd6fc8ab")
+    assert (
+        candidate["pattern_lane"]["ruleset_sha256"]
+        == json.loads(
+            (
+                _ROOT / "deploy/deep-adapters/profiles/semgrep-pattern-limited.json"
+            ).read_text()
+        )["ruleset_sha256"]
+    )
+    assert candidate["codeql_lane"]["cli_version"] == "2.27.1"
+    assert all(
+        case["fixes"] and case["prefix_files"] for case in recall_record["cases"]
+    )
+    detections = [
+        hit for case in recall_record["cases"] for hit in case["pattern"]["detections"]
+    ]
+    assert {hit["rule"] for hit in detections} == {
+        "java.disabled-hostname-verification",
+        "ruby.disabled-tls-verification",
+    }
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda case: case["codeql"]["detections"][0].update(line=10**6),
+            "outside the fix hunks",
+        ),
+        (lambda case: case["codeql"].update(source_revision="0" * 40), "first parent"),
+        (lambda case: case["codeql"].update(status="not_detected"), "disagrees"),
+        (
+            lambda case: case["prefix_files"][0].update(sha256="x"),
+            "unbound pre-fix file",
+        ),
+    ],
+)
+def test_advisory_recall_record_rejects_altered_observations(
+    recall_record, mutate, message
+):
+    altered = copy.deepcopy(recall_record)
+    case = next(
+        case for case in altered["cases"] if case["codeql"]["status"] == "detected"
+    )
+    mutate(case)
+    with pytest.raises(ValueError, match=message):
+        _gain["verify_recall"](altered)
+
+
+def test_advisory_recall_record_rejects_inflated_summary(recall_record):
+    altered = copy.deepcopy(recall_record)
+    altered["summary"]["total"]["combined_detected"] = 21
+    with pytest.raises(ValueError, match="does not match"):
+        _gain["verify_recall"](altered)
+
+
+def test_advisory_recall_prefix_cache_digest_mismatch_is_rejected(
+    recall_record, tmp_path
+):
+    case = next(
+        case for case in recall_record["cases"] if case["pattern"]["detections"]
+    )
+    subset = dict(recall_record, cases=[case])
+    for item in case["prefix_files"]:
+        target = _gain["_cache_path"](tmp_path, case, item)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"not the pre-fix source")
+    with pytest.raises(ValueError, match="pre-fix bytes differ"):
+        _gain["check_cache"](subset, tmp_path)
+
+
+def test_advisory_recall_cli_reports_verified_record():
+    assert _gain["recall_main"]([str(_RECALL_RECORD)]) == 0
+
+
+def _synthetic_recall(tmp_path):
+    """Owned synthetic provenance, never a claimed native scanner execution."""
+    parent = "a" * 40
+    case = {
+        "ghsa": "GHSA-2345-6789-cfgh",
+        "repository": "owner/repository",
+        "ecosystem": "python",
+        "cwes": ["CWE-295"],
+        "fixes": [{"fix": "b" * 40, "parent": parent}],
+        "prefix_files": [
+            {
+                "parent": parent,
+                "path": "src/App.py",
+                "sha256": _digest("source"),
+                "hunk_lines": [[1, 3]],
+            }
+        ],
+        "pattern": {"status": "not_detected", "detections": []},
+        "codeql": {"status": "not_run", "detections": []},
+    }
+    binary = tmp_path / "opengrep.exe"
+    binary.write_bytes(b"synthetic-not-executed")
+    ruleset = tmp_path / "rules.yml"
+    ruleset.write_text(
+        "rules:\n- id: python.synthetic\n  metadata:\n    cwe: [CWE-295]\n"
+    )
+    record = {
+        "schema": _gain["RECALL_SCHEMA"],
+        "candidate": {
+            "pattern_lane": {
+                "ruleset_sha256": _gain["digest"](ruleset.read_bytes()),
+                "opengrep_binary_sha256": _gain["digest"](binary.read_bytes()),
+                "opengrep_version": "1.15.0",
+            },
+            "codeql_lane": {
+                "bundle_sha256": _digest("bundle"),
+                "query_sets_sha256": _digest("queries"),
+            },
+        },
+        "detection_rule": {"class_families": {"CWE-295": "tls"}},
+        "cases": [case],
+    }
+    record["summary"] = _gain["summarize_recall"](record)
+    cache = tmp_path / "cache"
+    target = cache / case["ghsa"] / parent[:12] / "src/App.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"source")
+    return record, cache, target, binary, ruleset
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "status",
+        "empty",
+        "duplicate",
+        "line_bool",
+        "line_zero",
+        "unordered",
+        "path",
+        "ghsa",
+        "repo",
+        "revision",
+        "prefix_collision",
+    ],
+)
+def test_advisory_synthetic_metadata_rejects_before_filesystem(tmp_path, mutation):
+    record, _, _, _, _ = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    item = case["prefix_files"][0]
+
+    def collide():
+        other = "a" * 12 + "c" * 28
+        case["fixes"].append({"fix": "d" * 40, "parent": other})
+        case["prefix_files"].append({**item, "parent": other})
+
+    operations = {
+        "status": lambda: case["pattern"].update(status="unknown"),
+        "empty": lambda: case.update(prefix_files=[]),
+        "duplicate": lambda: case["prefix_files"].extend([item]),
+        "line_bool": lambda: item.update(hunk_lines=[[True, 3]]),
+        "line_zero": lambda: item.update(hunk_lines=[[0, 3]]),
+        "unordered": lambda: item.update(hunk_lines=[[3, 1]]),
+        "path": lambda: item.update(path="../escape.py"),
+        "ghsa": lambda: case.update(ghsa="../../outside"),
+        "repo": lambda: case.update(repository="https://untrusted.example/repo"),
+        "revision": lambda: item.update(parent="a" * 12),
+        "prefix_collision": collide,
+    }
+    operations[mutation]()
+    with pytest.raises((ValueError, TypeError)):
+        _gain["verify_recall"](record)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../escape.py",
+        "/absolute.py",
+        "C:/drive.py",
+        r"src\App.py",
+        "%2e%2e/escape.py",
+        "src/../App.py",
+    ],
+)
+def test_advisory_cache_rejects_noncanonical_paths(tmp_path, path):
+    record, cache, _, _, _ = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    item = dict(case["prefix_files"][0], path=path)
+    with pytest.raises((ValueError, OSError)):
+        _gain["_cache_path"](cache, case, item)
+
+
+def test_advisory_cache_rejects_existing_link_ancestor(tmp_path):
+    record, cache, _, _, _ = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = cache / case["ghsa"] / ("a" * 12) / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("host does not grant creation of symbolic links")
+    with pytest.raises((ValueError, OSError)):
+        _gain["_cache_path"](
+            cache, case, dict(case["prefix_files"][0], path="linked/file.py")
+        )
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_advisory_synthetic_bounded_replay_accepts_complete_native_metadata(
+    tmp_path, monkeypatch, exit_code
+):
+    import factoryline.assembly_process as process
+
+    record, cache, target, binary, ruleset = _synthetic_recall(tmp_path)
+    calls = []
+
+    def runner(executable, argv, cwd, **kwargs):
+        calls.append((executable, argv, kwargs))
+        return {
+            "exit_code": exit_code,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "reason": None,
+            "stdout": json.dumps(
+                {"results": [], "errors": [], "paths": {"scanned": [str(target)]}}
+            ).encode(),
+            "stderr": b"",
+        }
+
+    monkeypatch.setattr(process, "run_cli_detailed", runner)
+    _gain["replay_pattern"](record, cache, str(binary), ruleset)
+    assert len(calls) == 1 and calls[0][0] == str(binary.resolve())
+    assert calls[0][2]["timeout"] == 180
+    assert calls[0][2]["max_stream_bytes"] == 16 * 1024 * 1024
+    assert calls[0][1][calls[0][1].index("--timeout") + 1] == "30"
+    assert _gain["_recall_result_path"](str(target), cache) == (
+        record["cases"][0]["ghsa"],
+        "a" * 12,
+        "src/App.py",
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "binary",
+        "exit",
+        "errors",
+        "partial",
+        "missing",
+        "cleanup",
+        "timeout",
+        "overflow",
+        "stderr",
+        "json",
+        "duplicate_json",
+        "nonfinite",
+        "drift",
+        "scanned_traversal",
+        "unknown_source",
+        "skipped",
+        "missing_errors",
+        "missing_reason",
+    ],
+)
+def test_advisory_synthetic_replay_rejects_incomplete_execution(
+    tmp_path, monkeypatch, mutation
+):
+    import factoryline.assembly_process as process
+
+    record, cache, target, binary, ruleset = _synthetic_recall(tmp_path)
+    calls = []
+    if mutation == "binary":
+        binary.write_bytes(b"wrong binary")
+
+    def runner(*args, **kwargs):
+        calls.append(True)
+        report = {"results": [], "errors": [], "paths": {"scanned": [str(target)]}}
+        facts = {
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "reason": None,
+            "stderr": b"",
+        }
+        operations = {
+            "exit": lambda: facts.update(exit_code=2),
+            "errors": lambda: report.update(errors=[{"type": "timeout"}]),
+            "partial": lambda: report["paths"].update(scanned=[]),
+            "missing": lambda: report.pop("paths"),
+            "cleanup": lambda: facts.update(cleanup_confirmed=False),
+            "timeout": lambda: facts.update(reason="timeout"),
+            "overflow": lambda: facts.update(reason="output_limit"),
+            "stderr": lambda: facts.update(stderr=b"x" * 65537),
+            "drift": lambda: target.write_bytes(b"changed during invocation"),
+            "scanned_traversal": lambda: report["paths"].update(
+                scanned=["../outside.py"]
+            ),
+            "unknown_source": lambda: report.update(
+                results=[
+                    {
+                        "path": str(target.parent / "Other.py"),
+                        "check_id": "python.synthetic",
+                        "start": {"line": 1},
+                    }
+                ]
+            ),
+            "skipped": lambda: report["paths"].update(skipped=[{"path": str(target)}]),
+            "missing_errors": lambda: report.pop("errors"),
+            "missing_reason": lambda: facts.pop("reason"),
+        }
+        operations.get(mutation, lambda: None)()
+        facts["stdout"] = {
+            "json": b"{",
+            "duplicate_json": b'{"results":[],"results":[]}',
+            "nonfinite": b'{"n":NaN}',
+        }.get(mutation, json.dumps(report).encode())
+        return facts
+
+    monkeypatch.setattr(process, "run_cli_detailed", runner)
+    with pytest.raises((ValueError, OSError, KeyError)):
+        _gain["replay_pattern"](record, cache, str(binary), ruleset)
+    assert len(calls) == (0 if mutation == "binary" else 1)
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "missing", "extra", "wrong_rule", "wrong_line"]
+)
+def test_advisory_nonempty_expected_detection_replay(tmp_path, monkeypatch, mutation):
+    import factoryline.assembly_process as process
+
+    record, cache, target, binary, ruleset = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    hit = {
+        "rule": "python.synthetic",
+        "parent": "a" * 40,
+        "path": "src/App.py",
+        "line": 1,
+    }
+    case["pattern"].update(status="detected", detections=[hit])
+    record["summary"] = _gain["summarize_recall"](record)
+    result = {"path": str(target), "check_id": "python.synthetic", "start": {"line": 1}}
+    results = [result]
+    operations = {
+        "missing": results.clear,
+        "extra": lambda: results.append({**result, "start": {"line": 2}}),
+        "wrong_rule": lambda: result.update(check_id="python.unknown"),
+        "wrong_line": lambda: result.update(start={"line": 3}),
+    }
+    operations.get(mutation, lambda: None)()
+    facts = {
+        "exit_code": 0,
+        "cleanup_confirmed": True,
+        "streams_closed": True,
+        "reason": None,
+        "stderr": b"",
+        "stdout": json.dumps(
+            {"results": results, "errors": [], "paths": {"scanned": [str(target)]}}
+        ).encode(),
+    }
+    monkeypatch.setattr(process, "run_cli_detailed", lambda *args, **kwargs: facts)
+    if mutation is None:
+        _gain["replay_pattern"](record, cache, str(binary), ruleset)
+    else:
+        with pytest.raises((ValueError, KeyError)):
+            _gain["replay_pattern"](record, cache, str(binary), ruleset)
+
+
+@pytest.mark.parametrize("mutation", [None, "download_digest", "existing_different"])
+def test_advisory_fetch_admits_only_bound_nonoverwriting_bytes(
+    tmp_path, monkeypatch, mutation
+):
+    import factoryline.assembly_process as process
+
+    record, cache, target, _, _ = _synthetic_recall(tmp_path)
+    target.unlink()
+    if mutation == "existing_different":
+        target.write_bytes(b"existing preserve")
+    payload = b"wrong download" if mutation == "download_digest" else b"source"
+
+    def runner(executable, argv, cwd, **kwargs):
+        return {
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "reason": None,
+            "stdout": payload if "show" in argv else b"",
+            "stderr": b"",
+        }
+
+    monkeypatch.setattr(process, "run_cli_detailed", runner)
+    if mutation is None:
+        _gain["fetch_cache"](record, cache, tmp_path / "fetch")
+        assert target.read_bytes() == b"source"
+    else:
+        with pytest.raises(ValueError):
+            _gain["fetch_cache"](record, cache, tmp_path / "fetch")
+        assert (
+            target.read_bytes() == b"existing preserve"
+            if mutation == "existing_different"
+            else not target.exists()
+        )
+
+
+def _recall_detected_case(recall_record):
+    case = next(c for c in recall_record["cases"] if c["pattern"]["detections"])
+    return copy.deepcopy(case), dict(recall_record, cases=[case])
+
+
+def test_advisory_recall_summarize_recall_counts_lanes_and_overlap(recall_record):
+    case, _ = _recall_detected_case(recall_record)
+    both = copy.deepcopy(case)
+    both["codeql"].update(
+        status="detected", detections=[{"rule": "q", "path": "p", "line": 1}]
+    )
+    neither = copy.deepcopy(case)
+    neither["pattern"].update(status="not_detected", detections=[])
+    neither["codeql"].update(status="no_extractor", detections=[])
+    summary = _gain["summarize_recall"]({"cases": [both, neither]})
+    total = summary["total"]
+    assert (total["cases"], total["pattern_detected"], total["codeql_detected"]) == (
+        2,
+        1,
+        1,
+    )
+    assert (total["combined_detected"], total["overlap"]) == (1, 1)
+    assert (total["codeql_analyzed"], total["codeql_state_no_extractor"]) == (1, 1)
+    assert summary["combined_not_held_out"]["overlap"] == 1
+
+
+def test_advisory_recall_fetch_cache_writes_each_bound_prefix_file(
+    recall_record, tmp_path, monkeypatch
+):
+    import factoryline.assembly_process as process
+
+    subset, _, _, _, _ = _synthetic_recall(tmp_path)
+    case = subset["cases"][0]
+    calls = []
+
+    def fake_run(executable, args, cwd, **kwargs):
+        argv = [executable, *args]
+        calls.append(argv)
+        stdout = b""
+        if argv[3] == "show":
+            stdout = b"source"
+        return {
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "reason": None,
+            "stdout": stdout,
+        }
+
+    monkeypatch.setattr(process, "run_cli_detailed", fake_run)
+    _gain["fetch_cache"](subset, tmp_path / "cache", tmp_path / "work")
+    fetched = [argv for argv in calls if argv[3] == "fetch"]
+    assert [argv[-1] for argv in fetched] == [fix["fix"] for fix in case["fixes"]]
+    assert all(
+        "--depth=2" in argv
+        and argv[-2] == f"https://github.com/{case['repository']}.git"
+        for argv in fetched
+    )
+    for item in case["prefix_files"]:
+        written = _gain["_cache_path"](tmp_path / "cache", case, item)
+        assert written.read_bytes() == b"source"
+
+
+def test_advisory_recall_replays_native_paths_with_relative_cache(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    cache = Path("scan/cache")
+    source = cache / "GHSA-test" / "abcdef" / "src" / "App.py"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source")
+    lookup = _gain["_recall_result_path"]
+    expected = ("GHSA-test", "abcdef", "src/App.py")
+    assert lookup(str(source), cache) == expected
+    assert lookup(str(source.relative_to(cache)), cache) == expected
+    assert lookup(str(source.absolute()), cache) == expected
+
+
+def test_advisory_recall_replay_pattern_requires_identical_detections(
+    recall_record, tmp_path, monkeypatch
+):
+    import factoryline.assembly_process as process
+
+    subset, cache, _, binary, ruleset = _synthetic_recall(tmp_path)
+    case = subset["cases"][0]
+    case["pattern"].update(
+        status="detected",
+        detections=[
+            {
+                "rule": "python.synthetic",
+                "parent": "a" * 40,
+                "path": "src/App.py",
+                "line": 1,
+            }
+        ],
+    )
+    subset["summary"] = _gain["summarize_recall"](subset)
+    results = [
+        {
+            "path": str(cache / case["ghsa"] / hit["parent"][:12] / hit["path"]),
+            "check_id": f"deploy.deep-adapters.rules.{hit['rule']}",
+            "start": {"line": hit["line"]},
+        }
+        for hit in case["pattern"]["detections"]
+    ]
+
+    def fake_run(*args, **kwargs):
+        scanned = [
+            str(_gain["_cache_path"](cache, case, item))
+            for item in case["prefix_files"]
+        ]
+        return {
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "reason": None,
+            "stderr": b"",
+            "stdout": json.dumps(
+                {"results": results, "errors": [], "paths": {"scanned": scanned}}
+            ).encode(),
+        }
+
+    monkeypatch.setattr(process, "run_cli_detailed", fake_run)
+    _gain["replay_pattern"](subset, cache, str(binary), ruleset)
+    results.append(
+        dict(results[0], start={"line": results[0]["start"]["line"] + 10**6})
+    )
+    results[0] = dict(results[0], start={"line": results[0]["start"]["line"] + 10**6})
+    with pytest.raises(ValueError, match="pattern replay differs"):
+        _gain["replay_pattern"](subset, cache, str(binary), ruleset)
+    altered = tmp_path / "ruleset.yml"
+    altered.write_bytes(ruleset.read_bytes() + b"\n# altered\n")
+    with pytest.raises(ValueError, match="ruleset bytes differ"):
+        _gain["replay_pattern"](subset, cache, str(binary), altered)

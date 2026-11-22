@@ -2,7 +2,7 @@ name: deep-audit-coordinator-v1
 language: python
 spec_markdown: |
   # Deep audit coordinator v1 - opt-in amendment
-  Status: ARCHITECTURE_GATED_IMPLEMENTATION_PENDING. No runtime completion claim.
+  Status: PUBLIC_CLI_IMPLEMENTED_QUALIFICATION_PENDING. No full runtime completion claim.
   Owner said "Approve warm coordinator + fresh workers"; the objective remains approved.
   Approval: .factory/daemon-lifecycle/owner-approval-20261119.json; not release authority.
   This versioned exception applies only to the explicit foreground coordinator command.
@@ -20,12 +20,18 @@ spec_markdown: |
   never signals a process and cannot independently eliminate a later PID race.
   Actual cancellation must still use the existing owned Job/process-group handle.
   Module signatures cover the implemented foundation and direct-API worker bridge.
-  The full MUST contract and public command remain unverified.
+  The full MUST contract remains unverified; public CLI acceptance is scoped below.
 
   ## Current foundation and direct-API worker bridge (not full command completion)
   Modify existing assembly_process.py, agentic_control.py and cli_deep_audit.py;
-  add no runtime module, dependency or result database. The coordinator is not
-  registered as a CLI command. The MUST requirements below describe
+  add no runtime module, dependency or result database. The public foreground
+  command is `factory deep-audit coordinator --root ROOT --session-nonce NONCE`
+  with optional integer `--lease-seconds` (default300). The adapter hands owned
+  raw FileIO stdin to the existing service without closing or detaching it,
+  refuses buffered-only wrappers, emits no duplicate result, and exits nonzero
+  on incomplete admission or cleanup. Actual Windows CLI tests cover status,
+  stop, invalid input, open-pipe expiry and a signed fresh-child handshake with
+  owned cleanup. They do not prove a successful six-family audit. The MUST requirements below describe
   the complete target, not a claim of completed daemon operation or speedup.
   Identity objects contain exactly pid (positive non-boolean integer), creation
   (1..256 characters), runtime_sha256 and workspace_sha256 (64 lowercase hex),
@@ -164,6 +170,38 @@ spec_markdown: |
   These APIs retain bounded hashes/IDs/state metadata, never request bodies,
   prompts, or raw child output. Direct-API native handshake and stop controls do
   not establish full command lifecycle, restart recovery or paired timing.
+  Each worker thread collects its existing child_launch, child_wait and
+  child_cleanup measurements through the shared ops_telemetry recorder. Only
+  bounded aggregate phase totals, status and dropped-call counts become visible
+  on status after execution returns, including failure paths. Each job has a
+  separate recorder; no parent ContextVar or other job's samples are reused.
+  A job with no measured phase reports not_observed, not a complete measurement.
+  Status omits phase_timings without a job and returns null for a running job
+  until its recorder is finalized. Then phase_timings contains exactly status,
+  phases, dropped_calls and dropped_phase_names. A phase has exactly phase,
+  elapsed_ms (rounded aggregate monotonic nanoseconds / 1000000), calls,
+  completed and incomplete. Reuse the recorder's existing fixed phase allowlist
+  and twelve-phase cap, reporting overflow without storing discarded payloads.
+  Phases and dropped phase names are alphabetically sorted. Overflow increments
+  dropped_calls up to 2147483647. Unknown phase names and negative elapsed values
+  are silently ignored, not recorded as dropped calls.
+  Status is incomplete for a failed measured call or dropped observation,
+  otherwise complete when phases exist. Completion of a measured operation is
+  not a successful audit: a nonzero child exit can have complete phase timing.
+  Specifically child_launch wraps _launch; child_wait wraps _monitor; and
+  child_cleanup wraps _finish_and_close or _cleanup_after_wait_error. Reader
+  startup and _observe_started_child run outside these timers. An observer
+  failure may propagate before wait or cleanup is measured. Missing phase names do
+  not alone make a nonempty summary incomplete; consumers must separately check
+  the phase coverage required for their claim. This preserves existing runner
+  cleanup behavior even when its observer-failure cleanup is not timed.
+  Existing child_wait includes child startup, handshake and execution; it is
+  not a standalone analyzer-execution timer. Measurements remain in bounded
+  current-job memory, not a second persisted result or authority store.
+  The loaded telemetry implementation is bound into the existing runtime identity.
+  These child-process phases do not measure all end-to-end startup/admission/
+  dispatch/execution/cleanup boundaries and do not establish the eleven-pair
+  native benchmark or change execution_available=false or completion authority.
 
   ## MUST - Functional core
   ### Requirements (EARS)
@@ -252,6 +290,7 @@ modules:
 # Other danger checks and QA still inspect declared modules. This list grants no
 # executor exemption, callee/transitive safety claim or release authority.
 review_scopes:
+  - {module: cli_deep_audit, symbol: _run_coordinator, max_lines: 26}
   - {module: assembly_process, symbol: _process_creation_identity, max_lines: 13}
   - {module: assembly_process, symbol: _process_identity_absent, max_lines: 14}
   - {module: assembly_process, symbol: _linux_identity_absent, max_lines: 18}
@@ -291,7 +330,8 @@ review_scopes:
   - {module: cli_deep_audit, symbol: _coordinator_read, max_lines: 4}
   - {module: cli_deep_audit, symbol: _coordinator_bootstrap, max_lines: 7}
   - {module: cli_deep_audit, symbol: _coordinator_worker_args, max_lines: 17}
-  - {module: cli_deep_audit, symbol: _coordinator_execute, max_lines: 44}
+  - {module: cli_deep_audit, symbol: _coordinator_execute, max_lines: 14}
+  - {module: cli_deep_audit, symbol: _coordinator_execute_job, max_lines: 44}
   - {module: cli_deep_audit, symbol: _coordinator_launched, max_lines: 11}
   - {module: cli_deep_audit, symbol: _coordinator_settle, max_lines: 26}
   - {module: cli_deep_audit, symbol: _coordinator_bind_interrupted, max_lines: 28}

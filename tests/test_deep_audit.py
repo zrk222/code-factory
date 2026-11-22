@@ -224,6 +224,40 @@ def _capture_scope_gap_control(
     return deep_audit, args, state, counters
 
 
+@pytest.mark.parametrize(
+    "language", ["python", "javascript", "typescript", "ruby", "go"]
+)
+def test_uncovered_static_source_names_supported_profiles_only(language):
+    import re
+
+    from factoryline.audit_taxonomy import _NATIVE_WORKERS
+    from factoryline.deep_audit import _source_gaps
+
+    supported = {worker["profile"] for worker in _NATIVE_WORKERS.values()} | {
+        variant["profile"]
+        for worker in _NATIVE_WORKERS.values()
+        for variant in worker.get("variants", {}).values()
+    }
+    profiles_dir = Path(__file__).parents[1] / "deploy/deep-adapters/profiles"
+    gaps = _source_gaps({f"app.{language}": {"language": language}}, {}, [])
+    [static] = [gap for gap in gaps if gap["action"].startswith("Add a static ")]
+    named = re.findall(r"[\w-]+\.json", static["action"])
+    assert named and all(name in supported for name in named)
+    assert all((profiles_dir / name).is_file() for name in named)
+    assert ("codeql-" in static["action"]) is (language != "go")
+    assert static["code"] == "UNCOVERED_SOURCE"
+    assert static["action"].endswith(
+        "naming a profile does not install, run or complete its worker."
+    )
+    assert not re.search(
+        r"\b(installed|available|completed?|covered|passed)\b",
+        static["action"].split(";")[0],
+    )
+    assert all(
+        "Supported profiles" not in gap["action"] for gap in gaps if gap is not static
+    )
+
+
 @pytest.mark.parametrize("code", ["UNCOVERED_SOURCE", "DEPENDENCY_DEPTH"])
 def test_capture_retains_authorized_static_observations_despite_other_scope_gaps(
     tmp_path, monkeypatch, code
@@ -2689,8 +2723,12 @@ def _assert_worker_image_imports(
     assert _WORKER_IMPORT_MODULES <= copied
     assert "COPY factoryline/data/junie_pack.json " not in dockerfile
     _copy_worker_modules(Path.cwd(), package_root, copied)
-    closure_bytes = sum((Path.cwd() / source).stat().st_size for source in copied)
-    closure_bytes += (package_root / "factoryline/data/junie_pack.json").stat().st_size
+    # Images are built from LF sources; a Windows CRLF checkout must not count.
+    closure_bytes = sum(
+        len(path.read_bytes().replace(b"\r\n", b"\n"))
+        for path in [Path.cwd() / source for source in copied]
+        + [package_root / "factoryline/data/junie_pack.json"]
+    )
     assert closure_bytes <= 1_250_000
     result = _run_worker_import(package_root)
     assert result.returncode == 0, result.stderr
@@ -6018,6 +6056,7 @@ def test_codeql_archived_sources_bounds_archive_read(tmp_path, monkeypatch):
     [
         ("javascript-typescript", "javascript", "TopLevel"),
         ("python", "python", "Module"),
+        ("ruby", "ruby", "AstNode"),
         ("actions", "actions", "YamlDocument"),
     ],
 )
@@ -6780,6 +6819,491 @@ def test_fuzz_control_rejects_incomplete_native_argv(argv):
         _fuzz_control_args(argv)
 
 
+def _native_completion_codeql_fixture():
+    """Real retained source/query bytes and a stdout-bound host replay receipt."""
+    from factoryline.deep_audit_io import digest
+    from factoryline.deep_audit_sarif import _coverage_source_gaps
+
+    coverage, lane, required = _codeql_retained_evidence_fixture()
+    lane.update(
+        id="completion-codeql",
+        engine="codeql",
+        family="static",
+        languages=["javascript"],
+        mode="native",
+        image="sha256:" + "b" * 64,
+        report="report.json",
+        coverage="coverage.json",
+        challenge_report="challenges.json",
+    )
+    inventory = {
+        "candidate_sha256": "c" * 64,
+        "files": [
+            {"path": path, "sha256": seal, "language": "javascript"}
+            for path, seal in required.items()
+        ],
+    }
+    report = {"native": "report"}
+    coverage.update(
+        schema="factory.deep-coverage.v1",
+        sources=required,
+        complete=False,
+        errors=["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"],
+        mode=lane["mode"],
+        fallback=False,
+        report_sha256=digest(report),
+        obligations=["signed-codeql"],
+    )
+    obligations = [
+        {
+            "id": "signed-codeql",
+            "engine": "codeql",
+            "family": "static",
+            "paths": list(required),
+            "detector_rule_id": lane["rule_ids"][0],
+            "challenges": [
+                {"kind": kind} for kind in ("positive", "negative", "mutation")
+            ],
+        }
+    ]
+    challenges = {
+        "schema": "factory.deep-challenges.v1",
+        "observations": [],
+        "gaps": [],
+    }
+    bundle = {
+        "artifacts": {
+            lane["report"]: report,
+            lane["coverage"]: coverage,
+            lane["challenge_report"]: challenges,
+        }
+    }
+    replay = {
+        "schema": "factory.codeql-native-replay.v1",
+        "state": "VERIFIED",
+        "candidate_sha256": inventory["candidate_sha256"],
+        "lane_sha256": digest(lane),
+        "coverage_sha256": digest(coverage),
+        "queries": len(lane["rule_ids"]),
+        "source_paths": sorted(required),
+        "decoded_queries_sha256": "d" * 64,
+        "findings_sha256": "e" * 64,
+        "native_execution_sha256": "f" * 64,
+    }
+    raw = json.dumps(replay).encode()
+    replay.update(
+        image=lane["image"],
+        runtime_sha256="1" * 64,
+        command_sha256="2" * 64,
+        cleanup_confirmed=True,
+        execution=_codeql_process_facts(30, raw, b"", cancelled=False),
+    )
+    result = {
+        "gaps": _coverage_source_gaps(report, coverage, lane, required),
+        "obligations": ["signed-codeql"],
+        "state": "INCOMPLETE",
+    }
+    assert result["gaps"] == ["ANALYZER_INCOMPLETE"]
+    return result, replay, lane, bundle, inventory, obligations
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "arbitrary_verified",
+        "unknown_error",
+        "worker_true",
+        "empty_inventory",
+        "no_obligations",
+        "uncovered_obligation",
+        "source_drift",
+        "missing_artifact",
+        "corrupt_artifact",
+        "unrelated_gap",
+        "failed_cleanup",
+        "wrong_candidate",
+        "wrong_image",
+        "missing_control",
+    ],
+)
+def test_native_completion_reconciliation_never_promotes_unsafe_worker(
+    damage, monkeypatch
+):
+    import factoryline.deep_audit as module
+    import factoryline.deep_audit_sarif as sarif
+
+    result, replay, lane, bundle, inventory, obligations = (
+        _native_completion_codeql_fixture()
+    )
+    # Unit boundary: signed-control normalization is tested separately below.
+    # Retained artifacts, source accounting and host receipt remain real here.
+    if damage != "missing_control":
+        monkeypatch.setattr(
+            sarif,
+            "normalize_execution_bundle",
+            lambda *args: {"gaps": ["ANALYZER_INCOMPLETE"]},
+        )
+    coverage = bundle["artifacts"][lane["coverage"]]
+    operations = {
+        "arbitrary_verified": lambda: (replay.clear(), replay.update(state="VERIFIED")),
+        "unknown_error": lambda: coverage["errors"].append("UNEXPECTED_ANALYZER_ERROR"),
+        "worker_true": lambda: coverage.update(complete=True),
+        "empty_inventory": lambda: inventory.update(files=[]),
+        "no_obligations": obligations.clear,
+        "uncovered_obligation": lambda: result.update(obligations=[]),
+        "source_drift": lambda: inventory["files"][0].update(sha256="0" * 64),
+        "missing_artifact": lambda: coverage.pop("codeql_query_execution"),
+        "corrupt_artifact": lambda: coverage["codeql_source_execution"][
+            "native_artifacts"
+        ]["archive"].update(data="%%%"),
+        "unrelated_gap": lambda: result["gaps"].append("CHALLENGE_FAILED"),
+        "failed_cleanup": lambda: replay["execution"].update(cleanup_confirmed=False),
+        "wrong_candidate": lambda: replay.update(candidate_sha256="0" * 64),
+        "wrong_image": lambda: replay.update(image="sha256:" + "0" * 64),
+        "missing_control": obligations[0]["challenges"].pop,
+    }
+    operations[damage]()
+    original_bundle = deepcopy(bundle)
+    try:
+        module._reconcile_native_completion(
+            result, replay, lane, bundle, inventory, obligations, "completion-test"
+        )
+    except (RuntimeAuditError, KeyError, TypeError, ValueError):
+        pass  # Existing replay handler records the bounded failure.
+    assert "ANALYZER_INCOMPLETE" in result["gaps"]
+    assert result["state"] == "INCOMPLETE"
+    assert bundle == original_bundle
+
+
+def test_native_completion_reconciliation_checks_retained_bytes_and_preserves_bundle(
+    monkeypatch,
+):
+    import factoryline.deep_audit as module
+    import factoryline.deep_audit_sarif as sarif
+
+    args = _native_completion_codeql_fixture()
+    result, replay, lane, bundle, inventory, obligations = args
+    original = deepcopy(bundle)
+    calls = []
+
+    def normalized(*actual):
+        calls.append(actual)
+        return {"gaps": ["ANALYZER_INCOMPLETE", "CODEQL_NATIVE_REPLAY_REQUIRED"]}
+
+    monkeypatch.setattr(sarif, "normalize_execution_bundle", normalized)
+    module._reconcile_native_completion(*args, "completion-test")
+    assert result["gaps"] == []
+    assert calls == [(bundle, lane, inventory, "completion-test", obligations)]
+    assert bundle == original
+
+
+@pytest.mark.parametrize(
+    "gap",
+    [
+        "CHALLENGE_FAILED",
+        "CHALLENGE_COVERAGE_MISSING",
+        "CODEQL_ARTIFACT_UNVERIFIED",
+        "SOURCE_COVERAGE_MISSING",
+    ],
+)
+def test_native_completion_reconciliation_preserves_normalized_failures(
+    gap, monkeypatch
+):
+    import factoryline.deep_audit as module
+    import factoryline.deep_audit_sarif as sarif
+
+    args = _native_completion_codeql_fixture()
+    monkeypatch.setattr(
+        sarif,
+        "normalize_execution_bundle",
+        lambda *actual: {"gaps": ["ANALYZER_INCOMPLETE", gap]},
+    )
+    module._reconcile_native_completion(*args, "completion-test")
+    assert args[0]["gaps"] == ["ANALYZER_INCOMPLETE"]
+
+
+def test_native_completion_codeql_host_wrapper_finalizes_only_reconciled_result(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    import factoryline.deep_audit as module
+    import factoryline.deep_audit_sarif as sarif
+
+    result, replay, lane, bundle, inventory, obligations = (
+        _native_completion_codeql_fixture()
+    )
+    result["gaps"].append("CODEQL_NATIVE_REPLAY_REQUIRED")
+    original = deepcopy(bundle)
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    monkeypatch.setattr(module, "_replay_codeql_lane", lambda *args, **kwargs: replay)
+    monkeypatch.setattr(
+        sarif,
+        "normalize_execution_bundle",
+        lambda *args: {
+            "gaps": ["ANALYZER_INCOMPLETE", "CODEQL_NATIVE_REPLAY_REQUIRED"]
+        },
+    )
+    module._codeql_replay_result(
+        result,
+        ["docker"],
+        lane,
+        tmp_path,
+        bundle,
+        inventory,
+        "completion-test",
+        threading.Event(),
+        time.monotonic() + 60,
+        (tmp_path, {"active_lane": lane["id"]}, lambda event: None),
+        obligations,
+    )
+    assert result["state"] == "OBSERVED"
+    assert result["gaps"] == []
+    assert bundle == original
+
+    normalized = {
+        **result,
+        "findings": [],
+        "state": "INCOMPLETE",
+        "gaps": ["ANALYZER_INCOMPLETE", "CODEQL_NATIVE_REPLAY_REQUIRED"],
+    }
+    gaps = []
+    monkeypatch.setattr(
+        sarif, "normalize_execution_bundle", lambda *args: deepcopy(normalized)
+    )
+    assert (
+        module._lineage_normalization(
+            bundle,
+            lane,
+            inventory,
+            "completion-test",
+            result,
+            lane["id"],
+            gaps,
+            {"obligations": obligations},
+        )["state"]
+        == "OBSERVED"
+    )
+    assert gaps == []
+    altered = {**result, "codeql_replay": {**replay, "candidate_sha256": "0" * 64}}
+    assert (
+        module._lineage_normalization(
+            bundle,
+            lane,
+            inventory,
+            "completion-test",
+            altered,
+            lane["id"],
+            gaps,
+            {"obligations": obligations},
+        )
+        is None
+    )
+    assert gaps == [f"LANE_NORMALIZATION_FAILED:{lane['id']}"]
+
+
+@pytest.mark.parametrize(
+    "damage", [None, "missing_source", "source_drift", "empty_source", "corrupt_corpus"]
+)
+def test_native_completion_fuzz_requires_real_source_accounting(damage, monkeypatch):
+    import factoryline.deep_audit as module
+    import factoryline.deep_audit_sarif as sarif
+    from factoryline.deep_audit_io import _retained_fuzz_corpus
+
+    args = list(_native_completion_codeql_fixture())
+    result, replay, lane, bundle, inventory, obligations = args
+    lane.update(engine="atheris", family="fuzz", languages=["python"])
+    inventory["files"][0]["language"] = "python"
+    path, seal = inventory["files"][0]["path"], inventory["files"][0]["sha256"]
+    obligations[0].update(engine="atheris", family="fuzz")
+    _, corpus_report = _retained_fuzz_fixture()
+    report = {**corpus_report, "source_coverage": {path: {"sha256": seal}}}
+    bundle["artifacts"][lane["report"]] = report
+    if damage == "missing_source":
+        report["source_coverage"] = {}
+    elif damage == "source_drift":
+        report["source_coverage"][path]["sha256"] = "0" * 64
+    elif damage == "empty_source":
+        inventory["files"] = []
+    elif damage == "corrupt_corpus":
+        report["fuzz_corpus"]["data"] = "%%%"
+    expected = {"schema": "factory.fuzz-native-replay.v1", "state": "VERIFIED"}
+    replay.update(expected)
+    replay["image"] = lane["image"]
+    monkeypatch.setattr(
+        sarif,
+        "normalize_execution_bundle",
+        lambda *actual: {"gaps": ["ANALYZER_INCOMPLETE"]},
+    )
+
+    def corpus_bound_expected(request):
+        # Isolate the host binding boundary; validate real retained main corpus.
+        _retained_fuzz_corpus(request["report"], {"fuzz.py": "a" * 64})
+        return expected
+
+    monkeypatch.setattr(
+        module._deep_audit_io, "_fuzz_replay_expected", corpus_bound_expected
+    )
+    original = deepcopy(bundle)
+    try:
+        module._reconcile_native_completion(*args, "completion-test")
+    except (RuntimeAuditError, KeyError, TypeError, ValueError):
+        assert damage is not None
+    assert result["gaps"] == ([] if damage is None else ["ANALYZER_INCOMPLETE"])
+    assert bundle == original
+
+
+def _native_completion_normalized_fixture():
+    """Complete legacy signed controls plus real retained CodeQL evidence."""
+    args = _native_completion_codeql_fixture()
+    result, replay, lane, bundle, inventory, obligations = args
+    lane["tool_version"] = "1"
+    coverage = bundle["artifacts"][lane["coverage"]]
+    coverage.update(
+        tool_version="1",
+        ruleset_sha256=lane["ruleset_sha256"],
+        invocation_sha256="a" * 64,
+    )
+    path = inventory["files"][0]["path"]
+    seal = inventory["files"][0]["sha256"]
+    rule = lane["rule_ids"][0]
+    report = {
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "CodeQL",
+                        "version": "1",
+                        "rules": [{"id": rule}],
+                    }
+                },
+                "invocations": [{"executionSuccessful": True}],
+                "results": [],
+            }
+        ],
+    }
+    bundle.update(
+        schema="factory.deep-worker.v1",
+        run_id="completion-test",
+        candidate_sha256=inventory["candidate_sha256"],
+    )
+    bundle["artifacts"][lane["report"]] = report
+    coverage["report_sha256"] = digest(report)
+    challenges = bundle["artifacts"][lane["challenge_report"]]
+    obligations[0]["challenges"] = []
+    for kind in ("positive", "negative", "mutation"):
+        native = deepcopy(report)
+        if kind == "positive":
+            native["runs"][0]["results"] = [
+                {
+                    "ruleId": rule,
+                    "level": "error",
+                    "message": {"text": "owned control"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": path},
+                                "region": {"startLine": 1},
+                            }
+                        }
+                    ],
+                }
+            ]
+        observed = {
+            "schema": "factory.deep-challenge-observation.v1",
+            "engine": "codeql",
+            "fixture_sha256": seal,
+            "detector_rule_id": rule,
+            "detector_enabled": kind != "mutation",
+            "native_report": native,
+        }
+        obligations[0]["challenges"].append(
+            {
+                "kind": kind,
+                "fixture_path": path,
+                "fixture_sha256": seal,
+                "expected_exit_code": 0,
+                "expected_report_sha256": digest(observed),
+            }
+        )
+        challenges["observations"].append(
+            {
+                "obligation_id": obligations[0]["id"],
+                "kind": kind,
+                "fixture_sha256": seal,
+                "observation_sha256": digest(observed),
+                "exit_code": 0,
+                "report": observed,
+            }
+        )
+    replay.update(lane_sha256=digest(lane), coverage_sha256=digest(coverage))
+    body = {
+        key: value
+        for key, value in replay.items()
+        if key
+        not in {
+            "image",
+            "runtime_sha256",
+            "command_sha256",
+            "execution",
+            "cleanup_confirmed",
+        }
+    }
+    replay["execution"] = _codeql_process_facts(
+        30, json.dumps(body).encode(), b"", cancelled=False
+    )
+    return args
+
+
+@pytest.mark.parametrize("missing", [None, "positive", "negative", "mutation"])
+def test_native_completion_real_normalization_requires_each_control(missing):
+    import factoryline.deep_audit as module
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    result, replay, lane, bundle, inventory, obligations = (
+        _native_completion_normalized_fixture()
+    )
+    challenges = bundle["artifacts"][lane["challenge_report"]]
+    if missing:
+        challenges["observations"] = [
+            item for item in challenges["observations"] if item["kind"] != missing
+        ]
+    normalized = normalize_execution_bundle(
+        bundle, lane, inventory, "completion-test", obligations
+    )
+    assert ("CHALLENGE_COVERAGE_MISSING" in normalized["gaps"]) is bool(missing)
+    assert set(normalized["gaps"]) == (
+        {"ANALYZER_INCOMPLETE", "CODEQL_NATIVE_REPLAY_REQUIRED"}
+        | ({"CHALLENGE_COVERAGE_MISSING"} if missing else set())
+    )
+    original = deepcopy(bundle)
+    module._reconcile_native_completion(
+        result, replay, lane, bundle, inventory, obligations, "completion-test"
+    )
+    assert result["gaps"] == (["ANALYZER_INCOMPLETE"] if missing else [])
+    assert bundle == original
+
+
+def test_native_completion_real_normalization_rejects_invalid_native_report():
+    import factoryline.deep_audit as module
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    result, replay, lane, bundle, inventory, obligations = (
+        _native_completion_normalized_fixture()
+    )
+    bundle["artifacts"][lane["report"]]["version"] = "invalid"
+    with pytest.raises(RuntimeAuditError, match="E_SARIF_VERSION"):
+        normalize_execution_bundle(
+            bundle, lane, inventory, "completion-test", obligations
+        )
+    with pytest.raises(RuntimeAuditError, match="E_SARIF_VERSION"):
+        module._reconcile_native_completion(
+            result, replay, lane, bundle, inventory, obligations, "completion-test"
+        )
+    assert result["gaps"] == ["ANALYZER_INCOMPLETE"]
+
+
 def _codeql_replay_receipt_inputs():
     from factoryline.deep_audit_io import digest
 
@@ -6815,7 +7339,14 @@ def test_codeql_replay_receipt_accepts_bound_success():
 
 
 @pytest.mark.parametrize(
-    "sabotage", ["invalid_facts", "cancelled", "stdout_hash_drift", "binding_drift"]
+    "sabotage",
+    [
+        "invalid_facts",
+        "cancelled",
+        "stdout_hash_drift",
+        "stdout_size_drift",
+        "binding_drift",
+    ],
 )
 def test_codeql_replay_receipt_rejects_execution_or_binding_drift(sabotage):
     from factoryline.deep_audit import _codeql_replay_receipt
@@ -6827,6 +7358,8 @@ def test_codeql_replay_receipt_rejects_execution_or_binding_drift(sabotage):
         facts["cancelled"] = True
     elif sabotage == "stdout_hash_drift":
         facts["stdout_sha256"] = "0" * 64
+    elif sabotage == "stdout_size_drift":
+        facts["stdout_bytes"] += 1
     else:
         request["inventory"]["candidate_sha256"] = "0" * 64
     with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):

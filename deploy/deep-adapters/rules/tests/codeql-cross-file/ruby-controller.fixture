@@ -1,0 +1,5 @@
+class ReportsController < ApplicationController
+  def export
+    Exporter.run(params[:format])
+  end
+end

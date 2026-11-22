@@ -1753,51 +1753,69 @@ def _bm25_scores(
     This intentionally stays local and deterministic.  It is a retrieval aid,
     not a semantic verifier and never changes the rule inventory or authority.
     """
-    query_terms = sorted(set(_tokens(query)))
-    if not query_terms:
-        return {str(rule["ruleId"]): 0.0 for rule in rules}
-    documents = [_field_values(rule) for rule in rules]
-    n_docs = len(documents)
+    return _bm25_scores_batch(rules, [query], fielded=fielded)[0]
+
+
+def _bm25_scores_batch(
+    rules: list[dict[str, Any]], queries: list[str], *, fielded: bool
+) -> list[dict[str, float]]:
+    """Prepare only this request's corpus; never cache evidence admission."""
+    terms = [sorted(set(_tokens(query))) for query in queries]
+    if not any(terms):
+        return [{str(rule["ruleId"]): 0.0 for rule in rules} for _ in queries]
     field_tokens = [
-        {field: _tokens(value) for field, value in document.items()}
-        for document in documents
+        {field: _tokens(value) for field, value in _field_values(rule).items()}
+        for rule in rules
     ]
+    doc_frequency = {
+        term: sum(
+            any(term in tokens for tokens in fields.values()) for fields in field_tokens
+        )
+        for term in set().union(*terms)
+    }
+    if not fielded:
+        flattened = [
+            [token for tokens in fields.values() for token in tokens]
+            for fields in field_tokens
+        ]
+        average = sum(map(len, flattened)) / len(rules) if rules else 0.0
+        return [
+            _bm25_scores_flat(rules, query, flattened, doc_frequency, average)
+            for query in terms
+        ]
+    n_docs = len(rules)
     avg_len = {
         field: (sum(len(item[field]) for item in field_tokens) / n_docs)
         if n_docs
         else 0.0
         for field in _SEARCH_FIELDS
     }
-    if not fielded:
-        return _bm25_scores_flat(rules, query_terms, field_tokens)
-    return _bm25f_scores(rules, query_terms, field_tokens, avg_len)
+    return [
+        _bm25f_scores(rules, query, field_tokens, avg_len, doc_frequency)
+        for query in terms
+    ]
 
 
 def _bm25_scores_flat(
     rules: list[dict[str, Any]],
     query_terms: list[str],
-    field_tokens: list[dict[str, list[str]]],
+    flattened: list[list[str]],
+    doc_frequency: dict[str, int],
+    avg: float,
 ) -> dict[str, float]:
-    flattened = [
-        [token for values in item.values() for token in values] for item in field_tokens
-    ]
     n_docs = len(flattened)
-    avg = sum(len(tokens) for tokens in flattened) / n_docs if n_docs else 0.0
-    doc_frequency = {
-        term: sum(term in set(tokens) for tokens in flattened) for term in query_terms
-    }
     scores: dict[str, float] = {}
     for rule, tokens in zip(rules, flattened):
-        counts = {term: tokens.count(term) for term in query_terms}
         length = len(tokens)
         score = 0.0
         for term in query_terms:
             df = doc_frequency[term]
-            if not counts[term] or not df:
+            count = tokens.count(term)
+            if not count or not df:
                 continue
             idf = math.log(1.0 + (n_docs - df + 0.5) / (df + 0.5))
             norm = 1.2 * (1.0 - 0.75 + 0.75 * length / avg) if avg else 1.2
-            score += idf * (counts[term] * 2.2) / (counts[term] + norm)
+            score += idf * (count * 2.2) / (count + norm)
         scores[str(rule["ruleId"])] = round(score, 8)
     return scores
 
@@ -1807,16 +1825,9 @@ def _bm25f_scores(
     query_terms: list[str],
     field_tokens: list[dict[str, list[str]]],
     avg_len: dict[str, float],
+    doc_frequency: dict[str, int],
 ) -> dict[str, float]:
     n_docs = len(field_tokens)
-
-    doc_frequency = {
-        term: sum(
-            any(term in set(tokens) for tokens in fields.values())
-            for fields in field_tokens
-        )
-        for term in query_terms
-    }
     scores = {}
     for rule, fields in zip(rules, field_tokens):
         score = 0.0
@@ -1907,7 +1918,7 @@ def search_audit_rules(arguments: object) -> dict[str, object]:
     index_sha256 = sha256(
         json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    payload = {
+    payload: dict[str, object] = {
         "marker": "MCP_AUDIT_RULE_SEARCH_READ_ONLY",
         "schema": "factory.audit-rule-search.v1",
         "query": query,

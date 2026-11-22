@@ -1,0 +1,15 @@
+{
+  "scope": "Foundation-only smoke, deliberately separate from the blocked full coordinator gate; not native-family qualification, crash recovery, paired timing or public command readiness.",
+  "checks": [
+    {
+      "name": "coordinator_owned_foreground_and_invalid_ttl",
+      "kind": "python",
+      "run": "import importlib.util, io, json, sys, tempfile\nfrom pathlib import Path\nsource = Path.cwd() / 'factoryline' / 'cli_deep_audit.py'\nspec = importlib.util.spec_from_file_location('factoryline.cli_deep_audit', source)\nmodule = importlib.util.module_from_spec(spec)\nsys.modules[spec.name] = module\nspec.loader.exec_module(module)\nassert Path(module.__file__).resolve() == source.resolve()\nwith tempfile.TemporaryDirectory(prefix='cf-coordinator-smoke-') as temporary:\n    root = Path(temporary).resolve()\n    for ttl in (True, False, 0, 3601):\n        output = io.StringIO()\n        try:\n            module.serve_deep_audit_coordinator(root, ttl, 'a' * 32, io.BytesIO(), output)\n        except ValueError:\n            pass\n        else:\n            raise AssertionError('invalid TTL admitted')\n        assert output.getvalue() == '' and not (root / '.factory').exists()\n    rows = [dict(version=1, operation=operation, workspace=str(root), session_nonce='a' * 32, request_id=identity * 32) for operation, identity in (('status', 'b'), ('stop', 'c'))]\n    rows.insert(1, dict(rows[0], unexpected='coordinator-private-sentinel'))\n    stream = io.BytesIO(('\\n'.join(json.dumps(row) for row in rows) + '\\n').encode())\n    output = io.StringIO()\n    if sys.platform in ('win32', 'linux'):\n        result = module.serve_deep_audit_coordinator(root, 300, 'a' * 32, stream, output)\n        observed = [json.loads(line) for line in output.getvalue().splitlines()]\n        assert [row['state'] for row in observed] == ['OBSERVED', 'INCOMPLETE', 'STOPPED']\n        assert observed[0]['execution_available'] is False and result == observed[-1]\n        assert all(row['authority'] == 'none' and row['release_approval'] is False for row in observed)\n        assert 'coordinator-private-sentinel' not in output.getvalue()\n        metadata = (root / '.factory' / 'deep-runs' / 'requests' / 'coordinator-metadata.json').read_text()\n        assert 'coordinator-private-sentinel' not in metadata and json.loads(metadata)['rows'] == {}\n    else:\n        try:\n            module.serve_deep_audit_coordinator(root, 300, 'a' * 32, stream, output)\n        except ValueError as error:\n            assert 'creation identity is unavailable' in str(error)\n        else:\n            raise AssertionError('unsupported identity admitted')\n        assert output.getvalue() == '' and not (root / '.factory').exists()\nprint('COORDINATOR_FOUNDATION_SMOKE_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "COORDINATOR_FOUNDATION_SMOKE_PASS",
+      "timeout_s": 30,
+      "covers": ["coordinator_request_schema", "coordinator_lease_owner", "coordinator_receipt_privacy"],
+      "must_fail_on_stub": true
+    }
+  ]
+}

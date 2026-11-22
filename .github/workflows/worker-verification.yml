@@ -54,7 +54,7 @@ on:
       target:
         description: Manual worker selection; automatic PR/push checks are unchanged
         type: choice
-        options: [all, osv-worker, semgrep-worker]
+        options: [all, osv-worker, semgrep-worker, codeql-python-worker]
         default: all
 
 permissions:
@@ -90,7 +90,7 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { appendFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
           import { join } from 'node:path';
-          const targets = ['codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker'];
+          const targets = ['codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'codeql-ruby-worker', 'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker'];
           let result = { sdk: 'true', matrix: JSON.stringify(targets), reason: 'trusted-baseline-unavailable' };
           let temporary;
           try {
@@ -99,8 +99,8 @@ jobs:
               appendFileSync(process.env.GITHUB_OUTPUT, `sdk=false\nmatrix=${JSON.stringify(targets)}\nreason=manual-semgrep-only\n`);
               process.exit(0);
             }
-            if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && event.inputs?.target === 'osv-worker') {
-              appendFileSync(process.env.GITHUB_OUTPUT, `sdk=true\nmatrix=${JSON.stringify(['osv-worker'])}\nreason=manual-osv-only\n`);
+            if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && ['osv-worker', 'codeql-python-worker'].includes(event.inputs?.target)) {
+              appendFileSync(process.env.GITHUB_OUTPUT, `sdk=true\nmatrix=${JSON.stringify([event.inputs.target])}\nreason=manual-selected-sdk\n`);
               process.exit(0);
             }
             const base = process.env.GITHUB_EVENT_NAME === 'pull_request' ? event.pull_request?.base?.sha : process.env.GITHUB_EVENT_NAME === 'push' ? event.before : null;
@@ -131,7 +131,7 @@ jobs:
       - name: Check candidate worker regression and target selector controls
         run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs scripts/verify_osv_worker.test.mjs scripts/semgrep_mutation_controls.test.mjs
   semgrep-surface:
-    if: github.event_name != 'workflow_dispatch' || inputs.target != 'osv-worker'
+    if: github.event_name != 'workflow_dispatch' || (inputs.target != 'osv-worker' && inputs.target != 'codeql-python-worker')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -218,6 +218,19 @@ jobs:
       - name: Verify JavaScript cross-file source-to-sink controls
         if: matrix.target == 'codeql-javascript-worker'
         run: node scripts/verify_codeql_cross_file.mjs factory-worker:candidate codeql-cross-file-verification.json
+      - name: Verify Python cross-file SQL and parameterized-query controls
+        if: matrix.target == 'codeql-python-worker'
+        run: node scripts/verify_codeql_cross_file.mjs factory-worker:candidate codeql-python-verification.json python
+      - name: Preserve Python native findings and source-flow evidence
+        if: always() && matrix.target == 'codeql-python-worker'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: codeql-python-verification
+          path: |
+            codeql-python-verification.json
+            codeql-python-verification.json.*.bundle.json
+            codeql-python-verification.json.execution-*.json
+          if-no-files-found: error
       - name: Preserve cross-file findings and flow evidence
         if: always() && matrix.target == 'codeql-javascript-worker'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -226,6 +239,7 @@ jobs:
           path: |
             codeql-cross-file-verification.json
             codeql-cross-file-verification.json.*.bundle.json
+            codeql-cross-file-verification.json.execution-*.json
           if-no-files-found: error
       - name: Verify GitHub Actions injection and safe environment controls
         if: matrix.target == 'codeql-actions-worker'
@@ -238,6 +252,20 @@ jobs:
           path: |
             codeql-actions-verification.json
             codeql-actions-verification.json.*.bundle.json
+            codeql-actions-verification.json.execution-*.json
+          if-no-files-found: error
+      - name: Verify Ruby cross-file command-injection and safe argument-vector controls
+        if: matrix.target == 'codeql-ruby-worker'
+        run: node scripts/verify_codeql_cross_file.mjs factory-worker:candidate codeql-ruby-verification.json ruby
+      - name: Preserve Ruby cross-file findings and flow evidence
+        if: always() && matrix.target == 'codeql-ruby-worker'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: codeql-ruby-verification
+          path: |
+            codeql-ruby-verification.json
+            codeql-ruby-verification.json.*.bundle.json
+            codeql-ruby-verification.json.execution-*.json
           if-no-files-found: error
       - name: Preserve hash-bound tracker and installed source-version evidence
         if: always()

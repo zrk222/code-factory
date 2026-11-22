@@ -113,7 +113,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.disabled-tls-verification': 1,
   'opt.factory.rules.go.request-command-injection': 3,
   'opt.factory.rules.go.request-sql-injection': 4,
-  'opt.factory.rules.java.disabled-hostname-verification': 1,
+  'opt.factory.rules.java.disabled-hostname-verification': 4,
   'opt.factory.rules.java.request-command-injection': 3,
   'opt.factory.rules.java.request-sql-injection': 3,
   'opt.factory.rules.javascript.request-command-injection': 4,
@@ -166,9 +166,9 @@ export function verifyJavascriptControlMatrix(manifest) {
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
   const observedRuleIds = [...ruleIds].sort();
-  if (manifest.length !== 134 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30 ||
+  if (manifest.length !== 137 || ruleIds.length !== 30 || new Set(ruleIds).size !== 30 ||
       JSON.stringify(observedRuleIds) !== JSON.stringify(expectedRuleIds) ||
-      Object.values(fixedReviewedFindingCounts).reduce((sum, count) => sum + count, 0) !== 134) {
+      Object.values(fixedReviewedFindingCounts).reduce((sum, count) => sum + count, 0) !== 137) {
     throw new Error('Registered rule/finding control matrix differs');
   }
   const observedCounts = new Map(ruleIds.map(rule => [rule, 0]));

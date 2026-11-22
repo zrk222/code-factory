@@ -461,6 +461,7 @@ def _review_provenance(review, coordinator, binding):
 
 
 def _review_native_lanes(plan, evidence, inventory, run_id, directory):
+    from .deep_audit import apply_retained_native_completion
     from .deep_audit_sarif import normalize_execution_bundle
 
     lanes = {lane["id"]: lane for lane in plan["lanes"]}
@@ -477,8 +478,14 @@ def _review_native_lanes(plan, evidence, inventory, run_id, directory):
         )
         if digest(bundle) != observation["bundle_sha256"]:
             raise RuntimeAuditError("E_REVIEW_BUNDLE", "native evidence changed")
-        _review_fuzz_control_replay(
-            plan, observation, normalized, lane, bundle, inventory
+        apply_retained_native_completion(
+            normalized,
+            observation,
+            lane,
+            bundle,
+            inventory,
+            plan["obligations"],
+            run_id,
         )
         # Rerun instructions are added by the coordinator, not the native parser.
         recorded = [
@@ -508,22 +515,6 @@ def _review_native_lanes(plan, evidence, inventory, run_id, directory):
                 "E_REVIEW_EXECUTION",
                 "execution facts do not establish successful bounded completion",
             )
-
-
-def _review_fuzz_control_replay(plan, observation, normalized, lane, bundle, inventory):
-    from .deep_audit import apply_fuzz_control_replay, has_fuzz_controls
-
-    if has_fuzz_controls(lane, inventory, plan["obligations"]) and observation.get(
-        "fuzz_replay"
-    ):
-        apply_fuzz_control_replay(
-            normalized,
-            observation["fuzz_replay"],
-            lane,
-            bundle,
-            inventory,
-            plan["obligations"],
-        )
 
 
 def _review_candidate(

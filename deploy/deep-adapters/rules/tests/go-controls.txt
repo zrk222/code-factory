@@ -16,6 +16,15 @@ func fetchWithToken(url string, token string) (*http.Response, error) {
 	return client.Do(request)
 }
 
+func fetchWithAssignedConfig(url string, password string) (*http.Response, error) {
+	config := &tls.Config{}
+	// ruleid: go.disabled-tls-verification
+	config.InsecureSkipVerify = true
+	request, _ := http.NewRequest("GET", url, nil)
+	request.SetBasicAuth("admin", password)
+	return (&http.Client{Transport: &http.Transport{TLSClientConfig: config}}).Do(request)
+}
+
 func controlPlaneStatus(url string, bearerToken string) (*http.Response, error) {
 	client := &http.Client{Transport: &http.Transport{
 		// ruleid: go.disabled-tls-verification
