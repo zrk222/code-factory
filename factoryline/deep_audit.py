@@ -95,7 +95,10 @@ def _gap_repair(family: str, language: str) -> str:
     profile = _STATIC_PROFILES.get(
         language, "semgrep-pattern-limited.json (no offline interprocedural worker)"
     )
-    return f"{repair} Recommended profiles: {profile}."
+    return (
+        f"{repair} Supported profiles for a signed lane: {profile}; "
+        "naming a profile does not install, run or complete its worker."
+    )
 
 
 def _source_gaps(
