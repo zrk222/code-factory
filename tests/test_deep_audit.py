@@ -224,7 +224,9 @@ def _capture_scope_gap_control(
     return deep_audit, args, state, counters
 
 
-@pytest.mark.parametrize("language", ["python", "javascript", "typescript", "ruby", "go"])
+@pytest.mark.parametrize(
+    "language", ["python", "javascript", "typescript", "ruby", "go"]
+)
 def test_uncovered_static_source_names_supported_profiles_only(language):
     import re
 
@@ -247,8 +249,13 @@ def test_uncovered_static_source_names_supported_profiles_only(language):
     assert static["action"].endswith(
         "naming a profile does not install, run or complete its worker."
     )
-    assert not re.search(r"\b(installed|available|completed?|covered|passed)\b", static["action"].split(";")[0])
-    assert all("Supported profiles" not in gap["action"] for gap in gaps if gap is not static)
+    assert not re.search(
+        r"\b(installed|available|completed?|covered|passed)\b",
+        static["action"].split(";")[0],
+    )
+    assert all(
+        "Supported profiles" not in gap["action"] for gap in gaps if gap is not static
+    )
 
 
 @pytest.mark.parametrize("code", ["UNCOVERED_SOURCE", "DEPENDENCY_DEPTH"])
