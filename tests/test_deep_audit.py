@@ -6906,36 +6906,25 @@ def test_native_completion_reconciliation_never_promotes_unsafe_worker(
             lambda *args: {"gaps": ["ANALYZER_INCOMPLETE"]},
         )
     coverage = bundle["artifacts"][lane["coverage"]]
-    if damage == "arbitrary_verified":
-        replay = {"state": "VERIFIED"}
-    elif damage == "unknown_error":
-        coverage["errors"].append("UNEXPECTED_ANALYZER_ERROR")
-    elif damage == "worker_true":
-        coverage["complete"] = True
-    elif damage == "empty_inventory":
-        inventory["files"] = []
-    elif damage == "no_obligations":
-        obligations = []
-    elif damage == "uncovered_obligation":
-        result["obligations"] = []
-    elif damage == "source_drift":
-        inventory["files"][0]["sha256"] = "0" * 64
-    elif damage == "missing_artifact":
-        del coverage["codeql_query_execution"]
-    elif damage == "corrupt_artifact":
-        coverage["codeql_source_execution"]["native_artifacts"]["archive"]["data"] = (
-            "%%%"
-        )
-    elif damage == "unrelated_gap":
-        result["gaps"].append("CHALLENGE_FAILED")
-    elif damage == "failed_cleanup":
-        replay["execution"]["cleanup_confirmed"] = False
-    elif damage == "wrong_candidate":
-        replay["candidate_sha256"] = "0" * 64
-    elif damage == "wrong_image":
-        replay["image"] = "sha256:" + "0" * 64
-    else:
-        obligations[0]["challenges"].pop()
+    operations = {
+        "arbitrary_verified": lambda: (replay.clear(), replay.update(state="VERIFIED")),
+        "unknown_error": lambda: coverage["errors"].append("UNEXPECTED_ANALYZER_ERROR"),
+        "worker_true": lambda: coverage.update(complete=True),
+        "empty_inventory": lambda: inventory.update(files=[]),
+        "no_obligations": obligations.clear,
+        "uncovered_obligation": lambda: result.update(obligations=[]),
+        "source_drift": lambda: inventory["files"][0].update(sha256="0" * 64),
+        "missing_artifact": lambda: coverage.pop("codeql_query_execution"),
+        "corrupt_artifact": lambda: coverage["codeql_source_execution"][
+            "native_artifacts"
+        ]["archive"].update(data="%%%"),
+        "unrelated_gap": lambda: result["gaps"].append("CHALLENGE_FAILED"),
+        "failed_cleanup": lambda: replay["execution"].update(cleanup_confirmed=False),
+        "wrong_candidate": lambda: replay.update(candidate_sha256="0" * 64),
+        "wrong_image": lambda: replay.update(image="sha256:" + "0" * 64),
+        "missing_control": obligations[0]["challenges"].pop,
+    }
+    operations[damage]()
     original_bundle = deepcopy(bundle)
     try:
         module._reconcile_native_completion(

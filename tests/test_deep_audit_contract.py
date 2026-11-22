@@ -1158,8 +1158,16 @@ def _coordinator_signed_fixture(tmp_path):
     )
     owner = module._coordinator_owner(root, request["session_nonce"])
     store = CoordinatorRequestStore(root)
-    store.acquire(owner, 45, time.monotonic())
-    context = dict(store=store, expires_at=time.monotonic() + 45, stop=False, job=None)
+    lease = store.acquire(owner, 45, time.monotonic())
+    context = dict(
+        store=store,
+        owner=owner,
+        root=root,
+        ttl=45,
+        expires_at=lease["expires_monotonic"],
+        stop=False,
+        job=None,
+    )
     return root, request, owner, context, inventory
 
 
@@ -1188,6 +1196,10 @@ def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_ch
             module.dispatch_deep_audit_request(root, other, owner, context)
         deadline = time.monotonic() + 50
         while job["thread"].is_alive() and time.monotonic() < deadline:
+            # Direct dispatch must service the same active lease as the server.
+            # Renewal deliberately cannot revive an already expired owner.
+            assert time.monotonic() < context["expires_at"]
+            module._coordinator_renew(context)
             directory = job.get("directory")
             if directory:
                 assert not (directory / "input.json").exists()
