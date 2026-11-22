@@ -107,6 +107,16 @@ extraction needs dependency resolution that network-less workers cannot do.
 Route library-level findings to the CodeQL lanes; the pattern lane stays a
 local web-handler and unsafe-API detector.
 
+Factory-level advisory recall ([evidence](../../docs/evidence/advisory-recall-factory-20261121.json)):
+on the same 161 advisories where the pattern lane alone scored 0, the pattern
+lane plus the Python, JavaScript/TypeScript and Ruby CodeQL workers detect 20
+(12.4%, Wilson 8.2-18.4%): CodeQL Ruby 8 of 25, JS/TS 4 of 25, Python 3 of 25
+(untuned, held out) and pattern trust shapes 6 (Maven 4, Ruby 2; in-sample).
+Go, Maven, NuGet, Packagist and crates.io library injections stay undetected.
+Neither a wider CodeQL threat model (0 changes on 25 paired advisories) nor a
+PHP library-input rule (2 of 25 fresh advisories, 0 of 19 decided fresh alerts
+supported) closes that gap, so neither ships.
+
 ## Efficient unified operation
 
 Use `factory scan --deep --worker-config PATH --json` with explicit signed,

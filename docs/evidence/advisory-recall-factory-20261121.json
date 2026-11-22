@@ -1,0 +1,89 @@
+{
+ "schema": "factory.advisory-recall-factory.v1",
+ "population": "The 161 advisories of recall study A (registration 3d368b11...), round 7; pattern-lane-only result was 0/161.",
+ "lanes": {
+  "codeql": "stock CodeQL 2.27.1 security-extended (Python, JavaScript/TypeScript, Ruby workers); untuned, so held-out",
+  "pattern": "current OpenGrep rules; the Java trust and Ruby TLS shapes were developed partly on these advisories, so pattern hits are in-sample (a fresh trust check moved 2/79 to 10/79)"
+ },
+ "by_ecosystem": {
+  "Packagist": {
+   "n": 25,
+   "codeql_scored": 0,
+   "codeql": 0,
+   "pattern": 0,
+   "factory": 0
+  },
+  "PyPI": {
+   "n": 25,
+   "codeql_scored": 25,
+   "codeql": 3,
+   "pattern": 0,
+   "factory": 3
+  },
+  "Maven": {
+   "n": 25,
+   "codeql_scored": 8,
+   "codeql": 0,
+   "pattern": 4,
+   "factory": 4
+  },
+  "NuGet": {
+   "n": 9,
+   "codeql_scored": 2,
+   "codeql": 0,
+   "pattern": 0,
+   "factory": 0
+  },
+  "Go": {
+   "n": 25,
+   "codeql_scored": 6,
+   "codeql": 0,
+   "pattern": 0,
+   "factory": 0
+  },
+  "npm": {
+   "n": 25,
+   "codeql_scored": 25,
+   "codeql": 4,
+   "pattern": 0,
+   "factory": 4
+  },
+  "crates.io": {
+   "n": 2,
+   "codeql_scored": 2,
+   "codeql": 0,
+   "pattern": 0,
+   "factory": 0
+  },
+  "RubyGems": {
+   "n": 25,
+   "codeql_scored": 25,
+   "codeql": 8,
+   "pattern": 2,
+   "factory": 9
+  }
+ },
+ "total": {
+  "n": 161,
+  "codeql_scored": 93,
+  "codeql": 15,
+  "pattern": 6,
+  "factory": 20
+ },
+ "factory_wilson95": [
+  0.082,
+  0.184
+ ],
+ "rejected_levers": {
+  "codeql_threat_model_all": "25 paired advisories, 0 differences from the default threat model",
+  "php_library_input_rule": {
+   "fresh_packagist_recall": [
+    2,
+    25
+   ],
+   "fresh_precision": "0 supported, 19 false positive, 1 unclear of 20 (consensus of two reviewers)",
+   "decision": "not shipped"
+  },
+  "parameter_source_rules_go_ruby_java": "development +12/224 for ~900 findings on ~1,100 files; not shipped"
+ }
+}
