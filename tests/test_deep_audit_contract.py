@@ -55,6 +55,7 @@ def _coordinator_cli_argv(root, *extra):
 
 def test_coordinator_public_cli_status_stop_ndjson(tmp_path):
     import subprocess
+    import sys
 
     requests = [
         _coordinator_test_request(tmp_path, operation)
@@ -67,6 +68,9 @@ def test_coordinator_public_cli_status_stop_ndjson(tmp_path):
         capture_output=True,
         timeout=20,
     )
+    if sys.platform not in {"win32", "linux"}:
+        _coordinator_cli_assert_unsupported(result, tmp_path)
+        return
     assert result.returncode == 0, result.stderr
     rows = [json.loads(line) for line in result.stdout.splitlines()]
     assert len(rows) == 2 and rows[-1]["state"] == "STOPPED"
@@ -93,6 +97,7 @@ def test_coordinator_public_cli_rejects_invalid_lease(tmp_path, ttl):
 @pytest.mark.parametrize("fault", ["nonce", "operation", "duplicate_json", "workspace"])
 def test_coordinator_public_cli_protocol_refusal(tmp_path, fault):
     import subprocess
+    import sys
 
     request = _coordinator_test_request(tmp_path)
     changes = {
@@ -110,6 +115,9 @@ def test_coordinator_public_cli_protocol_refusal(tmp_path, fault):
         capture_output=True,
         timeout=20,
     )
+    if sys.platform not in {"win32", "linux"}:
+        _coordinator_cli_assert_unsupported(result, tmp_path)
+        return
     assert result.returncode == 1
     rows = [json.loads(line) for line in result.stdout.splitlines()]
     assert len(rows) == 1 and rows[0]["state"] == "INCOMPLETE"
@@ -135,6 +143,12 @@ def test_coordinator_public_cli_rejects_buffered_input_without_closing(
 def test_coordinator_public_cli_signed_child_owned_stop(tmp_path):
     import subprocess
     import time
+    import sys
+
+    if sys.platform not in {"win32", "linux"}:
+        pytest.skip(
+            "NOT_RUN: native signed child identity supported on Windows/Linux only; refusal tested separately"
+        )
 
     root, request, owner, context, inventory = _coordinator_signed_fixture(tmp_path)
     context["store"].release(owner)
@@ -180,15 +194,32 @@ def test_coordinator_public_cli_signed_child_owned_stop(tmp_path):
 def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
     import subprocess
     import time
+    import os
+    import shutil
+    import sys
     from factoryline.agentic_control import CoordinatorRequestStore
+    from factoryline.deep_audit import deep_run_status
 
+    if sys.platform not in {"win32", "linux"}:
+        pytest.skip(
+            "NOT_RUN: native signed child identity supported on Windows/Linux only; refusal tested separately"
+        )
     root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
     context["store"].release(owner)
+    # This is terminal-history transport acceptance, not analyzer qualification.
+    # Retain real Git inventory and a signed fresh child, but deliberately omit
+    # Docker so placeholder lanes fail closed without host-dependent daemon waits.
+    test_path = os.pathsep.join(
+        [str(Path(shutil.which("git")).parent), str(Path(sys.executable).parent)]
+    )
+    assert shutil.which("git", path=test_path)
+    assert shutil.which("docker", path=test_path) is None
     child = subprocess.Popen(
         _coordinator_cli_argv(root, "--lease-seconds", "120"),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env={**os.environ, "PATH": test_path},
     )
     try:
         child.stdin.write((json.dumps(request) + "\n").encode())
@@ -197,6 +228,20 @@ def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
             root, request, child, time.monotonic() + 100
         )
         assert terminal["run_id"] and terminal["cleanup_confirmed"] is True
+        assert terminal["state"] == "INCOMPLETE"
+        status = deep_run_status(root, terminal["run_id"])
+        assert status["analysis_complete"] is False
+        failures = [
+            json.loads(path.read_bytes())
+            for path in (root / ".factory/deep-runs" / terminal["run_id"]).glob(
+                "event-*.json"
+            )
+        ]
+        assert any(
+            row["kind"] == "failure_recorded"
+            and row["details"].get("code") == "E_DOCKER_UNAVAILABLE"
+            for row in failures
+        )
         changed = {
             **request,
             "payload": {**request["payload"], "manifest_sha256": "0" * 64},
@@ -243,19 +288,50 @@ def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
 
 def _coordinator_cli_wait_terminal(root, request, child, deadline):
     import time
-    from factoryline.agentic_control import CoordinatorRequestStore, AgenticControlError
+    from factoryline.agentic_control import CoordinatorRequestStore
 
     while child.poll() is None and time.monotonic() < deadline:
         try:
-            row = CoordinatorRequestStore(root).read(
-                request["session_nonce"], request["request_id"]
+            # Observe atomic snapshots without repeatedly competing for the
+            # production coordinator's exclusive metadata lock during launch.
+            metadata = json.loads(
+                (
+                    root / ".factory/deep-runs/requests/coordinator-metadata.json"
+                ).read_bytes()
             )
+            key = request["session_nonce"] + ":" + request["request_id"]
+            row = json.loads(metadata["rows"][key][0])
             if row["state"] not in {"ADMITTED", "RUNNING"}:
-                return row
-        except AgenticControlError:
+                return CoordinatorRequestStore(root).read(
+                    request["session_nonce"], request["request_id"]
+                )
+        except (OSError, ValueError, KeyError):
             pass
         time.sleep(0.05)
     pytest.fail("CLI did not retain bounded terminal request history")
+
+
+def _coordinator_cli_assert_unsupported(result, root):
+    assert result.returncode == 2, result.stderr
+    row = json.loads(result.stdout)
+    assert row["state"] == "INCOMPLETE" and row["code"] == "E_COORDINATOR_INPUT"
+    assert row["authority"] == "none" and row["release_approval"] is False
+    assert row["execution_available"] is False
+    assert not (root / ".factory/deep-runs/requests/coordinator-metadata.json").exists()
+
+
+def test_coordinator_public_cli_unsupported_identity_refuses_before_metadata(tmp_path):
+    import subprocess
+
+    argv = _coordinator_cli_argv(tmp_path)
+    # Force only the existing identity observation to be unavailable, not the
+    # parser, coordinator dispatcher, process cleanup or emitted refusal.
+    argv[3] = argv[3].replace(
+        "sys.exit(main(sys.argv[1:]))",
+        "import factoryline.assembly_process as assembly;assembly._process_creation_identity=lambda pid:None;sys.exit(main(sys.argv[1:]))",
+    )
+    result = subprocess.run(argv, input=b"", capture_output=True, timeout=20)
+    _coordinator_cli_assert_unsupported(result, tmp_path)
 
 
 def _coordinator_test_payload(root):
