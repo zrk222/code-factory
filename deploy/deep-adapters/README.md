@@ -108,8 +108,8 @@ Route library-level findings to the CodeQL lanes; the pattern lane stays a
 local web-handler and unsafe-API detector.
 
 Factory-level advisory recall ([record](../../docs/evidence/advisory-recall-factory-20261121.json),
-verify with `python scripts/verify_advisory_recall.py <record> [--prefix-cache DIR
---opengrep BIN]`): on the 161 advisories where the pattern lane alone scored 0,
+verify with `python scripts/verify_precision_gain.py advisory-recall <record>
+[--prefix-cache DIR --opengrep BIN]`): on the 161 advisories where the pattern lane alone scored 0,
 20 are detected in fix hunks by at least one lane. That combined figure is
 descriptive and **not held out**. The record keeps the lanes apart:
 

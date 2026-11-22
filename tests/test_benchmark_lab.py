@@ -1233,3 +1233,108 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+_ROOT = Path(__file__).resolve().parents[1]
+_RECALL_RECORD = _ROOT / "docs/evidence/advisory-recall-factory-20261121.json"
+
+
+@pytest.fixture(scope="module")
+def recall_record():
+    return json.loads(_RECALL_RECORD.read_text(encoding="utf-8"))
+
+
+def test_advisory_recall_record_recomputes_lane_separated_summary(recall_record):
+    summary = _gain["verify_recall"](recall_record)
+    assert summary["total"] == {
+        "cases": 161,
+        "pattern_detected": 6,
+        "codeql_detected": 15,
+        "combined_detected": 20,
+        "overlap": 1,
+        "codeql_analyzed": 91,
+        "codeql_state_extraction_failed": 10,
+        "codeql_state_no_class_query": 2,
+        "codeql_state_not_run": 33,
+        "codeql_state_no_extractor": 25,
+    }
+    assert summary["codeql_untuned"]["wilson_95_over_analyzed"] == [0.102513, 0.254309]
+    assert "wilson_95_descriptive_only" in summary["combined_not_held_out"]
+    assert "NOT held out" in recall_record["claim"]
+    assert recall_record["exposure"]["pattern"].startswith("Exposed")
+
+
+def test_advisory_recall_record_binds_revisions_files_and_tools(recall_record):
+    candidate = recall_record["candidate"]
+    assert candidate["measured_commit"].startswith("dd6fc8ab")
+    assert (
+        candidate["pattern_lane"]["ruleset_sha256"]
+        == json.loads(
+            (
+                _ROOT / "deploy/deep-adapters/profiles/semgrep-pattern-limited.json"
+            ).read_text()
+        )["ruleset_sha256"]
+    )
+    assert candidate["codeql_lane"]["cli_version"] == "2.27.1"
+    assert all(
+        case["fixes"] and case["prefix_files"] for case in recall_record["cases"]
+    )
+    detections = [
+        hit for case in recall_record["cases"] for hit in case["pattern"]["detections"]
+    ]
+    assert {hit["rule"] for hit in detections} == {
+        "java.disabled-hostname-verification",
+        "ruby.disabled-tls-verification",
+    }
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda case: case["codeql"]["detections"][0].update(line=10**6),
+            "outside the fix hunks",
+        ),
+        (lambda case: case["codeql"].update(source_revision="0" * 40), "first parent"),
+        (lambda case: case["codeql"].update(status="not_detected"), "disagrees"),
+        (
+            lambda case: case["prefix_files"][0].update(sha256="x"),
+            "unbound pre-fix file",
+        ),
+    ],
+)
+def test_advisory_recall_record_rejects_altered_observations(
+    recall_record, mutate, message
+):
+    altered = copy.deepcopy(recall_record)
+    case = next(
+        case for case in altered["cases"] if case["codeql"]["status"] == "detected"
+    )
+    mutate(case)
+    with pytest.raises(ValueError, match=message):
+        _gain["verify_recall"](altered)
+
+
+def test_advisory_recall_record_rejects_inflated_summary(recall_record):
+    altered = copy.deepcopy(recall_record)
+    altered["summary"]["total"]["combined_detected"] = 21
+    with pytest.raises(ValueError, match="does not match"):
+        _gain["verify_recall"](altered)
+
+
+def test_advisory_recall_prefix_cache_digest_mismatch_is_rejected(
+    recall_record, tmp_path
+):
+    case = next(
+        case for case in recall_record["cases"] if case["pattern"]["detections"]
+    )
+    subset = dict(recall_record, cases=[case])
+    for item in case["prefix_files"]:
+        target = _gain["_cache_path"](tmp_path, case, item)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"not the pre-fix source")
+    with pytest.raises(ValueError, match="pre-fix bytes differ"):
+        _gain["check_cache"](subset, tmp_path)
+
+
+def test_advisory_recall_cli_reports_verified_record():
+    assert _gain["recall_main"]([str(_RECALL_RECORD)]) == 0
