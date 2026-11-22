@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+
 from factoryline.continuity import ContinuityStore, ContinuityError
 from factoryline.engineering_memory import recall_engineering_memory
 from factoryline.cli import main
@@ -314,6 +315,38 @@ def test_ascii_del_is_rejected_before_database_io(tmp_path):
         query_recall(tmp_path, ["tenant\x7f"])
 
 
+@pytest.mark.parametrize("mutation", ["evidence", "withdrawal", "scope", "ledger"])
+def test_consecutive_batch_requests_never_reuse_admission(tmp_path, mutation):
+    store = setup(tmp_path, summary="tenant rollback")
+    assert [
+        row["record_id"]
+        for row in query_recall(tmp_path, ["tenant", "rollback"])["records"]
+    ] == ["one"]
+    if mutation == "evidence":
+        (tmp_path / "proof.json").write_text("changed")
+    elif mutation == "withdrawal":
+        store.withdraw(
+            _principal("reviewer", ("promoter",)),
+            "tenant-a",
+            "one",
+            status="revoked",
+            reason="fresh correction",
+        )
+    elif mutation == "scope":
+        with sqlite3.connect(store.path) as db:
+            db.execute("UPDATE continuity_records SET scope_ref='other'")
+    else:
+        with sqlite3.connect(store.path) as db:
+            db.execute("UPDATE continuity_audit_events SET event_hash='corrupted'")
+    if mutation == "ledger":
+        with pytest.raises(ContinuityError):
+            query_recall(tmp_path, ["tenant", "rollback"])
+    else:
+        result = query_recall(tmp_path, ["tenant", "rollback"])
+        assert result["records"] == [] and result["influence_edges"] == []
+        assert result["retrieval"]["status"] == "PARTIAL_CONTEXT"
+
+
 def test_cli_query_recall_and_handoff_cannot_be_silently_narrowed(tmp_path, capsys):
     setup(tmp_path, summary="migration rollback")
     args = [
@@ -337,3 +370,60 @@ def test_cli_query_recall_and_handoff_cannot_be_silently_narrowed(tmp_path, caps
     assert len(result["records"]) == 1
     assert main([*args, "--query", "migration", "--sender", "forgeline"]) == 1
     assert json.loads(capsys.readouterr().out)["authority"] == "none"
+
+
+def test_batch_recall_fixed_complete_trace_and_single_shared_call(monkeypatch):
+    from factoryline import audit_rule_search as search, engineering_memory as memory
+
+    calls = []
+    original = search._bm25_scores_batch
+
+    def observed(rules, queries, *, fielded):
+        calls.append((len(rules), list(queries), fielded))
+        return original(rules, queries, fielded=fielded)
+
+    monkeypatch.setattr(search, "_bm25_scores_batch", observed)
+    rows = [
+        {
+            "record_id": "a",
+            "summary": "tenant cache",
+            "evidence": [{"path": "one.json"}],
+        },
+        {"record_id": "b", "summary": "rollback", "evidence": [{"path": "two.json"}]},
+    ]
+    selected, trace = memory._balanced_recall(
+        rows, (["tenant", "rollback", "quasar"], 2)
+    )
+    assert selected == rows
+    assert calls == [(2, ["tenant", "rollback", "quasar"], True)]
+    assert trace == {
+        "schema": "factory.evidence-recall-selection.v1",
+        "method": "trust-first-bm25f-round-robin",
+        "limit": 2,
+        "admissible": 2,
+        "matched": 2,
+        "authority": "none",
+        "status": "PARTIAL_CONTEXT",
+        "claim_boundary": "Lexical context matches, not semantic completeness, defect recall or proof authority.",
+        "queries": [
+            {
+                "query_sha256": "da048eda4e78177117649659a8517977d116dfc0f72643eea55f87a528990b4d",
+                "matched": 1,
+                "selected_record_ids": ["a"],
+                "gap": None,
+            },
+            {
+                "query_sha256": "3770b198a03f18cbf37a3bfd4eba2fbbab9ea2eb9795b207678b45c957a6ce18",
+                "matched": 1,
+                "selected_record_ids": ["b"],
+                "gap": None,
+            },
+            {
+                "query_sha256": "b02c69f5565815b842073bb3e0266e00c1b2702169942cb0c7fa97804c34cdf2",
+                "matched": 0,
+                "selected_record_ids": [],
+                "gap": "no_admissible_lexical_match",
+            },
+        ],
+        "selection_sha256": "8dfe1920d7e6a5431b09dad3c9e2447950157a97096de684a002c5a2ea561079",
+    }

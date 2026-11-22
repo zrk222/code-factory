@@ -24,6 +24,11 @@ polyglot developers—not another agent that approves its own work.
 - **Optimized:** exhausted alias-memo entry/pair budgets reject before redundant
   copying/UTF-8 accounting. Capacity and findings remain unchanged; 2,867 focused
   controls passed. Helper timing is not an overall scan-speed claim.
+- **Recall:** share BM25/BM25F corpus preparation across explicit topics while
+  preserving exact scores, receipts and fresh trust checks. In 11 paired
+  1,000-record synthetic runs, four/eight-topic selection medians fell from
+  46.43/95.09 to 20.97/34.50 ms; no reliable full-API speedup or detector-recall
+  improvement is claimed. No new dependency, memory store or persistent cache.
 - **Added:** frozen versioned scan JSON, SARIF 2.1.0 and opt-in pre-commit;
   byte-exact historical mutation diffs preserve CRLF, non-UTF-8 bytes and missing
   final newlines. Existing CI and editors can consume evidence without a new

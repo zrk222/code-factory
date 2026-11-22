@@ -161,7 +161,7 @@ def _recall_queries(queries, limit):
 
 
 def _recall_rankings(records, queries):
-    from .audit_rule_search import _bm25_scores
+    from .audit_rule_search import _bm25_scores_batch
 
     documents = [
         {
@@ -173,8 +173,7 @@ def _recall_rankings(records, queries):
         for row in records
     ]
     rankings = []
-    for query in queries:
-        scores = _bm25_scores(documents, query, fielded=True)
+    for scores in _bm25_scores_batch(documents, queries, fielded=True):
         rankings.append(
             sorted(
                 (key for key, score in scores.items() if score > 0),

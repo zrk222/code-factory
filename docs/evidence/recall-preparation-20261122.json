@@ -1,0 +1,422 @@
+{
+  "schema": "factory.recall-preparation-measurement.v1",
+  "measurement_id": "recall-preparation-20261122",
+  "baseline_commit": "f47814a7688987af117ae192bca6d973b1a09003",
+  "claim_boundary": {
+    "scope": "Local deterministic evidence metadata ranking and selection; no defect-detection recall measurement.",
+    "production_claim": false,
+    "held_out_benchmark": false,
+    "universal_speedup_claim": false,
+    "end_to_end_gain_established": false,
+    "authority": "none",
+    "trust_boundary": "No cached admission, evidence integrity, promotion, authorization, expiry or approval decisions; complete public recall API revalidates evidence.",
+    "release_approval": false
+  },
+  "methodology": {
+    "python": "3.11.9",
+    "timer": "time.perf_counter_ns; elapsed milliseconds",
+    "pairs_per_case": 11,
+    "ordering": "Pair indices 0,2,4,6,8,10 run baseline then candidate; indices 1,3,5,7,9 run candidate then baseline.",
+    "paired_samples": "Each baseline_samples_ms[i] and candidate_samples_ms[i] is one alternating pair.",
+    "p95": "Nearest rank ceil(0.95*11)=11: maximum sample for each 11-sample series.",
+    "baseline_oracle": "Independent functions AST-extracted from frozen git HEAD copies before implementation: original tokenizer, BM25/BM25F, ranking and round-robin selection. Imports removed from extracted ranking function to retain original scorer globals.",
+    "score_parity": "For each case and each query, exact score dictionary equality against frozen baseline was checked for fielded=False (flat BM25) and fielded=True (BM25F).",
+    "ranking_trace_parity": "Every timed pair requires complete equality; digest determinism checked across all repetitions.",
+    "instrumentation": "Separate instrumented runs wrap each implementation's _tokens function and restore it in finally; counts are measured, not inferred.",
+    "timing_scope": "1000-record ranking and balanced-selection cases exclude authorization, SQLite and evidence-byte hashing. End-to-end cases include the actual public API, evidence files, local authorization role contracts, independently promoted records and SQLite audit validation.",
+    "environment_limit": "Local desktop timings may reflect concurrent work and contention; no hardware-isolated or production latency claim.",
+    "privacy": "Only fixed synthetic metadata and local synthetic evidence used; no personal data or untouched detector holdouts accessed."
+  },
+  "synthetic_corpus": {
+    "records": 1000,
+    "topics": [
+      "authorization",
+      "receipt",
+      "cache",
+      "parser",
+      "budget",
+      "routing",
+      "workflow",
+      "boundary"
+    ],
+    "formula": {
+      "range": "i=0..999",
+      "record_id": "f'synthetic-{i:04d}'",
+      "summary": "f'{TOPICS[i % 8]} validation synthetic metadata ' + ' '.join(TOPICS[(i + j) % 8] for j in range(i % 7 + 1))",
+      "evidence": [
+        {
+          "path": "f'synthetic/{TOPICS[i % 8]}/record-{i:04d}.json'",
+          "sha256": "64 zero characters"
+        }
+      ],
+      "usage": "untrusted_reference_not_instruction",
+      "queries": "list(TOPICS[:count]) for count in (1,4,8)",
+      "selection_limit": 20
+    },
+    "canonicalization": "json.dumps(RECORDS, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8'); SHA256",
+    "sha256": "6321b818fd2d7ac0a802cbdb7b307de2c2bf8c589d20cf0c601ce2b3114c04b4",
+    "label": "Synthetic local preparation benchmark, NOT a held-out detector benchmark."
+  },
+  "paired_preparation": {
+    "schema": "private.synthetic-recall-paired.v1",
+    "python": "3.11.9",
+    "records": 1000,
+    "pairs": 11,
+    "corpus_sha256": "6321b818fd2d7ac0a802cbdb7b307de2c2bf8c589d20cf0c601ce2b3114c04b4",
+    "sources": {
+      ".factory\\recall-research\\head_engineering_memory.py": "ba609fb1a6a2c3d976d4b9e064cd58114e21d9f24d8d6414aae72e8493f4b0c9",
+      ".factory\\recall-research\\head_audit_rule_search.py": "095693c43d51bd6a11229cbeebd2d17bbfa3bd3187a6331e230a394c07498ba2",
+      "factoryline\\engineering_memory.py": "72fe9e8ad705585b7cb7fa75a9be3d3c9a7a4b4ec681bd572015d9c918bf7a65",
+      "factoryline\\audit_rule_search.py": "d1fa334138b8ef75fc90af7e6d39071a51c8ee2e0b614202e3a033418a72f23a",
+      ".factory\\recall-research\\paired.py": "c1b85bec4e5524bff4755707c756aa00212b3ce7a09e6b21ac6f2c7ed6580749"
+    },
+    "cases": [
+      {
+        "topics": 1,
+        "score_parity": true,
+        "rankings": {
+          "baseline_median_ms": 11.4817,
+          "candidate_median_ms": 10.7446,
+          "baseline_samples_ms": [
+            11.4817,
+            11.204,
+            11.3102,
+            11.4473,
+            16.4433,
+            11.2275,
+            11.18,
+            11.8012,
+            11.6279,
+            11.9994,
+            11.8613
+          ],
+          "candidate_samples_ms": [
+            10.4087,
+            10.5892,
+            10.5883,
+            10.7266,
+            14.5323,
+            11.1124,
+            10.7446,
+            11.3002,
+            11.2974,
+            13.8806,
+            10.496
+          ],
+          "result_sha256": "c14480be15f39320997dbc739e8fa184c130a4fa4644595649adc517321284da",
+          "exact_parity": true,
+          "candidate_pair_wins": 10,
+          "baseline_p95_ms": 16.4433,
+          "candidate_p95_ms": 14.5323
+        },
+        "balanced": {
+          "baseline_median_ms": 11.9047,
+          "candidate_median_ms": 11.2237,
+          "baseline_samples_ms": [
+            11.8864,
+            11.9873,
+            11.9549,
+            12.6782,
+            11.5034,
+            11.9047,
+            11.516,
+            11.1787,
+            10.8092,
+            12.8012,
+            14.2596
+          ],
+          "candidate_samples_ms": [
+            10.7984,
+            11.3757,
+            13.6784,
+            11.2237,
+            10.7814,
+            10.667,
+            10.4639,
+            13.9461,
+            10.8072,
+            11.7536,
+            12.3802
+          ],
+          "result_sha256": "99d65a697c30a945737c9d3d13f08edf321cffc68383f802e3ac1fc4a593a380",
+          "exact_parity": true,
+          "candidate_pair_wins": 9,
+          "baseline_p95_ms": 14.2596,
+          "candidate_p95_ms": 13.9461
+        }
+      },
+      {
+        "topics": 4,
+        "score_parity": true,
+        "rankings": {
+          "baseline_median_ms": 48.144,
+          "candidate_median_ms": 20.6034,
+          "baseline_samples_ms": [
+            47.7382,
+            47.8444,
+            47.2575,
+            47.2218,
+            53.1533,
+            50.5334,
+            51.8106,
+            46.7552,
+            48.1897,
+            48.144,
+            52.068
+          ],
+          "candidate_samples_ms": [
+            21.141,
+            22.8997,
+            23.4175,
+            19.4741,
+            20.0519,
+            20.7976,
+            19.6811,
+            19.5582,
+            20.2704,
+            21.129,
+            20.6034
+          ],
+          "result_sha256": "01894315a445e796af91f7ce30ae1724f8018e25664e011b39c22c2f98994041",
+          "exact_parity": true,
+          "candidate_pair_wins": 11,
+          "baseline_p95_ms": 53.1533,
+          "candidate_p95_ms": 23.4175
+        },
+        "balanced": {
+          "baseline_median_ms": 46.4315,
+          "candidate_median_ms": 20.972,
+          "baseline_samples_ms": [
+            50.3154,
+            49.462,
+            46.8905,
+            46.5383,
+            45.9782,
+            46.4315,
+            48.1848,
+            37.8245,
+            39.384,
+            36.2566,
+            40.8212
+          ],
+          "candidate_samples_ms": [
+            21.0492,
+            20.2743,
+            20.4734,
+            24.0183,
+            23.2822,
+            20.4702,
+            24.8483,
+            20.972,
+            15.8986,
+            15.6944,
+            33.47
+          ],
+          "result_sha256": "26df36d51d08b432be9d64d91451a275d282f5f002166cd066bee7933ea7252e",
+          "exact_parity": true,
+          "candidate_pair_wins": 11,
+          "baseline_p95_ms": 50.3154,
+          "candidate_p95_ms": 33.47
+        }
+      },
+      {
+        "topics": 8,
+        "score_parity": true,
+        "rankings": {
+          "baseline_median_ms": 97.1459,
+          "candidate_median_ms": 34.3007,
+          "baseline_samples_ms": [
+            100.4159,
+            102.6545,
+            101.0498,
+            95.5161,
+            103.6465,
+            116.9591,
+            90.2918,
+            78.0334,
+            89.9813,
+            97.1459,
+            90.3026
+          ],
+          "candidate_samples_ms": [
+            31.5427,
+            33.2773,
+            37.9524,
+            36.4756,
+            38.7836,
+            37.665,
+            24.2824,
+            28.399,
+            35.5717,
+            30.8134,
+            34.3007
+          ],
+          "result_sha256": "f68ba83db265988f156a0827e77dd1cd1a28c9f8ad5c5947496012e1fe9f8a70",
+          "exact_parity": true,
+          "candidate_pair_wins": 11,
+          "baseline_p95_ms": 116.9591,
+          "candidate_p95_ms": 38.7836
+        },
+        "balanced": {
+          "baseline_median_ms": 95.088,
+          "candidate_median_ms": 34.5001,
+          "baseline_samples_ms": [
+            92.2627,
+            91.994,
+            81.8558,
+            105.7114,
+            94.6873,
+            95.9157,
+            98.1545,
+            108.7693,
+            99.8443,
+            95.088,
+            87.3875
+          ],
+          "candidate_samples_ms": [
+            33.2005,
+            36.9849,
+            34.7176,
+            36.8832,
+            32.7712,
+            29.8527,
+            34.5001,
+            34.9595,
+            35.5338,
+            34.3558,
+            29.4405
+          ],
+          "result_sha256": "a982cdc1ec5fa471b30ba8ee1aca9b2569587235b78d6eb0f1756a7835f08ebe",
+          "exact_parity": true,
+          "candidate_pair_wins": 11,
+          "baseline_p95_ms": 108.7693,
+          "candidate_p95_ms": 36.9849
+        }
+      }
+    ],
+    "command": "rtk proxy py -3.11 .factory/recall-research/paired.py"
+  },
+  "tokenization": {
+    "command": "rtk proxy py -3.11 .factory/recall-research/count_tokens.py",
+    "corpus_sha256": "6321b818fd2d7ac0a802cbdb7b307de2c2bf8c589d20cf0c601ce2b3114c04b4",
+    "cases": [
+      {
+        "topics": 1,
+        "baseline_tokenization_calls": 8001,
+        "baseline_result_sha256": "c14480be15f39320997dbc739e8fa184c130a4fa4644595649adc517321284da",
+        "candidate_tokenization_calls": 8001,
+        "candidate_result_sha256": "c14480be15f39320997dbc739e8fa184c130a4fa4644595649adc517321284da"
+      },
+      {
+        "topics": 4,
+        "baseline_tokenization_calls": 32004,
+        "baseline_result_sha256": "01894315a445e796af91f7ce30ae1724f8018e25664e011b39c22c2f98994041",
+        "candidate_tokenization_calls": 8004,
+        "candidate_result_sha256": "01894315a445e796af91f7ce30ae1724f8018e25664e011b39c22c2f98994041"
+      },
+      {
+        "topics": 8,
+        "baseline_tokenization_calls": 64008,
+        "baseline_result_sha256": "f68ba83db265988f156a0827e77dd1cd1a28c9f8ad5c5947496012e1fe9f8a70",
+        "candidate_tokenization_calls": 8008,
+        "candidate_result_sha256": "f68ba83db265988f156a0827e77dd1cd1a28c9f8ad5c5947496012e1fe9f8a70"
+      }
+    ],
+    "sources": {
+      "factoryline\\audit_rule_search.py": "d1fa334138b8ef75fc90af7e6d39071a51c8ee2e0b614202e3a033418a72f23a",
+      "factoryline\\engineering_memory.py": "72fe9e8ad705585b7cb7fa75a9be3d3c9a7a4b4ec681bd572015d9c918bf7a65",
+      ".factory\\recall-research\\count_tokens.py": "d7411655655a1d1b95aeb96894220a2ae33b4bfbbbfb5a8c761a225660fda54d"
+    }
+  },
+  "end_to_end": {
+    "schema": "private.synthetic-recall-end-to-end.v1",
+    "python": "3.11.9",
+    "command": "rtk proxy py -3.11 .factory/recall-research/end_to_end.py",
+    "records": 100,
+    "topics": 8,
+    "pairs": 11,
+    "database_unchanged": true,
+    "database_sha256": "bc2eea3f926e5bad08af8f31de120b41736c0713c2aa479326dc0637a2c66966",
+    "exact_complete_output_parity": true,
+    "output_sha256": "a5a6c1a78529834e2adf03f56548add1d54f4c34c1d47748c7385ba9a0517ae5",
+    "baseline_samples_ms": [
+      315.7942,
+      324.8283,
+      337.441,
+      287.1811,
+      303.5192,
+      306.2636,
+      315.689,
+      277.538,
+      329.4315,
+      287.5714,
+      303.5267
+    ],
+    "candidate_samples_ms": [
+      382.118,
+      349.5033,
+      331.0116,
+      297.8283,
+      276.5373,
+      272.0072,
+      349.5262,
+      310.5187,
+      309.768,
+      275.9571,
+      314.3829
+    ],
+    "baseline_median_ms": 306.2636,
+    "candidate_median_ms": 310.5187,
+    "baseline_p95_ms": 337.441,
+    "candidate_p95_ms": 382.118,
+    "candidate_pair_wins": 5,
+    "sources": {
+      "factoryline\\engineering_memory.py": "72fe9e8ad705585b7cb7fa75a9be3d3c9a7a4b4ec681bd572015d9c918bf7a65",
+      "factoryline\\audit_rule_search.py": "d1fa334138b8ef75fc90af7e6d39071a51c8ee2e0b614202e3a033418a72f23a",
+      ".factory\\recall-research\\end_to_end.py": "99ffbdb77d7abdc4021e68af4e9118baee605ee9de2b47acefcaf5252d4b66b0",
+      "tests\\test_engineering_memory.py": "55ee75f6d27a10bc47498304a19d651bd61bf4d2e271d6d14acfdfefd7d48f08",
+      "tests\\test_continuity.py": "d8e475fdfd2ea10708ececb919f0e95760bba4c7933348783f9f5bbe7eb70d04"
+    },
+    "limits": "Synthetic local API/auth-role contracts, not production authentication, universal latency, or defect recall."
+  },
+  "end_to_end_interpretation": "Qualified run median and p95 were slower for candidate, with only 5 of 11 paired wins. No reliable end-to-end gain established; exact complete-output parity and unchanged SQLite hash passed.",
+  "provenance": {
+    "private_artifacts_available_in_public_repository": false,
+    "commands_are_private_execution_provenance_only": true,
+    "script_paths": "The .factory/recall-research paths identify private scripts and frozen snapshots, not publicly distributed or independently reproducible scripts.",
+    "source_identity": "Relative factoryline/tests paths and hashes identify measured source bytes; .factory/head_* hashes identify retained frozen snapshot bytes, not Git object hashes.",
+    "wizeme": {
+      "source": "services/api/src/lib/memory-spine-recall-orchestrator.ts",
+      "sha256": "392d7551c5b0c954eec5d0571b0c9d942eacc4c54bb5a687270ec4adcb5697ae",
+      "review": "Root agent read the current WizeMe source, including per-hop candidate-token preparation, trust filtering, next-distinct selection and missing-hop reporting. This is a source-byte identity, not a claim that its workspace is clean or deployed.",
+      "adaptation": "Reuse request-local corpus preparation and explicit evidence gaps; retain CF's independently implemented lexical formula and trust checks. No personal data, personalized scoring model or TS runtime was copied."
+    },
+    "root_workflow": "Root agent owns source approval, workflow QA, review and release gates; this artifact records measurements only."
+  },
+  "primary_research": {
+    "search_queries": 4,
+    "sources_deep_read": 5,
+    "sources": [
+      {
+        "url": "https://www.sqlite.org/fts5.html",
+        "finding": "Weighted local lexical ranking and explicit index consistency; SQLite weighted BM25 is not automatically full BM25F."
+      },
+      {
+        "url": "https://aider.chat/docs/repomap.html",
+        "finding": "Compact definitions/signatures support targeted acquisition; proposed structural expansion remains distinct from measured implementation."
+      },
+      {
+        "url": "https://arxiv.org/html/2303.12570v2",
+        "finding": "Iterative retrieval can improve code completion, but additional rounds do not improve monotonically; not defect recall evidence."
+      },
+      {
+        "url": "https://arxiv.org/html/2403.10059v2",
+        "finding": "Selective retrieval tradeoffs concern trained code completion systems and particular serving setups; no external performance percentages transferred to CF."
+      },
+      {
+        "url": "https://bazel.build/remote/caching",
+        "finding": "Explicit-input, content-addressed reuse motivates hash-bound retrieval artifacts, never cached trust authority."
+      }
+    ]
+  }
+}

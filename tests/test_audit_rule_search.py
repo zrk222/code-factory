@@ -1,9 +1,11 @@
 from __future__ import annotations
 import ast
+import pytest
+
+
 import json
 from hashlib import sha256
 from pathlib import Path
-import pytest
 from factoryline.audit_rule_search import AuditRuleSearchError, search_audit_rules
 from factoryline.jev_classifier import (
     JevClassificationError,
@@ -4936,3 +4938,148 @@ def test_native_observation_rekey_cannot_hide_retained_rows(tmp_path, key):
         JevClassificationError, match="NATIVE_OBSERVATION_TRANSPORT_INVALID"
     ):
         build_retrieval_context(finding, index, "origin", None)
+
+
+@pytest.mark.parametrize("fielded", [False, True])
+def test_request_batch_preserves_frozen_preoptimization_scores(fielded):
+    from factoryline.audit_rule_search import _bm25_scores_batch
+
+    # Frozen vectors from the independent pre-change scorer, not the new wrapper.
+    rules = [
+        {
+            "ruleId": "b",
+            "name": "Cache CACHE",
+            "description": "tenant café 中文",
+            "sourceModule": "cache.py",
+        },
+        {"ruleId": "a", "name": "rollback", "description": "tenant rollback rollback"},
+        {"ruleId": "b", "name": "cache", "description": "rollback"},
+    ]
+    queries = ["cache tenant", "CACHE cache!!!", "café 中文", "!!!", "rollback"]
+    expected = (
+        [
+            {"b": 0.61633259, "a": 0.25343333},
+            {"b": 0.61633259, "a": 0.0},
+            {"b": 0.0, "a": 0.0},
+            {"b": 0.0, "a": 0.0},
+            {"b": 0.4456931, "a": 0.70312294},
+        ]
+        if fielded
+        else [
+            {"b": 0.59086171, "a": 0.47000363},
+            {"b": 0.59086171, "a": 0.0},
+            {"b": 0.0, "a": 0.0},
+            {"b": 0.0, "a": 0.0},
+            {"b": 0.59086171, "a": 0.73857713},
+        ]
+    )
+    actual = _bm25_scores_batch(rules, queries, fielded=fielded)
+    assert actual == expected
+    assert all(list(scores) == ["b", "a"] for scores in actual)
+    assert _bm25_scores_batch([], queries, fielded=fielded) == [{}] * len(queries)
+    assert _bm25_scores_batch(rules, [], fielded=fielded) == []
+    assert (
+        _bm25_scores_batch(rules, ["", "中文"], fielded=fielded)
+        == [{"b": 0.0, "a": 0.0}] * 2
+    )
+
+
+@pytest.mark.parametrize("fielded", [False, True])
+def test_request_batch_tokenizes_eight_fields_once_per_document(monkeypatch, fielded):
+    import factoryline.audit_rule_search as search
+
+    calls = []
+    original = search._tokens
+
+    def counted(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(search, "_tokens", counted)
+    rules = [
+        {"ruleId": str(index), "name": "tenant tenant", "description": "cache"}
+        for index in range(3)
+    ]
+    queries = ["tenant", "cache", "tenant cache", "!!!"]
+    search._bm25_scores_batch(rules, queries, fielded=fielded)
+    assert len(calls) == 8 * len(rules) + len(queries)
+
+
+@pytest.mark.parametrize("fielded", [False, True])
+def test_request_batch_all_fields_frozen_vectors_and_reversed_unique_ids(fielded):
+    from factoryline.audit_rule_search import _bm25_scores_batch
+
+    fields = (
+        "name",
+        "description",
+        "practicalQuestion",
+        "rejectionCondition",
+        "lane",
+        "laneLabel",
+        "requiredEvidenceTypes",
+        "sourceModule",
+    )
+    rules = [
+        {"ruleId": str(index), field: "alpha beta beta " + "gamma " * index}
+        for index, field in enumerate(fields)
+    ]
+    # Literal pre-change AST scorer output: every field, unequal document lengths.
+    first, last = (
+        (
+            [
+                0.06942086,
+                0.02332614,
+                0.04641159,
+                0.08445713,
+                0.02364812,
+                0.03663379,
+                0.02228126,
+                0.01714252,
+            ],
+            [
+                0.02613926,
+                0.0339469,
+                0.11127823,
+                0.23822175,
+                0.09589261,
+                0.15991636,
+                0.12083117,
+                0.1085499,
+            ],
+        )
+        if fielded
+        else (
+            [
+                0.16592561,
+                0.15595679,
+                0.14716486,
+                0.13934629,
+                0.1323431,
+                0.12603055,
+                0.1203087,
+                0.1150964,
+            ],
+            [
+                0.07330631,
+                0.28419615,
+                0.33120938,
+                0.35032261,
+                0.35990491,
+                0.3652168,
+                0.36831097,
+                0.37014224,
+            ],
+        )
+    )
+    expected = [
+        dict(zip(map(str, range(8)), values)) for values in (first, [0.0] * 8, last)
+    ]
+    queries = ["alpha beta", "", "gamma alpha"]
+    assert _bm25_scores_batch(rules, queries, fielded=fielded) == expected
+    reversed_scores = _bm25_scores_batch(
+        list(reversed(rules)), queries, fielded=fielded
+    )
+    assert reversed_scores == expected
+    assert all(
+        list(scores) == list(map(str, reversed(range(8)))) for scores in reversed_scores
+    )

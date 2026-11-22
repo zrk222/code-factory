@@ -8,7 +8,8 @@ Status: approved for implementation under user request
 - When `REQ_EVIDENCE` admits a record, it shall require independent promotion, non-expiry, a valid content digest, and 1 or more local SHA-256-bound evidence references; missing, changed or malformed evidence shall exclude the record. [R2]
 - When `REQ_WITHDRAW` changes a verified record, it shall require promoter authorization, prohibit its creator from withdrawing it, and atomically record status superseded, contradicted or revoked with 1 audit event; supersession shall require a verified replacement with exact matching tenant, purpose and scope. [R3]
 - When `REQ_INFLUENCE` returns recall, it shall include record and evidence digests, exclusions without summary text, a deterministic influence digest and zero approval or execution authority. [R4]
-- When `REQ_TOPIC_RECALL` receives bounded explicit topics, it shall rank only admitted records, allocate each topic its next distinct candidate before another round, report unmatched and budget-exhausted topics separately, and preserve full-scope handoffs and read-only authority. [R6]
+- When `REQ_TOPIC_RECALL` receives 1..8 explicit topics and a limit of at least 1 and at most 20 records, it shall rank only admitted records, allocate each topic its next distinct candidate before another round, report unmatched and budget-exhausted topics separately, and preserve full-scope handoffs and read-only authority. [R6]
+- When `REQ_BATCH_RANKING` scores 1..8 topics, it shall prepare exactly 8 search fields per admitted document once per request, reuse integer document frequencies and length statistics, and preserve every existing rounded score, ranking, selected record, gap and receipt digest without retaining validation results between requests. [R7]
 
 ### Acceptance criteria
 ```gherkin
@@ -28,6 +29,14 @@ Scenario: Bounded snapshot
  Given REQ_SCOPE encounters more than 1000 records
  When REQ_SCOPE reads the snapshot
  Then REQ_SCOPE blocks the recall
+Scenario: Shared preparation preserves recall
+ Given REQ_BATCH_RANKING receives 8 topics over 1000 admitted records
+ When REQ_BATCH_RANKING scores the topics
+ Then REQ_BATCH_RANKING tokenizes exactly 8008 field and query inputs and returns the original scores and selection digest
+Scenario: Topics retain separate gaps
+ Given REQ_TOPIC_RECALL receives 3 topics and a limit of 1 record
+ When REQ_TOPIC_RECALL finds matches for the first 2 topics but none for the third
+ Then REQ_TOPIC_RECALL reports budget_exhausted for the second and no_admissible_lexical_match for the third
 ```
 
 ## SHOULD - Structural
@@ -104,6 +113,34 @@ authorization, expiry, withdrawal and exact evidence checks; it does not copy
 the TS orchestrator, probabilistic graph scores, ANN or personalized weights.
 Ranking cannot repair a detector which never emitted a finding. The historical
 0/161 advisory-detection result is not changed by evidence retrieval tests.
+
+### Request-local corpus preparation
+
+The ranking adapter uses one shared batch scorer in audit_rule_search; the
+existing single-query scorer delegates to the same implementation. Prepare
+field tokens, integer document frequencies and average lengths once for the
+batch. Query terms remain sorted unique tokens; document frequency
+is computed once for the union of query terms. Preserve field iteration and
+floating-point operation order, constants and final 8-decimal rounding. Flat
+BM25 and fielded BM25F retain their distinct formulas. Empty queries return zero
+scores; empty corpora and duplicate identifiers retain existing behavior. No
+global cache, persisted index, metadata-only evidence check, SQL pre-truncation,
+new dependency, scope expansion or untrusted evidence-body indexing is allowed.
+
+Accuracy acceptance compares the unchanged independent baseline with candidate
+scores and complete selections/traces, including reordered documents, ties,
+repeated and missing terms, punctuation, Unicode and overlapping topics. The
+baseline is retained before editing; it must not call the candidate wrapper.
+Performance acceptance uses 11 alternating baseline/candidate pairs at 1, 4 and
+8 topics over the same 1000 synthetic metadata records, on the same interpreter.
+At 4 and 8 topics require a lower candidate median and at least 9 paired wins;
+at 1 topic require no median regression above 5 percent. Publish raw pairs,
+input/source hashes, score/trace parity and measured scope. These are retrieval
+measurements, not full-scan latency, detector accuracy or production throughput.
+Retain rejection tests for changed evidence, withdrawals, authorization and
+audit-chain corruption across consecutive requests; preparation never caches
+trust or grants authority. Missing-topic traces guide a caller's next explicit
+query, not an automatic model loop or invented semantic expansion.
 
 Acceptance: multi-topic distractors cannot crowd out a matching second topic
 when budget permits; report budget loss separately from no lexical match;
