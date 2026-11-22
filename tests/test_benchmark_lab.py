@@ -1338,3 +1338,329 @@ def test_advisory_recall_prefix_cache_digest_mismatch_is_rejected(
 
 def test_advisory_recall_cli_reports_verified_record():
     assert _gain["recall_main"]([str(_RECALL_RECORD)]) == 0
+
+
+def _synthetic_recall(tmp_path):
+    """Owned synthetic provenance, never a claimed native scanner execution."""
+    parent = "a" * 40
+    case = {
+        "ghsa": "GHSA-2345-6789-cfgh",
+        "repository": "owner/repository",
+        "ecosystem": "python",
+        "cwes": ["CWE-295"],
+        "fixes": [{"fix": "b" * 40, "parent": parent}],
+        "prefix_files": [
+            {
+                "parent": parent,
+                "path": "src/App.py",
+                "sha256": _digest("source"),
+                "hunk_lines": [[1, 3]],
+            }
+        ],
+        "pattern": {"status": "not_detected", "detections": []},
+        "codeql": {"status": "not_run", "detections": []},
+    }
+    binary = tmp_path / "opengrep.exe"
+    binary.write_bytes(b"synthetic-not-executed")
+    ruleset = tmp_path / "rules.yml"
+    ruleset.write_text(
+        "rules:\n- id: python.synthetic\n  metadata:\n    cwe: [CWE-295]\n"
+    )
+    record = {
+        "schema": _gain["RECALL_SCHEMA"],
+        "candidate": {
+            "pattern_lane": {
+                "ruleset_sha256": _gain["digest"](ruleset.read_bytes()),
+                "opengrep_binary_sha256": _gain["digest"](binary.read_bytes()),
+                "opengrep_version": "1.15.0",
+            },
+            "codeql_lane": {
+                "bundle_sha256": _digest("bundle"),
+                "query_sets_sha256": _digest("queries"),
+            },
+        },
+        "detection_rule": {"class_families": {"CWE-295": "tls"}},
+        "cases": [case],
+    }
+    record["summary"] = _gain["summarize_recall"](record)
+    cache = tmp_path / "cache"
+    target = cache / case["ghsa"] / parent[:12] / "src/App.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"source")
+    return record, cache, target, binary, ruleset
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "status",
+        "empty",
+        "duplicate",
+        "line_bool",
+        "line_zero",
+        "unordered",
+        "path",
+        "ghsa",
+        "repo",
+        "revision",
+        "prefix_collision",
+    ],
+)
+def test_advisory_synthetic_metadata_rejects_before_filesystem(tmp_path, mutation):
+    record, _, _, _, _ = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    item = case["prefix_files"][0]
+
+    def collide():
+        other = "a" * 12 + "c" * 28
+        case["fixes"].append({"fix": "d" * 40, "parent": other})
+        case["prefix_files"].append({**item, "parent": other})
+
+    operations = {
+        "status": lambda: case["pattern"].update(status="unknown"),
+        "empty": lambda: case.update(prefix_files=[]),
+        "duplicate": lambda: case["prefix_files"].extend([item]),
+        "line_bool": lambda: item.update(hunk_lines=[[True, 3]]),
+        "line_zero": lambda: item.update(hunk_lines=[[0, 3]]),
+        "unordered": lambda: item.update(hunk_lines=[[3, 1]]),
+        "path": lambda: item.update(path="../escape.py"),
+        "ghsa": lambda: case.update(ghsa="../../outside"),
+        "repo": lambda: case.update(repository="https://untrusted.example/repo"),
+        "revision": lambda: item.update(parent="a" * 12),
+        "prefix_collision": collide,
+    }
+    operations[mutation]()
+    with pytest.raises((ValueError, TypeError)):
+        _gain["verify_recall"](record)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../escape.py",
+        "/absolute.py",
+        "C:/drive.py",
+        r"src\App.py",
+        "%2e%2e/escape.py",
+        "src/../App.py",
+    ],
+)
+def test_advisory_cache_rejects_noncanonical_paths(tmp_path, path):
+    record, cache, _, _, _ = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    item = dict(case["prefix_files"][0], path=path)
+    with pytest.raises((ValueError, OSError)):
+        _gain["_cache_path"](cache, case, item)
+
+
+def test_advisory_cache_rejects_existing_link_ancestor(tmp_path):
+    record, cache, _, _, _ = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = cache / case["ghsa"] / ("a" * 12) / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("host does not grant creation of symbolic links")
+    with pytest.raises((ValueError, OSError)):
+        _gain["_cache_path"](
+            cache, case, dict(case["prefix_files"][0], path="linked/file.py")
+        )
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_advisory_synthetic_bounded_replay_accepts_complete_native_metadata(
+    tmp_path, monkeypatch, exit_code
+):
+    import factoryline.assembly_process as process
+
+    record, cache, target, binary, ruleset = _synthetic_recall(tmp_path)
+    calls = []
+
+    def runner(executable, argv, cwd, **kwargs):
+        calls.append((executable, argv, kwargs))
+        return {
+            "exit_code": exit_code,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "reason": None,
+            "stdout": json.dumps(
+                {"results": [], "errors": [], "paths": {"scanned": [str(target)]}}
+            ).encode(),
+            "stderr": b"",
+        }
+
+    monkeypatch.setattr(process, "run_cli_detailed", runner)
+    _gain["replay_pattern"](record, cache, str(binary), ruleset)
+    assert len(calls) == 1 and calls[0][0] == str(binary.resolve())
+    assert calls[0][2]["timeout"] == 180
+    assert calls[0][2]["max_stream_bytes"] == 16 * 1024 * 1024
+    assert calls[0][1][calls[0][1].index("--timeout") + 1] == "30"
+    assert _gain["_recall_result_path"](str(target), cache) == (
+        record["cases"][0]["ghsa"],
+        "a" * 12,
+        "src/App.py",
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "binary",
+        "exit",
+        "errors",
+        "partial",
+        "missing",
+        "cleanup",
+        "timeout",
+        "overflow",
+        "stderr",
+        "json",
+        "duplicate_json",
+        "nonfinite",
+        "drift",
+        "scanned_traversal",
+        "unknown_source",
+        "skipped",
+        "missing_errors",
+        "missing_reason",
+    ],
+)
+def test_advisory_synthetic_replay_rejects_incomplete_execution(
+    tmp_path, monkeypatch, mutation
+):
+    import factoryline.assembly_process as process
+
+    record, cache, target, binary, ruleset = _synthetic_recall(tmp_path)
+    calls = []
+    if mutation == "binary":
+        binary.write_bytes(b"wrong binary")
+
+    def runner(*args, **kwargs):
+        calls.append(True)
+        report = {"results": [], "errors": [], "paths": {"scanned": [str(target)]}}
+        facts = {
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "reason": None,
+            "stderr": b"",
+        }
+        operations = {
+            "exit": lambda: facts.update(exit_code=2),
+            "errors": lambda: report.update(errors=[{"type": "timeout"}]),
+            "partial": lambda: report["paths"].update(scanned=[]),
+            "missing": lambda: report.pop("paths"),
+            "cleanup": lambda: facts.update(cleanup_confirmed=False),
+            "timeout": lambda: facts.update(reason="timeout"),
+            "overflow": lambda: facts.update(reason="output_limit"),
+            "stderr": lambda: facts.update(stderr=b"x" * 65537),
+            "drift": lambda: target.write_bytes(b"changed during invocation"),
+            "scanned_traversal": lambda: report["paths"].update(
+                scanned=["../outside.py"]
+            ),
+            "unknown_source": lambda: report.update(
+                results=[
+                    {
+                        "path": str(target.parent / "Other.py"),
+                        "check_id": "python.synthetic",
+                        "start": {"line": 1},
+                    }
+                ]
+            ),
+            "skipped": lambda: report["paths"].update(skipped=[{"path": str(target)}]),
+            "missing_errors": lambda: report.pop("errors"),
+            "missing_reason": lambda: facts.pop("reason"),
+        }
+        operations.get(mutation, lambda: None)()
+        facts["stdout"] = {
+            "json": b"{",
+            "duplicate_json": b'{"results":[],"results":[]}',
+            "nonfinite": b'{"n":NaN}',
+        }.get(mutation, json.dumps(report).encode())
+        return facts
+
+    monkeypatch.setattr(process, "run_cli_detailed", runner)
+    with pytest.raises((ValueError, OSError, KeyError)):
+        _gain["replay_pattern"](record, cache, str(binary), ruleset)
+    assert len(calls) == (0 if mutation == "binary" else 1)
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "missing", "extra", "wrong_rule", "wrong_line"]
+)
+def test_advisory_nonempty_expected_detection_replay(tmp_path, monkeypatch, mutation):
+    import factoryline.assembly_process as process
+
+    record, cache, target, binary, ruleset = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    hit = {
+        "rule": "python.synthetic",
+        "parent": "a" * 40,
+        "path": "src/App.py",
+        "line": 1,
+    }
+    case["pattern"].update(status="detected", detections=[hit])
+    record["summary"] = _gain["summarize_recall"](record)
+    result = {"path": str(target), "check_id": "python.synthetic", "start": {"line": 1}}
+    results = [result]
+    operations = {
+        "missing": results.clear,
+        "extra": lambda: results.append({**result, "start": {"line": 2}}),
+        "wrong_rule": lambda: result.update(check_id="python.unknown"),
+        "wrong_line": lambda: result.update(start={"line": 3}),
+    }
+    operations.get(mutation, lambda: None)()
+    facts = {
+        "exit_code": 0,
+        "cleanup_confirmed": True,
+        "streams_closed": True,
+        "reason": None,
+        "stderr": b"",
+        "stdout": json.dumps(
+            {"results": results, "errors": [], "paths": {"scanned": [str(target)]}}
+        ).encode(),
+    }
+    monkeypatch.setattr(process, "run_cli_detailed", lambda *args, **kwargs: facts)
+    if mutation is None:
+        _gain["replay_pattern"](record, cache, str(binary), ruleset)
+    else:
+        with pytest.raises((ValueError, KeyError)):
+            _gain["replay_pattern"](record, cache, str(binary), ruleset)
+
+
+@pytest.mark.parametrize("mutation", [None, "download_digest", "existing_different"])
+def test_advisory_fetch_admits_only_bound_nonoverwriting_bytes(
+    tmp_path, monkeypatch, mutation
+):
+    import factoryline.assembly_process as process
+
+    record, cache, target, _, _ = _synthetic_recall(tmp_path)
+    target.unlink()
+    if mutation == "existing_different":
+        target.write_bytes(b"existing preserve")
+    payload = b"wrong download" if mutation == "download_digest" else b"source"
+
+    def runner(executable, argv, cwd, **kwargs):
+        return {
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "reason": None,
+            "stdout": payload if "show" in argv else b"",
+            "stderr": b"",
+        }
+
+    monkeypatch.setattr(process, "run_cli_detailed", runner)
+    if mutation is None:
+        _gain["fetch_cache"](record, cache, tmp_path / "fetch")
+        assert target.read_bytes() == b"source"
+    else:
+        with pytest.raises(ValueError):
+            _gain["fetch_cache"](record, cache, tmp_path / "fetch")
+        assert (
+            target.read_bytes() == b"existing preserve"
+            if mutation == "existing_different"
+            else not target.exists()
+        )

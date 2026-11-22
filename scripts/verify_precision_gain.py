@@ -575,6 +575,64 @@ UNEXECUTED = ("extraction_failed", "no_class_query", "not_run", "no_extractor")
 _SHA1 = re.compile(r"[0-9a-f]{40}")
 
 
+def _recall_case_name(case):
+    if not re.fullmatch(
+        r"GHSA-[23456789cfghjmpqrvwx]{4}(?:-[23456789cfghjmpqrvwx]{4}){2}",
+        str(case.get("ghsa")),
+    ):
+        raise ValueError("invalid advisory identity")
+    if not re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", str(case.get("repository"))
+    ) or any(part in {".", ".."} for part in case["repository"].split("/")):
+        raise ValueError("invalid repository identity")
+
+
+def _recall_identity(case):
+    from factoryline.deep_audit_io import relative_path
+
+    _recall_case_name(case)
+    files = case.get("prefix_files")
+    if not isinstance(files, list) or not files:
+        raise ValueError("nonempty source bindings required")
+    seen, prefixes = set(), {}
+    for item in files:
+        path = relative_path(item["path"])
+        parent = item["parent"]
+        if not isinstance(parent, str) or not _SHA1.fullmatch(parent):
+            raise ValueError("invalid source parent")
+        if prefixes.setdefault(parent[:12], parent) != parent or (parent, path) in seen:
+            raise ValueError("duplicate or ambiguous source binding")
+        seen.add((parent, path))
+        _recall_hunks(item)
+
+
+def _recall_hunks(item):
+    ranges = item.get("hunk_lines")
+    if not isinstance(ranges, list) or not ranges:
+        raise ValueError("nonempty hunk ranges required")
+    for pair in ranges:
+        if (
+            not isinstance(pair, list)
+            or len(pair) != 2
+            or any(type(value) is not int or value < 1 for value in pair)
+            or pair[0] > pair[1]
+        ):
+            raise ValueError("positive ordered integer hunk bounds required")
+
+
+def _recall_hit(hit):
+    from factoryline.deep_audit_io import relative_path
+
+    relative_path(hit["path"])
+    if (
+        type(hit["line"]) is not int
+        or hit["line"] < 1
+        or not isinstance(hit.get("rule"), str)
+        or not hit["rule"]
+    ):
+        raise ValueError("invalid detection identity")
+
+
 def _in_hunk(case: dict, parent: str, path: str, line: int) -> bool:
     return any(
         item["parent"] == parent
@@ -585,6 +643,7 @@ def _in_hunk(case: dict, parent: str, path: str, line: int) -> bool:
 
 
 def _validate_case(case: dict) -> None:
+    _recall_identity(case)
     name = case.get("ghsa")
     parents = [fix.get("parent") for fix in case.get("fixes", [])]
     if not parents or not all(
@@ -593,19 +652,30 @@ def _validate_case(case: dict) -> None:
         for key in ("fix", "parent")
     ):
         raise ValueError(f"{name}: unbound fix or parent revision")
+    if len({parent[:12] for parent in set(parents)}) != len(set(parents)):
+        raise ValueError("ambiguous parent revision prefix")
     for item in case["prefix_files"]:
         if item["parent"] not in parents or not _hash(item["sha256"]):
             raise ValueError(f"{name}: unbound pre-fix file {item['path']}")
-        if not item["hunk_lines"] or any(
-            low > high for low, high in item["hunk_lines"]
-        ):
-            raise ValueError(f"{name}: invalid hunk ranges for {item['path']}")
+    _recall_observations(case, parents)
+
+
+def _recall_observations(case, parents):
+    name = case["ghsa"]
     pattern = case["pattern"]
+    if pattern["status"] not in {"detected", "not_detected"}:
+        raise ValueError("unknown pattern status")
     if (pattern["status"] == "detected") != bool(pattern["detections"]):
         raise ValueError(f"{name}: pattern status disagrees with detections")
     for hit in pattern["detections"]:
+        _recall_hit(hit)
         if not _in_hunk(case, hit["parent"], hit["path"], hit["line"]):
             raise ValueError(f"{name}: pattern detection outside the fix hunks")
+    _recall_codeql(case, parents)
+
+
+def _recall_codeql(case, parents):
+    name = case["ghsa"]
     codeql = case["codeql"]
     if codeql["status"] not in CODEQL_STATES:
         raise ValueError(f"{name}: unknown CodeQL state")
@@ -615,6 +685,7 @@ def _validate_case(case: dict) -> None:
         if codeql.get("source_revision") != parents[0]:
             raise ValueError(f"{name}: CodeQL source revision is not the first parent")
     for hit in codeql.get("detections", []):
+        _recall_hit(hit)
         if not _in_hunk(case, parents[0], hit["path"], hit["line"]):
             raise ValueError(f"{name}: CodeQL detection outside the fix hunks")
 
@@ -695,19 +766,67 @@ def verify_recall(record: dict) -> dict:
 
 
 def _cache_path(cache: Path, case: dict, item: dict) -> Path:
-    return cache / case["ghsa"] / item["parent"][:12] / item["path"]
+    _recall_case_name(case)
+    from factoryline.deep_audit_io import relative_path
+
+    if not isinstance(item["parent"], str) or not _SHA1.fullmatch(item["parent"]):
+        raise ValueError("invalid source parent")
+
+    relative = relative_path(f"{case['ghsa']}/{item['parent'][:12]}/{item['path']}")
+    return _recall_contained(cache, relative)
+
+
+def _recall_contained(root, relative):
+    from factoryline.deep_audit_io import relative_path
+    import stat
+
+    root = Path(root).absolute()
+    target = root / relative_path(relative)
+    for path in [
+        *root.parents,
+        root,
+        *[
+            root / Path(*target.relative_to(root).parts[:index])
+            for index in range(1, len(target.relative_to(root).parts) + 1)
+        ],
+    ]:
+        if path.is_symlink() or (
+            path.exists()
+            and getattr(path.lstat(), "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 1024)
+        ):
+            raise ValueError("linked cache paths forbidden")
+    target.resolve().relative_to(root.resolve())
+    return target
 
 
 def fetch_cache(record: dict, cache: Path, work: Path) -> None:
     """Write each bound pre-fix file from its source revision (needs git and network)."""
 
     def git(directory: Path, *args: str) -> bytes:
-        return subprocess.run(
-            ["git", "-C", str(directory), *args], check=True, capture_output=True
-        ).stdout
+        from factoryline.assembly_process import run_cli_detailed
 
+        result = run_cli_detailed(
+            "git",
+            ["-C", str(directory), *args],
+            directory,
+            timeout=180,
+            max_stream_bytes=16 * 1024 * 1024,
+        )
+        if (
+            result.get("exit_code") != 0
+            or result.get("cleanup_confirmed") is not True
+            or result.get("reason") is not None
+        ):
+            raise ValueError("bounded git fetch failed")
+        raw = result["stdout"]
+        if not isinstance(raw, bytes):
+            raise ValueError("bounded git output bytes required")
+        return raw
+
+    verify_recall(record)
     for case in record["cases"]:
-        clone = work / case["ghsa"]
+        clone = _recall_contained(work, case["ghsa"])
         clone.mkdir(parents=True, exist_ok=True)
         git(clone, "init", "-q")
         url = f"https://github.com/{case['repository']}.git"
@@ -718,14 +837,28 @@ def fetch_cache(record: dict, cache: Path, work: Path) -> None:
         for item in case["prefix_files"]:
             target = _cache_path(cache, case, item)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(git(clone, "show", f"{item['parent']}:{item['path']}"))
+            data = git(clone, "show", f"{item['parent']}:{item['path']}")
+            if digest(data) != item["sha256"]:
+                raise ValueError("downloaded source digest differs")
+            target = _cache_path(cache, case, item)
+            if target.exists():
+                if _recall_file_hash(target) != item["sha256"]:
+                    raise ValueError("refusing to overwrite different cached source")
+            else:
+                with target.open("xb") as stream:
+                    stream.write(data)
 
 
 def check_cache(record: dict, cache: Path) -> int:
+    from factoryline.deep_audit_io import local_file
+
+    for case in record["cases"]:
+        _validate_case(case)
     for case in record["cases"]:
         for item in case["prefix_files"]:
-            data = _cache_path(cache, case, item).read_bytes()
-            if digest(data) != item["sha256"]:
+            target = _cache_path(cache, case, item)
+            source = local_file(cache, target.relative_to(cache.absolute()).as_posix())
+            if _recall_file_hash(source) != item["sha256"]:
                 raise ValueError(
                     f"{case['ghsa']}: pre-fix bytes differ for {item['path']}"
                 )
@@ -734,18 +867,24 @@ def check_cache(record: dict, cache: Path) -> int:
 
 def replay_pattern(record: dict, cache: Path, opengrep: str, ruleset: Path) -> None:
     import yaml
+    import shutil
+    from factoryline.assembly_process import run_cli_detailed
 
-    if (
-        digest(ruleset.read_bytes())
-        != record["candidate"]["pattern_lane"]["ruleset_sha256"]
-    ):
+    verify_recall(record)
+    check_cache(record, cache)
+    executable = Path(shutil.which(opengrep) or opengrep).resolve(strict=True)
+    binary_pin = record["candidate"]["pattern_lane"]["opengrep_binary_sha256"]
+    if _recall_file_hash(executable) != binary_pin:
+        raise ValueError("invoked binary differs from pinned executable")
+    rules_raw = _recall_read(ruleset)
+    if digest(rules_raw) != record["candidate"]["pattern_lane"]["ruleset_sha256"]:
         raise ValueError("ruleset bytes differ from the bound ruleset")
     families = record["detection_rule"]["class_families"]
     rule_cwes = {
         rule["id"]: rule["metadata"]["cwe"]
-        for rule in yaml.safe_load(ruleset.read_text())["rules"]
+        for rule in yaml.safe_load(rules_raw)["rules"]
     }
-    argv = [opengrep, "--legacy", "--disable-version-check", "--no-git-ignore"]
+    argv = ["--legacy", "--disable-version-check", "--no-git-ignore"]
     argv += [
         "--disable-nosem",
         "--timeout",
@@ -756,13 +895,19 @@ def replay_pattern(record: dict, cache: Path, opengrep: str, ruleset: Path) -> N
         str(cache),
     ]
     env = dict(os.environ, PYTHONIOENCODING="utf-8", LANG="C.UTF-8")
-    report = json.loads(
-        subprocess.run(argv, env=env, capture_output=True, text=True).stdout
+    facts = run_cli_detailed(
+        str(executable),
+        argv,
+        Path.cwd(),
+        env=env,
+        timeout=180,
+        max_stream_bytes=16 * 1024 * 1024,
     )
+    report = _recall_native_report(facts, record, cache)
     cases = {case["ghsa"]: case for case in record["cases"]}
     observed = set()
     for result in report["results"]:
-        ghsa, prefix, path = os.path.relpath(result["path"], cache).split("/", 2)
+        ghsa, prefix, path = _recall_result_path(result["path"], cache)
         case = cases[ghsa]
         rule = ".".join(result["check_id"].split(".")[-2:])
         wanted = {families.get(cwe) for cwe in case["cwes"]} - {None}
@@ -783,6 +928,94 @@ def replay_pattern(record: dict, cache: Path, opengrep: str, ruleset: Path) -> N
         raise ValueError(
             f"pattern replay differs: missing {sorted(expected - observed)}, extra {sorted(observed - expected)}"
         )
+    if (
+        _recall_file_hash(executable) != binary_pin
+        or digest(_recall_read(ruleset))
+        != record["candidate"]["pattern_lane"]["ruleset_sha256"]
+    ):
+        raise ValueError("tool or ruleset drift during replay")
+    check_cache(record, cache)
+
+
+def _recall_result_path(value, cache):
+    from factoryline.deep_audit_io import relative_path, local_file
+
+    path = Path(value)
+    if not path.is_absolute():
+        path = cache.absolute() / path
+    parts = path.absolute().relative_to(cache.absolute()).parts
+    if len(parts) < 3:
+        raise ValueError("native result lacks source identity")
+    source = relative_path(Path(*parts[2:]).as_posix())
+    local_file(cache, relative_path(Path(*parts).as_posix()))
+    return parts[0], parts[1], source
+
+
+def _recall_native_report(facts, record, cache):
+    if (
+        facts.get("exit_code") not in {0, 1}
+        or facts.get("cleanup_confirmed") is not True
+        or facts.get("streams_closed") is not True
+        or "reason" not in facts
+        or facts.get("reason") is not None
+        or len(facts.get("stderr", b"")) > 65536
+    ):
+        raise ValueError("native replay process incomplete")
+    report = strict_json(facts["stdout"])
+    if (
+        report.get("errors") != []
+        or report.get("paths", {}).get("skipped")
+        or report.get("skipped_rules")
+    ):
+        raise ValueError("native replay errors or skipped inputs")
+    expected = {
+        _cache_path(cache, case, item).absolute()
+        for case in record["cases"]
+        for item in case["prefix_files"]
+    }
+    scanned = report.get("paths", {}).get("scanned")
+    if not isinstance(scanned, list) or len(scanned) != len(expected):
+        raise ValueError("native source accounting incomplete")
+    observed = {_cache_native_path(value, cache) for value in scanned}
+    if observed != expected:
+        raise ValueError("native scanned paths differ")
+    for result in report["results"]:
+        ghsa, prefix, path = _recall_result_path(result["path"], cache)
+        matching = [
+            case
+            for case in record["cases"]
+            if case["ghsa"] == ghsa
+            and any(
+                item["parent"][:12] == prefix and item["path"] == path
+                for item in case["prefix_files"]
+            )
+        ]
+        if (
+            len(matching) != 1
+            or type(result["start"]["line"]) is not int
+            or result["start"]["line"] < 1
+        ):
+            raise ValueError("unbound native result")
+    return report
+
+
+def _cache_native_path(value, cache):
+    ghsa, prefix, path = _recall_result_path(value, cache)
+    return _recall_contained(cache, f"{ghsa}/{prefix}/{path}").absolute()
+
+
+def _recall_file_hash(path):
+    from factoryline.candidate_lineage import _sha_file
+
+    return _sha_file(path)
+
+
+def _recall_read(path):
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_EVIDENCE_BYTES + 1)
+    if len(raw) > MAX_EVIDENCE_BYTES:
+        raise ValueError("recall input exceeds evidence byte limit")
+    return raw
 
 
 def recall_main(argv: list[str]) -> int:
@@ -803,7 +1036,7 @@ def recall_main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        record = strict_json(args.record.read_bytes())
+        record = strict_json(_recall_read(args.record))
         summary = verify_recall(record)
         if args.fetch_into:
             if not args.prefix_cache:
