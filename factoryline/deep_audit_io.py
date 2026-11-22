@@ -56,7 +56,7 @@ def relative_path(value: object) -> str:
     """Require a canonical workspace path, rejecting ambiguous URI, Windows and traversal spellings."""
     text = require_str(value, "path", maximum=512)
     parts = text.split("/")
-    forbidden = ("\\", ":", "?", "#")
+    forbidden = ("\\", ":", "?", "#", '"', "*", "<", ">", "|")
     if any(char in text for char in forbidden) or unquote(text) != text:
         raise RuntimeAuditError("E_PATH_ESCAPE", "noncanonical path")
     if any(
