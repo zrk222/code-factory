@@ -1664,3 +1664,123 @@ def test_advisory_fetch_admits_only_bound_nonoverwriting_bytes(
             if mutation == "existing_different"
             else not target.exists()
         )
+
+
+def _recall_detected_case(recall_record):
+    case = next(c for c in recall_record["cases"] if c["pattern"]["detections"])
+    return copy.deepcopy(case), dict(recall_record, cases=[case])
+
+
+def test_advisory_recall_summarize_recall_counts_lanes_and_overlap(recall_record):
+    case, _ = _recall_detected_case(recall_record)
+    both = copy.deepcopy(case)
+    both["codeql"].update(
+        status="detected", detections=[{"rule": "q", "path": "p", "line": 1}]
+    )
+    neither = copy.deepcopy(case)
+    neither["pattern"].update(status="not_detected", detections=[])
+    neither["codeql"].update(status="no_extractor", detections=[])
+    summary = _gain["summarize_recall"]({"cases": [both, neither]})
+    total = summary["total"]
+    assert (total["cases"], total["pattern_detected"], total["codeql_detected"]) == (
+        2,
+        1,
+        1,
+    )
+    assert (total["combined_detected"], total["overlap"]) == (1, 1)
+    assert (total["codeql_analyzed"], total["codeql_state_no_extractor"]) == (1, 1)
+    assert summary["combined_not_held_out"]["overlap"] == 1
+
+
+def test_advisory_recall_fetch_cache_writes_each_bound_prefix_file(
+    recall_record, tmp_path, monkeypatch
+):
+    import factoryline.assembly_process as process
+
+    subset, _, _, _, _ = _synthetic_recall(tmp_path)
+    case = subset["cases"][0]
+    calls = []
+
+    def fake_run(executable, args, cwd, **kwargs):
+        argv = [executable, *args]
+        calls.append(argv)
+        stdout = b""
+        if argv[3] == "show":
+            stdout = b"source"
+        return {
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "reason": None,
+            "stdout": stdout,
+        }
+
+    monkeypatch.setattr(process, "run_cli_detailed", fake_run)
+    _gain["fetch_cache"](subset, tmp_path / "cache", tmp_path / "work")
+    fetched = [argv for argv in calls if argv[3] == "fetch"]
+    assert [argv[-1] for argv in fetched] == [fix["fix"] for fix in case["fixes"]]
+    assert all(
+        "--depth=2" in argv
+        and argv[-2] == f"https://github.com/{case['repository']}.git"
+        for argv in fetched
+    )
+    for item in case["prefix_files"]:
+        written = _gain["_cache_path"](tmp_path / "cache", case, item)
+        assert written.read_bytes() == b"source"
+
+
+def test_advisory_recall_replay_pattern_requires_identical_detections(
+    recall_record, tmp_path, monkeypatch
+):
+    import factoryline.assembly_process as process
+
+    subset, cache, _, binary, ruleset = _synthetic_recall(tmp_path)
+    case = subset["cases"][0]
+    case["pattern"].update(
+        status="detected",
+        detections=[
+            {
+                "rule": "python.synthetic",
+                "parent": "a" * 40,
+                "path": "src/App.py",
+                "line": 1,
+            }
+        ],
+    )
+    subset["summary"] = _gain["summarize_recall"](subset)
+    results = [
+        {
+            "path": str(cache / case["ghsa"] / hit["parent"][:12] / hit["path"]),
+            "check_id": f"deploy.deep-adapters.rules.{hit['rule']}",
+            "start": {"line": hit["line"]},
+        }
+        for hit in case["pattern"]["detections"]
+    ]
+
+    def fake_run(*args, **kwargs):
+        scanned = [
+            str(_gain["_cache_path"](cache, case, item))
+            for item in case["prefix_files"]
+        ]
+        return {
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "reason": None,
+            "stderr": b"",
+            "stdout": json.dumps(
+                {"results": results, "errors": [], "paths": {"scanned": scanned}}
+            ).encode(),
+        }
+
+    monkeypatch.setattr(process, "run_cli_detailed", fake_run)
+    _gain["replay_pattern"](subset, cache, str(binary), ruleset)
+    results.append(
+        dict(results[0], start={"line": results[0]["start"]["line"] + 10**6})
+    )
+    results[0] = dict(results[0], start={"line": results[0]["start"]["line"] + 10**6})
+    with pytest.raises(ValueError, match="pattern replay differs"):
+        _gain["replay_pattern"](subset, cache, str(binary), ruleset)
+    altered = tmp_path / "ruleset.yml"
+    altered.write_bytes(ruleset.read_bytes() + b"\n# altered\n")
+    with pytest.raises(ValueError, match="ruleset bytes differ"):
+        _gain["replay_pattern"](subset, cache, str(binary), altered)

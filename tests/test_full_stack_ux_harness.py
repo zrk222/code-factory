@@ -641,7 +641,10 @@ def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, cap
     import factoryline.full_stack_ux_harness as harness
 
     # Required native CI never skips; optional jobs only skip absent packages.
-    if __import__("os").environ.get("FACTORY_REQUIRE_NATIVE_VISUAL") == "1":
+    if any(
+        __import__("os").environ.get(flag) == "1"
+        for flag in ("FACTORY_REQUIRE_NATIVE_VISUAL", "FACTORY_VISUAL_ACCEPTANCE")
+    ):
         from playwright.sync_api import sync_playwright
         import prestige_design
 

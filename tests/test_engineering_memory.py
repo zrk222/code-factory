@@ -427,3 +427,40 @@ def test_batch_recall_fixed_complete_trace_and_single_shared_call(monkeypatch):
         ],
         "selection_sha256": "8dfe1920d7e6a5431b09dad3c9e2447950157a97096de684a002c5a2ea561079",
     }
+
+
+def _metadata(key, summary, path):
+    return {"record_id": key, "summary": summary, "evidence": [{"path": path}]}
+
+
+def test_question_words_alone_do_not_hide_a_missing_topic():
+    from factoryline import engineering_memory as memory
+
+    rows = [
+        _metadata("r1", "The retry budget for the payment worker", "src/retry.py"),
+        _metadata("r2", "How the release gate blocks unsigned wheels", "gate.py"),
+    ]
+    selected, trace = memory._balanced_recall(
+        rows, (["payment retry", "how is the cache invalidated"], 2)
+    )
+    assert [row["record_id"] for row in selected] == ["r1"]
+    assert [hop["gap"] for hop in trace["queries"]] == [
+        None,
+        "no_admissible_lexical_match",
+    ]
+    assert trace["status"] == "PARTIAL_CONTEXT"
+    natural, _ = memory._balanced_recall(rows, (["how does the payment retry work"], 2))
+    assert [row["record_id"] for row in natural] == ["r1"]
+
+
+def test_records_citing_new_evidence_precede_same_evidence_duplicates():
+    from factoryline import engineering_memory as memory
+
+    rows = [
+        _metadata(f"d{i}", "tenant cache invalidation keys cleared", "cache.py")
+        for i in range(3)
+    ] + [_metadata("x1", "CDN cache invalidation is asynchronous", "cdn.py")]
+    selected, _ = memory._balanced_recall(rows, (["cache invalidation"], 2))
+    assert [row["record_id"] for row in selected] == ["d0", "x1"]
+    padded, _ = memory._balanced_recall(rows, (["cache invalidation"], 4))
+    assert len(padded) == 4
