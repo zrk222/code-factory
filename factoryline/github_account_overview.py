@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote, urlsplit
+from . import CodedError
 
 
 SCHEMA = "factory.github-account-overview.v1"
@@ -34,12 +35,8 @@ _REPOSITORY_FILTER = (
 CommandRunner = Callable[[list[str], Path, int], subprocess.CompletedProcess[str]]
 
 
-class GitHubOverviewError(ValueError):
+class GitHubOverviewError(CodedError):
     """An invalid local request or a required GitHub source that could not be read."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 class _ReadFailure(Exception):

@@ -8,7 +8,6 @@ that define that evaluation.  It is local and cannot contact Apple.
 from __future__ import annotations
 
 from .contract import write_atomic_json
-from . import canonical_json_bytes as _canonical
 
 import hashlib
 import json
@@ -22,16 +21,14 @@ from .oracle_firewall import (
 )
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import RevenueForgeError
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import canonical_sha as _sha
 
 
 AUTHORITY_SCHEMA = "factory.appforge.oracle-authority.v1"
 RECEIPT_SCHEMA = "factory.appforge.oracle-authority-receipt.v1"
 MAX_BYTES = 1_048_576
 CANDIDATE_KEYS = ("bundle_identifier", "version", "build_number", "source_commit")
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _text(value: object, field: str, *, limit: int = 500) -> str:

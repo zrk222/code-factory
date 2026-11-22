@@ -9,9 +9,7 @@ generate media, reach App Store Connect, or publish anything.
 from __future__ import annotations
 
 from .contract import write_atomic_json as _atomic
-from . import canonical_json_compat_bytes as _canonical
 
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -22,6 +20,9 @@ from .appforge_surface_matrix import RECEIPT_SCHEMA as MATRIX_SCHEMA
 from .appforge_storefront_story import RECEIPT_SCHEMA as STORY_SCHEMA
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
+from . import file_sha256 as _file_sha
 
 
 CONTRACT_SCHEMA = "factory.appforge.fastlane-capture-contract.v1"
@@ -45,14 +46,6 @@ _UNSAFE_LANE_ACTIONS = (
     "match",
     "sync_code_signing",
 )
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _text(value: object, field: str, limit: int = 300) -> str:

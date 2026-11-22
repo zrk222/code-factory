@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+from . import CodedError
 
 
 SCHEMA = "factory.domain-ontology.v1"
@@ -27,10 +28,8 @@ AUTHORITY = {
 }
 
 
-class DomainOntologyError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
+class DomainOntologyError(CodedError):
+    pass
 
 
 def _sha(value: object) -> str:

@@ -25,6 +25,9 @@ from typing import Any
 
 from .assembly_process import run_cli_detailed
 from .change_review import ChangeReviewError, review_change
+from . import atomic_text as _atomic_text
+from . import canonical_sha as _sha
+from . import CodedError
 
 
 REPAIR_SCOPE_SCHEMA = "factory.repair_scope.v1"
@@ -104,16 +107,8 @@ _DEFAULT_PROTECTED = (
 )
 
 
-class RepairSandboxError(ValueError):
+class RepairSandboxError(CodedError):
     """A closed, machine-readable repair-sandbox input failure."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _workspace(root: Path) -> Path:
@@ -606,14 +601,6 @@ def _scope_markdown(scope: dict[str, Any]) -> str:
             "",
         )
     )
-
-
-def _atomic_text(path: Path, content: str) -> str:
-    encoded = content.encode("utf-8")
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_bytes(encoded)
-    temporary.replace(path)
-    return sha256(encoded).hexdigest()
 
 
 def _artifact_directory(root: Path, out_dir: Path) -> Path:

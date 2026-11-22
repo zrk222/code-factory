@@ -19,6 +19,7 @@ import tokenize  # noqa: F401
 from collections import Counter
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote
+from . import windows_reserved_segment as _windows_reserved
 
 from .repository_checkpoint_audit import (
     _full_repository_checkpoint_identity as _full_repository_checkpoint_identity,
@@ -55,7 +56,7 @@ def relative_path(value: object) -> str:
     """Require a canonical workspace path, rejecting ambiguous URI, Windows and traversal spellings."""
     text = require_str(value, "path", maximum=512)
     parts = text.split("/")
-    forbidden = ("\\", ":", "?", "#")
+    forbidden = ("\\", ":", "?", "#", '"', "*", "<", ">", "|")
     if any(char in text for char in forbidden) or unquote(text) != text:
         raise RuntimeAuditError("E_PATH_ESCAPE", "noncanonical path")
     if any(
@@ -68,10 +69,7 @@ def relative_path(value: object) -> str:
         raise RuntimeAuditError("E_PATH_ESCAPE", "control characters in path")
     if PureWindowsPath(text).drive or any(part in {"", ".", ".."} for part in parts):
         raise RuntimeAuditError("E_PATH_ESCAPE", "path must be workspace-relative")
-    if any(
-        part.endswith((" ", ".")) or PureWindowsPath(part).is_reserved()
-        for part in parts
-    ):
+    if any(part.endswith((" ", ".")) or _windows_reserved(part) for part in parts):
         raise RuntimeAuditError("E_PATH_ESCAPE", "ambiguous Windows path")
     return text
 

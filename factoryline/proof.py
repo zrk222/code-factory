@@ -23,12 +23,10 @@ from .contract import LAYOUT, MODULES, Receipt, ensure_layout
 from .meter import summarize
 from .protocol import CHALLENGE_SCHEMA, PASSPORT_SCHEMA
 from .refinement import assert_build_metadata_locations
+from . import file_sha256 as _sha256
+from . import sha256_hex as _sha256_bytes
 
 TRACE_SCHEMA = "factoryline.proof_trace.v1"
-
-
-def _sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _sha256_file(path: Path) -> str:
@@ -742,10 +740,6 @@ def challenge_trace(trace_path: Path, root: Path | None = None) -> dict:
 
 def _canonical(payload: object) -> bytes:
     return _canonical_encode(payload)
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def _safe_label(value: object) -> str:

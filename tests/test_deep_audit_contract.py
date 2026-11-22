@@ -2227,6 +2227,14 @@ def test_osv_coordinator_rejects_boolean_and_float_package_counts():
         )
 
 
+@pytest.mark.parametrize("char", ['"', "*", "<", ">", "|"])
+def test_audit_rejects_windows_invalid_source_path(char):
+    from factoryline.deep_audit_io import relative_path
+
+    with pytest.raises(RuntimeAuditError, match="E_PATH_ESCAPE"):
+        relative_path(f"src/report{char}draft.py")
+
+
 def test_execution_manifest_and_signed_authorization(tmp_path):
     from factoryline.deep_audit_contract import load_execution_manifest
     from factoryline.deep_audit_attestation import verify_execution_authorization

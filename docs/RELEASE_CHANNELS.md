@@ -184,7 +184,10 @@ the 4-per-30-day limit and 7-day interval. The publish
 workflow dispatches only from protected `main`, accepts only an existing draft
 release, validates the immutable tag, waits at the protected `pypi` environment,
 and marks the GitHub release public only after the approved PyPI publication
-succeeds.
+succeeds. Set `core_only=true` when uploading the editors independently. The
+workflow builds and checks fresh Python distributions and excludes editor
+validation and editor assets. Microsoft and JetBrains website uploads keep
+their own package and provider checks.
 
 Cadence exceptions are disabled after the completed publication of the
 previously approved candidates. No automatic or routine exception path is

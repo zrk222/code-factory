@@ -7,7 +7,6 @@ the opt-in workflow is the separate, supervised delivery adapter.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from hashlib import sha256
 import json
@@ -17,6 +16,10 @@ from typing import Any
 
 from .change_review import AUTHORITY as CHANGE_REVIEW_AUTHORITY
 from .change_review import CHANGE_REVIEW_SCHEMA, review_change
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
+from . import atomic_text as _atomic_text
+from . import CodedError
 
 
 GITHUB_PROOF_REVIEW_SCHEMA = "factory.github_proof_review.v1"
@@ -76,16 +79,8 @@ AUTHORITY = {
 }
 
 
-class GitHubProofReviewError(ValueError):
+class GitHubProofReviewError(CodedError):
     """A rejected GitHub Proof Review input."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _reject(message: str) -> None:
@@ -585,14 +580,6 @@ def compile_github_proof_review(
     return render_github_proof_review(
         review_change(Path(root), base=base, changed=changed), head_sha
     )
-
-
-def _atomic_text(path: Path, content: str) -> str:
-    encoded = content.encode("utf-8")
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_bytes(encoded)
-    temporary.replace(path)
-    return sha256(encoded).hexdigest()
 
 
 def write_github_proof_review_artifacts(

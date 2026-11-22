@@ -50,6 +50,7 @@ from .repair_sandbox import (
 from .runtime_coverage import read_runtime_coverage_report
 from .savings import SavingsError, public_savings_report, record_savings_pair
 from .target_compiler import TARGETS, TargetCompileError, create_target_from_prompt
+from . import sha256_hex as _guided_digest
 
 STUDIO_SCHEMA = "factory.studio.v1"
 MAX_BODY_BYTES = 64 * 1024
@@ -630,10 +631,6 @@ def create_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
         status = 409 if exc.code == "OUTPUT_EXISTS" else 400
         raise StudioRequestError(exc.code, exc.message, status) from exc
     return {**result, "studio_marker": "STUDIO_CONTAINED"}
-
-
-def _guided_digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _guided_is_digest(value: Any) -> bool:

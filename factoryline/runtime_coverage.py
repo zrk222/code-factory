@@ -9,6 +9,7 @@ import math
 from pathlib import Path, PurePosixPath
 import subprocess
 from typing import Any
+from . import file_sha256 as _file_sha256
 
 
 REPORT_PATH = Path(".factory/test-reports/coverage.json")
@@ -339,10 +340,6 @@ def _validate_aggregate_totals(
             observed = sum(item[metric][key] for item in files)
             if observed != expected[key]:
                 raise ValueError(f"aggregate {metric} {key} differs from file totals.")
-
-
-def _file_sha256(path: Path) -> str:
-    return sha256(path.read_bytes()).hexdigest()
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

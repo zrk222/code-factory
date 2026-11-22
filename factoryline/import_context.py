@@ -2422,6 +2422,8 @@ def decode_structural_context(payload):
 def bind_security_call_scopes(tree: ast.AST, nodes=None) -> None:
     """Retain lexical parameter shadowing for nested security call readers."""
     tree._security_sanitizer_provider_cache = {}
+    tree._security_builtin_identity_cache = {}
+    tree._security_tree_index = None
     tree._security_parent_scope = None
     tree._security_scope_kind = "module"
     tree._security_local_names = set()

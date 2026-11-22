@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from . import canonical_json_compat_bytes as _canonical
 
-from hashlib import sha256
 import json
 from pathlib import Path
 import re
 from typing import Any
+from . import sha256_hex as _sha_bytes
+from . import CodedError
 
 
 TEAM_PILOT_MANIFEST_SCHEMA = "factory.team-pilot-launch.v1"
@@ -65,20 +66,12 @@ AUTHORITY = {
 }
 
 
-class TeamPilotError(ValueError):
+class TeamPilotError(CodedError):
     """A malformed Team Pilot package or a changed readiness receipt."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 def _reject(code: str, message: str) -> None:
     raise TeamPilotError(code, message)
-
-
-def _sha_bytes(value: bytes) -> str:
-    return sha256(value).hexdigest()
 
 
 def _sha(value: object) -> str:

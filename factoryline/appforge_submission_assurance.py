@@ -7,7 +7,6 @@ build, submit an app, or certify that Apple will approve it.
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,16 +25,14 @@ from .appforge_oracle import (
     RECEIPT_SCHEMA as ORACLE_AUTHORITY_RECEIPT_SCHEMA,
     verify_appforge_oracle_authority,
 )
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import canonical_sha as _sha
 
 
 CONTRACT_SCHEMA = "factory.appforge.submission-assurance-contract.v1"
 RECEIPT_SCHEMA = "factory.appforge.submission-assurance-receipt.v1"
 MAX_BYTES = 1_048_576
 CANDIDATE_KEYS = ("bundle_identifier", "version", "build_number", "source_commit")
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _text(value: object, field: str, *, limit: int = 500) -> str:

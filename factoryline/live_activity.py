@@ -15,15 +15,12 @@ import json
 from pathlib import Path
 import tempfile
 from typing import Any
+from . import utc_iso as _now
 
 
 ACTIVITY_SCHEMA = "factory.live-activity.v1"
 ACTIVITY_RELATIVE_PATH = Path(".factory") / "live-activity.json"
 STALE_AFTER_SECONDS = 8.0
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _parse_time(value: object) -> datetime | None:

@@ -22,6 +22,9 @@ from typing import Any
 from .protocol import AutonomyLevel
 
 from .attribution import FailureClass
+from . import compat_sha as _sha
+from . import utc_now as _now
+from . import CodedError
 
 
 AGENT_IDENTITY_SCHEMA = "factory.agent-identity.v1"
@@ -67,20 +70,8 @@ _AUTHORITY = {
 }
 
 
-class AgentLicenseError(ValueError):
+class AgentLicenseError(CodedError):
     """A stable, fail-closed license error."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _iso(value: datetime) -> str:

@@ -11,12 +11,14 @@ from __future__ import annotations
 from . import canonical_json_bytes as _canonical
 
 from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
 import tempfile
 from typing import Any, Iterable
+from . import canonical_or_bytes_sha as _sha
+from . import file_sha256 as _file_sha
+from . import CodedMessageError
 
 
 SCHEMA = "factory.first-lap.v1"
@@ -67,19 +69,8 @@ def _is_iso8601(value: object) -> bool:
     return True
 
 
-class FirstLapError(ValueError):
+class FirstLapError(CodedMessageError):
     """Stable, machine-readable fail-closed first-lap error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(
-        value if isinstance(value, bytes) else _canonical(value)
-    ).hexdigest()
 
 
 def _now() -> str:
@@ -150,10 +141,6 @@ def _atomic_json(
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _json(path: Path) -> dict[str, Any]:

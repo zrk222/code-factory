@@ -15,6 +15,8 @@ from typing import Any
 
 from .runtime_audit_common import canonical_bytes
 from .senior_assurance import SeniorAssuranceError, compare_repair, failure_brief
+from . import is_sha256_hex as _is_digest
+from . import PrefixedCodedError
 
 SCHEMA = "factory.fix-workflow.v1"
 INTERVENTION_SCHEMA = "factory.behavioral-intervention-summary.v1"
@@ -25,13 +27,8 @@ CONTINUITY_SCHEMA = "factory.repair-continuity.v1"
 MAX_REPAIR_ROUNDS = 32
 
 
-class FixWorkflowError(ValueError):
+class FixWorkflowError(PrefixedCodedError):
     """Stable fix-workflow input error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _sha(value: object) -> str:
@@ -281,14 +278,6 @@ def _negative_controls(comparison: dict[str, Any], execute: bool) -> dict[str, A
             regression_checks.get("negative_controls_fail") if execute else None
         ),
     }
-
-
-def _is_digest(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and all(character in "0123456789abcdef" for character in value)
-    )
 
 
 def _unsupported_intervention_run(

@@ -8,7 +8,6 @@ cannot silently convert repeated guesses into an approved outcome.
 from __future__ import annotations
 
 from . import canonical_json_bytes as _canonical_encode
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -25,6 +24,9 @@ from .oracle_firewall import (
     verify_oracle_contract,
 )
 from .protocol import RepairConsequence, RepairSeverity
+from . import utc_stamp as _now
+from . import file_sha256 as _file_sha
+from . import CodedError
 
 
 MANIFEST_SCHEMA = "factory.repair-loop-manifest.v1"
@@ -51,10 +53,8 @@ AUTHORITY = {
 }
 
 
-class RepairLoopError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
+class RepairLoopError(CodedError):
+    pass
 
 
 def compare_deep_audit_repairs(
@@ -77,23 +77,6 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
 
 
 def _id(value: object, label: str) -> str:

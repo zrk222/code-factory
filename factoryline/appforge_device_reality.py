@@ -11,9 +11,7 @@ Oracle intent contract and named human supervision.
 from __future__ import annotations
 
 from .contract import write_atomic_json as _atomic_json
-from . import canonical_json_compat_bytes as _canonical
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -23,6 +21,9 @@ from .appforge_oracle import verify_appforge_oracle_authority
 from .oracle_firewall import AUTHORITY_ORIGINS, verify_oracle_contract
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
+from . import file_sha256 as _file_sha
 
 
 ENVELOPE_SCHEMA = "factory.appforge.device-reality-intent-envelope.v1"
@@ -32,14 +33,6 @@ MAX_BYTES = 1_048_576
 MAX_CAPTURE_BYTES = 25 * 1_048_576
 CANDIDATE_KEYS = ("bundle_identifier", "version", "build_number", "source_commit")
 ALLOWED_TRANSPORTS = frozenset({"manual_physical_device", "phone_harness"})
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _text(value: object, field: str, *, limit: int = 500) -> str:

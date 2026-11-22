@@ -104,6 +104,7 @@ from .import_context import (
     _full_repository_workspace_cached_source_entry as _full_repository_workspace_cached_source_entry,
     _full_repository_workspace_cache_load_source as _full_repository_workspace_cache_load_source,
 )
+from . import PrefixedCodedError
 
 _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = None
 # 64 MiB source retention plus 16 MiB for measured cache rows and containers.
@@ -2690,13 +2691,8 @@ _REDACT = (
 )
 
 
-class ContextEfficiencyError(ValueError):
+class ContextEfficiencyError(PrefixedCodedError):
     """Stable fail-closed error raised for malformed or changed context."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: Any) -> bytes:

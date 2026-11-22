@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from copy import deepcopy
 from html import escape
 from pathlib import Path
 from typing import Any
-import hashlib
 import json
 import os
 import tempfile
 
 import yaml
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
+from . import CodedError
 
 
 SCHEMA = "factory.revenueforge.v1"
@@ -42,16 +43,8 @@ AUTHORITY = {
 }
 
 
-class RevenueForgeError(ValueError):
+class RevenueForgeError(CodedError):
     """Represent a stable fail-closed RevenueForge error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _local(root: Path, value: Path, *, exists: bool = True) -> Path:

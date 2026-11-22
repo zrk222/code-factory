@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from .run_metrics import _atomic_json
+from . import CodedError
 
 
 PAIR_SCHEMA = "factory.savings-pair.v1"
@@ -20,12 +21,8 @@ MAX_PAIR_ID_LENGTH = 80
 MAX_PAIRS = 10_000
 
 
-class SavingsError(ValueError):
+class SavingsError(CodedError):
     """A typed invalid or conflicting savings observation."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 def _positive_elapsed(value: dict[str, Any], label: str) -> int:

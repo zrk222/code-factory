@@ -13,6 +13,7 @@ import stat
 from functools import wraps
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
+from . import PrefixedCodedError
 
 MAX_ARTIFACT_BYTES = 1_048_576
 MAX_CHALLENGE_FILES = 64
@@ -46,11 +47,8 @@ IGNORED_VERDICT_FIELDS = {"passed", "ok", "verdict", "decision"}
 FORBIDDEN_SECRET_FIELDS = {"body", "headers", "token", "password", "secret"}
 
 
-class RuntimeAuditError(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
+class RuntimeAuditError(PrefixedCodedError):
+    pass
 
 
 def _mutation_qualname(node: ast.AST, parents: dict) -> str:

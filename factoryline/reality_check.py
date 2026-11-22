@@ -23,6 +23,8 @@ from .e2e_proof import (
     verify_e2e_proof,
 )
 from .intent_quality import IntentQualityError, require_clear
+from . import compat_sha as _sha
+from . import CodedError
 
 
 REALITY_CHECK_MANIFEST_SCHEMA = "factory.reality-check-manifest.v1"
@@ -46,16 +48,8 @@ AUTHORITY = {
 }
 
 
-class RealityCheckError(ValueError):
+class RealityCheckError(CodedError):
     """Raised when a Reality Check contract or receipt is malformed."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _reject(code: str, message: str) -> None:

@@ -50,6 +50,7 @@ import re
 from typing import Any, Iterable
 
 from .run_metrics import _atomic_json
+from . import CodedError
 
 REVIEW_SCHEMA = "factory.habituation.review.v1"
 CALIBRATION_SCHEMA = "factory.habituation.calibration.v1"
@@ -78,12 +79,8 @@ MIN_DEFECT_SAMPLE = 20
 BLIND_SAMPLE_RATE = 10
 
 
-class HabituationError(ValueError):
+class HabituationError(CodedError):
     """A typed invalid review event, window, or calibration input."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 def _exact(value: Any) -> Any:

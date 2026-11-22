@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from .contract import write_atomic_json
-from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -16,6 +14,9 @@ from .appforge_evidence_kit import _read_candidate
 from .appforge_store_media import RECEIPT_SCHEMA as MEDIA_RECEIPT_SCHEMA
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
+from . import file_sha256 as _file_sha
 
 
 CONTRACT_SCHEMA = "factory.appforge.storefront-story-contract.v1"
@@ -30,14 +31,6 @@ HIGH_RISK_CLAIM = re.compile(
     r"\b(?:guarantee(?:d)?|apple\s+approved|never\s+reject(?:ed)?|save\s+(?:\d+|many)\s+(?:hours?|days?)|\d+\s*%)\b",
     re.IGNORECASE,
 )
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _text(value: object, field: str, limit: int) -> str:

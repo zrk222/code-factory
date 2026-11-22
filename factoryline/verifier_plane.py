@@ -11,13 +11,13 @@ from __future__ import annotations
 from . import canonical_json_bytes as _canonical
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from hashlib import sha256
 import json
 import math
 from pathlib import Path
 import re
 from typing import Any, Iterable
+from . import utc_iso as _now
+from . import sha256_hex as _sha_bytes
 
 
 SESSION_SCHEMA = "factory.verifier-session.v1"
@@ -47,16 +47,8 @@ class VerifierPlaneError(ValueError):
         self.marker = "VERIFIER_RESULT_REJECTED"
 
 
-def _sha_bytes(value: bytes) -> str:
-    return sha256(value).hexdigest()
-
-
 def _sha_path(path: Path) -> str:
     return _sha_bytes(path.read_bytes())
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _text(value: object, field: str, *, maximum: int = 160) -> str:

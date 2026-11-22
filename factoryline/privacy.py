@@ -6,16 +6,14 @@ import hashlib
 from typing import Any, Iterable
 
 from .control_plane import canonical_json, sha256
+from . import CodedRuntimeError
 
 
 PRIVACY_SCHEMA = "factory.privacy.v1"
 
 
-class PrivacyError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+class PrivacyError(CodedRuntimeError):
+    pass
 
 
 def _leaf(value: str) -> str:

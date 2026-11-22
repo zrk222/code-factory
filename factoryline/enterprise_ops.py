@@ -33,6 +33,9 @@ from dataclasses import dataclass, field
 import threading
 from typing import Iterator, Literal, Protocol, cast
 import weakref
+from . import utc_iso as _now
+from . import CodedMessageError
+from . import PrefixedCodedRuntimeError
 
 OPS_SCHEMA = "factory.enterprise-ops.v1"
 EVIDENCE_SCHEMA = "factory.enterprise-ops.evidence.v1"
@@ -61,13 +64,8 @@ SAFE_RESULT_SET = frozenset(
 )
 
 
-class EnterpriseOpsError(ValueError):
+class EnterpriseOpsError(CodedMessageError):
     """Stable fail-closed error for the enterprise operations surface."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: Any) -> bytes:
@@ -83,10 +81,6 @@ def _canonical(value: Any) -> bytes:
 
 def _sha(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _require(value: Any, name: str, pattern: re.Pattern[str] | None = None) -> str:
@@ -1538,11 +1532,8 @@ SETTLE_OUTCOMES = frozenset({COMPLETED, TOOL_ERROR, REJECTED})
 RERUN_BINDING_FIELDS = ("scope_digest", "plan_digest")
 
 
-class CommercialUsageError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
+class CommercialUsageError(PrefixedCodedRuntimeError):
+    pass
 
 
 def default_home() -> Path:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from hashlib import sha256
 import json
@@ -13,6 +12,8 @@ from typing import Any
 
 from .attribution import FailureClass
 from .e2e_proof import run_supervised_command
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _digest
 
 
 AUTHORITY = {
@@ -46,10 +47,6 @@ class JourneyProofError(ValueError):
     def __init__(self, message: str, code: str = "JOURNEY_INPUT_REJECTED") -> None:
         super().__init__(message)
         self.code = code
-
-
-def _digest(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _sha_file(path: Path) -> str:

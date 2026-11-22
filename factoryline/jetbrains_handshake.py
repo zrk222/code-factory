@@ -6,7 +6,6 @@ invokes Qodana, contacts JetBrains, applies a patch, or grants approval.
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
 from hashlib import sha256
 import json
@@ -20,6 +19,9 @@ from .e2e_proof import E2EProofError, validate_e2e_proof_receipt
 from .intent_ledger import IntentLedgerError, inspect_intent_ledger
 from .repair_sandbox import RepairSandboxError, validate_repair_scope_envelope
 from .saas_proof import saas_proof_projection
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import canonical_sha as _sha
+from . import CodedError
 
 
 MISSION_SCHEMA = "factory.agent-proof-mission.v1"
@@ -40,14 +42,8 @@ _AUTHORITY = {
 }
 
 
-class JetBrainsHandshakeError(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
+class JetBrainsHandshakeError(CodedError):
+    pass
 
 
 def _workspace(root: Path) -> Path:

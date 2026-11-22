@@ -20,6 +20,9 @@ from dataclasses import dataclass
 import re
 import shutil
 from typing import NoReturn
+from . import utc_iso as _now
+from . import sha256_hex as _sha256
+from . import PrefixedCodedRuntimeError
 
 serialization: Any = None
 Ed25519PrivateKey: Any = None
@@ -43,11 +46,8 @@ MAX_REVOCATION_ENTRIES = 4096
 MAX_JSON_DEPTH = 128
 
 
-class EnterpriseReceiptError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
+class EnterpriseReceiptError(PrefixedCodedRuntimeError):
+    pass
 
 
 def _require_crypto() -> None:
@@ -196,10 +196,6 @@ def _json_loads(value: str | bytes) -> Any:
     )
 
 
-def _sha256(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
-
-
 def _pae_field(value: bytes) -> bytes:
     return str(len(value)).encode("ascii") + b" " + value
 
@@ -227,10 +223,6 @@ def _write_json(path: Path, value: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(_canonical(value) + b"\n")
     return path
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _timestamp(value: str) -> datetime:
@@ -982,11 +974,8 @@ TRUST_ROOT_FILENAME = "commercial-trust-root.json"
 ENTITLEMENTS_DIR = "entitlements"
 
 
-class CommercialEntitlementError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
+class CommercialEntitlementError(PrefixedCodedRuntimeError):
+    pass
 
 
 def _commercial_entitlement_utc(now: datetime) -> datetime:

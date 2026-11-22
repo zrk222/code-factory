@@ -33,6 +33,9 @@ from .e2e_proof import (
 )
 from .intent_quality import IntentQualityError, require_clear
 from .reality_check import RealityCheckError, validate_reality_check_manifest
+from . import canonical_sha as _sha
+from . import utc_now as _now
+from . import CodedError
 
 
 GAUNTLET_SOURCE_SCHEMA = "factory.gauntlet-source.v1"
@@ -87,20 +90,8 @@ _RUN_AUTHORITY = {
 }
 
 
-class GauntletError(ValueError):
+class GauntletError(CodedError):
     """Stable Gauntlet input, admission, and card error."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _iso(value: datetime) -> str:

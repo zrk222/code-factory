@@ -21,6 +21,7 @@ from .runtime_audit_common import (
     reject_secret_material,
     require_digest,
 )
+from . import PrefixedCodedError
 
 
 SCHEMA = "factory.defect-benchmark.v1"
@@ -36,13 +37,8 @@ CATEGORIES = (
 CLEAN_FINDING = "NO_FINDING"
 
 
-class BenchmarkError(ValueError):
+class BenchmarkError(PrefixedCodedError):
     """Stable, fail-closed benchmark contract/result error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _nonempty(value: object, field: str, maximum: int = 512) -> str:

@@ -27,6 +27,8 @@ from .agent_license import (
 from .attribution import FailureClass
 from .e2e_proof import _run_command
 from .run_admission import verify_admission
+from . import compat_sha as _sha
+from . import CodedError
 
 
 SESSION_RECEIPT_SCHEMA = "factory.observed-session.v1"
@@ -53,14 +55,8 @@ _AUTHORITY = {
 }
 
 
-class SessionRecorderError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
+class SessionRecorderError(CodedError):
+    pass
 
 
 def _file_sha(path: Path) -> str:

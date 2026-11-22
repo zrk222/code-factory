@@ -6,10 +6,10 @@ commands, or grant any authority; Graph Ops owns the read-only node projection.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
-from hashlib import sha256
 from typing import Any
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
 
 
 _AUTHORITY = {
@@ -22,10 +22,6 @@ _AUTHORITY = {
     "credential": False,
     "connector": False,
 }
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def build_proof_delta_telemetry(

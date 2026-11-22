@@ -17,6 +17,7 @@ from .app_builder import (
 )
 from .capability_packs import target_inventory
 from .app_builder import write_output_map
+from . import file_sha256 as _file_sha
 
 
 TARGET_SCHEMA = "factory.target.v1"
@@ -44,10 +45,6 @@ def _write(path: Path, content: str) -> None:
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
     _write(path, json.dumps(value, indent=2, sort_keys=True))
-
-
-def _file_sha(path: Path) -> str:
-    return sha256(path.read_bytes()).hexdigest()
 
 
 def _deployment_profile(target: str, selected: str | None) -> dict[str, Any]:

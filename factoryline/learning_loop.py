@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import hashlib
 import json
 import os
 import re
@@ -15,6 +12,9 @@ import tempfile
 
 from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
 from .failure_guidance import explain_failure
+from . import utc_iso as _now
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import canonical_or_bytes_sha as _sha
 
 
 TASK_SCHEMA = "factory.learning.task.v1"
@@ -287,16 +287,6 @@ def diagnose_forensic_rejection(packet: dict[str, Any]) -> dict[str, str]:
         "confidence": "hypothesis_requires_replay",
         "failure_id": packet["failure_id"],
     }
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(
-        value if isinstance(value, bytes) else _canonical(value)
-    ).hexdigest()
 
 
 def _slug(value: str) -> str:

@@ -18,6 +18,7 @@ from .enterprise_enforcement import (
     canonical_json,
     verify_enterprise_decision,
 )
+from . import PrefixedCodedRuntimeError
 
 
 INPUT_SCHEMA = "factory.runner-admission-input.v1"
@@ -27,11 +28,8 @@ PACKET_DIR = Path(".factory/enterprise-enforcement/runner-admissions")
 FORBIDDEN_ARGV_TOKENS = frozenset({"&&", ";", "|", ">", "<", "`"})
 
 
-class EnterpriseRunnerAdmissionError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
+class EnterpriseRunnerAdmissionError(PrefixedCodedRuntimeError):
+    pass
 
 
 def _text(value: object, field: str, *, limit: int = 160) -> str:

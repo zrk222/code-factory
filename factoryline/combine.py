@@ -32,6 +32,7 @@ from .agent_license import (
     normalize_agent_identity,
 )
 from .attribution import FailureClass
+from . import CodedError
 
 
 COMBINE_TASK_SCHEMA = "factory.combine-task.v1"
@@ -52,12 +53,8 @@ _AUTHORITY = {
 }
 
 
-class CombineError(ValueError):
+class CombineError(CodedError):
     """A stable, fail-closed Combine error."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> Path:

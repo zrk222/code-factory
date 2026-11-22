@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import platform as platform_module
 from typing import Mapping
+from . import CodedError
 
 
 WORKSPACE_ADVISOR_SCHEMA = "factory.workspace_advisor.v1"
@@ -55,12 +56,8 @@ _MANIFESTS = {
 }
 
 
-class WorkspaceAdvisorError(ValueError):
+class WorkspaceAdvisorError(CodedError):
     """A stable refusal from the local workspace advisor."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 def _canonical(value: object) -> str:

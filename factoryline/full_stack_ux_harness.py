@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
-from datetime import datetime, timezone
-import hashlib
 import json
 import os
 import tempfile
 from pathlib import Path, PureWindowsPath
 from typing import Any
+from . import utc_iso as _now
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import canonical_or_bytes_sha as _sha
+from . import PrefixedCodedError
 
 
 MANIFEST_SCHEMA = "factory.full-stack-ux-harness.manifest.v1"
@@ -56,13 +57,8 @@ JUDGMENTS = (
 )
 
 
-class FullStackUXHarnessError(ValueError):
+class FullStackUXHarnessError(PrefixedCodedError):
     """Stable refusal for a malformed or unsafe quality-harness input."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _require_exact_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
@@ -74,16 +70,6 @@ def _require_exact_keys(value: dict[str, Any], expected: set[str], label: str) -
             "E_UX_MANIFEST_SCHEMA",
             f"{label} keys must be exact; missing={missing}, unexpected={unexpected}",
         )
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(
-        value if isinstance(value, bytes) else _canonical(value)
-    ).hexdigest()
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:

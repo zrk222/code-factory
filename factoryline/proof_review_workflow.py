@@ -15,6 +15,8 @@ from typing import Any
 
 from .continuous_proof import assess_continuous_proof, verify_continuous_proof
 from .intake_parameters import verify_intake_binding
+from . import canonical_sha as _sha
+from . import CodedError
 
 
 INTENT_SCHEMA = "factory.intent-contract.v1"
@@ -62,14 +64,8 @@ _AUTHORITY = {
 }
 
 
-class ProofReviewError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
+class ProofReviewError(CodedError):
+    pass
 
 
 def _now() -> str:

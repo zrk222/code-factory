@@ -6,6 +6,7 @@ from copy import deepcopy
 from hashlib import sha256
 import json
 from typing import Any, Callable, Mapping
+from . import is_sha256_hex as _is_sha256
 
 
 class JevClassificationError(ValueError):
@@ -42,14 +43,6 @@ def _digest(value: object) -> str:
     return sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-
-
-def _is_sha256(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and all(character in "0123456789abcdef" for character in value)
-    )
 
 
 def build_informed_actionability_case(

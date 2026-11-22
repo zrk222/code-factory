@@ -39,6 +39,9 @@ from .enterprise_receipts import (
     verify_entitlement_envelope,
 )
 from .enterprise_ops import RERUN_BINDING_FIELDS
+from . import utc_now as _now
+from . import PrefixedCodedError
+from . import PrefixedCodedRuntimeError
 
 WORKLOAD_IDENTITY_SCHEMA = "factory.workload-identity.v1"
 WORKLOAD_IDENTITY_PAYLOAD_TYPE = "application/vnd.factory.workload-identity.v1+json"
@@ -76,15 +79,8 @@ AUTHORITY = {
 }
 
 
-class EnterpriseEnforcementError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+class EnterpriseEnforcementError(PrefixedCodedRuntimeError):
+    pass
 
 
 def _stamp(value: datetime | None = None) -> str:
@@ -971,11 +967,8 @@ DECISIONS = frozenset(
 )
 
 
-class CommercialPolicyError(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
+class CommercialPolicyError(PrefixedCodedError):
+    pass
 
 
 def _commercial_require(condition: bool, code: str, message: str) -> None:
