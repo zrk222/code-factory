@@ -209,9 +209,13 @@ def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
     # This is terminal-history transport acceptance, not analyzer qualification.
     # Retain real Git inventory and a signed fresh child, but deliberately omit
     # Docker so placeholder lanes fail closed without host-dependent daemon waits.
-    test_path = os.pathsep.join(
-        [str(Path(shutil.which("git")).parent), str(Path(sys.executable).parent)]
-    )
+    git_directory = Path(shutil.which("git")).parent
+    if sys.platform == "linux":
+        # /usr/bin commonly contains both Git and Docker on hosted runners.
+        git_directory = tmp_path / "git-only"
+        git_directory.mkdir()
+        shutil.copy2(shutil.which("git"), git_directory / "git")
+    test_path = os.pathsep.join([str(git_directory), str(Path(sys.executable).parent)])
     assert shutil.which("git", path=test_path)
     assert shutil.which("docker", path=test_path) is None
     child = subprocess.Popen(
