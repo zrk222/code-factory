@@ -130,7 +130,11 @@ WORKDIR /src
 RUN git -C /src init -q \
     && git -C /src apply --check /tmp/gitleaks-rule-ledger.patch \
     && git -C /src apply /tmp/gitleaks-rule-ledger.patch \
-    && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/zricethezav/gitleaks/v8/cmd.Version=8.28.0" -o /gitleaks .
+    && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/zricethezav/gitleaks/v8/cmd.Version=8.28.0" -o /gitleaks . \
+    && test "$(/gitleaks version)" = "8.28.0" \
+    && mkdir /tmp/gitleaks-version-probe \
+    && /gitleaks dir /tmp/gitleaks-version-probe --no-banner --report-format sarif --report-path /tmp/gitleaks-version.sarif \
+    && grep -Eq '"semanticVersion": *"8.28.0"' /tmp/gitleaks-version.sarif
 FROM sdk AS gitleaks-worker
 COPY --from=gitleaks-build /gitleaks /usr/bin/gitleaks
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/gitleaks.json /opt/factory/adapter-profile.json

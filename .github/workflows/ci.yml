@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install optional native acceptance tools
-        run: python -m pip install -e ".[dev]" -e .integration/prestige pytest playwright==1.57.0
+        run: python -m pip install -e ".[dev]" ./.integration/prestige pytest playwright==1.57.0
       - name: Install the pinned Playwright browser
         run: python -m playwright install --with-deps chromium
       - name: Require actual browser and Prestige execution

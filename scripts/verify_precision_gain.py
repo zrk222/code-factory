@@ -840,13 +840,16 @@ def fetch_cache(record: dict, cache: Path, work: Path) -> None:
             data = git(clone, "show", f"{item['parent']}:{item['path']}")
             if digest(data) != item["sha256"]:
                 raise ValueError("downloaded source digest differs")
-            target = _cache_path(cache, case, item)
-            if target.exists():
-                if _recall_file_hash(target) != item["sha256"]:
-                    raise ValueError("refusing to overwrite different cached source")
-            else:
-                with target.open("xb") as stream:
-                    stream.write(data)
+            _recall_store_source(_cache_path(cache, case, item), item["sha256"], data)
+
+
+def _recall_store_source(target, expected_hash, data):
+    if target.exists():
+        if _recall_file_hash(target) != expected_hash:
+            raise ValueError("refusing to overwrite different cached source")
+    else:
+        with target.open("xb") as stream:
+            stream.write(data)
 
 
 def check_cache(record: dict, cache: Path) -> int:
@@ -904,21 +907,7 @@ def replay_pattern(record: dict, cache: Path, opengrep: str, ruleset: Path) -> N
         max_stream_bytes=16 * 1024 * 1024,
     )
     report = _recall_native_report(facts, record, cache)
-    cases = {case["ghsa"]: case for case in record["cases"]}
-    observed = set()
-    for result in report["results"]:
-        ghsa, prefix, path = _recall_result_path(result["path"], cache)
-        case = cases[ghsa]
-        rule = ".".join(result["check_id"].split(".")[-2:])
-        wanted = {families.get(cwe) for cwe in case["cwes"]} - {None}
-        if not {families.get(cwe) for cwe in rule_cwes[rule]} & wanted:
-            continue
-        for item in case["prefix_files"]:
-            if item["path"] == path and item["parent"].startswith(prefix):
-                if _in_hunk(case, item["parent"], path, result["start"]["line"]):
-                    observed.add(
-                        (ghsa, rule, item["parent"], path, result["start"]["line"])
-                    )
+    observed = _recall_matching_results(report, record, cache, families, rule_cwes)
     expected = {
         (case["ghsa"], hit["rule"], hit["parent"], hit["path"], hit["line"])
         for case in record["cases"]
@@ -935,6 +924,26 @@ def replay_pattern(record: dict, cache: Path, opengrep: str, ruleset: Path) -> N
     ):
         raise ValueError("tool or ruleset drift during replay")
     check_cache(record, cache)
+
+
+def _recall_matching_results(report, record, cache, families, rule_cwes):
+    cases = {case["ghsa"]: case for case in record["cases"]}
+    observed = set()
+    for result in report["results"]:
+        ghsa, prefix, path = _recall_result_path(result["path"], cache)
+        case = cases[ghsa]
+        rule = ".".join(result["check_id"].split(".")[-2:])
+        wanted = {families.get(cwe) for cwe in case["cwes"]} - {None}
+        if not {families.get(cwe) for cwe in rule_cwes[rule]} & wanted:
+            continue
+        observed.update(
+            (ghsa, rule, item["parent"], path, result["start"]["line"])
+            for item in case["prefix_files"]
+            if item["path"] == path
+            and item["parent"].startswith(prefix)
+            and _in_hunk(case, item["parent"], path, result["start"]["line"])
+        )
+    return observed
 
 
 def _recall_result_path(value, cache):
