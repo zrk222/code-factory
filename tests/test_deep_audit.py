@@ -224,6 +224,40 @@ def _capture_scope_gap_control(
     return deep_audit, args, state, counters
 
 
+@pytest.mark.parametrize(
+    "language", ["python", "javascript", "typescript", "ruby", "go"]
+)
+def test_uncovered_static_source_names_supported_profiles_only(language):
+    import re
+
+    from factoryline.audit_taxonomy import _NATIVE_WORKERS
+    from factoryline.deep_audit import _source_gaps
+
+    supported = {worker["profile"] for worker in _NATIVE_WORKERS.values()} | {
+        variant["profile"]
+        for worker in _NATIVE_WORKERS.values()
+        for variant in worker.get("variants", {}).values()
+    }
+    profiles_dir = Path(__file__).parents[1] / "deploy/deep-adapters/profiles"
+    gaps = _source_gaps({f"app.{language}": {"language": language}}, {}, [])
+    [static] = [gap for gap in gaps if gap["action"].startswith("Add a static ")]
+    named = re.findall(r"[\w-]+\.json", static["action"])
+    assert named and all(name in supported for name in named)
+    assert all((profiles_dir / name).is_file() for name in named)
+    assert ("codeql-" in static["action"]) is (language != "go")
+    assert static["code"] == "UNCOVERED_SOURCE"
+    assert static["action"].endswith(
+        "naming a profile does not install, run or complete its worker."
+    )
+    assert not re.search(
+        r"\b(installed|available|completed?|covered|passed)\b",
+        static["action"].split(";")[0],
+    )
+    assert all(
+        "Supported profiles" not in gap["action"] for gap in gaps if gap is not static
+    )
+
+
 @pytest.mark.parametrize("code", ["UNCOVERED_SOURCE", "DEPENDENCY_DEPTH"])
 def test_capture_retains_authorized_static_observations_despite_other_scope_gaps(
     tmp_path, monkeypatch, code

@@ -107,6 +107,32 @@ extraction needs dependency resolution that network-less workers cannot do.
 Route library-level findings to the CodeQL lanes; the pattern lane stays a
 local web-handler and unsafe-API detector.
 
+Factory-level advisory recall ([record](../../docs/evidence/advisory-recall-factory-20261121.json),
+verify with `python scripts/verify_precision_gain.py advisory-recall <record>
+[--prefix-cache DIR --opengrep BIN]`): on the 161 advisories where the pattern lane alone scored 0,
+20 are detected in fix hunks by at least one lane. That combined figure is
+descriptive and **not held out**. The record keeps the lanes apart:
+
+- CodeQL (untuned stock queries; the Ruby worker decision used part of these
+  results; 36 of the analyzed advisories were added after registration): 15 of
+  91 analyzed (Wilson 10.3-25.4%): Ruby 8 of 25, JS/TS 4 of 25, Python 3 of
+  25, and 0 of 16 across Go, Maven and crates.io.
+- Pattern lane (exposed: its Java trust and Ruby TLS shapes were developed on
+  these advisories): 6 of 161 (Maven 4, Ruby 2). One Ruby advisory is detected
+  by both lanes.
+- Not executed by CodeQL: Packagist 25 (no extractor); 33 Go and Maven
+  advisories outside the sample; 10 extraction failures (Go 2, Maven 1,
+  NuGet 7); 2 NuGet advisories with no class-matching query.
+
+Each case binds the fix and pre-fix revisions, pre-fix file digests, fix hunks
+and every detection. The record also binds the ruleset, OpenGrep binary,
+CodeQL bundle, query packs and selected query sets. The verifier recomputes
+the summary from the cases. With a pre-fix cache it re-runs the pattern lane
+and requires identical detections. Neither a wider CodeQL threat model (0
+changes on 25 paired advisories) nor a PHP library-input rule (2 of 25 fresh
+advisories; 0 of 19 decided fresh alerts supported) closes the gap, so
+neither ships.
+
 ## Efficient unified operation
 
 Use `factory scan --deep --worker-config PATH --json` with explicit signed,
