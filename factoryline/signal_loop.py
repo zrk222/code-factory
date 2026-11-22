@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from . import canonical_ascii_json_compat_bytes as _canonical
 
-from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
@@ -19,6 +18,7 @@ from typing import Any, Iterable
 
 from .product_missions import compile_product_text
 from .failure_guidance import explain_failure
+from . import utc_iso as _now
 
 
 SIGNAL_SCHEMA = "factory.signal.v1"
@@ -43,10 +43,6 @@ class SignalLoopError(ValueError):
         self.code = code
         self.message = message
         self.guidance = explain_failure(code, message)
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _sha(value: object) -> str:

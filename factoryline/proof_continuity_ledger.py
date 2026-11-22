@@ -9,16 +9,17 @@ code, contact a provider, or decide that a release is approved.
 from __future__ import annotations
 
 from .contract import write_atomic_json as _atomic
-from . import canonical_json_compat_bytes as _canonical
 
-from datetime import datetime, timezone
-import hashlib
 import json
 from pathlib import Path
 import re
 from typing import Any
 
 from .oracle_firewall import AUTHORITY, verify_oracle_contract
+from . import utc_stamp as _now
+from . import compat_sha as _sha
+from . import file_sha256 as _file_sha
+from . import CodedError
 
 
 CONTRACT_INPUT_SCHEMA = "factory.proof-continuity-contract-input.v1"
@@ -48,29 +49,8 @@ _HASH_FIELDS = {
 }
 
 
-class ProofContinuityError(ValueError):
+class ProofContinuityError(CodedError):
     """Stable local refusal for the proof-continuity boundary."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
 
 
 def _text(value: object, field: str, limit: int = 800) -> str:

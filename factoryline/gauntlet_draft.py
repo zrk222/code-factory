@@ -5,12 +5,14 @@ from __future__ import annotations
 from . import canonical_json_compat_bytes as _canonical
 
 import ast
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
 from typing import Any
+from . import compat_sha as _sha
+from . import file_sha256 as _file_sha
+from . import CodedError
 
 try:
     import tomllib
@@ -39,18 +41,8 @@ _AUTHORITY = {
 }
 
 
-class GauntletDraftError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+class GauntletDraftError(CodedError):
+    pass
 
 
 def _write(path: Path, payload: dict[str, Any]) -> Path:

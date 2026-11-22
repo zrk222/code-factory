@@ -23,6 +23,7 @@ from .assembly_process import run_cli_detailed
 from .context_efficiency import (
     build_informed_sink_context as build_informed_sink_context,
 )
+from . import CodedError
 
 
 SCHEMA = "factory.analysis-evidence.v1"
@@ -834,10 +835,8 @@ def evaluate_spans_file(
         )
 
 
-class AnalysisEvidenceError(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
+class AnalysisEvidenceError(CodedError):
+    pass
 
 
 def evaluate_trace_file(

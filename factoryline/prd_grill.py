@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from . import canonical_json_compat_bytes as _canonical
 
-from datetime import datetime, timezone
-from hashlib import sha256
 from importlib.resources import files
 import json
 import os
@@ -14,6 +12,8 @@ import tempfile
 from typing import Any
 
 from .product_missions import ProductMissionError, analyze_product_text
+from . import utc_iso as _now
+from . import sha256_hex as _sha
 
 
 PRD_GRILL_SCHEMA = "factory.prd_grill.v1"
@@ -111,14 +111,6 @@ _QUESTION_SPECS = {
         "depends_on": ["Q-OUTCOMES"],
     },
 }
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _sha(value: bytes) -> str:
-    return sha256(value).hexdigest()
 
 
 def _atomic_write(path: Path, data: bytes, *, force: bool) -> Path:

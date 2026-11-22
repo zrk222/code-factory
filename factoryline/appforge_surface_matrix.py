@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from .contract import write_atomic_json
-from . import canonical_json_compat_bytes as _canonical
 
 from pathlib import Path
 from typing import Any
@@ -14,14 +13,11 @@ from .appforge_evidence_kit import _read_candidate
 from .appforge_native_surface import RECEIPT_SCHEMA as NATIVE_RECEIPT_SCHEMA
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import compat_sha as _sha
 
 
 RECEIPT_SCHEMA = "factory.appforge.surface-matrix-receipt.v1"
 MAX_BYTES = 1_048_576
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _local(root: Path, path: Path, *, exists: bool = True) -> Path:

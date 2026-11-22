@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from hashlib import sha256
 import json
@@ -16,6 +15,8 @@ from .continuity import (
     _is_expired,
     recall_continuity_metadata_read_only,
 )
+from . import compat_sha as _sha
+from . import CodedError
 
 
 GUARDRAIL_MANIFEST_SCHEMA = "factory.guardrail-manifest.v1"
@@ -26,14 +27,8 @@ _RISK_TAGS = frozenset(
 )
 
 
-class GuardrailError(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
+class GuardrailError(CodedError):
+    pass
 
 
 def _text(

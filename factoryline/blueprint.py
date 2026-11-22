@@ -9,13 +9,13 @@ task, or grants release authority.
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
 from datetime import datetime, timezone
-from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any, Iterable
+from . import canonical_or_bytes_sha as _sha
+from . import PrefixedCodedError
 
 
 BLUEPRINT_SCHEMA = "factory.ai-native-blueprint.v1"
@@ -34,17 +34,8 @@ ACCESS_PROFILES = {"read_write", "read_only", "masked"}
 ARTIFACT_STATUSES = {"draft", "approved", "processed"}
 
 
-class BlueprintError(ValueError):
+class BlueprintError(PrefixedCodedError):
     """Closed-class blueprint contract failure."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-
-
-def _sha(value: object) -> str:
-    return sha256(value if isinstance(value, bytes) else _canonical(value)).hexdigest()
 
 
 def _text(value: object, field: str, maximum: int = 240) -> str:

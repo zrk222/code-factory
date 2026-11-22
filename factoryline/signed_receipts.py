@@ -18,6 +18,7 @@ import sys
 from typing import Sequence
 
 from .enterprise_receipts import _json_loads
+from . import PrefixedCodedRuntimeError
 
 RESULT_SCHEMA = "factory.sigstore.result.v1"
 DEFAULT_TIMEOUT_SECONDS = 300
@@ -459,11 +460,8 @@ def fetch_ci_receipt(commit: str, output: Path) -> dict:
     )
 
 
-class SignedReceiptError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
+class SignedReceiptError(PrefixedCodedRuntimeError):
+    pass
 
 
 @dataclass(frozen=True)

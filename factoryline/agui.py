@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from . import canonical_json_bytes as _canonical
 
-from hashlib import sha256
 import re
 from typing import Any, Iterable
+from . import canonical_or_bytes_sha as _sha
+from . import CodedError
 
 
 SCHEMA = "factory.agui.events.v1"
@@ -37,16 +38,8 @@ _FORBIDDEN_KEYS = frozenset(
 _RUN_ID = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,95}$")
 
 
-class AguiError(ValueError):
+class AguiError(CodedError):
     """Fail-closed error at the controlled AGUI event boundary."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(value if isinstance(value, bytes) else _canonical(value)).hexdigest()
 
 
 def _run_id(value: object) -> str:

@@ -40,6 +40,7 @@ from .runtime_audit_common import (
     require_str,
     sha256_bytes,
 )
+from . import PrefixedCodedError
 
 
 SCHEMA = "factory.runtime-boundary-attestation.v1"
@@ -81,13 +82,8 @@ _EXPECTED_BACKENDS = {
 }
 
 
-class RuntimeAttestationError(ValueError):
+class RuntimeAttestationError(PrefixedCodedError):
     """Stable fail-closed error for runtime-boundary observations."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _timestamp(value: object, field: str) -> datetime:

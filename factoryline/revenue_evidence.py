@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -21,6 +20,7 @@ from .revenueforge import (
     _local,
     validate_products,
 )
+from . import compat_sha as _sha
 
 
 REPLAY_SCHEMA = "factory.revenueforge.purchase-replay.v1"
@@ -63,10 +63,6 @@ SENSITIVE_KEYS = {
     "signed_payload",
     "jws",
 }
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _read_json(root: Path, value: Path) -> tuple[dict[str, Any], Path]:

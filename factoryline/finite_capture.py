@@ -347,6 +347,7 @@ from .pickle_model_audit import (
 from .pickle_model_audit import (
     _provider_v2_instance_state_cost as _provider_v2_instance_state_cost,
 )
+from . import node_span as _finite_source_span
 
 _AST_TRY_NODES = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
@@ -2782,13 +2783,6 @@ def _finite_eval_source_call(node, call_name, source_bytes, source_path):
     if len(matches) != 1 or ast.dump(matches[0]) != ast.dump(node):
         return None
     return tree, matches[0]
-
-
-def _finite_source_span(node):
-    return [
-        getattr(node, key, None)
-        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-    ]
 
 
 def _finite_eval_closed_domain(tree, call):

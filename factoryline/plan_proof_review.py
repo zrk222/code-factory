@@ -8,15 +8,16 @@ facts and derives the remaining obligations a human must settle.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
-from hashlib import sha256
 import json
 from pathlib import Path
 import re
 from typing import Any
 
 from .change_review import review_change
+from . import compat_sha as _sha
+from . import atomic_text as _atomic_text
+from . import CodedError
 
 
 AGENT_PLAN_SCHEMA = "factory.agent_plan.v1"
@@ -44,16 +45,8 @@ AUTHORITY = {
 }
 
 
-class PlanProofReviewError(ValueError):
+class PlanProofReviewError(CodedError):
     """A rejected agent-plan envelope or Plan-to-Proof review payload."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _reject(message: str) -> None:
@@ -561,14 +554,6 @@ def validate_plan_proof_review(value: object) -> dict[str, Any]:
             "the Plan-to-Proof review SHA-256 does not match",
         )
     return value
-
-
-def _atomic_text(path: Path, content: str) -> str:
-    encoded = content.encode("utf-8")
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_bytes(encoded)
-    temporary.replace(path)
-    return sha256(encoded).hexdigest()
 
 
 def write_plan_proof_review_artifacts(

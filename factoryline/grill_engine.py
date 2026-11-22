@@ -8,12 +8,12 @@ and the final contract has an explicit confirmation stop-gate.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 import re
 from typing import Any
+from . import utc_iso as _now
 
 
 SCHEMA = "factory.grill-session.v1"
@@ -26,10 +26,6 @@ def _sha(value: Any) -> str:
             value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode("utf-8")
     ).hexdigest()
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _session_path(root: Path, session_id: str) -> Path:

@@ -76,6 +76,8 @@ from .finite_capture import (
     finite_template_program_hashes,
 )
 from .provenance import _LiteralConsumers as _LiteralConsumers
+from . import node_span as _source_span
+from . import node_span as _source_eval_span
 
 
 def _full_repository_workspace_store_prefix(
@@ -290,13 +292,6 @@ def _closed_declaration_binding(tree, call):
         ):
             return False
     return True
-
-
-def _source_span(node):
-    return [
-        getattr(node, key, None)
-        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-    ]
 
 
 def _exact_source_call(source_bytes, node):
@@ -578,13 +573,6 @@ def fixed_literal_program_witness(
             "max_ast_nodes": 1024,
         },
     }
-
-
-def _source_eval_span(node):
-    return [
-        getattr(node, key, None)
-        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-    ]
 
 
 def _source_eval_call(node):
@@ -4375,10 +4363,6 @@ def _conditional_v3_enum_leaf(
         + row["member"]
     )
     return leaf if audit._resolved_ast_name(leaf, aliases) in paths else None
-
-
-def _conditional_resolved_name(node, aliases, audit):
-    return audit._resolved_ast_name(node, aliases)
 
 
 def _conditional_module_exports(selected_classes):

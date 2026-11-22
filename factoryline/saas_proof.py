@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -12,6 +11,8 @@ import hashlib
 import json
 import os
 import tempfile
+from . import compat_sha as _sha
+from . import CodedError
 
 
 CONTRACT_SCHEMA = "factory.saas-proof.contract.v1"
@@ -57,14 +58,8 @@ RELEASE_CANDIDATE_KEYS = (
 )
 
 
-class SaasProofError(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
+class SaasProofError(CodedError):
+    pass
 
 
 def _local(root: Path, value: Path, *, exists: bool = True) -> Path:

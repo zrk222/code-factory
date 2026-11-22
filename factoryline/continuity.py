@@ -23,6 +23,8 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Iterable, Iterator
 import uuid
+from . import utc_iso as _now
+from . import CodedRuntimeError
 
 
 CONTINUITY_SCHEMA = "factory.continuity.v1"
@@ -51,13 +53,8 @@ _ROLE_ACTIONS: dict[str, frozenset[str]] = {
 }
 
 
-class ContinuityError(RuntimeError):
+class ContinuityError(CodedRuntimeError):
     """Structured, fail-closed continuity error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 @dataclass(frozen=True)
@@ -102,10 +99,6 @@ def _canonical(value: Any) -> bytes:
 
 def _sha(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _parse_future_utc(value: object) -> str:

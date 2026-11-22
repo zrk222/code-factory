@@ -9,10 +9,8 @@ meaning, execute a tool, contact a network, or grant external authority.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime, timedelta, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -26,6 +24,8 @@ from .oracle_firewall import (
     OracleFirewallError,
     verify_oracle_contract,
 )
+from . import compat_sha as _sha
+from . import CodedError
 
 
 HANDOFF_INPUT_SCHEMA = "factory.semantic-handoff-input.v1"
@@ -67,16 +67,8 @@ FORBIDDEN_ACTIONS = frozenset(
 )
 
 
-class SemanticAuthorityError(ValueError):
+class SemanticAuthorityError(CodedError):
     """Stable, safe error suitable for a local incident or adapter receipt."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _now() -> datetime:

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
-import hashlib
 import json
 from pathlib import Path
 import re
 import subprocess
 from typing import Any
+from . import canonical_sha as _sha
+from . import CodedError
 
 
 MANIFEST_SCHEMA = "factory.repo-coordination-manifest.v1"
@@ -30,14 +30,8 @@ AUTHORITY = {
 }
 
 
-class RepoCoordinationError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
+class RepoCoordinationError(CodedError):
+    pass
 
 
 def _path(value: object, label: str) -> str:

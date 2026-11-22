@@ -24,6 +24,8 @@ from .reality_check import (
     validate_reality_check_receipt,
     write_reality_check_artifacts,
 )
+from . import compat_sha as _sha
+from . import CodedError
 
 
 AUTHORIZATION_SCHEMA = "factory.graph-ops-authorization.v1"
@@ -61,16 +63,8 @@ _AUTHORITY = {
 }
 
 
-class GraphAuthorizationError(ValueError):
+class GraphAuthorizationError(CodedError):
     """Raised for invalid, expired, replayed, or out-of-scope authorizations."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _reject(code: str, message: str) -> None:

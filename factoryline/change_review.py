@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -19,6 +18,9 @@ from .graph_ops import graph_ops_impact
 from .proof import git_changed_paths, risk_for_paths
 from .review_audits import ReviewAuditError, audit_code
 from .revenueforge import AUTHORITY as _CR_RECEIPT_AUTHORITY, RevenueForgeError
+from . import compat_sha as _sha
+from . import atomic_text as _atomic_text
+from . import CodedError
 
 
 CHANGE_REVIEW_SCHEMA = "factory.change_review.v1"
@@ -43,20 +45,12 @@ AUTHORITY = {
 }
 
 
-class ChangeReviewError(ValueError):
+class ChangeReviewError(CodedError):
     """A rejected local change-review input."""
 
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
-
-class RepositoryScopeError(ValueError):
+class RepositoryScopeError(CodedError):
     """A malformed scope policy or unavailable changed-path source."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 def _scope_policy_path(value: object) -> str:
@@ -461,10 +455,6 @@ def check_repository_scope(
     }
 
 
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
-
-
 def _changed_path(value: str) -> str:
     path = str(value).replace("\\", "/").strip()
     path = path.removeprefix("./")
@@ -862,14 +852,6 @@ def review_change(
     review["mermaid"] = _review_mermaid(changed_paths, impact, findings)
     review["review_markdown"] = _review_markdown(review)
     return review
-
-
-def _atomic_text(path: Path, content: str) -> str:
-    encoded = content.encode("utf-8")
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_bytes(encoded)
-    temporary.replace(path)
-    return sha256(encoded).hexdigest()
 
 
 def write_review_artifacts(review: dict, out_dir: Path) -> dict:

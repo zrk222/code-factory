@@ -10,7 +10,6 @@ or an explicit ``not_attempted`` release stage.
 from __future__ import annotations
 
 from .contract import write_atomic_json
-from . import canonical_json_bytes as _canonical
 
 import hashlib
 import json
@@ -21,6 +20,7 @@ from typing import Any
 from .appforge_evidence_kit import _read_candidate
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_sha as _sha
 
 
 CONTRACT_SCHEMA = "factory.appforge.mobile-evidence-contract.v1"
@@ -79,10 +79,6 @@ STAGE_STATES = frozenset(
 )
 METRICS = ("crash_free_rate", "anr_rate", "hang_rate", "startup_ms")
 PASS = "passed"
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _file_sha(path: Path) -> str:

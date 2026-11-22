@@ -25,6 +25,7 @@ from .control_plane import (
 from .hosted_identity import HttpTransport, JwksCache, get_jwks
 from .integrations import principal_from_verified_oidc
 from .pr_assurance import PRAssuranceError, verify_oidc_token
+from . import utc_now as _utcnow
 
 
 CONTROL_SCHEMA = "factory.hosted-control.postgres.v1"
@@ -307,10 +308,6 @@ CREATE POLICY factory_hosted_repairs_tenant ON factory_hosted_repairs
   USING (tenant_id = current_setting('factory.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('factory.tenant_id', true));
 """
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _utc_audit_timestamp(value: datetime) -> datetime:

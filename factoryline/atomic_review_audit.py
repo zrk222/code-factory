@@ -7,7 +7,6 @@ correctness or release readiness.
 
 from __future__ import annotations
 
-from hashlib import sha256
 import json
 from pathlib import Path, PureWindowsPath
 import re
@@ -16,6 +15,8 @@ import unicodedata
 import uuid
 from typing import Any
 from . import canonical_json_compat_bytes as _canonical
+from . import compat_sha as _digest
+from . import CodedError
 
 
 CONTRACT_SCHEMA = "factory.atomic-review-contract.v1"
@@ -48,16 +49,8 @@ _ALIGNMENTS = {
 }
 
 
-class ReviewConvergenceError(ValueError):
+class ReviewConvergenceError(CodedError):
     """Rejected review-convergence input."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _digest(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

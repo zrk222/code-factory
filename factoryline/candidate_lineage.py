@@ -7,7 +7,6 @@ graph, analyzer, repair, approval, or release action.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -16,6 +15,8 @@ from typing import Any
 from .deep_audit import _read_receipt
 from .graph_forensics import verify_graph_lineage
 from .oracle_firewall import verify_oracle_contract
+from . import file_sha256 as _sha_file
+from . import CodedError
 
 
 SCHEMA = "factory.candidate-lineage-input.v1"
@@ -37,20 +38,8 @@ _AUTHORITY = {
 }
 
 
-class CandidateLineageError(ValueError):
+class CandidateLineageError(CodedError):
     """Stable, fail-closed continuity error."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _sha(value: object, field: str) -> str:

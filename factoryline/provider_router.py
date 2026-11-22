@@ -6,7 +6,6 @@ from . import canonical_json_bytes as _canonical_encode
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-import hashlib
 import json
 import math
 import os
@@ -15,6 +14,7 @@ import tempfile
 
 from .failure_guidance import explain_failure
 from .mission_graph import QUALITY_TIERS, mission_graph_status, recommend_mission_route
+from . import sha256_hex as _sha_bytes
 
 
 POLICY_SCHEMA = "factory.provider-policy.v1"
@@ -65,10 +65,6 @@ def _canonical(value: object) -> bytes:
         raise ProviderRouterError(
             "PROVIDER_POLICY_INVALID", f"policy must be canonical JSON: {exc}"
         ) from exc
-
-
-def _sha_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
 
 
 def _load(path: Path) -> dict[str, Any]:

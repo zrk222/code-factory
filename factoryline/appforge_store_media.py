@@ -6,7 +6,6 @@ contact App Store Connect, generate screenshots, or claim Apple approval.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +16,8 @@ import os
 import struct
 import tempfile
 import zlib
+from . import compat_sha as _sha
+from . import CodedError
 
 
 CONTRACT_SCHEMA = "factory.appforge.store-media-contract.v1"
@@ -34,14 +35,8 @@ AUTHORITY = {
 }
 
 
-class StoreMediaError(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
+class StoreMediaError(CodedError):
+    pass
 
 
 def _text(value: object, field: str, *, limit: int = 300) -> str:

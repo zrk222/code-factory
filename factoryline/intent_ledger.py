@@ -9,7 +9,6 @@ proof visible without inventing intent, running a test, or granting authority.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -21,6 +20,8 @@ from typing import Any
 
 from .change_review import ChangeReviewError, review_change
 from .intent_quality import IntentQualityError, require_clear
+from . import compat_sha as _sha
+from . import CodedError
 
 
 INTENT_LEDGER_SCHEMA = "factory.intent-ledger.v1"
@@ -63,16 +64,8 @@ CAPTURE_AUTHORITY = {
 INSPECTION_AUTHORITY = {**CAPTURE_AUTHORITY, "record_write": False}
 
 
-class IntentLedgerError(ValueError):
+class IntentLedgerError(CodedError):
     """Raised when an Intent Ledger input cannot be trusted."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _text(value: object, field: str, *, maximum: int = MAX_TEXT) -> str:

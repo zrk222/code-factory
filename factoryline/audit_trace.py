@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from . import canonical_json_bytes as _canonical
 
-import hashlib
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 from typing import Any
+from . import sha256_hex as _digest
 
 
 TRACE_SCHEMA = "factory.audit-trace.v1"
@@ -25,10 +25,6 @@ _TRACE_TOKEN = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 
 class AuditTraceError(ValueError):
     """Raised when trace input cannot be safely and reproducibly bound."""
-
-
-def _digest(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
 
 
 def _workspace_path(root: Path, raw: object) -> tuple[str, Path]:

@@ -9,7 +9,6 @@ reviewable and fail-closed.
 from __future__ import annotations
 
 from . import canonical_json_bytes as _canonical_encode
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -22,6 +21,9 @@ from typing import Any
 from .e2e_proof import E2EProofError, validate_e2e_proof_receipt
 from .journey_proof import JourneyProofError, validate_failure_capsule
 from .protocol import OperationsEvidenceTier, OperationsWorkKind
+from . import utc_stamp as _now
+from . import file_sha256 as _file_sha
+from . import CodedError
 
 
 MANIFEST_SCHEMA = "factory.operations-control-manifest.v1"
@@ -48,10 +50,8 @@ AUTHORITY = {
 }
 
 
-class OperationsControlError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
+class OperationsControlError(CodedError):
+    pass
 
 
 def _canonical(value: object) -> bytes:
@@ -65,23 +65,6 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
 
 
 def _exact(value: object, fields: set[str], label: str) -> dict[str, Any]:

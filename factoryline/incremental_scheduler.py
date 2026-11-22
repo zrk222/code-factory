@@ -24,19 +24,15 @@ from .runtime_audit_common import (
     require_str,
     require_unique_strings,
 )
+from . import PrefixedCodedError
 
 
 SCHEMA = "factory.incremental-plan.v1"
 ASSURANCE_LEVELS = ("supervised_local", "isolated_worker", "hardened_vm")
 
 
-class SchedulerError(ValueError):
+class SchedulerError(PrefixedCodedError):
     """Stable, fail-closed schedule manifest error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _paths(

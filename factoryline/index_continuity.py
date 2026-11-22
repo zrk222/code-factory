@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .workspace_advisor import WorkspaceAdvisorError, inspect_workspace
+from . import CodedError
 
 
 INDEX_CONTINUITY_SCHEMA = "factory.index_continuity.v1"
@@ -49,12 +50,8 @@ _STRUCTURAL_PATTERNS = (
 _SOURCE_ROOTS = {"src", "lib", "app", "apps", "packages", "modules", "test", "tests"}
 
 
-class IndexContinuityError(ValueError):
+class IndexContinuityError(CodedError):
     """Stable refusal from the local continuity guard."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 def _sha_file(path: Path) -> str:

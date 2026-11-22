@@ -6,7 +6,6 @@ changes a repository rule, approves a pull request, or makes a merge decision.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -19,6 +18,8 @@ from .github_proof_review import (
     GITHUB_PROOF_REVIEW_SCHEMA,
     validate_github_proof_review_payload,
 )
+from . import compat_sha as _sha
+from . import CodedError
 
 
 GITHUB_POLICY_SNAPSHOT_SCHEMA = "factory.github_policy_snapshot.v1"
@@ -45,16 +46,8 @@ AUTHORITY = {
 }
 
 
-class GitHubAssuranceDossierError(ValueError):
+class GitHubAssuranceDossierError(CodedError):
     """A supplied policy, exception, or review cannot support a dossier."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _reject(code: str, message: str) -> None:

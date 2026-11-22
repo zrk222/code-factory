@@ -9,9 +9,7 @@ or grants an external permission.
 from __future__ import annotations
 
 from .contract import write_atomic_json as _atomic_json
-from . import canonical_json_compat_bytes as _canonical
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -22,6 +20,10 @@ from typing import Any
 
 from .agent_license import normalize_agent_identity
 from .protocol import AuthorityOrigin, RuleEffect
+from . import utc_stamp as _now
+from . import compat_sha as _sha
+from . import file_sha256 as _file_sha
+from . import CodedError
 
 
 HANDOFF_SCHEMA = "factory.intent-handoff.v1"
@@ -63,29 +65,8 @@ AUTHORITY = {
 }
 
 
-class OracleFirewallError(ValueError):
+class OracleFirewallError(CodedError):
     """Stable local failure with a code suitable for receipts and adapters."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
 
 
 def _text(value: object, field: str, *, limit: int = 800) -> str:

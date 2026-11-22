@@ -10,10 +10,7 @@ store provider.
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
-from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path, PureWindowsPath
@@ -22,6 +19,9 @@ import tempfile
 from typing import Any
 
 import yaml
+from . import utc_iso as _now
+from . import canonical_or_bytes_sha as _sha
+from . import CodedMessageError
 
 
 SPEC_SCHEMA = "factory.full-stack-ux-harness.spec.v1"
@@ -95,13 +95,8 @@ LEGACY_REQUIREMENTS = frozenset(
 )
 
 
-class FullStackUXSpecError(ValueError):
+class FullStackUXSpecError(CodedMessageError):
     """Stable fail-closed error for an unavailable or unsafe SSAT source."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -125,16 +120,6 @@ def _construct_unique_mapping(
 _UniqueKeyLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping
 )
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(
-        value if isinstance(value, bytes) else _canonical(value)
-    ).hexdigest()
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _text(value: object, field: str, *, limit: int = 512) -> str:

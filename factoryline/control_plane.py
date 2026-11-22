@@ -14,6 +14,8 @@ from pathlib import Path
 import sqlite3
 import uuid
 from typing import Any, Iterable
+from . import utc_iso as _now
+from . import CodedRuntimeError
 
 
 CONTROL_PLANE_SCHEMA = "factory.control-plane.v1"
@@ -22,13 +24,8 @@ AUDIT_SCHEMA = "factory.audit.event.v1"
 APPROVAL_SCHEMA = "factory.approval.request.v1"
 
 
-class ControlPlaneError(RuntimeError):
+class ControlPlaneError(CodedRuntimeError):
     """Structured, fail-closed control-plane error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 @dataclass(frozen=True)
@@ -102,10 +99,6 @@ def canonical_json(value: Any) -> bytes:
 def sha256(value: bytes) -> str:
     """Return the lowercase SHA-256 digest that binds the supplied byte string."""
     return hashlib.sha256(value).hexdigest()
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def authorize(principal: Principal, action: str, tenant_id: str) -> None:

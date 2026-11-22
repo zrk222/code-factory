@@ -4,26 +4,21 @@ from __future__ import annotations
 
 from . import canonical_json_compat_bytes as _canonical
 
-from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any
 
 from .graph_forensics import verify_graph_lineage
+from . import compat_sha as _sha
+from . import CodedError
 
 
 RESILIENCE_PLAN_SCHEMA = "factory.temporal-resilience-plan.v1"
 MAX_SCHEDULES = 64
 
 
-class ResilienceError(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
+class ResilienceError(CodedError):
+    pass
 
 
 def _relative(root: Path, path: Path) -> str:

@@ -7,7 +7,6 @@ separate. It never generates code, executes commands, or changes a workspace.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from itertools import combinations
 from pathlib import Path
@@ -17,6 +16,8 @@ import json
 import re
 
 from .proofsearch import _write, verify_proofsearch_evaluation
+from . import compat_sha as _digest
+from . import CodedError
 
 
 REQUEST_SCHEMA = "factory.evidence-frontier-request.v1"
@@ -44,16 +45,8 @@ _AUTHORITY = {
 }
 
 
-class EvidenceFrontierError(ValueError):
+class EvidenceFrontierError(CodedError):
     """Closed, user-correctable Evidence Frontier contract failure."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _digest(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _load(path: Path) -> dict[str, Any]:

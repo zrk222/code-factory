@@ -7,17 +7,15 @@ import hashlib
 from typing import Any, Iterable
 
 from .control_plane import canonical_json, sha256
+from . import CodedRuntimeError
 
 
 COMPLIANCE_SCHEMA = "factory.compliance.v1"
 OSCAL_SCHEMA = "https://docs.oasis-open.org/oscal/assessment-common/v1.1/oscal-assessment-common.json"
 
 
-class ComplianceError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+class ComplianceError(CodedRuntimeError):
+    pass
 
 
 # These are deliberately factory-owned mappings, not claims of complete

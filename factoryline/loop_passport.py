@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from . import canonical_json_compat_bytes as _canonical
 
-from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -14,6 +13,8 @@ import math
 import re
 import sqlite3
 import uuid
+from . import utc_iso as _now
+from . import file_sha256 as _sha256_path
 
 
 LOOP_MANIFEST_SCHEMA = "factory.loop.manifest.v1"
@@ -694,14 +695,6 @@ def _runtime_guard(
     if session["status"] != "ACTIVE":
         return session, session["status"]
     return session, None
-
-
-def _sha256_path(path: Path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _error(errors: list[str], path: str, message: str) -> None:

@@ -7,14 +7,9 @@ hash-bound acknowledgement and never performs provider release work.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
-from hashlib import sha256
 from typing import Any
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
+from . import compat_sha as _sha
 
 
 class McpMrtError(ValueError):

@@ -11,9 +11,7 @@ provider.
 from __future__ import annotations
 
 from .contract import write_atomic_json as _atomic_json
-from . import canonical_json_compat_bytes as _canonical
 
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -23,6 +21,8 @@ from .appforge_evidence_kit import _read_candidate
 from .appforge_submission_assurance import RECEIPT_SCHEMA as ASSURANCE_SCHEMA
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import compat_sha as _sha
+from . import file_sha256 as _file_sha
 
 
 PROFILE_SCHEMA = "factory.appforge.release-automation-profile.v1"
@@ -54,14 +54,6 @@ SECRET_HINTS = (
     "apikey",
     "credential",
 )
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _local(root: Path, path: Path, *, exists: bool = True) -> Path:

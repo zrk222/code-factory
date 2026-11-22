@@ -9,10 +9,8 @@ receipt separate from device, Store media, TestFlight, and Apple evidence.
 from __future__ import annotations
 
 from .contract import write_atomic_json
-from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -21,6 +19,8 @@ from typing import Any
 from .appforge_evidence_kit import _read_candidate
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import compat_sha as _sha
+from . import file_sha256 as _file_sha
 
 
 CONTRACT_SCHEMA = "factory.appforge.native-surface-contract.v1"
@@ -37,14 +37,6 @@ ADAPTIVE_APIS = (
     "GeometryReader",
 )
 FORBIDDEN_SCREEN_GEOMETRY = ("UIScreen.main.bounds", "UIApplication.shared.windows")
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _text(value: object, field: str, *, limit: int = 500) -> str:

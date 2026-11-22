@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import hashlib
 import json
 import math
 import os
@@ -22,6 +20,8 @@ from .revenueforge import (
     RevenueForgeError,
     validate_products,
 )
+from . import compat_sha as _sha
+from . import sha256_hex as _sha_bytes
 
 
 LEDGER_SCHEMA = "factory.revenueforge.billing-ledger.v1"
@@ -64,14 +64,6 @@ EXTERNAL_AUTHORITY = {
     "winner_promotion": False,
     "price_change": False,
 }
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _sha_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
 
 
 def _workspace_path(root: Path, value: Path, *, exists: bool = True) -> Path:

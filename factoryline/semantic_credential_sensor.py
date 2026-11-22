@@ -25,6 +25,7 @@ from .credential_endpoint_admission import (
     SECURITY_EFFECT_CONTRACTS as SECURITY_EFFECT_CONTRACTS,
     SECURITY_EFFECT_WITNESS_SCHEMA as SECURITY_EFFECT_WITNESS_SCHEMA,
 )
+from . import node_span as _finite_source_span
 
 _AUTH_CALLS = frozenset({"requests.auth.HTTPBasicAuth", "httpx.BasicAuth"})
 _AUTH_HEADER = re.compile(r"(?i)^\s*(?:bearer|basic)\s+(.+?)\s*$")
@@ -5118,6 +5119,25 @@ def _sql_sink(
 def _security_builtin_identity_closed(
     module, aliases, names, *, readonly_reflection=None
 ):
+    """Memoize the proof on a scope-bound module; rebinding a reshaped tree resets it."""
+    try:
+        key = (frozenset(aliases.items()), frozenset(names), readonly_reflection)
+        hash(key)
+    except TypeError:
+        key = None
+    cache = getattr(module, "_security_builtin_identity_cache", None)
+    if key is None or cache is None:
+        return _security_builtin_identity_proof(
+            module, aliases, names, readonly_reflection
+        )
+    if key not in cache:
+        cache[key] = _security_builtin_identity_proof(
+            module, aliases, names, readonly_reflection
+        )
+    return cache[key]
+
+
+def _security_builtin_identity_proof(module, aliases, names, readonly_reflection):
     from .review_integrity import _resolve
 
     protected = (
@@ -5750,13 +5770,6 @@ def _security_helper_source_context(call, function):
     module = flow._security_module_scope(getattr(call, "_security_lexical_scope", None))
     index = getattr(module, "_security_source_model", None)
     return module, index, _security_source_path(index, module)
-
-
-def _finite_source_span(node):
-    return [
-        getattr(node, key, None)
-        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-    ]
 
 
 def source_built_ast_program_witness(node, call_name, *, source_bytes, source_path):

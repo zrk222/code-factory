@@ -17,6 +17,7 @@ import tempfile
 from typing import Any, Callable, Iterable
 
 from .control_plane import canonical_json, sha256
+from . import CodedRuntimeError
 
 
 ASSURANCE_SCHEMA = "factory.assurance.v1"
@@ -28,11 +29,8 @@ VEX_SCHEMA = "factory.vex.v1"
 CHALLENGE_SCHEMA = "factory.private.challenge-set.v1"
 
 
-class AssuranceError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+class AssuranceError(CodedRuntimeError):
+    pass
 
 
 def _required(value: Any, name: str) -> str:

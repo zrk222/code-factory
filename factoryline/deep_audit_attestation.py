@@ -27,6 +27,7 @@ from .runtime_audit_common import (
     require_int,
     require_str,
 )
+from . import PrefixedCodedError
 
 SCHEMA = "factory.deep-audit-attestation.v1"
 PAYLOAD_TYPE = "application/vnd.factory.deep-audit-attestation.v1+json"
@@ -652,13 +653,8 @@ def verify_execution_review(
     }
 
 
-class DeepAuditAttestationError(ValueError):
+class DeepAuditAttestationError(PrefixedCodedError):
     """Stable, review-safe error for an invalid external deep-audit attestation."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _fail(code: str, message: str) -> None:

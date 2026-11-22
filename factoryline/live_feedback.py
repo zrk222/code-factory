@@ -21,6 +21,7 @@ from .senior_assurance import (
     run_replay,
     validate_capture_outputs,
 )
+from . import PrefixedCodedError
 
 
 SCHEMA = "factory.live-feedback.v1"
@@ -52,13 +53,8 @@ _DENIED_ARGUMENTS = {
 }
 
 
-class LiveFeedbackError(ValueError):
+class LiveFeedbackError(PrefixedCodedError):
     """Stable fail-closed live-feedback validation error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _sha(value: object) -> str:

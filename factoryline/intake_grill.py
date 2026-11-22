@@ -12,10 +12,7 @@ authority.  A keyword shortlist is a review aid, not architectural advice.
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
-from datetime import datetime, timezone
-from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -25,6 +22,9 @@ from typing import Any
 
 from .product_missions import ProductMissionError, analyze_product_text
 from .intent_quality import IntentQualityError, require_clear
+from . import utc_iso as _now
+from . import canonical_sha as _sha
+from . import sha256_hex as _sha_bytes
 
 
 INTAKE_GRILL_SCHEMA = "factory.intake-grill.v1"
@@ -105,18 +105,6 @@ _FRAMEWORKS: tuple[dict[str, Any], ...] = (
         "use_when": "No listed surface fits, or a human has not made the framework decision yet.",
     },
 )
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
-
-
-def _sha_bytes(value: bytes) -> str:
-    return sha256(value).hexdigest()
 
 
 def _project_id(value: str) -> str:
