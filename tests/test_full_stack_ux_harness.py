@@ -303,6 +303,45 @@ def test_visual_noexecute_never_discovers_tools_or_launches(tmp_path, monkeypatc
     assert (tmp_path / "app.html").read_text().startswith("<button")
 
 
+_VISUAL_MUTATIONS = {
+    "forged": lambda contract, case: case.update(passed=True),
+    "remote": lambda contract, case: contract.update(target="https://example.com/"),
+    "agent": lambda contract, case: contract["reviewer"].update(type="agent"),
+    "empty": lambda contract, case: contract.update(candidate=[]),
+    "duplicate": lambda contract, case: contract.update(
+        candidate=contract["candidate"] * 2
+    ),
+    "threshold": lambda contract, case: case.update(max_changed_ratio=0.02),
+    "deadline": lambda contract, case: case.update(timeout_ms=True),
+    "escape": lambda contract, case: contract["candidate"][0].update(
+        path="../outside.html"
+    ),
+    "source_hash": lambda contract, case: contract["candidate"][0].update(
+        sha256="0" * 64
+    ),
+    "empty_cases": lambda contract, case: contract.update(cases=[]),
+    "duplicate_cases": lambda contract, case: contract.update(
+        cases=contract["cases"] * 2
+    ),
+    "width": lambda contract, case: contract["browser"].update(width=319),
+    "css_property": lambda contract, case: case.update(
+        tokens=[{"selector": "body", "property": "behavior", "value": "evil"}]
+    ),
+    "fixture_false": lambda contract, case: contract.update(fixture_only=False),
+    "fixture_absent": lambda contract, case: contract.pop("fixture_only"),
+    "response": lambda contract, case: case.update(
+        response={
+            "method": "POST",
+            "path": "/save",
+            "status": 200,
+            "field": "saved",
+            "value": True,
+            "correlation": {"header": "x-cf-action", "value": "ready"},
+        }
+    ),
+}
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -335,46 +374,8 @@ def test_visual_admission_rejects_untrusted_contract_before_execution(
 
     monkeypatch.setattr(harness, "_visual_tool_identity", forbidden)
     contract = _visual_contract(tmp_path)
-    case = contract["cases"][0]
-    if mutation == "forged":
-        case["passed"] = True
-    elif mutation == "remote":
-        contract["target"] = "https://example.com/"
-    elif mutation == "agent":
-        contract["reviewer"]["type"] = "agent"
-    elif mutation == "empty":
-        contract["candidate"] = []
-    elif mutation == "duplicate":
-        contract["candidate"] *= 2
-    elif mutation == "threshold":
-        case["max_changed_ratio"] = 0.02
-    elif mutation == "deadline":
-        case["timeout_ms"] = True
-    elif mutation == "escape":
-        contract["candidate"][0]["path"] = "../outside.html"
-    elif mutation == "source_hash":
-        contract["candidate"][0]["sha256"] = "0" * 64
-    elif mutation == "empty_cases":
-        contract["cases"] = []
-    elif mutation == "duplicate_cases":
-        contract["cases"] *= 2
-    elif mutation == "width":
-        contract["browser"]["width"] = 319
-    elif mutation == "css_property":
-        case["tokens"] = [{"selector": "body", "property": "behavior", "value": "evil"}]
-    elif mutation == "fixture_false":
-        contract["fixture_only"] = False
-    elif mutation == "fixture_absent":
-        del contract["fixture_only"]
-    elif mutation == "response":
-        case["response"] = {
-            "method": "POST",
-            "path": "/save",
-            "status": 200,
-            "field": "saved",
-            "value": True,
-            "correlation": {"header": "x-cf-action", "value": "ready"},
-        }
+    if mutation != "pin":
+        _VISUAL_MUTATIONS[mutation](contract, contract["cases"][0])
     path, pin = _visual_write(tmp_path, contract)
     with pytest.raises((FullStackUXHarnessError, ValueError)):
         harness.run_visual_behavior_gate(
@@ -470,13 +471,7 @@ def test_visual_file_budget_is_bounded_before_reading_all_bytes(
     assert requests
 
 
-def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, capsys):
-    """Exposed local detector acceptance, never a production accuracy claim."""
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    import threading
-    import shutil
-    import factoryline.full_stack_ux_harness as harness
-
+def _visual_browser_identity():
     # Windows acceptance must actually run; dependency absence must fail here.
     if sys.platform == "win32":
         from playwright.sync_api import sync_playwright
@@ -487,8 +482,44 @@ def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, cap
         browser = playwright.chromium.launch(headless=True)
         version = browser.version
         browser.close()
+    return executable, version
 
-    behavior = {"mode": "ready"}
+
+_VISUAL_PAGE_EDITS = {
+    "pixel": ("#ffffff", "#000000"),
+    "hidden": ('id="save"', 'id="save" hidden'),
+    "unnamed": (">Save</button>", "></button>"),
+    "multiple": (
+        "fetch('/api/save',",
+        "fetch('/api/save',{headers:{'x-cf-action':'ready'}});fetch('/api/save',",
+    ),
+    "stuck": ("textContent='Saved'", "textContent='Working'"),
+}
+
+
+def _visual_save_reply(handler, mode):
+    body = b'{"saved":true,"private":"PRIVATE_RESPONSE_SENTINEL_8237"}'
+    handler.send_response(500 if mode == "dishonest" else 200)
+    handler.send_header("Content-Type", "application/json")
+    if mode not in {"missing-length", "chunked"}:
+        handler.send_header(
+            "Content-Length",
+            str(10_000_001 if mode == "oversize-length" else len(body)),
+        )
+    if mode == "encoded":
+        handler.send_header("Content-Encoding", "identity")
+    if mode == "chunked":
+        handler.send_header("Transfer-Encoding", "chunked")
+    handler.end_headers()
+    handler.wfile.write(
+        (f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n")
+        if mode == "chunked"
+        else body
+    )
+
+
+def _visual_app_handler(root, behavior):
+    from http.server import BaseHTTPRequestHandler
 
     class App(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -497,47 +528,84 @@ def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, cap
         def do_GET(self):
             mode = behavior["mode"]
             if self.path == "/api/save":
-                body = b'{"saved":true,"private":"PRIVATE_RESPONSE_SENTINEL_8237"}'
-                self.send_response(500 if mode == "dishonest" else 200)
-                self.send_header("Content-Type", "application/json")
-                if mode not in {"missing-length", "chunked"}:
-                    self.send_header(
-                        "Content-Length",
-                        str(10_000_001 if mode == "oversize-length" else len(body)),
-                    )
-                if mode == "encoded":
-                    self.send_header("Content-Encoding", "identity")
-                if mode == "chunked":
-                    self.send_header("Transfer-Encoding", "chunked")
-                self.end_headers()
-                self.wfile.write(
-                    (f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n")
-                    if mode == "chunked"
-                    else body
-                )
+                _visual_save_reply(self, mode)
                 return
-            html = (tmp_path / "app.html").read_text(encoding="utf-8")
+            html = (root / "app.html").read_text(encoding="utf-8")
             if mode == "source-drift":
-                (tmp_path / "app.html").write_text(
+                (root / "app.html").write_text(
                     html + "<!-- concurrent drift -->", encoding="utf-8"
                 )
-            if mode == "pixel":
-                html = html.replace("#ffffff", "#000000")
-            if mode == "hidden":
-                html = html.replace('id="save"', 'id="save" hidden')
-            if mode == "unnamed":
-                html = html.replace(">Save</button>", "></button>")
-            if mode == "multiple":
-                html = html.replace(
-                    "fetch('/api/save',",
-                    "fetch('/api/save',{headers:{'x-cf-action':'ready'}});fetch('/api/save',",
-                )
-            if mode == "stuck":
-                html = html.replace("textContent='Saved'", "textContent='Working'")
+            if mode in _VISUAL_PAGE_EDITS:
+                html = html.replace(*_VISUAL_PAGE_EDITS[mode])
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(html.encode())
+
+    return App
+
+
+def _visual_reject_resealed(harness, root, value, name):
+    value["receipt_sha256"] = harness._sha(
+        {key: item for key, item in value.items() if key != "receipt_sha256"}
+    )
+    target = root / f"tamper-{name}.json"
+    target.write_text(json.dumps(value))
+    try:
+        replay = harness.verify_visual_behavior_receipt(root, target)
+    except (FullStackUXHarnessError, ValueError, OSError):
+        return
+    assert replay["decision"] != "PASS", name
+
+
+def _visual_assert_receipt_tamper_rejected(harness, root, original_receipt):
+    def copy():
+        return json.loads(json.dumps(original_receipt))
+
+    for omission in ("all", "screenshot", "accessibility", "observations"):
+        changed = copy()
+        changed["artifacts"] = (
+            []
+            if omission == "all"
+            else [item for item in changed["artifacts"] if item["kind"] != omission]
+        )
+        _visual_reject_resealed(harness, root, changed, omission)
+    for field, replacement in (("sha256", "0" * 64), ("path", "reviewed.png")):
+        changed = copy()
+        changed["cases"][0]["screenshot"][field] = replacement
+        _visual_reject_resealed(harness, root, changed, field)
+    changed = copy()
+    changed["cases"][0]["accessible_snapshot"] = '- button "Invented"'
+    _visual_reject_resealed(harness, root, changed, "inline-aria")
+    aria = next(
+        item
+        for item in original_receipt["artifacts"]
+        if item["kind"] == "accessibility"
+    )
+    aria_path = root / aria["path"]
+    aria_bytes = aria_path.read_bytes()
+    aria_path.unlink()
+    _visual_reject_resealed(harness, root, copy(), "missing-aria")
+    aria_path.write_bytes(aria_bytes)
+    capture_path = root / original_receipt["cases"][0]["screenshot"]["path"]
+    capture_bytes = capture_path.read_bytes()
+    capture_path.write_bytes(capture_bytes + b"changed")
+    _visual_reject_resealed(harness, root, copy(), "changed-png")
+    capture_path.write_bytes(capture_bytes)
+
+
+def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, capsys):
+    """Exposed local detector acceptance, never a production accuracy claim."""
+    from http.server import ThreadingHTTPServer
+    import threading
+    import shutil
+    import factoryline.full_stack_ux_harness as harness
+
+    executable, version = _visual_browser_identity()
+
+    behavior = {"mode": "ready"}
+
+    App = _visual_app_handler(tmp_path, behavior)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), App)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -626,48 +694,7 @@ def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, cap
         approved_contract_bytes = (tmp_path / "visual-contract.json").read_bytes()
         original_receipt = json.loads(Path(approved["path"]).read_text())
 
-        def reject_resealed(value, name):
-            value["receipt_sha256"] = harness._sha(
-                {key: item for key, item in value.items() if key != "receipt_sha256"}
-            )
-            target = tmp_path / f"tamper-{name}.json"
-            target.write_text(json.dumps(value))
-            try:
-                replay = harness.verify_visual_behavior_receipt(tmp_path, target)
-            except (FullStackUXHarnessError, ValueError, OSError):
-                return
-            assert replay["decision"] != "PASS", name
-
-        for omission in ("all", "screenshot", "accessibility", "observations"):
-            changed = json.loads(json.dumps(original_receipt))
-            changed["artifacts"] = (
-                []
-                if omission == "all"
-                else [item for item in changed["artifacts"] if item["kind"] != omission]
-            )
-            reject_resealed(changed, omission)
-        for field, replacement in (("sha256", "0" * 64), ("path", "reviewed.png")):
-            changed = json.loads(json.dumps(original_receipt))
-            changed["cases"][0]["screenshot"][field] = replacement
-            reject_resealed(changed, field)
-        changed = json.loads(json.dumps(original_receipt))
-        changed["cases"][0]["accessible_snapshot"] = '- button "Invented"'
-        reject_resealed(changed, "inline-aria")
-        aria = next(
-            item
-            for item in original_receipt["artifacts"]
-            if item["kind"] == "accessibility"
-        )
-        aria_path = tmp_path / aria["path"]
-        aria_bytes = aria_path.read_bytes()
-        aria_path.unlink()
-        reject_resealed(json.loads(json.dumps(original_receipt)), "missing-aria")
-        aria_path.write_bytes(aria_bytes)
-        capture_path = tmp_path / original_receipt["cases"][0]["screenshot"]["path"]
-        capture_bytes = capture_path.read_bytes()
-        capture_path.write_bytes(capture_bytes + b"changed")
-        reject_resealed(json.loads(json.dumps(original_receipt)), "changed-png")
-        capture_path.write_bytes(capture_bytes)
+        _visual_assert_receipt_tamper_rejected(harness, tmp_path, original_receipt)
         quality = _write_manifest(tmp_path)
         assert (
             main(
