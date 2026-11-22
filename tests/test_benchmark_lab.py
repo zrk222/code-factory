@@ -1728,6 +1728,21 @@ def test_advisory_recall_fetch_cache_writes_each_bound_prefix_file(
         assert written.read_bytes() == b"source"
 
 
+def test_advisory_recall_replays_native_paths_with_relative_cache(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    cache = Path("scan/cache")
+    source = cache / "GHSA-test" / "abcdef" / "src" / "App.py"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source")
+    lookup = _gain["_recall_result_path"]
+    expected = ("GHSA-test", "abcdef", "src/App.py")
+    assert lookup(str(source), cache) == expected
+    assert lookup(str(source.relative_to(cache)), cache) == expected
+    assert lookup(str(source.absolute()), cache) == expected
+
+
 def test_advisory_recall_replay_pattern_requires_identical_detections(
     recall_record, tmp_path, monkeypatch
 ):

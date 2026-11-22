@@ -526,7 +526,7 @@ def _visual_runtime_negative_controls(
     behavior["mode"] = "dishonest"
     case = contract["cases"][0]
     case.update(
-        action={"selector": "#save"},
+        action={"selector": ".control"},
         state={"selector": "#state", "text": "Saved"},
         response={
             "method": "GET",
@@ -539,6 +539,7 @@ def _visual_runtime_negative_controls(
     )
     dishonest = run()
     assert dishonest["decision"] == "FAIL"
+    assert dishonest["cases"][0]["state_text"] == "Saved"
     assert (
         main(
             [
@@ -633,6 +634,41 @@ class _VisualApp(BaseHTTPRequestHandler):
         self.wfile.write(html.encode())
 
 
+def test_visual_route_does_not_follow_redirects(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    import factoryline.full_stack_ux_harness as harness
+
+    pytest.importorskip("playwright.sync_api")
+    monkeypatch.setattr("time.monotonic", lambda: 1.0)
+    target = "http://127.0.0.1:4000/"
+    route = Mock(request=SimpleNamespace(url=target))
+    route.fetch.return_value.status = 302
+    route.fetch.return_value.headers = {"location": "/fixture-next"}
+    harness._visual_route(route, target, 2.0)
+    route.fetch.assert_called_once_with(max_redirects=0, timeout=1000)
+    route.abort.assert_called_once_with("blockedbyclient")
+    route.fulfill.assert_not_called()
+
+
+def test_visual_replay_reports_unavailable_optional_dependencies(monkeypatch, tmp_path):
+    import factoryline.full_stack_ux_harness as harness
+
+    def unavailable(*args):
+        raise ImportError("optional tool unavailable")
+
+    monkeypatch.setattr(harness, "_visual_tool_identity", unavailable)
+    monkeypatch.setattr(harness, "_visual_prestige", unavailable)
+    assert (
+        harness._visual_profile_findings({"browser": {}}, {})[0]["code"]
+        == "E_VISUAL_PROFILE"
+    )
+    assert (
+        harness._visual_prestige_replay(tmp_path, {}, {})[0]["code"]
+        == "E_VISUAL_PRESTIGE"
+    )
+
+
 def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, capsys):
     """Exposed local detector acceptance, never a production accuracy claim."""
     from http.server import ThreadingHTTPServer
@@ -670,7 +706,8 @@ def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, cap
         source = tmp_path / "app.html"
         source.write_text(
             "<style>body {background:#ffffff;margin:8px}</style>"
-            "<button id=\"save\" onclick=\"fetch('/api/save',{headers:{'x-cf-action':'ready'}}).then(()=>document.querySelector('#state').textContent='Saved')\">Save</button>"
+            "<button id=\"save\" class=\"control\" onclick=\"fetch('/api/save',{headers:{'x-cf-action':'ready'}}).then(()=>document.querySelector('#state').textContent='Saved')\">Save</button>"
+            '<button class="control">Cancel</button>'
             '<p id="state">Ready</p>',
             encoding="utf-8",
         )
@@ -749,6 +786,18 @@ def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, cap
         approved_contract_bytes = (tmp_path / "visual-contract.json").read_bytes()
         _visual_replay_tamper_controls(tmp_path, approved, harness)
         quality = _write_manifest(tmp_path)
+        visual_source = Path(approved["path"])
+        visual_before = visual_source.read_bytes()
+        with pytest.raises(
+            harness.FullStackUXHarnessError, match="differ from its inputs"
+        ):
+            harness.verify_quality_harness(
+                tmp_path,
+                quality,
+                visual_receipt=visual_source,
+                out=visual_source.relative_to(tmp_path),
+            )
+        assert visual_source.read_bytes() == visual_before
         assert (
             main(
                 [

@@ -379,11 +379,7 @@ def verify_quality_harness(
 ) -> dict[str, Any]:
     """Verify declared evidence and human judgment; never execute checks or release work."""
     workspace = Path(root).resolve()
-    manifest_input = Path(manifest_path)
-    manifest_source = (
-        manifest_input if manifest_input.is_absolute() else workspace / manifest_input
-    ).resolve()
-    manifest, source = _load_manifest(workspace, manifest_input)
+    manifest, source = _load_manifest(workspace, Path(manifest_path))
     check_findings, checks = _check_findings(workspace, manifest)
     judgment_findings, review = _judgment_findings(manifest)
     findings = [*check_findings, *judgment_findings]
@@ -432,6 +428,14 @@ def verify_quality_harness(
             "path": str(visual_receipt),
         }
     receipt = {**core, "receipt_sha256": _sha(core), "generated_at": _now()}
+    destination = _quality_receipt_destination(workspace, manifest_path, optical, out)
+    _atomic_json(destination, receipt)
+    return {**receipt, "path": str(destination)}
+
+
+def _quality_receipt_destination(workspace, manifest_path, optical, out):
+    """Resolve the output below the workspace and protect both evidence inputs."""
+    manifest_source = (workspace / Path(manifest_path)).resolve()
     destination = (
         Path(out)
         if out
@@ -449,13 +453,14 @@ def verify_quality_harness(
         raise FullStackUXHarnessError(
             "E_UX_RECEIPT_PATH", "receipt must stay inside the workspace"
         ) from exc
-    if destination == manifest_source:
+    if destination == manifest_source or (
+        optical is not None and destination == Path(optical["path"])
+    ):
         raise FullStackUXHarnessError(
             "E_UX_RECEIPT_PATH",
-            "receipt destination must differ from the manifest source",
+            "receipt destination must differ from its inputs",
         )
-    _atomic_json(destination, receipt)
-    return {**receipt, "path": str(destination)}
+    return destination
 
 
 def run_visual_behavior_gate(
@@ -598,15 +603,9 @@ def verify_visual_behavior_receipt(root, receipt_path) -> dict[str, Any]:
         _visual_cases_findings(workspace, contract["cases"], receipt["cases"])
     )
     findings.extend(_visual_prestige_findings(receipt["prestige"], contract["design"]))
-    if (
-        contract["design"] is not None
-        and _visual_prestige(workspace, contract["design"]) != receipt["prestige"]
-    ):
-        findings.append(
-            _visual_finding(
-                "E_VISUAL_PRESTIGE_DRIFT", "companion evidence differs", incomplete=True
-            )
-        )
+    findings.extend(
+        _visual_prestige_replay(workspace, contract["design"], receipt["prestige"])
+    )
     findings.extend(receipt["findings"])
     return {
         **receipt,
@@ -614,6 +613,25 @@ def verify_visual_behavior_receipt(root, receipt_path) -> dict[str, Any]:
         "findings": findings,
         "path": str(source),
     }
+
+
+def _visual_prestige_replay(root, design, recorded):
+    if design is None:
+        return []
+    try:
+        if _visual_prestige(root, design) == recorded:
+            return []
+    except ImportError:
+        return [
+            _visual_finding(
+                "E_VISUAL_PRESTIGE", "Prestige unavailable", incomplete=True
+            )
+        ]
+    return [
+        _visual_finding(
+            "E_VISUAL_PRESTIGE_DRIFT", "companion evidence differs", incomplete=True
+        )
+    ]
 
 
 def _visual_cases_findings(root, expected, observed):
@@ -1056,11 +1074,13 @@ def _visual_capture(browser, root, output, contract, case, index):
         timezone_id="UTC",
         service_workers="block",
     )
-    context.route("**/*", lambda route: _visual_route(route, contract["target"]))
-    context.route_web_socket("**/*", lambda socket: socket.close())
-    page = context.new_page()
     started = time.monotonic()
     deadline = started + case["timeout_ms"] / 1000
+    context.route(
+        "**/*", lambda route: _visual_route(route, contract["target"], deadline)
+    )
+    context.route_web_socket("**/*", lambda socket: socket.close())
+    page = context.new_page()
     observed = {"id": case["id"], "artifacts": [], "capture_error": None}
     responses = []
     try:
@@ -1124,15 +1144,30 @@ def _visual_capture(browser, root, output, contract, case, index):
     return observed
 
 
-def _visual_route(route, target):
+def _visual_route(route, target, deadline):
+    import time
     from urllib.parse import urlsplit
+    from playwright.sync_api import Error as BrowserError
 
     parsed = urlsplit(route.request.url)
     origin = parsed.scheme, parsed.hostname, parsed.port or 80
-    if origin != _visual_origin(target):
+    remaining = int((deadline - time.monotonic()) * 1000)
+    if remaining < 1 or origin != _visual_origin(target):
         route.abort("blockedbyclient")
-    else:
-        route.continue_()
+        return
+    # Playwright routes only the initial request in a redirect chain.
+    try:
+        response = route.fetch(max_redirects=0, timeout=remaining)
+    except BrowserError:
+        route.abort("failed")
+        return
+    try:
+        if 300 <= response.status < 400 and "location" in response.headers:
+            route.abort("blockedbyclient")
+        else:
+            route.fulfill(response=response)
+    finally:
+        response.dispose()
 
 
 def _visual_budget(page, deadline):
@@ -1196,10 +1231,11 @@ def _visual_click(page, case, target, deadline, responses):
 
     if case["action"] is None:
         return
+    control = page.locator(case["element"]["selector"]).and_(
+        page.locator(case["action"]["selector"])
+    )
     if case["response"] is None:
-        page.locator(case["action"]["selector"]).click(
-            timeout=_visual_budget(page, deadline)
-        )
+        control.click(timeout=_visual_budget(page, deadline))
         return
     expected = case["response"]
 
@@ -1218,9 +1254,7 @@ def _visual_click(page, case, target, deadline, responses):
         lambda response: responses.append(response) if matches(response) else None,
     )
     with page.expect_response(matches, timeout=_visual_budget(page, deadline)):
-        page.locator(case["action"]["selector"]).click(
-            timeout=_visual_budget(page, deadline)
-        )
+        control.click(timeout=_visual_budget(page, deadline))
 
 
 def _visual_response_observation(response, expected):
@@ -1542,7 +1576,14 @@ def _visual_profile_findings(contract, identity):
     from .candidate_lineage import _sha_file
 
     expected = contract["browser"]
-    tools = _visual_tool_identity()
+    try:
+        tools = _visual_tool_identity()
+    except ImportError:
+        return [
+            _visual_finding(
+                "E_VISUAL_PROFILE", "browser tools unavailable", incomplete=True
+            )
+        ]
     if (
         not isinstance(identity, dict)
         or set(identity)
