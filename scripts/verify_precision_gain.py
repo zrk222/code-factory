@@ -762,7 +762,8 @@ def replay_pattern(record: dict, cache: Path, opengrep: str, ruleset: Path) -> N
     cases = {case["ghsa"]: case for case in record["cases"]}
     observed = set()
     for result in report["results"]:
-        ghsa, prefix, path = os.path.relpath(result["path"], cache).split("/", 2)
+        ghsa, prefix, *parts = Path(os.path.relpath(result["path"], cache)).parts
+        path = "/".join(parts)
         case = cases[ghsa]
         rule = ".".join(result["check_id"].split(".")[-2:])
         wanted = {families.get(cwe) for cwe in case["cwes"]} - {None}
