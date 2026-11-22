@@ -692,6 +692,7 @@ def _execute_lane(
         cancelled,
         deadline,
         (directory, state, emit),
+        plan["obligations"],
     )
     result = _osv_replay_result(
         result,
@@ -1826,6 +1827,7 @@ def _codeql_replay_result(
     cancelled,
     deadline,
     monitoring,
+    obligations=None,
 ):
     return _native_replay_result(
         result,
@@ -1839,7 +1841,7 @@ def _codeql_replay_result(
         deadline,
         monitoring,
         "codeql",
-        [],
+        obligations or [],
     )
 
 
@@ -2123,6 +2125,11 @@ def _native_replay_result(
             apply_fuzz_control_replay(
                 result, replay, lane, bundle, inventory, obligations
             )
+        _reconcile_native_completion(
+            result, replay, lane, bundle, inventory, obligations, run_id
+        )
+        if cancelled.is_set() or time.monotonic() >= deadline:
+            raise RuntimeAuditError(f"E_{prefix}_REPLAY", "completion deadline expired")
     except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as error:
         result[f"{engine}_replay"] = {
             "state": "INCOMPLETE",
@@ -2136,6 +2143,81 @@ def _native_replay_result(
     result["gaps"] = sorted(set(result["gaps"]))
     result["state"] = "INCOMPLETE" if result["gaps"] else "OBSERVED"
     return result
+
+
+def _reconcile_native_completion(
+    result, replay, lane, bundle, inventory, obligations, run_id
+):
+    """Close only deferred worker incompleteness after independent host replay."""
+    from .deep_audit_sarif import (
+        _covered_obligation_ids,
+        _required_sources,
+        normalize_execution_bundle,
+    )
+
+    if lane["engine"] not in {"codeql", "atheris"} or result["gaps"] != [
+        "ANALYZER_INCOMPLETE"
+    ]:
+        return
+    coverage = bundle["artifacts"][lane["coverage"]]
+    if coverage.get("complete") is not False or coverage.get("errors") != [
+        "NATIVE_SOURCE_ACCOUNTING_REQUIRED",
+        "NATIVE_CHALLENGES_REQUIRED",
+    ]:
+        return
+    required = _required_sources(inventory, lane)
+    expected = _covered_obligation_ids(obligations, lane, required)
+    if not required or not expected or set(result["obligations"]) != expected:
+        return
+    checked = normalize_execution_bundle(bundle, lane, inventory, run_id, obligations)
+    deferred = {"ANALYZER_INCOMPLETE", "CODEQL_NATIVE_REPLAY_REQUIRED"}
+    if lane["engine"] == "atheris":
+        deferred = {
+            "ANALYZER_INCOMPLETE",
+            "FUZZ_NATIVE_REPLAY_REQUIRED",
+            "FUZZ_CHALLENGE_REPLAY_REQUIRED",
+            "OBLIGATION_COVERAGE_MISSING",
+        }
+    if set(checked["gaps"]) - deferred:
+        return
+    report = bundle["artifacts"][lane["report"]]
+    if lane["engine"] == "codeql":
+        source = _deep_audit_io.verify_codeql_retained_evidence(
+            coverage, lane, required
+        )["source_accounting"]
+    else:
+        source = _deep_audit_io._native_runtime_accounting(report, inventory, lane)
+    if source["state"] != "COMPLETE":
+        return
+    _completion_replay_binding(
+        replay, lane, inventory, coverage, report, bundle, obligations
+    )
+    result["gaps"] = []
+
+
+def _completion_replay_binding(
+    replay, lane, inventory, coverage, report, bundle, obligations
+):
+    from .runtime_audit_common import _validate_runner_facts, require_digest
+
+    _validate_fuzz_host_replay(replay, lane, _validate_runner_facts, require_digest)
+    if lane["engine"] == "atheris":
+        expected = _deep_audit_io._fuzz_replay_expected(
+            {
+                "lane": lane,
+                "inventory": inventory,
+                "coverage": coverage,
+                "report": report,
+                "challenges": bundle["artifacts"][lane["challenge_report"]],
+                "obligations": obligations,
+            }
+        )
+    else:
+        expected = _codeql_replay_expected(
+            {"lane": lane, "inventory": inventory, "coverage": coverage}
+        )
+    if any(replay.get(key) != value for key, value in expected.items()):
+        raise RuntimeAuditError("E_NATIVE_COMPLETION", "host replay binding differs")
 
 
 def _codeql_replay_runtime(scratch):
@@ -2382,7 +2464,16 @@ def _codeql_replay_receipt(raw, facts, request):
     ):
         raise RuntimeAuditError("E_CODEQL_REPLAY", "native replay execution failed")
     replay = strict_json(raw)
-    expected = {
+    if any(
+        replay.get(key) != value
+        for key, value in _codeql_replay_expected(request).items()
+    ):
+        raise RuntimeAuditError("E_CODEQL_REPLAY", "native replay binding differs")
+    return replay
+
+
+def _codeql_replay_expected(request):
+    return {
         "schema": "factory.codeql-native-replay.v1",
         "state": "VERIFIED",
         "candidate_sha256": request["inventory"]["candidate_sha256"],
@@ -2395,9 +2486,6 @@ def _codeql_replay_receipt(raw, facts, request):
             if item["language"] in request["lane"]["languages"]
         ),
     }
-    if any(replay.get(key) != value for key, value in expected.items()):
-        raise RuntimeAuditError("E_CODEQL_REPLAY", "native replay binding differs")
-    return replay
 
 
 def _osv_replay_receipt(raw, facts, request):
