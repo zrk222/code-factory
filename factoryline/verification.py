@@ -609,6 +609,115 @@ def _event(value: dict, manifest: dict, position: int, kind: str) -> datetime:
     return _time(value.get("recorded_at"))
 
 
+def _check_sequence_files(directory: Path, count: int, quarantined: bool) -> None:
+    expected = {"manifest.json"} | {
+        f"{position:04d}.{kind}.json"
+        for position in range(1, count + 1)
+        for kind in ("intent", "outcome")
+    }
+    if quarantined:
+        expected.add("quarantine.json")
+    for path in directory.iterdir():
+        if path.name not in expected or path.is_symlink() or not path.is_file():
+            raise ValueError("unexpected sequence evidence file")
+
+
+def _sequence_events(directory, manifest, position, previous):
+    intent_path = directory / f"{position:04d}.intent.json"
+    outcome_path = directory / f"{position:04d}.outcome.json"
+    intent = _read(intent_path) if intent_path.exists() else None
+    outcome = _read(outcome_path) if outcome_path.exists() else None
+    intent_time = (
+        _event(intent, manifest, position, "intent") if intent is not None else None
+    )
+    outcome_time = (
+        _event(outcome, manifest, position, "outcome") if outcome is not None else None
+    )
+    if intent_time is not None and intent_time <= previous:
+        raise ValueError(f"plan/sequence chronology invalid at position {position}")
+    if outcome_time is not None and (
+        outcome_time <= previous
+        or (intent_time is not None and outcome_time < intent_time)
+    ):
+        raise ValueError(f"outcome chronology invalid at position {position}")
+    return intent, outcome, intent_time, outcome_time
+
+
+def _sequence_native_row(root, manifest, position, events, receipts_seen):
+    intent, outcome, intent_time, outcome_time = events
+    name = outcome.get("receipt_path")
+    if not isinstance(name, str) or Path(name).name != name or name in receipts_seen:
+        raise ValueError("invalid or reused native receipt reference")
+    receipts_seen.add(name)
+    receipt_dir = Path(root) / "receipts"
+    native_path = receipt_dir / name
+    if native_path.resolve().parent != receipt_dir.resolve():
+        raise ValueError("native receipt reference escapes receipts/")
+    payload, raw_sha256 = _read_snapshot(native_path)
+    receipt = Receipt.from_dict(payload)
+    if (
+        receipt.feature != manifest["feature"]
+        or f"{receipt.module}:{receipt.stage}" != manifest["stages"][position - 1]
+    ):
+        raise ValueError("native receipt feature/stage mismatch")
+    binding = sequence_binding(manifest, position)
+    if any(
+        type(receipt.inputs.get(key)) is not type(value)
+        or receipt.inputs.get(key) != value
+        for key, value in binding.items()
+    ):
+        raise ValueError("native receipt sequence binding mismatch")
+    native_time = _time(receipt.ts)
+    if (
+        native_time <= _time(manifest["declared_at"])
+        or native_time > outcome_time
+        or (intent_time is not None and native_time < intent_time)
+    ):
+        raise ValueError("native receipt chronology invalid")
+    if outcome.get("receipt_sha256") != _hash(payload):
+        raise ValueError("native receipt hash mismatch")
+    if intent is not None and outcome.get("intent_sha256") != _hash(intent):
+        raise ValueError("outcome does not bind its paired intent")
+    return {
+        "module": receipt.module,
+        "stage": receipt.stage,
+        "status": "ok" if receipt.ok else "failed",
+        "inputs": receipt.inputs,
+        "outputs": receipt.outputs,
+        "attribution": receipt.attribution,
+        "receipt_path": name,
+        "receipt_sha256": raw_sha256,
+    }
+
+
+def _verify_sequence_positions(root, directory, manifest, result) -> None:
+    previous = _time(manifest["declared_at"])
+    receipts_seen: set[str] = set()
+    for position, stage in enumerate(manifest["stages"], 1):
+        events = _sequence_events(directory, manifest, position, previous)
+        intent, outcome, intent_time, outcome_time = events
+        missing = [
+            kind
+            for kind, value in (("intent", intent), ("outcome", outcome))
+            if value is None
+        ]
+        if missing:
+            result["missing_positions"].append(
+                {"position": position, "stage": stage, "missing": missing}
+            )
+        if outcome is not None:
+            row = _sequence_native_row(root, manifest, position, events, receipts_seen)
+            result["stages"].append(row)
+            if row["status"] == "failed":
+                result["blockers"].append(
+                    {
+                        "code": "SEQUENCE_STAGE_FAILED",
+                        "detail": f"position {position}: {stage}",
+                    }
+                )
+        previous = outcome_time or intent_time or previous
+
+
 def verify_sequence(
     root: Path, feature: str, run_id: str, required_stages: set[str]
 ) -> dict:
@@ -634,118 +743,8 @@ def verify_sequence(
         stages = manifest["stages"]
         if not required_stages.issubset(set(stages)):
             raise ValueError("plan omits required native gates")
-        expected_files = {"manifest.json"} | {
-            f"{p:04d}.{kind}.json"
-            for p in range(1, len(stages) + 1)
-            for kind in ("intent", "outcome")
-        }
-        if result["quarantined"]:
-            expected_files.add("quarantine.json")
-        # Bounded enumeration avoids ignoring extra/undeclared events.
-        names = set()
-        for path in directory.iterdir():
-            names.add(path.name)
-            if (
-                len(names) > len(expected_files)
-                or path.name not in expected_files
-                or path.is_symlink()
-                or not path.is_file()
-            ):
-                raise ValueError("unexpected sequence evidence file")
-        previous = _time(manifest["declared_at"])
-        receipts_seen: set[str] = set()
-        for position, stage in enumerate(stages, 1):
-            intent_path = directory / f"{position:04d}.intent.json"
-            outcome_path = directory / f"{position:04d}.outcome.json"
-            intent = _read(intent_path) if intent_path.exists() else None
-            outcome = _read(outcome_path) if outcome_path.exists() else None
-            if intent is None or outcome is None:
-                result["missing_positions"].append(
-                    {
-                        "position": position,
-                        "stage": stage,
-                        "missing": [
-                            kind
-                            for kind, value in (
-                                ("intent", intent),
-                                ("outcome", outcome),
-                            )
-                            if value is None
-                        ],
-                    }
-                )
-            # Even incomplete pairs must not conceal an invalid/late manifest.
-            intent_time = (
-                _event(intent, manifest, position, "intent")
-                if intent is not None
-                else None
-            )
-            outcome_time = (
-                _event(outcome, manifest, position, "outcome")
-                if outcome is not None
-                else None
-            )
-            if intent_time is not None and intent_time <= previous:
-                raise ValueError(
-                    f"plan/sequence chronology invalid at position {position}"
-                )
-            if outcome_time is not None and (
-                outcome_time <= previous
-                or (intent_time is not None and outcome_time < intent_time)
-            ):
-                raise ValueError(f"outcome chronology invalid at position {position}")
-            if outcome is not None:
-                name = outcome.get("receipt_path")
-                if (
-                    not isinstance(name, str)
-                    or Path(name).name != name
-                    or name in receipts_seen
-                ):
-                    raise ValueError("invalid or reused native receipt reference")
-                receipts_seen.add(name)
-                native_path = Path(root) / "receipts" / name
-                if native_path.resolve().parent != (Path(root) / "receipts").resolve():
-                    raise ValueError("native receipt reference escapes receipts/")
-                payload, raw_sha256 = _read_snapshot(native_path)
-                receipt = Receipt.from_dict(payload)
-                if (
-                    receipt.feature != feature
-                    or f"{receipt.module}:{receipt.stage}" != stage
-                ):
-                    raise ValueError("native receipt feature/stage mismatch")
-                binding = sequence_binding(manifest, position)
-                if any(
-                    type(receipt.inputs.get(key)) is not type(value)
-                    or receipt.inputs.get(key) != value
-                    for key, value in binding.items()
-                ):
-                    raise ValueError("native receipt sequence binding mismatch")
-                native_time = _time(receipt.ts)
-                if (
-                    native_time <= _time(manifest["declared_at"])
-                    or native_time > outcome_time
-                    or (intent_time is not None and native_time < intent_time)
-                ):
-                    raise ValueError("native receipt chronology invalid")
-                if outcome.get("receipt_sha256") != _hash(payload):
-                    raise ValueError("native receipt hash mismatch")
-                if intent is not None and outcome.get("intent_sha256") != _hash(intent):
-                    raise ValueError("outcome does not bind its paired intent")
-                result["stages"].append(
-                    {
-                        "module": receipt.module,
-                        "stage": receipt.stage,
-                        "status": "ok" if receipt.ok else "failed",
-                        "inputs": receipt.inputs,
-                        "outputs": receipt.outputs,
-                        "attribution": receipt.attribution,
-                        "receipt_path": name,
-                        "receipt_sha256": raw_sha256,
-                    }
-                )
-                if not receipt.ok:
-                    block("SEQUENCE_STAGE_FAILED", f"position {position}: {stage}")
-            previous = outcome_time or intent_time or previous
+        _check_sequence_files(directory, len(stages), result["quarantined"])
+        _verify_sequence_positions(root, directory, manifest, result)
         if result["missing_positions"]:
             result["status"] = "incomplete"
             block(

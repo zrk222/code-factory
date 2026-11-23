@@ -358,10 +358,10 @@ def test_default_assembly_binds_whole_run_with_optional_scopes_absent(
         encoding="utf-8",
     )
 
-    def detailed(cli, args, *_args, **_kwargs):
+    def detailed(_cli, args, *_args, **_kwargs):
         output = (
             json.dumps({**payload, "obligations_met": "1/1"})
-            if cli == "forgeline" and args[0] == "ship"
+            if args[0] == "ship"
             else ""
         )
         return _detailed_result(output)
@@ -377,7 +377,7 @@ def test_default_assembly_binds_whole_run_with_optional_scopes_absent(
     assert "paused_at" not in report
     assert result["whole_run"]["basis"] == report["run_id"]
     assert result["whole_run"]["assured"] is True
-    assert result["shippable"] is True
+    assert result["shippable"] is True, result["blockers"]
 
 
 def test_assembly_cleanup_failure_does_not_mark_cli_action_success(
