@@ -13,7 +13,13 @@ polyglot developers—not another agent that approves its own work.
 The core install supports quick static review of Python. Configure native
 workers for other languages and install the optional [companion toolchain](docs/START_HERE.md#install-the-full-toolchain)
 to use its commands. A scan can exit 0 with an `INCOMPLETE` result; check
-coverage and status before relying on it.
+coverage and status before relying on it. Use `--require-complete` to make
+incomplete coverage fail a CI job.
+
+Unified six-family signed qualification and the cold/warm comparisons are
+still outstanding. A clean PyPI install reproduced two default Python scanner
+misses with synthetic input: a Stripe-shaped credential with a neutral variable
+name and MD5 used to hash a password.
 
 - **Latest advisory evidence:** the retained 161-case study records CodeQL
   detections in 15/91 analyzed cases, with 70 not executed. Pattern replay
