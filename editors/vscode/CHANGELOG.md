@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.7 - 2026-11-23
+
+- Pair with Code Factory core 0.50.1 for the Stripe credential and MD5 detector fixes.
+- Document package licensing and Python 3.11+ for the full toolchain.
+
 ## 1.3.6 - 2026-11-21 (candidate; publication gated)
 
 - Include fresh Round 7 per-language precision and recall evidence, distinguishing

@@ -1,16 +1,16 @@
 # FactoryLine for VS Code
 
-## VS Code 1.3.6
+## VS Code 1.3.7
 
-The VS Code and Open VSX packages share version 1.3.6 with the JetBrains
-plugin. This release pairs with Code Factory core 0.50.0, installed separately.
+The VS Code and Open VSX packages share version 1.3.7 with the JetBrains
+plugin. This release pairs with Code Factory core 0.50.1, installed separately.
 
 You have a change open and a review to finish. FactoryLine keeps local audit
 findings and receipts beside your VS Code workspace, so you can follow a finding
 back to its file, choose what to repair, and check the result before accepting it.
 Start with **FactoryLine: Run CF + ForgeLine Audits**.
 
-### What's new in 1.3.6
+### What's new in 1.3.7
 
 - The separately installed runtime provides **30 native security rules across
   12 languages** when the required workers and toolchains are configured;
@@ -292,7 +292,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.3.6.vsix
+code --install-extension factoryline-vscode-1.3.7.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

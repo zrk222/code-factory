@@ -648,8 +648,8 @@ def test_hosted_release_and_editor_versions_are_declared():
     )
 
     assert project["version"] == __version__
-    assert project["version"] == "0.50.0"
-    assert vscode["version"] == "1.3.6"
+    assert project["version"] == "0.50.1"
+    assert vscode["version"] == "1.3.7"
     assert "hosted" in project["optional-dependencies"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", vscode["version"])
     assert vscode_lock["version"] == vscode["version"]
@@ -678,11 +678,11 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert intellij_version == vscode["version"]
     assert f'version = "{intellij_version}"' in gradle
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert (
-        f"{__version__} release line · VS Code / Open VSX / JetBrains / Devin plugin {vscode['version']}"
-        in readme
-    )
+    assert f"**Code Factory {__version__}**" in readme
+    assert "docs/RELEASE_CHANNELS.md" in readme
+    assert "docs/commercial-model.md" in readme
     normalized = " ".join(readme.split())
+    assert "The full `[factory]` install requires Python 3.11+" in normalized
     assert "12 languages, one review workflow" in normalized
     assert "worker setup and coverage gaps remain explicit" in normalized
     assert "38/40 decided alerts (95%; Wilson 83.5–98.6%)" in normalized
@@ -1002,7 +1002,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         == "https://github.com/zrk222/code-factory"
     )
     assert metadata["version"] == __version__
-    assert metadata["publication_date"] == "2026-11-21"
+    assert metadata["publication_date"] == "2026-11-23"
     assert "read-only Agent Proof Bridge" in metadata["description"]
     assert "Proof Worklog" in metadata["description"]
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]

@@ -72,7 +72,7 @@ CodeRabbit can consume completed neutral GitHub Check output when configured. PR
 ## Try a local check
 
 ```sh
-python -m pip install factoryline-code-factory==0.50.0
+python -m pip install factoryline-code-factory==0.50.1
 factory first-proof --root .
 ```
 
@@ -80,13 +80,21 @@ First Proof uses a generated sandbox to check the demonstration, not your reposi
 
 ## Versions and limits
 
-Core 0.50.0 and plugins 1.3.6 are the prepared release line. Publication and
-marketplace moderation are verified per channel; preparation is not availability.
-The install example targets that release and requires its PyPI publication.
+Core 0.50.1 addresses Stripe credential and MD5 detection. Core 0.50.0 has a versioned Zenodo archive.
+VS Marketplace lists the 1.3.6 VSIX. JetBrains accepted the 1.3.6 submission
+for review. [Release channels](https://github.com/zrk222/code-factory/blob/main/docs/RELEASE_CHANNELS.md).
 
 The Proof Agent runs a human-approved signed plan and records evidence. It does not approve its result. Signed-observation checks verify a recorded binding, not code correctness or release readiness. Local tests do not establish live provider support or marketplace availability.
 
-Audit depth depends on language, policy and supplied evidence. The security scanner inspects Python ASTs; static inventory is not runtime proof. This static preview does not scan or upload your repository. Missing evidence stays incomplete.
+The default static scan analyzes Python. Other native analysis requires
+configured workers. Check the result status and audited file count, even when
+the command exits 0. This static preview does not scan or upload your repository.
+
+## Package licensing
+
+The core and all four companion wheels declare MIT OR Apache-2.0.
+The full toolchain requires Python 3.11+. See the
+[package license matrix](https://github.com/zrk222/code-factory/blob/main/docs/commercial-model.md).
 
 ## Go deeper
 
@@ -96,4 +104,4 @@ Audit depth depends on language, policy and supplied evidence. The security scan
 - [Teams operations manual](https://github.com/zrk222/code-factory/blob/main/docs/ENTERPRISE_TEAMS_OPERATIONS.md)
 - [PyPI package](https://pypi.org/project/factoryline-code-factory/0.50.0/)
 - [GitHub release](https://github.com/zrk222/code-factory/releases/tag/v0.50.0)
-- [Zenodo collection](https://doi.org/10.5281/zenodo.21381405)
+- [Zenodo collection](https://doi.org/10.5281/zenodo.24451994)

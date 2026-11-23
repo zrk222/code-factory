@@ -5,18 +5,31 @@ Review agent-written code by collecting local software review evidence:
 trace findings to their source, challenge weak tests, and keep the release
 decision with your team. Code Factory does not certify software.
 
-**0.50.0 release line · VS Code / Open VSX / JetBrains / Devin plugin 1.3.6**
-Channel availability is verified separately; prepared packages are not publication.
+**Code Factory 0.50.1**
 
-[Release downloads](https://github.com/zrk222/code-factory/releases) ·
-[Quick guide](docs/START_HERE.md) · [Screenshots](#product-walkthrough)
+[Release downloads](https://github.com/zrk222/code-factory/releases/tag/v0.50.0) ·
+[Release channels](docs/RELEASE_CHANNELS.md) ·
+[Quick guide](docs/START_HERE.md) · [Package licensing](docs/commercial-model.md) ·
+[Screenshots](#product-walkthrough)
 
 ```powershell
-python -m pip install factoryline-code-factory
+python -m pip install factoryline-code-factory==0.50.1
 factory scan --root . --static-only
 ```
 
-## A bigger evidence layer for polyglot teams
+The core runs on Python 3.10+. The full `[factory]` install requires Python 3.11+.
+
+The default static scan analyzes Python. Other native analysis requires
+[configured workers](docs/START_HERE.md). A scan can exit 0 with status
+`INCOMPLETE`. Check that status and the audited file count before relying on it.
+
+## What changed in 0.50.1
+
+The Python scan now detects Stripe-shaped live credentials and canonical MD5
+calls. Explicit compatibility checksums retain their exemption, and reports
+withhold credential values. [Changes and fixes](CHANGELOG.md#0501--2026-11-23).
+
+## What changed in 0.50.0
 
 Current coverage adds Go, Java, C# and Ruby framework sources/sinks plus wider
 Ruby/Swift trust checks. New request coverage is review-tier. Round 7 numbers
@@ -54,7 +67,7 @@ the lanes are not interchangeable and neither number is whole-CF blind recall.
   challenges use the same source-bound receipt. Missing tooling or evidence
   stays incomplete; this is not a native-device or release certificate.
 
-[Changes and fixes](CHANGELOG.md#0500--2026-11-21-release-candidate-publication-gated) ·
+[Changes and fixes](CHANGELOG.md#0500--2026-11-22) ·
 [Panel results and limits](https://github.com/zrk222/code-factory/pull/354) ·
 [Native worker controls](https://github.com/zrk222/code-factory/actions/runs/44893613016)
 
@@ -87,9 +100,11 @@ recovery and resource-aware checks.
 [Install the full toolchain](docs/START_HERE.md#install-the-full-toolchain) or see
 the [proof workflow](docs/PROOF_REVIEW_WORKFLOW.md).
 
-![The JetBrains plugin connects to the local FactoryLine core. AppForge runs inside the core, with SpecLine, ForgeLine, HSF, and Prestige as companions.](https://github.com/zrk222/code-factory/releases/download/v0.49.7/code-factory-workflow.png)
+![The Code Factory operational proof loop](docs/assets/operational-proof-loop.svg)
 
 ## Product walkthrough
+
+![Graph Ops and Factory Studio](docs/assets/marketplace/graph-ops-studio-1280x800.png)
 
 <details>
 <summary>Four annotated screenshots from the 0.49.6 preview</summary>

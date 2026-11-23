@@ -5,8 +5,8 @@
     <description><![CDATA[
 <h3>Review AI changes with evidence in view</h3>
 <p>FactoryLine connects code changes, audit findings, tests, and repair candidates to local, source-bound receipts.</p>
-<h4>What's improved in 1.3.6</h4>
-<p>Pair the JetBrains, VS Code, and Open VSX adapters with the separately installed Code Factory CLI 0.50.0: <strong>30 native security rules across 12 languages</strong> through configured external workers. Analyzers are not bundled in this plugin.</p>
+<h4>What's improved in 1.3.7</h4>
+<p>Pair the JetBrains, VS Code, and Open VSX adapters with the separately installed Code Factory CLI 0.50.1: <strong>30 native security rules across 12 languages</strong> through configured external workers. Analyzers are not bundled in this plugin.</p>
 <p><strong>Current coverage:</strong> Go/Java/C#/Ruby framework sources and sinks plus wider Ruby/Swift trust checks. New request rules are review-tier; the shipped variant has no fresh precision score. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/polyglot-coverage-round8.json">Coverage evidence</a>.</p>
 <p><strong>Historical Round 7, the earlier ruleset:</strong> 38/40 decided default-tier alerts supported (95%; Wilson 83.5–98.6%), with 12 additional unclear. Review tier: 23/40 (57.5%), plus 3 unclear. Advisory recall: 0/161. Six languages had insufficient precision samples. AI labels are not twelve-language accuracy or independent human validation. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/polyglot-readiness-round7.json">Per-language evidence</a>.</p>
 <p>Review source-bound claim verification and bounded Proof Agent evidence, with optional SARIF and pre-commit outputs and read-only mutation-diff inspection. Verification binds an observation; it does not prove code correctness or release readiness.</p>
@@ -20,7 +20,7 @@
 <p><a href="https://github.com/zrk222/code-factory">Documentation</a> | <a href="https://github.com/zrk222/code-factory/issues">Report an issue</a></p>
     ]]></description>
     <change-notes><![CDATA[
-<p><strong>1.3.6:</strong> Pair the editor adapters with Code Factory CLI 0.50.0; connect source-bound claim verification, bounded Proof Agent evidence, trusted recall and optional visual/Prestige checks to local review. Native report identity, coordinator lifecycle and packaging were repaired without relaxing limits. Junie remains optional; receipts do not certify correctness or release readiness.</p>
+<p><strong>1.3.7:</strong> Pair the editor adapters with Code Factory CLI 0.50.1; connect source-bound claim verification, bounded Proof Agent evidence, trusted recall and optional visual/Prestige checks to local review. Native report identity, coordinator lifecycle and packaging were repaired without relaxing limits. Junie remains optional; receipts do not certify correctness or release readiness.</p>
 <p><a href="https://github.com/zrk222/code-factory/blob/main/editors/intellij/CHANGELOG.md">Earlier release notes</a></p>
     ]]></change-notes>
 
