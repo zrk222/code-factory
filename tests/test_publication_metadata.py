@@ -678,11 +678,11 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert intellij_version == vscode["version"]
     assert f'version = "{intellij_version}"' in gradle
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert (
-        f"{__version__} release line · VS Code / Open VSX / JetBrains / Devin plugin {vscode['version']}"
-        in readme
-    )
+    assert f"**Code Factory {__version__}**" in readme
+    assert "docs/RELEASE_CHANNELS.md" in readme
+    assert "docs/commercial-model.md" in readme
     normalized = " ".join(readme.split())
+    assert "The full `[factory]` install requires Python 3.11+" in normalized
     assert "12 languages, one review workflow" in normalized
     assert "worker setup and coverage gaps remain explicit" in normalized
     assert "38/40 decided alerts (95%; Wilson 83.5–98.6%)" in normalized

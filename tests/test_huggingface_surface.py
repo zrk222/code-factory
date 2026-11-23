@@ -28,9 +28,11 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
     assert "does not approve its result" in page
     assert "not code correctness or release readiness" in page
     assert "not a hosted repository scanner" in page
-    assert "The quick security scanner inspects Python ASTs" in page
-    assert "Core 0.50.0 and plugins 1.3.6 are the prepared release line" in page
-    assert "12-language native security" in page
+    assert "The default static scan analyzes Python" in page
+    assert "Other native analysis requires configured workers" in page
+    assert "Core 0.50.0 is public" in page
+    assert "VS Marketplace lists the 1.3.6 VSIX" in page
+    assert "JetBrains accepted the 1.3.6 submission for review" in page
     assert "Six languages had insufficient precision samples" in page
     assert (
         "AI labels are not twelve-language accuracy or independent human validation"
@@ -71,9 +73,12 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
         f'href="https://github.com/zrk222/code-factory/releases/tag/v{__version__}"'
         in page
     )
-    assert "Audit depth depends on language, policy and supplied evidence." in readme
-    assert "Missing evidence stays incomplete." in readme
-    assert "doi.org/10.5281/zenodo.21381405" in page
+    normalized_readme = " ".join(readme.split())
+    assert "Other native analysis requires configured workers" in normalized_readme
+    assert "Check the result status and audited file count" in normalized_readme
+    assert "doi.org/10.5281/zenodo.24451994" in page
+    assert "MIT OR Apache-2.0" in readme
+    assert "docs/commercial-model.md" in page
     assert '<meta name="viewport"' in page
     assert 'id="story-video"' in page
     assert 'aria-label="From requirements to WMM: Code Factory walkthrough"' in page

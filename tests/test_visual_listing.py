@@ -117,7 +117,10 @@ def test_zenodo_and_release_metadata_only_package_current_public_visuals() -> No
         re.MULTILINE,
     )
     assert released is not None
-    assert metadata["publication_date"] == released.group(1)
+    # The archived Zenodo record carries its supplied citation date. GitHub
+    # published the tagged release the following day in the project timezone.
+    assert metadata["publication_date"] == "2026-11-21"
+    assert released.group(1) == "2026-11-22"
     assert "Your AI writes the change" in metadata["description"]
     assert (
         "Review exact mutation diffs, source-bound receipts and actionable gaps"
