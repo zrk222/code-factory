@@ -1309,6 +1309,7 @@ def test_ci_template_comments_without_masking_failed_verification():
 def test_dry_run_assemble_plans_all_stages(tmp_path):
     ensure_layout(tmp_path)
     report = assemble(tmp_path, "feat", dry_run=True)
+    assert not (tmp_path / ".factory" / "run-sequences").exists()
     stages = [s for s in report["stages"] if s["status"] in ("would-run", "skipped")]
     assert len(stages) == len(DEFAULT_CHAIN)
 

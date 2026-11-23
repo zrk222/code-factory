@@ -956,7 +956,24 @@ def _build_parser(
         default=None,
         help="workspace-relative release contract; defaults to .factory/release-contracts/<feature>.json",
     )
+    s.add_argument(
+        "--strict-sequence",
+        action="store_true",
+        help="require a declared whole-run sequence and paired evidence",
+    )
+    s.add_argument(
+        "--sequence-run-id", help="explicit run to verify under .factory/run-sequences/"
+    )
     s.add_argument("--json", action="store_true")
+
+    sequence = sub.add_parser("sequence", help="manage local run-sequence evidence")
+    quarantine = sequence.add_subparsers(dest="sequence_cmd", required=True).add_parser(
+        "quarantine", help="preserve a run while excluding it from default selection"
+    )
+    quarantine.add_argument("feature")
+    quarantine.add_argument("run_id")
+    quarantine.add_argument("--root", default=".")
+    quarantine.add_argument("--reason", required=True)
 
     s = sub.add_parser("meter", help="real savings summary from your runs")
     s.add_argument("--root", default=".")
@@ -3604,6 +3621,9 @@ def _verification_text(a, result: dict) -> None:
         label = "LOCAL GATES PASS"
     else:
         label = "NOT READY"
+    from .verification import _print_sequence_status
+
+    _print_sequence_status(result)
     print(f"FACTORY  {label}")
     print(f"next action: {result['next_action']}")
 
@@ -3621,11 +3641,15 @@ def _verification_exit_code(a, result: dict) -> int:
 
 
 def _dispatch_route_group_25(a, capture_command, p):
+    if a.cmd == "sequence":
+        return _lazy_import("verification", "_quarantine_command")(a)
     if a.cmd == "verify":
         result = _lazy_import("verification", "verify_feature")(
             Path(a.root),
             a.feature,
             strict_release=a.strict_release,
+            strict_sequence=a.strict_sequence,
+            sequence_run_id=a.sequence_run_id,
             release_contract_path=Path(a.release_contract)
             if a.release_contract
             else None,
