@@ -211,6 +211,8 @@ def test_release_decision_exposes_local_pass_without_external_provider_claim(
     card = release_decision_card(tmp_path, "payments")
 
     assert card["state"] == "EXTERNAL_GATES_UNOBSERVED"
+    assert card["local_evidence"]["whole_run_assured"] is False
+    assert card["local_evidence"]["whole_run_basis"] is None
     assert card["blockers"] == []
     assert card["external_gates"][0]["id"] == "PROVIDER_STATE_UNOBSERVED"
     assert "does not contact a provider" in card["claim_boundary"]

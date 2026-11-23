@@ -246,7 +246,7 @@ def _project_contract(workspace: Path, path: Path):
         feature = value.get("feature") if isinstance(value, dict) else None
         if not isinstance(feature, str) or not feature.strip():
             raise ValueError("release contract feature is missing")
-        from .verification import verify_feature
+        from .verification import verify_feature, whole_run_projection
 
         result = verify_feature(
             workspace, feature, strict_release=True, release_contract_path=path
@@ -257,6 +257,7 @@ def _project_contract(workspace: Path, path: Path):
             "ok": result.get("release_ready") is True,
             "marker": result.get("release_contract", {}).get("marker"),
             "blocker_count": len(result.get("blockers", [])),
+            **whole_run_projection(result),
             "next_action": result.get("next_action"),
         }, None
     except (
