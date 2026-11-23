@@ -1694,7 +1694,11 @@ def test_stray_run_inventory_entry_fails_closed(run):
     assert result["whole_run"]["status"] == "unverifiable"
 
 
-@pytest.mark.parametrize("malformed", [" " * (1024 * 1024 + 1), "[" * 10000])
+@pytest.mark.parametrize(
+    "malformed",
+    [" " * (1024 * 1024 + 1), "[" * 10000],
+    ids=["oversized", "deeply-nested"],
+)
 def test_invalid_manifest_resource_bounds_fail_closed(run, malformed):
     (run[1] / "manifest.json").write_text(malformed, encoding="utf-8")
     result = verify_feature(run[0], "sample")
