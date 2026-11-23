@@ -9,12 +9,15 @@ decision with your team. Code Factory does not certify software.
 
 [Release downloads](https://github.com/zrk222/code-factory/releases/tag/v0.50.0) ·
 [Release channels](docs/RELEASE_CHANNELS.md) ·
-[Quick guide](docs/START_HERE.md) · [Screenshots](#product-walkthrough)
+[Quick guide](docs/START_HERE.md) · [Package licensing](docs/commercial-model.md) ·
+[Screenshots](#product-walkthrough)
 
 ```powershell
 python -m pip install factoryline-code-factory==0.50.0
 factory scan --root . --static-only
 ```
+
+The core runs on Python 3.10+. The full `[factory]` install requires Python 3.11+.
 
 The default static scan analyzes Python. Other native analysis requires
 [configured workers](docs/START_HERE.md). A scan can exit 0 with status

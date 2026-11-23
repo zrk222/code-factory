@@ -90,6 +90,12 @@ The default static scan analyzes Python. Other native analysis requires
 configured workers. Check the result status and audited file count, even when
 the command exits 0. This static preview does not scan or upload your repository.
 
+## Package licensing
+
+The core and all four companion wheels declare MIT OR Apache-2.0.
+The full toolchain requires Python 3.11+. See the
+[package license matrix](https://github.com/zrk222/code-factory/blob/main/docs/commercial-model.md).
+
 ## Go deeper
 
 - [PR 354 source and review](https://github.com/zrk222/code-factory/pull/354)
