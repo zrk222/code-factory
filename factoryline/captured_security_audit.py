@@ -109,7 +109,8 @@ def configured_call_finding(provider, relative, call, aliases):
 def _weak_hash_finding(call, relative, node, aliases):
     """Observe confirmed hashlib MD5 calls with no explicit compatibility flag."""
     from .review_audits import _security_finding
-    from .security_configuration import _canonical, _keyword, _literal_bool
+    from .security_configuration import _canonical, _keyword
+    from .weak_hash_compatibility import definite_compatibility_checksum
 
     if _canonical(node, aliases) != call:
         return None
@@ -121,7 +122,7 @@ def _weak_hash_finding(call, relative, node, aliases):
             and algorithm.value.lower() == "md5"
         ):
             return None
-    if _literal_bool(_keyword(node, "usedforsecurity")) is False:
+    if definite_compatibility_checksum(node):
         return None
     return _security_finding(
         "SECURITY_WEAK_HASH",
