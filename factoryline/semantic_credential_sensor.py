@@ -5971,6 +5971,10 @@ def _security_input_flow_evidence(value, *, value_type):
     return evidence
 
 
+def _literal_keyword_name(key):
+    return isinstance(key, ast.Constant) and isinstance(key.value, str)
+
+
 def definite_compatibility_checksum(node):
     """Credit one literal false flag only when keyword expansion is unambiguous."""
     values = []
@@ -5981,7 +5985,7 @@ def definite_compatibility_checksum(node):
             if not isinstance(keyword.value, ast.Dict):
                 return False
             for key, value in zip(keyword.value.keys, keyword.value.values):
-                if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                if not _literal_keyword_name(key):
                     return False
                 if key.value == "usedforsecurity":
                     values.append(value)
