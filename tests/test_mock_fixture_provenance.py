@@ -1977,7 +1977,7 @@ def test_application_known_token_inventory_code_change_invalidates_cache(
     path.parent.mkdir(parents=True)
     token_source = _APP133_DRF.replace(
         'password = "fictionalvalue"',
-        'password = "sk_live_aaaaaaaaaaaaaaaa"',
+        'password = "sk_prod_aaaaaaaaaaaaaaaa"',
         1,
     )
     path.write_text(token_source, encoding="utf-8")
