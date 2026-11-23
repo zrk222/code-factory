@@ -6,13 +6,13 @@ from factoryline.adoption import run_repo_scan
 @pytest.mark.parametrize(
     "arguments,expected_warning",
     [
-        ('usedforsecurity=False', False),
+        ("usedforsecurity=False", False),
         ('**{"usedforsecurity": False}', False),
         ('**{"usedforsecurity": True}', True),
-        ('**options', True),
-        ('usedforsecurity=False, **options', True),
+        ("**options", True),
+        ("usedforsecurity=False, **options", True),
         ('**{"usedforsecurity": False}, **{"usedforsecurity": False}', True),
-        ('**{key: False}', True),
+        ("**{key: False}", True),
         ('**{"usedforsecurity": flag}', True),
         ('**{"usedforsecurity": False, **options}', True),
         ('**{"usedforsecurity": False, "usedforsecurity": True}', True),
