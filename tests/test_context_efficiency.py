@@ -339,6 +339,17 @@ def test_common_credential_paths_and_shapes_are_digest_only(name, content):
     assert excerpt is None
 
 
+def test_stripe_live_secret_stays_out_of_context_packet(tmp_path):
+    synthetic_secret = "rk_" + "live_" + "A" * 24
+    (tmp_path / "settings.py").write_text(
+        f"payment_provider = {synthetic_secret!r}\n", encoding="utf-8"
+    )
+    packet = build_context_packet(tmp_path, _request(paths=("settings.py",)))
+    assert packet["sources"][0]["inclusion"] == "digest_only"
+    assert "excerpt" not in packet["sources"][0]
+    assert synthetic_secret not in json.dumps(packet)
+
+
 def test_secret_material_in_request_is_rejected(tmp_path):
     (tmp_path / "README.md").write_text("safe", encoding="utf-8")
     with pytest.raises(ContextEfficiencyError, match="E_SECRET_MATERIAL"):

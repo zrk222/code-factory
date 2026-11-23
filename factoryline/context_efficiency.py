@@ -2679,6 +2679,7 @@ _SECRET_BYTES = (
     re.compile(rb"(?:ghp_|github_pat_|pypi-|vsce[_-]?pat)[A-Za-z0-9_-]{8,}"),
     re.compile(rb"(?:AKIA|ASIA)[0-9A-Z]{16}"),
     re.compile(rb"AIza[0-9A-Za-z_-]{30,}"),
+    re.compile(rb"\b(?:sk|rk)_live_[A-Za-z0-9]{10,99}\b"),
     re.compile(
         rb"(?:sk-(?:live|proj|ant|test)-|xox[baprs]-|ya29\.)[A-Za-z0-9._-]{12,}"
     ),
