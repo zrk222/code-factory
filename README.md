@@ -5,7 +5,7 @@ Review agent-written code by collecting local software review evidence:
 trace findings to their source, challenge weak tests, and keep the release
 decision with your team. Code Factory does not certify software.
 
-**Code Factory 0.50.0**
+**Code Factory 0.50.1**
 
 [Release downloads](https://github.com/zrk222/code-factory/releases/tag/v0.50.0) ·
 [Release channels](docs/RELEASE_CHANNELS.md) ·
@@ -13,7 +13,7 @@ decision with your team. Code Factory does not certify software.
 [Screenshots](#product-walkthrough)
 
 ```powershell
-python -m pip install factoryline-code-factory==0.50.0
+python -m pip install factoryline-code-factory==0.50.1
 factory scan --root . --static-only
 ```
 
@@ -22,6 +22,12 @@ The core runs on Python 3.10+. The full `[factory]` install requires Python 3.11
 The default static scan analyzes Python. Other native analysis requires
 [configured workers](docs/START_HERE.md). A scan can exit 0 with status
 `INCOMPLETE`. Check that status and the audited file count before relying on it.
+
+## What changed in 0.50.1
+
+The Python scan now detects Stripe-shaped live credentials and canonical MD5
+calls. Explicit compatibility checksums retain their exemption, and reports
+withhold credential values. [Changes and fixes](CHANGELOG.md#0501--2026-11-23).
 
 ## What changed in 0.50.0
 

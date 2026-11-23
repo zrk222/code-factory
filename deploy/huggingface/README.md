@@ -72,7 +72,7 @@ CodeRabbit can consume completed neutral GitHub Check output when configured. PR
 ## Try a local check
 
 ```sh
-python -m pip install factoryline-code-factory==0.50.0
+python -m pip install factoryline-code-factory==0.50.1
 factory first-proof --root .
 ```
 
@@ -80,7 +80,7 @@ First Proof uses a generated sandbox to check the demonstration, not your reposi
 
 ## Versions and limits
 
-Core 0.50.0 is available on PyPI and GitHub, with a versioned Zenodo archive.
+Core 0.50.1 addresses Stripe credential and MD5 detection. Core 0.50.0 has a versioned Zenodo archive.
 VS Marketplace lists the 1.3.6 VSIX. JetBrains accepted the 1.3.6 submission
 for review. [Release channels](https://github.com/zrk222/code-factory/blob/main/docs/RELEASE_CHANNELS.md).
 

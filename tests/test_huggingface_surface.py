@@ -30,7 +30,7 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
     assert "not a hosted repository scanner" in page
     assert "The default static scan analyzes Python" in page
     assert "Other native analysis requires configured workers" in page
-    assert "Core 0.50.0 is public" in page
+    assert "Core 0.50.1 addresses Stripe credential and MD5 detection" in page
     assert "VS Marketplace lists the 1.3.6 VSIX" in page
     assert "JetBrains accepted the 1.3.6 submission for review" in page
     assert "Six languages had insufficient precision samples" in page

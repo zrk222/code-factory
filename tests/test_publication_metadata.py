@@ -648,8 +648,8 @@ def test_hosted_release_and_editor_versions_are_declared():
     )
 
     assert project["version"] == __version__
-    assert project["version"] == "0.50.0"
-    assert vscode["version"] == "1.3.6"
+    assert project["version"] == "0.50.1"
+    assert vscode["version"] == "1.3.7"
     assert "hosted" in project["optional-dependencies"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", vscode["version"])
     assert vscode_lock["version"] == vscode["version"]
@@ -1002,7 +1002,7 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
         == "https://github.com/zrk222/code-factory"
     )
     assert metadata["version"] == __version__
-    assert metadata["publication_date"] == "2026-11-21"
+    assert metadata["publication_date"] == "2026-11-23"
     assert "read-only Agent Proof Bridge" in metadata["description"]
     assert "Proof Worklog" in metadata["description"]
     assert "deterministic AppForge App Review evidence gate" in metadata["description"]

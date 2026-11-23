@@ -57,12 +57,12 @@ evidence. Other CI providers can invoke the CLI and retain the JSON as an artifa
 
 ### Install the full toolchain
 
-The core wheel installs the scanner and coordinator. For Core 0.50.0, install
+The core wheel installs the scanner and coordinator. For Core 0.50.1, install
 the published SpecLine, ForgeLine, HSF, and Prestige wheels in the same Python
 3.11+ environment:
 
 ```powershell
-python -m pip install "factoryline-code-factory[factory]==0.50.0"
+python -m pip install "factoryline-code-factory[factory]==0.50.1"
 factory doctor --strict --json
 ```
 

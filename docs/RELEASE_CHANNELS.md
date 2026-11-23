@@ -23,12 +23,12 @@ not turn a source merge into release approval.
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
 | GitHub | Source tag, wheel, sdist, media and any editor packages included in the selected release mode | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.50.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| PyPI | `factoryline-code-factory==0.50.1` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | `factoryline-vscode-1.3.6.vsix` candidate | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
-| JetBrains | `factoryline-intellij-1.3.6.zip` candidate | Owner-authorized direct upload after required checks and live Marketplace validation; the protected publisher workflow remains available | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
+| VS Code / Open VSX | `factoryline-vscode-1.3.7.vsix` candidate | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
+| JetBrains | `factoryline-intellij-1.3.7.zip` candidate | Owner-authorized direct upload after required checks and live Marketplace validation; the protected publisher workflow remains available | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
 | Devin | `code-factory-evidence` plugin 1.3.6 | Source-pinned contribution to `CognitionAI/devin-marketplace`, after live plugin tool acceptance | Accepted marketplace contribution and indexed entry; a submitted PR is pending review, not public availability |
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
@@ -179,7 +179,7 @@ artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured. Direct
 marketplace uploads require their own provider acceptance and approval evidence.
 
-Core 0.50.0 and editor 1.3.6 artifacts must bind to one final source commit.
+Core 0.50.1 and editor 1.3.7 artifacts must bind to one final source commit.
 Version metadata does not establish provider availability. The latest owner
 provider read-back recorded here, 2026-10-31, verified core 0.49.0, VS Code 1.3.0
 and JetBrains 1.3.1; update each channel only from its own publication receipt.
@@ -201,6 +201,11 @@ succeeds. Set `core_only=true` when uploading the editors independently. The
 workflow builds and checks fresh Python distributions and excludes editor
 validation and editor assets. Microsoft and JetBrains website uploads keep
 their own package and provider checks.
+
+The owner approved an expedited, core-only exception for v0.50.1. It is bound
+to the candidate tag, owner dispatch, protected PyPI environment, source SHA,
+workflow run attempt and expiring receipt. VS Code and JetBrains 1.3.7 use
+their separately authorized website uploads and package verification.
 
 Cadence exceptions are disabled after the completed publication of the
 previously approved candidates. No automatic or routine exception path is

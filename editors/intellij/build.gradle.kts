@@ -138,7 +138,7 @@ plugins {
 }
 
 group = "app.factoryline"
-version = "1.3.6"
+version = "1.3.7"
 
 // Keep release task inputs configuration-cache safe. Do not resolve the
 // Project from a task action: Gradle 9.5 treats that as a release-gate error.

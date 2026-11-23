@@ -187,7 +187,7 @@ def test_publish_0495_protected_exception_round_trips_exact_source_run(
     ],
 )
 @pytest.mark.parametrize("recent_count", [1, 4])
-@pytest.mark.parametrize("opt_in_version", ["0.49.6", "0.50.0"])
+@pytest.mark.parametrize("opt_in_version", ["0.49.6", "0.50.0", "0.50.1"])
 def test_publish_0496_guard_keeps_cooldown_cap_and_exact_owner(
     tmp_path, monkeypatch, tag, actor, opt_in, accepted, recent_count, opt_in_version
 ):
@@ -227,6 +227,8 @@ def test_publish_0496_guard_keeps_cooldown_cap_and_exact_owner(
         "CORE_0495_EXCEPTION": "false",
         "CORE_0496_EXCEPTION": opt_in if opt_in_version == "0.49.6" else "false",
         "CORE_0500_EXCEPTION": opt_in if opt_in_version == "0.50.0" else "false",
+        "CORE_0501_EXCEPTION": opt_in if opt_in_version == "0.50.1" else "false",
+        "CORE_ONLY": "true",
     }.items():
         monkeypatch.setenv(key, value)
     code = _snippet(
@@ -239,7 +241,7 @@ def test_publish_0496_guard_keeps_cooldown_cap_and_exact_owner(
             exec(compile(code, str(WORKFLOW), "exec"), {})
 
 
-@pytest.mark.parametrize("version", ["0.49.6", "0.50.0"])
+@pytest.mark.parametrize("version", ["0.49.6", "0.50.0", "0.50.1"])
 def test_publish_0496_exception_record_binds_request_and_candidate_sha(
     tmp_path, monkeypatch, version
 ):
@@ -261,6 +263,8 @@ def test_publish_0496_exception_record_binds_request_and_candidate_sha(
         "CORE_0495_EXCEPTION": "false",
         "CORE_0496_EXCEPTION": "true" if version == "0.49.6" else "false",
         "CORE_0500_EXCEPTION": "true" if version == "0.50.0" else "false",
+        "CORE_0501_EXCEPTION": "true" if version == "0.50.1" else "false",
+        "CORE_ONLY": "true",
     }.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "c" * 40)
@@ -280,7 +284,15 @@ def test_publish_0496_exception_record_binds_request_and_candidate_sha(
     )
     assert result["monthly_cap_exception"] is True
     assert result["one_time_version_opt_in"] == version
-    assert value["owner_request_record"]["request"] == "published now"
+    record = value["owner_request_record"]
+    if version == "0.50.1":
+        assert record["request"] == "apply to this one"
+        assert record["scope"] == ["core 0.50.1"]
+        monkeypatch.setenv("CORE_ONLY", "false")
+        with pytest.raises(SystemExit, match="core-only"):
+            exec(compile(code, str(WORKFLOW), "exec"), {})
+    else:
+        assert record["request"] == "published now"
     assert value["owner_request_record"]["candidate_sha"] == "c" * 40
     assert value["source_commit"] == "c" * 40
     assert "signed_receipts fetch-ci" in WORKFLOW.read_text(encoding="utf-8")

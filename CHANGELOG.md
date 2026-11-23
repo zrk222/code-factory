@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.50.1 — 2026-11-23
+
+- Detect Stripe-shaped live credentials in the default Python scan without emitting the value.
+- Report canonical MD5 calls and preserve explicit compatibility-checksum exemptions.
+- Keep license and Python requirements visible for every package. Restore the approved commercial decision record and include its policy JSON in the source archive.
+- Pair the separately installed core with the 1.3.7 VS Code and JetBrains adapters. Native worker setup, signed six-family qualification and cold/warm comparisons are separate from this detector fix.
+
 ## 0.50.0 — 2026-11-22
 
 Your AI can propose a repair. Your team needs evidence before trusting it.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.50.0"
+version = "0.50.1"
 description = "Local evidence for AI-built code: 12-language native security rules, SARIF review, signed claims and human-owned release decisions."
 authors = [
   { name = "Richard Katz" },

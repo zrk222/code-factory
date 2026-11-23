@@ -1,5 +1,6 @@
 include .zenodo.json
 include CITATION.cff
+include commercial-policy.v1.json
 include AKU_STANDARD.md
 include LAUNCH_KIT.md
 include PUBLICATION_GUIDE.md
