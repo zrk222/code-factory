@@ -780,6 +780,19 @@ def test_editor_publishers_keep_trusted_tools_and_bind_approved_candidate():
         assert "Bind trusted publisher and recheck immutable candidate tag" in workflow
 
 
+def test_signed_and_pr_quality_use_the_same_pinned_forge():
+    import re
+
+    def pin(workflow):
+        return re.findall(
+            r"code-factory-2-forge @ git\+https://github\.com/zrk222/code-factory-2-forge\.git@([a-f0-9]{40})",
+            Path(workflow).read_text(encoding="utf-8"),
+        )
+
+    signed = pin(".github/workflows/signed-receipts.yml")
+    assert len(signed) == 1 and signed == pin(".github/workflows/ci.yml")
+
+
 def test_legacy_receipt_is_valid_only_when_candidate_is_workflow_commit():
     import factoryline.signed_receipts as receipts
 

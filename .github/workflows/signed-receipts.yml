@@ -103,7 +103,8 @@ jobs:
         run: |
           extras=dev,enterprise
           if [[ "$CHECK_NAME" == tests ]]; then extras+=,hosted; fi
-          python -m pip install -e ".[$extras]" code-factory-2-forge==0.10.8
+          # Match the candidate-quality gate's reviewed SQLite call classification.
+          python -m pip install -e ".[$extras]" "code-factory-2-forge @ git+https://github.com/zrk222/code-factory-2-forge.git@36304efbfececed506a30403fe1b4655f60a18cf"
           npm install --no-save --no-package-lock typescript@5.9.3
       - name: Verify pristine candidate before fixed audit
         env:
