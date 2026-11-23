@@ -3621,9 +3621,9 @@ def _verification_text(a, result: dict) -> None:
         label = "LOCAL GATES PASS"
     else:
         label = "NOT READY"
-    from .verification import print_sequence_status
+    from .verification import _print_sequence_status
 
-    print_sequence_status(result)
+    _print_sequence_status(result)
     print(f"FACTORY  {label}")
     print(f"next action: {result['next_action']}")
 
@@ -3642,7 +3642,7 @@ def _verification_exit_code(a, result: dict) -> int:
 
 def _dispatch_route_group_25(a, capture_command, p):
     if a.cmd == "sequence":
-        return _lazy_import("verification", "quarantine_command")(a)
+        return _lazy_import("verification", "_quarantine_command")(a)
     if a.cmd == "verify":
         result = _lazy_import("verification", "verify_feature")(
             Path(a.root),

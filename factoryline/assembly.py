@@ -1164,9 +1164,9 @@ def _execute_assembly_stage(
         for row in report["stages"]
     )
     action_id = _cli_action_id(run_id, stage, attempt, release_binding)
-    from .verification import assembly_intent, assembly_outcome, sequence_error
+    from .verification import _assembly_intent, _assembly_outcome, _sequence_error
 
-    sequence = assembly_intent(root, feature, run_id, stage.stage_id, report)
+    sequence = _assembly_intent(root, feature, run_id, stage.stage_id, report)
     if sequence is None:
         return False
     receipt = Receipt(
@@ -1198,7 +1198,7 @@ def _execute_assembly_stage(
     try:
         receipt.write(root)
     except (OSError, ValueError) as error:
-        sequence_error(report, stage.stage_id, error)
+        _sequence_error(report, stage.stage_id, error)
         return False
     activity.stage_started(stage.module, stage.name)
     with stopwatch() as sw:
@@ -1254,9 +1254,9 @@ def _execute_assembly_stage(
     try:
         receipt_path = receipt.write(root)
     except (OSError, ValueError) as error:
-        sequence_error(report, stage.stage_id, error)
+        _sequence_error(report, stage.stage_id, error)
         return False
-    ok = assembly_outcome(root, feature, run_id, sequence, receipt_path, report) and ok
+    ok = _assembly_outcome(root, feature, run_id, sequence, receipt_path, report) and ok
     report["stages"].append(
         {
             "module": stage.module,
@@ -1398,7 +1398,7 @@ def _run_assembly_pipeline(
             dry_run,
         )
 
-    from .verification import begin_assembly_sequence
+    from .verification import _begin_assembly_sequence
 
     stages = [
         _plan_assembly_stage(
@@ -1412,7 +1412,7 @@ def _run_assembly_pipeline(
         )
         for module, args in chain
     ]
-    if not dry_run and not begin_assembly_sequence(
+    if not dry_run and not _begin_assembly_sequence(
         root, feature, run_id, stages, report
     ):
         _finish_activity(report, activity)

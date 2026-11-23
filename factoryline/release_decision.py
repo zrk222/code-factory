@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 from .release_integrity import release_integrity
-from .verification import verify_feature, whole_run_projection
+from .verification import verify_feature, _whole_run_projection
 
 
 SCHEMA = "factory.release-decision-card.v1"
@@ -272,7 +272,7 @@ def release_decision_card(root: Path, feature: str) -> dict[str, Any]:
         "shippable": result.get("shippable") is True,
         "contract_path": contract_path.relative_to(workspace).as_posix(),
         "contract_marker": marker,
-        **whole_run_projection(result),
+        **_whole_run_projection(result),
         "blocker_count": len(result.get("blockers", [])),
     }
     if result.get("release_ready") is not True:

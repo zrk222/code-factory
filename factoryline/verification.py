@@ -293,6 +293,44 @@ def _next_verify_action(
     return f"factory trace {feature} --root {workspace}"
 
 
+def _stage_evidence_audit(by_module, rows, required):
+    modules, blockers = _module_audit(by_module, required)
+    intent_failure = _ship_intent_failure(rows)
+    if intent_failure is not None:
+        blockers.append(intent_failure)
+    return modules, blockers
+
+
+def _declared_release_stages(workspace, feature, contract_path, strict_release):
+    if not strict_release:
+        return set()
+    return {
+        stage
+        for stage in ("prestige:score", "hsf:compile")
+        if _release_declares(workspace, feature, contract_path, stage)
+    }
+
+
+def _verify_selected_run(
+    workspace, feature, run_id, required, stage_ids, release_contract
+):
+    """Audit the selected run against its own native gates and contract bindings."""
+    sequence = verify_sequence(workspace, feature, run_id, stage_ids)
+    if not sequence["ok"]:
+        return sequence, sequence["blockers"]
+
+    from .assembly import rollup_attributions
+
+    rows = rollup_attributions(sequence["stages"])["stages"]
+    by_module = _stages_by_module(rows)
+    _, blockers = _stage_evidence_audit(by_module, rows, required)
+    if release_contract.get("ok"):
+        blockers.extend(
+            _contract_binding_blockers(required, by_module, release_contract)
+        )
+    return sequence, blockers
+
+
 def verify_feature(
     root: Path,
     feature: str,
@@ -312,19 +350,20 @@ def verify_feature(
         release_contract_path
         or workspace / ".factory" / "release-contracts" / f"{feature}.json"
     )
-    declared = {
-        stage
-        for stage in ("prestige:score", "hsf:compile")
-        if strict_release
-        and _release_declares(workspace, feature, contract_path, stage)
-    }
-    required = _required_stages(workspace, feature, rows, declared)
+    required = _required_stages(
+        workspace,
+        feature,
+        rows,
+        _declared_release_stages(
+            workspace,
+            feature,
+            contract_path,
+            strict_release,
+        ),
+    )
     blockers = _snapshot_blockers(rollup)
-    modules, module_blockers = _module_audit(by_module, required)
-    blockers.extend(module_blockers)
-    intent_failure = _ship_intent_failure(rows)
-    if intent_failure is not None:
-        blockers.append(intent_failure)
+    modules, stage_blockers = _stage_evidence_audit(by_module, rows, required)
+    blockers.extend(stage_blockers)
     declared_stage_ids = {
         f"{module}:{stage}" for module, stages in required.items() for stage in stages
     }
@@ -339,33 +378,20 @@ def verify_feature(
             by_module,
         )
         blockers.extend(contract_blockers)
-    whole_run = select_sequence(workspace, feature, declared_stage_ids, rows)
-    if not strict_sequence:
-        blockers.extend(whole_run["blockers"])
+    whole_run = _select_sequence(workspace, feature, declared_stage_ids, rows)
     sequence: dict[str, Any] = {"status": "not_requested", "ok": False}
     if strict_sequence:
-        sequence = verify_sequence(
-            workspace, feature, sequence_run_id or "", declared_stage_ids
+        sequence, sequence_blockers = _verify_selected_run(
+            workspace,
+            feature,
+            sequence_run_id or "",
+            required,
+            declared_stage_ids,
+            release_contract,
         )
-        blockers.extend(sequence["blockers"])
-        # Selected-run evidence cannot borrow ship intent, attribution or strict
-        # release bindings from a different run in the legacy latest-stage view.
-        if sequence.get("ok"):
-            from .assembly import rollup_attributions
-
-            selected_rows = rollup_attributions(sequence["stages"])["stages"]
-            selected_by_module = _stages_by_module(selected_rows)
-            _, selected_blockers = _module_audit(selected_by_module, required)
-            blockers.extend(selected_blockers)
-            selected_intent_failure = _ship_intent_failure(selected_rows)
-            if selected_intent_failure is not None:
-                blockers.append(selected_intent_failure)
-            if strict_release and release_contract.get("ok"):
-                blockers.extend(
-                    _contract_binding_blockers(
-                        required, selected_by_module, release_contract
-                    )
-                )
+    else:
+        sequence_blockers = whole_run["blockers"]
+    blockers.extend(sequence_blockers)
     next_action = _next_verify_action(workspace, feature, rollup, blockers)
     shippable = bool(rows) and not rollup.get("earliest_failing_stage") and not blockers
     return {
@@ -767,7 +793,7 @@ def verify_sequence(
     return result
 
 
-def sequence_error(report: dict, stage: str, error: Exception) -> None:
+def _sequence_error(report: dict, stage: str, error: Exception) -> None:
     report["halted_at"] = stage
     report["sequence_error"] = {
         "code": "SEQUENCE_EVIDENCE_ERROR",
@@ -775,7 +801,7 @@ def sequence_error(report: dict, stage: str, error: Exception) -> None:
     }
 
 
-def begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
+def _begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
     """Declare required and applicable native stages before assembly runs them."""
 
     def applies(stage):
@@ -795,13 +821,13 @@ def begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
     try:
         declare_sequence(root, feature, run_id, planned)
     except (OSError, ValueError) as error:
-        sequence_error(report, "sequence:manifest", error)
+        _sequence_error(report, "sequence:manifest", error)
         return False
     report["sequence_recorded"] = True
     return True
 
 
-def assembly_intent(root, feature, run_id, stage_id, report) -> dict | None:
+def _assembly_intent(root, feature, run_id, stage_id, report) -> dict | None:
     """Record the positional intent before a native stage starts."""
     try:
         directory, manifest = _manifest(root, feature, run_id)
@@ -815,18 +841,18 @@ def assembly_intent(root, feature, run_id, stage_id, report) -> dict | None:
         record_intent(root, feature, run_id, position)
         return sequence_binding(manifest, position)
     except (OSError, ValueError, StopIteration) as error:
-        sequence_error(report, stage_id, error)
+        _sequence_error(report, stage_id, error)
         return None
 
 
-def assembly_outcome(root, feature, run_id, binding, receipt_path, report) -> bool:
+def _assembly_outcome(root, feature, run_id, binding, receipt_path, report) -> bool:
     """Bind the durable native receipt before the next stage can start."""
     try:
         record_outcome(
             root, feature, run_id, binding["sequence_position"], receipt_path
         )
     except (OSError, ValueError) as error:
-        sequence_error(report, "sequence:outcome", error)
+        _sequence_error(report, "sequence:outcome", error)
         return False
     return True
 
@@ -907,7 +933,7 @@ def _basis_inventory(root, feature, required, result):
     return newest[1] if newest else None
 
 
-def select_sequence(
+def _select_sequence(
     root: Path, feature: str, required: set[str], rows: list[dict]
 ) -> dict:
     """Require one current whole-run basis whenever a qualifying plan exists."""
@@ -976,7 +1002,7 @@ def select_sequence(
     return result
 
 
-def whole_run_projection(verification: dict) -> dict:
+def _whole_run_projection(verification: dict) -> dict:
     """Expose the evidence boundary on release decision surfaces."""
     whole = verification.get("whole_run", {})
     return {
@@ -986,7 +1012,7 @@ def whole_run_projection(verification: dict) -> dict:
     }
 
 
-def print_sequence_status(result: dict) -> None:
+def _print_sequence_status(result: dict) -> None:
     """Display explicit and default sequence evidence without changing gate outputs."""
     whole = result["whole_run"]
     if result.get("strict_sequence"):
@@ -1000,7 +1026,7 @@ def print_sequence_status(result: dict) -> None:
         print("SEQUENCE RECOVERED (quarantined: " + ", ".join(whole["recovered"]) + ")")
 
 
-def quarantine_command(args) -> int:
+def _quarantine_command(args) -> int:
     """Persist a one-way quarantine record without deleting any evidence."""
     try:
         value = quarantine_sequence(
