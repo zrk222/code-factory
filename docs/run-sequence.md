@@ -8,8 +8,8 @@ ID, manifest digest and position. An evidence write failure halts the run
 with `SEQUENCE_EVIDENCE_ERROR`.
 
 The plan includes required stages and applicable optional stages. An
-unavailable optional module, Prestige without UI scope or HSF without a
-decision spec can be skipped. Paused and failed runs retain their partial
+unavailable companion can be skipped only when its gate is outside the
+feature scope. Existing design or compile receipts also declare scope. Paused and failed runs retain their partial
 evidence. Dry runs and historical workspaces receive no new sequence evidence.
 
 ## Verify readiness
@@ -26,14 +26,16 @@ verification reports `SEQUENCE_BASIS_SUPERSEDED`. A subset plan cannot
 become the basis, but the receipts it writes still count as current evidence.
 
 Without a recorded whole-run plan, verification reports gate-only
-readiness and `whole_run.assured=false`. The release decision card and
+readiness and `whole_run.assured=false`. Adding a required gate after a whole run
+requires a new whole run that covers that gate. The release decision card and
 release-contract projection report `whole_run_assured`, `whole_run_basis`
 and `whole_run_limit`.
 
 Passing `--sequence-run-id` enables strict selected-run verification.
 It checks the selected receipts, ship intent and any applicable
 `--strict-release` contract bindings. Normal latest-stage gate failures
-also block the result.
+also block the result. Mission completion can verify its exact ship-only
+handoff while release readiness still requires one current whole run.
 
 ## Recover damaged evidence
 
@@ -52,6 +54,7 @@ receipts it wrote. When no eligible basis remains, run a new whole assembly.
 
 Run manifests and position records live in
 `.factory/run-sequences/FEATURE/RUN_ID/`. The evidence represents local
-producer assertions. Hashes bind evidence content and local timestamps
+producer assertions. Names that require encoding use a deterministic
+directory name and retain the original feature name in the records. Hashes bind evidence content and local timestamps
 order the records. The records cannot establish signer identity, trusted
 time, independent execution or provider effects.

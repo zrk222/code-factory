@@ -13,7 +13,7 @@ import hashlib
 import os
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1398,7 +1398,7 @@ def _run_assembly_pipeline(
             dry_run,
         )
 
-    from .verification import _begin_assembly_sequence
+    from .verification import _assembly_scope_requirements, _begin_assembly_sequence
 
     stages = [
         _plan_assembly_stage(
@@ -1412,12 +1412,16 @@ def _run_assembly_pipeline(
         )
         for module, args in chain
     ]
-    if not dry_run and not _begin_assembly_sequence(
-        root, feature, run_id, stages, report
-    ):
-        _finish_activity(report, activity)
-        persist()
-        return report
+    if not dry_run:
+        scoped = _assembly_scope_requirements(root, feature)
+        stages = [
+            replace(stage, required=True) if stage.stage_id in scoped else stage
+            for stage in stages
+        ]
+        if not _begin_assembly_sequence(root, feature, run_id, stages, report):
+            _finish_activity(report, activity)
+            persist()
+            return report
 
     if not _assembly_agent_contract(root, report, activity):
         persist()

@@ -333,23 +333,32 @@ def test_assembly_enrolls_and_records_detailed_cli_attempts(tmp_path, monkeypatc
         assert "args" not in action
 
 
+@pytest.mark.parametrize(
+    "feature, scoped_module",
+    [
+        ("complete", None),
+        ("Checkout API v2", None),
+        ("ui", "prestige"),
+        ("decision", "hsf"),
+    ],
+)
 def test_default_assembly_binds_whole_run_with_optional_scopes_absent(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, feature, scoped_module
 ):
     from types import SimpleNamespace
 
     monkeypatch.setattr(
         "factoryline.assembly.detect",
         lambda: [
-            SimpleNamespace(name=name, installed=True, cli=name)
+            SimpleNamespace(name=name, installed=name != scoped_module, cli=name)
             for name in ("specline", "forgeline", "hsf", "prestige")
         ],
     )
     specs = tmp_path / "specs"
     specs.mkdir()
-    (specs / "complete.md").write_text("# Complete", encoding="utf-8")
-    (specs / "complete.ssat.yaml").write_text("version: 1", encoding="utf-8")
-    forge = tmp_path / ".forge" / "complete"
+    (specs / f"{feature}.md").write_text("# Complete", encoding="utf-8")
+    (specs / f"{feature}.ssat.yaml").write_text("version: 1", encoding="utf-8")
+    forge = tmp_path / ".forge" / feature
     forge.mkdir(parents=True)
     (forge / "state.json").write_text('{"state":"architected"}', encoding="utf-8")
     payload = {"shipped": True, "intent_traceable": True, "intent_hash": "a" * 64}
@@ -357,6 +366,10 @@ def test_default_assembly_binds_whole_run_with_optional_scopes_absent(
         json.dumps({**payload, "phase": "ship", "obligations": "1/1"}) + "\n",
         encoding="utf-8",
     )
+
+    if scoped_module:
+        stage = "score" if scoped_module == "prestige" else "compile"
+        Receipt(scoped_module, stage, feature, True).write(tmp_path)
 
     def detailed(_cli, args, *_args, **_kwargs):
         output = (
@@ -370,8 +383,16 @@ def test_default_assembly_binds_whole_run_with_optional_scopes_absent(
     monkeypatch.setattr(
         "factoryline.assembly._validated_forge_acceptance", lambda *_: True
     )
-    report = assemble(tmp_path, "complete")
-    result = verify_feature(tmp_path, "complete")
+    report = assemble(tmp_path, feature)
+    result = verify_feature(tmp_path, feature)
+
+    if scoped_module:
+        assert report["halted_at"] == f"{scoped_module}:{stage}"
+        result = verify_feature(tmp_path, feature)
+        assert result["whole_run"]["basis"] == report["run_id"]
+        assert result["whole_run"]["status"] == "incomplete"
+        assert not result["shippable"]
+        return
 
     assert "halted_at" not in report
     assert "paused_at" not in report
@@ -1704,3 +1725,54 @@ def test_invalid_manifest_resource_bounds_fail_closed(run, malformed):
     result = verify_feature(run[0], "sample")
     assert not result["shippable"]
     assert result["whole_run"]["status"] == "unverifiable"
+
+
+def test_existing_gate_only_receipts_accept_legacy_feature_name(tmp_path):
+    feature = "Checkout API v2"
+    for stage_id in STAGES:
+        module, stage = stage_id.split(":")
+        outputs = {"intent_trace": {"shipped": True, "intent_traceable": True}}
+        Receipt(module, stage, feature, True, outputs=outputs).write(tmp_path)
+    verdict = verify_feature(tmp_path, feature)
+    assert verdict["shippable"]
+    assert verdict["whole_run"]["status"] == "not_evaluated"
+
+
+def test_new_scope_blocks_fallback_to_gate_only_after_whole_run(run):
+    root, _, _ = run
+    Receipt("prestige", "score", "sample", True).write(root)
+    result = verify_feature(root, "sample")
+    assert not result["shippable"]
+    assert result["whole_run"]["status"] == "incomplete"
+
+
+def test_mission_ship_handoff_preserves_release_supersession(run):
+    from factoryline.specforge_promotion import _mission_ship_evidence
+    from factoryline.verification import _now
+
+    root, _, _ = run
+    feature, run_id = "sample", "mission"
+    manifest = declare_sequence(root, feature, run_id, ["forgeline:ship"])
+    record_intent(root, feature, run_id, 1)
+    trace = {"shipped": True, "intent_traceable": True, "intent_hash": "a" * 64}
+    ship = Receipt(
+        "forgeline",
+        "ship",
+        feature,
+        True,
+        ts=_now(),
+        inputs=sequence_binding(manifest, 1),
+        outputs={"intent_trace": trace},
+    ).write(root)
+    record_outcome(root, feature, run_id, 1, ship)
+
+    verification = verify_feature(root, feature)
+    assert not verification["shippable"]
+    assert verification["whole_run"]["status"] == "superseded"
+    assert _mission_ship_evidence(root, feature, trace)
+    assert not _mission_ship_evidence(root, feature, {**trace, "intent_hash": "b" * 64})
+    outcome = (
+        root / ".factory" / "run-sequences" / feature / run_id / "0001.outcome.json"
+    )
+    outcome.unlink()
+    assert not _mission_ship_evidence(root, feature, trace)

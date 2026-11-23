@@ -13,7 +13,7 @@ import json
 import os
 import re
 import stat
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from .assembly import rollup_receipts
@@ -433,9 +433,26 @@ def _id(value: str) -> str:
     return value
 
 
+def _feature_component(feature: str) -> str:
+    if (
+        not isinstance(feature, str)
+        or feature in {"", ".", ".."}
+        or any(char in '/\\:*?"<>|' or ord(char) < 32 for char in feature)
+    ):
+        raise ValueError("feature must be a safe name")
+    if PureWindowsPath(feature).is_reserved() or feature.endswith((".", " ")):
+        return "~" + hashlib.sha256(feature.encode("utf-8")).hexdigest()
+    try:
+        return _id(feature)
+    except ValueError:
+        return "~" + hashlib.sha256(feature.encode("utf-8")).hexdigest()
+
+
 def _directory(root: Path, feature: str, run_id: str) -> Path:
     root = Path(root).resolve()
-    path = root / ".factory" / "run-sequences" / _id(feature) / _id(run_id)
+    path = (
+        root / ".factory" / "run-sequences" / _feature_component(feature) / _id(run_id)
+    )
     if any(
         parent.is_symlink()
         for parent in (path, *path.parents)
@@ -801,6 +818,16 @@ def _sequence_error(report: dict, stage: str, error: Exception) -> None:
     }
 
 
+def _assembly_scope_requirements(root, feature):
+    rows = rollup_receipts(root, feature)["stages"]
+    return {
+        f"{module}:{stage}"
+        for module, stages in _required_stages(root, feature, rows).items()
+        if module not in BASE_REQUIRED_MODULES
+        for stage in stages
+    }
+
+
 def _begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
     """Declare required and applicable native stages before assembly runs them."""
 
@@ -915,8 +942,14 @@ def quarantine_sequence(root: Path, feature: str, run_id: str, reason: str) -> d
 def _basis_inventory(root, feature, required, result):
     runs = _directory(root, feature, "manifest-probe").parent
     if not runs.exists():
-        return None
+        return None, False
     newest = None
+    base_stages = {
+        f"{owner}:{stage}"
+        for owner, stages in BASE_REQUIRED.items()
+        for stage in stages
+    }
+    has_whole_attempt = False
     for count, directory in enumerate(runs.iterdir(), 1):
         if count > 2048 or directory.is_symlink() or not directory.is_dir():
             raise ValueError("invalid or oversized sequence inventory")
@@ -927,10 +960,12 @@ def _basis_inventory(root, feature, required, result):
             continue
         _, manifest = _manifest(root, feature, run_id)
         key = (_time(manifest["declared_at"]), run_id)
-        if required <= set(manifest["stages"]) and (newest is None or key > newest):
+        planned = set(manifest["stages"])
+        has_whole_attempt = has_whole_attempt or base_stages <= planned
+        if required <= planned and (newest is None or key > newest):
             newest = key
     result["recovered"].sort()
-    return newest[1] if newest else None
+    return newest[1] if newest else None, has_whole_attempt
 
 
 def _select_sequence(
@@ -946,7 +981,7 @@ def _select_sequence(
         "recovered": [],
     }
     try:
-        basis = _basis_inventory(root, feature, required, result)
+        basis, has_whole_attempt = _basis_inventory(root, feature, required, result)
     except (OSError, ValueError, TypeError, OverflowError) as error:
         return result | {
             "status": "unverifiable",
@@ -954,14 +989,14 @@ def _select_sequence(
             "blockers": [{"code": "SEQUENCE_UNVERIFIABLE", "detail": str(error)}],
         }
     if basis is None:
-        if result["recovered"]:
+        if has_whole_attempt or result["recovered"]:
             result.update(
                 status="incomplete",
-                limit="A fresh whole run is required after quarantine.",
+                limit="A fresh whole run must cover all current required gates.",
                 blockers=[
                     {
                         "code": "SEQUENCE_EVIDENCE_MISSING",
-                        "detail": "No whole-run basis remains after quarantine.",
+                        "detail": "No recorded basis covers all current required gates.",
                     }
                 ],
             )
