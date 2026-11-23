@@ -397,6 +397,46 @@ def test_scan_output_contract_public_smoke_preserves_sources(tmp_path, capsys, u
         assert result["static_security"]["findings"]
 
 
+@pytest.mark.parametrize("format_flag", ["--json", "--sarif"])
+def test_scan_detects_stripe_secret_and_security_md5_without_exposing_secret(
+    tmp_path, capsys, format_flag
+):
+    synthetic_secret = "sk_" + "live_" + "A" * 24
+    (tmp_path / "credential.py").write_text(
+        f"payment_provider = {synthetic_secret!r}\n", encoding="utf-8"
+    )
+    (tmp_path / "hashing.py").write_text(
+        "import hashlib\n"
+        "def password_digest(value):\n"
+        "    return hashlib.md5(value).hexdigest()\n"
+        "def compatibility_checksum(value):\n"
+        "    return hashlib.new('md5', value, usedforsecurity=False).hexdigest()\n"
+        "def unrelated_provider(hashlib, value):\n"
+        "    return hashlib.md5(value)\n",
+        encoding="utf-8",
+    )
+    assert main(["scan", "--root", str(tmp_path), format_flag]) == 2
+    captured = capsys.readouterr()
+    assert synthetic_secret not in captured.out + captured.err
+    result = json.loads(captured.out)
+    if format_flag == "--json":
+        findings = [
+            (row["code"], row["line"]) for row in result["static_security"]["findings"]
+        ]
+    else:
+        findings = [
+            (
+                row["ruleId"],
+                row["locations"][0]["physicalLocation"]["region"]["startLine"],
+            )
+            for row in result["runs"][0]["results"]
+        ]
+    assert sorted(findings) == [
+        ("SECURITY_HARDCODED_SECRET", 1),
+        ("SECURITY_WEAK_HASH", 3),
+    ]
+
+
 @pytest.mark.parametrize(
     "language,suffix",
     [
@@ -2696,3 +2736,34 @@ def test_invalid_native_projection_keeps_python_diagnostics(
         assert result["languages"] == []
     else:
         assert error is None and result == original
+
+
+@pytest.mark.parametrize(
+    "arguments,expected_warning",
+    [
+        ("usedforsecurity=False", False),
+        ('**{"usedforsecurity": False}', False),
+        ('**{"usedforsecurity": True}', True),
+        ("**options", True),
+        ("usedforsecurity=False, **options", True),
+        ('**{"usedforsecurity": False}, **{"usedforsecurity": False}', True),
+        ("**{key: False}", True),
+        ('**{"usedforsecurity": flag}', True),
+        ('**{"usedforsecurity": False, **options}', True),
+        ('**{"usedforsecurity": False, "usedforsecurity": True}', True),
+    ],
+)
+@pytest.mark.parametrize("constructor", ["md5", "new"])
+def test_md5_compatibility_keyword_expansion_is_definite(
+    tmp_path, arguments, expected_warning, constructor
+):
+    prefix = "'md5', " if constructor == "new" else ""
+    (tmp_path / "hashing.py").write_text(
+        "import hashlib\n"
+        "def checksum(payload, options, key, flag):\n"
+        f"    return hashlib.{constructor}({prefix}payload, {arguments})\n",
+        encoding="utf-8",
+    )
+    result = run_repo_scan(tmp_path)
+    codes = [row["code"] for row in result["static_security"]["findings"]]
+    assert ("SECURITY_WEAK_HASH" in codes) is expected_warning

@@ -1442,9 +1442,9 @@ def _security_call_finding(
             call, relative, node, getattr(node, "_security_configuration_aliases", {})
         )
     else:
-        from .security_configuration import tls_finding
+        from .captured_security_audit import configured_call_finding
 
-        return tls_finding(
+        return configured_call_finding(
             call, relative, node, getattr(node, "_security_configuration_aliases", {})
         )
     return closed_shell_finding(call, relative, node) or _security_finding(
