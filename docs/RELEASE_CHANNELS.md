@@ -22,8 +22,8 @@ not turn a source merge into release approval.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.50.0` candidate | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, media and any editor packages included in the selected release mode | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.50.0` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
@@ -33,7 +33,20 @@ not turn a source merge into release approval.
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
-### 0.50.0 / 1.3.6 preview copy
+### 0.50.0 / 1.3.6 release
+
+- Core 0.50.0 is public on [GitHub](https://github.com/zrk222/code-factory/releases/tag/v0.50.0)
+  and [PyPI](https://pypi.org/project/factoryline-code-factory/0.50.0/).
+- The [Hugging Face Space](https://huggingface.co/spaces/zrk222/code-factory)
+  and the [Zenodo archive](https://doi.org/10.5281/zenodo.24451994) are public.
+- [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=zrk222.factoryline-vscode)
+  lists 1.3.6. JetBrains accepted the 1.3.6 submission for review.
+
+The core release built and verified the wheel and source archive. The
+[publication run](https://github.com/zrk222/code-factory/actions/runs/45093735087)
+skipped editor builds and registry metadata publication. Editor uploads ran separately.
+
+### Coverage and benchmark notes
 
 Your AI writes the change. Code Factory shows what was actually checked.
 Configured native security rules now span **12 languages**, with source-bound

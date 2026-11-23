@@ -1,10 +1,19 @@
 # Changelog
 
-## 0.50.0 — 2026-11-21 (release candidate; publication gated)
+## 0.50.0 — 2026-11-22
 
 Your AI can propose a repair. Your team needs evidence before trusting it.
 This release makes Code Factory a broader, tool-friendly evidence layer for
 polyglot developers—not another agent that approves its own work.
+
+[GitHub release](https://github.com/zrk222/code-factory/releases/tag/v0.50.0) ·
+[PyPI distributions](https://pypi.org/project/factoryline-code-factory/0.50.0/) ·
+[Release channels](docs/RELEASE_CHANNELS.md).
+
+The core install supports quick static review of Python. Configure native
+workers for other languages and install the optional [companion toolchain](docs/START_HERE.md#install-the-full-toolchain)
+to use its commands. A scan can exit 0 with an `INCOMPLETE` result; check
+coverage and status before relying on it.
 
 - **Latest advisory evidence:** the retained 161-case study records CodeQL
   detections in 15/91 analyzed cases, with 70 not executed. Pattern replay
