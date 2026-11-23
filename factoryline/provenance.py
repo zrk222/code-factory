@@ -6,6 +6,7 @@ import ast
 import hashlib
 import importlib.metadata
 import json
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -4949,3 +4950,216 @@ def oauth_service_locator_proof_helpers():
         source_symbol_index,
         _root_name,
     )
+
+
+# Value-shape credential routing shared by the assignment and positional sensors.
+_TOKEN_NAME = re.compile(r"(?i)(?:^|[_-])(?:token|passwd|pwd|auth[_-]?key)s?(?:$|[_-])")
+_DOTTED_IDENTIFIER = re.compile(r"(?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*")
+
+
+def _digit_letter_switches(chunk: str) -> int:
+    kinds = [character.isdigit() for character in chunk]
+    return sum(left != right for left, right in zip(kinds, kinds[1:]))
+
+
+def secret_shaped_value(value) -> bool:
+    """True for a literal shaped like generated key material, not prose or a label.
+
+    Words joined by punctuation ("X-Auth-Token-Version-2"), dotted identifiers,
+    locators and digit-free passphrases are labels here; at least one
+    alphanumeric run must switch between letters and digits three times.
+    """
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not 16 <= len(text) <= 512 or not text.isascii() or not text.isprintable():
+        return False
+    if any(character.isspace() for character in text) or "://" in text:
+        return False
+    if text.startswith(("/", "./", "../")) or _DOTTED_IDENTIFIER.fullmatch(text):
+        return False
+    return any(
+        _digit_letter_switches(chunk) >= 3 for chunk in re.split(r"[^A-Za-z0-9]+", text)
+    )
+
+
+def _known_format_secret(audit, value, *, standalone=False) -> bool:
+    """Match a vendor key format; ``standalone`` also requires a token boundary
+    and an uppercase letter or digit, so ``offline-pypi-snapshot`` is a label."""
+    from .context_efficiency import _SECRET_BYTES
+
+    if not isinstance(value, str) or not value.strip():
+        return False
+    encoded = value.encode(errors="surrogatepass")
+    return any(
+        not audit._AWS_DEMO.match(match.string, match.start())
+        and (
+            not standalone
+            or not encoded[max(match.start() - 1, 0) : match.start()].isalnum()
+            and encoded[max(match.start() - 1, 0) : match.start()] not in (b"-", b"_")
+            and any(byte in b"0123456789" or 65 <= byte <= 90 for byte in match.group())
+        )
+        for pattern in _SECRET_BYTES
+        for match in pattern.finditer(encoded)
+    )
+
+
+def _credential_slot_name(audit, name) -> bool:
+    return isinstance(name, str) and bool(
+        audit._SECRET_ASSIGNMENT.search(name) or _TOKEN_NAME.search(name)
+    )
+
+
+def literal_credential_candidate(audit, node, target) -> bool:
+    """Decide assignment eligibility; classification and proofs happen downstream."""
+    if not isinstance(target, ast.Name):
+        return False
+    value = audit._secret_literal(node)
+    if _known_format_secret(audit, value):
+        return True
+    if audit._SECRET_ASSIGNMENT.search(target.id):
+        return True
+    return bool(_TOKEN_NAME.search(target.id)) and secret_shaped_value(value)
+
+
+_PASSWORD_SLOT = re.compile(r"(?i)pass(?:word|wd)|pwd")
+_PASSWORD_HASH = re.compile(
+    r"(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{56}|[0-9a-f]{64}|[0-9a-f]{96}|[0-9a-f]{128})"
+    r"|\$(?:2[abxy]|argon2(?:id|i|d)|scrypt|5|6)\$.+|(?:pbkdf2|bcrypt|argon2|scrypt)[_:$].+"
+)
+
+
+def _stored_password_hash(slot, value) -> bool:
+    """A digest-length hex or tagged hash in a password slot is a verifier, not a password."""
+    return bool(
+        _PASSWORD_SLOT.search(slot) and _PASSWORD_HASH.fullmatch(value.strip().lower())
+    )
+
+
+def _configuration_key(audit, key) -> bool:
+    return (
+        isinstance(key, str)
+        and key.isupper()
+        and key.isidentifier()
+        and _credential_slot_name(audit, key)
+    )
+
+
+def _configuration_receiver(node) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr == "config") or (
+        isinstance(node, ast.Name) and node.id == "config"
+    )
+
+
+def _assignment_slots(audit, node, slots):
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    if any(isinstance(target, ast.Name) for target in targets):
+        slots[id(node.value)] = None
+        return
+    for target in targets:
+        if isinstance(target, ast.Attribute):
+            slots[id(node.value)] = (
+                "attribute",
+                target.attr,
+                target.attr == "secret_key",
+            )
+            return
+        if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant):
+            key = target.slice.value
+            configured = _configuration_receiver(target.value) and _configuration_key(
+                audit, key
+            )
+            slots[id(node.value)] = "mapping_value", key, configured
+            return
+
+
+def _literal_slots(audit, nodes):
+    """Map literal node ids to (position, slot name, configuration slot).
+
+    ``None`` marks the value of a ``NAME = literal`` assignment, which the
+    assignment rule owns; literals absent from the map are plain expressions.
+    """
+    slots = {}
+    for node in nodes:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            _assignment_slots(audit, node, slots)
+        elif isinstance(node, ast.Call):
+            configured = (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"update", "from_mapping"}
+                and _configuration_receiver(node.func.value)
+            )
+            for keyword in node.keywords:
+                slots[id(keyword.value)] = (
+                    "keyword",
+                    keyword.arg,
+                    configured and _configuration_key(audit, keyword.arg),
+                )
+        elif isinstance(node, ast.Dict):
+            for key, item in zip(node.keys, node.values):
+                slots[id(item)] = "mapping_value", getattr(key, "value", None), False
+    return slots
+
+
+def positional_credential_findings(tree, relative, nodes, existing):
+    """Report credential literals outside ``NAME = literal`` assignments.
+
+    A literal qualifies by where it sits and what it is: a recognized vendor key
+    format in any position; generated-looking material in a credential-named
+    attribute, keyword or mapping slot (stored password hashes excepted); or any
+    non-placeholder value written to an application signing/credential
+    configuration slot (``app.secret_key``, ``app.config["SECRET_KEY"]``).
+    The literal itself never enters the finding.
+    """
+    from . import review_audits as audit
+
+    nodes = tuple(ast.walk(tree)) if nodes is None else nodes
+    literals = [
+        node
+        for node in nodes
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.strip()
+    ]
+    if not literals:
+        return []
+    slots = _literal_slots(audit, nodes)
+    reported = [
+        (row.get("line", 0), row.get("end_line", row.get("line", 0)))
+        for row in existing
+        if row.get("code") == "SECURITY_LITERAL_HTTP_CREDENTIAL"
+    ]
+    findings = []
+    for node in literals:
+        located = slots.get(id(node), ("expression", None, False))
+        if located is None:
+            continue
+        position, slot, configured = located
+        if _known_format_secret(audit, node.value, standalone=True):
+            evidence = "recognized_key_format"
+        elif configured and not audit._PLACEHOLDER_SECRET.match(node.value.strip()):
+            evidence = "configuration_slot"
+        elif (
+            _credential_slot_name(audit, slot)
+            and secret_shaped_value(node.value)
+            and not _stored_password_hash(slot, node.value)
+            and not any(first <= node.lineno <= last for first, last in reported)
+        ):
+            evidence = "generated_shape"
+        else:
+            continue
+        findings.append(
+            audit._security_finding(
+                "SECURITY_HARDCODED_SECRET",
+                relative,
+                node,
+                "Credential-like material is assigned as a source literal.",
+                "CRITICAL",
+                name=slot
+                if isinstance(slot, str) and slot.isidentifier()
+                else "literal",
+                credential_position=position,
+                value_evidence=evidence,
+            )
+        )
+    return sorted(findings, key=lambda row: (row["line"], row["column"]))

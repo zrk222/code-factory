@@ -464,7 +464,9 @@ def configuration_and_credential_findings(
 
     findings = configuration_findings(tree, aliases, relative)
     findings.extend(credential_findings(tree, aliases, relative, nodes=nodes))
-    return findings
+    from .provenance import positional_credential_findings as positional
+
+    return findings + positional(tree, relative, nodes, findings)
 
 
 def validation_modules():
