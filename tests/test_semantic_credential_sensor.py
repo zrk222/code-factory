@@ -6320,3 +6320,31 @@ def test_assignment_candidate_keeps_every_existing_name_match():
     assert _assignment_candidate(
         "access_token_url = 'https://gitlab.com/oauth/token'\n"
     )
+
+
+def test_secret_shaped_value_separates_generated_material_from_labels():
+    from factoryline.provenance import secret_shaped_value
+
+    assert secret_shaped_value(_SHAPED)
+    assert secret_shaped_value("9f86d081884c7d65" + "9a2feaa0c55ad015")
+    for label in (
+        "X-Auth-Token-Version-2",
+        "correct-horse-battery-staple",
+        "django.contrib.auth.hashers.MD5PasswordHasher",
+        "https://example.com/a1b2c3d4e5f6",
+        "/var/run/secrets/a1b2c3d4e5f6",
+        "two words a1b2c3d4e5f6",
+        "a1b2c3",
+        None,
+    ):
+        assert not secret_shaped_value(label)
+
+
+def test_positional_credential_findings_walks_the_tree_when_no_inventory_is_given():
+    from factoryline.provenance import positional_credential_findings
+
+    tree = ast.parse(f"client.token = {_SHAPED!r}\nauth(password={_SHAPED!r})\n")
+    http = [{"code": "SECURITY_LITERAL_HTTP_CREDENTIAL", "line": 2, "end_line": 2}]
+    rows = positional_credential_findings(tree, "app/x.py", None, http)
+    assert [(row["line"], row["severity"]) for row in rows] == [(1, "CRITICAL")]
+    assert positional_credential_findings(ast.parse("x = 1\n"), "a.py", None, []) == []

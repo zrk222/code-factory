@@ -5101,6 +5101,32 @@ def _literal_slots(audit, nodes):
     return slots
 
 
+def _positional_evidence(audit, node, located, reported):
+    """Name the evidence that makes one located literal a credential candidate."""
+    _, slot, configured = located
+    if _known_format_secret(audit, node.value, standalone=True):
+        return "recognized_key_format"
+    if configured:
+        placeholder = audit._PLACEHOLDER_SECRET.match(node.value.strip())
+        return None if placeholder else "configuration_slot"
+    if not _credential_slot_name(audit, slot) or not secret_shaped_value(node.value):
+        return None
+    if _stored_password_hash(slot, node.value):
+        return None
+    covered = any(first <= node.lineno <= last for first, last in reported)
+    return None if covered else "generated_shape"
+
+
+def _string_literals(nodes):
+    return [
+        node
+        for node in nodes
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.strip()
+    ]
+
+
 def positional_credential_findings(tree, relative, nodes, existing):
     """Report credential literals outside ``NAME = literal`` assignments.
 
@@ -5114,13 +5140,7 @@ def positional_credential_findings(tree, relative, nodes, existing):
     from . import review_audits as audit
 
     nodes = tuple(ast.walk(tree)) if nodes is None else nodes
-    literals = [
-        node
-        for node in nodes
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and node.value.strip()
-    ]
+    literals = _string_literals(nodes)
     if not literals:
         return []
     slots = _literal_slots(audit, nodes)
@@ -5132,22 +5152,10 @@ def positional_credential_findings(tree, relative, nodes, existing):
     findings = []
     for node in literals:
         located = slots.get(id(node), ("expression", None, False))
-        if located is None:
+        evidence = located and _positional_evidence(audit, node, located, reported)
+        if not evidence:
             continue
-        position, slot, configured = located
-        if _known_format_secret(audit, node.value, standalone=True):
-            evidence = "recognized_key_format"
-        elif configured and not audit._PLACEHOLDER_SECRET.match(node.value.strip()):
-            evidence = "configuration_slot"
-        elif (
-            _credential_slot_name(audit, slot)
-            and secret_shaped_value(node.value)
-            and not _stored_password_hash(slot, node.value)
-            and not any(first <= node.lineno <= last for first, last in reported)
-        ):
-            evidence = "generated_shape"
-        else:
-            continue
+        slot = located[1]
         findings.append(
             audit._security_finding(
                 "SECURITY_HARDCODED_SECRET",
@@ -5158,7 +5166,7 @@ def positional_credential_findings(tree, relative, nodes, existing):
                 name=slot
                 if isinstance(slot, str) and slot.isidentifier()
                 else "literal",
-                credential_position=position,
+                credential_position=located[0],
                 value_evidence=evidence,
             )
         )
