@@ -116,6 +116,37 @@
     .module-flow { grid-template-columns:1fr; }
     @media(max-width:50rem) { .story-layout { grid-template-columns:1fr; gap:20px; } .story { max-width:340px; margin:auto; } h1 { font-size:2.6rem; } .lede { font-size:1rem; } }
   </style>
+<style>
+/* Independent presentation repair: keep approved content, expose both video controls. */
+header { padding: 12px 0; }
+.hero { padding: 12px 0 36px; }
+h1 { font-size: clamp(1.8rem,3.2vw,2.8rem); line-height:1.12; margin:10px 0 18px; max-width:28ch; }
+.preview-videos { grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:start; gap:24px; margin:0 0 24px; }
+.preview-videos .story { width:100%; max-width:none; }
+.preview-videos video, .preview-videos .story video { width:100%; height:270px; aspect-ratio:auto; object-fit:contain; background:#111; }
+.preview-videos #operations { padding:0; }
+.preview-videos #operations .shell { width:100%; }
+.preview-videos .section-head { display:block; margin:0 0 12px; }
+.preview-videos .section-head h2 { font-size:1.3rem; letter-spacing:-.025em; margin:0 0 8px; }
+.preview-videos .section-head p { font-size:.92rem; line-height:1.45; }
+.preview-videos figcaption { font-size:.85rem; line-height:1.45; padding:12px 14px; }
+.story-explanation .module-flow { grid-template-columns:repeat(3,minmax(0,1fr)); }
+@media(max-width:50rem) {
+ .shell { width:calc(100% - 28px); }
+ header { padding:10px 0; }
+ .brand { font-size:.95rem; gap:8px; }
+ nav .button { min-height:40px; padding:8px 10px; font-size:.8rem; }
+ .hero { padding-top:8px; }
+ .eyebrow { font-size:.68rem; letter-spacing:.1em; }
+ h1 { font-size:1.65rem; line-height:1.12; margin:8px 0 14px; }
+ .preview-videos { grid-template-columns:1fr; gap:18px; margin-top:0; }
+ .preview-videos video, .preview-videos .story video { height:150px; }
+ .preview-videos figcaption { font-size:.78rem; }
+ .preview-videos .section-head { margin-bottom:10px; }
+ .preview-videos .section-head p { font-size:.86rem; }
+ .story-explanation .module-flow { grid-template-columns:1fr; }
+}
+</style>
 </head>
 <body>
   <p class="sr-only">A local-first code audit system connecting requirements, architecture, security checks, behavioral evidence, specialty AI review, and actionable repairs.</p>
@@ -136,8 +167,7 @@
       <div>
         <div class="eyebrow">0.50.0 release line · 12-language native security</div>
         <h1>Your AI writes code. You get the evidence.</h1>
-        <p class="lede"><strong>More languages. Clearer findings. A decision your team can inspect.</strong> Thirty native security rules, source-bound traces, SARIF and bounded agent proof connect the change to what was actually checked. WMM is a real product Code Factory helped assemble, not simply check afterward.</p>
-        <div class="story-layout">
+        <div class="story-layout preview-videos">
           <figure class="visual story" id="story-video">
             <video controls preload="metadata" playsinline poster="cf-story-v5-poster.jpg" aria-label="From requirements to WMM: Code Factory walkthrough">
               <source src="cf-story-v5-narrated.mp4" type="video/mp4">
@@ -145,6 +175,14 @@
             </video>
             <figcaption>57-second narrated walkthrough. WMM screens use example data; process illustrations are labeled. Not a customer case or independent certification.</figcaption>
           </figure>
+    <section id="operations" aria-labelledby="operations-title">
+      <div class="shell">
+        <div class="section-head"><h2 id="operations-title">How the proof layer works</h2><p>Prepare an approved plan, run its checks and inspect the receipt. This PR 354 walkthrough uses a local test fixture.</p></div>
+        <figure class="visual" style="margin:0"><video controls preload="metadata" playsinline poster="cf-operations-pr354-poster.png" style="display:block;width:100%;aspect-ratio:16/9;background:#111"><source src="cf-operations-pr354-105s.mp4" type="video/mp4"></video><figcaption>1:45 how-to. Command templates and reformatted local test results, not a screen recording or live Devin session. Uses PR 354 source, not the released package.</figcaption></figure>
+      </div>
+    </section>
+        </div>
+        <p class="lede"><strong>More languages. Clearer findings. A decision your team can inspect.</strong> Thirty native security rules, source-bound traces, SARIF and bounded agent proof connect the change to what was actually checked. WMM is a real product Code Factory helped assemble, not simply check afterward.</p>
           <div class="story-explanation">
             <div class="module-flow" aria-label="Workflow diagram: requirements, scoped changes, evidence and human review">
               <p><span class="flow-step">01</span><strong>SpecLine</strong> Requirements and acceptance checks.</p>
@@ -157,16 +195,9 @@
             </div>
             <p class="story-limit">A static preview, not an online repository scanner. Missing evidence stays visible.</p>
           </div>
-        </div>
       </div>
     </div>
 
-    <section id="operations" aria-labelledby="operations-title">
-      <div class="shell">
-        <div class="section-head"><h2 id="operations-title">How the proof layer works</h2><p>Prepare an approved plan, run its checks and inspect the receipt. This PR 354 walkthrough uses a local test fixture.</p></div>
-        <figure class="visual" style="margin:0"><video controls preload="metadata" playsinline poster="cf-operations-pr354-poster.png" style="display:block;width:100%;aspect-ratio:16/9;background:#111"><source src="cf-operations-pr354-105s.mp4" type="video/mp4"></video><figcaption>1:45 how-to. Command templates and reformatted local test results, not a screen recording or live Devin session. Uses PR 354 source, not the released package.</figcaption></figure>
-      </div>
-    </section>
     <section id="enterprise" aria-labelledby="enterprise-title">
       <div class="shell">
         <div class="section-head"><div class="eyebrow">For enterprise engineering teams</div><h2 id="enterprise-title">AI writes the change. Your team owns the decision.</h2><p>See what was tested, what is missing and what needs fixing for the exact change under review.</p></div>
@@ -206,4 +237,4 @@ factory first-proof --root .</code></pre><p>First Proof uses a generated local s
     <footer><span>Code Factory 0.50.0 · Static workflow overview · Provider availability tracked separately</span><span><a href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/0.50.0/" target="_blank" rel="noopener noreferrer">PyPI 0.50.0</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.50.0" target="_blank" rel="noopener noreferrer">GitHub release v0.50.0</a> · <a href="https://doi.org/10.5281/zenodo.21381405" target="_blank" rel="noopener noreferrer">Zenodo</a></span></footer>
   </div>
 </body>
-</html>
+                                                                                                     </html>
