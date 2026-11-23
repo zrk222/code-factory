@@ -2,6 +2,7 @@
 
 import ast
 
+
 def definite_compatibility_checksum(node):
     """Credit one literal false flag only when keyword expansion is unambiguous."""
     values = []
