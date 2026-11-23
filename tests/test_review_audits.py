@@ -6636,8 +6636,8 @@ def test_security_evals_kill_all_adversarial_fixtures_and_keep_safe_control_clea
     result = security_evals()
     assert result["marker"] == "SECURITY_EVALS_COMPLETE"
     assert result["state"] == "PASS"
-    assert result["mutation_coverage"] == {"attempted": 14, "caught": 14, "rate": 1.0}
-    assert result["safe_controls"] == {"attempted": 4, "passed": 4}
+    assert result["mutation_coverage"] == {"attempted": 17, "caught": 17, "rate": 1.0}
+    assert result["safe_controls"] == {"attempted": 7, "passed": 7}
     assert result["authority"]["approval"] is False
 
 
