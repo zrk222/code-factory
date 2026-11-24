@@ -23,7 +23,7 @@
       "working_hunk_gain": 4
     }
   },
-  "ruleset_sha256": "40aaf1d5b72f0eaf3786df6f11e4728cc726c517e56b62bc7be780c0a2a92b11",
+  "ruleset_sha256": "d3edff779e99fef123af2fa5f818bb709cd6809d4ac99343dbed1991b1369cd4",
   "schema": "factory.pattern-recall-measurement.v1",
   "sets": {
     "dev_161_first_fix": {
@@ -185,8 +185,8 @@
     },
     "working_113": {
       "after": {
-        "file_hit": 28,
-        "hunk_hit": 16,
+        "file_hit": 30,
+        "hunk_hit": 18,
         "hunk_hits": [
           {
             "ecosystem": "PyPI",
@@ -222,6 +222,14 @@
             "ghsa": "GHSA-58g7-7f52-h92c",
             "rules": [
               "javascript.dom-innerhtml-from-variable"
+            ]
+          },
+          {
+            "ecosystem": "Go",
+            "ghsa": "GHSA-8fh7-7q4q-cq52",
+            "rules": [
+              "go.peer-certificate-trusted-without-verified-chain",
+              "go.tls-client-cert-requested-not-verified"
             ]
           },
           {
@@ -300,6 +308,13 @@
             "rules": [
               "python.parameter-path-join-without-containment"
             ]
+          },
+          {
+            "ecosystem": "Go",
+            "ghsa": "GHSA-w34q-cm8f-9c5x",
+            "rules": [
+              "go.grpc-insecure-transport"
+            ]
           }
         ],
         "scored": 107
@@ -333,6 +348,14 @@
       "dev_hunk_hit": 20,
       "ruleset": "40aaf1d5",
       "working_hunk_hit": 16
+    },
+    {
+      "added": "Go client-cert modes without verification, PeerCertificates without VerifiedChains, insecure gRPC dial; JS rejectUnauthorized false; Python unverified SSL contexts",
+      "control_alerts": 1,
+      "dev_hunk_hit": 20,
+      "note": "No dev-set gain: these shapes are tuned to the working set.",
+      "ruleset": "d3edff77",
+      "working_hunk_hit": 18
     }
   ]
 }

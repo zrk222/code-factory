@@ -2886,3 +2886,120 @@ rules:
       confidence: LOW
       cwe: ["CWE-79"]
       scope: innerHTML/outerHTML/insertAdjacentHTML with an identifier or member expression; call results are excluded.
+  - id: go.tls-client-cert-requested-not-verified
+    message: Client certificates are requested but not verified against a CA; any self-signed certificate is accepted. Use tls.VerifyClientCertIfGiven or tls.RequireAndVerifyClientCert with ClientCAs.
+    severity: WARNING
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: 'tls.Config{..., ClientAuth: tls.RequestClientCert, ...}'
+          - pattern: 'tls.Config{..., ClientAuth: tls.RequireAnyClientCert, ...}'
+          - pattern: $CFG.ClientAuth = tls.RequestClientCert
+          - pattern: $CFG.ClientAuth = tls.RequireAnyClientCert
+      - pattern-not-inside: |
+          switch $MODE {
+          case $V:
+            ...
+          }
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-295"]
+      scope: tls.Config ClientAuth set to a mode that requests or requires client certificates without chain verification.
+  - id: go.peer-certificate-trusted-without-verified-chain
+    message: A request's TLS peer certificate is used without checking that it verified; when client certificates are optional or unverified, PeerCertificates holds whatever the client sent. Require len(r.TLS.VerifiedChains) > 0 first.
+    severity: INFO
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: $R.TLS.PeerCertificates[0]
+          - pattern: $CS.PeerCertificates[0]
+      - pattern-either:
+          - pattern-inside: |
+              if <... len($R.TLS.PeerCertificates) ...> {
+                ...
+              }
+          - pattern-inside: |
+              if <... len($CS.PeerCertificates) ...> {
+                ...
+              }
+      - pattern-not-inside: |
+          if <... $X.VerifiedChains ...> {
+            ...
+          }
+      - pattern-either:
+          - pattern-inside: func $F(..., $R *http.Request, ...) { ... }
+          - pattern-inside: func $F(..., $R *http.Request, ...) $RET { ... }
+          - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) { ... }
+          - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) $RET { ... }
+          - pattern-inside: func ($CS tls.ConnectionState) error { ... }
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-295"]
+      scope: Handlers that read the first peer certificate under a length check without consulting VerifiedChains.
+  - id: go.grpc-insecure-transport
+    message: A gRPC client is dialed without transport security; configure credentials.NewTLS or credentials.NewClientTLSFromCert.
+    severity: INFO
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: grpc.WithInsecure()
+          - pattern: grpc.WithTransportCredentials(insecure.NewCredentials())
+      - pattern-not-inside: |
+          if $OPTIN { ... }
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-295", "CWE-319"]
+      scope: Unconditional insecure gRPC dial options; branches guarded by a configuration condition are excluded.
+  - id: javascript.tls-reject-unauthorized-disabled
+    message: Certificate verification is disabled for a TLS connection; remove rejectUnauthorized false and trust the needed CA instead.
+    severity: INFO
+    languages: [javascript, typescript]
+    patterns:
+      - pattern-either:
+          - pattern: '{..., rejectUnauthorized: false, ...}'
+          - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+          - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+      - pattern-not-inside: |
+          if ($OPTIN) { ... }
+      - pattern-not-inside: '$OPTIN ? $A : $B'
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-295"]
+      scope: Unconditional rejectUnauthorized false or NODE_TLS_REJECT_UNAUTHORIZED=0; option-guarded branches are excluded.
+  - id: python.ssl-context-verification-disabled
+    message: An SSL context with certificate or hostname verification disabled is created; use ssl.create_default_context() and load the needed CA instead.
+    severity: INFO
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: ssl._create_unverified_context(...)
+          - pattern: $CTX.check_hostname = False
+          - pattern: $CTX.verify_mode = ssl.CERT_NONE
+          - pattern: 'ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)'
+          - pattern: urllib3.disable_warnings(...)
+      - pattern-not-inside: |
+          if $OPTIN:
+            ...
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-295"]
+      scope: Unconditional SSL contexts without certificate or hostname checks; option-guarded branches are excluded.
