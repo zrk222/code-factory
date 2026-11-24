@@ -48,7 +48,8 @@ jobs:
 
           plan = json.loads(Path("scripts/deep-audit-keyless-plan.json").read_bytes())
           assert plan["candidate_sha256"] == "b0f44e6fb579fe5cb9fb44599b0f6a56fd56c61b5a26da01ae2793845b6bd6cc"
-          assert len(plan["lanes"]) == 6 and len(plan["obligations"]) == 9
+          assert len(plan["lanes"]) == 7 and len(plan["obligations"]) == 9
+          assert len({lane["family"] for lane in plan["lanes"]}) == 6
           workflows = {
               "implementer": "signed-receipts.yml",
               "reviewer": "deep-audit-keyless-reviewer.yml",

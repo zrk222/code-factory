@@ -205,6 +205,32 @@
     {
       "argv": [
         "/opt/factory/bin/audit-adapter",
+        "syft",
+        "--mode",
+        "native"
+      ],
+      "challenge_report": "challenges.json",
+      "coverage": "coverage.json",
+      "engine": "syft",
+      "family": "dependencies",
+      "id": "syft",
+      "image": "sha256:d695f1cc257ce63776abc854c14f247e580ca44c114ff483664729b5d9b7873b",
+      "languages": [
+        "dependency"
+      ],
+      "memory_mib": 512,
+      "mode": "native",
+      "native_artifact_roles": [
+        "sbom_json"
+      ],
+      "report": "native.json",
+      "ruleset_sha256": "cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033",
+      "timeout_seconds": 120,
+      "tool_version": "1.33.0"
+    },
+    {
+      "argv": [
+        "/opt/factory/bin/audit-adapter",
         "gitleaks",
         "--mode",
         "secrets-full"
@@ -871,10 +897,17 @@
       "family": "static",
       "id": "codeql-py/sql-injection",
       "paths": [
+        ".factory/fuzz_harness.py",
+        "app.py",
         "controls/codeql_positive/route.py",
         "controls/codeql_positive/service.py",
         "controls/codeql_safe/route.py",
-        "controls/codeql_safe/service.py"
+        "controls/codeql_safe/service.py",
+        "controls/fuzz_positive/.factory/fuzz_harness.py",
+        "controls/fuzz_safe/.factory/fuzz_harness.py",
+        "controls/runtime_positive/tests/test_runtime_harness.py",
+        "controls/runtime_safe/tests/test_runtime_harness.py",
+        "tests/test_runtime_harness.py"
       ],
       "remediation": "Bind database query parameters to the fixed query.",
       "requirements": [
@@ -937,7 +970,8 @@
       },
       "paths": [
         "controls/dependency_positive/requirements.txt",
-        "controls/dependency_safe/requirements.txt"
+        "controls/dependency_safe/requirements.txt",
+        "requirements.txt"
       ],
       "remediation": "Use the verified fixed dependency version.",
       "requirements": [
@@ -998,7 +1032,8 @@
       },
       "paths": [
         "controls/dependency_positive/requirements.txt",
-        "controls/dependency_safe/requirements.txt"
+        "controls/dependency_safe/requirements.txt",
+        "requirements.txt"
       ],
       "remediation": "Use the verified fixed dependency version.",
       "requirements": [
@@ -1059,7 +1094,8 @@
       },
       "paths": [
         "controls/dependency_positive/requirements.txt",
-        "controls/dependency_safe/requirements.txt"
+        "controls/dependency_safe/requirements.txt",
+        "requirements.txt"
       ],
       "remediation": "Use the verified fixed dependency version.",
       "requirements": [
@@ -1120,7 +1156,8 @@
       },
       "paths": [
         "controls/dependency_positive/requirements.txt",
-        "controls/dependency_safe/requirements.txt"
+        "controls/dependency_safe/requirements.txt",
+        "requirements.txt"
       ],
       "remediation": "Use the verified fixed dependency version.",
       "requirements": [
@@ -1169,8 +1206,25 @@
       "family": "secrets",
       "id": "gitleaks-stripe-access-token",
       "paths": [
+        ".factory/fuzz_harness.py",
+        "Dockerfile",
+        "app.py",
+        "controls/codeql_positive/route.py",
+        "controls/codeql_positive/service.py",
+        "controls/codeql_safe/route.py",
+        "controls/codeql_safe/service.py",
+        "controls/configuration_positive/Dockerfile",
+        "controls/configuration_safe/Dockerfile",
+        "controls/dependency_positive/requirements.txt",
+        "controls/dependency_safe/requirements.txt",
+        "controls/fuzz_positive/.factory/fuzz_harness.py",
+        "controls/fuzz_safe/.factory/fuzz_harness.py",
+        "controls/runtime_positive/tests/test_runtime_harness.py",
+        "controls/runtime_safe/tests/test_runtime_harness.py",
         "controls/secrets_positive/config.txt",
-        "controls/secrets_safe/config.txt"
+        "controls/secrets_safe/config.txt",
+        "requirements.txt",
+        "tests/test_runtime_harness.py"
       ],
       "remediation": "Keep credential literals outside application source.",
       "requirements": [
@@ -1219,6 +1273,7 @@
       "family": "configuration",
       "id": "trivy-DS002",
       "paths": [
+        "Dockerfile",
         "controls/configuration_positive/Dockerfile",
         "controls/configuration_safe/Dockerfile"
       ],
@@ -1275,7 +1330,14 @@
       "family": "runtime",
       "id": "runtime-RUNTIME_TEST_FAILURE",
       "paths": [
+        ".factory/fuzz_harness.py",
         "app.py",
+        "controls/codeql_positive/route.py",
+        "controls/codeql_positive/service.py",
+        "controls/codeql_safe/route.py",
+        "controls/codeql_safe/service.py",
+        "controls/fuzz_positive/.factory/fuzz_harness.py",
+        "controls/fuzz_safe/.factory/fuzz_harness.py",
         "controls/runtime_positive/tests/test_runtime_harness.py",
         "controls/runtime_safe/tests/test_runtime_harness.py",
         "tests/test_runtime_harness.py"
@@ -1329,8 +1391,17 @@
       "family": "fuzz",
       "id": "atheris-FUZZ_EXCEPTION",
       "paths": [
+        ".factory/fuzz_harness.py",
+        "app.py",
+        "controls/codeql_positive/route.py",
+        "controls/codeql_positive/service.py",
+        "controls/codeql_safe/route.py",
+        "controls/codeql_safe/service.py",
         "controls/fuzz_positive/.factory/fuzz_harness.py",
-        "controls/fuzz_safe/.factory/fuzz_harness.py"
+        "controls/fuzz_safe/.factory/fuzz_harness.py",
+        "controls/runtime_positive/tests/test_runtime_harness.py",
+        "controls/runtime_safe/tests/test_runtime_harness.py",
+        "tests/test_runtime_harness.py"
       ],
       "remediation": "Handle the owned failing input in the application.",
       "requirements": [
