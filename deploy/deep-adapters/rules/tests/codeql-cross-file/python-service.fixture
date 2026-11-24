@@ -1,0 +1,6 @@
+import sqlite3
+
+
+def lookup(name):
+    connection = sqlite3.connect(":memory:")
+    return connection.execute("SELECT name FROM users WHERE name = '" + name + "'").fetchall()

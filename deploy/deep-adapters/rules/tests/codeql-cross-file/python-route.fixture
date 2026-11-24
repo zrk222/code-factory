@@ -1,0 +1,9 @@
+from flask import Flask, request
+from service import lookup
+
+app = Flask(__name__)
+
+
+@app.get("/lookup")
+def route():
+    return repr(lookup(request.args["name"]))
