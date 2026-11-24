@@ -120,22 +120,30 @@ def _validate_scope_policy(value: object) -> dict[str, Any]:
     }
 
 
+def _read_scope_blob(root: Path, ref: str, path: str) -> str:
+    return subprocess.run(
+        ["git", "cat-file", "blob", "--", f"{ref}:{path}"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    ).stdout
+
+
 def _read_scope_decisions(root: Path, ref: str | None) -> dict[str, Any]:
     """Read candidate evidence records; records never override the trusted policy."""
     try:
         if ref:
-            result = subprocess.run(
-                ["git", "show", f"{ref}:{REPOSITORY_SCOPE_DECISION_PATH}"],
-                cwd=root,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            raw = result.stdout
+            raw = _read_scope_blob(root, ref, REPOSITORY_SCOPE_DECISION_PATH)
         else:
             raw = (root / REPOSITORY_SCOPE_DECISION_PATH).read_text(encoding="utf-8")
         record = json.loads(raw)
-    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+    except (
+        OSError,
+        subprocess.CalledProcessError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as exc:
         raise RepositoryScopeError(
             "SCOPE_DECISION_UNAVAILABLE",
             "scope decision record is unavailable or invalid",
@@ -186,19 +194,12 @@ def _read_scope_policy(
         if policy_ref.startswith("-") or any(char in policy_ref for char in "\r\n\0"):
             raise RepositoryScopeError("SCOPE_POLICY_INVALID", "policy ref is invalid")
         try:
-            result = subprocess.run(
-                ["git", "show", f"{policy_ref}:{relative}"],
-                cwd=root,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except (OSError, subprocess.CalledProcessError) as exc:
+            raw = _read_scope_blob(root, policy_ref, relative)
+        except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as exc:
             raise RepositoryScopeError(
                 "SCOPE_POLICY_UNAVAILABLE",
                 f"cannot read {relative} from trusted policy ref {policy_ref}",
             ) from exc
-        raw = result.stdout
     else:
         candidate = (root / relative).resolve()
         if not candidate.is_relative_to(root):
@@ -754,6 +755,7 @@ def _review_markdown(review: dict[str, Any]) -> str:
             "",
             f"- `{review['next_action']['action']}` — {review['next_action']['reason']}",
             "",
+            *_priority_invariant_lines(review),
             "## Findings",
             "",
             findings,
@@ -774,15 +776,54 @@ def _review_markdown(review: dict[str, Any]) -> str:
     )
 
 
+def _priority_invariant_lines(review: dict[str, Any]) -> list[str]:
+    invariant = review.get("priority_invariant")
+    if invariant is None:
+        return []
+    statement = json.dumps(invariant["assertion"]["statement"]).replace("`", r"\u0060")
+    argv = json.dumps(invariant["check_argv"]).replace("`", r"\u0060")
+    return [
+        "## Priority invariant from selected contract",
+        "",
+        f"- `{invariant['assertion']['id']}` — `{statement}`",
+        f"- Declared check argv ({invariant['evidence_state']}): `{argv}`",
+        "",
+    ]
+
+
+def _priority_invariant(root: Path, manifest: str) -> dict[str, Any]:
+    from .reality_check import reality_verification_map
+
+    try:
+        view = reality_verification_map(root, Path(manifest))
+    except (OSError, ValueError) as error:
+        raise ChangeReviewError(
+            getattr(error, "code", "REALITY_VERIFICATION_MAP_UNAVAILABLE"),
+            str(error),
+        ) from error
+    return {
+        "assertion": view["assertions"][0],
+        "reality_manifest": view["reality_manifest"],
+        "e2e_manifest": view["e2e_manifest"],
+        "check_argv": view["check_argv"],
+        "evidence_state": view["evidence_state"],
+    }
+
+
 def review_change(
     root: Path,
     base: str = "main",
     changed: list[str] | None = None,
     audit_policy: str | None = None,
+    *,
+    reality_manifest: str | None = None,
 ) -> dict:
     """Compile a deterministic change review without executing a gate or writing files."""
     workspace = Path(root).resolve()
     input_source, changed_paths = _resolve_changed_paths(workspace, base, changed)
+    invariant = (
+        _priority_invariant(workspace, reality_manifest) if reality_manifest else None
+    )
     impact = graph_ops_impact(workspace, changed_paths)
     coverage = requirement_coverage(workspace)
     risk = risk_for_paths(changed_paths)
@@ -848,6 +889,8 @@ def review_change(
             "Repository product-boundary checks are path-based and run when a workspace scope policy exists.",
         ],
     }
+    if invariant is not None:
+        core["priority_invariant"] = invariant
     review_sha256 = _sha(core)
     review = {**core, "review_sha256": review_sha256}
     review["mermaid"] = _review_mermaid(changed_paths, impact, findings)

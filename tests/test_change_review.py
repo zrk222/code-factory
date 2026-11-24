@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+import sys
 import pytest
 from factoryline.change_review import (
     ChangeReviewError,
@@ -1179,6 +1180,9 @@ def test_scope_guard_blocks_unexpected_top_level_directory_even_when_name_is_neu
 def test_scope_policy_addition_requires_candidate_evidence_record_and_never_bypasses_base(
     tmp_path: Path,
 ) -> None:
+    if sys.platform == "win32" and len(str(tmp_path)) < 181:
+        tmp_path /= "scope-" + "x" * max(0, 174 - len(str(tmp_path)))
+        tmp_path.mkdir()
     _scope_repository(tmp_path)
     base = subprocess.run(
         ["git", "rev-parse", "HEAD"],

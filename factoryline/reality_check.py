@@ -19,6 +19,7 @@ from typing import Any
 from .e2e_proof import (
     E2EProofError,
     public_e2e_proof_receipt,
+    validate_e2e_proof_manifest,
     validate_e2e_proof_receipt,
     verify_e2e_proof,
 )
@@ -260,6 +261,50 @@ def inspect_reality_intent(root: Path, manifest_path: Path) -> dict[str, Any]:
         "scope_limits": [
             "Inspection validates declared intent-to-evidence coverage only; it does not run commands or establish behavior."
         ],
+    }
+
+
+def reality_verification_map(root: Path, manifest_path: Path) -> dict[str, Any]:
+    """Project the current behavior contract and its proof pair without running either."""
+    workspace = Path(root).resolve()
+    path = workspace / manifest_path
+    manifest = validate_reality_check_manifest(workspace, path)
+    binding = manifest["e2e_manifest"]
+    try:
+        proof = validate_e2e_proof_manifest(workspace, workspace / binding["path"])
+    except E2EProofError as error:
+        raise RealityCheckError(error.code, str(error)) from error
+    if proof["manifest_sha256"] != binding["sha256"]:
+        _reject(
+            "REALITY_PROOF_BINDING_CHANGED",
+            "E2E proof changed during verification-map inspection",
+        )
+    return {
+        "schema": "factory.reality-verification-map.v1",
+        "id": manifest["id"],
+        "behavior": manifest["behavior"],
+        "reality_manifest": {
+            "path": manifest["manifest_path"],
+            "sha256": manifest["manifest_sha256"],
+        },
+        "e2e_manifest": binding,
+        "assertions": sorted(
+            manifest["intent_assertions"], key=lambda row: row["evidence"] != "negative"
+        ),
+        "working_directory": proof["working_directory"],
+        "timeout_seconds": proof["timeout_seconds"],
+        "expected_artifacts": proof["artifact_paths"],
+        "check_argv": [
+            "factory",
+            "reality",
+            "verify",
+            "--root",
+            str(workspace),
+            f"--manifest={manifest['manifest_path']}",
+            "--json",
+        ],
+        "evidence_state": "NOT_RUN",
+        "execution": False,
     }
 
 

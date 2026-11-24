@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 import json
 from pathlib import Path
 import sys
@@ -50,6 +51,115 @@ def _manifest(
     path = root / "e2e-proof.json"
     path.write_text(json.dumps(value), encoding="utf-8")
     return path
+
+
+def _reality_manifest(root: Path, e2e: Path) -> Path:
+    path = root / "approval proof.reality.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.reality-check-manifest.v1",
+                "id": "approval-flow",
+                "approval": {"state": "approved", "approved_by": "qa-owner"},
+                "behavior": {
+                    "promise": "A manager can approve a request.",
+                    "happy_path": "An approved request is recorded.",
+                    "failure_case": "A non-manager approval request is rejected.",
+                },
+                "intent_assertions": [
+                    {
+                        "id": "manager-approves",
+                        "statement": "Manager approval is recorded.",
+                        "evidence": "positive",
+                    },
+                    {
+                        "id": "non-manager-rejected",
+                        "statement": "Non-manager approval is rejected.",
+                        "evidence": "negative",
+                    },
+                ],
+                "e2e_manifest": e2e.name,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_verification_map_and_diff_priority_share_the_runnable_proof(tmp_path, capsys):
+    proof = _manifest(tmp_path)
+    reality = _reality_manifest(tmp_path, proof)
+    inspect = [
+        "reality",
+        "inspect",
+        "--root",
+        str(tmp_path),
+        "--manifest",
+        reality.name,
+        "--verification-map",
+        "--json",
+    ]
+    review = [
+        "change",
+        "review",
+        "--root",
+        str(tmp_path),
+        "--changed",
+        "app.py",
+        "--reality-manifest",
+        reality.name,
+        "--json",
+    ]
+
+    assert main(inspect) == 0
+    view = json.loads(capsys.readouterr().out)
+    assert view["assertions"][0]["id"] == "non-manager-rejected"
+    assert view["e2e_manifest"]["sha256"] == sha256(proof.read_bytes()).hexdigest()
+    assert (
+        view["reality_manifest"]["sha256"] == sha256(reality.read_bytes()).hexdigest()
+    )
+    assert view["expected_artifacts"] == ["artifact.txt"]
+    assert view["evidence_state"] == "NOT_RUN" and not view["execution"]
+
+    assert main(review) == 0
+    observed = json.loads(capsys.readouterr().out)
+    invariant = observed["priority_invariant"]
+    assert invariant["assertion"] == view["assertions"][0]
+    assert invariant["check_argv"] == view["check_argv"]
+    assert invariant["evidence_state"] == "NOT_RUN"
+    assert "non-manager-rejected" in observed["review_markdown"]
+    assert not (tmp_path / "artifact.txt").exists()
+
+    proof.write_text(proof.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    assert main(review) == 0
+    updated = json.loads(capsys.readouterr().out)
+    assert updated["review_sha256"] != observed["review_sha256"]
+    assert (
+        updated["priority_invariant"]["e2e_manifest"]["sha256"]
+        != invariant["e2e_manifest"]["sha256"]
+    )
+
+    assert main(updated["priority_invariant"]["check_argv"][1:]) == 0
+    assert (
+        json.loads(capsys.readouterr().out)["receipt"]["marker"]
+        == "REALITY_CHECK_VERIFIED"
+    )
+    assert (tmp_path / "artifact.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_verification_map_and_diff_decline_an_unapproved_proof(tmp_path, capsys):
+    proof = _manifest(
+        tmp_path, approval={"state": "pending", "approved_by": "qa-owner"}
+    )
+    reality = _reality_manifest(tmp_path, proof)
+    commands = [
+        ["reality", "inspect", "--manifest", reality.name, "--verification-map"],
+        ["change", "review", "--changed", "app.py", "--reality-manifest", reality.name],
+    ]
+    for command in commands:
+        assert main([*command, "--root", str(tmp_path), "--json"]) == 2
+        assert json.loads(capsys.readouterr().err)["code"] == "E2E_MANIFEST_UNAPPROVED"
+    assert not (tmp_path / "artifact.txt").exists()
 
 
 def test_native_e2e_gate_proves_a_declared_negative_case_and_writes_explicit_artifacts(

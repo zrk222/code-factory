@@ -12,6 +12,7 @@ and a failure case, then reference an approved E2E argv pair.
 ```powershell
 factory reality verify --root . --manifest approval.reality.json --out-dir .factory/reality --json
 factory reality inspect --root . --manifest approval.reality.json --json
+factory reality inspect --root . --manifest approval.reality.json --verification-map --json
 ```
 
 ## Contract
@@ -40,6 +41,13 @@ arrays, working directory, timeout, artifact paths, and a separate approval.
 one-sided assertions before a command is eligible to run. A completed Reality
 Check binds every assertion to the corresponding verified or unverified E2E
 outcome.
+
+The verification map is generated from the same Reality and E2E manifests.
+It lists the behavior, failure assertions first, the runner's working
+directory and timeout, expected artifacts, and the declared `factory reality
+verify` argv. Both source manifests carry SHA-256 bindings. The map reports
+`NOT_RUN` because it describes checks to run. It reads and validates the
+referenced E2E manifest alongside the Reality contract.
 
 ## Result states
 

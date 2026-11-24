@@ -36,6 +36,10 @@ def add_parser(sub) -> None:
         help="workspace-relative code-audit policy; defaults to .factory/review-audits.json when present",
     )
     change_review.add_argument(
+        "--reality-manifest",
+        help="include the priority invariant from this workspace-contained behavior contract",
+    )
+    change_review.add_argument(
         "--changed",
         action="append",
         default=[],
@@ -246,6 +250,7 @@ def _run_change(a) -> int:
             base=a.base,
             changed=a.changed or None,
             audit_policy=a.audit_policy,
+            reality_manifest=a.reality_manifest,
         )
         if a.out_dir:
             review["artifacts"] = write_review_artifacts(review, Path(a.out_dir))
@@ -272,6 +277,11 @@ def _run_change(a) -> int:
         print("=" * 44)
         print(f"changed paths: {len(review['changed_paths'])}")
         print(f"next action : {review['next_action']['action']}")
+        if invariant := review.get("priority_invariant"):
+            print(
+                f"invariant   : {invariant['assertion']['id']} {json.dumps(invariant['assertion']['statement'])}"
+            )
+            print(f"check argv  : {json.dumps(invariant['check_argv'])}")
         print(f"findings    : {len(review['findings'])}")
         if review.get("artifacts"):
             print(f"packet      : {review['artifacts']['paths']['markdown']}")

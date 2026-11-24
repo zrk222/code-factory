@@ -7,6 +7,7 @@ is stale or missing, and what is the smallest defensible next review action?**
 ```powershell
 factory change review --root . --base origin/main --json
 factory change review --root . --changed factoryline/graph_ops.py --out-dir .factory/change-reviews
+factory change review --root . --base origin/main --reality-manifest approval.reality.json --json
 factory change scope-check --root . --base origin/main --json
 ```
 
@@ -20,6 +21,13 @@ The command joins only existing local facts:
 It returns JSON, deterministic Markdown, and a Mermaid map. With no `--out-dir`
 it writes nothing. An explicit output directory writes only local review JSON,
 Markdown, and Mermaid artifacts beneath that chosen directory.
+
+With `--reality-manifest`, the terminal and review packet surface the
+first declared failure assertion from the selected behavior contract and
+the argv for its existing Reality Check. The assertion, both manifest
+digests, and its `NOT_RUN` state are bound into the review hash. The
+caller selects the contract. Diff-to-Proof leaves its normal findings
+and next action in place.
 
 ## Repository product-boundary guard
 

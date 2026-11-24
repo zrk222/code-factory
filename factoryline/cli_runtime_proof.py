@@ -60,6 +60,11 @@ def add_parser(sub: Any) -> None:
         help="workspace-contained factory.reality-check-manifest.v1 JSON path",
     )
     reality_inspect.add_argument("--json", action="store_true")
+    reality_inspect.add_argument(
+        "--verification-map",
+        action="store_true",
+        help="show the behavior, assertions and declared proof pair without running it",
+    )
 
     admission = sub.add_parser(
         "admission", help="seal and revalidate a local external-run admission packet"
@@ -309,6 +314,7 @@ def _run_reality(args: Any) -> int:
     from .reality_check import (
         RealityCheckError,
         inspect_reality_intent,
+        reality_verification_map,
         run_reality_check,
         write_reality_check_artifacts,
     )
@@ -319,8 +325,14 @@ def _run_reality(args: Any) -> int:
         manifest = workspace / manifest
     try:
         if args.reality_cmd == "inspect":
-            inspection = inspect_reality_intent(workspace, manifest)
-            _print_reality_inspection(inspection, args.json)
+            if args.verification_map:
+                _print_reality_map(
+                    reality_verification_map(workspace, manifest), args.json
+                )
+            else:
+                _print_reality_inspection(
+                    inspect_reality_intent(workspace, manifest), args.json
+                )
             return 0
         receipt = run_reality_check(workspace, manifest)
         artifacts = (
@@ -357,6 +369,23 @@ def _print_reality_inspection(inspection: dict[str, Any], as_json: bool) -> None
         f"coverage : {len(inspection['positive_assertion_ids'])} positive / {len(inspection['negative_assertion_ids'])} negative assertions"
     )
     print("execution: locked; this only validates the declared intent contract")
+
+
+def _print_reality_map(view: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(view, indent=2, sort_keys=True))
+        return
+    print(f"Verification map for {view['id']}")
+    print(f"Behavior: {json.dumps(view['behavior']['promise'])}")
+    print(f"Evidence: {view['evidence_state']}")
+    for assertion in view["assertions"]:
+        statement = json.dumps(assertion["statement"], ensure_ascii=True)
+        print(f"{assertion['evidence']} {assertion['id']} | {statement}")
+    print(
+        f"Working directory: {json.dumps(view['working_directory'])} | Timeout: {view['timeout_seconds']}s"
+    )
+    print(f"Expected artifacts: {json.dumps(view['expected_artifacts'])}")
+    print(f"Check argv: {json.dumps(view['check_argv'])}")
 
 
 def _print_reality_result(
