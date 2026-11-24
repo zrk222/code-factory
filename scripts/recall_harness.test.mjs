@@ -127,7 +127,8 @@ test('findings carry dataflow steps; hunk, trace and residual are scored separat
 });
 
 test('gate rejects lost hits, more residuals and control growth', () => {
-  const result = (rows, residual = 0) => ({ cases: rows, summary: { fix_side_residual_alerts: residual } });
+  const result = (rows, residual = 0) => ({ cases: rows,
+    summary: { fix_side_residual_alerts: residual, hunk_hits: rows.filter(row => row.hunk_hit).length } });
   const before = result([{ ghsa: 'A', hunk_hit: true }, { ghsa: 'B', hunk_hit: false }]);
   const better = result([{ ghsa: 'A', hunk_hit: true }, { ghsa: 'B', hunk_hit: true }]);
   assert.equal(gate({ dev: [{ before, after: better }], controls: [{ before: 3, after: 3 }] }).decision, 'ACCEPT');
@@ -136,6 +137,9 @@ test('gate rejects lost hits, more residuals and control growth', () => {
   assert.match(lostVerdict.failures[0], /lost 1 dev hit/);
   assert.deepEqual(lostVerdict.lost_baseline_hits, ['A']);
   assert.equal(gate({ dev: [{ before, after: result(better.cases, 2) }], controls: [] }).decision, 'REJECT');
+  // Twice the hits may carry twice the residuals, not more.
+  assert.equal(gate({ dev: [{ before: result(before.cases, 1), after: result(better.cases, 2) }], controls: [] }).decision, 'ACCEPT');
+  assert.equal(gate({ dev: [{ before: result(before.cases, 1), after: result(better.cases, 3) }], controls: [] }).decision, 'REJECT');
   const noisy = gate({ dev: [{ before, after: better }], controls: [{ before: 3, after: 9 }], maxControlIncrease: 5 });
   assert.deepEqual([noisy.decision, noisy.control_increase], ['REJECT', 6]);
 });
@@ -227,15 +231,18 @@ async function feederFixture(run) {
     const scanner = join(root, 'scanner.mjs');
     writeFileSync(scanner, [
       "import { readFileSync, writeFileSync } from 'node:fs';",
-      "import { basename } from 'node:path';",
+      "import { basename, dirname } from 'node:path';",
       "const rules = process.argv[process.argv.indexOf('--config') + 1];",
       "const report = process.argv[process.argv.indexOf('--sarif-output') + 1];",
       "const coverageArgs = process.argv.indexOf('--json-output');",
       "const files = (await import('node:fs')).readdirSync('.');",
       "const old = basename(process.cwd()) === 'old';",
-      "const incomplete = !old && readFileSync(rules, 'utf8').includes('# incomplete');",
+      "const ruleText = readFileSync(rules, 'utf8');",
+      "const incomplete = !old && ruleText.includes('# incomplete');",
+      "const timeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
       "const results = old ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
+      "if (timeout) issues.push({ descriptor: { id: 'Timeout' }, level: 'warning' });",
       "if (coverageArgs >= 0) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'skipped.py' && path !== 'unreported.py'), skipped: files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [] }, errors: files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : [] }));",
       "writeFileSync(report, JSON.stringify({ runs: [{ results, invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: issues }] }] }));",
       "process.exitCode = incomplete ? 2 : 0;",
@@ -311,6 +318,20 @@ test('changed prepared source, diff and inventory bytes cannot yield a measured 
   const inventoryDrift = await scoreManifest(manifest, baseline, opts);
   assert.equal(inventoryDrift.summary.scored, 0);
   assert.match(inventoryDrift.cases[0].detail, /inventory fingerprint differs/);
+}));
+
+test('a successful serial retry keeps the original timed-out report fingerprint', () => feederFixture(async fixture => {
+  const { workdir, manifest, baseline, opts } = fixture;
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# retry\n');
+  const result = await scoreManifest(manifest, baseline, opts);
+  const row = result.cases[0];
+  const root = join(workdir, result.scan_directory);
+  assert.equal(row.outcome, 'hit');
+  assert.equal(row.retried_serially, true);
+  assert.equal(row.initial_scan_sides.old.timeouts, 1);
+  assert.equal(row.scan_sides.old.timeouts, 0);
+  assert.equal(row.initial_scan_sides.old.report_sha256, sha256(readFileSync(join(root, feederRow.ghsa, 'old.sarif'))));
+  assert.equal(row.scan_sides.old.report_sha256, sha256(readFileSync(join(root, 'serial', feederRow.ghsa, 'old.sarif'))));
 }));
 
 

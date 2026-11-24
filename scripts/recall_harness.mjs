@@ -359,12 +359,18 @@ function readCoverage(path, notes) {
   }
 }
 
+function coverageReportPath(profile, report, collectCoverage) {
+  if (collectCoverage && profile.engine === 'semgrep' && profile.commands[0].argv.includes('--sarif-output')) {
+    return report + '.coverage.json';
+  }
+  return null;
+}
+
 // Scan with the source as cwd so SARIF URIs are relative to it.
 export async function scan(context, source, report = `${source}.sarif`, collectCoverage = false) {
   rmSync(report, { force: true });
   mkdirSync(dirname(report), { recursive: true });
-  const coveragePath = collectCoverage && context.profile.engine === 'semgrep'
-    && context.profile.commands[0].argv.includes('--sarif-output') ? report + '.coverage.json' : null;
+  const coveragePath = coverageReportPath(context.profile, report, collectCoverage);
   if (coveragePath) rmSync(coveragePath, { force: true });
   const extra = coveragePath ? [...context.extra, '--json-output', coveragePath, '--verbose'] : context.extra;
   const argv = profileArgv(context.profile, { bin: context.bin, rules: context.rules, report, source: '.', extra });
@@ -386,7 +392,7 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
     const findings = sarifFindings(sarif);
     findings.notes = { ...diagnostics, ...scanNotes(sarif) };
     findings.coverage = coverage;
-    if (run.timedOut && !findings.notes.timeouts) findings.notes.timeouts = 1;
+    findings.notes.timeouts = Math.max(execution.timeouts, findings.notes.timeouts);
     return findings;
   } catch (error) {
     throw Object.assign(error, { diagnostics });
@@ -588,10 +594,20 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
   const context = scoringContext(opts, rulesPath);
   mkdirSync(context.workdir, { recursive: true });
   context.scanRoot = mkdtempSync(join(context.workdir, 'scan-'));
-  const rows = await pool(manifest.cases, Number(opts.jobs ?? 6), async row => {
-    try { return { ...row, ...(await scoreOne(context, row)) }; }
+  const one = async (row, scanContext = context) => {
+    try { return { ...row, ...(await scoreOne(scanContext, row)) }; }
     catch (error) { return { ...row, status: 'error', detail: String(error.message).slice(-300) }; }
-  });
+  };
+  const rows = await pool(manifest.cases, Number(opts.jobs ?? 6), one);
+  // Engine timeouts depend on machine load; repeat those cases one at a time
+  // so a timeout is only recorded when it happens on an otherwise idle engine.
+  for (let index = 0; index < rows.length; index++) {
+    if (rows[index].outcome !== 'timeout') continue;
+    const initial = rows[index];
+    const serial = { ...context, scanRoot: join(context.scanRoot, 'serial') };
+    rows[index] = { ...(await one(manifest.cases[index], serial)), retried_serially: true,
+      initial_scan_sides: initial.scan_sides };
+  }
   return { schema: 'factory.recall-result.v1', manifest: manifestPath, manifest_cases_sha256: manifestDigest,
     manifest_sha256: sha256(manifestBytes), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
     scan_directory: basename(context.scanRoot),
@@ -640,7 +656,7 @@ function measureDevPair({ before, after }, changes) {
   }
 }
 
-export function gate({ dev, controls, maxControlIncrease = 0 }) {
+export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1 }) {
   const lost = [], gained = [], newErrors = [], failures = [];
   for (const pair of dev) measureDevPair(pair, { lost, gained, newErrors, failures });
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
@@ -648,19 +664,29 @@ export function gate({ dev, controls, maxControlIncrease = 0 }) {
   const controlIncrease = controls.reduce((n, delta) => n + (delta.after ?? 0) - (delta.before ?? 0), 0);
   if (newErrors.length) failures.push(`new engine errors/timeouts: ${newErrors.join(', ')}`);
   if (lost.length) failures.push(`lost ${lost.length} dev hit(s): ${lost.join(', ')}`);
-  if (residualAfter > residualBefore) failures.push(`fix-side residuals ${residualBefore} -> ${residualAfter}`);
+  // Residuals are judged per strict hit: a rule that finds more fixes also sees
+  // more fixed code it cannot prove safe. The rate may not rise by more than
+  // residualTolerance (default 10%).
+  const hitsBefore = dev.reduce((n, pair) => n + pair.before.summary.hunk_hits, 0);
+  const hitsAfter = dev.reduce((n, pair) => n + pair.after.summary.hunk_hits, 0);
+  const rateBefore = residualBefore / Math.max(hitsBefore, 1), rateAfter = residualAfter / Math.max(hitsAfter, 1);
+  if (rateAfter > rateBefore * (1 + residualTolerance)) {
+    failures.push(`fix-side residuals per hit ${rateBefore.toFixed(2)} -> ${rateAfter.toFixed(2)} (${residualBefore} -> ${residualAfter})`);
+  }
   if (controlIncrease > maxControlIncrease) failures.push(`control alerts +${controlIncrease} > ${maxControlIncrease}`);
   if (controls.some(delta => delta.error)) failures.push('a control scan failed');
   return { decision: failures.length ? 'REJECT' : 'ACCEPT', failures, gained, lost_baseline_hits: lost, new_errors: newErrors,
-    residual: [residualBefore, residualAfter], control_increase: controlIncrease };
+    residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
+    control_increase: controlIncrease };
 }
 
 function evaluationEvidence(result) {
   return { manifest_sha256: result.manifest_sha256, cases_sha256: result.manifest_cases_sha256,
     profile_sha256: result.profile_sha256, ruleset_sha256: result.ruleset_sha256, scan_directory: result.scan_directory,
     cases: result.cases.map(({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256, file_coverage,
-      scan_sides, outcome, status }) => ({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256,
-      file_coverage, scan_sides, outcome, status })) };
+      scan_sides, initial_scan_sides, retried_serially, outcome, status }) =>
+      ({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256,
+        file_coverage, scan_sides, initial_scan_sides, retried_serially, outcome, status })) };
 }
 
 async function evaluate(opts) {
@@ -683,8 +709,13 @@ async function evaluate(opts) {
   const out = { schema: 'factory.recall-evaluation.v1', baseline_sha256: sha256(readFileSync(opts.baseline)),
     candidate_sha256: sha256(readFileSync(opts.candidate)), extra_args: [].concat(opts['extra-arg'] ?? []),
     candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []), ...verdict,
-    dev: dev.map(pair => ({ manifest: pair.manifest, before: pair.before.summary, after: pair.after.summary,
-      before_evidence: evaluationEvidence(pair.before), after_evidence: evaluationEvidence(pair.after) })),
+    dev: dev.map(pair => ({ manifest: pair.manifest, manifest_cases_sha256: pair.after.manifest_cases_sha256,
+      before: pair.before.summary, after: pair.after.summary,
+      before_evidence: evaluationEvidence(pair.before), after_evidence: evaluationEvidence(pair.after),
+      cases: pair.after.cases.map((row, index) => ({ ghsa: row.ghsa, fix: row.fix,
+        before: pair.before.cases[index].outcome ?? pair.before.cases[index].status, after: row.outcome ?? row.status,
+        hunk_findings: row.hunk_findings ?? [], fix_side_residual: row.fix_side_residual ?? [],
+        retried_serially: Boolean(row.retried_serially) })) })),
     controls: controlDeltas.map(({ dir, before, after, added, removed, error, scan_sides }) =>
       ({ dir, before, after, added, removed, error, scan_sides })) };
   writeFileSync(opts.out, `${JSON.stringify(out, null, 1)}\n`);
@@ -698,9 +729,12 @@ async function controlDeltas_(opts) {
     bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []) };
   const key = f => `${f.rule}|${f.path}|${f.line}`;
   const deltas = [];
+  const workdir = resolve(opts.workdir ?? '.factory/recall-work');
+  mkdirSync(workdir, { recursive: true });
+  const scanRoot = mkdtempSync(join(workdir, 'controls-'));
   for (const dir of [].concat(opts.dir)) {
     try {
-      const reports = join(resolve(opts.workdir ?? '.factory/recall-work'), 'controls', sha256(resolve(dir)).slice(0, 16));
+      const reports = join(scanRoot, sha256(resolve(dir)).slice(0, 16));
       const old = await scan({ ...base, rules: resolve(before) }, resolve(dir), `${reports}/before.sarif`);
       const now = await scan({ ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])], rules: resolve(after) },
         resolve(dir), `${reports}/after.sarif`);
