@@ -261,9 +261,71 @@ rules:
       - pattern: request.POST.get(...)
       - pattern: request.GET[...]
       - pattern: request.POST[...]
+      # http.server handlers: the raw request target in do_GET/do_POST/...
+      - patterns:
+          - pattern: self.path
+          - pattern-inside: |
+              def $DO(self, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $DO
+              regex: ^do_[A-Z]+$
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)
+      - pattern: secure_filename(...)
+      # if not is_md5(h): return; is_safe_path(root, p); re.fullmatch(..., v)
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: $CHECK(..., $X, ...)
+              - pattern: $OBJ.$CHECK(..., $X, ...)
+          - metavariable-regex:
+              metavariable: $CHECK
+              regex: ^(is_\w+|valid\w*|validate\w*|check\w*|\w*safe\w*|\w*within\w*|\w*contain\w*|fullmatch|match)$
+          - focus-metavariable: $X
     pattern-sinks:
       - patterns:
           - pattern: open($PATH, ...)
+          # Used only after a containment guard that names the same value.
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    if <... $CHECK(..., <... $V ...>, ...) ...>:
+                      ...
+                    ...
+                - pattern: open(<... $V ...>, ...)
+                - metavariable-regex:
+                    metavariable: $CHECK
+                    regex: (?i)^(\w*safe\w*|\w*within\w*|\w*contain\w*|\w*inside\w*|is_relative_to|commonpath|valid\w*|is_valid\w*)$
+          - focus-metavariable: $PATH
+      # Joining request text under a base directory is the traversal itself,
+      # unless the joined value is then put through a containment guard.
+      - patterns:
+          - pattern-either:
+              - pattern: os.path.join($BASE, ..., $PATH, ...)
+              - pattern: $BASE / $PATH
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $V = $JOIN
+                        ...
+                        if <... $CHECK(..., <... $V ...>, ...) ...>:
+                          ...
+                    - pattern-inside: |
+                        $V = $JOIN
+                        ...
+                        if <... $V.$CHECK(...) ...>:
+                          ...
+                    - pattern-inside: |
+                        $V = $JOIN
+                        ...
+                        if <... str($V).$CHECK(...) ...>:
+                          ...
+                - pattern: $JOIN
+                - metavariable-regex:
+                    metavariable: $CHECK
+                    regex: (?i)^(\w*safe\w*|\w*within\w*|\w*contain\w*|\w*inside\w*|startswith|is_relative_to|relative_to|commonpath|valid\w*|is_valid\w*|check\w*)$
           - focus-metavariable: $PATH
       - patterns:
           - pattern: pathlib.Path($PATH).read_text(...)
@@ -296,9 +358,19 @@ rules:
     languages: [javascript, typescript]
     mode: taint
     pattern-sources:
-      - pattern: '$REQ.query'
-      - pattern: '$REQ.body'
-      - pattern: '$REQ.params'
+      # Request objects only (req, request, ctx.request, incomingReq...), not
+      # any object with a params/body field such as route.params.
+      - patterns:
+          - pattern-either:
+              - pattern: '$REQ.query'
+              - pattern: '$REQ.body'
+              - pattern: '$REQ.params'
+              - pattern: '$REQ.url'
+              - pattern: '$REQ.path'
+              - pattern: '$REQ.originalUrl'
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request|\w*Req|\w*Request|ctx|ctx\.request|context\.request|event\.request)$
     pattern-sanitizers:
       # Named containment/sanitizing helpers (safeRel, sanitizePath, resolveWithin...).
       - patterns:
@@ -338,6 +410,22 @@ rules:
           - focus-metavariable: $PATH
       - patterns:
           - pattern: fs.createReadStream($PATH, ...)
+          - focus-metavariable: $PATH
+      # Other fs calls on the path, through any fs-like module alias.
+      - patterns:
+          - pattern: $FS.$CALL($PATH, ...)
+          - metavariable-regex:
+              metavariable: $FS
+              regex: ^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$
+          - metavariable-regex:
+              metavariable: $CALL
+              regex: ^(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
+          - focus-metavariable: $PATH
+      # Joining request text under a base directory is the traversal itself.
+      - patterns:
+          - pattern-either:
+              - pattern: path.join($BASE, ..., $PATH, ...)
+              - pattern: path.resolve($BASE, ..., $PATH, ...)
           - focus-metavariable: $PATH
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
@@ -1339,6 +1427,29 @@ rules:
           - pattern-inside: |
               with tarfile.TarFile(...) as $T:
                 ...
+          # Opened inside a try, extracted after it.
+          - pattern-inside: |
+              try:
+                ...
+                $T = tarfile.open(...)
+              except $EX:
+                ...
+              ...
+          - pattern-inside: |
+              try:
+                ...
+                $T = tarfile.open(...)
+              except:
+                ...
+              ...
+          # A helper defined inside the with-block that extracts its own tar argument.
+          - patterns:
+              - pattern-inside: |
+                  with tarfile.open(...) as $W:
+                    ...
+              - pattern-inside: |
+                  def $FN(..., $T, ...):
+                    ...
       - pattern-not-inside: |
           $T.extraction_filter = $FILTER
           ...
@@ -3310,12 +3421,36 @@ rules:
     severity: INFO
     languages: [python]
     patterns:
-      - pattern-inside: |
-          def $F(..., $P, ...):
-            ...
+      - pattern-either:
+          - pattern-inside: |
+              def $F(..., $P, ...):
+                ...
+          # Keys of a caller-supplied or instance mapping (template names, file
+          # names) written out one file per key.
+          - pattern-inside: |
+              def $F(..., $D, ...):
+                ...
+                for $P, $VAL in $D.items():
+                  ...
+          - pattern-inside: |
+              def $F(..., $D, ...):
+                ...
+                for $P, $VAL in ($D or {}).items():
+                  ...
+          - pattern-inside: |
+              def $F(self, ...):
+                ...
+                for $P, $VAL in self.$A.items():
+                  ...
       - pattern-either:
           - pattern: os.path.join($BASE, ..., $P, ...)
           - pattern: os.path.join($BASE, ..., f"...{$P}...", ...)
+          - pattern: os.path.join($BASE, ..., $P.strip(...), ...)
+          - pattern: os.path.join($BASE, ..., $P.lstrip(...), ...)
+          - pattern: os.path.join($BASE, ..., $P.rstrip(...), ...)
+          - pattern: $BASE / $P.strip(...)
+          - pattern: $BASE / $P.lstrip(...)
+          - pattern: $BASE / $P.rstrip(...)
           - pattern: $BASE / $P
           - pattern: $BASE / f"...{$P}..."
           - pattern: Path($BASE, ..., $P, ...)
@@ -3354,10 +3489,53 @@ rules:
             ...
             os.path.commonpath(...)
             ...
+      # Joined value resolved and compared, with a raise, before use.
+      - pattern-not-inside: |
+          $V = $J
+          ...
+          if <... Path($V).resolve() ...>:
+            ...
+            raise ...
+          ...
+      - pattern-not-inside: |
+          $V = $J
+          ...
+          if <... os.path.realpath($V) ...>:
+            ...
+            raise ...
+          ...
+      - pattern-not-inside: |
+          $V = $J
+          ...
+          if <... os.path.abspath($V) ...>:
+            ...
+            raise ...
+          ...
+      - pattern-not-inside: |
+          $V = $J
+          ...
+          if <... $V.resolve() ...>:
+            ...
+            raise ...
+          ...
+      # A prefix check only contains the path when the prefix ends in a separator;
+      # startswith(abspath(root)) alone also accepts root-evil/.
       - pattern-not-inside: |
           def $F(...):
             ...
-            $S.startswith(...)
+            <... $S.startswith(<... os.sep ...>) ...>
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            <... $S.startswith($R + "/") ...>
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            <... os.sep ...>
+            ...
+            <... $S.startswith(...) ...>
             ...
       - pattern-not-inside: |
           def $F(...):
@@ -3384,12 +3562,6 @@ rules:
           def $F(...):
             ...
             if <... os.path.commonprefix(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $S.startswith(...) ...>:
               ...
             ...
       - pattern-not-inside: |
@@ -3647,8 +3819,8 @@ rules:
                 $FS.$SINK(...)
                 ...
               } ... }
-      - metavariable-regex: {metavariable: $FS, regex: '^(fs|fsp|fsPromises|fse|promises|fs\.promises)$'}
-      - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync)$'}
+      - metavariable-regex: {metavariable: $FS, regex: '^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$'}
+      - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)$'}
       - pattern-not-inside: |
           function $F(...) {
             ...

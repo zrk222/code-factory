@@ -131,12 +131,12 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.archive-path-traversal': 3,
   'opt.factory.rules.javascript.dom-innerhtml-from-variable': 1,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 2,
-  'opt.factory.rules.javascript.parameter-path-join-without-containment': 1,
+  'opt.factory.rules.javascript.parameter-path-join-without-containment': 2,
   'opt.factory.rules.javascript.parameter-shell-command': 2,
   'opt.factory.rules.javascript.parameter-sql-text': 1,
   'opt.factory.rules.javascript.request-command-injection': 4,
   'opt.factory.rules.javascript.request-html-injection': 12,
-  'opt.factory.rules.javascript.request-path-traversal': 13,
+  'opt.factory.rules.javascript.request-path-traversal': 16,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 2,
@@ -150,15 +150,15 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.php.request-unsafe-deserialization': 4,
   'opt.factory.rules.python.archive-path-traversal': 4,
   'opt.factory.rules.python.disabled-tls-verification': 3,
-  'opt.factory.rules.python.parameter-path-join-without-containment': 2,
+  'opt.factory.rules.python.parameter-path-join-without-containment': 4,
   'opt.factory.rules.python.parameter-shell-command': 6,
   'opt.factory.rules.python.parameter-sql-text': 2,
   'opt.factory.rules.python.request-command-injection': 2,
   'opt.factory.rules.python.request-html-injection': 1,
-  'opt.factory.rules.python.request-path-traversal': 9,
+  'opt.factory.rules.python.request-path-traversal': 11,
   'opt.factory.rules.python.request-sql-injection': 1,
   'opt.factory.rules.python.ssl-context-verification-disabled': 1,
-  'opt.factory.rules.python.tarfile-extractall-without-filter': 3,
+  'opt.factory.rules.python.tarfile-extractall-without-filter': 5,
   'opt.factory.rules.python.unsafe-deserialization': 2,
   'opt.factory.rules.python.unsafe-deserialization-unscoped': 3,
   'opt.factory.rules.ruby.archive-path-traversal': 2,
@@ -179,6 +179,8 @@ export const typescriptExtensionEndpoints = Object.freeze([
   ['parameter-sql-text', 233], ['parameter-path-join-without-containment', 247],
   ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
   ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
+  ['request-path-traversal', 305], ['request-path-traversal', 312], ['request-path-traversal', 314],
+  ['parameter-path-join-without-containment', 328],
 ]);
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
@@ -208,9 +210,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 196 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 206 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 196;
+const REVIEWED_FINDINGS = 206;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -255,12 +257,13 @@ function sourcePath(uri) {
 export const extensionControlFiles = Object.freeze([
   ['py', 'python-archive-output-controls.txt'], ['py', 'python-parameter-sink-controls.txt'],
   ['py', 'python-path-join-controls.txt'], ['py', 'python-tls-trust-controls.txt'],
+  ['py', 'python-path-request-controls.txt'],
   ['go', 'go-archive-output-controls.txt'], ['go', 'go-parameter-sink-controls.txt'],
   ['go', 'go-path-join-controls.txt'], ['go', 'go-tls-trust-controls.txt'],
   ['java', 'java-archive-output-controls.txt'],
   ['ts', 'javascript-archive-output-controls.txt'], ['ts', 'tsx-parameter-sink-controls.txt'],
   ['ts', 'tsx-path-join-controls.txt'], ['ts', 'tsx-html-output-controls.txt'],
-  ['ts', 'javascript-tls-trust-controls.txt'],
+  ['ts', 'javascript-tls-trust-controls.txt'], ['ts', 'tsx-path-request-controls.txt'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
 ]);

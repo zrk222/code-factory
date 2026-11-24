@@ -1,0 +1,107 @@
+import os
+import tarfile
+from http.server import BaseHTTPRequestHandler
+from pathlib import Path
+from urllib.parse import urlparse
+
+REPORT_DIR = "/srv/reports"
+
+
+class DashboardHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = urlparse(self.path).path
+        # ruleid: python.request-path-traversal
+        candidate = self.root / path.lstrip("/")
+        if candidate.exists():
+            self.serve(candidate)
+
+    def do_HEAD(self):
+        name = os.path.basename(self.path)
+        # ok: python.request-path-traversal
+        target = self.root / name
+        self.serve(target)
+
+    def log_path(self):
+        # ok: python.request-path-traversal
+        return self.root / self.path
+
+
+def download_report(request):
+    name = request.GET["name"]
+    # ruleid: python.request-path-traversal
+    return os.path.join(REPORT_DIR, name)
+
+
+def download_checked(request):
+    name = request.GET["name"]
+    # ok: python.request-path-traversal
+    report = Path(REPORT_DIR) / name
+    if not is_safe_path(REPORT_DIR, report):
+        raise ValueError("outside the report directory")
+    # ok: python.request-path-traversal
+    with open(report) as handle:
+        return handle.read()
+
+
+def fetch_and_unpack(blob, dest):
+    try:
+        archive = tarfile.open(fileobj=blob)
+    except tarfile.TarError:
+        return None
+    # ruleid: python.tarfile-extractall-without-filter
+    archive.extractall(dest)
+
+
+def fetch_and_unpack_filtered(blob, dest):
+    try:
+        archive = tarfile.open(fileobj=blob)
+    except tarfile.TarError:
+        return None
+    # ok: python.tarfile-extractall-without-filter
+    archive.extractall(dest, filter="data")
+
+
+def unpack_bundle(bundle, dest):
+    with tarfile.open(bundle) as tar:
+        def extract_checked(tar, path):
+            # ruleid: python.tarfile-extractall-without-filter
+            tar.extractall(path)
+
+        extract_checked(tar, dest)
+
+
+def load_image(context, path):
+    # ruleid: python.parameter-path-join-without-containment
+    file_path = os.path.join(context.root, path.lstrip("/"))
+    file_path = os.path.abspath(file_path)
+    if not file_path.startswith(os.path.abspath(context.root)):
+        return None
+    with open(file_path, "rb") as handle:
+        return handle.read()
+
+
+def load_image_sep(context, path):
+    # ok: python.parameter-path-join-without-containment
+    file_path = os.path.abspath(os.path.join(context.root, path.lstrip("/")))
+    if not file_path.startswith(os.path.abspath(context.root) + os.sep):
+        return None
+    with open(file_path, "rb") as handle:
+        return handle.read()
+
+
+class TemplateSaver:
+    def save(self, out_dir):
+        for template_name, body in self.templates.items():
+            # ruleid: python.parameter-path-join-without-containment
+            target = os.path.join(out_dir, f"{template_name}.jinja")
+            with open(target, "w") as handle:
+                handle.write(body)
+
+    def save_checked(self, out_dir):
+        for template_name, body in self.templates.items():
+            # ok: python.parameter-path-join-without-containment
+            target = os.path.join(out_dir, f"{template_name}.jinja")
+            if Path(target).resolve().parent != Path(out_dir).resolve():
+                raise ValueError(template_name)
+            with open(target, "w") as handle:
+                handle.write(body)
