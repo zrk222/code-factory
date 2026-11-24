@@ -140,6 +140,7 @@ def test_appforge_stage_status_is_actionable_and_does_not_scan_other_stages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from factoryline import canonical_sha
+    from factoryline.appforge_design import appforge_status_lines
 
     root = tmp_path / ".factory" / "appforge"
     path = root / "submission-assurance.json"
@@ -174,6 +175,7 @@ def test_appforge_stage_status_is_actionable_and_does_not_scan_other_stages(
         "submission-assurance",
         "--help",
     ]
+    assert "Capture evidence is missing" in list(appforge_status_lines(summary))
     assert calls == ["submission-assurance*.json"]
 
     assert main(focus) == 0
@@ -195,3 +197,23 @@ def test_appforge_stage_status_is_actionable_and_does_not_scan_other_stages(
     assert calls == ["*.json"]
     assert summary["quality_audit"]["invalid_count"] == 1
     assert summary["submission_assurance"]["latest"]["ok"] is False
+
+
+def test_shared_receipt_discovery_and_reader_preserve_workspace_scope(
+    tmp_path: Path,
+) -> None:
+    from factoryline.revenue_evidence import read_receipt, receipt_paths
+
+    root = tmp_path / "workspace"
+    evidence = root / ".factory/appforge/reports"
+    target = _write(evidence / "receipt.json", {"current": True})
+    malformed = _write(evidence / "invalid.json", [])
+    _write(evidence / "receipt.log", {"irrelevant": True})
+    outside = _write(tmp_path / "outside.json", {"outside": True})
+    inventory = tuple(receipt_paths(root, "*.json"))
+    assert list(receipt_paths(root, "receipt*.json", inventory)) == [target]
+    assert read_receipt(root, target) == {"current": True}
+    with pytest.raises(ValueError, match="JSON object"):
+        read_receipt(root, malformed)
+    with pytest.raises(ValueError):
+        read_receipt(root, outside)
