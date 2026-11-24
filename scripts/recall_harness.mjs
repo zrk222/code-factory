@@ -256,7 +256,17 @@ async function materialize(repo, revision, paths, target) {
 }
 
 // Scan with the source as cwd so SARIF URIs are relative to it.
-export async function scan(context, source, report = `${source}.sarif`) {
+export async function scan(context, source, report = `${source}.sarif`, { reuse = false } = {}) {
+  // A cached report is reused only if the engine reported no timeout in it;
+  // timeouts depend on machine load, so those scans are always repeated.
+  if (reuse && existsSync(report)) {
+    const cached = JSON.parse(readFileSync(report, 'utf8'));
+    if (!scanNotes(cached).timeouts) {
+      const findings = sarifFindings(cached);
+      findings.notes = scanNotes(cached);
+      return findings;
+    }
+  }
   rmSync(report, { force: true });
   mkdirSync(dirname(report), { recursive: true });
   const argv = profileArgv(context.profile, { bin: context.bin, rules: context.rules, report, source: '.', extra: context.extra });
@@ -316,8 +326,8 @@ async function scoreOne(context, row) {
   const prepared = await prepareCase(context.workdir, row);
   if (prepared.status !== 'ready') return { status: prepared.status };
   const reports = join(context.workdir, 'scans', sha256(context.rulesText + context.extra.join(' ')).slice(0, 16), row.ghsa);
-  const oldFindings = await scan(context, prepared.old, `${reports}/old.sarif`);
-  const newFindings = prepared.new ? await scan(context, prepared.new, `${reports}/new.sarif`) : [];
+  const oldFindings = await scan(context, prepared.old, `${reports}/old.sarif`, { reuse: true });
+  const newFindings = prepared.new ? await scan(context, prepared.new, `${reports}/new.sarif`, { reuse: true }) : [];
   const result = scoreCase({ families: familiesFor(row.cwes), hunks: prepared.hunks, oldFindings, newFindings, rules: context.ruleMap });
   return { status: 'scored', families: familiesFor(row.cwes), changed_files: Object.keys(prepared.hunks).sort(),
     scan_notes: oldFindings.notes, ...result, outcome: outcomeOf({ status: 'scored', scan_notes: oldFindings.notes, ...result }) };
