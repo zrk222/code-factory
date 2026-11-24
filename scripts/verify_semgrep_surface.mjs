@@ -191,7 +191,7 @@ class UsersController < ApplicationController
   def show
     # source: ruby.request-sql-injection
     name = params[:name]
-    # ruleid: ruby.request-sql-injection
+    # ruleid: ruby.request-sql-injection, ruby.parameter-sql-text
     User.where("name = '#{name}'")
     # ok: ruby.request-sql-injection
     User.where(name: name)

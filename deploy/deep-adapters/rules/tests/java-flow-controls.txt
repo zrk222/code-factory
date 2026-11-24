@@ -17,6 +17,7 @@ String alias = "echo " + value;
 new java.lang.ProcessBuilder("/bin/sh", "-c", alias);
 // source: java.request-sql-injection
 String name = req.getParameter("name");
+// ruleid: java.parameter-sql-text
 String query = "SELECT * FROM users WHERE name='" + name + "'";
 // ruleid: java.request-sql-injection
 db.execute(query);
@@ -44,7 +45,7 @@ db.executeQuery(value);
 void frameworks(jakarta.servlet.http.HttpServletRequest req, java.sql.Connection conn) {
 // source: java.request-sql-injection
 String name = req.getParameter("name");
-// ruleid: java.request-sql-injection
+// ruleid: java.request-sql-injection, java.parameter-sql-text
 conn.prepareStatement("SELECT * FROM t WHERE n='" + name + "'");
 // source: java.request-command-injection
 String host = req.getParameter("host");

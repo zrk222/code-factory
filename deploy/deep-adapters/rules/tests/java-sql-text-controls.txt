@@ -1,0 +1,38 @@
+class SearchStore {
+    java.util.List<String> searchSpaces(org.hibernate.Session session, String whereClause) {
+        // ruleid: java.parameter-sql-text
+        return session.createQuery("select distinct doc.space from XWikiDocument doc " + whereClause).list();
+    }
+
+    void stage(java.sql.Connection connection, String tempTable) throws java.sql.SQLException {
+        // ruleid: java.parameter-sql-text
+        connection.prepareStatement("insert into " + tempTable + " (entity_id) values (?)").execute();
+    }
+
+    String byOwner(String owner) {
+        // ruleid: java.parameter-sql-text
+        return String.format("select id from documents where owner = '%s'", owner);
+    }
+
+    java.sql.PreparedStatement bound(java.sql.Connection connection) throws java.sql.SQLException {
+        // ok: java.parameter-sql-text
+        return connection.prepareStatement("select id from documents where owner = ?");
+    }
+
+    String constant() {
+        // ok: java.parameter-sql-text
+        return "select id from documents where kind = " + KIND_DOCUMENT;
+    }
+
+    String message(String table) {
+        // ok: java.parameter-sql-text
+        return "Unable to delete from cache " + table;
+    }
+
+    String byClass(Object object) {
+        // ok: java.parameter-sql-text
+        return "select obj.id from " + object.getClass().getName();
+    }
+
+    static final String KIND_DOCUMENT = "1";
+}

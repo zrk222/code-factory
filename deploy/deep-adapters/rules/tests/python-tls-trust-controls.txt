@@ -2,13 +2,13 @@ import ssl
 
 
 def fetch_context():
-    # ruleid: python.ssl-context-verification-disabled
+    # ruleid: python.disabled-tls-verification
     return ssl._create_unverified_context()
 
 
 def context(insecure):
     ctx = ssl.create_default_context()
     if insecure:
-        # ok: python.ssl-context-verification-disabled
+        # ok: python.disabled-tls-verification
         ctx.check_hostname = False
     return ctx

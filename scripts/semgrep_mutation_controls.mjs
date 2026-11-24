@@ -112,18 +112,18 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.csharp.request-sql-injection': 3,
   'opt.factory.rules.go.archive-path-traversal': 4,
   'opt.factory.rules.go.disabled-tls-verification': 1,
-  'opt.factory.rules.go.grpc-insecure-transport': 1,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
   'opt.factory.rules.go.parameter-shell-command': 1,
   'opt.factory.rules.go.parameter-sql-text': 2,
-  'opt.factory.rules.go.peer-certificate-trusted-without-verified-chain': 1,
   'opt.factory.rules.go.request-command-injection': 3,
   'opt.factory.rules.go.request-html-injection': 2,
   'opt.factory.rules.go.request-path-traversal': 1,
   'opt.factory.rules.go.request-sql-injection': 4,
   'opt.factory.rules.go.tls-client-cert-requested-not-verified': 1,
+  'opt.factory.rules.go.tls-peer-not-verified': 2,
   'opt.factory.rules.java.archive-path-traversal': 3,
   'opt.factory.rules.java.disabled-hostname-verification': 4,
+  'opt.factory.rules.java.parameter-sql-text': 5,
   'opt.factory.rules.java.request-command-injection': 3,
   'opt.factory.rules.java.request-html-injection': 1,
   'opt.factory.rules.java.request-path-traversal': 1,
@@ -149,7 +149,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.php.request-sql-injection': 15,
   'opt.factory.rules.php.request-unsafe-deserialization': 4,
   'opt.factory.rules.python.archive-path-traversal': 4,
-  'opt.factory.rules.python.disabled-tls-verification': 3,
+  'opt.factory.rules.python.disabled-tls-verification': 4,
   'opt.factory.rules.python.parameter-path-join-without-containment': 4,
   'opt.factory.rules.python.parameter-shell-command': 7,
   'opt.factory.rules.python.parameter-sql-text': 2,
@@ -157,13 +157,13 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.request-html-injection': 1,
   'opt.factory.rules.python.request-path-traversal': 26,
   'opt.factory.rules.python.request-sql-injection': 1,
-  'opt.factory.rules.python.ssl-context-verification-disabled': 1,
   'opt.factory.rules.python.tarfile-extractall-without-filter': 5,
   'opt.factory.rules.python.unsafe-deserialization': 2,
   'opt.factory.rules.python.unsafe-deserialization-unscoped': 5,
   'opt.factory.rules.ruby.archive-path-traversal': 2,
   'opt.factory.rules.ruby.disabled-tls-verification': 2,
   'opt.factory.rules.ruby.parameter-shell-command': 1,
+  'opt.factory.rules.ruby.parameter-sql-text': 4,
   'opt.factory.rules.ruby.request-command-injection': 3,
   'opt.factory.rules.ruby.request-html-injection': 1,
   'opt.factory.rules.ruby.request-path-traversal': 4,
@@ -211,9 +211,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 234 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 243 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 234;
+const REVIEWED_FINDINGS = 243;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -262,13 +262,13 @@ export const extensionControlFiles = Object.freeze([
   ['py', 'python-model-loader-controls.txt'],
   ['go', 'go-archive-output-controls.txt'], ['go', 'go-parameter-sink-controls.txt'],
   ['go', 'go-path-join-controls.txt'], ['go', 'go-tls-trust-controls.txt'],
-  ['java', 'java-archive-output-controls.txt'],
+  ['java', 'java-archive-output-controls.txt'], ['java', 'java-sql-text-controls.txt'],
   ['ts', 'javascript-archive-output-controls.txt'], ['ts', 'tsx-parameter-sink-controls.txt'],
   ['ts', 'tsx-path-join-controls.txt'], ['ts', 'tsx-html-output-controls.txt'],
   ['ts', 'javascript-tls-trust-controls.txt'], ['ts', 'tsx-path-request-controls.txt'],
   ['ts', 'tsx-sql-text-controls.txt'], ['ts', 'tsx-shell-text-controls.txt'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
-  ['rb', 'ruby-path-param-controls.txt'],
+  ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
   ['php', 'php-path-upload-controls.php'],
 ]);

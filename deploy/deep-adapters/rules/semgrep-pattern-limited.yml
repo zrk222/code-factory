@@ -116,42 +116,56 @@ rules:
       confidence: MEDIUM
       cwe: ["CWE-502"]
   - id: python.disabled-tls-verification
-    message: TLS certificate validation is disabled; enable verification and configure trusted certificates.
+    message: TLS certificate or hostname verification is disabled; enable verification and configure trusted certificates.
     severity: INFO
     languages: [python]
-    patterns:
-      # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
-      - pattern-not-inside:
-          patterns:
-            - pattern-inside: |
-                if $OPTIN:
-                  ...
-            - metavariable-regex:
-                metavariable: $OPTIN
-                regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
-      - pattern: requests.$METHOD(..., verify=False, ...)
-      # Report only connections that carry credentials or session material;
-      # unauthenticated probes of public endpoints are not a credential exposure.
-      - pattern-either:
-          - pattern: requests.$METHOD(..., auth=$CREDENTIAL, ...)
-          - pattern: requests.$METHOD(..., cert=$CREDENTIAL, ...)
-          - pattern: requests.$METHOD(..., cookies=$CREDENTIAL, ...)
-          - patterns:
-              - pattern-inside: |
-                  def $FUNCTION(...):
-                    $...BODY
-              - metavariable-pattern:
-                  metavariable: $...BODY
-                  language: generic
-                  patterns:
-                    - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\bauth\s*=)
+    pattern-either:
+      # requests calls that carry credentials with verify=False.
+      - patterns:
+          # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    if $OPTIN:
+                      ...
+                - metavariable-regex:
+                    metavariable: $OPTIN
+                    regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
+          - pattern: requests.$METHOD(..., verify=False, ...)
+          # Report only connections that carry credentials or session material;
+          # unauthenticated probes of public endpoints are not a credential exposure.
+          - pattern-either:
+              - pattern: requests.$METHOD(..., auth=$CREDENTIAL, ...)
+              - pattern: requests.$METHOD(..., cert=$CREDENTIAL, ...)
+              - pattern: requests.$METHOD(..., cookies=$CREDENTIAL, ...)
+              - patterns:
+                  - pattern-inside: |
+                      def $FUNCTION(...):
+                        $...BODY
+                  - metavariable-pattern:
+                      metavariable: $...BODY
+                      language: generic
+                      patterns:
+                        - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\bauth\s*=)
+      # SSL contexts created without certificate or hostname checks.
+      - patterns:
+          - pattern-either:
+              - pattern: ssl._create_unverified_context(...)
+              - pattern: $CTX.check_hostname = False
+              - pattern: $CTX.verify_mode = ssl.CERT_NONE
+              - pattern: 'ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)'
+              - pattern: urllib3.disable_warnings(...)
+          - pattern-not-inside: |
+              if $OPTIN:
+                ...
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
-      confidence: HIGH
+      confidence: MEDIUM
       cwe: ["CWE-295"]
+      scope: Credential-carrying requests calls with verify=False outside an operator opt-in, and unconditional SSL contexts without certificate or hostname checks.
   - id: javascript.request-command-injection
     message: Request data reaches a shell command; use execFile with validated arguments.
     severity: INFO
@@ -3609,6 +3623,59 @@ rules:
       confidence: LOW
       cwe: ["CWE-89"]
       scope: Function parameters interpolated into template or concatenated SQL passed to a driver call in the same function.
+  - id: ruby.parameter-sql-text
+    message: A value is interpolated into SQL text; pass it as a bound parameter or quote it with the adapter instead.
+    severity: INFO
+    languages: [ruby]
+    patterns:
+      - pattern-either:
+          # SQL text in a double-quoted literal with an interpolation that is not adapter quoting.
+          - pattern-regex: '"(?:[^"\\\n]|\\.)*?(?<![\w.])(?:(?i:select\s[^"\n]*?\bfrom|insert\s+into|update\s+[\w.`]+\s+set|delete\s+from)|WHERE|LIMIT|OFFSET|ORDER\s+BY|GROUP\s+BY|HAVING|AND|OR)\b(?:[^"\\\n]|\\.)*?#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name|connection\.quote\w*)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
+          # ActiveRecord query methods given an interpolated string.
+          - pattern-regex: '\.(?:where|order|reorder|group|having|joins|select|pluck|from|find_by_sql|lock|count_by_sql)\(\s*(?:Arel\.sql\(\s*)?"[^"\n]*#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
+      - pattern-not-regex: '(?m)^[ \t]*#(?!\{).*$'
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py", "**/db/migrate/**", "**/db/post_migrate/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: [CWE-89]
+  - id: java.parameter-sql-text
+    message: A value is concatenated into SQL text; use a PreparedStatement placeholder or a bound query parameter instead.
+    severity: INFO
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: '"$SQL" + $X'
+                  - pattern: '$A + "$SQL" + $X'
+              - pattern-not: '"$SQL" + "$Y"'
+              - pattern-not: '$A + "$SQL" + "$Y"'
+              - pattern-not: '"$SQL" + $C.$CONST'
+              - pattern-not: '$A + "$SQL" + $C.$CONST'
+              - metavariable-regex:
+                  metavariable: $X
+                  regex: '^(?![A-Z][A-Z0-9_]*$)(?!\d)(?!.*\b(?:quote\w*|escape\w*|getTableName|tableName)\s*\()(?!.*(?:getClass\(\)|\.class)\.get(?:Simple)?Name\(\)\s*$)'
+          - patterns:
+              - pattern-either:
+                  - pattern: 'String.format("$SQL", $ARG, ...)'
+                  - pattern: '"$SQL".formatted($ARG, ...)'
+              # Only string placeholders carry text; %d and the like format numbers.
+              - metavariable-regex:
+                  metavariable: $SQL
+                  regex: '(?s).*%s'
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: [CWE-89]
   - id: python.parameter-path-join-without-containment
     message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
     severity: INFO
@@ -4159,51 +4226,42 @@ rules:
       confidence: MEDIUM
       cwe: ["CWE-295"]
       scope: tls.Config ClientAuth set to a mode that requests or requires client certificates without chain verification.
-  - id: go.peer-certificate-trusted-without-verified-chain
-    message: A request's TLS peer certificate is used without checking that it verified; when client certificates are optional or unverified, PeerCertificates holds whatever the client sent. Require len(r.TLS.VerifiedChains) > 0 first.
+  - id: go.tls-peer-not-verified
+    message: The TLS peer is not verified; a gRPC client dials without transport security, or a handler trusts a peer certificate without checking VerifiedChains. Configure TLS credentials, or require len(r.TLS.VerifiedChains) > 0 first.
     severity: INFO
     languages: [go]
-    patterns:
-      - pattern-either:
-          - pattern: $R.TLS.PeerCertificates[0]
-          - pattern: $CS.PeerCertificates[0]
-      - pattern-either:
-          - pattern-inside: |
-              if <... len($R.TLS.PeerCertificates) ...> {
+    pattern-either:
+      # A peer certificate read under a length check without VerifiedChains.
+      - patterns:
+          - pattern-either:
+              - pattern: $R.TLS.PeerCertificates[0]
+              - pattern: $CS.PeerCertificates[0]
+          - pattern-either:
+              - pattern-inside: |
+                  if <... len($R.TLS.PeerCertificates) ...> {
+                    ...
+                  }
+              - pattern-inside: |
+                  if <... len($CS.PeerCertificates) ...> {
+                    ...
+                  }
+          - pattern-not-inside: |
+              if <... $X.VerifiedChains ...> {
                 ...
               }
-          - pattern-inside: |
-              if <... len($CS.PeerCertificates) ...> {
-                ...
-              }
-      - pattern-not-inside: |
-          if <... $X.VerifiedChains ...> {
-            ...
-          }
-      - pattern-either:
-          - pattern-inside: func $F(..., $R *http.Request, ...) { ... }
-          - pattern-inside: func $F(..., $R *http.Request, ...) $RET { ... }
-          - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) { ... }
-          - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) $RET { ... }
-          - pattern-inside: func ($CS tls.ConnectionState) error { ... }
-    paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
-    metadata:
-      tier: review
-      category: security
-      confidence: LOW
-      cwe: ["CWE-295"]
-      scope: Handlers that read the first peer certificate under a length check without consulting VerifiedChains.
-  - id: go.grpc-insecure-transport
-    message: A gRPC client is dialed without transport security; configure credentials.NewTLS or credentials.NewClientTLSFromCert.
-    severity: INFO
-    languages: [go]
-    patterns:
-      - pattern-either:
-          - pattern: grpc.WithInsecure()
-          - pattern: grpc.WithTransportCredentials(insecure.NewCredentials())
-      - pattern-not-inside: |
-          if $OPTIN { ... }
+          - pattern-either:
+              - pattern-inside: func $F(..., $R *http.Request, ...) { ... }
+              - pattern-inside: func $F(..., $R *http.Request, ...) $RET { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) $RET { ... }
+              - pattern-inside: func ($CS tls.ConnectionState) error { ... }
+      # Unconditional insecure gRPC dial options.
+      - patterns:
+          - pattern-either:
+              - pattern: grpc.WithInsecure()
+              - pattern: grpc.WithTransportCredentials(insecure.NewCredentials())
+          - pattern-not-inside: |
+              if $OPTIN { ... }
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -4211,7 +4269,7 @@ rules:
       category: security
       confidence: LOW
       cwe: ["CWE-295", "CWE-319"]
-      scope: Unconditional insecure gRPC dial options; branches guarded by a configuration condition are excluded.
+      scope: Handlers that read the first peer certificate under a length check without consulting VerifiedChains, and unconditional insecure gRPC dial options.
   - id: javascript.tls-reject-unauthorized-disabled
     message: Certificate verification is disabled for a TLS connection; remove rejectUnauthorized false and trust the needed CA instead.
     severity: INFO
@@ -4232,25 +4290,3 @@ rules:
       confidence: LOW
       cwe: ["CWE-295"]
       scope: Unconditional rejectUnauthorized false or NODE_TLS_REJECT_UNAUTHORIZED=0; option-guarded branches are excluded.
-  - id: python.ssl-context-verification-disabled
-    message: An SSL context with certificate or hostname verification disabled is created; use ssl.create_default_context() and load the needed CA instead.
-    severity: INFO
-    languages: [python]
-    patterns:
-      - pattern-either:
-          - pattern: ssl._create_unverified_context(...)
-          - pattern: $CTX.check_hostname = False
-          - pattern: $CTX.verify_mode = ssl.CERT_NONE
-          - pattern: 'ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)'
-          - pattern: urllib3.disable_warnings(...)
-      - pattern-not-inside: |
-          if $OPTIN:
-            ...
-    paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
-    metadata:
-      tier: review
-      category: security
-      confidence: LOW
-      cwe: ["CWE-295"]
-      scope: Unconditional SSL contexts without certificate or hostname checks; option-guarded branches are excluded.

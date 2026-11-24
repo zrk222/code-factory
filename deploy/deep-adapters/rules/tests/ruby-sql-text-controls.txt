@@ -1,0 +1,43 @@
+class CvtModel
+  def range(start_time, end_time)
+    query = "SELECT * FROM packets "
+    # ruleid: ruby.parameter-sql-text
+    query += "WHERE PACKET_TIME >= '#{start_time}' AND PACKET_TIME < '#{end_time}'"
+    @@conn.exec(query)
+  end
+
+  def sorted(query, sort_attr, sort_order)
+    # ruleid: ruby.parameter-sql-text
+    query.order("#{sort_attr} #{sort_order}")
+  end
+
+  def limited(sql, limit)
+    # ruleid: ruby.parameter-sql-text
+    sql << " LIMIT #{limit}"
+  end
+
+  def bound(start_time)
+    # ok: ruby.parameter-sql-text
+    Packet.where("packet_time >= ?", start_time)
+  end
+
+  def quoted(sql, name)
+    # ok: ruby.parameter-sql-text
+    sql << " WHERE name = #{connection.quote(name)}"
+  end
+
+  def counted(sql, limit)
+    # ok: ruby.parameter-sql-text
+    sql << " LIMIT #{limit.to_i}"
+  end
+
+  def message(limit)
+    # ok: ruby.parameter-sql-text
+    raise ArgumentError, "Body size exceeds limit of #{limit}"
+  end
+
+  def cached(account)
+    # ok: ruby.parameter-sql-text
+    redis.exists?("subscribed:timeline:#{account}")
+  end
+end
