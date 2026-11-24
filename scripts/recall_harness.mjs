@@ -589,7 +589,9 @@ function freeze(opts) {
 
 function scoringContext(opts, rulesPath) {
   const rulesBytes = readFileSync(rulesPath);
-  const profileBytes = readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
+  // evaluate() reads the profile once so a working-tree edit during a long
+  // paired run cannot give the two sides different profiles.
+  const profileBytes = opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
   return { profile: JSON.parse(utf8(profileBytes)), profileSha256: sha256(profileBytes),
     bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', rules: resolve(rulesPath),
     rulesSha256: sha256(rulesBytes), ruleMap: ruleFamilies(utf8(rulesBytes)),
@@ -700,7 +702,9 @@ function evaluationEvidence(result) {
         file_coverage, scan_sides, initial_scan_sides, retried_serially, outcome, status })) };
 }
 
-async function evaluate(opts) {
+async function evaluate(input) {
+  const opts = { ...input, profileBytes: input.profileBytes
+    ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
   const manifests = [].concat(opts.manifest);
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
   const candidateOpts = { ...opts, 'extra-arg': [].concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []) };
@@ -736,7 +740,7 @@ async function evaluate(opts) {
 
 async function controlDeltas_(opts) {
   const [before, after] = [].concat(opts.rules);
-  const base = { profile: JSON.parse(readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json', 'utf8')),
+  const base = { profile: JSON.parse(utf8(opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'))),
     bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []) };
   const key = f => `${f.rule}|${f.path}|${f.line}`;
   const deltas = [];
