@@ -57,8 +57,9 @@ jobs:
               path = target / relative
               path.parent.mkdir(parents=True, exist_ok=True)
               path.write_bytes(b64decode(packet["files"][relative], validate=True))
-              if item.get("mode") in (0o100755, "100755"):
-                  path.chmod(0o755)
+              mode = item["mode"]
+              assert type(mode) is int and 0 <= mode <= 0o777
+              path.chmod(mode)
           subprocess.run(["git", "init", "-q", str(target)], check=True)
           subprocess.run(["git", "-C", str(target), "add", "-f", "--", "."], check=True)
           actual = inventory_candidate(target)
