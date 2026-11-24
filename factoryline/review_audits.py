@@ -69,6 +69,7 @@ from .captured_security_audit import argument_role_proof_helpers
 from .deep_audit_io import local_file
 from .ops_telemetry import _measure_hash, _measure_parse
 from .runtime_audit_common import (
+    MAX_SECURITY_SOURCE_FILES as MAX_SECURITY_SOURCE_FILES,
     RuntimeAuditError,
     runtime_config_sources as runtime_config_sources,
 )
@@ -99,7 +100,6 @@ SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
 SECURITY_SCHEMA = "factory.security-audit.v1"
 TENANT_CONTRACT_SCHEMA = "factory.tenant-read-contract.v1"
-MAX_SECURITY_SOURCE_FILES = 2000
 MAX_BYTES = 1_000_000
 MAX_RULES = 128
 MAX_PATHS = 64
