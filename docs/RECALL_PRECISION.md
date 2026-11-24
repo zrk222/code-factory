@@ -122,6 +122,14 @@ from metadata before any diff was read (`docs/evidence/heldout-recall-manifest-2
 | Overflow, 61 cases (56 scored), never read | #384 head | 4/56 (7.1%) | 2.8–17.0% | 2/26 |
 | Overflow, same cases | this change, scored once | 5/56 (8.9%) | 3.9–19.3% | 3/26 |
 
+**Overlap correction (applied after scoring).** Four overflow cases share a
+repository and fix commit with an earlier development case under a different
+advisory ID (mistune `1bef343a`, PraisonAI `1620b49f` twice, mcp-atlassian
+`b0417334`); all four were path misses. Without them the overflow numbers are
+4/52 → 5/52 overall (Wilson 4.2–20.6%) and 2/22 → 3/22 for path traversal
+(Wilson 4.7–33.3%). The Sep–Oct set below excludes earlier fix commits as well
+as earlier advisory IDs.
+
 The path rules were tuned on the 33 path cases of the fresh set and gain 9
 there. On the overflow set, which they never saw, they gain 1 (litellm's
 parameter join). **The number to quote for this change is the overflow one:
