@@ -394,3 +394,12 @@ test('local Git source bytes survive preparation, scanning, and the reported pac
     assert.equal(coverage('old', 'partial.py').state, 'partial');
     assert.equal(coverage('old', 'unreported.py').state, 'unreported');
   }));
+
+test('parse warnings stay diagnostics; timeouts and failed scans make a case incomplete', async () => {
+  const { outcomeOf } = await import('./recall_harness.mjs');
+  const side = notes => ({ status: 'scored', hunk_hit: true, scan_sides: { old: notes, fixed: { timeouts: 0 } } });
+  assert.equal(outcomeOf(side({ timeouts: 0, parse_errors: 2, other: 0 })), 'hit');
+  assert.equal(outcomeOf(side({ timeouts: 1, parse_errors: 0, other: 0 })), 'timeout');
+  assert.equal(outcomeOf(side({ timeouts: 0, parse_errors: 0, other: 1 })), 'error');
+  assert.equal(outcomeOf(side({ timeouts: 0, failed_exit: true })), 'error');
+});

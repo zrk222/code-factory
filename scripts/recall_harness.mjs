@@ -244,7 +244,7 @@ export function scoreCase({ families, hunks, oldFindings, newFindings, rules }) 
 
 function scanIssue(notes) {
   if (notes?.timeouts > 0) return 'timeout';
-  if ((notes?.blocking_parse_errors ?? notes?.parse_errors) > 0 || notes?.other > 0 || notes?.failed_exit) return 'error';
+  if (notes?.blocking_parse_errors > 0 || notes?.other > 0 || notes?.failed_exit) return 'error';
   return null;
 }
 
