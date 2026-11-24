@@ -1,0 +1,13 @@
+import shlex
+
+
+def run_action(command_template, values):
+    command = command_template.format(**values)
+    # ruleid: python.parameter-shell-command
+    return secure_popen(command)
+
+
+def run_action_quoted(values):
+    command = "notify-send " + shlex.quote(values["title"])
+    # ok: python.parameter-shell-command
+    return secure_popen(command)

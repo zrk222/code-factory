@@ -3083,6 +3083,13 @@ rules:
               - pattern: subprocess.getstatusoutput($CMD)
               - pattern: asyncio.create_subprocess_shell($CMD, ...)
           - focus-metavariable: $CMD
+      # Command strings handed to a shell wrapper (secure_popen, run_command...).
+      - patterns:
+          - pattern: $RUN($CMD, ...)
+          - metavariable-regex:
+              metavariable: $RUN
+              regex: ^(\w*popen|run_command|run_cmd|run_shell|shell_exec|exec_command|execute_command)$
+          - focus-metavariable: $CMD
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -3139,6 +3146,15 @@ rules:
           - pattern-not-inside: function (..., exec, ...) { ... }
           - pattern-not-inside: function $FN(..., exec, ...) { ... }
           - pattern-not-inside: (..., exec, ...) => { ... }
+          - focus-metavariable: $CMD
+      # Shell command text assembled from a parameter (`rm -rf "${dir}"`) and handed
+      # to a run/exec wrapper elsewhere; reported at the first placeholder.
+      - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
+      - patterns:
+          - pattern: $RUN($CMD, ...)
+          - metavariable-regex:
+              metavariable: $RUN
+              regex: ^(run|runCmd|runCommand|runWinCmd|runShell|shell|execCommand|executeCommand|execShell)$
           - focus-metavariable: $CMD
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]

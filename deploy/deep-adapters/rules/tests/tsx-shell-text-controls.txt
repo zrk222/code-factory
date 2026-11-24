@@ -1,0 +1,16 @@
+export const removeTree = (folderPath: string) => {
+  // ruleid: javascript.parameter-shell-command
+  const cmd = `rm -rf "${folderPath}"`;
+  // ruleid: javascript.parameter-shell-command
+  return run(cmd);
+};
+
+export const removeTreeArgv = (folderPath: string) => {
+  // ok: javascript.parameter-shell-command
+  return execFileSync("rm", ["-rf", "--", folderPath]);
+};
+
+export const describe = (folderPath: string) => {
+  // ok: javascript.parameter-shell-command
+  return `Removing ${folderPath}`;
+};
