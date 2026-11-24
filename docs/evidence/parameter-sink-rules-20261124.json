@@ -11,13 +11,13 @@
     "repositories": 19,
     "review": "Remaining alerts are real interpolation of a function parameter into shell text (rubygems tool/release.rb x3, laravel DevCommand passthru) plus one laravel DynamoDB query-array alert; none is an exploitable public entry point."
   },
-  "ruleset_sha256": "e5f091f2c9234dbea188674e6ad6336b794494acb3a2b01e2f882b65eea2d2bf",
+  "ruleset_sha256": "46a66c52e48c4b99d45d2251507d6110f27bce80fd9b036dfab9ec67c23b641d",
   "schema": "factory.pattern-recall-measurement.v1",
   "sets": {
     "dev_161_first_fix": {
       "after": {
-        "file_hit": 20,
-        "hunk_hit": 16,
+        "file_hit": 22,
+        "hunk_hit": 18,
         "hunk_hits": [
           {
             "ecosystem": "Maven",
@@ -100,7 +100,15 @@
             "ecosystem": "PyPI",
             "ghsa": "GHSA-fhff-qmm8-h2fp",
             "rules": [
+              "python.parameter-path-join-without-containment",
               "python.tarfile-member-extract-without-filter"
+            ]
+          },
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-fr3h-cpq2-9496",
+            "rules": [
+              "python.parameter-path-join-without-containment"
             ]
           },
           {
@@ -115,6 +123,13 @@
             "ghsa": "GHSA-jwhr-h7pc-3974",
             "rules": [
               "java.disabled-hostname-verification"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-pmw4-jgxx-pcq9",
+            "rules": [
+              "javascript.parameter-path-join-without-containment"
             ]
           },
           {
@@ -144,13 +159,14 @@
     },
     "working_113": {
       "after": {
-        "file_hit": 15,
-        "hunk_hit": 8,
+        "file_hit": 23,
+        "hunk_hit": 12,
         "hunk_hits": [
           {
             "ecosystem": "PyPI",
             "ghsa": "GHSA-259w-wmqg-fp76",
             "rules": [
+              "python.parameter-path-join-without-containment",
               "python.tarfile-member-extract-without-filter"
             ]
           },
@@ -159,6 +175,13 @@
             "ghsa": "GHSA-3f7j-7jwc-fxfj",
             "rules": [
               "javascript.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-4xm8-rg9h-jhq2",
+            "rules": [
+              "javascript.parameter-path-join-without-containment"
             ]
           },
           {
@@ -190,6 +213,20 @@
             ]
           },
           {
+            "ecosystem": "Go",
+            "ghsa": "GHSA-mmg6-4qmv-6pc8",
+            "rules": [
+              "go.parameter-path-join-without-containment"
+            ]
+          },
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-p34x-fmph-9fjx",
+            "rules": [
+              "python.parameter-path-join-without-containment"
+            ]
+          },
+          {
             "ecosystem": "Packagist",
             "ghsa": "GHSA-r7h9-qx4h-77j5",
             "rules": [
@@ -201,6 +238,13 @@
             "ghsa": "GHSA-rw77-vq4g-x3hp",
             "rules": [
               "php.parameter-sql-text"
+            ]
+          },
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-vvr2-h2jp-838m",
+            "rules": [
+              "python.parameter-path-join-without-containment"
             ]
           }
         ],
@@ -214,5 +258,20 @@
       "manifest": "docs/evidence/heldout-recall-manifest-20261123.json",
       "role": "development: rules were designed after reading these fixes, with the user's agreement"
     }
-  }
+  },
+  "steps": [
+    {
+      "added": "parameter-sourced shell and SQL rules, tarfile with-block",
+      "dev_hunk_hit": 16,
+      "ruleset": "e5f091f2",
+      "working_hunk_hit": 8
+    },
+    {
+      "added": "base-directory join of a parameter without containment (Python, Go, JS/TS)",
+      "control_alerts": 3,
+      "dev_hunk_hit": 18,
+      "ruleset": "46a66c52",
+      "working_hunk_hit": 12
+    }
+  ]
 }

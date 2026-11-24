@@ -2419,3 +2419,423 @@ rules:
       confidence: MEDIUM
       cwe: ["CWE-22"]
       scope: with-block and TarFile handles extracted without filter=; complements python.tarfile-extractall-without-filter.
+  - id: python.parameter-path-join-without-containment
+    message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
+    severity: INFO
+    languages: [python]
+    patterns:
+      - pattern-inside: |
+          def $F(..., $P, ...):
+            ...
+      - pattern-either:
+          - pattern: os.path.join($BASE, ..., $P, ...)
+          - pattern: os.path.join($BASE, ..., f"...{$P}...", ...)
+          - pattern: $BASE / $P
+          - pattern: $BASE / f"...{$P}..."
+          - pattern: Path($BASE, ..., $P, ...)
+      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|filename|path|relpath|rel_path|subpath|sub_path|key|id|slug|target|dest|destination|member|entry|recipe|template|page|doc|document|resource|asset|upload|attachment)\w*$'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+      - metavariable-pattern:
+          metavariable: $BASE
+          patterns:
+            - pattern-not: $P
+            - pattern-not: '"..."'
+      - pattern-either:
+          - pattern-inside: |
+              def $F(...):
+                ...
+                $SINK(...)
+                ...
+          - pattern-inside: |
+              def $F(...):
+                ...
+                with $SINK(...) as $FH:
+                  ...
+                ...
+      - metavariable-regex: {metavariable: $SINK, regex: '^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$'}
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $C.relative_to(...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $C.is_relative_to(...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            os.path.commonpath(...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $S.startswith(...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $V = os.path.basename($P)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $V = secure_filename($P)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $CHECK($P, ...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... os.path.commonpath(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... os.path.commonprefix(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $S.startswith(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $C.is_relative_to(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $C.relative_to(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $X in $Y.parents ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $X not in $Y.parents ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... os.path.isabs($P) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... '..' in $P ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... ".." in $P ...>:
+              ...
+            ...
+      - pattern-not-inside:
+          patterns:
+            - pattern: $H(...)
+            - metavariable-regex: {metavariable: $H, regex: '(?i)^(\w+\.)*_?\w*(rooted|contain|confine|within|inside|safe_join|safejoin|ensure_under|under_root)\w*$'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:keyid|uuid|pk)$)'}
+      - pattern-not: os.path.join($BASE, ..., os.path.basename($P), ...)
+      - pattern-not: os.path.join($BASE, ..., secure_filename($P), ...)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-22"]
+      scope: Function parameters joined under a base path in a function that touches the filesystem and has no containment check; callers are not checked.
+  - id: go.parameter-path-join-without-containment
+    message: A function parameter is joined under a base directory and used for file access with no containment check; reject names that escape the base (filepath.IsLocal, or Rel/HasPrefix on the cleaned result).
+    severity: INFO
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern-inside: func $F(..., $P string, ...) { ... }
+          - pattern-inside: func $F(..., $P string, ...) $R { ... }
+          - pattern-inside: func ($RV $RT) $F(..., $P string, ...) { ... }
+          - pattern-inside: func ($RV $RT) $F(..., $P string, ...) $R { ... }
+      - pattern-either:
+          - pattern: filepath.Join($BASE, ..., $P, ...)
+          - pattern: path.Join($BASE, ..., $P, ...)
+      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+      - metavariable-pattern:
+          metavariable: $BASE
+          patterns:
+            - pattern-not: $P
+      - pattern-either:
+          - pattern-inside: |
+              func $F(...) {
+                ...
+                $SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              func $F(...) $R {
+                ...
+                $SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              func ($RV $RT) $F(...) {
+                ...
+                $SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              func ($RV $RT) $F(...) $R {
+                ...
+                $SINK(...)
+                ...
+              }
+      - metavariable-regex: {metavariable: $SINK, regex: '^(os\.(Open|OpenFile|ReadFile|Create|WriteFile|MkdirAll|Mkdir|Remove|RemoveAll|Rename|ReadDir|Symlink|Chmod|Lstat|Stat)|ioutil\.(ReadFile|WriteFile)|http\.ServeFile)$'}
+      - pattern-not-inside: |
+          func $F(...) {
+            ...
+            if <... strings.HasPrefix(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) $R {
+            ...
+            if <... strings.HasPrefix(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) $R {
+            ...
+            if <... strings.HasPrefix(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) {
+            ...
+            if <... strings.HasPrefix(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) $R {
+            ...
+            if <... filepath.Rel(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) $R {
+            ...
+            if <... filepath.Rel(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) $R {
+            ...
+            if <... filepath.IsLocal(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) $R {
+            ...
+            if <... filepath.IsLocal(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) $R {
+            ...
+            if <... strings.Contains($P, "..") ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) $R {
+            ...
+            if <... strings.Contains($P, "..") ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not: filepath.Join($BASE, ..., filepath.Base($P), ...)
+      - pattern-not: path.Join($BASE, ..., path.Base($P), ...)
+      - pattern-not-inside: securejoin.SecureJoin(...)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-22"]
+      scope: String parameters joined under a base path in a function that touches the filesystem and has no containment check; callers are not checked.
+  - id: javascript.parameter-path-join-without-containment
+    message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
+    severity: INFO
+    languages: [javascript, typescript]
+    patterns:
+      - pattern-either:
+          - pattern-inside: function $F(..., $P, ...) { ... }
+          - pattern-inside: async function $F(..., $P, ...) { ... }
+          - pattern-inside: (..., $P, ...) => { ... }
+          - pattern-inside: async (..., $P, ...) => { ... }
+          - pattern-inside: |
+              class $C { ... $M(..., $P, ...) { ... } ... }
+          - pattern-inside: |
+              class $C { ... async $M(..., $P, ...) { ... } ... }
+      - pattern-either:
+          - pattern: path.join($BASE, ..., $P, ...)
+          - pattern: path.resolve($BASE, ..., $P, ...)
+          - pattern: join($BASE, ..., $P, ...)
+          - pattern: resolve($BASE, ..., $P, ...)
+      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+      - metavariable-pattern:
+          metavariable: $BASE
+          patterns:
+            - pattern-not: $P
+      - pattern-either:
+          - pattern-inside: |
+              function $F(...) {
+                ...
+                $FS.$SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              async function $F(...) {
+                ...
+                $FS.$SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              (...) => {
+                ...
+                $FS.$SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              async (...) => {
+                ...
+                $FS.$SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              class $C { ... $M(...) {
+                ...
+                $FS.$SINK(...)
+                ...
+              } ... }
+          - pattern-inside: |
+              class $C { ... async $M(...) {
+                ...
+                $FS.$SINK(...)
+                ...
+              } ... }
+      - metavariable-regex: {metavariable: $FS, regex: '^(fs|fsp|fsPromises|fse|promises|fs\.promises)$'}
+      - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync)$'}
+      - pattern-not-inside: |
+          function $F(...) {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          async function $F(...) {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          (...) => {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          async (...) => {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          class $C { ... $M(...) {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          } ... }
+      - pattern-not-inside: |
+          class $C { ... async $M(...) {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          } ... }
+      - pattern-not-inside: |
+          function $F(...) {
+            ...
+            <... path.relative(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          async function $F(...) {
+            ...
+            <... path.relative(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          class $C { ... async $M(...) {
+            ...
+            <... path.relative(...) ...>
+            ...
+          } ... }
+      - pattern-not-inside: |
+          function $F(...) {
+            ...
+            <... $P.includes("..") ...>
+            ...
+          }
+      - pattern-not-inside: |
+          async function $F(...) {
+            ...
+            <... $P.includes("..") ...>
+            ...
+          }
+      - pattern-not: path.join($BASE, ..., path.basename($P), ...)
+      - pattern-not: path.resolve($BASE, ..., path.basename($P), ...)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-22"]
+      scope: Function parameters joined under a base path in a function that calls fs and has no containment check; callers are not checked.
