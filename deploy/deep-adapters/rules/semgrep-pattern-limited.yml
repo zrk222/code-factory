@@ -3351,6 +3351,16 @@ rules:
           - pattern: $P
           - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|rawsql|table|column|columns|grammar|builder|config|options|connection)$)\w+$'}
     pattern-sanitizers:
+      - patterns:
+          - pattern: $OBJ->$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(?i:sql_\w+|\w*escape\w*|\w*quote\w*|build\w*|in_set|wrap\w*)$
+      - patterns:
+          - pattern: $FN(...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(?i:\w*escape\w*|\w*quote\w*|addslashes)$
       - pattern: intval(...)
       - pattern: (int) $V
       - pattern: (float) $V
@@ -3406,17 +3416,27 @@ rules:
                     - pattern: '"..."'
                     - pattern-regex: ^\$\w+$
           - focus-metavariable: $Q
-      # SQL text assembled from a parameter, wherever it is executed later
-      # (query builders, custom store APIs, condition arrays).
+      # SQL text assembled from a parameter inside a quoted SQL value
+      # ('... = \'' . $v, 'LIKE \'%' . $v, sprintf("... '%s'", $v)), wherever it
+      # is executed later. SQL compilers (Grammar/Builder/Compiler classes) are
+      # left out: they assemble already-quoted pieces by design.
       - patterns:
-          - pattern-either:
-              - pattern: $LIT . $X
-              - pattern: $X . $LIT
+          - pattern: $LIT . $X
           - metavariable-pattern:
               metavariable: $LIT
               patterns:
                 - pattern: '"..."'
-                - pattern-regex: '(?i)\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|\bwhere\s|\border\s+by\s|\blike\s|\band\s+\w+\s*(=|<|>|!=|like|in)\b|\bvalues\s*\()'
+                # One regex over the whole literal, delimiters included (two
+                # pattern-regex terms would intersect their match ranges): SQL text
+                # whose content ends inside a value: = ', LIKE \'%, IN (, \', or a
+                # lone backtick opening a quoted identifier ('`' . $column).
+                - pattern-regex: '(?is)\A[''"]`[''"]\z|\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?[''\"%]).*?(=\s*|like\s*|in\s*\(\s*|\\''%?|"%?|''%?|`)[''"]\z'
+          - pattern-not-inside:
+              patterns:
+                - pattern: class $C extends $B { ... }
+                - metavariable-regex:
+                    metavariable: $C
+                    regex: (?i).*(Grammar|Builder|Compiler|Dialect|Platform).*
           - focus-metavariable: $X
       - patterns:
           - pattern: sprintf($FMT, ..., $X, ...)
@@ -3424,10 +3444,7 @@ rules:
               metavariable: $FMT
               patterns:
                 - pattern: '"..."'
-                - pattern-regex: '(?i)\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|\bwhere\s|\border\s+by\s|\blike\s|\band\s+\w+\s*(=|<|>|!=|like|in)\b|\bvalues\s*\()'
-          - metavariable-pattern:
-              metavariable: $FMT
-              pattern-regex: "'%s'|%s"
+                - pattern-regex: '(?is)\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?[''\"%]).*?([''"](%%)*%?%s(%%)*%?[''"]|\\[''"]%s).*\z'
           - focus-metavariable: $X
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
@@ -3544,10 +3561,10 @@ rules:
                 - pattern: '"..."'
                 - pattern-regex: '(?i)\b(select\s[\s\S]*?\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|where\s|order\s+by\s|values\s*\()'
           - focus-metavariable: $X
-      # A placeholder right after a SQL comparison inside a template literal
-      # (id = ${userId}, NAME='${t}', name LIKE '${q}', IN (${ids})); reported at the
-      # placeholder. attr="${v}" in HTML and ?q=${v} in URLs do not match.
-      - pattern-regex: '(?i)(?:\s(?:=|<>|!=|<=|>=|<|>|like|in\s*\(|values\s*\()\s*[''"(]?|(?:=|<>|!=|like)\s*'')\s*\K\$\{[^}`]*\}'
+      # Every placeholder of a template literal that starts with a SQL statement
+      # (`SELECT ... WHERE id = ${userId}`), each reported where it sits. \G chains
+      # matches within one template; code-generation templates do not start with SQL.
+      - pattern-regex: '(?i)(?:`\s*\(?\s*(?:select|insert\s+into|update|delete\s+from|with)\b|\G)[^`$]*(?:\$(?!\{)[^`$]*)*\K\$\{[^}`]*\}'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
