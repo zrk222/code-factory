@@ -57,11 +57,11 @@ def run_sql(cursor, sql):
 def restore(archive, dest):
     with tarfile.open(archive) as tf:
         for member in tf.getmembers():
-            # ruleid: python.tarfile-member-extract-without-filter
+            # ruleid: python.tarfile-extractall-without-filter
             tf.extract(member, dest, set_attrs=True)
 
 
 def restore_filtered(archive, dest):
     with tarfile.open(archive) as tf:
-        # ok: python.tarfile-member-extract-without-filter
+        # ok: python.tarfile-extractall-without-filter
         tf.extractall(dest, filter="data")

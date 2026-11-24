@@ -23,13 +23,13 @@
       "working_hunk_gain": 4
     }
   },
-  "ruleset_sha256": "d3edff779e99fef123af2fa5f818bb709cd6809d4ac99343dbed1991b1369cd4",
+  "ruleset_sha256": "7428f1a33e1b05dc0e3bb66a3e68ced557dcef31903d6a80d7695f2cc2460386",
   "schema": "factory.pattern-recall-measurement.v1",
   "sets": {
     "dev_161_first_fix": {
       "after": {
-        "file_hit": 25,
-        "hunk_hit": 20,
+        "file_hit": 24,
+        "hunk_hit": 19,
         "hunk_hits": [
           {
             "ecosystem": "Maven",
@@ -113,7 +113,7 @@
             "ghsa": "GHSA-fhff-qmm8-h2fp",
             "rules": [
               "python.parameter-path-join-without-containment",
-              "python.tarfile-member-extract-without-filter"
+              "python.tarfile-extractall-without-filter"
             ]
           },
           {
@@ -128,13 +128,6 @@
             "ghsa": "GHSA-gpfj-4j6g-c4w9",
             "rules": [
               "javascript.dom-innerhtml-from-variable"
-            ]
-          },
-          {
-            "ecosystem": "PyPI",
-            "ghsa": "GHSA-h36j-8vv3-cj52",
-            "rules": [
-              "python.tarfile-member-extract-without-filter"
             ]
           },
           {
@@ -193,7 +186,7 @@
             "ghsa": "GHSA-259w-wmqg-fp76",
             "rules": [
               "python.parameter-path-join-without-containment",
-              "python.tarfile-member-extract-without-filter"
+              "python.tarfile-extractall-without-filter"
             ]
           },
           {
@@ -352,9 +345,9 @@
     {
       "added": "Go client-cert modes without verification, PeerCertificates without VerifiedChains, insecure gRPC dial; JS rejectUnauthorized false; Python unverified SSL contexts",
       "control_alerts": 1,
-      "dev_hunk_hit": 20,
-      "note": "No dev-set gain: these shapes are tuned to the working set.",
-      "ruleset": "d3edff77",
+      "dev_hunk_hit": 19,
+      "note": "No dev gain from TLS shapes. Merging the two tarfile rules to stay within the 64-rule bound drops one dev hit (onnx GHSA-h36j) that only matched extractall with an explicit members= filter, which is now treated as a mitigation.",
+      "ruleset": "7428f1a3",
       "working_hunk_hit": 18
     }
   ]

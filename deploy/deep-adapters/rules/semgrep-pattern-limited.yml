@@ -1232,9 +1232,19 @@ rules:
       - pattern-either:
           - pattern: $T.extractall(...)
           - pattern: $T.extract(...)
-      - pattern-inside: |
-          $T = tarfile.open(...)
-          ...
+      - pattern-either:
+          - pattern-inside: |
+              $T = tarfile.open(...)
+              ...
+          - pattern-inside: |
+              $T = tarfile.TarFile(...)
+              ...
+          - pattern-inside: |
+              with tarfile.open(...) as $T:
+                ...
+          - pattern-inside: |
+              with tarfile.TarFile(...) as $T:
+                ...
       - pattern-not: $T.extractall(..., filter=$F, ...)
       - pattern-not: $T.extract(..., filter=$F, ...)
       - pattern-not: $T.extractall(..., members=$M, ...)
@@ -1248,7 +1258,7 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-22"]
-      scope: Local tarfile.open handle extracted without filter= or explicit members.
+      scope: tarfile.open/TarFile handles, assigned or in a with-block, extracted without filter= or explicit members.
   - id: go.archive-path-traversal
     message: An archive entry name reaches a filesystem write; reject absolute and parent-relative names and enforce containment under the destination.
     severity: WARNING
@@ -2388,37 +2398,6 @@ rules:
       confidence: LOW
       cwe: ["CWE-89"]
       scope: Function parameters interpolated into template or concatenated SQL passed to a driver call in the same function.
-  - id: python.tarfile-member-extract-without-filter
-    message: A tar member is extracted without filter=; members can carry absolute or parent-relative paths and links. Pass filter="data".
-    severity: INFO
-    languages: [python]
-    patterns:
-      - pattern-either:
-          - pattern-inside: |
-              with tarfile.open(...) as $T:
-                ...
-          - pattern-inside: |
-              with tarfile.TarFile(...) as $T:
-                ...
-          - pattern-inside: |
-              $T = tarfile.TarFile(...)
-              ...
-      - pattern-either:
-          - pattern: $T.extractall(...)
-          - pattern: $T.extract(...)
-      - pattern-not: $T.extractall(..., filter=$F, ...)
-      - pattern-not: $T.extract(..., filter=$F, ...)
-      - pattern-not-inside: |
-          $T.extraction_filter = $F
-          ...
-    paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
-    metadata:
-      tier: review
-      category: security
-      confidence: MEDIUM
-      cwe: ["CWE-22"]
-      scope: with-block and TarFile handles extracted without filter=; complements python.tarfile-extractall-without-filter.
   - id: python.parameter-path-join-without-containment
     message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
     severity: INFO
