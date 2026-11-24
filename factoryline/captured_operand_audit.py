@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 import re
+from string import Formatter
 
 
 _COOKIE_NAME_PROVIDERS = frozenset(
@@ -348,7 +349,7 @@ def _captured_literal_argument_origin(argument, call, parents, module):
     return value if _CapturedTextDefinitions.literal(value) else argument
 
 
-def _captured_argument_definition(argument, call, parents, module):
+def _captured_argument_definition(argument, call, parents, module, *, aliases=False):
     """Find the assignment that reaches this argument on the captured branch."""
     from .credential_role_constructor_provider import (
         _binding_precedes_sibling,
@@ -385,16 +386,28 @@ def _captured_argument_definition(argument, call, parents, module):
             writes = [node for node in writes if node not in handler_nodes]
         if len(writes) == 1:
             assignment = parents.get(id(writes[0]))
-            if (
-                isinstance(assignment, ast.Assign)
-                and assignment.targets == writes
-                and _binding_precedes_sibling(assignment, current, owner)
-            ):
+            if _captured_assignment_targets(
+                assignment, writes[0], aliases=aliases
+            ) and _binding_precedes_sibling(assignment, current, owner):
                 return assignment.value
         if owner is scope:
             break
         current = owner
     return None
+
+
+def _captured_assignment_targets(assignment, target, *, aliases):
+    if isinstance(assignment, ast.AnnAssign):
+        return aliases and assignment.target is target and assignment.value is not None
+    if not isinstance(assignment, ast.Assign):
+        return False
+    if assignment.targets == [target]:
+        return True
+    if not aliases or not all(
+        isinstance(node, ast.Name) for node in assignment.targets
+    ):
+        return False
+    return len({node.id for node in assignment.targets}) == len(assignment.targets)
 
 
 def _argument_binding_is_parameter_or_external(name, scope):
@@ -3515,10 +3528,69 @@ def _matches_reach_span(node: ast.Call, finding: dict) -> bool:
     )
 
 
+def _reach_format_values(template, args, keywords):
+    named = {kw.arg: kw.value for kw in keywords}
+    if (
+        None in named
+        or len(named) != len(keywords)
+        or any(isinstance(arg, ast.Starred) for arg in args)
+    ):
+        return []
+
+    values = []
+    automatic, explicit = 0, False
+    try:
+        for _, field, spec, conversion in Formatter().parse(template):
+            if field is None:
+                continue
+            if spec or conversion not in (None, "s", "r", "a"):
+                return []
+            if field == "":
+                if explicit:
+                    return []
+                values.append(args[automatic])
+                automatic += 1
+            elif field.isascii() and field.isdecimal():
+                if automatic:
+                    return []
+                explicit = True
+                values.append(args[int(field)])
+            else:
+                values.append(named[field])
+    except (ValueError, IndexError, KeyError):
+        return []
+    return values
+
+
+def _reach_percent_values(template, operand):
+    fields = re.findall(r"%%|%[sra]|%", template)
+    if any(field not in ("%%", "%s", "%r", "%a") for field in fields):
+        return []
+    count = sum(field != "%%" for field in fields)
+    values = operand.elts if isinstance(operand, ast.Tuple) else [operand]
+    if count != len(values) or any(isinstance(value, ast.Starred) for value in values):
+        return []
+    return values
+
+
 def _reach_operand_names(expr: ast.AST):
     match expr:
         case ast.Name(ctx=ast.Load()):
             yield expr
+        case ast.Call(
+            func=ast.Attribute(
+                value=ast.Constant(value=str() as template), attr="format"
+            ),
+            args=args,
+            keywords=keywords,
+        ):
+            for value in _reach_format_values(template, args, keywords):
+                yield from _reach_operand_names(value)
+        case ast.BinOp(
+            op=ast.Mod(), left=ast.Constant(value=str() as template), right=operand
+        ):
+            for value in _reach_percent_values(template, operand):
+                yield from _reach_operand_names(value)
         case ast.BinOp(op=ast.Add() | ast.Mod() | ast.Div(), left=left, right=right):
             yield from _reach_operand_names(left)
             yield from _reach_operand_names(right)
@@ -3601,7 +3673,9 @@ def _sink_parameters(func: Function, finding: dict) -> list[str]:
                 ):
                     found[name.id] = None
                 continue
-            value = _captured_argument_definition(name, name, parents, None)
+            value = _captured_argument_definition(
+                name, name, parents, None, aliases=True
+            )
             if value is not None:
                 pending.append(value)
     return list(found)

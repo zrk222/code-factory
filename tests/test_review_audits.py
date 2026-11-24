@@ -17093,6 +17093,30 @@ def test_entry_reach_tier_changes_only_needs_context_command_findings(tmp_path):
             False,
         ),
         ("alias = label\n    observe(alias)", "observe(alias)", True),
+        ("alias: str = label\n    observe(alias)", "observe(alias)", True),
+        ("first = alias = label\n    observe(alias)", "observe(alias)", True),
+        (
+            "alias = label\n    label = 'fixed'\n    observe(alias)",
+            "observe(alias)",
+            True,
+        ),
+        ("observe('{}'.format(label))", "observe('{}'.format(label))", True),
+        (
+            "observe('{value}'.format(value='fixed', unused=label))",
+            "observe('{value}'.format(value='fixed', unused=label))",
+            False,
+        ),
+        (
+            "observe('{1}'.format(label, 'fixed'))",
+            "observe('{1}'.format(label, 'fixed'))",
+            False,
+        ),
+        (
+            "observe('%s:%s' % ('fixed', label))",
+            "observe('%s:%s' % ('fixed', label))",
+            True,
+        ),
+        ("observe('%%s' % (label,))", "observe('%%s' % (label,))", False),
         (
             "alias = label\n    label = 'fixed'\n    observe(label)",
             "observe(label)",
