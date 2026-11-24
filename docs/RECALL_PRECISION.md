@@ -68,7 +68,7 @@ measurements that do exist:
 | Imported `unittest.TestCase` oracle credit (PR #380) | Review-tier findings on 5 control repositories 136 to 93, none added, security tiers unchanged | Volume only |
 | Earlier blind study (study225) | 0 actionable true positives in 49 decided security alerts, mostly hardcoded secrets | Two blind AI reviewers; predates the credential work in #376/#377 |
 
-### Cross-function reach (`factoryline/parameter_reach.py`)
+### Cross-function reach (`factoryline/captured_operand_audit.py` (`reach`, `entry_reach_tier`))
 
 The reach pass follows a sink parameter to its callers until nothing
 changes. On 48 full Python advisory repositories it labelled the

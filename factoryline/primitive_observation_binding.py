@@ -13,7 +13,7 @@ from contextlib import nullcontext
 from . import canonical_json_compat_bytes
 
 from .audit_action_refs import _primitive_source_capture
-from .parameter_reach import entry_reach_tier
+from .captured_operand_audit import entry_reach_tier
 
 _ROLE_REBUILD_CONTEXT = ContextVar("factory-role-rebuild-context", default=None)
 _RULE_SPAN_KEYS = ("code", "path", "line", "column", "end_line", "end_column")

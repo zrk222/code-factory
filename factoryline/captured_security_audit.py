@@ -5594,7 +5594,7 @@ def _application_configuration_hashes(class_profiles):
 def _captured_application_source_bytes(
     workspace, findings, bindings, source_bytes, *, capture_all_sources=False
 ):
-    from .parameter_reach import REACH_CODES
+    from .captured_operand_audit import REACH_CODES
     from .primitive_observation_binding import fixed_program_proof_dispositions
 
     program_proofs = fixed_program_proof_dispositions()
