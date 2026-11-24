@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 from functools import cached_property
-import json
 from pathlib import Path
 import re
 
@@ -3501,7 +3500,6 @@ REACH_CODES = {
     "SECURITY_SQL_INJECTION",
     "SECURITY_PATH_TRAVERSAL",
 }
-_INDEX_CACHE: dict[str, Index] = {}
 
 
 def _matches_reach_span(node: ast.Call, finding: dict) -> bool:
@@ -3609,24 +3607,17 @@ def _sink_parameters(func: Function, finding: dict) -> list[str]:
     return list(found)
 
 
-def _source_index(source_bytes: dict, bindings: dict) -> Index:
-    import hashlib
-
-    key = hashlib.sha256(
-        json.dumps(sorted(bindings.items()), separators=(",", ":")).encode()
-    ).hexdigest()
-    if key not in _INDEX_CACHE:
-        texts = {
+def _source_index(source_bytes: dict) -> Index:
+    return Index(
+        {
             path: data.decode("utf-8", errors="replace")
             for path, data in source_bytes.items()
             if isinstance(path, str) and isinstance(data, (bytes, bytearray))
         }
-        _INDEX_CACHE.clear()
-        _INDEX_CACHE[key] = Index(texts)
-    return _INDEX_CACHE[key]
+    )
 
 
-def entry_reach_tier(finding, source_bytes, bindings, decided):
+def entry_reach_tier(finding, source_bytes, decided, *, get_source_index=None):
     """Promote a command, SQL or path finding whose sink parameter an entry reaches.
 
     Only a ``NEEDS_CONTEXT`` decision changes; the reach chain becomes the
@@ -3643,7 +3634,9 @@ def entry_reach_tier(finding, source_bytes, bindings, decided):
         or not isinstance(line, int)
     ):
         return decided
-    index = _source_index(source_bytes, bindings if isinstance(bindings, dict) else {})
+    index = (
+        _source_index(source_bytes) if get_source_index is None else get_source_index()
+    )
     func = index.enclosing(path, line)
     if func is None:
         return decided
