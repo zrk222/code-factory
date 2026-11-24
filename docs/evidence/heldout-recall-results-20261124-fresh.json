@@ -1,0 +1,1943 @@
+{
+ "manifest": "docs/evidence/heldout-recall-manifest-20261124-fresh.json",
+ "manifest_commit": "409712c",
+ "ruleset": "deploy/deep-adapters/rules/semgrep-pattern-limited.yml @ 7ae1505 (PR #384 head)",
+ "ruleset_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
+ "engine": "opengrep 1.15.0 --legacy",
+ "runs": 1,
+ "summary": {
+  "cases": 91,
+  "scored": 85,
+  "unfetchable": 1,
+  "no_in_language_source_change": 5,
+  "hunk_hits": 10,
+  "hunk_recall_pct": 11.8,
+  "hunk_wilson95": [
+   6.5,
+   20.3
+  ],
+  "file_hits": 19,
+  "file_recall_pct": 22.4,
+  "file_wilson95": [
+   14.8,
+   32.3
+  ],
+  "distinct_fix_commits_hit": 8,
+  "alerts_in_changed_files": 141,
+  "by_ecosystem": {
+   "Go": "2/7",
+   "Maven": "0/8",
+   "Packagist": "2/17",
+   "PyPI": "1/22",
+   "RubyGems": "0/7",
+   "npm": "5/24"
+  },
+  "by_family": {
+   "cmd": "2/10",
+   "tls": "2/4",
+   "xss": "3/18",
+   "path": "1/33",
+   "sql": "2/16",
+   "deser": "0/5"
+  }
+ },
+ "note": "Two pairs of hits share a fix commit (kumahq/kuma, TryGhost/Ghost), so 10 advisory hits come from 8 distinct fixes.",
+ "cases": [
+  {
+   "ghsa": "GHSA-3x77-wg38-92r3",
+   "ecosystem": "Go",
+   "repository": "sonirico/mcp-shell",
+   "fix": "f31377fce6ec31114e5a4398c0e5270552bce09f",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-f5pj-2738-996m",
+   "ecosystem": "Go",
+   "repository": "sonirico/mcp-shell",
+   "fix": "f31377fce6ec31114e5a4398c0e5270552bce09f",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-2m8m-jhrm-w6j2",
+   "ecosystem": "Go",
+   "repository": "rclone/rclone",
+   "fix": "e122fba1a57641b63a580aa26c026903a84e2e88",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-xc5w-4v5w-7x65",
+   "ecosystem": "Go",
+   "repository": "OliveTin/OliveTin",
+   "fix": "995ff79736f2bccc364448a3ece84087b550b232",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-v95x-xhq5-4929",
+   "ecosystem": "Go",
+   "repository": "kumahq/kuma",
+   "fix": "2ecadac1aa2fd8cded4c2ab768949f4c2ec83e2a",
+   "status": "scored",
+   "families": [
+    "tls"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "go.grpc-insecure-transport",
+     "pkg/intercp/client/client.go",
+     39
+    ],
+    [
+     "go.disabled-tls-verification",
+     "pkg/intercp/client/client.go",
+     48
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-wvmp-6r4v-j6cv",
+   "ecosystem": "Go",
+   "repository": "kumahq/kuma",
+   "fix": "2ecadac1aa2fd8cded4c2ab768949f4c2ec83e2a",
+   "status": "scored",
+   "families": [
+    "tls"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "go.grpc-insecure-transport",
+     "pkg/intercp/client/client.go",
+     39
+    ],
+    [
+     "go.disabled-tls-verification",
+     "pkg/intercp/client/client.go",
+     48
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-v5px-423j-pf7p",
+   "ecosystem": "Go",
+   "repository": "nuclio/nuclio",
+   "fix": "3356b86a8bfab3f960aa420310ebff765df9dede",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-rxpg-wjf8-qv9c",
+   "ecosystem": "Maven",
+   "repository": "yamcs/yamcs",
+   "fix": "4d47d5cdcf5d92c2c5bbbc19feada422923332e3",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-pc63-qcmh-9cmg",
+   "ecosystem": "Maven",
+   "repository": "spring-projects/spring-framework",
+   "fix": "692dbc9160de3b5de50ccedeee014716d0cedb7b",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-w2x5-gv52-9ccv",
+   "ecosystem": "Maven",
+   "repository": "sakaiproject/sakai",
+   "fix": "2696b4b48cbef2e81512f52f84f7477adff78b27",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-mqjf-5f49-2fjh",
+   "ecosystem": "Maven",
+   "repository": "geotools/geotools",
+   "fix": "d821c4d321dd91c22e31fcd5b1ce676645da5176",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-34pm-923j-7wf8",
+   "ecosystem": "Maven",
+   "repository": "kestra-io/kestra",
+   "fix": "6c8e6d099ed172cbb6b003b7fb30b7bb1f8f710e",
+   "status": "no_in_language_source_change",
+   "families": null,
+   "hunk_hit": null,
+   "file_hit": null,
+   "findings": null
+  },
+  {
+   "ghsa": "GHSA-pmhh-3w7g-xqp8",
+   "ecosystem": "Maven",
+   "repository": "jhy/jsoup",
+   "fix": "92f1aca552548b484bc7d4b94c51e48b8e6eca70",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-9pwp-9qqc-pr26",
+   "ecosystem": "Maven",
+   "repository": "bcgit/bc-java",
+   "fix": "2c28b253a44681fbbc562561eab6ad383d2ae558",
+   "status": "scored",
+   "families": [
+    "tls"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-gf8h-gq53-288j",
+   "ecosystem": "Maven",
+   "repository": "OpenIdentityPlatform/OpenAM",
+   "fix": "9dd0fbe07f70f118cf45042d3a9ffb32f3c21e08",
+   "status": "scored",
+   "families": [
+    "deser"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-vqxv-6xrh-49cp",
+   "ecosystem": "Maven",
+   "repository": "OpenIdentityPlatform/OpenAM",
+   "fix": "98cee2dfe701c2e16e5bcee34e6fd9d913925118",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-w6w4-rjh9-9r58",
+   "ecosystem": "Maven",
+   "repository": "swaldman/c3p0",
+   "fix": "7b022c4b6694dabc6204254dc917af9c38f2cb27",
+   "status": "no_in_language_source_change",
+   "families": null,
+   "hunk_hit": null,
+   "file_hit": null,
+   "findings": null
+  },
+  {
+   "ghsa": "GHSA-79cw-hfcc-7mw9",
+   "ecosystem": "Packagist",
+   "repository": "pimcore/studio-backend-bundle",
+   "fix": "f532428cfbf4f5d6e299a13cedd5c29541802552",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-w23p-wrp7-ch38",
+   "ecosystem": "Packagist",
+   "repository": "pimcore/pimcore",
+   "fix": "b184c01bf11e213e601d965b4e96c8bb7248e980",
+   "status": "scored",
+   "families": [
+    "deser"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-59xm-4m8c-g3xj",
+   "ecosystem": "Packagist",
+   "repository": "mineadmin/MineAdmin",
+   "fix": "ca41902a2a5422676227e5088f4cc1dec06044f1",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-w27m-rmmf-g5w4",
+   "ecosystem": "Packagist",
+   "repository": "froxlor/froxlor",
+   "fix": "a1eaca5a1601c8a30e00814a4fc73ad0c185f89e",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-2mhj-fhvg-v428",
+   "ecosystem": "Packagist",
+   "repository": "pimcore/pimcore",
+   "fix": "33a0e1887e1e31b4283b016ac5440c35ea5697b4",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "php.parameter-sql-text",
+     "models/DataObject/ClassDefinition/Data/Block.php",
+     736
+    ],
+    [
+     "php.parameter-sql-text",
+     "models/DataObject/ClassDefinition/Data/Block.php",
+     750
+    ],
+    [
+     "php.parameter-sql-text",
+     "models/DataObject/ClassDefinition/Data/Block.php",
+     761
+    ],
+    [
+     "php.parameter-sql-text",
+     "models/DataObject/ClassDefinition/Data/Block.php",
+     773
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-6pvm-2vjj-rx4w",
+   "ecosystem": "Packagist",
+   "repository": "thorsten/phpMyFAQ",
+   "fix": "bd4b08b012234ccfcff07bfe6518062475b29e0a",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": true,
+   "findings": [
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     59
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     100
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     137
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     189
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     200
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     230
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     245
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     259
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     277
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     316
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     403
+    ],
+    [
+     "php.parameter-sql-text",
+     "phpmyfaq/src/phpMyFAQ/Chat.php",
+     431
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-m7jc-g4rc-jmvh",
+   "ecosystem": "Packagist",
+   "repository": "wintercms/winter",
+   "fix": "50713de95adf5298536d93f4d999652525d36d43",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-c9w5-rwh3-7pm9",
+   "ecosystem": "Packagist",
+   "repository": "codeigniter4/CodeIgniter4",
+   "fix": "f5e463b9a3e986389ce285963e51a7f1fab6559f",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": true,
+   "findings": [
+    [
+     "php.parameter-sql-text",
+     "system/Database/BaseBuilder.php",
+     1851
+    ],
+    [
+     "php.parameter-sql-text",
+     "system/Database/BaseBuilder.php",
+     2355
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-hhmc-q9hp-r662",
+   "ecosystem": "Packagist",
+   "repository": "codeigniter4/CodeIgniter4",
+   "fix": "20ebcf4694d96d3c97fbc3938e360730e4f54618",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-rjhh-76wf-8xmw",
+   "ecosystem": "Packagist",
+   "repository": "smarty-php/smarty",
+   "fix": "3c9f77a2e06ce319ae0092496af32cc8f3adc52e",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-g3hq-hphg-8fhh",
+   "ecosystem": "Packagist",
+   "repository": "pheditor/pheditor",
+   "fix": "f40f5070d5a171b65359bc87568734d31de498e1",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "php.request-command-injection",
+     "pheditor.php",
+     617
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-mw6p-33vw-46cc",
+   "ecosystem": "Packagist",
+   "repository": "mantisbt/mantisbt",
+   "fix": "6ad20bea2e01f33c6e4170775ae4d9dbe2c75325",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-4pf7-cc4r-g63h",
+   "ecosystem": "Packagist",
+   "repository": "YesWiki/yeswiki",
+   "fix": "90ca54fb518e1c43a1ead6e4f5bf9f0389789841",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-89v6-j5x6-cmj3",
+   "ecosystem": "Packagist",
+   "repository": "YesWiki/yeswiki",
+   "fix": "5da27474c3ee62270c8a6b9d7055d494cdbd38e5",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": true,
+   "findings": [
+    [
+     "php.parameter-sql-text",
+     "includes/services/PageManager.php",
+     390
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-8f2v-2qhj-gfwg",
+   "ecosystem": "Packagist",
+   "repository": "YesWiki/yeswiki",
+   "fix": "23d3cc124613b9428ab963b31807c08879a9c631",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-9369-69wj-7m2f",
+   "ecosystem": "Packagist",
+   "repository": "YesWiki/yeswiki",
+   "fix": "8f70a8d6b8befa0e644d03c785701dbbc55b8fd0",
+   "status": "scored",
+   "families": [
+    "deser"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-qg78-vmvc-fhjw",
+   "ecosystem": "Packagist",
+   "repository": "YesWiki/yeswiki",
+   "fix": "f3b0dd093a7ace47dc29a515faeb02635baceae2",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-p6gw-4frg-j7jw",
+   "ecosystem": "PyPI",
+   "repository": "mar10/wsgidav",
+   "fix": "6f35776c9188f130ab044ce557015d51aaa83500",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     339
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     376
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     392
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     405
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     428
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     444
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     457
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     482
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     498
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     509
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     531
+    ],
+    [
+     "python.parameter-sql-text",
+     "wsgidav/samples/mysql_dav_provider.py",
+     547
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-2wxc-x7rj-hg8f",
+   "ecosystem": "PyPI",
+   "repository": "ronf/asyncssh",
+   "fix": "d730803b8e4e94c20c7580d90f94d1e05f9f58de",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-mv8m-v9v6-5f94",
+   "ecosystem": "PyPI",
+   "repository": "siemens/kas",
+   "fix": "1c1e861c9f241ce082b86bef6bedc7da9b676294",
+   "status": "scored",
+   "families": [
+    "tls"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-qr67-gv47-xwwh",
+   "ecosystem": "PyPI",
+   "repository": "ronf/asyncssh",
+   "fix": "3d515ba9ba0cd9990d248bdf62bcf05d51261a88",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-ch89-h4r2-c8f8",
+   "ecosystem": "PyPI",
+   "repository": "MervinPraison/PraisonAI",
+   "fix": "2f9677abb2ea68eab864ee8b6a828fd0141612e1",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": true,
+   "findings": [
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+     1201
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+     1292
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+     1498
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+     4417
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+     4447
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+     4494
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-gxmw-5f7x-6g22",
+   "ecosystem": "PyPI",
+   "repository": "MervinPraison/PraisonAI",
+   "fix": "2f9677abb2ea68eab864ee8b6a828fd0141612e1",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": true,
+   "findings": [
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+     1201
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+     1292
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/memory/file_memory.py",
+     1498
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+     4417
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+     4447
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "src/praisonai-agents/praisonaiagents/workflows/workflows.py",
+     4494
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-w3fx-mc44-mf6j",
+   "ecosystem": "PyPI",
+   "repository": "Chainlit/chainlit",
+   "fix": "0565fd0eccb915fce159929598b053ed79f6e0c9",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-5gh2-94qg-qppq",
+   "ecosystem": "PyPI",
+   "repository": "nltk/nltk",
+   "fix": "c3e37113742a1ebeeb4f2ca58941f320f98805ea",
+   "status": "scored",
+   "families": [
+    "deser"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-cv22-g7mw-8v73",
+   "ecosystem": "PyPI",
+   "repository": "nltk/nltk",
+   "fix": "10d34b3f4fe3fec74b76527a409eb0acbac2e8ab",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-hvq6-2r72-p2x7",
+   "ecosystem": "PyPI",
+   "repository": "django-cms/django-cms",
+   "fix": "b56a568844ff3702495945f73a31d0868285bf88",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-8j49-mmcx-4mp5",
+   "ecosystem": "PyPI",
+   "repository": "MobSF/Mobile-Security-Framework-MobSF",
+   "fix": "62563ca429a75b3e5d47a13b958e1d2e7d5e2bbf",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": true,
+   "findings": [
+    [
+     "python.request-path-traversal",
+     "mobsf/DynamicAnalyzer/views/android/tests_common.py",
+     235
+    ],
+    [
+     "python.request-path-traversal",
+     "mobsf/DynamicAnalyzer/views/android/tests_common.py",
+     239
+    ],
+    [
+     "python.request-path-traversal",
+     "mobsf/DynamicAnalyzer/views/android/tests_frida.py",
+     157
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "mobsf/DynamicAnalyzer/views/common/shared.py",
+     120
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "mobsf/DynamicAnalyzer/views/ios/corellium_instance.py",
+     779
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "mobsf/DynamicAnalyzer/views/ios/device/report.py",
+     104
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "mobsf/StaticAnalyzer/views/android/icon_analysis.py",
+     332
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "mobsf/StaticAnalyzer/views/android/icon_analysis.py",
+     333
+    ],
+    [
+     "python.parameter-path-join-without-containment",
+     "mobsf/StaticAnalyzer/views/android/icon_analysis.py",
+     357
+    ],
+    [
+     "python.request-path-traversal",
+     "mobsf/StaticAnalyzer/views/common/shared_func.py",
+     534
+    ],
+    [
+     "python.request-path-traversal",
+     "mobsf/StaticAnalyzer/views/ios/views/view_source.py",
+     110
+    ],
+    [
+     "python.request-path-traversal",
+     "mobsf/StaticAnalyzer/views/ios/views/view_source.py",
+     118
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-rh9c-rqvg-f7pr",
+   "ecosystem": "PyPI",
+   "repository": "Linuxfabrik/lib",
+   "fix": "d665042c55fae83a295ebc0023e8b77f6c473a28",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-59fj-m2j6-hcxh",
+   "ecosystem": "PyPI",
+   "repository": "nicolargo/glances",
+   "fix": "5c07c0d96423e9d5b9de71dd92e3717c66f504bd",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-m42h-3232-vpv3",
+   "ecosystem": "PyPI",
+   "repository": "nltk/nltk",
+   "fix": "aec4fce1b84ad725b8975f7365b23a4f626572a9",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-rm43-82j9-r4mj",
+   "ecosystem": "PyPI",
+   "repository": "dep0we/atomic-agents-stack",
+   "fix": "ec474f458122c5c0ca718d0df3078c8080338b2c",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-gg2p-37pv-v7fq",
+   "ecosystem": "PyPI",
+   "repository": "feast-dev/feast",
+   "fix": "e0ef16ea1ed149ecd5dc9d4d0aa0fdbfa547f861",
+   "status": "scored",
+   "families": [
+    "deser"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-3xpf-xq7r-v8c5",
+   "ecosystem": "PyPI",
+   "repository": "open-webui/open-webui",
+   "fix": "65a5fad7b97db99d490d81f4e0860282c3a4543c",
+   "status": "no_in_language_source_change",
+   "families": null,
+   "hunk_hit": null,
+   "file_hit": null,
+   "findings": null
+  },
+  {
+   "ghsa": "GHSA-pwxh-7358-jq2x",
+   "ecosystem": "PyPI",
+   "repository": "open-webui/open-webui",
+   "fix": "bc600d3f085802c45aa8f38c30e6e8c986bde6cc",
+   "status": "no_in_language_source_change",
+   "families": null,
+   "hunk_hit": null,
+   "file_hit": null,
+   "findings": null
+  },
+  {
+   "ghsa": "GHSA-3f7w-8rr8-f37f",
+   "ecosystem": "PyPI",
+   "repository": "gitpython-developers/GitPython",
+   "fix": "3af0c2516c5e18c829da30338614688f6b69b49c",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-m2h6-j472-rp4c",
+   "ecosystem": "PyPI",
+   "repository": "pyca/cryptography",
+   "fix": "4d035a4225965edeffd312079a510ef25fcfdcb2",
+   "status": "no_in_language_source_change",
+   "families": null,
+   "hunk_hit": null,
+   "file_hit": null,
+   "findings": null
+  },
+  {
+   "ghsa": "GHSA-xrqw-3rrv-vx5w",
+   "ecosystem": "PyPI",
+   "repository": "huggingface/transformers",
+   "fix": "eaaaf8494dd5386634ae37d1d122212fdc315be5",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-c5px-58j2-7fqp",
+   "ecosystem": "PyPI",
+   "repository": "eLyiN/gemini-bridge",
+   "fix": "8f3b85afd02b692c4bc974b5176e12fb277ea801",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-cj54-hpcc-gj6h",
+   "ecosystem": "PyPI",
+   "repository": "thumbor/thumbor",
+   "fix": "3b986d13677b30fe6651c8c72ebb25957ac0a40d",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-2956-977x-2w3r",
+   "ecosystem": "PyPI",
+   "repository": "flytohub/flyto-core",
+   "fix": "d5f89d71303e3c1e6418d347c5c55fcd173cc8cc",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-f42x-p2mx-hm8r",
+   "ecosystem": "PyPI",
+   "repository": "brightio/penelope",
+   "fix": "a040afb5db32c7e80b5e8a2f9b2164cf911cfa62",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-g65v-27r3-5p6m",
+   "ecosystem": "RubyGems",
+   "repository": "guard/guard-livereload",
+   "fix": "0e98469e6b9d81a5bd415781534a23d087c271f8",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-pmwx-rm49-xv39",
+   "ecosystem": "RubyGems",
+   "repository": "basecamp/activerecord-tenanted",
+   "fix": "b242c8ad9bf58bbd7f5a032d153b0f29db54b9ba",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-2xmw-f8j8-wfxc",
+   "ecosystem": "RubyGems",
+   "repository": "ddnexus/pagy",
+   "fix": "efcf09690e9fa7d7abdfb987b785a55f87e287df",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-5qhf-9phg-95m2",
+   "ecosystem": "RubyGems",
+   "repository": "flavorjones/loofah",
+   "fix": "f1be9d893b5a8dd79240441a912d8897e74c38c0",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-9wjq-cp2p-hrgf",
+   "ecosystem": "RubyGems",
+   "repository": "flavorjones/loofah",
+   "fix": "20867b9be689521887364b74822c41ef830523c9",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-cj75-f6xr-r4g7",
+   "ecosystem": "RubyGems",
+   "repository": "rails/rails-html-sanitizer",
+   "fix": "74dcb8053e6da9921246ce71b06ad9fd65b19586",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-97jw-64cj-jc58",
+   "ecosystem": "RubyGems",
+   "repository": "ViewComponent/view_component",
+   "fix": "48e5fd2d602344c7d33019fbc5c8b087e315bb78",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-g5xc-5w98-jfvm",
+   "ecosystem": "npm",
+   "repository": "mariadb-corporation/mariadb-connector-nodejs",
+   "fix": "0148cadba48064d430902678bbc5b4b62dc1c04f",
+   "status": "scored",
+   "families": [
+    "sql",
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-gmxc-r82q-347r",
+   "ecosystem": "npm",
+   "repository": "elwerene/libreoffice-convert",
+   "fix": "b78f17df9b9183bd503fc4635fc8b3df6705047b",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-q7m3-rhxg-7vxr",
+   "ecosystem": "npm",
+   "repository": "DangerBlack/n8n-node-sqlite3",
+   "fix": "145a8876ff12375813bdcd4ae4fe78f460c53a98",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-w93q-cq9w-58p7",
+   "ecosystem": "npm",
+   "repository": "JiHong88/suneditor",
+   "fix": "9d43a5e082101d2d6475cba86e0d58d7c2cf6677",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": true,
+   "findings": [
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/plugins/modal/embed.js",
+     847
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/plugins/modal/embed.js",
+     876
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/plugins/modal/embed.js",
+     895
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-3vfr-4gwf-qxfp",
+   "ecosystem": "npm",
+   "repository": "avwo/whistle",
+   "fix": "777bcf69bae2972aa7138a158c91619185653cf5",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "javascript.parameter-path-join-without-containment",
+     "lib/https/ca.js",
+     344
+    ],
+    [
+     "javascript.parameter-path-join-without-containment",
+     "lib/plugins/get-plugins-sync.js",
+     36
+    ],
+    [
+     "javascript.parameter-path-join-without-containment",
+     "lib/plugins/get-plugins-sync.js",
+     40
+    ],
+    [
+     "javascript.parameter-path-join-without-containment",
+     "lib/plugins/get-plugins-sync.js",
+     64
+    ],
+    [
+     "javascript.parameter-path-join-without-containment",
+     "lib/plugins/util.js",
+     157
+    ],
+    [
+     "javascript.parameter-path-join-without-containment",
+     "lib/plugins/util.js",
+     207
+    ],
+    [
+     "javascript.parameter-path-join-without-containment",
+     "lib/service/service.js",
+     213
+    ],
+    [
+     "javascript.parameter-path-join-without-containment",
+     "lib/service/service.js",
+     220
+    ],
+    [
+     "javascript.request-path-traversal",
+     "lib/service/service.js",
+     445
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-m9mq-7m7q-xc6p",
+   "ecosystem": "npm",
+   "repository": "That1Drifter/browse-mcp",
+   "fix": "5352a4a56f626254b445bfa07e4bb48c5aad15c1",
+   "status": "unfetchable",
+   "families": null,
+   "hunk_hit": null,
+   "file_hit": null,
+   "findings": null
+  },
+  {
+   "ghsa": "GHSA-qj6x-xx2h-8hvv",
+   "ecosystem": "npm",
+   "repository": "udecode/plate",
+   "fix": "6214914ca811adf22d0ad503154494216eed68ba",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-jg4p-g6xj-4qmf",
+   "ecosystem": "npm",
+   "repository": "kepano/defuddle",
+   "fix": "baf2eaef61d334ef595b28c89e5c5e89e52daf7f",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/extractors/substack.ts",
+     181
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/extractors/substack.ts",
+     186
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/extractors/x-article.ts",
+     114
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-p853-83gj-wjj3",
+   "ecosystem": "npm",
+   "repository": "nocobase/nocobase",
+   "fix": "0e1aba1b7b112ffc841588963f7343c00edd9806",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-rxjr-6c9q-h67x",
+   "ecosystem": "npm",
+   "repository": "logto-io/logto",
+   "fix": "5686815955534f803d3d50738259efd0f741e62c",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-2mf3-mr2r-r4vf",
+   "ecosystem": "npm",
+   "repository": "gina-io/swig",
+   "fix": "381bdc305e0b10e45368d56324328b9b4f7017fc",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-2jp7-wwpg-3p9w",
+   "ecosystem": "npm",
+   "repository": "ether/etherpad",
+   "fix": "86c56cf827dd6e5ff1b6cd3760f87adc47f58bb1",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": true,
+   "findings": [
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/node/utils/ExportHtml.ts",
+     396
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/node/utils/ExportHtml.ts",
+     400
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/node/utils/ExportHtml.ts",
+     407
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/node/utils/ExportHtml.ts",
+     410
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/node/utils/ExportHtml.ts",
+     416
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "src/node/utils/ExportHtml.ts",
+     418
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-92hr-gmr6-h8cp",
+   "ecosystem": "npm",
+   "repository": "ether/etherpad",
+   "fix": "7ea99706483443239bbbc0f2df9aff8ab5de4805",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-49mq-fc6q-3h46",
+   "ecosystem": "npm",
+   "repository": "ooples/token-optimizer-mcp",
+   "fix": "b4ee96dac799cbfba0a9f9c17844ce9d613cbcc7",
+   "status": "scored",
+   "families": [
+    "cmd"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/code-analysis/smart-ast-grep.ts",
+     459
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/configuration/smart-package-json.ts",
+     421
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-branch.ts",
+     437
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-branch.ts",
+     454
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-branch.ts",
+     485
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-diff.ts",
+     298
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-diff.ts",
+     366
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-diff.ts",
+     444
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-log.ts",
+     382
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-log.ts",
+     459
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-log.ts",
+     479
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-merge.ts",
+     348
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-merge.ts",
+     497
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-merge.ts",
+     538
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-merge.ts",
+     547
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-merge.ts",
+     556
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-merge.ts",
+     607
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/file-operations/smart-status.ts",
+     581
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-cron.ts",
+     611
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-cron.ts",
+     651
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-cron.ts",
+     776
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-cron.ts",
+     817
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-cron.ts",
+     904
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-cron.ts",
+     991
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-cron.ts",
+     1020
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-process.ts",
+     452
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-process.ts",
+     491
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-process.ts",
+     584
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     325
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     357
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     376
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     397
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     412
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     471
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     521
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     562
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     574
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     624
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     670
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     736
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     858
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     871
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-service.ts",
+     883
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     886
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     918
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     963
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     999
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     1035
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     1074
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     1094
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     1115
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     1199
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     1244
+    ],
+    [
+     "javascript.parameter-shell-command",
+     "src/tools/system-operations/smart-user.ts",
+     1266
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-76pc-mqxp-3rq5",
+   "ecosystem": "npm",
+   "repository": "ooples/token-optimizer-mcp",
+   "fix": "b4ee96dac799cbfba0a9f9c17844ce9d613cbcc7",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": true,
+   "findings": [
+    [
+     "javascript.request-path-traversal",
+     "src/server/web-server.ts",
+     88
+    ],
+    [
+     "javascript.request-path-traversal",
+     "src/server/web-server.ts",
+     311
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-pr22-p9rp-2cqv",
+   "ecosystem": "npm",
+   "repository": "TryGhost/Ghost",
+   "fix": "a8bea3a4ceec4c852b880f4885119453c3d8588e",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "ghost/core/core/server/data/importer/importers/json-to-html.js",
+     43
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "ghost/core/core/server/data/importer/importers/json-to-html.js",
+     48
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-2gx6-7gx2-wwcf",
+   "ecosystem": "npm",
+   "repository": "TryGhost/Ghost",
+   "fix": "a8bea3a4ceec4c852b880f4885119453c3d8588e",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": true,
+   "file_hit": true,
+   "findings": [
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "ghost/core/core/server/data/importer/importers/json-to-html.js",
+     43
+    ],
+    [
+     "javascript.html-template-unescaped-interpolation",
+     "ghost/core/core/server/data/importer/importers/json-to-html.js",
+     48
+    ]
+   ]
+  },
+  {
+   "ghsa": "GHSA-88pr-878c-24wf",
+   "ecosystem": "npm",
+   "repository": "FlowiseAI/Flowise",
+   "fix": "571b5d6218b1c129588ac625c8f20e30905a67cb",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-cj62-hvv2-2q5h",
+   "ecosystem": "npm",
+   "repository": "TryGhost/Ghost",
+   "fix": "f466c300191a609ed36c8d7c5d1e33ccd440786b",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-cjc9-q5gf-327p",
+   "ecosystem": "npm",
+   "repository": "TryGhost/Ghost",
+   "fix": "fbaa92327e52607036a1e42204c9eadcc751d82c",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-fxqj-rqcc-2cmp",
+   "ecosystem": "npm",
+   "repository": "postcss/postcss",
+   "fix": "7beca139e70f9075c6b19700fcb00dd8033e5da8",
+   "status": "scored",
+   "families": [
+    "path"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-v8fg-2rw7-q452",
+   "ecosystem": "npm",
+   "repository": "sequelize/sequelize",
+   "fix": "5deadd2410ae9136a21fb652db206d27bb715f26",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-vpx6-8pjr-4g3v",
+   "ecosystem": "npm",
+   "repository": "angular/domino",
+   "fix": "f88e5aa49cf2804d7c2df22ef1640eb4ec43dd56",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-j839-gqq4-gf9j",
+   "ecosystem": "npm",
+   "repository": "xdan/jodit",
+   "fix": "5fba6ef2381d151d7cb8e3c5ad0b9996af0f97b0",
+   "status": "scored",
+   "families": [
+    "xss"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  },
+  {
+   "ghsa": "GHSA-p849-8hwh-84j9",
+   "ecosystem": "npm",
+   "repository": "nocobase/nocobase",
+   "fix": "68d64e3fcfb8be2ae4f3bfc9e1ee3f85b87c89ce",
+   "status": "scored",
+   "families": [
+    "sql"
+   ],
+   "hunk_hit": false,
+   "file_hit": false,
+   "findings": []
+  }
+ ]
+}
