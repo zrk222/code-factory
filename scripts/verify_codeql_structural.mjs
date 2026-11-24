@@ -6,6 +6,13 @@ import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { docker } from './verify_worker_cves.mjs';
 
+function hasExactSourceAccounting(accounting, expected) {
+  return accounting?.state === 'COMPLETE'
+    && Object.keys(accounting.checks ?? {}).length === expected.length
+    && expected.every(file => accounting.checks[file.path]?.state === 'EXTRACTED'
+      && accounting.checks[file.path]?.sha256 === file.sha256);
+}
+
 export function verifyStructuralBundle(bundle, candidate, expected) {
   const coverage = bundle.artifacts?.['coverage.json'];
   const accounting = coverage?.source_accounting;
@@ -18,9 +25,7 @@ export function verifyStructuralBundle(bundle, candidate, expected) {
         || !Array.isArray(run.invocations) || !run.invocations.length
         || run.invocations.some(invocation => invocation.executionSuccessful !== true))
       || !Array.isArray(coverage?.errors) || coverage.errors.some(error => !fixtureOnly.includes(error))
-      || accounting?.state !== 'COMPLETE' || Object.keys(accounting.checks ?? {}).length !== expected.length
-      || expected.some(file => accounting.checks[file.path]?.state !== 'EXTRACTED'
-        || accounting.checks[file.path]?.sha256 !== file.sha256)) {
+      || !hasExactSourceAccounting(accounting, expected)) {
     throw new Error('Expected exact native file coverage and a source-bound report');
   }
   return { sarif, coverage, challenges: bundle.artifacts['challenges.json'] };
