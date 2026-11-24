@@ -1244,7 +1244,8 @@ def recall_record():
 
 
 def test_advisory_recall_record_recomputes_lane_separated_summary(recall_record):
-    summary = _gain["verify_recall"](recall_record)
+    summary = _gain["summarize_recall"](recall_record)
+    assert _gain["verify_recall"](recall_record) == summary
     assert summary["total"] == {
         "cases": 161,
         "pattern_detected": 6,

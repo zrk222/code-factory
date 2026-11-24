@@ -837,6 +837,11 @@ def recall_main(argv: list[str]) -> int:
     return 0
 
 
+def _read_contract_bytes(path: Path) -> bytes:
+    with path.open("rb") as stream:
+        return stream.read(MAX_EVIDENCE_BYTES + 1)
+
+
 def main() -> int:
     """Verify sealed precision inputs and write a receipt for the operator."""
     if sys.argv[1:2] == ["advisory-recall"]:
@@ -858,8 +863,7 @@ def main() -> int:
     schema = SCHEMA
     contract_parsed = False
     try:
-        with args.contract.open("rb") as stream:
-            payload = stream.read(MAX_EVIDENCE_BYTES + 1)
+        payload = _read_contract_bytes(args.contract)
         contract = strict_json(payload)
         if contract.get("schema") == SINGLE_ARM_SCHEMA:
             schema = SINGLE_ARM_SCHEMA
