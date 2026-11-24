@@ -3163,32 +3163,35 @@ class Index:
 
     def resolve(self, call: ast.Call, module: str, caller: Function) -> Function | None:
         """The indexed function a call names, when it resolves statically."""
-        func = call.func
-        imports = self.imports.get(module, {})
-        if isinstance(func, ast.Name):
-            local = self.functions.get(f"{module}:{func.id}")
-            if local:
-                return local
-            target = imports.get(func.id)
-            if target and "." in target:
-                mod, name = target.rsplit(".", 1)
-                return self.functions.get(f"{mod}:{name}")
-            return None
-        if isinstance(func, ast.Attribute):
-            base = func.value
-            if (
-                isinstance(base, ast.Name)
-                and base.id in {"self", "cls"}
-                and caller.class_name
-            ):
-                prefix = caller.key.split(":", 1)[1].split(".")[0]
-                return self.functions.get(f"{module}:{prefix}.{func.attr}")
-            if isinstance(base, ast.Name) and base.id in imports:
-                return self.functions.get(f"{imports[base.id]}:{func.attr}")
-            candidates = self.method_names.get(func.attr, [])
-            if len(candidates) == 1:
-                return self.functions[candidates[0]]
+        if isinstance(call.func, ast.Name):
+            return self._resolve_name(call.func.id, module)
+        if isinstance(call.func, ast.Attribute):
+            return self._resolve_attribute(call.func, module, caller)
         return None
+
+    def _resolve_name(self, name: str, module: str) -> Function | None:
+        local = self.functions.get(f"{module}:{name}")
+        if local:
+            return local
+        target = self.imports.get(module, {}).get(name)
+        if target and "." in target:
+            owner, attribute = target.rsplit(".", 1)
+            return self.functions.get(f"{owner}:{attribute}")
+        return None
+
+    def _resolve_attribute(self, func, module: str, caller: Function):
+        base, imports = func.value, self.imports.get(module, {})
+        if (
+            isinstance(base, ast.Name)
+            and base.id in {"self", "cls"}
+            and caller.class_name
+        ):
+            prefix = caller.key.split(":", 1)[1].split(".")[0]
+            return self.functions.get(f"{module}:{prefix}.{func.attr}")
+        if isinstance(base, ast.Name) and base.id in imports:
+            return self.functions.get(f"{imports[base.id]}:{func.attr}")
+        candidates = self.method_names.get(func.attr, [])
+        return self.functions[candidates[0]] if len(candidates) == 1 else None
 
 
 def _in_mcp_module(relative: str) -> bool:
