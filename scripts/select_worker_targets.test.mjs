@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { selectWorkerTargets, sdkTargets } from './select_worker_targets.mjs';
 
@@ -44,6 +44,16 @@ test('Semgrep rule, profile, control and verifier changes skip SDK matrix', () =
   assert.equal(result.sdk, 'false');
   assert.equal(result.reason, 'semgrep-only');
   assert.deepEqual(JSON.parse(result.matrix), sdkTargets);
+});
+
+test('compiled verifier-only changes select Java, C# and Go on PR and push', () => {
+  const git = gitFor({ diffPaths: paths('scripts/verify_codeql_structural.mjs') });
+  for (const [name, input] of [['pull_request', prEvent()], ['push', pushEvent()]]) {
+    const result = selectWorkerTargets(name, input, git);
+    assert.equal(result.sdk, 'true');
+    assert.equal(result.reason, 'compiled-codeql-only');
+    assert.deepEqual(JSON.parse(result.matrix), ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker']);
+  }
 });
 
 test('mixed and common or unknown paths retain every SDK target', () => {
@@ -139,7 +149,39 @@ function trustedWorkflowProgram() {
   return program.replace(/^          /gm, '');
 }
 
-for (const target of ['osv-worker', 'semgrep-worker', 'codeql-python-worker', 'unknown-target', { target: 'codeql-python-worker' }]) {
+test('trusted planner admits the compiled matrix for a verifier-only diff', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'factory-compiled-selector-'));
+  const git = (...args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
+  const commit = message => git('-c', 'user.name=Factory Test', '-c', 'user.email=test@example.invalid',
+    '-c', 'commit.gpgsign=false', 'commit', '-qm', message);
+  const output = join(directory, 'output.txt');
+  try {
+    git('init', '-q');
+    mkdirSync(join(directory, 'scripts'));
+    writeFileSync(join(directory, 'scripts/select_worker_targets.mjs'),
+      readFileSync(new URL('./select_worker_targets.mjs', import.meta.url)));
+    const verifier = join(directory, 'scripts/verify_codeql_structural.mjs');
+    writeFileSync(verifier, '// first verifier\n');
+    git('add', 'scripts');
+    commit('trusted selector baseline');
+    const before = git('rev-parse', 'HEAD');
+    writeFileSync(verifier, '// updated verifier\n');
+    git('add', 'scripts');
+    commit('verifier-only change');
+    const after = git('rev-parse', 'HEAD');
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', trustedWorkflowProgram()], {
+      cwd: directory, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: directory, GITHUB_OUTPUT: output,
+        GITHUB_EVENT_NAME: 'push', GITHUB_EVENT_JSON: JSON.stringify({ before, after }) },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const expected = ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker'];
+    assert.deepEqual(readFileSync(output, 'utf8').trim().split('\n'),
+      ['sdk=true', 'matrix=' + JSON.stringify(expected), 'reason=compiled-codeql-only']);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+for (const target of ['osv-worker', 'semgrep-worker', 'codeql-python-worker', 'codeql-java-worker',
+  'codeql-csharp-worker', 'codeql-go-worker', 'unknown-target', { target: 'codeql-python-worker' }]) {
 test(`manual ${target} selection cannot narrow a PR or push matrix`, () => {
   for (const name of ['workflow_dispatch', 'pull_request', 'push']) {
     const directory = mkdtempSync(join(tmpdir(), 'factory-manual-osv-'));
@@ -150,7 +192,7 @@ test(`manual ${target} selection cannot narrow a PR or push matrix`, () => {
           GITHUB_EVENT_NAME: name, GITHUB_EVENT_JSON: JSON.stringify({ inputs: { target } }) },
       });
       assert.equal(result.status, 0, result.stderr);
-      const expected = name === 'workflow_dispatch' && ['osv-worker', 'codeql-python-worker'].includes(target) ? [target] : sdkTargets;
+      const expected = name === 'workflow_dispatch' && sdkTargets.includes(target) ? [target] : sdkTargets;
       assert.ok(readFileSync(output, 'utf8').includes(`matrix=${JSON.stringify(expected)}\n`));
       const sdk = name === 'workflow_dispatch' && target === 'semgrep-worker' ? 'false' : 'true';
       assert.ok(readFileSync(output, 'utf8').includes(`sdk=${sdk}\n`));
