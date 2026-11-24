@@ -1,0 +1,2140 @@
+{
+ "schema": "factory.repair-shape-classification.v1",
+ "measurement_id": "repair-shapes-20261123",
+ "baseline_record": "docs/evidence/advisory-recall-factory-20261121.json",
+ "claim": "Heuristic classification of what each fix did for the 141 advisories that neither lane detected. Development evidence for ranking obligation detectors (plan step R3); not a score.",
+ "claim_boundary": {
+  "exposure": "The 161 advisories are already exposed development evidence; this record may guide design but cannot score it.",
+  "method": "Added and removed lines of each fix (git diff parent..fix, -U3), limited to the in-language, non-test files the recall record binds, were matched against per-family unsafe/safe API patterns, condition and validation tokens, and encoder names. A case can carry several labels; its primary label follows the priority order.",
+  "priority": [
+   "safer_call",
+   "used_result",
+   "added_check",
+   "added_encoding",
+   "corrected_logic",
+   "structural_or_other"
+  ],
+  "spot_check": {
+   "sampled": 12,
+   "seed": 20261123,
+   "agreed_with_reviewer": 8,
+   "reviewer": "one AI reviewer reading the diffs",
+   "disagreements": "low-level protocol and certificate-loading fixes in database drivers and SDKs were labelled added_check or safer_call; they are structural library-internal changes"
+  },
+  "used_result": "The heuristic found no case; this shape needs a data-flow check, not line matching."
+ },
+ "summary": {
+  "cases": 141,
+  "primary": {
+   "added_check": 60,
+   "structural_or_other": 36,
+   "safer_call": 19,
+   "corrected_logic": 13,
+   "added_encoding": 13
+  },
+  "any_label": {
+   "added_check": 68,
+   "structural_or_other": 36,
+   "added_encoding": 33,
+   "corrected_logic": 22,
+   "safer_call": 19
+  },
+  "by_family_primary": {
+   "cmd": {
+    "added_check": 12,
+    "structural_or_other": 10,
+    "added_encoding": 5,
+    "corrected_logic": 3,
+    "safer_call": 3
+   },
+   "deser": {
+    "added_check": 6,
+    "structural_or_other": 2,
+    "safer_call": 1
+   },
+   "incl": {
+    "structural_or_other": 1
+   },
+   "path": {
+    "added_check": 13,
+    "structural_or_other": 6,
+    "corrected_logic": 1
+   },
+   "sql": {
+    "safer_call": 14,
+    "added_check": 13,
+    "structural_or_other": 10,
+    "corrected_logic": 5,
+    "added_encoding": 5
+   },
+   "tls": {
+    "added_check": 12,
+    "structural_or_other": 4,
+    "corrected_logic": 2,
+    "safer_call": 1
+   },
+   "xss": {
+    "added_check": 4,
+    "added_encoding": 3,
+    "structural_or_other": 3,
+    "corrected_logic": 2
+   }
+  },
+  "median_added_lines": 19,
+  "median_removed_lines": 6
+ },
+ "ranking": [
+  {
+   "rank": 1,
+   "obligation": "path containment after a join with caller input",
+   "evidence": "13 of 20 missed path cases add a check"
+  },
+  {
+   "rank": 2,
+   "obligation": "TLS peer and hostname verification enabled on client construction",
+   "evidence": "12 of 19 missed tls cases add a check"
+  },
+  {
+   "rank": 3,
+   "obligation": "allow-list or numeric coercion for SQL identifiers, LIMIT/OFFSET and ORDER BY parts",
+   "evidence": "13 added checks and 5 corrected comparisons among 47 missed sql cases; 14 more switch to a safer call"
+  },
+  {
+   "rank": 4,
+   "obligation": "argument validation before process execution",
+   "evidence": "12 of 33 missed cmd cases add a check, 5 add encoding"
+  }
+ ],
+ "cases": [
+  {
+   "ghsa": "GHSA-2223-f22x-24cq",
+   "ecosystem": "Packagist",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 69,
+   "removed_lines": 31,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-23fx-92m6-4f2g",
+   "ecosystem": "PyPI",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 11,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-25gv-mvm7-5h3h",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 5,
+   "removed_lines": 7,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-2fmj-p74r-3wjm",
+   "ecosystem": "Packagist",
+   "families": [
+    "deser"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 35,
+   "removed_lines": 2,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-2jh5-g5ch-43q5",
+   "ecosystem": "NuGet",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 26,
+   "removed_lines": 22,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-2pm6-9fhx-vvg3",
+   "ecosystem": "Packagist",
+   "families": [
+    "deser"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 4,
+   "removed_lines": 2,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-2rc4-7jc6-qffh",
+   "ecosystem": "Go",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 570,
+   "removed_lines": 120,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-2x7r-93ww-cxrq",
+   "ecosystem": "Packagist",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 39,
+   "removed_lines": 1,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-38jw-g2qx-4286",
+   "ecosystem": "Go",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 90,
+   "removed_lines": 6,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-3hcm-ggvf-rch5",
+   "ecosystem": "npm",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 33,
+   "removed_lines": 0,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-3p24-9x7v-7789",
+   "ecosystem": "Maven",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 20,
+   "removed_lines": 4,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-3p6w-gv5g-xjw9",
+   "ecosystem": "crates.io",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 280,
+   "removed_lines": 151,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-4574-qv3w-fcmg",
+   "ecosystem": "Packagist",
+   "families": [
+    "deser"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 44,
+   "removed_lines": 0,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-463c-jhp2-4mm7",
+   "ecosystem": "Packagist",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 297,
+   "removed_lines": 117,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-465w-gg5p-85c9",
+   "ecosystem": "Go",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 72,
+   "removed_lines": 56,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-4h97-wpxp-3757",
+   "ecosystem": "PyPI",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 24,
+   "removed_lines": 0,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-4m7p-55jm-3vwv",
+   "ecosystem": "Maven",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 12,
+   "removed_lines": 6,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-4pj9-g833-qx53",
+   "ecosystem": "crates.io",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 2,
+   "removed_lines": 2,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-4x28-j85r-668q",
+   "ecosystem": "Packagist",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 11,
+   "removed_lines": 0,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-4xf2-7qfv-mgfx",
+   "ecosystem": "Packagist",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_encoding",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 7,
+   "removed_lines": 2,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-527r-mfmj-prqf",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 8,
+   "removed_lines": 5,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-5jpj-293f-rhvj",
+   "ecosystem": "Go",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 297,
+   "removed_lines": 93,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-5mq7-rwhj-4fh9",
+   "ecosystem": "NuGet",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 395,
+   "removed_lines": 57,
+   "codeql_status": "no_class_query"
+  },
+  {
+   "ghsa": "GHSA-5xpp-75jx-m839",
+   "ecosystem": "npm",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 3,
+   "removed_lines": 2,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-63q7-h895-m982",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 5,
+   "removed_lines": 5,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-68wg-qv6r-j4vp",
+   "ecosystem": "Packagist",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 2,
+   "removed_lines": 2,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-69p3-xp37-f692",
+   "ecosystem": "RubyGems",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 6,
+   "removed_lines": 3,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-6g56-v9qg-jp92",
+   "ecosystem": "Go",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 161,
+   "removed_lines": 2,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-6gm7-j668-w6h9",
+   "ecosystem": "Packagist",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 1,
+   "removed_lines": 1,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-6j63-35hj-vmcg",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 17,
+   "removed_lines": 2,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-6m7c-xfhp-p9fh",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 48,
+   "removed_lines": 5,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-6m8w-jc87-6cr7",
+   "ecosystem": "Go",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 77,
+   "removed_lines": 15,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-6qjf-g333-pv38",
+   "ecosystem": "RubyGems",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 1,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-6vmq-24h2-pj7j",
+   "ecosystem": "PyPI",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 343,
+   "removed_lines": 162,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-6w89-c65w-jx2c",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 8,
+   "removed_lines": 6,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-6xxq-j39w-g3f6",
+   "ecosystem": "RubyGems",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 2,
+   "removed_lines": 0,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-72c7-4g63-hpw5",
+   "ecosystem": "Go",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 27,
+   "removed_lines": 10,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-72qq-p3r5-f7wq",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 19,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-73wf-9vmv-5pv9",
+   "ecosystem": "PyPI",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 27,
+   "removed_lines": 10,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-74hp-mggr-hv58",
+   "ecosystem": "Go",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 91,
+   "removed_lines": 31,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-76wq-xw4h-f8wj",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 6,
+   "removed_lines": 4,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-784x-7w88-w564",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 51,
+   "removed_lines": 1,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-79qw-g77v-2vfh",
+   "ecosystem": "Go",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 101,
+   "removed_lines": 90,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-7cj7-rcw6-p68v",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 7,
+   "removed_lines": 1,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-7hxc-f267-h5q7",
+   "ecosystem": "Packagist",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 6,
+   "removed_lines": 2,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-7wqf-h36w-47mc",
+   "ecosystem": "PyPI",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 13,
+   "removed_lines": 3,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-8gqp-hr9g-pg62",
+   "ecosystem": "Maven",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 12,
+   "removed_lines": 14,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-8grg-q944-cch5",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 23,
+   "removed_lines": 18,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-8qvf-mr4w-9x2c",
+   "ecosystem": "PyPI",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 10,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-97jv-2hp6-3frj",
+   "ecosystem": "Packagist",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 32,
+   "removed_lines": 32,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-9mh6-g99m-ppcw",
+   "ecosystem": "Packagist",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 12,
+   "removed_lines": 0,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-cgfv-jrfp-2r7v",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 90,
+   "removed_lines": 42,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-cpv4-ggrr-7j9v",
+   "ecosystem": "PyPI",
+   "families": [
+    "deser"
+   ],
+   "labels": [
+    "corrected_logic",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 641,
+   "removed_lines": 470,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-cxwf-qc32-375f",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_encoding",
+    "corrected_logic",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 29,
+   "removed_lines": 37,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-f3f2-mcxc-pwjx",
+   "ecosystem": "npm",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 207,
+   "removed_lines": 136,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-f6wf-28g6-769x",
+   "ecosystem": "Packagist",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 81,
+   "removed_lines": 11,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-f7w7-6pjc-wwm6",
+   "ecosystem": "Maven",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 192,
+   "removed_lines": 148,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-ff98-w8hj-qrxf",
+   "ecosystem": "npm",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 2,
+   "removed_lines": 45,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-fg4q-ccq8-3r5q",
+   "ecosystem": "NuGet",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 223,
+   "removed_lines": 71,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-fr3h-cpq2-9496",
+   "ecosystem": "PyPI",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 126,
+   "removed_lines": 9,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-fwj4-6wgp-mpxm",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 7,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-g23g-mw97-65c8",
+   "ecosystem": "Go",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 0,
+   "removed_lines": 6,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-gjqq-6r35-w3r8",
+   "ecosystem": "Go",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 0,
+   "removed_lines": 70,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-gprp-h92g-gc2h",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "corrected_logic",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 144,
+   "removed_lines": 98,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-gr4j-r575-g665",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 71,
+   "removed_lines": 18,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-gvg7-pp82-cff3",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 17,
+   "removed_lines": 11,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-h4h6-vccr-44h2",
+   "ecosystem": "Go",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 10,
+   "removed_lines": 0,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-h6r4-xvw6-jc5h",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 8,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-h7cm-jvpp-69xf",
+   "ecosystem": "Go",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 8,
+   "removed_lines": 3,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-hc5w-gxxr-w8x8",
+   "ecosystem": "Go",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 2468,
+   "removed_lines": 3302,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-hj4w-hm2g-p6w5",
+   "ecosystem": "PyPI",
+   "families": [
+    "deser"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 13,
+   "removed_lines": 8,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-hq7p-j377-6v63",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 24,
+   "removed_lines": 2,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-hr8g-6v94-x4m9",
+   "ecosystem": "Maven",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 532,
+   "removed_lines": 1,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-hw6x-2qwv-rxr7",
+   "ecosystem": "Maven",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 73,
+   "removed_lines": 7,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-hwcc-4cv8-cf3h",
+   "ecosystem": "NuGet",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 1,
+   "removed_lines": 1,
+   "codeql_status": "no_class_query"
+  },
+  {
+   "ghsa": "GHSA-j3f9-p6hm-5w6q",
+   "ecosystem": "Packagist",
+   "families": [
+    "incl"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 2,
+   "removed_lines": 0,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-j456-xh4h-cpf2",
+   "ecosystem": "PyPI",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 20,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-j6cv-98jx-mrwr",
+   "ecosystem": "PyPI",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 1,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-j7g8-3qqg-8cvm",
+   "ecosystem": "Packagist",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "corrected_logic"
+   ],
+   "primary": "added_check",
+   "added_lines": 13,
+   "removed_lines": 13,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-j7wh-x834-p3r7",
+   "ecosystem": "Go",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 8,
+   "removed_lines": 0,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-jccv-3h4x-35mv",
+   "ecosystem": "Packagist",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 3,
+   "removed_lines": 3,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-jj27-h5hq-8x99",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 13,
+   "removed_lines": 2,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-jjgq-jq8g-24w4",
+   "ecosystem": "Packagist",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 23,
+   "removed_lines": 31,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-jmm9-2p29-vh2w",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "corrected_logic",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 16,
+   "removed_lines": 16,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-jqmf-mx4f-hfr6",
+   "ecosystem": "PyPI",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 541,
+   "removed_lines": 77,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-m3hq-3qj8-c5fm",
+   "ecosystem": "RubyGems",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 1,
+   "removed_lines": 11,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-m445-w3xr-vp2f",
+   "ecosystem": "Go",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 0,
+   "removed_lines": 3,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-m462-mqw4-2c8m",
+   "ecosystem": "Go",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 43,
+   "removed_lines": 23,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-m734-r4g6-34f9",
+   "ecosystem": "npm",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 34,
+   "removed_lines": 10,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-mf2p-h6hf-fcwm",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 13,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-mggc-4xg6-vcxf",
+   "ecosystem": "NuGet",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 113,
+   "removed_lines": 39,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-mhwp-qhpc-h3jm",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 3,
+   "removed_lines": 3,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-mj4x-vf5c-5xg8",
+   "ecosystem": "PyPI",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 741,
+   "removed_lines": 9,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-mmcv-fvq8-r9x3",
+   "ecosystem": "Packagist",
+   "families": [
+    "deser"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 11,
+   "removed_lines": 0,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-mq84-hjqx-cwf2",
+   "ecosystem": "PyPI",
+   "families": [
+    "deser"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 19,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-mrq8-fv7v-hhjg",
+   "ecosystem": "PyPI",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 343,
+   "removed_lines": 162,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-mrww-27vc-gghv",
+   "ecosystem": "Go",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 306,
+   "removed_lines": 354,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-mw36-7c6c-q4q2",
+   "ecosystem": "Maven",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 1,
+   "removed_lines": 1,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-mxg3-432p-mr72",
+   "ecosystem": "Go",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 110,
+   "removed_lines": 7,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-p6w9-r443-r752",
+   "ecosystem": "Packagist",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 122,
+   "removed_lines": 11,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-p77r-c6m3-gj2r",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 6,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-p9qm-p942-q3w5",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 274,
+   "removed_lines": 98,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-pj84-qjm3-77mg",
+   "ecosystem": "Maven",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 41,
+   "removed_lines": 13,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-pmw4-jgxx-pcq9",
+   "ecosystem": "npm",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "corrected_logic"
+   ],
+   "primary": "corrected_logic",
+   "added_lines": 19,
+   "removed_lines": 14,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-pxrr-hq57-q35p",
+   "ecosystem": "PyPI",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 63,
+   "removed_lines": 12,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-q27f-v3r6-9v77",
+   "ecosystem": "RubyGems",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 57,
+   "removed_lines": 0,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-q296-9j5x-fxf4",
+   "ecosystem": "Maven",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 15,
+   "removed_lines": 6,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-q433-mp6c-8v4f",
+   "ecosystem": "Go",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 218,
+   "removed_lines": 68,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-q7m5-3jmv-vm48",
+   "ecosystem": "PyPI",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 0,
+   "removed_lines": 0,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-q9mp-79cp-9g8j",
+   "ecosystem": "Go",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 127,
+   "removed_lines": 30,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-qcpp-8x79-hhp3",
+   "ecosystem": "PyPI",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 12,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-qqh2-wvmv-h72m",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "corrected_logic"
+   ],
+   "primary": "added_check",
+   "added_lines": 27,
+   "removed_lines": 26,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-qrg7-hfx7-95c5",
+   "ecosystem": "Go",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "corrected_logic",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 26,
+   "removed_lines": 23,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-r8g5-cgf2-4m4m",
+   "ecosystem": "PyPI",
+   "families": [
+    "deser"
+   ],
+   "labels": [
+    "added_check",
+    "corrected_logic"
+   ],
+   "primary": "added_check",
+   "added_lines": 18,
+   "removed_lines": 5,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-rc6v-5rmx-w5mv",
+   "ecosystem": "Go",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 15,
+   "removed_lines": 1,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-rfx3-98h7-v3xp",
+   "ecosystem": "NuGet",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_encoding",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 37,
+   "removed_lines": 16,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-rjjv-87mx-6x3h",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 54,
+   "removed_lines": 30,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-rmjr-87wv-gf87",
+   "ecosystem": "npm",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 1,
+   "removed_lines": 1,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-rqw2-ghq9-44m7",
+   "ecosystem": "PyPI",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 80,
+   "removed_lines": 3,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-v253-rj99-jwpq",
+   "ecosystem": "npm",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 4,
+   "removed_lines": 0,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-v529-vhwc-wfc5",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 7,
+   "removed_lines": 3,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-v74c-qc46-9gg9",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 6,
+   "removed_lines": 2,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-vf2r-cxg9-p7rf",
+   "ecosystem": "Packagist",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 15,
+   "removed_lines": 22,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-vj3g-5px3-gr46",
+   "ecosystem": "npm",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 86,
+   "removed_lines": 44,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-vj9x-w7ch-f46p",
+   "ecosystem": "Packagist",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 1,
+   "removed_lines": 1,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-vmw2-qwm8-x84c",
+   "ecosystem": "NuGet",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check",
+    "added_encoding"
+   ],
+   "primary": "added_check",
+   "added_lines": 32,
+   "removed_lines": 0,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-vp4f-wxgw-7x8x",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 13,
+   "removed_lines": 3,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-vq7p-f4fv-rr5x",
+   "ecosystem": "Maven",
+   "families": [
+    "tls"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 301,
+   "removed_lines": 170,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-w2pm-r78h-4m7v",
+   "ecosystem": "Packagist",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_encoding",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 1,
+   "removed_lines": 1,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-w5ff-2mjc-4phc",
+   "ecosystem": "Packagist",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_encoding"
+   ],
+   "primary": "added_encoding",
+   "added_lines": 4,
+   "removed_lines": 3,
+   "codeql_status": "no_extractor"
+  },
+  {
+   "ghsa": "GHSA-wc3v-3457-c8cm",
+   "ecosystem": "Go",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 4,
+   "removed_lines": 11,
+   "codeql_status": "not_run"
+  },
+  {
+   "ghsa": "GHSA-wm65-ph3w-587c",
+   "ecosystem": "npm",
+   "families": [
+    "xss"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 26,
+   "removed_lines": 25,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-wqmh-qccw-pqwf",
+   "ecosystem": "PyPI",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 17,
+   "removed_lines": 0,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-wrvw-254r-wpmv",
+   "ecosystem": "NuGet",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 248,
+   "removed_lines": 66,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-x3wm-hffr-chwm",
+   "ecosystem": "Maven",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 128,
+   "removed_lines": 64,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-x485-rhg3-cqr4",
+   "ecosystem": "RubyGems",
+   "families": [
+    "cmd"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 16,
+   "removed_lines": 7,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-x67c-8pwr-m8g3",
+   "ecosystem": "Go",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 24,
+   "removed_lines": 3,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-x843-g5mx-g377",
+   "ecosystem": "PyPI",
+   "families": [
+    "deser"
+   ],
+   "labels": [
+    "added_check",
+    "corrected_logic"
+   ],
+   "primary": "added_check",
+   "added_lines": 18,
+   "removed_lines": 5,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-x9vc-6hfv-hg8c",
+   "ecosystem": "NuGet",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_check"
+   ],
+   "primary": "added_check",
+   "added_lines": 667,
+   "removed_lines": 176,
+   "codeql_status": "extraction_failed"
+  },
+  {
+   "ghsa": "GHSA-xf96-32q2-9rw2",
+   "ecosystem": "RubyGems",
+   "families": [
+    "sql"
+   ],
+   "labels": [
+    "added_encoding",
+    "safer_call"
+   ],
+   "primary": "safer_call",
+   "added_lines": 7,
+   "removed_lines": 2,
+   "codeql_status": "not_detected"
+  },
+  {
+   "ghsa": "GHSA-xr9m-gphc-9p63",
+   "ecosystem": "Packagist",
+   "families": [
+    "path"
+   ],
+   "labels": [
+    "structural_or_other"
+   ],
+   "primary": "structural_or_other",
+   "added_lines": 3,
+   "removed_lines": 3,
+   "codeql_status": "no_extractor"
+  }
+ ],
+ "rejected_levers": {
+  "path_join_containment_obligation": {
+   "rule": "Python function that joins a base-directory-named value with one of its non-numeric parameters and passes the result to a filesystem call (optionally: returns it) with no containment call (resolve, realpath, abspath, normpath, commonpath, is_relative_to, relative_to, basename, secure_filename), no regex match and no validate/sanitize/check-named helper in the function",
+   "development_recall": {
+    "PyPI path advisories": 12,
+    "sink_in_function": 1,
+    "with_returned_builders": 2
+   },
+   "control_volume": {
+    "repositories": 44,
+    "non_test_python_files": 4018,
+    "sink_in_function": 7,
+    "with_returned_builders": 14
+   },
+   "control_review": "One AI reviewer read all 14: at most 2 plausible (a directory removal named by a task parameter, a template read), the rest internal helpers, release scripts, framework-sanitized upload paths and one numeric division",
+   "decision": "not shipped: under 2 in 14 plausible on the controls for 1 to 2 of 12 development cases",
+   "finding": "The missed Python path fixes guard values that come from documents or messages (email attachment names, URIs inside documents, archive members, state tokens). Modelling those untrusted document fields as sources is the next lever, not a sink-side containment check."
+  }
+ }
+}
