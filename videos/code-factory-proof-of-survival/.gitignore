@@ -3,3 +3,4 @@ node_modules/
 renders/
 snapshots/
 .hyperframes/cache/
+/remotion/public/

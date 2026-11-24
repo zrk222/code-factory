@@ -64,7 +64,7 @@ Scene 3 (6.0–9.0s): the final review station receives the packet and the label
 - voiceover: "For vibe coders, that means you can begin with a plain outcome, lock the intent, build an MVP, and see what the tests really prove before you call it done."
 - type: feature_showcase
 - blueprint: 3d-page-scroll
-- asset_candidates: "focal: capture/assets/factory-studio-mvp-1280x800.png; roles: authentic MVP factory surface"
+- asset_candidates: "focal: ../../docs/assets/marketplace/factory-studio-mvp-1280x800.png; roles: authentic MVP factory surface"
 
 Scene 1 (0.0–3.0s): the prompt “Build an approval tracker” types into an outcome field. Layout: large code-editorial surface. Motion: type-on with caret (`discrete-text-sequence`).
 
@@ -140,7 +140,7 @@ Scene 3 (7.6–11.0s): bounded repair appears as an outlined lane ending at huma
 - voiceover: "Graph Ops makes that operational picture visible: current proofs, stale work, blocked gates, ownership, and the exact next safe action, all in one local control surface."
 - type: feature_showcase
 - blueprint: 3d-page-scroll
-- asset_candidates: "focal: capture/assets/graph-ops-studio-1280x800.png; roles: authentic Graph Ops UI; secondary: capture/assets/graph-ops-evidence-frontier.png; roles: evidence and next action"
+- asset_candidates: "focal: ../../docs/assets/marketplace/graph-ops-studio-1280x800.png; roles: authentic Graph Ops UI; secondary: ../../docs/assets/marketplace/graph-ops-evidence-frontier.png; roles: evidence and next action"
 
 Scene 1 (0.0–3.6s): a real Graph Ops Studio plate arrives as a dark evidence surface. Layout: full-width UI plate with editorial label. Motion: 3D page-scroll reveal (`3d-page-scroll`).
 
@@ -178,7 +178,7 @@ Scene 3 (6.2–9.0s): a human review mark remains outside the automated line. La
 - voiceover: "Build quickly. Verify honestly. Keep control. Code Factory is open source and local first, for anyone tired of discovering the truth after the demo."
 - type: cta
 - blueprint: kinetic-type-beats
-- asset_candidates: "focal: capture/assets/factoryline-logo-480.png; roles: official product mark; secondary: Remotion factory animation; roles: resolved proof lanes"
+- asset_candidates: "focal: ../../docs/assets/factoryline-logo-480.png; roles: official product mark; secondary: Remotion factory animation; roles: resolved proof lanes"
 
 Scene 1 (0.0–3.0s): the three closing phrases arrive one at a time. Layout: centered type, sparse and high contrast. Motion: kinetic beat-slam (`kinetic-beat-slam`) with smooth long-tail settles.
 
