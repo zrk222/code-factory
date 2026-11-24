@@ -7,6 +7,8 @@ build, submit an app, or certify that Apple will approve it.
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -821,9 +823,7 @@ def _projection_ranked(
 def _project_receipt(workspace: Path, path: Path) -> dict[str, Any] | None:
     if path.stat().st_size > MAX_BYTES:
         raise ValueError("submission assurance receipt exceeds 1 MiB")
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError("submission assurance receipt must be an object")
+    value = read_receipt(workspace, path)
     if not _valid_receipt(value, RECEIPT_SCHEMA):
         return None
     if (
@@ -879,14 +879,14 @@ def _project_receipts(
     return current
 
 
-def submission_assurance_projection(root: Path) -> dict[str, Any]:
+def submission_assurance_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read only hash-valid dossier state; reports remain evidence, not authorization."""
     workspace = Path(root).resolve()
     invalid: list[str] = []
     blockers: dict[str, str] = {}
-    candidates = list(
-        (workspace / ".factory" / "appforge").rglob("submission-assurance*.json")
-    )
+    candidates = list(receipt_paths(workspace, "submission-assurance*.json", inventory))
     truncated = len(candidates) > 1_000
     ranked = _projection_ranked(workspace, candidates, invalid)
     current = _project_receipts(workspace, ranked, invalid, blockers)

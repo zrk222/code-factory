@@ -8,6 +8,8 @@ and runtime lane. Unknown or not-applicable-without-review blocks the receipt.
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from .contract import write_atomic_json
 
 from datetime import datetime
@@ -417,16 +419,18 @@ def verify_quality_audit(
     return {**core, "path": destination.relative_to(workspace).as_posix()}
 
 
-def quality_audit_projection(root: Path) -> dict[str, Any]:
+def quality_audit_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read only hash-valid quality-audit receipts without granting release authority."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
-    for path in sorted(
-        (workspace / ".factory" / "appforge").rglob("quality-audit*.json")
-    )[:100]:
+    for path in sorted(receipt_paths(workspace, "quality-audit*.json", inventory))[
+        :100
+    ]:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = read_receipt(workspace, path)
             supplied = value.pop("receipt_sha256", None)
             valid = (
                 value.get("schema") == RECEIPT_SCHEMA

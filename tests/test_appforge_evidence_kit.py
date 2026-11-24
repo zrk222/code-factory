@@ -134,3 +134,64 @@ def test_appforge_status_is_a_read_only_projection_for_ide_adapters(
     assert result["marker"] == "APPFORGE_DESIGN_READ_ONLY"
     assert result["current_count"] == 0
     assert all(value is False for value in result["authority"].values())
+
+
+def test_appforge_stage_status_is_actionable_and_does_not_scan_other_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from factoryline import canonical_sha
+
+    root = tmp_path / ".factory" / "appforge"
+    path = root / "submission-assurance.json"
+    core = {
+        "schema": "factory.appforge.submission-assurance-receipt.v1",
+        "marker": "APPFORGE_SUBMISSION_DOSSIER_BLOCKED",
+        "ok": False,
+        "findings": [
+            {"gate": "Store media truth", "detail": "Capture evidence is missing"}
+        ],
+    }
+    _write(path, {**core, "receipt_sha256": canonical_sha(core)})
+    _write(root / "quality-audit-corrupt.json", 42)
+    calls = []
+    rglob = Path.rglob
+
+    def recording_glob(directory, pattern):
+        calls.append(pattern)
+        return rglob(directory, pattern)
+
+    monkeypatch.setattr(Path, "rglob", recording_glob)
+    invocation = ["revenue", "appforge-status", "--root", str(tmp_path)]
+    focus = [*invocation, "--stage", "submission-assurance"]
+    original = path.read_bytes()
+    assert main([*focus, "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["schema"] == "factory.appforge.stage-projection.v1"
+    assert summary["status"]["latest"]["ok"] is False
+    assert summary["help_command"] == [
+        "factory",
+        "revenue",
+        "submission-assurance",
+        "--help",
+    ]
+    assert calls == ["submission-assurance*.json"]
+
+    assert main(focus) == 0
+    output = capsys.readouterr().out
+    assert "Capture evidence is missing" in output
+    assert "factory revenue submission-assurance --help" in output
+    assert "quality-audit" not in output
+    assert path.read_bytes() == original
+
+    calls.clear()
+    assert main([*invocation, "--stage", "unknown", "--json"]) == 2
+    error = json.loads(capsys.readouterr().err)
+    assert error["code"] == "APPFORGE_STATUS_STAGE_UNKNOWN"
+    assert "submission-assurance" in error["message"]
+    assert calls == []
+
+    assert main([*invocation, "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert calls == ["*.json"]
+    assert summary["quality_audit"]["invalid_count"] == 1
+    assert summary["submission_assurance"]["latest"]["ok"] is False

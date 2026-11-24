@@ -699,6 +699,39 @@ def test_store_media_rejects_truncated_or_alpha_pngs(tmp_path: Path) -> None:
     )
 
 
+def test_store_media_hash_and_metadata_share_one_bounded_file_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import appforge_store_media
+
+    _media(tmp_path)
+    reads: list[Path] = []
+    original = Path.open
+
+    def count_reads(path, mode="r", *args, **kwargs):
+        if path.suffix == ".png" and mode == "rb":
+            reads.append(path)
+        return original(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", count_reads)
+    contract = tmp_path / "media-contract.json"
+    evidence = tmp_path / "media-evidence.json"
+    ready = verify_store_media(
+        tmp_path, contract, evidence, Path("verified-media.json")
+    )
+    assert ready["ok"] is True
+    assert len(reads) == len(set(reads)) == 2
+
+    monkeypatch.setattr(appforge_store_media, "MAX_MEDIA_BYTES", 8)
+    blocked = verify_store_media(
+        tmp_path, contract, evidence, Path("oversize-media.json")
+    )
+    assert blocked["ok"] is False
+    assert any(
+        item["code"] == "APPFORGE_MEDIA_FILE_TOO_LARGE" for item in blocked["findings"]
+    )
+
+
 def test_quality_audit_rejects_missing_user_design_confirmation_and_unbound_artifact(
     tmp_path: Path,
 ) -> None:

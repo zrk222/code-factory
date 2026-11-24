@@ -10,6 +10,8 @@ provider.
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from .contract import write_atomic_json as _atomic_json
 
 import json
@@ -578,16 +580,20 @@ def create_release_rehearsal(
     return {**receipt, "path": target.relative_to(workspace).as_posix()}
 
 
-def release_rehearsal_projection(root: Path) -> dict[str, Any]:
+def release_rehearsal_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read bounded, hash-valid rehearsals without inspecting provider state."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
     base = workspace / ".factory" / "appforge"
     if base.exists():
-        for path in sorted(base.rglob("*release-rehearsal*.json"))[:100]:
+        for path in sorted(
+            receipt_paths(workspace, "*release-rehearsal*.json", inventory)
+        )[:100]:
             try:
-                value = json.loads(path.read_text(encoding="utf-8"))
+                value = read_receipt(workspace, path)
                 if _sealed(value, RECEIPT_SCHEMA):
                     sources = value["sources"]
                     for key in (

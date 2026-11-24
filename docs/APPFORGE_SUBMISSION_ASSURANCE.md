@@ -57,6 +57,11 @@ and rerun with a fresh `--out` path.
 that has changed since a ready receipt was written. Restore the exact evidence
 or issue a fresh dossier in a new output path and report directory.
 
+Use `factory revenue appforge-status --stage submission-assurance` to inspect
+just the dossier and see its blocker or current receipt. Add `--json` for the
+stage payload and matching CLI help command. Status exits zero after a
+successful inspection, including when the inspected evidence is blocked.
+
 ## Strict design and full-stack checks
 
 The quality contract requires hash-bound artifacts for every listed check. A
