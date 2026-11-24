@@ -214,3 +214,19 @@ def observe_shadowed_normalizer(request):
     name = secure_filename(request.GET["name"])
     # ruleid: python.request-path-traversal
     return open(name)
+
+
+def download_by_hash(request):
+    digest = request.GET["hash"]
+    if not is_md5(digest):
+        raise ValueError("invalid hash")
+    # ok: python.request-path-traversal
+    return os.path.join(REPORT_DIR, digest)
+
+
+def download_by_id(request):
+    report_id = request.GET["id"]
+    if not report_id.isdigit():
+        raise ValueError("invalid id")
+    # ok: python.request-path-traversal
+    return os.path.join(REPORT_DIR, report_id)

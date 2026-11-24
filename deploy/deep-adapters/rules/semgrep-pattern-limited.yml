@@ -284,6 +284,28 @@ rules:
     pattern-sanitizers:
       - pattern: os.path.basename(...)
       - pattern: werkzeug.utils.secure_filename(...)
+      # Format checks that admit no path separator or dot segment (an MD5/SHA
+      # digest, a UUID, digits, alphanumerics) clear the checked value. Unlike a
+      # helper named *safe* or *within*, the format itself is the proof.
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: $CHECK($X)
+              - pattern: $MOD.$CHECK($X)
+          - metavariable-regex:
+              metavariable: $CHECK
+              regex: ^(is_md5|is_sha1|is_sha256|is_sha\d+|is_hex|is_uuid|valid_uuid|is_valid_uuid|is_int|is_integer|is_digit|is_numeric|is_alnum)$
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: $X.isdigit()
+              - pattern: $X.isalnum()
+              - pattern: $X.isnumeric()
+              - pattern: $X.isdecimal()
+          - focus-metavariable: $X
+      - pattern: int(...)
+      - pattern: uuid.UUID(...)
     pattern-sinks:
       - patterns:
           - pattern: open($PATH, ...)
