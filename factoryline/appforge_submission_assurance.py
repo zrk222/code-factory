@@ -790,6 +790,10 @@ def verify_current_submission_assurance(
             "Oracle authority no longer matches its passing receipt"
         )
 
+    _verify_reports(root, receipt)
+
+
+def _verify_reports(root: Path, receipt: dict[str, Any]) -> None:
     reports = receipt.get("reports")
     digests = receipt.get("report_sha256")
     if not isinstance(reports, dict) or not isinstance(digests, dict):
