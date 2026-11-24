@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
@@ -22,6 +23,28 @@ from .revenueforge import (
 )
 from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
+
+
+def receipt_paths(
+    root: Path, pattern: str, inventory: tuple[Path, ...] | None = None
+) -> Iterable[Path]:
+    """Discover AppForge receipts or reuse a snapshot from the current inspection."""
+    if inventory is None:
+        return (root / ".factory" / "appforge").rglob(pattern)
+    return (path for path in inventory if path.match(pattern))
+
+
+def read_receipt(root: Path, path: Path) -> dict[str, Any]:
+    """Read a workspace-contained receipt and require a JSON object."""
+    try:
+        source = path.resolve(strict=True)
+    except RuntimeError as exc:
+        raise ValueError("receipt path cannot be resolved") from exc
+    source.relative_to(root)
+    value = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("receipt must be a JSON object")
+    return value
 
 
 REPLAY_SCHEMA = "factory.revenueforge.purchase-replay.v1"

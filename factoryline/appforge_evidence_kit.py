@@ -7,6 +7,8 @@ deliberately incomplete until a human supplies observed local evidence.
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from pathlib import Path
 from typing import Any
 import hashlib
@@ -114,7 +116,8 @@ def _write_readme(
         "3. Run the App Review, Store media, SaaS, and quality gates. A blocked receipt is useful: fix the named gap rather than editing the receipt.",
         "4. Run `factory revenue appforge-eas` with the reviewed EAS profile to produce a credential-free handoff packet. It does not invoke EAS or Apple.",
         "5. Seal the supervised Device Reality intent envelope before collecting physical-device evidence. Its exact candidate, design-input digest, journeys, forbidden outcomes, and permitted transport cannot be rewritten by the capture worker.",
-        "6. Run `factory revenue submission-assurance` only after all required receipts are ready. It writes the final Markdown/PDF dossier only then.",
+        "6. Review the local Oracle authority with `factory revenue appforge-oracle --help`, then run `factory revenue submission-assurance` after all required receipts are ready.",
+        "7. Read `factory revenue appforge-status --stage submission-assurance` to find dossier blockers before preparing a release rehearsal.",
         "",
         "## Authority boundary",
         "",
@@ -277,16 +280,18 @@ def initialize_appforge(
     return {**receipt, "path": receipt_file.relative_to(workspace).as_posix()}
 
 
-def appforge_init_projection(root: Path) -> dict[str, Any]:
+def appforge_init_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read hash-valid AppForge Init state without activating a project."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
     for path in sorted(
-        (workspace / ".factory" / "appforge").rglob("appforge-init-receipt.json")
+        receipt_paths(workspace, "appforge-init-receipt.json", inventory)
     )[:100]:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = read_receipt(workspace, path)
             supplied = value.pop("receipt_sha256", None)
             valid = (
                 value.get("schema") == "factory.appforge.init-receipt.v1"
