@@ -737,9 +737,15 @@ def verify_current_submission_assurance(
     audit = receipt.get("audit")
     if not isinstance(audit, list) or len(audit) != len(SUBMISSION_GATES) + 1:
         raise _assurance_blocked("Required gate receipts are missing from the dossier")
-    for row, (name, schema, field, ready) in zip(
-        audit[:-1], SUBMISSION_GATES, strict=True
-    ):
+    _verify_gate_receipts(root, candidate, audit[:-1])
+    _verify_oracle_receipt(root, candidate, receipt.get("oracle_authority"), audit[-1])
+    _verify_reports(root, receipt)
+
+
+def _verify_gate_receipts(
+    root: Path, candidate: dict[str, str], rows: list[Any]
+) -> None:
+    for row, (name, schema, field, ready) in zip(rows, SUBMISSION_GATES, strict=True):
         if (
             not isinstance(row, dict)
             or row.get("name") != name
@@ -752,18 +758,25 @@ def verify_current_submission_assurance(
         if current is None or current["receipt_sha256"] != row.get("receipt_sha256"):
             raise _assurance_blocked(f"{name} no longer matches its passing receipt")
 
-    oracle = receipt.get("oracle_authority")
-    if not isinstance(oracle, dict) or not isinstance(oracle.get("source_path"), str):
-        raise _assurance_blocked("Oracle authority is missing from the dossier")
-    oracle_row = audit[-1]
+
+def _oracle_receipt_path(oracle: dict[str, Any], row: object) -> Path:
     if (
-        not isinstance(oracle_row, dict)
-        or oracle_row.get("name") != "Oracle authority"
-        or not isinstance(oracle_row.get("receipt_path"), str)
-        or oracle_row["receipt_path"] != oracle.get("path")
-        or oracle_row.get("receipt_sha256") != oracle.get("receipt_sha256")
+        not isinstance(row, dict)
+        or row.get("name") != "Oracle authority"
+        or not isinstance(row.get("receipt_path"), str)
+        or row["receipt_path"] != oracle.get("path")
+        or row.get("receipt_sha256") != oracle.get("receipt_sha256")
     ):
         raise _assurance_blocked("Oracle authority is missing from the audit")
+    return Path(row["receipt_path"])
+
+
+def _verify_oracle_receipt(
+    root: Path, candidate: dict[str, str], oracle: object, row: object
+) -> None:
+    if not isinstance(oracle, dict) or not isinstance(oracle.get("source_path"), str):
+        raise _assurance_blocked("Oracle authority is missing from the dossier")
+    receipt_path = _oracle_receipt_path(oracle, row)
     try:
         _verify_file(
             root,
@@ -776,7 +789,7 @@ def verify_current_submission_assurance(
         )
         sealed, _ = _read_json(
             root,
-            Path(oracle_row["receipt_path"]),
+            receipt_path,
             schema=ORACLE_AUTHORITY_RECEIPT_SCHEMA,
         )
     except (RevenueForgeError, OSError, ValueError) as exc:
@@ -789,8 +802,6 @@ def verify_current_submission_assurance(
         raise _assurance_blocked(
             "Oracle authority no longer matches its passing receipt"
         )
-
-    _verify_reports(root, receipt)
 
 
 def _verify_reports(root: Path, receipt: dict[str, Any]) -> None:

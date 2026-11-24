@@ -459,6 +459,8 @@ def test_submission_dossier_only_emits_markdown_and_pdf_after_all_build_bound_ga
     assert "Audited and passed" in markdown.read_text(encoding="utf-8")
     assert CANDIDATE["bundle_identifier"] in markdown.read_text(encoding="utf-8")
     assert pdf.read_bytes().startswith(b"%PDF-")
+    saved = json.loads((tmp_path / receipt["path"]).read_bytes())
+    assurance_module.verify_current_submission_assurance(tmp_path, saved, CANDIDATE)
 
 
 def test_report_failure_cannot_unlock_rehearsal_and_can_retry_same_paths(
