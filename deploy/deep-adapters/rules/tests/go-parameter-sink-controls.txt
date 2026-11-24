@@ -31,3 +31,12 @@ func (s *Store) Sorted(db *sql.DB, column string) (*sql.Rows, error) {
 	// ruleid: go.parameter-sql-text
 	return db.Query("SELECT * FROM users ORDER BY " + column)
 }
+
+func (p *EventsPersister) Events(filter *EventsFilter) {
+	finder := p.DB.Model(&Event{})
+	// ruleid: go.parameter-sql-text
+	finder = finder.Order(filter.SortOn)
+	// ok: go.parameter-sql-text
+	finder = finder.Order("created_at desc")
+	_ = finder
+}
