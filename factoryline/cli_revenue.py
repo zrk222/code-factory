@@ -174,6 +174,10 @@ def add_parser(sub: Any) -> None:
         help="read hash-verified local AppForge mission, design, quality, and submission-dossier status",
     )
     revenue_appforge_status.add_argument("--root", default=".")
+    revenue_appforge_status.add_argument(
+        "--stage",
+        help="inspect one stage, such as submission-assurance or release-rehearsal",
+    )
     revenue_appforge_status.add_argument("--json", action="store_true")
     revenue_app_review = revenue_sub.add_parser(
         "app-review-gate",
@@ -707,7 +711,7 @@ def _command_appforge_init(args: Any, root: Path) -> dict:
 def _command_appforge_status(args: Any, root: Path) -> dict:
     from .appforge_design import appforge_design_projection
 
-    payload = appforge_design_projection(root)
+    payload = appforge_design_projection(root, stage=args.stage)
     return payload
 
 
@@ -754,6 +758,26 @@ _COMMANDS = {
 }
 
 
+def _render_text_command(command: str, payload: dict) -> None:
+    print(payload.get("marker", "REVENUEFORGE_OK"))
+    if payload.get("receipt_sha256"):
+        print(f"receipt     : {payload['receipt_sha256']}")
+    if command == "appforge-status":
+        from .appforge_design import appforge_status_lines
+
+        for line in appforge_status_lines(payload):
+            print("".join(char if char.isprintable() else " " for char in line))
+    if command == "submission-assurance" and not payload["ok"]:
+        for finding in payload["findings"]:
+            print(f"{finding['gate']}: {finding['detail']}")
+        print(
+            "Fix the listed gates and rerun submission-assurance with a fresh --out path."
+        )
+    print(
+        "authority   : no App Store write, offer send, experiment promotion, review publication, deployment, or credential access"
+    )
+
+
 def run(args: Any) -> int:
     """Execute one RevenueForge/AppForge command and render its receipt."""
     from .appforge_store_media import StoreMediaError
@@ -789,10 +813,5 @@ def run(args: Any) -> int:
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print(payload.get("marker", "REVENUEFORGE_OK"))
-        if payload.get("receipt_sha256"):
-            print(f"receipt     : {payload['receipt_sha256']}")
-        print(
-            "authority   : no App Store write, offer send, experiment promotion, review publication, deployment, or credential access"
-        )
+        _render_text_command(args.revenue_cmd, payload)
     return 0 if payload.get("ok", True) else 1

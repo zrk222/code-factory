@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from pathlib import Path
 from typing import Any
 import hashlib
@@ -450,17 +452,17 @@ def verify_app_review_readiness(
     return _seal(workspace, destination, receipt)
 
 
-def app_review_gate_projection(root: Path) -> dict[str, Any]:
+def app_review_gate_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read bounded, hash-valid App Review gate receipts without granting authority."""
     workspace = Path(root).resolve()
     current = 0
     invalid = 0
     latest: dict[str, Any] | None = None
-    for path in sorted((workspace / ".factory" / "appforge").rglob("app-review*.json"))[
-        :100
-    ]:
+    for path in sorted(receipt_paths(workspace, "app-review*.json", inventory))[:100]:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = read_receipt(workspace, path)
             expected = value.pop("receipt_sha256")
             valid = (
                 value.get("schema") == SCHEMA
@@ -474,7 +476,7 @@ def app_review_gate_projection(root: Path) -> dict[str, Any]:
                 == expected
             )
             value["receipt_sha256"] = expected
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError):
             valid = False
             value = None
         if valid:

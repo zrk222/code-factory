@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from .contract import write_atomic_json
 
 from pathlib import Path
 from typing import Any
 import hashlib
-import json
 
 from .appforge_evidence_kit import _read_candidate
 from .appforge_native_surface import RECEIPT_SCHEMA as NATIVE_RECEIPT_SCHEMA
@@ -129,17 +130,19 @@ def create_surface_matrix(
     return {**result, "path": destination.relative_to(workspace).as_posix()}
 
 
-def surface_matrix_projection(root: Path) -> dict[str, Any]:
+def surface_matrix_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Project valid local surface-matrix plans without asserting device or Store execution."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
-    for path in sorted(
-        (workspace / ".factory" / "appforge").rglob("*surface-matrix*.json")
-    )[:100]:
+    for path in sorted(receipt_paths(workspace, "*surface-matrix*.json", inventory))[
+        :100
+    ]:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            value = read_receipt(workspace, path)
+        except (OSError, ValueError):
             invalid.append(path.relative_to(workspace).as_posix())
             continue
         supplied = value.get("receipt_sha256") if isinstance(value, dict) else None
