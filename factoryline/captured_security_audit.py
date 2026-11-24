@@ -5594,6 +5594,7 @@ def _application_configuration_hashes(class_profiles):
 def _captured_application_source_bytes(
     workspace, findings, bindings, source_bytes, *, capture_all_sources=False
 ):
+    from .parameter_reach import REACH_CODES
     from .primitive_observation_binding import fixed_program_proof_dispositions
 
     program_proofs = fixed_program_proof_dispositions()
@@ -5609,8 +5610,10 @@ def _captured_application_source_bytes(
                 if isinstance(row, dict)
             )
     hashes = {row["path"]: row["sha256"] for row in bindings}
+    # Entry reach needs every caller module, not only the files with findings.
     whole_inventory = capture_all_sources or any(
-        finding.get("facts", {}).get("disposition") in program_proofs
+        finding.get("code") in REACH_CODES
+        or finding.get("facts", {}).get("disposition") in program_proofs
         or isinstance(finding.get("facts", {}).get("security_precondition"), dict)
         for finding in findings
     )
