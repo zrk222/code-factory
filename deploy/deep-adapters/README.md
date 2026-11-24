@@ -11,6 +11,9 @@ timeouts, memory limits, challenge outcomes, and report completeness.
 | `codeql-javascript-worker` | CodeQL 2.27.1, JavaScript queries 2.4.6 | SARIF with source-bound code flows | Full JavaScript/TypeScript security-extended suite, including modeled cross-module flows. Candidate extraction and framework models determine coverage. |
 | `codeql-actions-worker` | CodeQL 2.27.1, Actions queries 0.6.36 | SARIF with workflow source-to-sink flows | Full GitHub Actions security-extended suite; workflow injection and trust-boundary models depend on extracted YAML. This does not execute workflows or prove external actions safe. |
 | `codeql-ruby-worker` | CodeQL 2.27.1, Ruby queries 1.6.11 | SARIF with source-bound code flows | Full Ruby security-extended suite with modeled Rails/Rack sources and library-input queries; no build or dependency installation. |
+| `codeql-java-worker` | CodeQL 2.27.1, Java queries 1.11.11 | SARIF and source accounting | Java source-only extraction using the bundled minimal JDK when needed. Kotlin and build-generated source require another profile. |
+| `codeql-csharp-worker` | CodeQL 2.27.1, C# queries 1.10.0, .NET SDK 10.0.404 | SARIF and source accounting | C# source-only extraction. Unavailable dependencies or target packs can leave coverage incomplete. |
+| `codeql-go-worker` | CodeQL 2.27.1, Go queries 1.6.11, Go SDK 1.27.2 | SARIF and source accounting | Compile-only extraction in declared module roots. Supports source-contained and vendored dependencies. Missing modules, cgo and absent external dependencies leave gaps. |
 | `semgrep-worker` | OpenGrep OSS 1.15.0 (Semgrep-compatible), thirty rules across twelve source languages | SARIF with source-bound local flows | Request-to-shell/SQL checks cover Python, JS/TS, PHP, Go, Java, C# and Ruby; explicit unsafe API/trust checks also cover Rust, C/C++ and Swift. Native controls verify safe counterparts, aliases, trace endpoints and detector removal. Pattern-limited only; no interfile or `interprocedural-full` claim. Candidate `.semgrepignore` still requires native source accounting. |
 | `osv-worker` | OSV-Scanner 2.2.0 + immutable PyPI database snapshot | OSV JSON | Offline PyPI dependency scanning only; the pinned database snapshot ages and does not cover other ecosystems. |
 | `syft-worker` | Syft 1.33.0 | Syft JSON | Inventory only; this is not a vulnerability scan. |
@@ -31,8 +34,7 @@ and wheel packages are removed from the SDK; this does not mean the Debian
 base has no published advisories.
 The vendored Gitleaks rules come from the official [v8.28.0 configuration](https://github.com/gitleaks/gitleaks/blob/v8.28.0/config/gitleaks.toml). The full upstream MIT license and Copyright 2019 Zachary Rice notice are included in the repository and image at [GITLEAKS-LICENSE.txt](rules/GITLEAKS-LICENSE.txt).
 
-CodeQL's immutable official 2.27.1 bundle digest pins the CLI and its Python
-and JavaScript query packs. These targets do not claim compiled-language coverage. OSV uses
+CodeQL's immutable official 2.27.1 bundle digest pins the CLI and bundled query packs. OSV uses
 offline mode because the signed host run uses `--network=none`. This
 image bundles the verified PyPI snapshot from GCS generation 1794393188720263.
 The release asset retains those bytes after the upstream object rolls over.
@@ -95,6 +97,24 @@ Ruby extraction needs no build, network or installed gems. Run
 report must hold an ordered flow from the controller into the exporter, and the
 safe control must have no findings.
 
+Use `codeql-java-full.json`, `codeql-csharp-full.json` or `codeql-go-full.json`
+for signed static lanes with the matching language. The Go worker discovers
+at most 64 module roots and compiles at most 2,048 packages from normal source
+directories, including tests. Its root discovery skips hidden, vendor and
+testdata directories. It compiles test binaries without running them.
+Go SDK auto-download, proxy lookups and cgo are disabled. Go workspace files
+require a separately qualified profile. Local module replacements must resolve
+inside the mounted source. All workers retain
+the source-hash and database-accounting checks. Missing or degraded source stays
+incomplete. PHP continues to use pattern-limited OpenGrep for its documented
+request shapes. Blade templates and inter-file PHP analysis require separate
+coverage.
+
+Compiled-language CI uses `node scripts/verify_codeql_structural.mjs IMAGE
+RECEIPT SDK_TARGET` against the built image ID with network isolation. It binds
+the profile, fixture and native per-file source accounting. The fixture is
+separate from signed six-family acceptance, cold/warm and recall measurements.
+
 Library-level recall ([evidence](../../docs/evidence/codeql-recall-20261121.json)):
 stock CodeQL 2.27.1 security-extended suites, unmodified, ran on 86 fixed
 advisories (15 per ecosystem, registered before the first scan) that the
@@ -102,8 +122,9 @@ pattern lane detected 0 times. In fix hunks it found Ruby 5 of 15, Python 3 of
 15 and JavaScript/TypeScript 2 of 15: 10 of 45 (22%, Wilson 12.5-36.3%) for
 the three network-free lanes, against 0 of 45 for the pattern lane. Go (0 of 11,
 4 autobuild failures), Java (0 of 13), C# (0 of 2; 7 failed without a .NET SDK)
-and Rust (0 of 2) found nothing, so no worker is added for them: their
-extraction needs dependency resolution that network-less workers cannot do.
+and Rust (0 of 2) found nothing on that sample. The structural worker recipes
+for Java, C# and Go address bounded offline extraction. The study did not
+measure those recipes.
 Route library-level findings to the CodeQL lanes; the pattern lane stays a
 local web-handler and unsafe-API detector.
 

@@ -84,6 +84,9 @@ _STATIC_PROFILES = {
     "javascript": "javascript",
     "typescript": "javascript",
     "ruby": "ruby",
+    "java": "java",
+    "csharp": "csharp",
+    "go": "go",
 }
 
 

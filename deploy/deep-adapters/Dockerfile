@@ -86,8 +86,42 @@ COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-ruby-full.json /opt/
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="ruby"
 
-# Go 1.27.2 OCI index digest verified from Docker Registry; build is linux/amd64.
-FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS osv-build
+# Reuse the pinned Linux/amd64 SDK with the offline Go extractor and the OSV build.
+FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS go-sdk
+
+FROM codeql-python-worker AS codeql-java-worker
+USER 0:0
+COPY --chmod=0555 deploy/deep-adapters/bin/codeql-check-suite /opt/factory/bin/codeql-check-suite
+RUN /opt/factory/bin/codeql-check-suite java 1.11.11
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-java-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="java"
+
+FROM codeql-python-worker AS codeql-csharp-worker
+USER 0:0
+COPY --chmod=0555 deploy/deep-adapters/bin/codeql-check-suite /opt/factory/bin/codeql-check-suite
+ADD --checksum=sha256:c0610757a818fde4b960d27a0ac421f273068a05dc5ec7abafc01dbf84e9cb4d https://dotnetcli.blob.core.windows.net/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-linux-x64.tar.gz /tmp/dotnet-sdk.tar.gz
+RUN mkdir /opt/dotnet && tar --no-same-owner -xzf /tmp/dotnet-sdk.tar.gz -C /opt/dotnet && rm /tmp/dotnet-sdk.tar.gz \
+    && /opt/factory/bin/codeql-check-suite csharp 1.10.0
+ENV PATH=/opt/dotnet:$PATH DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+COPY --chmod=0555 deploy/deep-adapters/bin/codeql-csharp /opt/factory/bin/codeql-csharp
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-csharp-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+RUN dotnet --version | grep -Fx 10.0.404
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="csharp"
+
+FROM codeql-python-worker AS codeql-go-worker
+USER 0:0
+COPY --from=go-sdk /usr/local/go /usr/local/go
+COPY --chmod=0555 deploy/deep-adapters/bin/codeql-check-suite /opt/factory/bin/codeql-check-suite
+RUN /opt/factory/bin/codeql-check-suite go 1.6.11
+ENV PATH=/usr/local/go/bin:$PATH
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-go-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+RUN go version | grep -Fx 'go version go1.27.2 linux/amd64'
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="go"
+
+FROM go-sdk AS osv-build
 ADD --checksum=sha256:1ce45371bd4b6480ac512156c2ea70d563753eba62283d160360bfe3cf94a7ab https://github.com/google/osv-scanner/archive/a14aa98ab8408547083d4411091c5fbaf5b47d8e.tar.gz /tmp/osv-scanner.tar.gz
 COPY deploy/deep-adapters/osv-lookup-ledger.patch /tmp/osv-lookup-ledger.patch
 COPY deploy/deep-adapters/osv-extractor-inventory.go /tmp/osv-extractor-inventory.go

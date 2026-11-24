@@ -24,21 +24,15 @@ _NATIVE_WORKERS = {
         "version": "2.27.1",
         "scope": "Full Python security-extended suite, precompiled.",
         "variants": {
-            "javascript_typescript": {
-                "target": "codeql-javascript-worker",
-                "profile": "codeql-javascript-full.json",
-                "scope": "JS/TS security-extended suite; modeled cross-file source-to-sink SARIF flows.",
-            },
-            "ruby": {
-                "target": "codeql-ruby-worker",
-                "profile": "codeql-ruby-full.json",
-                "scope": "Ruby security-extended: Rails/Rack/library cross-file flows; no build.",
-            },
-            "github_actions": {
-                "target": "codeql-actions-worker",
-                "profile": "codeql-actions-full.json",
-                "scope": "Actions security-extended: workflow injection and modeled trust; configuration only.",
-            },
+            name: {"target": f"codeql-{slug}-worker", "profile": f"codeql-{slug}-full.json", "scope": scope}
+            for name, slug, scope in (
+                ("javascript_typescript", "javascript", "JS/TS modeled cross-file flow."),
+                ("ruby", "ruby", "Ruby Rails/Rack/library cross-file flow without a build."),
+                ("github_actions", "actions", "Actions workflow injection and trust configuration."),
+                ("java", "java", "Java source only. Kotlin and generated source need a build."),
+                ("csharp", "csharp", "C# source only. Missing SDK targeting packs or dependencies leave gaps."),
+                ("go", "go", "Go compile-only modules with vendor or in-source dependencies."),
+            )
         },
     },
     "semgrep": {
@@ -100,7 +94,7 @@ _NATIVE_WORKER_CONTRACT = {
     "agent_action": "Return path, rule, severity, source binding, native/normalized hashes, failures, coverage gaps, repair and exact rerun; mark absent fields/accounting/challenges as gaps.",
     "tracing": "Preserve separate native/normalized digests, source binding and deadline/output/cleanup failures. Optional signed Python HTTP request-associated tracing: agent_usage_contract.six_lane_review.zap_source_trace; declared routes do not prove line execution.",
     "unified_cli": "factory scan --root PATH --deep --worker-config .factory/worker-config.json --json; configure signed manifest, authorization and SHA-pinned trust root before execution.",
-    "selection": "CodeQL: Python, JS/TS, Ruby or Actions by source. Reuse only exact image/candidate-bound evidence; select per edit.",
+    "selection": "Select per source and edit. PHP uses OpenGrep. Reuse exact image- and candidate-bound evidence.",
 }
 
 

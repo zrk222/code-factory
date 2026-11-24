@@ -225,7 +225,18 @@ def _capture_scope_gap_control(
 
 
 @pytest.mark.parametrize(
-    "language", ["python", "javascript", "typescript", "ruby", "go"]
+    "language",
+    [
+        "python",
+        "javascript",
+        "typescript",
+        "ruby",
+        "java",
+        "csharp",
+        "go",
+        "php",
+        "kotlin",
+    ],
 )
 def test_uncovered_static_source_names_supported_profiles_only(language):
     import re
@@ -244,7 +255,7 @@ def test_uncovered_static_source_names_supported_profiles_only(language):
     named = re.findall(r"[\w-]+\.json", static["action"])
     assert named and all(name in supported for name in named)
     assert all((profiles_dir / name).is_file() for name in named)
-    assert ("codeql-" in static["action"]) is (language != "go")
+    assert ("codeql-" in static["action"]) is (language not in {"php", "kotlin"})
     assert static["code"] == "UNCOVERED_SOURCE"
     assert static["action"].endswith(
         "naming a profile does not install, run or complete its worker."
@@ -6058,6 +6069,9 @@ def test_codeql_archived_sources_bounds_archive_read(tmp_path, monkeypatch):
         ("python", "python", "Module"),
         ("ruby", "ruby", "AstNode"),
         ("actions", "actions", "YamlDocument"),
+        ("java", "java", "CompilationUnit"),
+        ("csharp", "csharp", "ExtractorError"),
+        ("go", "go", "FactoryGoDiagnostic"),
     ],
 )
 def test_codeql_source_query_maps_supported_languages(
@@ -6081,11 +6095,38 @@ def test_codeql_source_query_rejects_unsupported_language():
 
     profile = _codeql_test_profile(Path("suite.qls"))
     profile["commands"][0]["argv"] = [
-        arg if not arg.startswith("--language=") else "--language=go"
+        arg if not arg.startswith("--language=") else "--language=php"
         for arg in profile["commands"][0]["argv"]
     ]
     with pytest.raises(RuntimeAuditError, match="E_CODEQL_SOURCE"):
         _codeql_source_query(profile)
+
+
+@pytest.mark.parametrize("vendor", [False, True])
+def test_offline_go_replacement_stays_inside_source(tmp_path, monkeypatch, vendor):
+    import json
+
+    from factoryline import runtime_audit_process
+
+    source = tmp_path / "source"
+    module = source / "nested"
+    sibling = source / "dependency"
+    sibling.mkdir(parents=True)
+    module.mkdir()
+    if vendor:
+        (module / "vendor").mkdir()
+        (module / "vendor/modules.txt").write_text("", encoding="utf-8")
+    metadata = {"Replace": [{"New": {"Path": "../dependency"}}]}
+    monkeypatch.setattr(
+        runtime_audit_process.subprocess,
+        "check_output",
+        lambda *_, **__: json.dumps(metadata),
+    )
+    helper = runtime_audit_process._offline_go_module_option
+    assert helper(module, source) == ("-mod=vendor" if vendor else "-mod=readonly")
+    metadata["Replace"][0]["New"]["Path"] = str(tmp_path)
+    with pytest.raises(SystemExit, match="replacement is missing or leaves"):
+        helper(module, source)
 
 
 def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
