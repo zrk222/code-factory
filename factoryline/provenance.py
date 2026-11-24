@@ -5304,7 +5304,7 @@ def _http_role(call, name):
     return None
 
 
-def _consumer_role(call, canonical, name, smtp_receivers):
+def _consumer_role(call, canonical, name):
     head, _, verb = canonical.rpartition(".")
     if head == "requests" and verb in _HTTP_VERBS:
         return _http_role(call, name)
@@ -5318,50 +5318,97 @@ def _consumer_role(call, canonical, name, smtp_receivers):
                 value = _argument(call, keyword, position)
                 if value is not None and _references(value, name):
                     return role, value
-    func = call.func
-    if (
-        isinstance(func, ast.Attribute)
-        and func.attr == "login"
-        and isinstance(func.value, ast.Name)
-        and func.value.id in smtp_receivers
-    ):
-        value = _argument(call, "password", 1)
-        if value is not None and _references(value, name):
-            return "smtp_login", value
     return None
 
 
-def _smtp_receivers(function, aliases):
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _own_scope(function):
+    """Nodes that execute in the function's own scope, nested scopes excluded."""
+    pending = list(function.body)
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(node, _SCOPES):
+            pending.extend(ast.iter_child_nodes(node))
+
+
+def _binds(node, name) -> bool:
+    """Any construct that can bind, rebind or unbind ``name``."""
+    if isinstance(node, ast.Name):
+        return node.id == name and not isinstance(node.ctx, ast.Load)
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    if isinstance(node, ast.alias):
+        return (node.asname or node.name.split(".", 1)[0]) == name or node.name == "*"
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == name
+    if isinstance(node, ast.arg):
+        return node.arg == name
+    if isinstance(node, ast.ExceptHandler):
+        return node.name == name
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+        return node.name == name
+    return isinstance(node, ast.MatchMapping) and node.rest == name
+
+
+def _dynamic_namespace(tree) -> bool:
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"globals", "exec", "eval", "setattr", "vars"}
+        for node in ast.walk(tree)
+    )
+
+
+def _sole_binding(tree, declaration) -> bool:
+    """The declaration is the only place in the whole module that binds its name."""
+    name, target = declaration.targets[0].id, declaration.targets[0]
+    return not _dynamic_namespace(tree) and not any(
+        node is not target and _binds(node, name) for node in ast.walk(tree)
+    )
+
+
+def _smtp_receiver(function, call, aliases) -> bool:
+    """``<name>.login`` where the name is bound once, to an SMTP client, before the call."""
     from .security_configuration import _canonical
 
-    receivers = set()
-    for node in ast.walk(function):
-        if isinstance(node, ast.withitem) and isinstance(node.optional_vars, ast.Name):
-            if isinstance(node.context_expr, ast.Call):
-                if _canonical(node.context_expr, aliases) in _SMTP:
-                    receivers.add(node.optional_vars.id)
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target, value = node.targets[0], node.value
-            if isinstance(target, ast.Name) and isinstance(value, ast.Call):
-                if _canonical(value, aliases) in _SMTP:
-                    receivers.add(target.id)
-    return receivers
-
-
-def _locally_bound(function, name) -> bool:
-    arguments = function.args
-    parameters = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
-    parameters += [arguments.vararg, arguments.kwarg]
-    if any(item is not None and item.arg == name for item in parameters):
-        return True
-    return any(
-        isinstance(node, ast.Name)
-        and node.id == name
-        and isinstance(node.ctx, ast.Store)
-        or isinstance(node, (ast.Global, ast.Nonlocal))
-        and name in node.names
-        for node in ast.walk(function)
-    )
+    func = call.func
+    if not (
+        isinstance(func, ast.Attribute)
+        and func.attr == "login"
+        and isinstance(func.value, ast.Name)
+    ):
+        return False
+    receiver = func.value.id
+    if sum(_binds(node, receiver) for node in ast.walk(function)) != 1:
+        return False
+    for node in _own_scope(function):
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if (
+                    _binds(item.optional_vars, receiver)
+                    if item.optional_vars
+                    else False
+                ):
+                    return (
+                        isinstance(item.context_expr, ast.Call)
+                        and _canonical(item.context_expr, aliases) in _SMTP
+                        and any(inner is call for inner in ast.walk(node))
+                    )
+    for statement in function.body:
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and _binds(statement.targets[0], receiver)
+        ):
+            return (
+                isinstance(statement.value, ast.Call)
+                and _canonical(statement.value, aliases) in _SMTP
+                and statement.end_lineno < call.lineno
+            )
+    return False
 
 
 def _literal_declaration(finding, tree):
@@ -5379,25 +5426,32 @@ def _literal_declaration(finding, tree):
     return None
 
 
+def _module_functions(tree):
+    """Module-level functions and methods of module-level classes."""
+    kinds = (ast.FunctionDef, ast.AsyncFunctionDef)
+    for node in tree.body:
+        if isinstance(node, kinds):
+            yield node
+        elif isinstance(node, ast.ClassDef):
+            yield from (item for item in node.body if isinstance(item, kinds))
+
+
 def _consumer_witness(tree, declaration, aliases):
     from .security_configuration import _canonical
 
     name = declaration.targets[0].id
-    functions = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
-    for function in functions:
-        if _locally_bound(function, name):
-            continue
-        receivers = _smtp_receivers(function, aliases)
-        for call in ast.walk(function):
-            if isinstance(call, ast.Call):
-                canonical = _canonical(call, aliases) or ""
-                found = _consumer_role(call, canonical, name, receivers)
-                if found is not None:
-                    return found[0], found[1], call
+    for function in _module_functions(tree):
+        for call in _own_scope(function):
+            if not isinstance(call, ast.Call):
+                continue
+            canonical = _canonical(call, aliases) or ""
+            found = _consumer_role(call, canonical, name)
+            if found is None and _smtp_receiver(function, call, aliases):
+                value = _argument(call, "password", 1)
+                if value is not None and _references(value, name):
+                    found = "smtp_login", value
+            if found is not None:
+                return found[0], found[1], call
     return None
 
 
@@ -5426,15 +5480,14 @@ def _consumer_provider_uncertain(context, tree, aliases, witness):
 def literal_credential_consumer_evidence(finding, context):
     """Bind a module credential literal to a same-module authentication consumer.
 
-    Proof: the literal is the single module binding of its name, the module is
-    not a test module and no repository module shadows a consumer library, and
-    a function with no local binding of that name passes it directly to a
-    closed-list consumer argument. Deployment and validity stay unassessed.
+    Proof: nothing else anywhere in the module binds the literal's name (no
+    assignment, parameter, import, ``global`` write or dynamic namespace use),
+    the module is not a test module, no repository module shadows the provider,
+    and a module-level function or method passes the name directly, in its own
+    scope, to a closed-list consumer argument. Deployment and validity stay
+    unassessed.
     """
-    from .semantic_credential_sensor import (
-        _credential_module_rebound,
-        _signing_source_span,
-    )
+    from .semantic_credential_sensor import _signing_source_span
 
     if context is None or finding.get("code") != "SECURITY_HARDCODED_SECRET":
         return None
@@ -5444,9 +5497,7 @@ def literal_credential_consumer_evidence(finding, context):
     if tree is None or not index.validate(path) or _is_test_module(str(path)):
         return None
     declaration = _literal_declaration(finding, tree)
-    if declaration is None or _credential_module_rebound(
-        tree, declaration.targets[0].id, declaration
-    ):
+    if declaration is None or not _sole_binding(tree, declaration):
         return None
     aliases = context["aliases"][path]
     witness = _consumer_witness(tree, declaration, aliases)

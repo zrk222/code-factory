@@ -6544,3 +6544,76 @@ def test_literal_credential_consumer_evidence_refuses_tests_and_shadowed_librari
         shadowed = context("app/db.py", ["app/db.py", shadow])
         assert proof({**finding, "path": "app/db.py"}, shadowed) is None
     assert proof({**finding, "code": "SECURITY_WEAK_HASH"}, None) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        # a local import supplies the name
+        lambda s: s.replace(
+            "def connect():\n", "def connect():\n    from vault import DB_PASSWORD\n"
+        ),
+        # startup overwrites the literal through ``global``
+        lambda s: s
+        + "\ndef init():\n    global DB_PASSWORD\n    DB_PASSWORD = load()\n",
+        # an enclosing parameter supplies the name to a nested consumer
+        lambda s: s.replace(
+            "def connect():\n    return psycopg2",
+            "def outer(DB_PASSWORD):\n    def connect():\n        return psycopg2",
+        ),
+        # the consumer runs in a nested scope of an otherwise clean function
+        lambda s: s.replace("    return psycopg2", "    return lambda: psycopg2"),
+        # the module rewrites its own namespace
+        lambda s: s + "globals().update(load_settings())\n",
+        # a conditional module-level rebinding
+        lambda s: s + "if PRODUCTION:\n    DB_PASSWORD = load()\n",
+    ],
+)
+def test_any_other_binding_of_the_credential_name_voids_the_proof(mutation):
+    source = mutation(_P1_CONSUMERS["db"].format(k=_SHAPED))
+    ast.parse(source)
+    assert _p1_tier(source)["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # receiver replaced before login
+        "    server = smtplib.SMTP_SSL('smtp.example.com', 465)\n"
+        "    server = other_client()\n"
+        "    server.login('a@example.com', SMTP_PASSWORD)\n",
+        # construction in one branch only
+        "    if tls:\n        server = smtplib.SMTP_SSL('smtp.example.com', 465)\n"
+        "    server.login('a@example.com', SMTP_PASSWORD)\n",
+        # login before construction
+        "    server.login('a@example.com', SMTP_PASSWORD)\n"
+        "    server = smtplib.SMTP_SSL('smtp.example.com', 465)\n",
+        # login outside the with block that bound the client
+        "    with smtplib.SMTP_SSL('smtp.example.com', 465) as server:\n        pass\n"
+        "    server.login('a@example.com', SMTP_PASSWORD)\n",
+        # receiver is a parameter
+        "    client.login('a@example.com', SMTP_PASSWORD)\n",
+    ],
+)
+def test_smtp_login_requires_a_single_reaching_client_binding(body):
+    source = f"import smtplib\nSMTP_PASSWORD = {_SHAPED!r}\n\ndef send(client, tls):\n"
+    assert _p1_tier(source + body)["tier"] == "NEEDS_CONTEXT"
+
+
+def test_smtp_login_after_a_direct_client_assignment_is_supported():
+    source = (
+        f"import smtplib\nSMTP_PASSWORD = {_SHAPED!r}\n\ndef send():\n"
+        "    server = smtplib.SMTP('smtp.example.com', 587)\n"
+        "    server.starttls()\n"
+        "    server.login('a@example.com', SMTP_PASSWORD)\n"
+    )
+    assert _p1_tier(source)["tier"] == "SUPPORTED_DEFECT"
+
+
+def test_credential_used_by_a_method_of_a_module_class_is_supported():
+    source = (
+        f"import psycopg2\nDB_PASSWORD = {_SHAPED!r}\n\nclass Store:\n"
+        "    def connect(self):\n"
+        "        return psycopg2.connect(host='db', password=DB_PASSWORD)\n"
+    )
+    assert _p1_tier(source)["tier"] == "SUPPORTED_DEFECT"
