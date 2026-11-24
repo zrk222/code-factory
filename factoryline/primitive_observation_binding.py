@@ -13,6 +13,7 @@ from contextlib import nullcontext
 from . import canonical_json_compat_bytes
 
 from .audit_action_refs import _primitive_source_capture
+from .captured_operand_audit import entry_reach_tier
 
 _ROLE_REBUILD_CONTEXT = ContextVar("factory-role-rebuild-context", default=None)
 _RULE_SPAN_KEYS = ("code", "path", "line", "column", "end_line", "end_column")
@@ -25,6 +26,7 @@ _FINDING_TIER_POLICY = {
         "source_bound_flask_session_authority",
         "source_bound_selected_framework_feedback_default",
         "source_bound_private_key_http_authentication_flow",
+        "source_bound_entry_reach",
     ],
     "primitive_evidence": "current_native_source_bound_primitive_partition",
     "unknown_evidence": "NEEDS_CONTEXT",
@@ -633,11 +635,7 @@ def build_finding_tier_report(
 
     tiers = {
         name: sum(row["tier"] == name for row in ledger)
-        for name in (
-            "SUPPORTED_DEFECT",
-            "NEEDS_CONTEXT",
-            "PROVEN_PRIMITIVE",
-        )
+        for name in _FINDING_TIER_POLICY["tiers"]
     }
     total = len(ledger)
     abstentions = tiers["NEEDS_CONTEXT"]
@@ -5082,7 +5080,7 @@ def _finding_tier_ledger_row(
     role_context, role_bindings = source_role_capture_context(
         source_bytes, bindings, context
     )
-    tier, evidence, evidence_details = _decide_finding_tier(
+    decided = _decide_finding_tier(
         finding,
         bound_source,
         native_rows,
@@ -5090,6 +5088,9 @@ def _finding_tier_ledger_row(
         credential_evidence,
         source_bindings=role_bindings,
         credential_context=role_context,
+    )
+    tier, evidence, evidence_details = entry_reach_tier(
+        finding, source_bytes, bindings, decided
     )
     identity = _tier_sha256(
         {

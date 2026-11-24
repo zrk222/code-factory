@@ -1,0 +1,149 @@
+package controls
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"fmt"
+	"html"
+	"html/template"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+func unzip(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	for _, f := range r.File {
+		target := filepath.Join(dest, f.Name)
+		// ruleid: go.archive-path-traversal
+		out, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		out.Close()
+	}
+	return nil
+}
+
+func unzipChecked(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	for _, f := range r.File {
+		target := filepath.Join(dest, f.Name)
+		if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal path %s", f.Name)
+		}
+		// ok: go.archive-path-traversal
+		out, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		out.Close()
+	}
+	return nil
+}
+
+func unzipUnusedCheck(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	for _, f := range r.File {
+		target := filepath.Join(dest, f.Name)
+		_ = strings.HasPrefix(target, filepath.Clean(dest))
+		// ruleid: go.archive-path-traversal
+		out, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		out.Close()
+	}
+	return nil
+}
+
+func untar(in io.Reader, dest string) error {
+	tr := tar.NewReader(in)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dest, hdr.Name)
+		// ruleid: go.archive-path-traversal
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			return err
+		}
+	}
+}
+
+func untarLocal(in io.Reader, dest string) error {
+	tr := tar.NewReader(in)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			return err
+		}
+		if !filepath.IsLocal(hdr.Name) {
+			return fmt.Errorf("bad name")
+		}
+		// ok: go.archive-path-traversal
+		if err := os.MkdirAll(filepath.Join(dest, hdr.Name), 0o755); err != nil {
+			return err
+		}
+	}
+}
+
+func untarUnrelatedGuard(in io.Reader, dest string, label string) error {
+	if !filepath.IsLocal(label) {
+		return fmt.Errorf("bad label")
+	}
+	tr := tar.NewReader(in)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			return err
+		}
+		// ruleid: go.archive-path-traversal
+		if err := os.MkdirAll(filepath.Join(dest, hdr.Name), 0o755); err != nil {
+			return err
+		}
+	}
+}
+
+func download(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("file")
+	// ruleid: go.request-path-traversal
+	data, _ := os.ReadFile(filepath.Join("/srv/files", name))
+	w.Write(data)
+}
+
+func downloadBase(w http.ResponseWriter, r *http.Request) {
+	name := filepath.Base(r.URL.Query().Get("file"))
+	// ok: go.request-path-traversal
+	data, _ := os.ReadFile(filepath.Join("/srv/files", name))
+	w.Write(data)
+}
+
+func greet(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	// ruleid: go.request-html-injection
+	fmt.Fprintf(w, "<h1>Hello %s</h1>", name)
+}
+
+func greetEscaped(w http.ResponseWriter, r *http.Request) {
+	name := html.EscapeString(r.FormValue("name"))
+	// ok: go.request-html-injection
+	fmt.Fprintf(w, "<h1>Hello %s</h1>", name)
+}
+
+func trusted(w http.ResponseWriter, r *http.Request) template.HTML {
+	// ruleid: go.request-html-injection
+	return template.HTML(r.FormValue("bio"))
+}

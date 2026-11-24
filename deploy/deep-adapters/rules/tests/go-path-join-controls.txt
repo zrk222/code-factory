@@ -1,0 +1,29 @@
+package controls
+
+import (
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+)
+
+func copyToVolume(filePath string, data []byte) error {
+	// ruleid: go.parameter-path-join-without-containment
+	targetPath := path.Join("/vol", filePath)
+	return os.WriteFile(targetPath, data, 0o644)
+}
+
+func copyToVolumeChecked(filePath string, data []byte) error {
+	// ok: go.parameter-path-join-without-containment
+	cleaned := path.Join("/vol", filePath)
+	if cleaned != "/vol" && !strings.HasPrefix(cleaned, "/vol/") {
+		return fmt.Errorf("escapes")
+	}
+	return os.WriteFile(cleaned, data, 0o644)
+}
+
+func joinOnly(name string) string {
+	// ok: go.parameter-path-join-without-containment
+	return filepath.Join("/srv", name)
+}

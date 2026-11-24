@@ -1,0 +1,16 @@
+import * as fs from "fs";
+import * as path from "path";
+
+export async function readAsset(assetName: string) {
+  // ruleid: javascript.parameter-path-join-without-containment
+  const target = path.join("/srv/assets", assetName);
+  return fs.promises.readFile(target);
+}
+
+export function readAssetChecked(assetName: string) {
+  const root = path.resolve("/srv/assets");
+  // ok: javascript.parameter-path-join-without-containment
+  const target = path.resolve(root, assetName);
+  if (!target.startsWith(root + path.sep)) throw new Error("escape");
+  return fs.readFileSync(target);
+}
