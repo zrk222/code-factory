@@ -14,8 +14,8 @@
 //   compare  before.json after.json
 //
 // Scoring runs the production profile argv (deploy/deep-adapters/profiles),
-// with only the binary, ruleset and report/source paths substituted, so
-// timeouts and flags match what ships. The scoring rule is fixed: a
+// with the binary, ruleset and report/source paths substituted, plus an
+// OpenGrep coverage report for diagnostics. The scoring rule is fixed: a
 // CWE-family-matching alert on an old-side line of a `git diff -U5` hunk in
 // an in-language, non-test changed file at the fix parent. Alerts still on
 // new-side hunk lines at the fix commit are reported as fix-side residuals,
@@ -25,6 +25,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { changedFiles, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
 
 export const FAMILIES = Object.freeze({
   'CWE-78': 'cmd', 'CWE-88': 'cmd', 'CWE-77': 'cmd', 'CWE-89': 'sql',
@@ -72,16 +73,25 @@ function appendHunk(files, match, oldPath, newPath, keep) {
   }
 }
 
+function diffPath(header, prefix) {
+  const raw = header.slice(4).replace(/\t$/, '');
+  const path = raw.startsWith('"') ? JSON.parse(raw) : raw;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : null;
+}
+
 // Old- and new-side line sets of every in-language, non-test file in a -U5 diff.
 export function parseHunks(diff, extensions) {
   const files = {};
   let oldPath = null, newPath = null;
+  let inHunks = false;
   const keep = path => path && extensions.some(ext => path.endsWith(`.${ext}`)) && !isTestPath(path);
   for (const line of diff.split('\n')) {
-    if (line.startsWith('--- ')) { oldPath = line.startsWith('--- a/') ? line.slice(6) : null; continue; }
-    if (line.startsWith('+++ ')) { newPath = line.startsWith('+++ b/') ? line.slice(6) : null; continue; }
+    if (line.startsWith('diff --git ')) { oldPath = newPath = null; inHunks = false; continue; }
+    if (!inHunks && line.startsWith('--- ')) { oldPath = diffPath(line, 'a/'); continue; }
+    if (!inHunks && line.startsWith('+++ ')) { newPath = diffPath(line, 'b/'); continue; }
     const match = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
     if (!match) continue;
+    inHunks = true;
     appendHunk(files, match, oldPath, newPath, keep);
   }
   return files;
@@ -234,7 +244,7 @@ export function scoreCase({ families, hunks, oldFindings, newFindings, rules }) 
 
 function scanIssue(notes) {
   if (notes?.timeouts > 0) return 'timeout';
-  if (notes?.parse_errors > 0 || notes?.other > 0 || notes?.failed_exit) return 'error';
+  if ((notes?.blocking_parse_errors ?? notes?.parse_errors) > 0 || notes?.other > 0 || notes?.failed_exit) return 'error';
   return null;
 }
 
@@ -264,7 +274,7 @@ export function summarize(rows) {
   const hits = scored.filter(row => row.hunk_hit).length;
   const fileHits = scored.filter(row => row.file_hit).length;
   return {
-    cases: rows.length, scored: scored.length,
+    cases: rows.length, scored: scored.length, file_coverage: summarizeCoverage(rows),
     status: rows.reduce((acc, row) => ({ ...acc, [row.status]: (acc[row.status] ?? 0) + 1 }), {}),
     hunk_hits: hits, hunk_recall_wilson95: wilson(hits, scored.length),
     trace_hits: scored.filter(row => row.trace_hit).length,
@@ -337,15 +347,32 @@ function verifyPreparedBytes(root, expected) {
   }
 }
 
+function readCoverage(path, notes) {
+  try {
+    const raw = readFileSync(path);
+    notes.coverage_report_sha256 = sha256(raw);
+    notes.coverage_report_bytes = raw.length;
+    return engineCoverage(JSON.parse(utf8(raw)));
+  } catch (error) {
+    notes.coverage_report_issue = error.code === 'ENOENT' ? 'missing' : 'invalid';
+    return null;
+  }
+}
+
 // Scan with the source as cwd so SARIF URIs are relative to it.
-export async function scan(context, source, report = `${source}.sarif`) {
+export async function scan(context, source, report = `${source}.sarif`, collectCoverage = false) {
   rmSync(report, { force: true });
   mkdirSync(dirname(report), { recursive: true });
-  const argv = profileArgv(context.profile, { bin: context.bin, rules: context.rules, report, source: '.', extra: context.extra });
+  const coveragePath = collectCoverage && context.profile.engine === 'semgrep'
+    && context.profile.commands[0].argv.includes('--sarif-output') ? report + '.coverage.json' : null;
+  if (coveragePath) rmSync(coveragePath, { force: true });
+  const extra = coveragePath ? [...context.extra, '--json-output', coveragePath, '--verbose'] : context.extra;
+  const argv = profileArgv(context.profile, { bin: context.bin, rules: context.rules, report, source: '.', extra });
   const run = await runProcess(argv[0], argv.slice(1), { cwd: source,
     env: { HOME: process.env.HOME ?? '/tmp', PYTHONIOENCODING: 'utf-8', LANG: 'C.UTF-8' } });
   const execution = { failed_exit: ![0, 1].includes(run.status), exit_code: run.status,
     timeouts: Number(Boolean(run.timedOut)) };
+  const coverage = coveragePath && readCoverage(coveragePath, execution);
   if (!existsSync(report)) {
     throw Object.assign(new Error('Scan produced no SARIF report'), {
       diagnostics: execution,
@@ -358,6 +385,7 @@ export async function scan(context, source, report = `${source}.sarif`) {
     if (!Array.isArray(sarif?.runs) || !sarif.runs.length) throw new Error('Scan produced no SARIF run');
     const findings = sarifFindings(sarif);
     findings.notes = { ...diagnostics, ...scanNotes(sarif) };
+    findings.coverage = coverage;
     if (run.timedOut && !findings.notes.timeouts) findings.notes.timeouts = 1;
     return findings;
   } catch (error) {
@@ -368,19 +396,28 @@ export async function scan(context, source, report = `${source}.sarif`) {
 // Engine timeouts and parse failures, so a miss caused by the engine is not
 // counted as a detector miss.
 export function scanNotes(sarif) {
-  const notes = { timeouts: 0, parse_errors: 0, other: 0 };
+  const notes = { timeouts: 0, parse_errors: 0, blocking_parse_errors: 0, other: 0 };
   for (const run of sarif.runs ?? []) {
     for (const invocation of run.invocations ?? []) {
       if (invocation.executionSuccessful === false) notes.other++;
       for (const note of invocation.toolExecutionNotifications ?? []) {
         const id = `${note.descriptor?.id ?? ''} ${note.message?.text ?? ''}`;
         if (/timeout|timed out/i.test(id)) notes.timeouts++;
-        else if (/syntax|pars/i.test(id)) notes.parse_errors++;
+        else if (/syntax|pars/i.test(id)) {
+          notes.parse_errors++;
+          if (note.level !== 'warning' && note.level !== 'note') notes.blocking_parse_errors++;
+        }
         else if (note.level === 'error') notes.other++;
       }
     }
   }
   return notes;
+}
+
+function readPreparedInventory(directory, digest) {
+  const raw = readFileSync(join(directory, 'changes.z'));
+  if (sha256(raw) !== digest) throw new Error('Prepared changed-file inventory fingerprint differs');
+  return changedFiles(raw);
 }
 
 // Fetch once per case and keep the old/new trees, so several rulesets can be
@@ -393,8 +430,28 @@ function bindPreparedCase(directory, record, key, row) {
   }
   const patch = readFileSync(join(directory, 'diff.patch'));
   if (sha256(patch) !== record.diff_sha256) throw new Error('Prepared diff byte fingerprint differs');
-  return { ...record, hunks: parseHunks(utf8(patch), LANGUAGES[row.ecosystem]),
-    old: join(directory, 'old'), new: record.source_packets.fixed.length ? join(directory, 'new') : null };
+  return { ...record, changes: readPreparedInventory(directory, record.changed_files_sha256),
+    hunks: parseHunks(patch.toString('utf8'), LANGUAGES[row.ecosystem]),
+    old: record.source_packets.old.length ? join(directory, 'old') : null,
+    new: record.source_packets.fixed.length ? join(directory, 'new') : null };
+}
+
+async function prepareChanges(repo, dir, parent, fix, extensions) {
+  const inventory = await gitBytes(repo, 'diff', '--name-status', '--no-renames', '-z', parent, fix, '--');
+  if (inventory.status !== 0) throw new Error('Prepared changed-file inventory could not be read');
+  const changes = changedFiles(inventory.stdout);
+  const additions = new Set(changes.filter(row => row.status === 'A').map(row => row.path));
+  const diff = await gitBytes(repo, '-c', 'core.quotePath=false', 'diff', '-U5', parent, fix, '--',
+    ...extensions.map(ext => '*.' + ext));
+  if (diff.status !== 0) throw new Error('Prepared case diff could not be read');
+  const hunks = parseHunks(diff.stdout.toString('utf8'), extensions);
+  const old = await materialize(repo, parent, Object.keys(hunks).filter(path => !additions.has(path)), join(dir, 'old'));
+  const fixedPaths = [...new Set(Object.values(hunks).map(entry => entry.new_path).filter(Boolean))];
+  const fixed = await materialize(repo, fix, fixedPaths, join(dir, 'new'));
+  writeFileSync(join(dir, 'changes.z'), inventory.stdout);
+  writeFileSync(join(dir, 'diff.patch'), diff.stdout);
+  return { status: 'ready', revisions: { old: parent, fixed: fix },
+    changed_files_sha256: sha256(inventory.stdout), diff_sha256: sha256(diff.stdout), source_packets: { old, fixed } };
 }
 
 async function buildPreparedCase(dir, row) {
@@ -407,21 +464,12 @@ async function buildPreparedCase(dir, row) {
   if (fix !== row.fix) throw new Error('Fetched case revision differs from the manifest');
   const parent = (await git(repo, 'rev-parse', `${fix}^`)).stdout.trim();
   if (!parent) return { status: 'no_parent' };
-  const extensions = LANGUAGES[row.ecosystem];
-  const diff = await gitBytes(repo, 'diff', '-U5', parent, fix, '--', ...extensions.map(ext => '*.' + ext));
-  if (diff.status !== 0) throw new Error('Prepared case diff could not be read');
-  const hunks = parseHunks(utf8(diff.stdout), extensions);
-  if (!Object.keys(hunks).length) return { status: 'no_in_language_source_change' };
-  const old = await materialize(repo, parent, Object.keys(hunks), join(dir, 'old'));
-  const fixed = await materialize(repo, fix, Object.values(hunks).map(entry => entry.new_path).filter(Boolean), join(dir, 'new'));
-  writeFileSync(join(dir, 'diff.patch'), diff.stdout);
-  return { status: 'ready', revisions: { old: parent, fixed: fix },
-    diff_sha256: sha256(diff.stdout), source_packets: { old, fixed } };
+  return prepareChanges(repo, dir, parent, fix, LANGUAGES[row.ecosystem]);
 }
 
 async function prepareCase(workdir, row) {
   const key = caseDigest([row]);
-  const cache = join(workdir, 'cases-v3'), directory = join(cache, key);
+  const cache = join(workdir, 'cases-v4'), directory = join(cache, key);
   const record = join(directory, 'case.json');
   const read = () => bindPreparedCase(directory, JSON.parse(readFileSync(record, 'utf8')), key, row);
   if (existsSync(record)) return read();
@@ -448,18 +496,20 @@ function verifyRulesBytes(context) {
 }
 
 async function observeSide(context, source, report, expected) {
-  if (!source) return { findings: [], diagnostics: null };
+  if (!source) return { findings: [], diagnostics: null, submitted: false };
   let diagnostics;
+  let submitted = false;
   try {
     verifyPreparedBytes(source, expected);
     verifyRulesBytes(context);
-    const findings = await scan(context, source, report);
+    submitted = true;
+    const findings = await scan(context, source, report, true);
     diagnostics = findings.notes;
     verifyRulesBytes(context);
     verifyPreparedBytes(source, expected);
-    return { findings, diagnostics };
+    return { findings, diagnostics, coverage: findings.coverage, submitted, verified: true };
   } catch (error) {
-    return { findings: [], diagnostics: { ...(diagnostics ?? error.diagnostics),
+    return { findings: [], submitted, diagnostics: { ...(diagnostics ?? error.diagnostics),
       other: 1, detail: String(error.message).slice(-300) } };
   }
 }
@@ -474,11 +524,15 @@ async function scoreOne(context, row) {
   const families = familiesFor(row.cwes);
   const result = scoreCase({ families, hunks: prepared.hunks, oldFindings: old.findings,
     newFindings: fixed.findings, rules: context.ruleMap });
-  const rowResult = { status: 'scored', families, changed_files: Object.keys(prepared.hunks).sort(),
+  const coverage = fileCoverage(prepared.changes, { packets: prepared.source_packets,
+    scans: { old, fixed }, extensions: LANGUAGES[row.ecosystem], isTestPath });
+  const status = oldPackets.length ? 'scored' : fixedPackets.length ? 'no_old_side_source' : 'no_in_language_source_change';
+  const rowResult = { status, families, changed_files: Object.keys(prepared.hunks).sort(),
     revisions: prepared.revisions, source_packets: prepared.source_packets, diff_sha256: prepared.diff_sha256,
+    changed_files_sha256: prepared.changed_files_sha256, file_coverage: coverage,
     scan_notes: old.diagnostics, scan_sides: { old: old.diagnostics, fixed: fixed.diagnostics }, ...result };
   const outcome = outcomeOf(rowResult);
-  return { ...rowResult, status: ['hit', 'miss'].includes(outcome) ? 'scored' : 'incomplete', outcome };
+  return { ...rowResult, status: ['error', 'timeout'].includes(outcome) ? 'incomplete' : status, outcome };
 }
 
 async function pool(items, jobs, worker) {
@@ -557,7 +611,8 @@ function measuredOutcome(row) {
 }
 
 function caseInputFingerprint(row) {
-  return caseDigest([row.revisions ?? null, row.diff_sha256 ?? null, row.source_packets ?? null]);
+  return caseDigest([row.revisions ?? null, row.diff_sha256 ?? null, row.source_packets ?? null,
+    row.changed_files_sha256 ?? null]);
 }
 
 function measureCaseChange(old, row, { lost, gained, newErrors, failures }) {
@@ -603,8 +658,9 @@ export function gate({ dev, controls, maxControlIncrease = 0 }) {
 function evaluationEvidence(result) {
   return { manifest_sha256: result.manifest_sha256, cases_sha256: result.manifest_cases_sha256,
     profile_sha256: result.profile_sha256, ruleset_sha256: result.ruleset_sha256, scan_directory: result.scan_directory,
-    cases: result.cases.map(({ ghsa, revisions, source_packets, diff_sha256, scan_sides, outcome, status }) =>
-      ({ ghsa, revisions, source_packets, diff_sha256, scan_sides, outcome, status })) };
+    cases: result.cases.map(({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256, file_coverage,
+      scan_sides, outcome, status }) => ({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256,
+      file_coverage, scan_sides, outcome, status })) };
 }
 
 async function evaluate(opts) {

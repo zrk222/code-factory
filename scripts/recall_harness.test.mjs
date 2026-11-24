@@ -39,6 +39,16 @@ test('hunks keep in-language non-test files with old and new sides', () => {
   assert.ok(isTestPath('pkg/__tests__/a.ts') && isTestPath('a_test.go') && !isTestPath('src/contest.py'));
 });
 
+test('hunk content cannot overwrite paths and file headers retain spaces', () => {
+  const diff = [
+    'diff --git a/café file.py b/café file.py', '--- a/café file.py\t', '+++ b/café file.py\t',
+    '@@ -1 +1 @@', '--- a/other.py', '+++ b/other.py', '@@ -8 +8 @@', '-a', '+b',
+  ].join('\n');
+  assert.deepEqual(parseHunks(diff, ['py']), { 'café file.py': {
+    old: [1, 8], new: [1, 8], new_path: 'café file.py',
+  } });
+});
+
 test('rule families read both inline and block CWE lists', () => {
   const rules = `rules:
   - id: python.request-path-traversal
@@ -140,7 +150,8 @@ test('outcomes separate hits, misses, engine timeouts, unknowns and errors', asy
   const notes = scanNotes({ runs: [{ invocations: [{ toolExecutionNotifications: [
     { descriptor: { id: 'Timeout' }, message: { text: 'Timeout when running rule x on a.py' }, level: 'warning' },
     { descriptor: { id: 'Syntax error' }, message: { text: 'Syntax error at line a.py:3' }, level: 'warning' }] }] }] });
-  assert.deepEqual(notes, { timeouts: 1, parse_errors: 1, other: 0 });
+  assert.deepEqual(notes, { timeouts: 1, parse_errors: 1, blocking_parse_errors: 0, other: 0 });
+  assert.equal(outcomeOf({ status: 'scored', hunk_hit: true, scan_notes: { ...notes, timeouts: 0 } }), 'hit');
 });
 
 test('observation loop queues control alerts once and gates on labels', async () => {
@@ -191,7 +202,7 @@ async function feederFixture(run) {
   const root = mkdtempSync(join(tmpdir(), 'recall-feeder-'));
   try {
     const workdir = join(root, 'work'), caseKey = caseDigest([feederRow]);
-    const prepared = join(workdir, 'cases-v3', caseKey);
+    const prepared = join(workdir, 'cases-v4', caseKey);
     const source = join(prepared, 'old', 'sample.py');
     const old = Buffer.from('print("before")\r\n'), fixed = Buffer.from('print("after")\n');
     const diff = Buffer.from([
@@ -205,8 +216,12 @@ async function feederFixture(run) {
     writeFileSync(join(prepared, 'new', 'sample.py'), fixed);
     const diffPath = join(prepared, 'diff.patch');
     writeFileSync(diffPath, diff);
+    const inventory = Buffer.from('M\0sample.py\0');
+    const inventoryPath = join(prepared, 'changes.z');
+    writeFileSync(inventoryPath, inventory);
     writeFileSync(join(prepared, 'case.json'), JSON.stringify({ status: 'ready', case_sha256: caseKey,
       revisions: { old: '3'.repeat(40), fixed: feederRow.fix }, diff_sha256: sha256(diff),
+      changed_files_sha256: sha256(inventory),
       source_packets: { old: fingerprints(old), fixed: fingerprints(fixed) } }));
 
     const scanner = join(root, 'scanner.mjs');
@@ -214,17 +229,20 @@ async function feederFixture(run) {
       "import { readFileSync, writeFileSync } from 'node:fs';",
       "import { basename } from 'node:path';",
       "const rules = process.argv[process.argv.indexOf('--config') + 1];",
-      "const report = process.argv[process.argv.indexOf('--sarif') + 1];",
+      "const report = process.argv[process.argv.indexOf('--sarif-output') + 1];",
+      "const coverageArgs = process.argv.indexOf('--json-output');",
+      "const files = (await import('node:fs')).readdirSync('.');",
       "const old = basename(process.cwd()) === 'old';",
       "const incomplete = !old && readFileSync(rules, 'utf8').includes('# incomplete');",
       "const results = old ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
+      "if (coverageArgs >= 0) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'skipped.py' && path !== 'unreported.py'), skipped: files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [] }, errors: files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : [] }));",
       "writeFileSync(report, JSON.stringify({ runs: [{ results, invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: issues }] }] }));",
       "process.exitCode = incomplete ? 2 : 0;",
     ].join('\n'));
     const profile = join(root, 'profile.json');
-    writeFileSync(profile, JSON.stringify({ commands: [{ argv: ['scanner', scanner, '--config', '{rules}',
-      '--sarif', '{report}', '{source}'] }] }));
+    writeFileSync(profile, JSON.stringify({ engine: 'semgrep', commands: [{ argv: ['scanner', scanner, '--config', '{rules}',
+      '--sarif-output', '{report}', '{source}'] }] }));
     const rowText = JSON.stringify({ cases: [feederRow], cases_sha256: caseKey }, null, 2) + '\n';
     const manifest = join(root, 'manifest.json');
     writeFileSync(manifest, rowText);
@@ -232,7 +250,7 @@ async function feederFixture(run) {
     const rules = 'rules:\n  - id: fixture.review\n    metadata:\n      cwe: ["CWE-79"]\n';
     writeFileSync(baseline, rules);
     writeFileSync(candidate, rules + '# incomplete\n');
-    await run({ root, workdir, source, manifest, profile, baseline, candidate, diffPath, old, diff,
+    await run({ root, workdir, source, manifest, profile, baseline, candidate, diffPath, inventoryPath, old, diff,
       opts: { workdir, profile, opengrep: process.execPath, jobs: 1 } });
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
@@ -248,6 +266,9 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   assert.equal(before.cases[0].diff_sha256, sha256(diff));
   assert.equal(before.cases[0].scan_sides.old.report_sha256,
     sha256(readFileSync(join(workdir, before.scan_directory, feederRow.ghsa, 'old.sarif'))));
+  assert.equal(before.cases[0].scan_sides.old.coverage_report_sha256,
+    sha256(readFileSync(join(workdir, before.scan_directory, feederRow.ghsa, 'old.sarif.coverage.json'))));
+  assert.equal(before.cases[0].file_coverage.fixed[0].reason, 'engine_scan_paths');
 
   const output = join(root, 'evaluation.json');
   const engine = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
@@ -264,6 +285,7 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   assert.equal(observed.status, 'incomplete');
   assert.equal(observed.scan_sides.fixed.parse_errors, 1);
   assert.equal(observed.scan_sides.fixed.exit_code, 2);
+  assert.equal(observed.file_coverage.fixed[0].sha256, before.cases[0].file_coverage.fixed[0].sha256);
   assert.equal(observed.scan_sides.fixed.report_sha256,
     sha256(readFileSync(join(workdir, dev.after_evidence.scan_directory, feederRow.ghsa, 'new.sarif'))));
 
@@ -272,17 +294,23 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   assert.match(gate({ dev: [{ before, after: drifted }], controls: [] }).failures[0], /source byte fingerprints differ/);
 }));
 
-test('changed prepared source and diff bytes cannot yield a measured case', () => feederFixture(async fixture => {
-  const { source, manifest, baseline, diffPath, opts, old } = fixture;
+test('changed prepared source, diff and inventory bytes cannot yield a measured case', () => feederFixture(async fixture => {
+  const { source, manifest, baseline, diffPath, inventoryPath, opts, old, diff } = fixture;
   writeFileSync(source, Buffer.from('print("before")\n'));
   const sourceDrift = await scoreManifest(manifest, baseline, opts);
   assert.equal(sourceDrift.summary.scored, 0);
   assert.match(sourceDrift.cases[0].scan_sides.old.detail, /source byte fingerprints differ/);
+  assert.equal(sourceDrift.cases[0].file_coverage.old[0].state, 'not_submitted');
   writeFileSync(source, old);
   writeFileSync(diffPath, 'changed\n');
   const diffDrift = await scoreManifest(manifest, baseline, opts);
   assert.equal(diffDrift.summary.scored, 0);
   assert.match(diffDrift.cases[0].detail, /diff byte fingerprint differs/);
+  writeFileSync(diffPath, diff);
+  writeFileSync(inventoryPath, 'changed\n');
+  const inventoryDrift = await scoreManifest(manifest, baseline, opts);
+  assert.equal(inventoryDrift.summary.scored, 0);
+  assert.match(inventoryDrift.cases[0].detail, /inventory fingerprint differs/);
 }));
 
 
@@ -299,11 +327,18 @@ test('local Git source bytes survive preparation, scanning, and the reported pac
     const afterBytes = Buffer.from('print("after")\n');
     const source = join(repository, 'sample.py');
     writeFileSync(source, beforeBytes);
-    git('add', 'sample.py');
+    for (const file of ['retired.py', 'clean file.py', 'View.vue', 'skipped.py', 'partial.py', 'unreported.py']) {
+      writeFileSync(join(repository, file), 'before\n');
+    }
+    git('add', '.');
     commit('old label');
     const parent = git('rev-parse', 'HEAD');
     writeFileSync(source, afterBytes);
-    git('add', 'sample.py');
+    for (const file of ['new.py', 'clean file.py', 'View.vue', 'skipped.py', 'partial.py', 'unreported.py']) {
+      writeFileSync(join(repository, file), 'after\n');
+    }
+    git('rm', 'retired.py');
+    git('add', '.');
     commit('new label');
     const fix = git('rev-parse', 'HEAD');
     const current = { ...feederRow, fix };
@@ -316,13 +351,25 @@ test('local Git source bytes survive preparation, scanning, and the reported pac
         GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: override,
         GIT_CONFIG_VALUE_0: 'https://github.com/example/label-demo.git', GIT_ALLOW_PROTOCOL: 'file' } });
     assert.equal(result.status, 0, result.stderr);
-    const captured = JSON.parse(readFileSync(out, 'utf8')).cases[0];
-    const directory = join(workdir, 'cases-v3', caseDigest([current]));
+    const scored = JSON.parse(readFileSync(out, 'utf8'));
+    const captured = scored.cases[0];
+    const directory = join(workdir, 'cases-v4', caseDigest([current]));
     assert.equal(captured.status, 'scored', captured.detail);
+    assert.equal(scored.summary.scored, 1);
+    assert.equal(scored.summary.hunk_hits, 1);
     assert.deepEqual(captured.revisions, { old: parent, fixed: fix });
     assert.deepEqual(readFileSync(join(directory, 'old', 'sample.py')), beforeBytes);
     assert.deepEqual(readFileSync(join(directory, 'new', 'sample.py')), afterBytes);
-    assert.equal(captured.source_packets.old[0].sha256, sha256(beforeBytes));
-    assert.equal(captured.source_packets.fixed[0].sha256, sha256(afterBytes));
+    const coverage = (side, path) => captured.file_coverage[side].find(row => row.path === path);
+    assert.equal(coverage('old', 'sample.py').sha256, sha256(beforeBytes));
+    assert.equal(coverage('fixed', 'sample.py').sha256, sha256(afterBytes));
     assert.equal(captured.diff_sha256, sha256(readFileSync(join(directory, 'diff.patch'))));
+    assert.equal(captured.changed_files_sha256, sha256(readFileSync(join(directory, 'changes.z'))));
+    assert.equal(coverage('old', 'new.py').reason, 'added_in_fix');
+    assert.equal(coverage('fixed', 'retired.py').reason, 'deleted_in_fix');
+    assert.equal(coverage('old', 'View.vue').reason, 'outside_ecosystem_language');
+    assert.equal(coverage('old', 'clean file.py').reason, 'engine_scan_paths');
+    assert.equal(coverage('old', 'skipped.py').reason, 'exceeded_size_limit');
+    assert.equal(coverage('old', 'partial.py').state, 'partial');
+    assert.equal(coverage('old', 'unreported.py').state, 'unreported');
   }));
