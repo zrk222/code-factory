@@ -5036,12 +5036,36 @@ def _stored_password_hash(slot, value) -> bool:
     )
 
 
+_CREDENTIAL_CONFIGURATION_KEY = re.compile(
+    r"(?:^|_)(?:SECRET|SECRET_KEY|PASSWORD|PASSWD|PWD|TOKEN|API_KEY|APIKEY|"
+    r"ACCESS_KEY|PRIVATE_KEY|SIGNING_KEY|CLIENT_SECRET|SALT|HMAC|AUTH_KEY)"
+    r"(?:_[0-9]+)?$"
+)
+
+
 def _configuration_key(audit, key) -> bool:
+    """An upper-case configuration key whose last word names the credential itself.
+
+    ``SECRET_KEY``, ``MAIL_PASSWORD`` and ``SECRET_KEY_HMAC_2`` qualify;
+    metadata about a credential (``TOKEN_EXPIRY``, ``PASSWORD_RESET_URL``,
+    ``PASSWORD_HASHERS``) does not.
+    """
     return (
         isinstance(key, str)
         and key.isupper()
         and key.isidentifier()
-        and _credential_slot_name(audit, key)
+        and bool(_CREDENTIAL_CONFIGURATION_KEY.search(key))
+    )
+
+
+def _configuration_value(audit, value: str) -> bool:
+    text = value.strip()
+    return not (
+        audit._PLACEHOLDER_SECRET.match(text)
+        or text.isdigit()
+        or text.startswith(("/", "./", "../"))
+        or "://" in text
+        or _DOTTED_IDENTIFIER.fullmatch(text)
     )
 
 
@@ -5101,20 +5125,18 @@ def _literal_slots(audit, nodes):
     return slots
 
 
-def _positional_evidence(audit, node, located, reported):
+def _positional_evidence(audit, node, located, consumed):
     """Name the evidence that makes one located literal a credential candidate."""
     _, slot, configured = located
     if _known_format_secret(audit, node.value, standalone=True):
         return "recognized_key_format"
-    if configured:
-        placeholder = audit._PLACEHOLDER_SECRET.match(node.value.strip())
-        return None if placeholder else "configuration_slot"
+    if configured and _configuration_value(audit, node.value):
+        return "configuration_slot"
+    if id(node) in consumed or audit._PLACEHOLDER_SECRET.match(node.value.strip()):
+        return None
     if not _credential_slot_name(audit, slot) or not secret_shaped_value(node.value):
         return None
-    if _stored_password_hash(slot, node.value):
-        return None
-    covered = any(first <= node.lineno <= last for first, last in reported)
-    return None if covered else "generated_shape"
+    return None if _stored_password_hash(slot, node.value) else "generated_shape"
 
 
 def _string_literals(nodes):
@@ -5127,7 +5149,7 @@ def _string_literals(nodes):
     ]
 
 
-def positional_credential_findings(tree, relative, nodes, existing):
+def positional_credential_findings(tree, relative, nodes, consumed=frozenset()):
     """Report credential literals outside ``NAME = literal`` assignments.
 
     A literal qualifies by where it sits and what it is: a recognized vendor key
@@ -5135,7 +5157,9 @@ def positional_credential_findings(tree, relative, nodes, existing):
     attribute, keyword or mapping slot (stored password hashes excepted); or any
     non-placeholder value written to an application signing/credential
     configuration slot (``app.secret_key``, ``app.config["SECRET_KEY"]``).
-    The literal itself never enters the finding.
+    ``consumed`` holds the ids of literal nodes an HTTP credential finding
+    already reports, so the same literal is not reported twice while other
+    literals in that call still are. The literal itself never enters the finding.
     """
     from . import review_audits as audit
 
@@ -5144,15 +5168,10 @@ def positional_credential_findings(tree, relative, nodes, existing):
     if not literals:
         return []
     slots = _literal_slots(audit, nodes)
-    reported = [
-        (row.get("line", 0), row.get("end_line", row.get("line", 0)))
-        for row in existing
-        if row.get("code") == "SECURITY_LITERAL_HTTP_CREDENTIAL"
-    ]
     findings = []
     for node in literals:
         located = slots.get(id(node), ("expression", None, False))
-        evidence = located and _positional_evidence(audit, node, located, reported)
+        evidence = located and _positional_evidence(audit, node, located, consumed)
         if not evidence:
             continue
         slot = located[1]
@@ -5171,3 +5190,22 @@ def positional_credential_findings(tree, relative, nodes, existing):
             )
         )
     return sorted(findings, key=lambda row: (row["line"], row["column"]))
+
+
+def consumed_http_literals(tree, aliases, nodes, findings):
+    """Ids of the exact literals behind reported HTTP credential findings."""
+    calls = {
+        (row["line"], row["column"])
+        for row in findings
+        if row["code"] == "SECURITY_LITERAL_HTTP_CREDENTIAL"
+    }
+    if not calls:
+        return frozenset()
+    from .semantic_credential_sensor import _auth_literal_nodes
+
+    return frozenset(
+        id(value)
+        for node in (ast.walk(tree) if nodes is None else nodes)
+        if isinstance(node, ast.Call) and (node.lineno, node.col_offset) in calls
+        for value, _, _ in _auth_literal_nodes(node, aliases)
+    )

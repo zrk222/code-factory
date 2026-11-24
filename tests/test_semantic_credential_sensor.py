@@ -6344,7 +6344,68 @@ def test_positional_credential_findings_walks_the_tree_when_no_inventory_is_give
     from factoryline.provenance import positional_credential_findings
 
     tree = ast.parse(f"client.token = {_SHAPED!r}\nauth(password={_SHAPED!r})\n")
-    http = [{"code": "SECURITY_LITERAL_HTTP_CREDENTIAL", "line": 2, "end_line": 2}]
-    rows = positional_credential_findings(tree, "app/x.py", None, http)
+    consumed = {id(tree.body[1].value.keywords[0].value)}
+    rows = positional_credential_findings(tree, "app/x.py", None, consumed)
     assert [(row["line"], row["severity"]) for row in rows] == [(1, "CRITICAL")]
-    assert positional_credential_findings(ast.parse("x = 1\n"), "a.py", None, []) == []
+    assert positional_credential_findings(ast.parse("x = 1\n"), "a.py", None) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "app.config['TOKEN_EXPIRY'] = '3600'\n",
+        "app.config['PASSWORD_RESET_URL'] = '/reset/password'\n",
+        "app.config['PASSWORD_HASHERS'] = 'django.contrib.auth.hashers.Argon2'\n",
+        "app.config['SECRET_KEY'] = '${APP_SECRET}'\n",
+        "app.config['SECRET_KEY'] = 'https://vault.example.com/v1/app'\n",
+        "app.config.update(TOKEN_LIFETIME='86400', SECRET_KEY_FILE='/run/key')\n",
+    ],
+)
+def test_configuration_slot_skips_credential_metadata_and_placeholders(source):
+    assert _positional(source) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "connect(password='${oauth2ClientSecretV2}')\n",
+        "CLIENT = {'client_secret': '${oauth2ClientSecretV2}'}\n",
+        "self.token = '<generated-token-goes-here-1a2b3c>'\n",
+    ],
+)
+def test_generated_shape_rule_skips_placeholders(source):
+    assert _positional(source) == []
+
+
+def test_http_credential_dedupe_is_per_literal_not_per_call():
+    source = (
+        "import requests\n"
+        "requests.get('https://api.example.org', headers={\n"
+        f"    'Authorization': {'Bearer ' + _SHAPED!r},\n"
+        f"    'X-API-Key': {_SHAPED[::-1]!r},\n"
+        "})\n"
+    )
+    tree = ast.parse(source)
+    rows = configuration_and_credential_findings(
+        tree, _security_aliases(list(ast.walk(tree))), "app/client.py"
+    )
+    codes = [(row["code"], row["line"]) for row in rows]
+    assert ("SECURITY_LITERAL_HTTP_CREDENTIAL", 2) in codes
+    assert ("SECURITY_HARDCODED_SECRET", 4) in codes
+
+
+def test_consumed_http_literals_names_only_the_reported_literals():
+    from factoryline.provenance import consumed_http_literals
+
+    tree = ast.parse(
+        "import requests\n"
+        f"requests.get('https://a.example', auth=('svc', {_SHAPED!r}))\n"
+        f"requests.get('https://b.example', auth=('svc', {_SHAPED[::-1]!r}))\n"
+    )
+    first = tree.body[1].value
+    rows = [{"code": "SECURITY_LITERAL_HTTP_CREDENTIAL", "line": 2, "column": 0}]
+    consumed = consumed_http_literals(
+        tree, _security_aliases(list(ast.walk(tree))), None, rows
+    )
+    assert consumed == {id(first.keywords[0].value.elts[1])}
+    assert consumed_http_literals(tree, {}, None, []) == frozenset()
