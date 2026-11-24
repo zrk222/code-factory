@@ -94,7 +94,7 @@ jobs:
           printf '%s  %s\n' '724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7' review.gguf | sha256sum -c -
       - name: Run the read-only specialty inference
         run: |
-          env -i PATH=/usr/bin:/bin llama/build/bin/llama-server -m review.gguf --host 127.0.0.1 --port 18080 -c 16384 -t 4 > model.log 2>&1 &
+          env -i PATH=/usr/bin:/bin llama/build/bin/llama-server -m review.gguf --host 127.0.0.1 --port 18080 -c 24576 -t 4 > model.log 2>&1 &
           model_pid=$!
           trap 'kill "$model_pid" 2>/dev/null || true; wait "$model_pid" 2>/dev/null || true' EXIT
           python - <<'PY'
