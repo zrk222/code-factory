@@ -18,6 +18,7 @@ test('compiled fixture parity ignores known timing fields and detects native evi
             descriptor: { id: 'cli/file-coverage-baseline' }, timeUtc: 'first',
             properties: { attributes: { durationMilliseconds: 20 } },
           }] }],
+          properties: { metricResults: [{ ruleId: 'count', value: 2 }, { ruleId: 'types', value: 1 }] },
           results: [{ ruleId: 'fixture-control', locations: [{ physicalLocation: { region: { startLine: 2 } } }] }],
         }],
       },
@@ -34,7 +35,11 @@ test('compiled fixture parity ignores known timing fields and detects native evi
   const notification = repeat.sarif.runs[0].invocations[0].toolExecutionNotifications[0];
   notification.timeUtc = 'second';
   notification.properties.attributes.durationMilliseconds = 12;
+  repeat.sarif.runs[0].properties.metricResults.reverse();
   assertStructuralParity(first, repeat);
+  notification.descriptor.id = 'unexpected-diagnostic';
+  assert.throws(() => assertStructuralParity(first, repeat), /changed on repeat \(report\)/);
+  notification.descriptor.id = 'cli/file-coverage-baseline';
   repeat.sarif.runs[0].results[0].locations[0].physicalLocation.region.startLine = 3;
   assert.throws(() => assertStructuralParity(first, repeat), /Native report or source coverage changed/);
   repeat.sarif.runs[0].results[0].locations[0].physicalLocation.region.startLine = 2;

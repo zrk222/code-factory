@@ -29,12 +29,14 @@ export function assertStructuralParity(first, repeat) {
     for (const run of report.runs) {
       for (const invocation of run.invocations ?? []) {
         for (const notification of invocation.toolExecutionNotifications ?? []) {
+          delete notification.timeUtc;
           if (['cli/file-coverage-baseline', 'cli/platform'].includes(notification.descriptor?.id)) {
-            delete notification.timeUtc;
             delete notification.properties?.attributes?.durationMilliseconds;
           }
         }
       }
+      // CodeQL exports these counters as an unordered list.
+      run.properties?.metricResults?.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
     }
     // Wrapper executions and archive/stream hashes are retained in the raw bundle.
     // These fields describe the analysis result and the exact inputs it covered.
@@ -44,7 +46,11 @@ export function assertStructuralParity(first, repeat) {
     } = coverage;
     return {
       report, challenges, schema, complete, errors, fallback, mode, obligations,
-      codeql_query_execution, profile_sha256, ruleset_sha256, source_accounting, sources, tool_version,
+      queries: codeql_query_execution?.rules?.map(({ rule_id, query_path, query_sha256, result_sets }) =>
+        ({ rule_id, query_path, query_sha256, result_sets })),
+      query_inventory: codeql_query_execution?.query_inventory_sha256,
+      suite: codeql_query_execution?.suite_sha256,
+      profile_sha256, ruleset_sha256, source_accounting, sources, tool_version,
       source_rows: coverage.codeql_source_execution?.rows,
       archived_sources: coverage.codeql_source_execution?.archived_sources,
     };
