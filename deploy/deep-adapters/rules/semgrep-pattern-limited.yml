@@ -1947,3 +1947,475 @@ rules:
       confidence: MEDIUM
       cwe: ["CWE-79"]
       scope: Typed servlet request values written to the response writer or stream.
+  - id: python.parameter-shell-command
+    message: A function parameter is built into a shell command; pass an argv list without shell=True, or quote it with shlex.quote.
+    severity: INFO
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def $F(..., $P, ...):
+                ...
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:self|cls|cmd|cmds|command|commands|cmdline|cmd_line|shell_cmd|script|argv|args)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+      - pattern: pipes.quote(...)
+      - pattern: int(...)
+      - pattern: str(int(...))
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FN($CMD, ..., shell=True, ...)
+              - pattern: Popen($CMD, ..., shell=True, ...)
+              - pattern: os.system($CMD)
+              - pattern: os.popen($CMD, ...)
+              - pattern: subprocess.getoutput($CMD)
+              - pattern: subprocess.getstatusoutput($CMD)
+              - pattern: asyncio.create_subprocess_shell($CMD, ...)
+          - focus-metavariable: $CMD
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Function parameters to shell-parsed command text in the same function; callers are not checked.
+  - id: javascript.parameter-shell-command
+    message: A function parameter is built into a shell command; use execFile or spawn with an argument array instead of shell text.
+    severity: INFO
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $F(..., $P, ...) { ... }
+              - pattern-inside: function (..., $P, ...) { ... }
+              - pattern-inside: (..., $P, ...) => { ... }
+              - pattern-inside: async (..., $P, ...) => { ... }
+              - pattern-inside: async function $F(..., $P, ...) { ... }
+              - pattern-inside: |
+                  class $C { ... $M(..., $P, ...) { ... } ... }
+              - pattern-inside: |
+                  class $C { ... async $M(..., $P, ...) { ... } ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: quote(...)
+      - pattern: shellQuote.quote(...)
+      - pattern: shellescape(...)
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+              - pattern: execAsync($CMD, ...)
+              - pattern: $CP.exec($CMD, ...)
+              - pattern: $CP.execSync($CMD, ...)
+              - pattern: 'spawn($CMD, $A, {..., shell: true, ...})'
+              - pattern: 'spawnSync($CMD, $A, {..., shell: true, ...})'
+          - pattern-not-inside: $RE.exec(...)
+          - pattern-not-inside: function (..., exec, ...) { ... }
+          - pattern-not-inside: function $FN(..., exec, ...) { ... }
+          - metavariable-regex: {metavariable: $CP, regex: '^(cp|child_process|childProcess|child|proc|shell)$'}
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+              - pattern: execAsync($CMD, ...)
+          - pattern-not-inside: function (..., exec, ...) { ... }
+          - pattern-not-inside: function $FN(..., exec, ...) { ... }
+          - pattern-not-inside: (..., exec, ...) => { ... }
+          - focus-metavariable: $CMD
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Function parameters to child_process exec/execSync or shell spawn text in the same function.
+  - id: php.parameter-shell-command
+    message: A function parameter is built into a shell command; wrap each operand in escapeshellarg or use an argument array with proc_open.
+    severity: INFO
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: function $F(..., $P, ...) { ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: escapeshellarg(...)
+      - pattern: escapeshellcmd(...)
+      - pattern: intval(...)
+      - pattern: (int) $V
+      - pattern: ProcessUtils::escapeArgument(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: shell_exec($CMD)
+              - pattern: system($CMD, ...)
+              - pattern: passthru($CMD, ...)
+              - pattern: popen($CMD, ...)
+              - pattern: proc_open($CMD, ...)
+              - pattern: pcntl_exec($CMD, ...)
+              - pattern: \exec($CMD, ...)
+              - pattern: \shell_exec($CMD)
+              - pattern: \system($CMD, ...)
+              - pattern: \passthru($CMD, ...)
+              - pattern: \popen($CMD, ...)
+              - pattern: \proc_open($CMD, ...)
+          - metavariable-pattern:
+              metavariable: $CMD
+              patterns:
+                - pattern-not: '[...]'
+          - focus-metavariable: $CMD
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Function parameters to shell-parsed exec/system/popen text in the same function.
+  - id: go.parameter-shell-command
+    message: A function parameter is built into shell command text; pass it as a separate exec.Command argument instead of through sh -c.
+    severity: INFO
+    languages: [go]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: func $F(..., $P $T, ...) { ... }
+              - pattern-inside: func $F(..., $P $T, ...) $R { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:cmd|cmds|command|commands|cmdline|script|args|argv|ctx)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: strconv.Itoa(...)
+      - pattern: strconv.Quote(...)
+      - pattern: shellescape.Quote(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command($SHELL, $FLAG, $CMD, ...)
+              - pattern: exec.CommandContext($C, $SHELL, $FLAG, $CMD, ...)
+          - metavariable-regex: {metavariable: $SHELL, regex: '^"(/bin/|/usr/bin/)?(sh|bash|zsh|cmd|cmd\.exe|powershell|pwsh)"$'}
+          - metavariable-regex: {metavariable: $FLAG, regex: '^"(-c|/c|/C|-Command)"$'}
+          - focus-metavariable: $CMD
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Function parameters to the text of an sh -c style exec.Command in the same function.
+  - id: ruby.parameter-shell-command
+    message: A method parameter is interpolated into a shell command string; pass separate arguments to system or Open3 instead.
+    severity: INFO
+    languages: [ruby]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def $F(..., $P, ...)
+                ...
+              end
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: Shellwords.escape(...)
+      - pattern: $X.shellescape
+      - pattern: $X.to_i
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: system($CMD)
+              - pattern: Kernel.system($CMD)
+              - pattern: exec($CMD)
+              - pattern: spawn($CMD)
+              - pattern: IO.popen($CMD, ...)
+              - pattern: Open3.$FN($CMD)
+              - pattern: Open3.$FN($CMD, {...})
+              - pattern: '`...`'
+          - pattern-not: Open3.$FN(*$X, ...)
+          - metavariable-pattern:
+              metavariable: $CMD
+              patterns:
+                - pattern-not: '[...]'
+          - focus-metavariable: $CMD
+      - pattern: '`...#{$X}...`'
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Method parameters to single-string shell commands or backticks in the same method.
+  - id: python.parameter-sql-text
+    message: A function parameter is formatted into SQL text; pass it as a bound query parameter instead.
+    severity: INFO
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def $F(..., $P, ...):
+                ...
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:self|cls|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|raw_sql|apps|schema_editor)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      - pattern: $C.quote(...)
+      - pattern: sql.Identifier(...)
+      - pattern: sql.Literal(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $CUR.execute($Q, ...)
+              - pattern: $CUR.executemany($Q, ...)
+              - pattern: $CUR.executescript($Q)
+              - pattern: $DB.raw($Q, ...)
+              - pattern: text($Q)
+              - pattern: sqlalchemy.text($Q)
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: f"..."
+                    - pattern: '"..." % $X'
+                    - pattern: '"...".format(...)'
+                    - pattern: '"..." + $X'
+                    - pattern: '$X + "..."'
+                    - pattern: $NAME
+          - focus-metavariable: $Q
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-89"]
+      scope: Function parameters to execute/raw/text SQL text in the same function; bound parameters in the second argument are not sinks.
+  - id: php.parameter-sql-text
+    message: A function parameter is concatenated or formatted into SQL text; bind it as a prepared-statement parameter instead.
+    severity: INFO
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: function $F(..., $P, ...) { ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|rawsql|table|column|columns|grammar|builder|config|options|connection)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: intval(...)
+      - pattern: (int) $V
+      - pattern: (float) $V
+      - pattern: $DB->quote(...)
+      - pattern: $DB->escape(...)
+      - pattern: $DB->escapeString(...)
+      - pattern: $DB->real_escape_string(...)
+      - pattern: mysqli_real_escape_string(...)
+      - pattern: $DB->quoteIdentifier(...)
+      - pattern: esc_sql(...)
+      - pattern: $DB->prepare(...)
+      - patterns:
+          - pattern: $OBJ->$M(...)
+          - metavariable-regex: {metavariable: $M, regex: '^(?i:compile|wrap|quote|escape|sanitize|grammar)\w*$'}
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB->query($Q, ...)
+              - pattern: $DB->exec($Q)
+              - pattern: $DB->executeQuery($Q, ...)
+              - pattern: $DB->executeStatement($Q, ...)
+              - pattern: $DB->fetchAllAssociative($Q, ...)
+              - pattern: $DB->fetchAssociative($Q, ...)
+              - pattern: $DB->fetchOne($Q, ...)
+              - pattern: $DB->fetchFirstColumn($Q, ...)
+              - pattern: $DB->get_results($Q, ...)
+              - pattern: $DB->get_row($Q, ...)
+              - pattern: $DB->get_var($Q, ...)
+          - metavariable-regex: {metavariable: $DB, regex: '^\$'}
+          - metavariable-regex: {metavariable: $Q, regex: '^[^\[]'}
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: $A . $B
+                    - pattern: sprintf(...)
+                    - pattern: \sprintf(...)
+                    - pattern: '"..."'
+                    - pattern-regex: ^\$\w+$
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern-either:
+              - pattern: mysqli_query($C, $Q, ...)
+              - pattern: DB::select($Q, ...)
+              - pattern: DB::statement($Q, ...)
+              - pattern: DB::unprepared($Q)
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: $A . $B
+                    - pattern: sprintf(...)
+                    - pattern: '"..."'
+                    - pattern-regex: ^\$\w+$
+          - focus-metavariable: $Q
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-89"]
+      scope: Function parameters to query/fetch/exec SQL text in the same function; bound parameter arrays are not sinks.
+  - id: go.parameter-sql-text
+    message: A function parameter is formatted into SQL text; pass it as a query argument with a placeholder instead.
+    severity: INFO
+    languages: [go]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: func $F(..., $P $T, ...) { ... }
+              - pattern-inside: func $F(..., $P $T, ...) $R { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|ctx|tx|db)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: strconv.Itoa(...)
+      - pattern: strconv.FormatInt(...)
+      - pattern: pq.QuoteIdentifier(...)
+      - pattern: pq.QuoteLiteral(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Query($Q, ...)
+              - pattern: $DB.QueryContext($C, $Q, ...)
+              - pattern: $DB.QueryRow($Q, ...)
+              - pattern: $DB.QueryRowContext($C, $Q, ...)
+              - pattern: $DB.Exec($Q, ...)
+              - pattern: $DB.ExecContext($C, $Q, ...)
+              - pattern: $DB.Raw($Q, ...)
+              - pattern: $DB.Select($DST, $Q, ...)
+              - pattern: $DB.Get($DST, $Q, ...)
+          - metavariable-regex: {metavariable: $DB, regex: '(?i)(^|\.)(db|tx|conn|sqlx?|pool|database|dbconn|dbpool|\w*(db|tx|conn|pool))$'}
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: fmt.Sprintf(...)
+                    - pattern: $A + $B
+                    - pattern: $V
+                    - pattern: $V.String()
+          - focus-metavariable: $Q
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-89"]
+      scope: Function parameters to database/sql, sqlx or gorm query text in the same function.
+  - id: javascript.parameter-sql-text
+    message: A function parameter is interpolated into SQL text; use a placeholder and pass the value in the parameters array.
+    severity: INFO
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $F(..., $P, ...) { ... }
+              - pattern-inside: async function $F(..., $P, ...) { ... }
+              - pattern-inside: (..., $P, ...) => { ... }
+              - pattern-inside: async (..., $P, ...) => { ... }
+              - pattern-inside: |
+                  class $C { ... $M(..., $P, ...) { ... } ... }
+              - pattern-inside: |
+                  class $C { ... async $M(..., $P, ...) { ... } ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: $DB.escape(...)
+      - pattern: $DB.escapeId(...)
+      - pattern: mysql.escape(...)
+      - pattern: format(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.query($Q, ...)
+              - pattern: $DB.execute($Q, ...)
+              - pattern: $DB.raw($Q, ...)
+              - pattern: $DB.$queryRawUnsafe($Q, ...)
+              - pattern: $DB.$executeRawUnsafe($Q, ...)
+              - pattern: $DB.exec($Q)
+              - pattern: $DB.prepare($Q)
+              - pattern: $DB.all($Q, ...)
+              - pattern: $DB.get($Q, ...)
+              - pattern: $DB.run($Q, ...)
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: '`...`'
+                    - pattern: $A + $B
+          - metavariable-pattern:
+              metavariable: $Q
+              pattern-regex: (?i)\b(select\s[\s\S]+\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|where\s|order\s+by)\b
+          - metavariable-regex: {metavariable: $DB, regex: '(?i)(^|\.)(db|database|conn|connection|client|pool|knex|sequelize|prisma|tx|trx|sql|pg|mysql|sqlite|\w*(db|conn|pool|client))$'}
+          - focus-metavariable: $Q
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-89"]
+      scope: Function parameters interpolated into template or concatenated SQL passed to a driver call in the same function.
+  - id: python.tarfile-member-extract-without-filter
+    message: A tar member is extracted without filter=; members can carry absolute or parent-relative paths and links. Pass filter="data".
+    severity: INFO
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              with tarfile.open(...) as $T:
+                ...
+          - pattern-inside: |
+              with tarfile.TarFile(...) as $T:
+                ...
+          - pattern-inside: |
+              $T = tarfile.TarFile(...)
+              ...
+      - pattern-either:
+          - pattern: $T.extractall(...)
+          - pattern: $T.extract(...)
+      - pattern-not: $T.extractall(..., filter=$F, ...)
+      - pattern-not: $T.extract(..., filter=$F, ...)
+      - pattern-not-inside: |
+          $T.extraction_filter = $F
+          ...
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-22"]
+      scope: with-block and TarFile handles extracted without filter=; complements python.tarfile-extractall-without-filter.
