@@ -217,3 +217,41 @@ def test_shared_receipt_discovery_and_reader_preserve_workspace_scope(
         read_receipt(root, malformed)
     with pytest.raises(ValueError):
         read_receipt(root, outside)
+
+
+@pytest.mark.parametrize("stage", ["app-review", "quality-audit"])
+def test_focused_status_shows_recorded_repair_guidance(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    stage: str,
+) -> None:
+    from factoryline import canonical_sha, compat_sha
+    from factoryline.app_review_gate import SCHEMA as REVIEW_SCHEMA
+    from factoryline.appforge_quality_audit import RECEIPT_SCHEMA as QUALITY_SCHEMA
+
+    current = {
+        "schema": REVIEW_SCHEMA if stage == "app-review" else QUALITY_SCHEMA,
+        "marker": "APP_REVIEW_BLOCKED"
+        if stage == "app-review"
+        else "APPFORGE_QUALITY_AUDIT_BLOCKED",
+        "ok": False,
+        "findings": [{"remediation": "Publish a reachable privacy policy."}],
+    }
+    digest = canonical_sha if stage == "app-review" else compat_sha
+    _write(
+        tmp_path / ".factory/appforge" / f"{stage}.json",
+        {**current, "receipt_sha256": digest(current)},
+    )
+    args = ["revenue", "appforge-status", "--root", str(tmp_path), "--stage", stage]
+    assert main([*args, "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_messages"] == ["Publish a reachable privacy policy."]
+    assert main(args) == 0
+    assert "Publish a reachable privacy policy." in capsys.readouterr().out
+
+    if stage == "quality-audit":
+        assert (
+            main(["revenue", "appforge-status", "--root", str(tmp_path), "--json"]) == 0
+        )
+        full = json.loads(capsys.readouterr().out)
+        assert "findings" not in full["quality_audit"]["latest"]

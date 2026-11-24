@@ -180,6 +180,39 @@ def test_release_rehearsal_cli_writes_only_the_local_sealed_receipt(
     assert output.is_file()
 
 
+def test_release_rehearsal_status_reports_stale_and_ready_receipts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    candidate, candidate_path = _candidate(tmp_path)
+    assurance = _assurance(tmp_path, candidate)
+    profile = _profile(tmp_path, candidate)
+    second_profile = tmp_path / "second-profile.json"
+    second_profile.write_bytes(profile.read_bytes())
+    ready = Path(".factory/appforge/release-rehearsal-41.json")
+    stale = Path(".factory/appforge/release-rehearsal-42.json")
+    create_release_rehearsal(tmp_path, candidate_path, assurance, profile, ready)
+    create_release_rehearsal(tmp_path, candidate_path, assurance, second_profile, stale)
+    second_profile.unlink()
+
+    assert (
+        main(
+            [
+                "revenue",
+                "appforge-status",
+                "--root",
+                str(tmp_path),
+                "--stage",
+                "release-rehearsal",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert f"Stale or invalid receipt {stale.as_posix()}" in output
+    assert f"APPFORGE_RELEASE_REHEARSAL_READY  {ready.as_posix()}" in output
+
+
 @pytest.mark.parametrize(
     ("channel", "not_applicable"),
     [

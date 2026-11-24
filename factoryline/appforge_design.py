@@ -8,6 +8,7 @@ import hashlib
 import json
 from collections.abc import Callable, Iterator
 
+from . import canonical_sha, compat_sha
 from .revenueforge import AUTHORITY, RevenueForgeError
 from .revenue_evidence import _atomic_json, _local, _read_json, _seal
 from .app_review_gate import app_review_gate_projection
@@ -138,11 +139,13 @@ def appforge_design_projection(
                 f"Unknown AppForge stage. Choose from {choices}.",
             )
         project, command = selected
+        status = project(workspace)
         return {
             "schema": "factory.appforge.stage-projection.v1",
             "marker": "APPFORGE_STAGE_READ_ONLY",
             "stage": stage.replace("_", "-"),
-            "status": project(workspace),
+            "status": status,
+            "repair_messages": _focused_repair_messages(workspace, status),
             "help_command": ["factory", "revenue", command, "--help"],
         }
     inventory = tuple(receipt_paths(workspace, "*.json"))
@@ -156,22 +159,58 @@ def appforge_design_projection(
     }
 
 
+def _repair_messages(findings: object) -> Iterator[str]:
+    if not isinstance(findings, list):
+        return
+    for finding in findings[:10]:
+        if not isinstance(finding, dict):
+            continue
+        for key in ("detail", "message", "remediation", "repair"):
+            value = finding.get(key)
+            if isinstance(value, str) and value.strip():
+                yield value[:500]
+
+
+def _focused_repair_messages(workspace: Path, status: dict[str, Any]) -> list[str]:
+    latest = status.get("latest") or {}
+    findings = latest.get("findings")
+    if findings:
+        return list(dict.fromkeys(_repair_messages(findings)))
+    path = latest.get("path")
+    if (
+        not isinstance(path, str)
+        or latest.get("ok") is not False
+        and "BLOCKED" not in str(latest.get("marker", ""))
+    ):
+        return []
+    try:
+        receipt, _ = _read_json(workspace, Path(path))
+    except (RevenueForgeError, OSError, RuntimeError, ValueError):
+        return []
+    seal = receipt.pop("receipt_sha256", None)
+    if seal == latest.get("receipt_sha256") and seal in (
+        canonical_sha(receipt),
+        compat_sha(receipt),
+    ):
+        return list(dict.fromkeys(_repair_messages(receipt.get("findings"))))
+    return []
+
+
 def _stage_status_lines(label: str, status: dict[str, Any]) -> Iterator[str]:
     latest = status.get("latest") or {}
     marker = latest.get("marker")
-    if status.get("invalid_count") and not marker:
+    if status.get("invalid_count"):
         yield f"{label} needs evidence review"
         yield from status.get("blockers", {}).values()
-    elif isinstance(marker, str):
-        yield f"{label}  {marker}"
-        findings = latest.get("findings")
-        if isinstance(findings, list):
-            for finding in findings[:10]:
-                if isinstance(finding, dict) and isinstance(finding.get("detail"), str):
-                    yield finding["detail"]
+        invalid = status.get("invalid")
+        if isinstance(invalid, list):
+            yield from (f"Stale or invalid receipt {path}" for path in invalid[:10])
+    if isinstance(marker, str):
+        path = latest.get("path")
+        yield f"{label}  {marker}" + (f"  {path}" if isinstance(path, str) else "")
     elif status.get("current_count"):
         yield f"{label} has {status['current_count']} local receipts"
-    else:
+    elif not status.get("invalid_count"):
         yield f"{label} has no local receipts"
 
 
@@ -180,6 +219,7 @@ def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
     stage = payload.get("stage")
     if stage is not None:
         yield from _stage_status_lines(stage, payload["status"])
+        yield from payload.get("repair_messages", [])
         yield " ".join(payload["help_command"])
         return
     found = False
@@ -188,6 +228,7 @@ def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
         if status.get("current_count") or status.get("invalid_count"):
             found = True
             yield from _stage_status_lines(name.replace("_", "-"), status)
+            yield from _repair_messages((status.get("latest") or {}).get("findings"))
     if not found:
         yield "No local AppForge receipts. Start with factory revenue appforge-init --help."
 

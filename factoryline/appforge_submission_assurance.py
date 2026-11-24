@@ -13,6 +13,7 @@ from .revenue_evidence import read_receipt, receipt_paths
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import errno
 import hashlib
 import json
 import os
@@ -144,6 +145,38 @@ def _valid_receipt(value: dict[str, Any], schema: str) -> bool:
     return value.get("schema") == schema and _sha(core) == supplied
 
 
+def _publish_with_claim(source: Path, destination: Path) -> None:
+    """Serialize AppForge publishers on volumes that cannot create hard links."""
+    claim = destination.with_name(f".{destination.name}.publishing")
+    with claim.open("xb"):
+        pass
+    try:
+        if os.path.lexists(destination):
+            raise FileExistsError(destination)
+        os.replace(source, destination)
+    finally:
+        claim.unlink()
+
+
+def _publish_exclusive(source: Path, destination: Path) -> None:
+    try:
+        try:
+            os.link(source, destination)
+        except OSError as exc:
+            unavailable = {errno.EPERM, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}
+            if exc.errno not in unavailable and getattr(exc, "winerror", None) not in (
+                1,
+                50,
+            ):
+                raise
+            _publish_with_claim(source, destination)
+    except FileExistsError as exc:
+        raise RevenueForgeError(
+            "APPFORGE_ASSURANCE_OUTPUT_EXISTS",
+            f"{destination.name} is immutable or is being published; choose a new path",
+        ) from exc
+
+
 def _atomic_json(
     path: Path, payload: dict[str, Any], *, exclusive: bool = False
 ) -> None:
@@ -158,13 +191,7 @@ def _atomic_json(
             handle.flush()
             os.fsync(handle.fileno())
         if exclusive:
-            try:
-                os.link(temporary, path)
-            except FileExistsError as exc:
-                raise RevenueForgeError(
-                    "APPFORGE_ASSURANCE_OUTPUT_EXISTS",
-                    "output dossier is immutable; choose a new path",
-                ) from exc
+            _publish_exclusive(Path(temporary), path)
         else:
             os.replace(temporary, path)
     finally:
@@ -641,7 +668,7 @@ def _write_submission_reports(
         published = []
         try:
             for kind, path in paths.items():
-                os.link(staged[kind], path)
+                _publish_exclusive(staged[kind], path)
                 published.append(path)
             verify_current_submission_assurance(workspace, core, candidate)
             _atomic_json(destination, core, exclusive=True)

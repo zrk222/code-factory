@@ -1,5 +1,6 @@
 from __future__ import annotations
 import builtins
+import errno
 import hashlib
 import json
 import subprocess
@@ -438,9 +439,21 @@ def _quality(tmp_path: Path) -> Path:
     return tmp_path / ".factory/appforge/quality-audit.json"
 
 
+def _disable_hard_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable(*_args: object) -> None:
+        raise OSError(errno.ENOTSUP, "hard links are unavailable")
+
+    monkeypatch.setattr(assurance_module.os, "link", unavailable)
+
+
+@pytest.mark.parametrize("hard_links", [True, False])
 def test_submission_dossier_only_emits_markdown_and_pdf_after_all_build_bound_gates_pass(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hard_links: bool,
 ) -> None:
+    if not hard_links:
+        _disable_hard_links(monkeypatch)
     receipt = verify_submission_assurance(
         tmp_path,
         _assurance_contract(tmp_path),
@@ -583,9 +596,14 @@ def test_report_failure_cannot_unlock_rehearsal_and_can_retry_same_paths(
     )
 
 
+@pytest.mark.parametrize("hard_links", [True, False])
 def test_submission_dossier_blocks_candidate_mismatch_without_emitting_final_reports(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hard_links: bool,
 ) -> None:
+    if not hard_links:
+        _disable_hard_links(monkeypatch)
     saas = _saas(tmp_path)
     value = json.loads(saas.read_text(encoding="utf-8"))
     value["release_candidate"]["build_number"] = "wrong"
@@ -610,6 +628,20 @@ def test_submission_dossier_blocks_candidate_mismatch_without_emitting_final_rep
         for item in receipt["findings"]
     )
     assert not (tmp_path / ".factory/appforge/reports").exists()
+
+
+def test_portable_publication_does_not_replace_an_existing_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_hard_links(monkeypatch)
+    target = tmp_path / "receipt.json"
+    target.write_bytes(b"existing dossier")
+    with pytest.raises(RevenueForgeError) as error:
+        assurance_module._atomic_json(target, {"ok": True}, exclusive=True)
+    assert error.value.code == "APPFORGE_ASSURANCE_OUTPUT_EXISTS"
+    assert target.read_bytes() == b"existing dossier"
+    assert list(tmp_path.iterdir()) == [target]
 
 
 def test_submission_dossier_fails_closed_when_the_contract_requires_oracle_authority(
