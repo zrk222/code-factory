@@ -13,7 +13,7 @@ jobs:
   analyze:
     if: github.repository == 'zrk222/code-factory'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -70,6 +70,12 @@ jobs:
                                           "obligations", "report_sha256", "coverage_sha256", "challenge_sha256")}
               for lane in evidence["lanes"]
           ]
+          # The signed binding covers full evidence. Omit repeated local rerun instructions from the model input.
+          for observation in observations:
+              observation["findings"] = [
+                  {key: value for key, value in finding.items() if key not in {"rerun", "closure_requirement"}}
+                  for finding in observation["findings"]
+              ]
           binding = {
               "run_id": evidence["run_id"], "candidate_sha256": evidence["candidate_sha256"],
               "manifest_sha256": evidence["manifest_sha256"], "evidence_sha256": digest(evidence),
@@ -79,7 +85,7 @@ jobs:
           Path("review-model-input.json").write_text(json.dumps({
               "binding": binding, "observations": observations,
               "sources": {key: (target / key).read_text(encoding="utf-8") for key in sorted(packet["files"])},
-          }, ensure_ascii=False))
+          }, ensure_ascii=False, separators=(",", ":")))
           PY
       - name: Prepare the pinned offline reviewer
         run: |
@@ -134,7 +140,7 @@ jobs:
                             data=canonical({"messages": messages, "temperature": 0, "max_tokens": 1600,
                                             "response_format": {"type": "json_object"}}),
                             headers={"Content-Type": "application/json"})
-          with urlopen(request, timeout=600) as response:
+          with urlopen(request, timeout=1200) as response:
               raw = response.read(131_073)
           assert len(raw) <= 131_072
           native = json.loads(raw)
