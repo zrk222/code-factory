@@ -62,4 +62,27 @@ start a browser session, approve a change, merge, deploy, or publish on its own.
 | Existing UI change | Visible regression and design-token review inputs | Acceptance criteria and release risk |
 | Enterprise workflow | A repeatable artifact alongside Proof Debt | Policy, accessibility assessment, security, and merge authority |
 
+## Compare a journey before and after
+
+Run the same reviewed visual-behavior contract against two local fixture
+snapshots. Give the snapshots separate roots and keep the component paths,
+browser profiles, and expected steps comparable. Use
+`factory quality-harness visual` with `--execute` and the reviewed contract
+SHA-256 to capture each receipt. Keep the baseline receipt even when a behavior
+check fails.
+
+```powershell
+factory quality-harness visual-compare .factory/before.json .factory/after.json --root before --after-root after --html-out .factory/journey-review.html --json
+```
+
+Open the HTML report in a browser. Follow the first unresolved step, then
+expand the evidence to inspect both runs and the local component diff. Review the
+diff in your editor before applying a change. The report contains local source
+excerpts, so treat it as workspace data when sharing.
+
+A completion screen can offer another action while keeping an explicit exit.
+For an expense confirmation, replay the original save, the confirmation
+announcement, keyboard dismissal and focus return, and the optional start of
+another expense. Record the actual input method and viewport with each result.
+
 For the complete team flow, read the [Teams and Enterprise Operations Manual](ENTERPRISE_TEAMS_OPERATIONS.md).

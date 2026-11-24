@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 COMMAND_GROUP = "quality-harness"
@@ -71,6 +73,19 @@ def add_quality_parser(sub: Any) -> None:
     visual.add_argument("--root", default=".")
     visual.add_argument("--out")
     visual.add_argument("--json", action="store_true")
+    visual_compare = quality_sub.add_parser(
+        "visual-compare", help="compare two verified visual journey receipts"
+    )
+    visual_compare.add_argument("before", help="baseline visual behavior receipt")
+    visual_compare.add_argument("after", help="candidate visual behavior receipt")
+    visual_compare.add_argument("--root", default=".", help="baseline workspace root")
+    visual_compare.add_argument(
+        "--after-root", help="candidate workspace root, defaults to --root"
+    )
+    visual_compare.add_argument(
+        "--html-out", help="fresh standalone HTML report path within --root"
+    )
+    visual_compare.add_argument("--json", action="store_true")
 
 
 def add_evidence_parser(sub: Any) -> None:
@@ -151,6 +166,8 @@ def _execute_quality_command(
             out=Path(args.out) if args.out else None,
         )
         return result, 0 if result["decision"] == "PASS" else 1
+    if args.quality_cmd == "visual-compare":
+        return _run_visual_comparison(args)
     result = verify_quality_harness(
         Path(args.root),
         Path(args.manifest),
@@ -161,6 +178,37 @@ def _execute_quality_command(
     )
     code = 0 if result["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW" else 1
     return result, code
+
+
+def _run_visual_comparison(args: Any) -> tuple[dict[str, Any], int]:
+    from .full_stack_ux_harness import compare_journey_evidence
+
+    root = Path(args.root).resolve()
+    after_root = Path(args.after_root).resolve() if args.after_root else root
+    comparison = compare_journey_evidence(
+        root, Path(args.before), after_root, Path(args.after)
+    )
+    result = {**comparison, "decision": comparison["status"]}
+    if args.html_out:
+        from .full_stack_ux_harness import (
+            _visual_destination,
+            render_journey_comparison,
+        )
+
+        destination = _visual_destination(root, args.html_out)
+        if destination.suffix.lower() != ".html":
+            raise ValueError("comparison report must use the .html extension")
+        html = render_journey_comparison(comparison)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(dir=destination.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+        try:
+            temporary.write_bytes(html.encode("utf-8"))
+            os.link(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        result["path"] = destination.relative_to(root).as_posix()
+    return result, 0 if comparison["status"] == "PASS" else 1
 
 
 def _quality_error(exc: Exception) -> dict[str, Any]:

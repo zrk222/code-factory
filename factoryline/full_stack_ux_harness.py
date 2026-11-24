@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 
+from collections.abc import Mapping, Sequence
+from difflib import unified_diff
+from html import escape
 import json
 import os
 import tempfile
 from pathlib import Path, PureWindowsPath
 from typing import Any
+from urllib.parse import urlsplit
 from . import utc_iso as _now
 from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_or_bytes_sha as _sha
@@ -564,6 +568,12 @@ def run_visual_behavior_gate(
 
 def verify_visual_behavior_receipt(root, receipt_path) -> dict[str, Any]:
     """Recompute current bindings and detector outcomes without starting a browser."""
+    result, _, _ = _verify_visual_behavior(root, receipt_path)
+    return result
+
+
+def _verify_visual_behavior(root, receipt_path):
+    """Expose the verified contract and independent observations to comparison."""
     workspace = Path(root).resolve()
     source = _visual_path(workspace, receipt_path)
     receipt = _visual_read(source)
@@ -591,12 +601,13 @@ def verify_visual_behavior_receipt(root, receipt_path) -> dict[str, Any]:
             )
         )
     if receipt["decision"] == "NOT_RUN":
-        return {
+        result = {
             **receipt,
             "decision": "INCOMPLETE" if findings else "NOT_RUN",
             "findings": findings,
             "path": str(source),
         }
+        return result, contract, findings
     findings.extend(_visual_process_findings(receipt["execution"]))
     findings.extend(_visual_profile_findings(contract, receipt["identity"]))
     findings.extend(
@@ -606,13 +617,17 @@ def verify_visual_behavior_receipt(root, receipt_path) -> dict[str, Any]:
     findings.extend(
         _visual_prestige_replay(workspace, contract["design"], receipt["prestige"])
     )
-    findings.extend(receipt["findings"])
-    return {
-        **receipt,
-        "decision": _visual_decision(findings),
-        "findings": findings,
-        "path": str(source),
-    }
+    combined = [*findings, *receipt["findings"]]
+    return (
+        {
+            **receipt,
+            "decision": _visual_decision(combined),
+            "findings": combined,
+            "path": str(source),
+        },
+        contract,
+        findings,
+    )
 
 
 def _visual_prestige_replay(root, design, recorded):
@@ -830,9 +845,12 @@ def _visual_browser_contract(browser):
 
 
 def _visual_case_contract(root, case):
+    fields = (
+        "id baseline action element state response tokens timeout_ms max_changed_ratio"
+    )
     _visual_keys(
         case,
-        "id baseline action element state response tokens timeout_ms max_changed_ratio",
+        fields + (" steps" if isinstance(case, dict) and "steps" in case else ""),
     )
     _visual_text(case["id"], 128)
     _visual_number(case["timeout_ms"], 50, 10000)
@@ -851,6 +869,34 @@ def _visual_case_contract(root, case):
     _visual_list(case["tokens"], 0, 32)
     for token in case["tokens"]:
         _visual_token_contract(token)
+    if "steps" in case:
+        _visual_steps_contract(case["steps"])
+
+
+def _visual_steps_contract(steps):
+    _visual_list(steps, 1, 16)
+    names = set()
+    for step in steps:
+        _visual_keys(step, "id kind selector value")
+        _visual_text(step["id"], 128)
+        _visual_text(step["selector"])
+        if step["id"] in names:
+            _visual_bad("duplicate journey step")
+        names.add(step["id"])
+        _visual_step_value(step["kind"], step["value"])
+
+
+def _visual_step_value(kind, value):
+    if kind in ("click", "focus") and value is None:
+        return
+    if kind == "press" and value in ("Enter", "Space", "Escape", "Tab", "Shift+Tab"):
+        return
+    if kind == "visible" and type(value) is bool:
+        return
+    if kind == "count":
+        _visual_number(value, 0, 500)
+        return
+    _visual_bad("unsupported journey step")
 
 
 def _visual_action_contract(case):
@@ -1097,9 +1143,20 @@ def _visual_capture(browser, root, output, contract, case, index):
                 _visual_action(page, case, contract["target"], deadline, responses)
             )
         _visual_budget(page, deadline)
-        observed.update(_visual_element(page, case))
+        observed.update(
+            observed["before_action"]
+            if "steps" in case
+            else _visual_element(page, case)
+        )
         _visual_budget(page, deadline)
         observed["tokens"] = [_visual_style(page, token) for token in case["tokens"]]
+        if (
+            "steps" in case
+            and observed["action_identity"]
+            and not observed.get("timed_out")
+            and observed.get("state_visible") is True
+        ):
+            observed["steps"] = _visual_capture_steps(page, case["steps"], deadline)
     except Exception as error:
         observed["capture_error"] = type(error).__name__
     finally:
@@ -1142,6 +1199,38 @@ def _visual_capture(browser, root, output, contract, case, index):
         observed.get("timed_out", False) or observed["duration_ms"] > case["timeout_ms"]
     )
     return observed
+
+
+def _visual_capture_steps(page, steps, deadline):
+    observations = []
+    for step in steps:
+        ok = _visual_capture_step(page, step, deadline)
+        observations.append({"id": step["id"], "ok": ok})
+        if not ok:
+            break
+    return observations
+
+
+def _visual_capture_step(page, step, deadline):
+    timeout = _visual_budget(page, deadline)
+    target = page.locator(step["selector"])
+    count = target.count()
+    kind, value = step["kind"], step["value"]
+    if kind == "count":
+        return count == value
+    if kind == "visible":
+        return count <= 1 and (count == 1 and target.is_visible()) is value
+    if count != 1:
+        return False
+    if kind == "click":
+        if not target.is_visible() or not target.is_enabled():
+            return False
+        target.click(timeout=timeout)
+        return True
+    focused = target.and_(page.locator(":focus")).count() == 1
+    if kind == "press" and focused:
+        page.keyboard.press(value)
+    return focused
 
 
 def _visual_route(route, target, deadline):
@@ -1382,6 +1471,7 @@ def _visual_case_findings(root, expected, observed):
     ):
         add("E_VISUAL_STATE", "terminal UI text differs")
     findings.extend(_visual_response_findings(expected, observed))
+    _visual_step_findings(expected, observed, add)
     for token, actual in zip(
         expected["tokens"], observed.get("tokens", []), strict=True
     ):
@@ -1400,6 +1490,35 @@ def _visual_case_findings(root, expected, observed):
             pixel["state"] == "INCOMPLETE",
         )
     return findings
+
+
+def _visual_step_findings(expected, observed, add):
+    steps = expected.get("steps", [])
+    results = observed.get("steps", [])
+    if not steps and not results:
+        return
+    if not _visual_step_trace_valid(steps, results):
+        add("E_VISUAL_STEP_EVIDENCE", "journey steps are missing or out of order", True)
+    elif not results[-1]["ok"]:
+        add("E_VISUAL_STEP", f"journey step failed: {results[-1]['id']}")
+
+
+def _visual_step_trace_valid(steps, results):
+    if not isinstance(results, list) or not 0 < len(results) <= len(steps):
+        return False
+    for expected, observed in zip(steps, results):
+        if (
+            observed
+            not in (
+                {"id": expected["id"], "ok": True},
+                {"id": expected["id"], "ok": False},
+            )
+            or type(observed["ok"]) is not bool
+        ):
+            return False
+    return all(row["ok"] for row in results[:-1]) and (
+        len(steps) == len(results) or not results[-1]["ok"]
+    )
 
 
 def _visual_response_findings(expected, observed):
@@ -1627,3 +1746,724 @@ def _visual_bounded_bytes(path):
     if not raw or len(raw) > MAX_EVIDENCE_BYTES:
         _visual_bad("file outside evidence byte budget")
     return raw
+
+
+# Journey receipt comparison
+
+JOURNEY_COMPARISON_SCHEMA = "factory.journey-evidence.comparison.v1"
+MAX_DIFF_BYTES = 16_384
+MAX_DIFF_LINES = 240
+MAX_SOURCE_BYTES = 32_768
+MAX_SOURCE_LINES = 1_024
+_SOURCE_SUFFIXES = {".html", ".css", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".py"}
+_OBSERVED = {"PASS", "FAIL"}
+
+
+class _PreviewSourceDrift(ValueError):
+    pass
+
+
+def _display(value: str) -> str:
+    """Keep visible text and make control characters visible without executing them."""
+    return "".join(char if char.isprintable() else ascii(char)[1:-1] for char in value)
+
+
+def _finding(code: str, detail: str) -> dict[str, Any]:
+    return {"code": code, "detail": detail, "case_id": None, "outcome": "INCOMPLETE"}
+
+
+def _read_side(root: Path, receipt_path: Path | str) -> tuple[dict, dict | None, dict]:
+    summary: dict[str, Any] = {
+        "status": "INCOMPLETE",
+        "receipt_sha256": None,
+        "contract_sha256": None,
+        "components": [],
+        "findings": [],
+        "profile": None,
+        "evidence": [],
+    }
+    try:
+        receipt, contract, independent_findings = _verify_visual_behavior(
+            root, receipt_path
+        )
+        binding = receipt["contract"]
+        components = [
+            {
+                **component,
+                "path": _visual_path(root, component["path"])
+                .relative_to(root)
+                .as_posix(),
+            }
+            for component in receipt["candidate"]
+        ]
+        if len({component["path"] for component in components}) != len(components):
+            raise ValueError("candidate paths must identify distinct files")
+        status = receipt["decision"]
+        observed_findings = receipt["findings"]
+        if status == "FAIL":
+            observed_findings = independent_findings
+            outcomes = {item["outcome"] for item in observed_findings}
+            if outcomes != {"FAIL"}:
+                status = "INCOMPLETE"
+                observed_findings = [
+                    _finding(
+                        "E_JOURNEY_FAILURE_UNVERIFIED",
+                        "Recorded failure could not be reproduced from bound observations.",
+                    )
+                ]
+        findings = list(
+            {
+                (item["code"], item["detail"], item["case_id"], item["outcome"]): {
+                    key: item[key] for key in ("code", "detail", "case_id", "outcome")
+                }
+                for item in observed_findings
+            }.values()
+        )
+        steps = {
+            case["id"]: {step["id"]: step["ok"] for step in case.get("steps", [])}
+            for case in receipt["cases"]
+        }
+        for item in findings:
+            if item["code"] == "E_VISUAL_STEP":
+                failed_step = next(
+                    (
+                        step
+                        for step, ok in steps.get(item["case_id"], {}).items()
+                        if ok is False
+                    ),
+                    None,
+                )
+                if failed_step is not None:
+                    item["step_id"] = failed_step
+        summary.update(
+            status=status,
+            receipt_sha256=receipt["receipt_sha256"],
+            contract_sha256=binding["sha256"],
+            components=sorted(components, key=lambda item: item["path"]),
+            findings=findings,
+            profile=receipt["identity"] if status in _OBSERVED else None,
+            evidence=receipt["artifacts"] if status != "NOT_RUN" else [],
+        )
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        AttributeError,
+        IndexError,
+        RuntimeError,
+    ) as error:
+        code = (
+            error.code
+            if isinstance(error, FullStackUXHarnessError)
+            else "E_JOURNEY_RECEIPT"
+        )
+        summary["findings"] = [
+            _finding(code, "Receipt or bound evidence failed verification.")
+        ]
+        return summary, None, {}
+    return summary, contract, steps
+
+
+def _scope(contract: dict, components: list[dict]) -> dict:
+    target = urlsplit(contract["target"])
+    design = contract["design"]
+    return {
+        "journey": [
+            contract["project_id"],
+            contract["journey_id"],
+            contract["reviewer"],
+        ],
+        "target": [target.hostname, target.path or "/", target.query],
+        "browser": {
+            key: value
+            for key, value in contract["browser"].items()
+            if key != "executable"
+        },
+        "cases": {case["id"]: case for case in contract["cases"]},
+        "design": None
+        if design is None
+        else [
+            design["contract"],
+            design["html"]["path"],
+            [item["path"] for item in design["css"]],
+        ],
+        "components": {item["path"]: item["kind"] for item in components},
+    }
+
+
+def _case_status(side: dict, case_id: str) -> str:
+    if side["status"] not in _OBSERVED:
+        return side["status"]
+    return (
+        "FAIL"
+        if any(item["case_id"] == case_id for item in side["findings"])
+        else "PASS"
+    )
+
+
+def _step_status(side: dict, observed: dict, case_id: str, step_id: str) -> str:
+    if side["status"] not in _OBSERVED:
+        return side["status"]
+    ok = observed.get(case_id, {}).get(step_id)
+    if ok is None:
+        return "INCOMPLETE"
+    return "PASS" if ok is True else "FAIL"
+
+
+def _case_rows(
+    contract: dict, before: dict, after: dict, before_steps: dict, after_steps: dict
+) -> list[dict]:
+    cases = []
+    for case in contract["cases"]:
+        case_id = case["id"]
+        row = {
+            "id": case_id,
+            "before_status": _case_status(before, case_id),
+            "after_status": _case_status(after, case_id),
+        }
+        if "steps" in case:
+            row["steps"] = [
+                {
+                    "id": step["id"],
+                    "before_status": _step_status(
+                        before, before_steps, case_id, step["id"]
+                    ),
+                    "after_status": _step_status(
+                        after, after_steps, case_id, step["id"]
+                    ),
+                }
+                for step in case["steps"]
+            ]
+        cases.append(row)
+    return cases
+
+
+def _source_lines(root: Path, binding: dict) -> list[str]:
+    path = _visual_path(root, binding["path"])
+    relative = path.relative_to(root)
+    if (
+        path.suffix.lower() not in _SOURCE_SUFFIXES
+        or binding["kind"] != "source"
+        or any(part.startswith(".") for part in relative.parts)
+    ):
+        raise ValueError("candidate is outside the fixture source preview scope")
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_SOURCE_BYTES + 1)
+    if len(raw) > MAX_SOURCE_BYTES:
+        raise ValueError("candidate exceeds the preview byte limit")
+    if _sha(raw) != binding["sha256"]:
+        raise _PreviewSourceDrift("candidate bytes changed")
+    source = raw.decode("utf-8")
+    if any(not (char.isprintable() or char in "\t\r\n") for char in source):
+        raise ValueError("candidate contains non-displayable source")
+    lines = source.splitlines(keepends=True)
+    if len(lines) > MAX_SOURCE_LINES:
+        raise ValueError("candidate exceeds the preview line limit")
+    return lines
+
+
+def _diff(
+    before_root: Path, before: dict, after_root: Path, after: dict
+) -> tuple[list[dict], dict]:
+    before_by_path = {item["path"]: item for item in before["components"]}
+    after_by_path = {item["path"]: item for item in after["components"]}
+    changes = [
+        {
+            "path": path,
+            "kind": item["kind"],
+            "before_sha256": before_by_path[path]["sha256"],
+            "after_sha256": item["sha256"],
+        }
+        for path, item in after_by_path.items()
+        if before_by_path[path]["sha256"] != item["sha256"]
+    ]
+    if not changes:
+        return [], {"status": "UNCHANGED", "text": "", "truncated": False}
+
+    lines = []
+    line_count = 0
+    remaining = MAX_DIFF_BYTES
+    try:
+        sources = [
+            (
+                path,
+                _source_lines(before_root, before_by_path[path]),
+                _source_lines(after_root, after_by_path[path]),
+            )
+            for path in (change["path"] for change in changes)
+        ]
+        for path, before_lines, after_lines in sources:
+            for line in unified_diff(
+                before_lines,
+                after_lines,
+                fromfile=f"a/{_display(path)}",
+                tofile=f"b/{_display(path)}",
+            ):
+                if not line.endswith("\n"):
+                    line += "\n\\ No newline at end of file\n"
+                size = len(line.encode("utf-8"))
+                line_count += line.count("\n")
+                if size > remaining or line_count > MAX_DIFF_LINES:
+                    return changes, {
+                        "status": "AVAILABLE",
+                        "text": "".join(lines),
+                        "truncated": True,
+                    }
+                remaining -= size
+                lines.append(line)
+    except _PreviewSourceDrift:
+        raise
+    except (OSError, ValueError, RuntimeError):
+        return changes, {
+            "status": "UNAVAILABLE",
+            "text": "",
+            "truncated": False,
+            "reason": "A changed candidate is outside the verified fixture text preview limits.",
+        }
+    return changes, {"status": "AVAILABLE", "text": "".join(lines), "truncated": False}
+
+
+def _next_action(status: str, findings: list[dict]) -> str | None:
+    if status == "PASS":
+        return None
+    if status == "INCOMPLETE":
+        return "Capture and verify both fixtures under the same reviewed journey and browser profile."
+    code = findings[0]["code"]
+    actions = {
+        "E_VISUAL_SEMANTICS": "Inspect the accessible control for the failing case and rerun it.",
+        "E_VISUAL_STATE": "Inspect the terminal UI state for the failing case and rerun it.",
+        "E_VISUAL_RUNTIME": "Inspect the same-action API response and terminal UI state, then rerun the case.",
+        "E_VISUAL_PIXELS": "Inspect the captured screenshot against the reviewed baseline and rerun the case.",
+        "E_VISUAL_TOKEN": "Inspect the computed style against the reviewed token expectation and rerun the case.",
+        "E_VISUAL_STEP": "Inspect the failed journey step and rerun the reviewed case.",
+    }
+    return actions.get(
+        code, "Inspect the recorded finding and rerun the reviewed journey."
+    )
+
+
+def _display_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: item if key == "text" else _display_payload(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_display_payload(item) for item in value]
+    return _display(value) if isinstance(value, str) else value
+
+
+def compare_journey_evidence(
+    before_root: Path | str,
+    before_receipt: Path | str,
+    after_root: Path | str,
+    after_receipt: Path | str,
+) -> dict[str, Any]:
+    """Replay two fixture receipts and compare the after result under equivalent scope."""
+    baseline = Path(before_root).resolve()
+    candidate = Path(after_root).resolve()
+    before, before_contract, before_steps = _read_side(baseline, before_receipt)
+    after, after_contract, after_steps = _read_side(candidate, after_receipt)
+    result: dict[str, Any] = {
+        "schema": JOURNEY_COMPARISON_SCHEMA,
+        "fixture_only": True,
+        "authority": {"release": False, "approval": False, "publication": False},
+        "claim_boundary": "Local fixture replay with unauthenticated receipt origin. The preview can include local fixture source excerpts.",
+        "project_id": None,
+        "journey_id": None,
+        "status": "INCOMPLETE",
+        "before": before,
+        "after": after,
+        "cases": [],
+        "findings": [],
+        "component_hints": [],
+        "source_diff": {"status": "UNAVAILABLE", "text": "", "truncated": False},
+    }
+
+    if before_contract is None or after_contract is None:
+        result["findings"] = [*before["findings"], *after["findings"]]
+    else:
+        before_scope = _scope(before_contract, before["components"])
+        after_scope = _scope(after_contract, after["components"])
+        differing = [
+            key for key in before_scope if before_scope[key] != after_scope[key]
+        ]
+        if differing:
+            result["findings"] = [
+                _finding(
+                    "E_JOURNEY_SCOPE", "Reviewed scope differs: " + ", ".join(differing)
+                )
+            ]
+        else:
+            result.update(_compare_matching(baseline, before, candidate, after))
+            if not any(
+                item["code"] == "E_JOURNEY_PROFILE" for item in result["findings"]
+            ):
+                result["cases"] = _case_rows(
+                    after_contract, before, after, before_steps, after_steps
+                )
+            result.update(
+                project_id=after_contract["project_id"],
+                journey_id=after_contract["journey_id"],
+            )
+    result["next_action"] = _next_action(result["status"], result["findings"])
+    result = _display_payload(result)
+    return {**result, "comparison_sha256": _sha(result)}
+
+
+def _compare_matching(
+    before_root: Path, before: dict, after_root: Path, after: dict
+) -> dict[str, Any]:
+    if before["status"] not in _OBSERVED or after["status"] not in _OBSERVED:
+        return {
+            "findings": [
+                _finding(
+                    "E_JOURNEY_INCOMPLETE",
+                    "Both receipts need complete browser observations.",
+                ),
+                *before["findings"],
+                *after["findings"],
+            ],
+        }
+    if before["profile"] != after["profile"]:
+        return {
+            "findings": [
+                _finding(
+                    "E_JOURNEY_PROFILE", "Captured browser or tool identities differ."
+                )
+            ],
+        }
+
+    try:
+        hints, preview = _diff(before_root, before, after_root, after)
+    except _PreviewSourceDrift:
+        return {
+            "findings": [
+                _finding(
+                    "E_VISUAL_SOURCE_DRIFT",
+                    "Bound source changed while preparing the preview.",
+                )
+            ],
+        }
+    return {
+        "status": after["status"],
+        "findings": after["findings"],
+        "component_hints": hints,
+        "source_diff": preview,
+    }
+
+
+# Standalone evidence report
+
+_JOURNEY_REPORT_STYLE = """
+:root {
+  color-scheme: light;
+  --ink: #152526; --muted: #475f60; --paper: #f1f5f3; --surface: #fff;
+  --edge: #ccd9d5; --accent: #17564e; --pass: #205847; --pass-bg: #e4f3ed;
+  --fail: #802c20; --fail-bg: #fff0eb; --pending: #644909; --pending-bg: #fbf1d4;
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); }
+main { max-width: 68rem; margin: auto; padding: 3rem 1.5rem; }
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.5; letter-spacing: -.035em; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1rem; }
+p { max-width: 65ch; overflow-wrap: anywhere; }
+p + p { margin-top: .65rem; }
+.eyebrow { color: var(--muted); font-weight: 650; margin-bottom: .5rem; }
+.muted { color: var(--muted); }
+.card, details { background: var(--surface); border: 1px solid var(--edge); border-radius: .8rem; }
+.card { padding: 1.4rem; }
+.intro { margin-bottom: 1.4rem; }
+.intro p:last-child { margin-top: .7rem; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; }
+.content { display: grid; gap: .85rem; }
+.row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; }
+.readout { margin: .65rem 0; font-size: 1.1rem; }
+.action { align-self: start; }
+.action p { margin: .5rem 0 1rem; }
+a { color: var(--accent); text-underline-offset: .16em; }
+.button { background: var(--accent); color: #fff; border-radius: .5rem; min-height: 44px;
+  display: inline-flex; align-items: center; padding: .5rem 1rem; font-weight: 650;
+  transition: background-color .15s ease; }
+.button:hover { background: #104439; }
+@media (prefers-reduced-motion: reduce) { .button { transition: none; } }
+.return { display: inline-flex; align-items: center; min-height: 44px; margin-top: .7rem; }
+:focus-visible { outline: 3px solid #925718; outline-offset: 3px; }
+.status { display: inline-block; border-radius: .35rem; padding: .15rem .5rem;
+  font-weight: 700; background: var(--pending-bg); color: var(--pending); }
+.pass { background: var(--pass-bg); color: var(--pass); }
+.fail { background: var(--fail-bg); color: var(--fail); }
+summary { cursor: pointer; padding: .8rem 1.4rem; min-height: 44px; font-weight: 650; }
+.detail { padding: 0 1.4rem 1.4rem; }
+dl, ul { margin: .65rem 0 0; }
+dl { overflow-wrap: anywhere; }
+dt { color: var(--muted); margin-top: .5rem; }
+dd { margin: 0; }
+code, pre { font-family: ui-monospace, Consolas, monospace; }
+code { overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper);
+  padding: 1rem; border-radius: .5rem; margin: .75rem 0 0; }
+ul { padding-inline-start: 1.25rem; }
+li + li { margin-top: .45rem; }
+.case { display: grid; grid-template-columns: minmax(0, 1fr) 9rem 9rem; gap: .4rem 1rem;
+  align-items: center; padding: .7rem 0; border-top: 1px solid var(--edge); }
+.case span { overflow-wrap: anywhere; }
+.case-label { margin-right: .35rem; }
+.step { padding-inline-start: 1rem; }
+.cases { margin-top: .75rem; }
+footer { padding-top: 1rem; }
+#done { display: none; }
+#done:target { display: block; }
+#done:target + #review { display: none; }
+@media (max-width: 640px) {
+  main { padding: 1.75rem 1rem; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .card, summary { padding-inline: 1rem; }
+  .detail { padding-inline: 1rem; }
+  .case { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .case > :first-child { grid-column: span 2; }
+  .case-label { display: block; }
+}
+"""
+
+
+def _text(value: object) -> str:
+    return escape(str(value)) if value is not None else "Unavailable"
+
+
+def _status(value: object) -> str:
+    css_class, label = {
+        "PASS": ("pass", "Pass"),
+        "FAIL": ("fail", "Fail"),
+        "INCOMPLETE": ("", "Incomplete"),
+        "NOT_RUN": ("", "Not run"),
+    }.get(str(value), ("", str(value) if value is not None else "Unavailable"))
+    return f'<span class="status {css_class}">{_text(label)}</span>'
+
+
+def _hash_rows(values: Mapping[str, object]) -> str:
+    rows = "".join(
+        f"<dt>{_text(label)}</dt><dd><code>{_text(value)}</code></dd>"
+        for label, value in values.items()
+    )
+    return f"<dl>{rows}</dl>"
+
+
+def _findings(items: Sequence[Mapping[str, Any]]) -> str:
+    if not items:
+        return "<p>No findings recorded.</p>"
+    rows = []
+    for item in items:
+        case = f" · {_text(item['case_id'])}" if item.get("case_id") else ""
+        step = f" / {_text(item['step_id'])}" if item.get("step_id") else ""
+        rows.append(
+            f"<li><strong>{_text(item['code'])}</strong>{case}{step}<br>{_text(item['detail'])}</li>"
+        )
+    return f"<ul>{''.join(rows)}</ul>"
+
+
+def _proof(label: str, side: Mapping[str, Any]) -> str:
+    return f"""<section class="card">
+      <div class="row"><h2>{label} proof</h2>{_status(side.get("status"))}</div>
+      {
+        _hash_rows(
+            {
+                "Receipt SHA-256": side.get("receipt_sha256"),
+                "Contract SHA-256": side.get("contract_sha256"),
+            }
+        )
+    }
+    </section>"""
+
+
+def _evidence(label: str, side: Mapping[str, Any]) -> str:
+    profile = side.get("profile")
+    profile_html = (
+        f"<pre>{_text(json.dumps(profile, indent=2, ensure_ascii=False))}</pre>"
+        if profile
+        else ("<p>Execution profile unavailable.</p>")
+    )
+    artifacts = "".join(
+        f"<li><strong>{_text(item['kind'])}</strong> · <code>{_text(item['path'])}</code><br>"
+        f"SHA-256 <code>{_text(item['sha256'])}</code> · {_text(item['bytes'])} bytes</li>"
+        for item in side.get("evidence", [])
+    )
+    components = "".join(
+        f"<li><code>{_text(item['path'])}</code> · {_text(item['kind'])}<br>"
+        f"SHA-256 <code>{_text(item['sha256'])}</code></li>"
+        for item in side.get("components", [])
+    )
+    return f"""<details>
+      <summary>{label} evidence</summary>
+      <div class="detail content">
+        <section><h3>Execution profile</h3>{profile_html}</section>
+        <section><h3>Artifacts</h3>{f"<ul>{artifacts}</ul>" if artifacts else "<p>No artifacts recorded.</p>"}</section>
+        <section><h3>Components</h3>{f"<ul>{components}</ul>" if components else "<p>No component bindings recorded.</p>"}</section>
+        <section><h3>Findings</h3>{_findings(side.get("findings", []))}</section>
+      </div>
+    </details>"""
+
+
+def _cases(items: Sequence[Mapping[str, Any]]) -> str:
+    if not items:
+        return '<p class="cases">No paired cases recorded.</p>'
+    rows = []
+    for item in items:
+        steps = "".join(_case_row(step, is_step=True) for step in item.get("steps", []))
+        steps_section = (
+            f'<div role="list" aria-label="Steps">{steps}</div>' if steps else ""
+        )
+        rows.append(f'<div role="listitem">{_case_row(item)}{steps_section}</div>')
+    return f'<div class="cases" role="list">{"".join(rows)}</div>'
+
+
+def _case_row(item: Mapping[str, Any], *, is_step: bool = False) -> str:
+    class_name = "case step" if is_step else "case"
+    role = ' role="listitem"' if is_step else ""
+    label = "Step" if is_step else "Case"
+    return (
+        f'<div class="{class_name}"{role}><span><span class="case-label muted">{label}</span>'
+        f"<strong>{_text(item['id'])}</strong></span>"
+        f'<span><span class="case-label muted">Before</span>{_status(item.get("before_status"))}</span>'
+        f'<span><span class="case-label muted">After</span>{_status(item.get("after_status"))}</span></div>'
+    )
+
+
+def _source_diff(diff: Mapping[str, Any], hints: Sequence[Mapping[str, Any]]) -> str:
+    status = diff.get("status")
+    content = {
+        "UNCHANGED": "The bound source components are unchanged.",
+        "UNAVAILABLE": "Source diff unavailable.",
+    }.get(str(status), "Changed lines from local fixture source")
+    if diff.get("truncated"):
+        content += " · Diff truncated"
+    diff_text = (
+        f"<pre><code>{_text(diff['text'])}</code></pre>" if diff.get("text") else ""
+    )
+    paths = "".join(
+        f"<li><strong>{_text(item['path'])}</strong> · {_text(item['kind'])}"
+        f"{_hash_rows({'Before SHA-256': item.get('before_sha256'), 'After SHA-256': item.get('after_sha256')})}</li>"
+        for item in hints
+    )
+    components = (
+        f"<section><h3>Changed component bindings</h3><ul>{paths}</ul></section>"
+        if paths
+        else ""
+    )
+    return f"""<details>
+      <summary>Components and source diff</summary>
+      <div class="detail content">{components}<section><p>{content}</p>{diff_text}</section></div>
+    </details>"""
+
+
+def render_journey_comparison(comparison: Mapping[str, Any]) -> str:
+    """Use the comparison verdict and display recorded evidence as inert text."""
+    before, after = comparison["before"], comparison["after"]
+    cases, findings = comparison["cases"], comparison["findings"]
+    after_steps = [
+        (f"{_text(case['id'])} / {_text(step['id'])}", step["after_status"])
+        for case in cases
+        for step in case.get("steps", [])
+    ]
+    failed_step = next(
+        (label for label, status in after_steps if status == "FAIL"), None
+    )
+    incomplete_step = next(
+        (label for label, status in after_steps if status in {"INCOMPLETE", "NOT_RUN"}),
+        None,
+    )
+    last_verified = next(
+        (label for label, status in reversed(after_steps) if status == "PASS"), None
+    )
+    first_failure = next((item for item in findings if item.get("case_id")), None)
+    if failed_step:
+        readout = f"First failing step · {failed_step}"
+    elif incomplete_step and comparison["status"] != "FAIL":
+        readout = f"First incomplete step · {incomplete_step}"
+    elif first_failure:
+        readout = f"First affected case · {_text(first_failure['case_id'])}"
+    elif findings:
+        readout = f"First finding · {_text(findings[0]['code'])}"
+    else:
+        count = len(cases)
+        readout = f"{count} paired {'case' if count == 1 else 'cases'} recorded"
+    verified_readout = (
+        f'<p class="muted">Last verified After step · {last_verified or "None recorded"}</p>'
+        if after_steps
+        else ""
+    )
+    action = _text(
+        comparison.get("next_action")
+        or ("Review the evidence if needed, or select Done to finish.")
+    )
+    scope = (
+        "Local fixture evidence"
+        if comparison.get("fixture_only")
+        else "Recorded journey evidence"
+    )
+    identity = " / ".join(
+        _text(comparison[key])
+        for key in ("project_id", "journey_id")
+        if comparison.get(key)
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>Journey evidence comparison</title>
+  <style>{_JOURNEY_REPORT_STYLE}</style>
+</head>
+<body>
+<main>
+  <section id="done" class="card" tabindex="-1" aria-labelledby="done-heading">
+    <h2 id="done-heading">Review ended</h2>
+    <p>You can close this tab.</p>
+    <a class="return" href="#review">Return to comparison</a>
+  </section>
+  <article id="review" tabindex="-1">
+    <header class="intro">
+      <p class="eyebrow">{scope}</p>
+      <h1>Journey evidence comparison</h1>
+      <p class="muted">{identity}</p>
+    </header>
+    <div class="content">
+      <div class="grid">
+        <section class="card">
+          <div class="row"><h2>Comparison verdict</h2>{_status(comparison["status"])}</div>
+          <p class="readout">{readout}</p>
+          {verified_readout}
+          <p class="muted">Scope covers the recorded cases and execution profile.</p>
+        </section>
+        <section class="card action">
+          <h2>Next action</h2>
+          <p>{action}</p>
+          <a class="button" href="#done">Done</a>
+        </section>
+      </div>
+      <section class="card">
+        <h2>Case progress</h2>
+        {_cases(cases)}
+      </section>
+      <div class="grid">{_proof("Before", before)}{_proof("After", after)}</div>
+      <details><summary>Comparison findings</summary><div class="detail">{_findings(findings)}</div></details>
+      {_evidence("Before", before)}
+      {_evidence("After", after)}
+      {_source_diff(comparison["source_diff"], comparison["component_hints"])}
+    </div>
+    <footer class="muted">
+      <p>Authority stays with the separate approval, release and publication workflows.</p>
+      {_hash_rows({"Comparison SHA-256": comparison.get("comparison_sha256")})}
+    </footer>
+  </article>
+</main>
+</body>
+</html>
+"""

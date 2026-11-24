@@ -44,14 +44,17 @@ jobs:
         run: >-
           python -m pytest -q -o addopts=
           tests/test_full_stack_ux_harness.py::test_visual_real_browser_pixels_semantics_runtime_and_prestige
+          tests/test_full_stack_ux_harness.py::test_expense_browser_journey
+          tests/test_full_stack_ux_harness.py::test_expense_validation_and_retry
+          tests/test_full_stack_ux_harness.py::test_native_expense_visual_pair
           --junitxml=native-visual-behavior.xml
       - name: Reject skipped or incomplete native acceptance
         if: always()
         run: >-
           python -c "import xml.etree.ElementTree as E; s=list(E.parse('native-visual-behavior.xml').iter('testsuite'));
-          assert sum(int(x.get('tests','0')) for x in s)==1;
+          assert sum(int(x.get('tests','0')) for x in s)==7;
           assert not any(int(x.get(k,'0')) for x in s for k in ('skipped','failures','errors'));
-          print('Actual fixture browser/Prestige case executed; not device certification or release approval')"
+          print('Native browser and Prestige fixture checks executed')"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:

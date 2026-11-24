@@ -1,20 +1,34 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from datetime import datetime, timezone
 import hashlib
-from http.server import BaseHTTPRequestHandler
+from hashlib import sha256
+from html.parser import HTMLParser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
+import shutil
+import tempfile
+import threading
+from urllib.parse import urlsplit
 import sys
 from pathlib import Path
 
 import pytest
 
+from factoryline import full_stack_ux_harness as comparison
 from factoryline.cli import main
+from factoryline.journey_proof import compile_reality_graph
 from factoryline.full_stack_ux_harness import (
     CORE_CHECKS,
     JUDGMENTS,
     UI_CHECKS,
     FullStackUXHarnessError,
     quality_harness_template,
+    render_journey_comparison,
+    run_visual_behavior_gate,
+    verify_visual_behavior_receipt,
     verify_quality_harness,
 )
 from factoryline.optimizer import optimize_pr
@@ -289,6 +303,47 @@ def _visual_write(root: Path, contract):
     path = root / "visual-contract.json"
     path.write_text(json.dumps(contract, allow_nan=False), encoding="utf-8")
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_visual_journey_step_trace_respects_order_and_explicit_failure():
+    from factoryline.full_stack_ux_harness import _visual_step_findings
+
+    expected = {"steps": [{"id": "dismiss"}, {"id": "return to form"}]}
+    findings = []
+
+    def add(*finding):
+        findings.append(finding)
+
+    _visual_step_findings(expected, {"steps": [{"id": "dismiss", "ok": False}]}, add)
+    assert findings.pop()[0] == "E_VISUAL_STEP"
+
+    for invalid in (
+        [],
+        [{"id": "dismiss", "ok": True}],
+        [{"id": "return to form", "ok": False}],
+        [{"id": "dismiss", "ok": 0}],
+        [{"id": "dismiss", "ok": False}, {"id": "return to form", "ok": True}],
+    ):
+        _visual_step_findings(expected, {"steps": invalid}, add)
+        assert findings.pop()[0] == "E_VISUAL_STEP_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"id": "step", "kind": "press", "selector": "button", "value": "Control+Alt+x"},
+        {"id": "step", "kind": "count", "selector": "main", "value": True},
+        {"id": "step", "kind": "click", "selector": "button", "value": "anything"},
+    ],
+)
+def test_visual_journey_rejects_unsupported_steps(step):
+    from factoryline.full_stack_ux_harness import (
+        FullStackUXHarnessError,
+        _visual_steps_contract,
+    )
+
+    with pytest.raises(FullStackUXHarnessError, match="unsupported|bounds"):
+        _visual_steps_contract([step])
 
 
 def test_visual_noexecute_never_discovers_tools_or_launches(tmp_path, monkeypatch):
@@ -862,3 +917,967 @@ def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, cap
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+# Journey receipt comparison and HTML report
+
+
+def _record(root, *, source=None, target="http://127.0.0.1:8765/", mutate=None):
+    root.mkdir(exist_ok=True)
+    contract = _visual_contract(root, target)
+    if source is not None:
+        path = root / "app.html"
+        path.write_bytes(source)
+        contract["candidate"] = [_visual_binding(root, path)]
+    if mutate is not None:
+        mutate(contract)
+    path, pin = _visual_write(root, contract)
+    return comparison.run_visual_behavior_gate(root, path, pin)["path"]
+
+
+@pytest.fixture
+def replayed_captures(monkeypatch):
+    """Exercise comparison with controlled outcomes after receipt replay."""
+    original = comparison._verify_visual_behavior
+    observations = {}
+
+    def verify(root, receipt):
+        verified, contract, independent = original(root, receipt)
+        if receipt in observations:
+            status, profile, findings, *cases = observations[receipt]
+            verified.update(decision=status, identity=profile, findings=findings)
+            independent = cases[1] if len(cases) > 1 else findings
+            if cases:
+                verified.update(cases=cases[0])
+        return verified, contract, independent
+
+    monkeypatch.setattr(comparison, "_verify_visual_behavior", verify)
+    return observations
+
+
+def test_comparison_read_only_and_stable(tmp_path, replayed_captures):
+    before, after = tmp_path / "before", tmp_path / "after"
+    original = b"<p>Error</p>\n"
+    repaired = b"<p>Saved</p>\n"
+    first = _record(before, source=original)
+    second = _record(after, source=repaired, target="http://127.0.0.1:8766/")
+    detail = comparison._visual_finding(
+        "E_VISUAL_RUNTIME", "same-action API/UI mismatch", case_id="ready"
+    )
+    profile = {"browser": "same", "viewport": {"width": 640, "height": 480}}
+    replayed_captures.update(
+        {first: ("FAIL", profile, [detail, detail]), second: ("PASS", profile, [])}
+    )
+    files = set(tmp_path.rglob("*"))
+    result = comparison.compare_journey_evidence(before, first, after, second)
+    assert result == comparison.compare_journey_evidence(before, first, after, second)
+    assert result["status"] == "PASS"
+    assert result["before"]["findings"] == [detail]
+    assert (
+        result["before"]["receipt_sha256"]
+        == json.loads(Path(first).read_text(encoding="utf-8"))["receipt_sha256"]
+    )
+    assert result["cases"] == [
+        {"id": "ready", "before_status": "FAIL", "after_status": "PASS"}
+    ]
+    assert result["source_diff"] == {
+        "status": "AVAILABLE",
+        "text": "--- a/app.html\n+++ b/app.html\n@@ -1 +1 @@\n-<p>Error</p>\n+<p>Saved</p>\n",
+        "truncated": False,
+    }
+    assert result["component_hints"][0]["after_sha256"] == comparison._sha(repaired)
+    assert result["next_action"] is None
+    assert not any(result["authority"].values())
+    assert set(tmp_path.rglob("*")) == files
+    assert (before / "app.html").read_bytes() == original
+    assert (after / "app.html").read_bytes() == repaired
+
+
+def test_current_noexecute_stale_and_malformed_fail_closed(tmp_path):
+    receipt = _record(tmp_path)
+    skipped = comparison.compare_journey_evidence(tmp_path, receipt, tmp_path, receipt)
+    assert skipped["status"] == "INCOMPLETE"
+    assert skipped["before"]["status"] == "NOT_RUN"
+    assert skipped["source_diff"]["status"] == "UNAVAILABLE"
+    (tmp_path / "app.html").write_text("stale", encoding="utf-8")
+    stale = comparison.compare_journey_evidence(tmp_path, receipt, tmp_path, receipt)
+    assert stale["status"] == "INCOMPLETE"
+    assert stale["before"]["receipt_sha256"] is None
+    assert stale["findings"][0]["code"] == "E_VISUAL_SOURCE_DRIFT"
+    broken = tmp_path / "malformed.json"
+    broken.write_text('{"same": 1, "same": 2}', encoding="utf-8")
+    result = comparison.compare_journey_evidence(tmp_path, broken, tmp_path, receipt)
+    assert result["status"] == "INCOMPLETE"
+    assert result["before"]["findings"][0]["code"] == "E_VISUAL_SCHEMA"
+    assert not result["component_hints"]
+
+
+@pytest.mark.parametrize(
+    "difference", ["case", "profile", "browser", "target", "component"]
+)
+def test_nonequivalent_comparison_has_no_preview(
+    tmp_path, replayed_captures, difference
+):
+    before, after = tmp_path / "before", tmp_path / "after"
+    first = _record(before)
+
+    def mutate(contract):
+        if difference == "case":
+            contract["cases"][0]["state"]["text"] = "Other expected state"
+        if difference == "browser":
+            contract["browser"]["width"] = 800
+        if difference == "component":
+            contract["candidate"][0]["kind"] = "other"
+
+    target = "http://127.0.0.1:8766/" + ("other" if difference == "target" else "")
+    second = _record(after, source=b"<p>Changed</p>", target=target, mutate=mutate)
+    replayed_captures[first] = ("PASS", {"browser": "same"}, [])
+    replayed_captures[second] = (
+        "PASS",
+        {"browser": "different" if difference == "profile" else "same"},
+        [],
+    )
+    result = comparison.compare_journey_evidence(before, first, after, second)
+    assert result["status"] == "INCOMPLETE"
+    assert result["cases"] == result["component_hints"] == []
+    assert result["source_diff"]["status"] == "UNAVAILABLE"
+    expected = "E_JOURNEY_PROFILE" if difference == "profile" else "E_JOURNEY_SCOPE"
+    assert result["findings"][0]["code"] == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "status", "truncated"),
+    [
+        (b"old\n", "UNCHANGED", False),
+        (b"0000000000000000000000\n" * 500, "AVAILABLE", True),
+        ((b"a" * 1_000 + b"\n") * 24, "AVAILABLE", True),
+        (b"\x1b[31m", "UNAVAILABLE", False),
+        (b"x" * (comparison.MAX_SOURCE_BYTES + 1), "UNAVAILABLE", False),
+    ],
+    ids=[
+        "unchanged",
+        "line-bound",
+        "preview-byte-bound",
+        "control-character",
+        "source-byte-bound",
+    ],
+)
+def test_diff_limits_and_observed_failure(
+    tmp_path, replayed_captures, source, status, truncated
+):
+    before, after = tmp_path / "before", tmp_path / "after"
+    first = _record(before, source=b"old\n")
+    second = _record(after, source=source)
+    replayed_captures[first] = ("PASS", {}, [])
+    replayed_captures[second] = (
+        "FAIL",
+        {},
+        [comparison._visual_finding("E_VISUAL_STATE", "wrong state", case_id="ready")],
+    )
+    result = comparison.compare_journey_evidence(before, first, after, second)
+    preview = result["source_diff"]
+    assert preview["status"] == status
+    assert preview["truncated"] is truncated
+    assert len(preview["text"].encode("utf-8")) <= comparison.MAX_DIFF_BYTES
+    assert len(preview["text"].splitlines()) <= comparison.MAX_DIFF_LINES
+    assert result["status"] == "FAIL"
+    assert "terminal UI state" in result["next_action"]
+
+
+def test_steps_bind_the_observed_failure_and_unreached_steps(
+    tmp_path, replayed_captures
+):
+    before, after = tmp_path / "before", tmp_path / "after"
+
+    def add_steps(contract):
+        contract["cases"][0]["steps"] = [
+            {"id": name, "kind": "visible", "selector": "#save", "value": True}
+            for name in ["open", "save", "confirm"]
+        ]
+
+    first = _record(before, mutate=add_steps)
+    second = _record(after, mutate=add_steps)
+    replayed_captures[first] = (
+        "PASS",
+        {},
+        [],
+        [
+            {
+                "id": "ready",
+                "steps": [
+                    {"id": name, "ok": True} for name in ["open", "save", "confirm"]
+                ],
+            }
+        ],
+    )
+    replayed_captures[second] = (
+        "FAIL",
+        {},
+        [
+            comparison._visual_finding(
+                "E_VISUAL_STEP", "journey step failed: save", case_id="ready"
+            )
+        ],
+        [
+            {
+                "id": "ready",
+                "steps": [{"id": "open", "ok": True}, {"id": "save", "ok": False}],
+            }
+        ],
+    )
+    result = comparison.compare_journey_evidence(before, first, after, second)
+    assert result["cases"][0]["steps"] == [
+        {"id": "open", "before_status": "PASS", "after_status": "PASS"},
+        {"id": "save", "before_status": "PASS", "after_status": "FAIL"},
+        {"id": "confirm", "before_status": "PASS", "after_status": "INCOMPLETE"},
+    ]
+    assert result["findings"][0]["step_id"] == "save"
+
+
+def test_unreproduced_recorded_failure_is_incomplete(tmp_path, replayed_captures):
+    receipt = _record(tmp_path)
+    replayed_captures[receipt] = (
+        "FAIL",
+        {},
+        [comparison._visual_finding("E_VISUAL_STATE", "forged")],
+        [],
+        [],
+    )
+
+    result = comparison.compare_journey_evidence(tmp_path, receipt, tmp_path, receipt)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["before"]["status"] == "INCOMPLETE"
+    assert result["before"]["findings"][0]["code"] == "E_JOURNEY_FAILURE_UNVERIFIED"
+    assert result["source_diff"]["status"] == "UNAVAILABLE"
+
+
+def test_source_drift_during_preview_suppresses_comparison(
+    tmp_path, replayed_captures, monkeypatch
+):
+    before, after = tmp_path / "before", tmp_path / "after"
+    first = _record(before, source=b"old\n")
+    second = _record(after, source=b"new\n")
+    replayed_captures[first] = replayed_captures[second] = ("PASS", {}, [])
+    original = comparison._source_lines
+
+    def drift(root, binding):
+        if root == after:
+            (root / binding["path"]).write_bytes(b"concurrent edit\n")
+        return original(root, binding)
+
+    monkeypatch.setattr(comparison, "_source_lines", drift)
+    result = comparison.compare_journey_evidence(before, first, after, second)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["findings"][0]["code"] == "E_VISUAL_SOURCE_DRIFT"
+    assert result["source_diff"]["text"] == ""
+
+
+class _Document(HTMLParser):
+    def __init__(self, document):
+        super().__init__()
+        self.elements = []
+        self.feed(document)
+
+    def handle_starttag(self, tag, attrs):
+        self.elements.append((tag, dict(attrs)))
+
+
+def _comparison():
+    proof = {
+        "status": "PASS",
+        "receipt_sha256": "a" * 64,
+        "contract_sha256": "b" * 64,
+        "components": [],
+        "evidence": [],
+        "profile": None,
+        "findings": [],
+    }
+    return {
+        "status": "FAIL",
+        "fixture_only": True,
+        "project_id": "expense",
+        "journey_id": "submit",
+        "before": proof,
+        "after": {**proof, "status": "FAIL", "receipt_sha256": "c" * 64},
+        "cases": [
+            {"id": "confirmation", "before_status": "PASS", "after_status": "FAIL"}
+        ],
+        "findings": [
+            {
+                "code": "E_JOURNEY_RECEIPT",
+                "detail": "Confirmation missing",
+                "case_id": "confirmation",
+            }
+        ],
+        "component_hints": [],
+        "source_diff": {
+            "status": "AVAILABLE",
+            "text": "- before\n+ after",
+            "truncated": True,
+        },
+        "next_action": "Open the recorded confirmation evidence.",
+        "comparison_sha256": "d" * 64,
+    }
+
+
+def test_comparison_exposes_failed_case_proofs_and_optional_follow_on():
+    html = render_journey_comparison(_comparison())
+    document = _Document(html)
+    assert "Local fixture evidence" in html
+    assert "First affected case · confirmation" in html
+    assert "Open the recorded confirmation evidence." in html
+    assert "Comparison verdict" in html
+    assert "Case progress" in html
+    assert "a" * 64 in html and "c" * 64 in html
+    assert "Diff truncated" in html
+    assert ("a", {"class": "button", "href": "#done"}) in document.elements
+    assert ("a", {"class": "return", "href": "#review"}) in document.elements
+    assert ("details", {}) in document.elements
+    assert "Review ended" in html
+    assert "#done:target + #review { display: none; }" in html
+
+
+def test_incomplete_comparison_preserves_evidence_gaps():
+    comparison = _comparison()
+    comparison.update(
+        status="INCOMPLETE", cases=[], next_action="Capture comparable evidence."
+    )
+    comparison["source_diff"] = {
+        "status": "UNAVAILABLE",
+        "text": "",
+        "truncated": False,
+    }
+    html = render_journey_comparison(comparison)
+    assert ">Incomplete<" in html
+    assert "No paired cases recorded." in html
+    assert "Source diff unavailable." in html
+    assert "Capture comparable evidence." in html
+
+
+def test_comparison_identifies_first_failing_step_with_before_and_after_statuses():
+    comparison = _comparison()
+    comparison["cases"][0]["steps"] = [
+        {"id": "open", "before_status": "PASS", "after_status": "PASS"},
+        {"id": "submit", "before_status": "PASS", "after_status": "FAIL"},
+        {"id": "close", "before_status": "PASS", "after_status": "INCOMPLETE"},
+    ]
+    html = render_journey_comparison(comparison)
+    assert "First failing step · confirmation / submit" in html
+    assert "Last verified After step · confirmation / open" in html
+    assert 'aria-label="Steps"' in html
+    assert ">Incomplete<" in html
+
+
+def test_comparison_identifies_first_incomplete_step_across_ordered_cases():
+    comparison = _comparison()
+    comparison["status"] = "INCOMPLETE"
+    comparison["cases"] = [
+        {"id": "confirm", "steps": [{"id": "open", "after_status": "PASS"}]},
+        {
+            "id": "finish",
+            "steps": [
+                {"id": "save", "after_status": "PASS"},
+                {"id": "close", "after_status": "NOT_RUN"},
+                {"id": "return", "after_status": "INCOMPLETE"},
+            ],
+        },
+    ]
+    html = render_journey_comparison(comparison)
+    assert "First incomplete step · finish / close" in html
+    assert "Last verified After step · finish / save" in html
+
+
+def test_comparison_escapes_evidence_and_has_no_external_resources():
+    comparison = _comparison()
+    payload = '<img src="https://example.invalid" onerror="alert(1)">'
+    comparison["project_id"] = payload
+    comparison["next_action"] = payload
+    comparison["findings"][0]["detail"] = payload
+    comparison["source_diff"]["text"] = payload
+    comparison["before"]["evidence"] = [
+        {"path": payload, "sha256": "e" * 64, "bytes": 8, "kind": "trace"}
+    ]
+    comparison["before"]["profile"] = {"browser": payload}
+    html = render_journey_comparison(comparison)
+    elements = _Document(html).elements
+    assert payload not in html
+    assert html.count("&lt;img") == 6
+    assert "default-src 'none'" in html
+    assert all(
+        tag not in {"form", "iframe", "img", "link", "script"} for tag, _ in elements
+    )
+    assert all(
+        attrs["href"].startswith("#") for _, attrs in elements if "href" in attrs
+    )
+    assert all("src" not in attrs for _, attrs in elements)
+
+
+# Chromium acceptance for the synthetic expense journey
+
+FIXTURES = Path(__file__).parent / "fixtures" / "prestige_expense_journey"
+SAMPLE = {"merchant": "North Station", "amount": "18.75"}
+DETAIL = "$18.75 · North Station"
+STATUS = f"Expense saved. {DETAIL}"
+
+
+def _write(path, value):
+    path.write_text(
+        json.dumps(value, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+def _digest(path):
+    return sha256(path.read_bytes()).hexdigest()
+
+
+def _binding(root, path, kind):
+    return {
+        "path": path.relative_to(root).as_posix(),
+        "sha256": _digest(path),
+        "kind": kind,
+    }
+
+
+def _stage(root, variant):
+    root.mkdir(parents=True, exist_ok=True)
+    html = (FIXTURES / "after.html").read_text(encoding="utf-8")
+    if variant == "before":
+        for source, replacement in (
+            ('data-variant="after"', 'data-variant="before"'),
+            (' role="status" aria-live="polite"', ""),
+            ("      <p>Your expense is in Recent expenses.</p>\n", ""),
+            (
+                ".actions > button { width: 100%; }",
+                ".actions > button { width: 100%; }\n"
+                "      #confirmation button { min-height: 32px; padding-block: 0; }",
+            ),
+        ):
+            assert html.count(source) == 1
+            html = html.replace(source, replacement)
+    (root / "index.html").write_text(html, encoding="utf-8", newline="\n")
+    shutil.copyfile(FIXTURES / "expense.js", root / "expense.js")
+
+
+@contextmanager
+def _serve(root, *, fail_once=False):
+    requests = []
+    records = []
+
+    class ExpenseApp(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reply(self, status, mime, data):
+            self.send_response(status)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            paths = {
+                "/": ("index.html", "text/html"),
+                "/expense.js": ("expense.js", "text/javascript"),
+            }
+            target = paths.get(urlsplit(self.path).path)
+            if target is None:
+                self.send_error(404)
+                return
+            filename, mime = target
+            self.reply(200, mime, (root / filename).read_bytes())
+
+        def do_POST(self):
+            if self.path != "/api/expenses":
+                self.send_error(404)
+                return
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            requests.append(payload)
+            if fail_once and len(requests) == 1:
+                self.reply(503, "application/json", b"{}")
+                return
+            assert payload == SAMPLE
+            records.append(payload)
+            self.reply(201, "application/json", json.dumps(payload).encode())
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), ExpenseApp) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}/", requests, records
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+@pytest.fixture(scope="module")
+def chromium():
+    if os.environ.get("FACTORY_REQUIRE_NATIVE_VISUAL") == "1":
+        from playwright import sync_api
+    else:
+        sync_api = pytest.importorskip("playwright.sync_api")
+    with sync_api.sync_playwright() as playwright:
+        executable = playwright.chromium.executable_path
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            yield browser, executable, sync_api.expect
+        finally:
+            browser.close()
+
+
+@pytest.fixture(scope="module")
+def evidence(tmp_path_factory):
+    configured = os.environ.get("FACTORY_PRESTIGE_EXPENSE_EVIDENCE")
+    root = (
+        Path(configured).resolve()
+        if configured
+        else tmp_path_factory.mktemp("expense-proof")
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _open_and_fill(page, expect, *, mobile):
+    opener = page.get_by_role("button", name="New expense")
+    if mobile:
+        opener.tap()
+    else:
+        page.keyboard.press("Tab")
+        expect(opener).to_be_focused()
+        page.keyboard.press("Enter")
+    merchant = page.get_by_label("Merchant")
+    expect(merchant).to_be_focused()
+    page.keyboard.type(SAMPLE["merchant"])
+    page.keyboard.press("Tab")
+    amount = page.get_by_label("Amount (USD)")
+    expect(amount).to_be_focused()
+    page.keyboard.type(SAMPLE["amount"])
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("button", name="Save expense")).to_be_focused()
+
+
+def _save(page, expect, *, mobile):
+    if mobile:
+        page.get_by_role("button", name="Save expense").tap()
+    else:
+        page.keyboard.press("Enter")
+    saved = page.get_by_role("heading", name="Expense saved")
+    expect(saved).to_be_visible()
+    expect(page.locator("#records li")).to_have_count(1)
+    expect(page.locator("#records li")).to_have_text(DETAIL)
+    return saved
+
+
+REQUIREMENTS = {
+    "form": "REACH_FORM",
+    "saved": "ONE_SAVE_ONE_RECORD",
+    "announced": "STATUS_LIVE_REGION",
+    "returned": "DONE_RETURNS_FOCUS",
+    "next": "EXPLICIT_ADD_ANOTHER",
+}
+TRANSITIONS = (
+    ("open-editor", "list", "form"),
+    ("submit-once", "form", "saved"),
+    ("expose-live-status", "saved", "announced"),
+    ("done-closes-editor", "saved", "returned"),
+    ("add-another-opens-editor", "saved", "next"),
+)
+PROJECT = {"project_id": "fieldbook-fixture", "journey_id": "save-expense"}
+
+
+def _reality(evidence, replay, facts, artifacts):
+    expected_states = {"list", *REQUIREMENTS}
+    present_states = {
+        "list",
+        *(state for state, key in REQUIREMENTS.items() if facts[key]),
+    }
+    if not facts["DONE_RETURNS_FOCUS"]:
+        present_states.add("unexpected-editor")
+    expected_outcomes = ["returned", "next"]
+    expected = {
+        "schema": "factory.journey-declaration.v1",
+        **PROJECT,
+        "states": [
+            {
+                "id": state,
+                "requirements": [REQUIREMENTS[state]] if state in REQUIREMENTS else [],
+                "outcome": state in expected_outcomes,
+            }
+            for state in sorted(expected_states)
+        ],
+        "transitions": [
+            {"id": key, "from": start, "to": end, "requirements": [REQUIREMENTS[end]]}
+            for key, start, end in TRANSITIONS
+        ],
+        "requirements": sorted(REQUIREMENTS.values()),
+        "outcomes": expected_outcomes,
+    }
+    observed = {
+        "schema": "factory.journey-observation.v1",
+        **PROJECT,
+        "run_id": replay["profile"],
+        "code_version": replay["candidate_sha256"],
+        "environment": {
+            "label": "local synthetic loopback",
+            "fingerprint": replay["browser"],
+        },
+        "states": [{"id": state} for state in sorted(present_states)],
+        "transitions": [
+            {"id": key, "from": start, "to": end, "artifacts": artifacts}
+            for key, start, end in TRANSITIONS
+            if end in present_states
+        ],
+        "requirements": sorted(key for key, passed in facts.items() if passed),
+        "outcomes": [state for state in expected_outcomes if state in present_states],
+        "observed_at": replay["observed_at"],
+    }
+    declaration = _write(evidence / "declaration.json", expected)
+    observation = _write(evidence / f"{replay['profile']}-observation.json", observed)
+    return compile_reality_graph(evidence, declaration.name, observation.name)
+
+
+@pytest.mark.parametrize(
+    "variant,mobile",
+    [("before", False), ("before", True), ("after", False), ("after", True)],
+    ids=["before-desktop", "before-mobile", "after-desktop", "after-mobile"],
+)
+def test_expense_browser_journey(variant, mobile, chromium, evidence):
+    browser, _, expect = chromium
+    profile = f"{variant}-{'mobile' if mobile else 'desktop'}"
+    stage = evidence / f"replay-{profile}"
+    _stage(stage, variant)
+    viewport = (
+        {"width": 320, "height": 640} if mobile else {"width": 960, "height": 720}
+    )
+    screenshot = evidence / f"{profile}.png"
+    confirmation_height = {}
+    context = browser.new_context(viewport=viewport, is_mobile=mobile, has_touch=mobile)
+    try:
+        with _serve(stage) as (target, requests, records):
+            page = context.new_page()
+            page.goto(target)
+            _open_and_fill(page, expect, mobile=mobile)
+            saved = _save(page, expect, mobile=mobile)
+            done = page.get_by_role("button", name="Done")
+            expect(done).to_be_focused()
+            expect(page.locator("#expense-detail")).to_have_text(DETAIL)
+            page.screenshot(path=str(screenshot), animations="disabled")
+            live_region = page.get_by_role("status")
+            status_text = (
+                live_region.text_content() if live_region.count() == 1 else None
+            )
+            aria = page.locator("body").aria_snapshot()
+            no_horizontal_overflow = page.evaluate(
+                "document.documentElement.scrollWidth === window.innerWidth"
+            )
+            expect(done).to_be_in_viewport()
+            assert no_horizontal_overflow
+            if mobile:
+                for control in (done, page.get_by_role("button", name="Add another")):
+                    bounds = control.bounding_box()
+                    assert bounds["width"] >= 44
+                    confirmation_height[control.inner_text()] = bounds["height"]
+                    assert (bounds["height"] >= 44) == (variant == "after")
+                done.tap()
+            else:
+                page.keyboard.press("Enter")
+            expect(saved).to_be_hidden()
+            editor = page.locator("#editor")
+            opener = page.get_by_role("button", name="New expense")
+            done_focus = page.evaluate("document.activeElement.id")
+            done_closed = editor.is_hidden()
+            assert requests == records == [SAMPLE]
+            if variant == "before":
+                assert not done_closed and done_focus == "merchant"
+                assert status_text is None
+            else:
+                expect(editor).to_be_hidden()
+                expect(opener).to_be_focused()
+                assert done_focus == "open-expense" and status_text == STATUS
+                assert "status" in aria and "Expense saved" in aria
+
+        # Separate visit: choosing Add another must open a fresh editor without saving.
+        with _serve(stage) as (target, requests, records):
+            page.goto(target)
+            _open_and_fill(page, expect, mobile=mobile)
+            _save(page, expect, mobile=mobile)
+            add_another = page.get_by_role("button", name="Add another")
+            if mobile:
+                add_another.tap()
+            else:
+                page.keyboard.press("Tab")
+                expect(add_another).to_be_focused()
+                page.keyboard.press("Enter")
+            expect(page.get_by_label("Merchant")).to_be_focused()
+            expect(page.get_by_label("Merchant")).to_have_value("")
+            expect(page.get_by_label("Amount (USD)")).to_have_value("")
+            expect(page.get_by_role("heading", name="Expense saved")).to_be_hidden()
+            assert requests == records == [SAMPLE]
+    finally:
+        context.close()
+
+    facts = {
+        "REACH_FORM": True,
+        "ONE_SAVE_ONE_RECORD": True,
+        "STATUS_LIVE_REGION": status_text == STATUS,
+        "DONE_RETURNS_FOCUS": done_closed and done_focus == "open-expense",
+        "EXPLICIT_ADD_ANOTHER": True,
+    }
+    replay = {
+        "profile": profile,
+        "browser": f"Playwright Chromium {browser.version}",
+        "viewport": viewport,
+        "input": (
+            "emulated touch with hardware key entry"
+            if mobile
+            else "hardware keyboard only"
+        ),
+        "candidate_sha256": _digest(stage / "index.html"),
+        "script_sha256": _digest(stage / "expense.js"),
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "requests": requests,
+        "records": records,
+        "done_focus": done_focus,
+        "done_closed_editor": done_closed,
+        "status_text": status_text,
+        "confirmation_accessibility_snapshot": aria,
+        "no_horizontal_overflow": no_horizontal_overflow,
+        "confirmation_control_height_px": confirmation_height,
+        "facts": facts,
+        "scope": "Synthetic service and browser accessibility tree. Physical hardware, native soft keyboard, screen reader speech and production storage were outside this run.",
+    }
+    report = _write(evidence / f"{profile}.json", replay)
+    receipt = _reality(
+        evidence,
+        replay,
+        facts,
+        [
+            _binding(evidence, report, "runtime"),
+            _binding(evidence, screenshot, "screenshot"),
+        ],
+    )
+    if variant == "before":
+        assert receipt["marker"] == "JOURNEY_REALITY_REVIEW_REQUIRED"
+        assert set(receipt["deltas"]["requirements"]["missing"]) == {
+            "done_returns_focus",
+            "status_live_region",
+        }
+    else:
+        assert receipt["marker"] == "JOURNEY_REALITY_MATCHED", receipt
+
+
+def test_expense_validation_and_retry(chromium, evidence):
+    browser, _, expect = chromium
+    stage = evidence / "replay-after-desktop"
+    _stage(stage, "after")
+    page = browser.new_page()
+    try:
+        with _serve(stage, fail_once=True) as (target, requests, records):
+            page.goto(target)
+            page.get_by_role("button", name="New expense").click()
+            save = page.get_by_role("button", name="Save expense")
+            save.click()
+            assert requests == records == []
+            assert not page.get_by_label("Merchant").evaluate(
+                "(field) => field.validity.valid"
+            )
+            page.get_by_label("Merchant").fill(SAMPLE["merchant"])
+            page.get_by_label("Amount (USD)").fill("0")
+            save.click()
+            assert requests == records == []
+            assert page.get_by_label("Amount (USD)").evaluate(
+                "(field) => field.validity.rangeUnderflow"
+            )
+            page.get_by_label("Amount (USD)").fill(SAMPLE["amount"])
+            save.click()
+            expect(page.get_by_role("alert")).to_have_text(
+                "Expense could not be saved. Try again."
+            )
+            expect(save).to_be_focused()
+            assert requests == [SAMPLE] and records == []
+            save.press("Enter")
+            expect(page.get_by_role("heading", name="Expense saved")).to_be_visible()
+            assert requests == [SAMPLE, SAMPLE] and records == [SAMPLE]
+            _write(
+                evidence / "validation-retry.json",
+                {
+                    "browser": f"Playwright Chromium {browser.version}",
+                    "observed_at": datetime.now(timezone.utc).isoformat(),
+                    "invalid_input_requests": 0,
+                    "failed_save_records": 0,
+                    "retry_requests_total": len(requests),
+                    "retry_records_total": len(records),
+                },
+            )
+    finally:
+        page.close()
+
+
+def _step(step_id, kind, selector, value=None):
+    return dict(id=step_id, kind=kind, selector=selector, value=value)
+
+
+VISUAL_STEPS = {
+    "finish": [
+        _step("one-record-after-save", "count", "#records li", 1),
+        _step("activate-done", "press", "#done", "Enter"),
+        _step("return-focus-to-opener", "focus", "#open-expense"),
+        _step("editor-stays-closed", "visible", "#editor", False),
+        _step("confirmation-dismissed", "visible", "#confirmation", False),
+        _step("one-record-after-done", "count", "#records li", 1),
+    ],
+    "add-another": [
+        _step("tab-to-add-another", "press", "#done", "Tab"),
+        _step("activate-add-another", "press", "#add-another", "Enter"),
+        _step("focus-fresh-merchant", "focus", "#merchant"),
+        _step("show-fresh-editor", "visible", "#editor", True),
+        _step("confirmation-dismissed", "visible", "#confirmation", False),
+        _step("one-record-before-second-save", "count", "#records li", 1),
+    ],
+    "announce": [
+        _step(
+            "live-success-with-detail",
+            "count",
+            '#save-status[role="status"][aria-live="polite"]:text-is("Expense saved. $18.75 · North Station")',
+            1,
+        ),
+    ],
+}
+
+
+def _visual_cases(stage, *, with_baseline):
+    cases = []
+    for case_id, steps in VISUAL_STEPS.items():
+        baseline = stage / f"{case_id}.png"
+        cases.append(
+            {
+                "id": case_id,
+                "baseline": (
+                    _binding(stage, baseline, "baseline") if with_baseline else None
+                ),
+                "action": {"selector": "#save-expense"},
+                "element": {
+                    "selector": "#save-expense",
+                    "role": "button",
+                    "name": "Save expense",
+                    "enabled": True,
+                },
+                "state": {"selector": "#confirmation-title", "text": "Expense saved"},
+                "response": {
+                    "method": "POST",
+                    "path": "/api/expenses",
+                    "status": 201,
+                    "field": "merchant",
+                    "value": SAMPLE["merchant"],
+                    "correlation": {
+                        "header": "X-Fixture-Journey",
+                        "value": "expense-save",
+                    },
+                },
+                "tokens": [],
+                "timeout_ms": 7000,
+                "max_changed_ratio": 0,
+                "steps": steps,
+            }
+        )
+    return cases
+
+
+def _expense_visual_contract(stage, target, browser, executable, *, with_baseline):
+    return {
+        "schema": "factory.visual-behavior.contract.v1",
+        "fixture_only": True,
+        **PROJECT,
+        "candidate": [
+            _binding(stage, stage / name, "source")
+            for name in ("index.html", "expense.js")
+        ],
+        "reviewer": {"name": "Local fixture baseline", "type": "human"},
+        "target": target + "?fixture=save",
+        "browser": {
+            "executable": executable,
+            "version": browser.version,
+            "platform": sys.platform,
+            "width": 320,
+            "height": 640,
+        },
+        "design": None,
+        "cases": _visual_cases(stage, with_baseline=with_baseline),
+    }
+
+
+def test_native_expense_visual_pair(chromium, evidence):
+    browser, executable, _ = chromium
+    run_root = Path(tempfile.mkdtemp(prefix="native-", dir=evidence))
+    stages = {variant: run_root / variant for variant in ("after", "before")}
+    locations = {}
+    for variant, stage in stages.items():
+        _stage(stage, variant)
+    for variant, stage in stages.items():
+        with _serve(stage) as (target, requests, records):
+
+            def run(*, with_baseline):
+                contract = _expense_visual_contract(
+                    stage, target, browser, executable, with_baseline=with_baseline
+                )
+                filename = (
+                    "visual-contract.json"
+                    if with_baseline
+                    else "proposed-contract.json"
+                )
+                path = _write(stage / filename, contract)
+                return run_visual_behavior_gate(
+                    stage,
+                    path,
+                    _digest(path),
+                    execute=True,
+                )
+
+            if variant == "after":
+                proposed = run(with_baseline=False)
+                assert proposed["decision"] == "INCOMPLETE", proposed["findings"]
+                assert len(proposed["cases"]) == len(VISUAL_STEPS)
+                for case in proposed["cases"]:
+                    assert len(case["steps"]) == len(VISUAL_STEPS[case["id"]])
+                    assert all(step["ok"] for step in case["steps"]), case
+                    origin = stage / case["screenshot"]["path"]
+                    for sibling in stages.values():
+                        shutil.copyfile(origin, sibling / f"{case['id']}.png")
+                requests.clear()
+                records.clear()
+
+            receipt = run(with_baseline=True)
+            assert requests == records == [SAMPLE] * len(VISUAL_STEPS)
+            verified = verify_visual_behavior_receipt(stage, Path(receipt["path"]))
+            expected = "PASS" if variant == "after" else "FAIL"
+            assert verified["decision"] == receipt["decision"] == expected, receipt[
+                "findings"
+            ]
+            if variant == "before":
+                failed = {
+                    case["id"]: [step["id"] for step in case["steps"] if not step["ok"]]
+                    for case in receipt["cases"]
+                }
+                assert failed == {
+                    "finish": ["return-focus-to-opener"],
+                    "add-another": [],
+                    "announce": ["live-success-with-detail"],
+                }
+            locations[variant] = {
+                "root": stage.relative_to(evidence).as_posix(),
+                "receipt": Path(receipt["path"]).relative_to(stage).as_posix(),
+                "decision": receipt["decision"],
+            }
+    _write(evidence / "native-pair.json", locations)
+    result = comparison.compare_journey_evidence(
+        stages["before"],
+        locations["before"]["receipt"],
+        stages["after"],
+        locations["after"]["receipt"],
+    )
+    assert result["status"] == "PASS", result["findings"]
+    assert result["before"]["status"] == "FAIL"
+    assert result["source_diff"]["status"] == "AVAILABLE"
+    assert "Last verified After step" in render_journey_comparison(result)

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fieldbook · Expenses</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #162c25;
+      --muted: #476057;
+      --paper: #fffefa;
+      --canvas: #eff3ed;
+      --line: #819c90;
+      --accent: #205844;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: var(--canvas); font: 16px system-ui, sans-serif; line-height: 1.6; }
+    main { max-width: 46rem; margin-inline: auto; padding: clamp(1rem, 5vw, 3rem); }
+    header, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+    header { justify-content: space-between; }
+    h1, h2 { line-height: 1.5; margin-block: 0.25rem 1rem; }
+    h1 { font-size: clamp(2rem, 7vw, 3.25rem); letter-spacing: -0.045em; }
+    .brand { color: var(--muted); font-weight: 600; margin: 0; }
+    .panel { background: var(--paper); border: 1px solid var(--line); border-radius: 1rem; padding: clamp(1rem, 4vw, 2rem); margin-block: 1.5rem; }
+    label, input { display: block; width: 100%; }
+    label { font-weight: 600; margin-block-start: 1rem; }
+    input, button { min-height: 44px; font: inherit; border: 1px solid var(--line); border-radius: 0.5rem; }
+    input { padding: 0.5rem 0.75rem; }
+    button { cursor: pointer; padding: 0.5rem 1rem; font-weight: 650; background: var(--paper); color: var(--accent); }
+    button.primary, #save-expense, #done { background: var(--accent); color: white; border-color: var(--accent); }
+    button:hover:not(:disabled) { box-shadow: inset 0 0 0 2px currentColor; }
+    input:user-invalid { border-color: #a63227; }
+    @media (prefers-reduced-motion: no-preference) { button { transition: box-shadow 140ms ease; } }
+    button:disabled { cursor: wait; opacity: 0.68; }
+    :focus-visible { outline: 3px solid #905319; outline-offset: 3px; }
+    .actions { margin-block-start: 1.25rem; }
+    .records { list-style: none; padding: 0; }
+    .records li { padding-block: 0.625rem; border-bottom: 1px solid var(--line); }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    @media (max-width: 360px) {
+      .actions > button { width: 100%; }
+    }
+  </style>
+  <script src="expense.js" defer></script>
+</head>
+<body data-variant="after">
+  <main>
+    <header>
+      <div><p class="brand">Fieldbook</p><h1>Expenses</h1></div>
+      <button id="open-expense" class="primary" type="button">New expense</button>
+    </header>
+    <section id="editor" class="panel" aria-labelledby="editor-title" hidden>
+      <h2 id="editor-title">New expense</h2>
+      <form id="expense-form">
+        <label for="merchant">Merchant</label>
+        <input id="merchant" name="merchant" required maxlength="80">
+        <label for="amount">Amount (USD)</label>
+        <input id="amount" name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" max="99999" required>
+        <div class="actions"><button id="save-expense" type="submit">Save expense</button></div>
+        <p id="save-error" role="alert"></p>
+      </form>
+    </section>
+    <p id="save-status" class="visually-hidden" role="status" aria-live="polite"></p>
+    <section id="confirmation" class="panel" aria-labelledby="confirmation-title" hidden>
+      <h2 id="confirmation-title">Expense saved</h2>
+      <p id="expense-detail"></p>
+      <p>Your expense is in Recent expenses.</p>
+      <div class="actions">
+        <button id="done" type="button">Done</button>
+        <button id="add-another" type="button">Add another</button>
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="records-title">
+      <h2 id="records-title">Recent expenses</h2>
+      <p id="empty-records">No expenses yet.</p>
+      <ul id="records" class="records"></ul>
+    </section>
+  </main>
+</body>
+</html>

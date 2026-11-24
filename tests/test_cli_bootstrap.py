@@ -112,6 +112,17 @@ def test_quality_adapter_matches_root_action_schema_help_and_registration_order(
         ],
         ["quality-harness", "spec-verify", "receipt.json"],
         ["quality-harness", "spec-verify", "r.json", "--root", "repo", "--json"],
+        [
+            "quality-harness",
+            "visual-compare",
+            "before.json",
+            "after.json",
+            "--after-root",
+            "candidate",
+            "--html-out",
+            "review.html",
+            "--json",
+        ],
         ["evidence-audit"],
         ["evidence-audit", "m.json", "--root", "repo", "--execute", "--json"],
     ],
@@ -181,6 +192,53 @@ def test_quality_registration_does_not_import_command_engines(monkeypatch):
     cli._build_parser()
     cli._build_parser(common_only=True)
     cli._build_parser(first_lap_only=True)
+
+
+def test_visual_compare_cli_preserves_evidence_and_writes_one_report(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline import cli, full_stack_ux_harness
+
+    before = tmp_path / "baseline"
+    after = tmp_path / "candidate"
+    before.mkdir()
+    after.mkdir()
+
+    def compare(before_root, before_receipt, after_root, after_receipt):
+        assert (before_root, before_receipt) == (before, Path("before.json"))
+        assert (after_root, after_receipt) == (after, Path("after.json"))
+        return {"status": "INCOMPLETE", "comparison_sha256": "a" * 64}
+
+    monkeypatch.setattr(full_stack_ux_harness, "compare_journey_evidence", compare)
+    monkeypatch.setattr(
+        full_stack_ux_harness,
+        "render_journey_comparison",
+        lambda result: f"<p>{result['status']}</p>",
+    )
+    argv = [
+        "quality-harness",
+        "visual-compare",
+        "before.json",
+        "after.json",
+        "--root",
+        str(before),
+        "--after-root",
+        str(after),
+        "--json",
+        "--html-out",
+    ]
+    output = before / "reports" / "review.html"
+    assert cli.main([*argv, "reports/review.html"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "INCOMPLETE"
+    assert result["path"] == "reports/review.html"
+    assert output.read_text() == "<p>INCOMPLETE</p>"
+
+    for rejected in ("reports/review.html", "../uncontained.html"):
+        assert cli.main([*argv, rejected]) == 2
+        assert json.loads(capsys.readouterr().err)["decision"] == "REJECTED"
+    assert output.read_text() == "<p>INCOMPLETE</p>"
+    assert not (tmp_path / "uncontained.html").exists()
 
 
 @pytest.mark.parametrize("raw", [b"+line\n" * 100, b"+" + b"x" * 9000])
