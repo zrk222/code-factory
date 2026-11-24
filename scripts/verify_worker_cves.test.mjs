@@ -14,6 +14,7 @@ test('compiled fixture parity ignores known timing fields and detects native evi
         version: '2.1.0',
         properties: { factory_native_raw_sha256: 'first-digest' },
         runs: [{
+          tool: { driver: { name: 'CodeQL' } },
           invocations: [{ executionSuccessful: true, toolExecutionNotifications: [{
             descriptor: { id: 'cli/file-coverage-baseline' }, timeUtc: 'first',
             properties: { attributes: { durationMilliseconds: 20 } },
@@ -23,6 +24,8 @@ test('compiled fixture parity ignores known timing fields and detects native evi
         }],
       },
       'coverage.json': {
+        complete: false,
+        errors: ['NATIVE_SOURCE_ACCOUNTING_REQUIRED', 'NATIVE_CHALLENGES_REQUIRED'],
         source_accounting: { state: 'COMPLETE', checks: { 'Example.java': { state: 'EXTRACTED', sha256: 'source-hash' } } },
         codeql_source_execution: { rows: [{ path: 'Example.java', errors: 0 }] },
       },
@@ -36,6 +39,7 @@ test('compiled fixture parity ignores known timing fields and detects native evi
   notification.timeUtc = 'second';
   notification.properties.attributes.durationMilliseconds = 12;
   repeat.sarif.runs[0].properties.metricResults.reverse();
+  repeat.sarif.runs[0].properties.metricResults[0] = { value: 1, ruleId: 'types' };
   assertStructuralParity(first, repeat);
   notification.descriptor.id = 'unexpected-diagnostic';
   assert.throws(() => assertStructuralParity(first, repeat), /changed on repeat \(report\)/);
@@ -45,6 +49,12 @@ test('compiled fixture parity ignores known timing fields and detects native evi
   repeat.sarif.runs[0].results[0].locations[0].physicalLocation.region.startLine = 2;
   repeat.coverage.codeql_source_execution.rows[0].errors = 1;
   assert.throws(() => assertStructuralParity(first, repeat), /Native report or source coverage changed/);
+  const invalid = structuredClone(bundle);
+  invalid.artifacts['native.json'].runs = [{}];
+  assert.throws(() => verifyStructuralBundle(invalid, 'candidate', expected), /exact native file coverage/);
+  invalid.artifacts['native.json'] = bundle.artifacts['native.json'];
+  invalid.artifacts['coverage.json'].errors.push('ADAPTER_ERROR');
+  assert.throws(() => verifyStructuralBundle(invalid, 'candidate', expected), /exact native file coverage/);
   bundle.artifacts['coverage.json'].source_accounting.checks['Example.java'].sha256 = 'other-bytes';
   assert.throws(() => verifyStructuralBundle(bundle, 'candidate', expected), /exact native file coverage/);
 });

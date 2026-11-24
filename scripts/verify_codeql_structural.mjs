@@ -10,9 +10,14 @@ export function verifyStructuralBundle(bundle, candidate, expected) {
   const coverage = bundle.artifacts?.['coverage.json'];
   const accounting = coverage?.source_accounting;
   const sarif = bundle.artifacts?.['native.json'];
+  // This unsigned fixture has no signed obligations or independent challenges.
+  const fixtureOnly = ['NATIVE_SOURCE_ACCOUNTING_REQUIRED', 'NATIVE_CHALLENGES_REQUIRED'];
   if (bundle.candidate_sha256 !== candidate || sarif?.version !== '2.1.0'
       || !Array.isArray(sarif.runs) || !sarif.runs.length
-      || sarif.runs.some(run => run.invocations?.some(invocation => invocation.executionSuccessful === false))
+      || sarif.runs.some(run => run.tool?.driver?.name !== 'CodeQL'
+        || !Array.isArray(run.invocations) || !run.invocations.length
+        || run.invocations.some(invocation => invocation.executionSuccessful !== true))
+      || !Array.isArray(coverage?.errors) || coverage.errors.some(error => !fixtureOnly.includes(error))
       || accounting?.state !== 'COMPLETE' || Object.keys(accounting.checks ?? {}).length !== expected.length
       || expected.some(file => accounting.checks[file.path]?.state !== 'EXTRACTED'
         || accounting.checks[file.path]?.sha256 !== file.sha256)) {
@@ -22,6 +27,9 @@ export function verifyStructuralBundle(bundle, candidate, expected) {
 }
 
 export function assertStructuralParity(first, repeat) {
+  const stableJson = value => JSON.stringify(value, (_, item) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
   const semantics = ({ sarif, coverage, challenges }) => {
     const report = structuredClone(sarif);
     // The raw digest includes CodeQL telemetry timestamps. Keep it in the stored bundle.
@@ -36,7 +44,7 @@ export function assertStructuralParity(first, repeat) {
         }
       }
       // CodeQL exports these counters as an unordered list.
-      run.properties?.metricResults?.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      run.properties?.metricResults?.sort((a, b) => stableJson(a).localeCompare(stableJson(b)));
     }
     // Wrapper executions and archive/stream hashes are retained in the raw bundle.
     // These fields describe the analysis result and the exact inputs it covered.
