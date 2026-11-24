@@ -2362,25 +2362,24 @@ def _source_diff(diff: Mapping[str, Any], hints: Sequence[Mapping[str, Any]]) ->
     </details>"""
 
 
-def render_journey_comparison(comparison: Mapping[str, Any]) -> str:
-    """Use the comparison verdict and display recorded evidence as inert text."""
-    before, after = comparison["before"], comparison["after"]
+def _journey_step_summary(cases):
+    first_failure = first_incomplete = last_verified = None
+    for case in cases:
+        for step in case.get("steps", []):
+            label = f"{_text(case['id'])} / {_text(step['id'])}"
+            status = step["after_status"]
+            if status == "PASS":
+                last_verified = label
+            elif status == "FAIL":
+                first_failure = first_failure or label
+            elif status in {"INCOMPLETE", "NOT_RUN"}:
+                first_incomplete = first_incomplete or label
+    return first_failure, first_incomplete, last_verified
+
+
+def _journey_progress(comparison):
     cases, findings = comparison["cases"], comparison["findings"]
-    after_steps = [
-        (f"{_text(case['id'])} / {_text(step['id'])}", step["after_status"])
-        for case in cases
-        for step in case.get("steps", [])
-    ]
-    failed_step = next(
-        (label for label, status in after_steps if status == "FAIL"), None
-    )
-    incomplete_step = next(
-        (label for label, status in after_steps if status in {"INCOMPLETE", "NOT_RUN"}),
-        None,
-    )
-    last_verified = next(
-        (label for label, status in reversed(after_steps) if status == "PASS"), None
-    )
+    failed_step, incomplete_step, last_verified = _journey_step_summary(cases)
     first_failure = next((item for item in findings if item.get("case_id")), None)
     if failed_step:
         readout = f"First failing step · {failed_step}"
@@ -2395,9 +2394,17 @@ def render_journey_comparison(comparison: Mapping[str, Any]) -> str:
         readout = f"{count} paired {'case' if count == 1 else 'cases'} recorded"
     verified_readout = (
         f'<p class="muted">Last verified After step · {last_verified or "None recorded"}</p>'
-        if after_steps
+        if any((failed_step, incomplete_step, last_verified))
         else ""
     )
+    return readout, verified_readout
+
+
+def render_journey_comparison(comparison: Mapping[str, Any]) -> str:
+    """Use the comparison verdict and display recorded evidence as inert text."""
+    before, after = comparison["before"], comparison["after"]
+    cases, findings = comparison["cases"], comparison["findings"]
+    readout, verified_readout = _journey_progress(comparison)
     action = _text(
         comparison.get("next_action")
         or ("Review the evidence if needed, or select Done to finish.")
