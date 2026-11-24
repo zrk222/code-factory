@@ -110,7 +110,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.csharp.disabled-certificate-verification': 1,
   'opt.factory.rules.csharp.request-command-injection': 3,
   'opt.factory.rules.csharp.request-sql-injection': 3,
-  'opt.factory.rules.go.archive-path-traversal': 3,
+  'opt.factory.rules.go.archive-path-traversal': 4,
   'opt.factory.rules.go.disabled-tls-verification': 1,
   'opt.factory.rules.go.grpc-insecure-transport': 1,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
@@ -122,13 +122,13 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.request-path-traversal': 1,
   'opt.factory.rules.go.request-sql-injection': 4,
   'opt.factory.rules.go.tls-client-cert-requested-not-verified': 1,
-  'opt.factory.rules.java.archive-path-traversal': 2,
+  'opt.factory.rules.java.archive-path-traversal': 3,
   'opt.factory.rules.java.disabled-hostname-verification': 4,
   'opt.factory.rules.java.request-command-injection': 3,
   'opt.factory.rules.java.request-html-injection': 1,
   'opt.factory.rules.java.request-path-traversal': 1,
   'opt.factory.rules.java.request-sql-injection': 3,
-  'opt.factory.rules.javascript.archive-path-traversal': 2,
+  'opt.factory.rules.javascript.archive-path-traversal': 3,
   'opt.factory.rules.javascript.dom-innerhtml-from-variable': 1,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 2,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 1,
@@ -139,7 +139,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.request-path-traversal': 13,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
-  'opt.factory.rules.php.archive-path-traversal': 1,
+  'opt.factory.rules.php.archive-path-traversal': 2,
   'opt.factory.rules.php.parameter-shell-command': 1,
   'opt.factory.rules.php.parameter-sql-text': 1,
   'opt.factory.rules.php.request-command-injection': 13,
@@ -148,7 +148,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.php.request-path-traversal': 11,
   'opt.factory.rules.php.request-sql-injection': 15,
   'opt.factory.rules.php.request-unsafe-deserialization': 4,
-  'opt.factory.rules.python.archive-path-traversal': 3,
+  'opt.factory.rules.python.archive-path-traversal': 4,
   'opt.factory.rules.python.disabled-tls-verification': 3,
   'opt.factory.rules.python.parameter-path-join-without-containment': 2,
   'opt.factory.rules.python.parameter-shell-command': 6,
@@ -161,7 +161,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.tarfile-extractall-without-filter': 3,
   'opt.factory.rules.python.unsafe-deserialization': 2,
   'opt.factory.rules.python.unsafe-deserialization-unscoped': 3,
-  'opt.factory.rules.ruby.archive-path-traversal': 1,
+  'opt.factory.rules.ruby.archive-path-traversal': 2,
   'opt.factory.rules.ruby.disabled-tls-verification': 2,
   'opt.factory.rules.ruby.parameter-shell-command': 1,
   'opt.factory.rules.ruby.request-command-injection': 3,
@@ -174,11 +174,11 @@ export const fixedReviewedFindingCounts = Object.freeze({
 // Fixed reviewed sink lines of the rule-family controls appended to the .ts
 // fixture (see extensionControlFiles); search-mode rules carry no source line.
 export const typescriptExtensionEndpoints = Object.freeze([
-  ['archive-path-traversal', 165], ['archive-path-traversal', 185],
-  ['parameter-shell-command', 198], ['parameter-shell-command', 208],
-  ['parameter-sql-text', 224], ['parameter-path-join-without-containment', 238],
-  ['html-template-unescaped-interpolation', 252], ['html-template-unescaped-interpolation', 262],
-  ['dom-innerhtml-from-variable', 272], ['tls-reject-unauthorized-disabled', 281],
+  ['archive-path-traversal', 165], ['archive-path-traversal', 185], ['archive-path-traversal', 194],
+  ['parameter-shell-command', 207], ['parameter-shell-command', 217],
+  ['parameter-sql-text', 233], ['parameter-path-join-without-containment', 247],
+  ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
+  ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
 ]);
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
@@ -208,9 +208,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 190 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 196 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 190;
+const REVIEWED_FINDINGS = 196;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

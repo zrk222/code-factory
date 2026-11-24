@@ -2994,6 +2994,39 @@ _REQUEST_ATTRS = {
     "path_params",
 }
 _MCP_CLASS = re.compile(r"(?i)(tool|mcp|server|handler)")
+_REGISTRATION = re.compile(
+    r"(?:^|\.)(add_url_rule|add_api_route|add_api_websocket_route|add_route|"
+    r"add_websocket_route|register_tool|add_tool|add_command|add_typer|"
+    r"add_resource|add_handler|register_handler|add_view)$"
+)
+_REGISTRY_NAME = re.compile(r"(?i)(tools|handlers|commands|routes|registry|dispatch)")
+
+
+_FUNCTION_OR_CLASS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def _registers_handlers(call: ast.Call) -> bool:
+    """``app.add_url_rule(..., view)`` style calls, or ``mcp.tool()(handler)``."""
+    if _REGISTRATION.search(_dotted(call.func)):
+        return True
+    inner = call.func
+    return isinstance(inner, ast.Call) and bool(
+        _ENTRY_DECORATOR.search(_dotted(inner.func))
+    )
+
+
+def _is_handler_registry(node: ast.AST) -> bool:
+    """A module-level ``NAME = {key: function, ...}`` registry of handlers."""
+    return (
+        isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Dict)
+        and any(
+            isinstance(t, ast.Name) and _REGISTRY_NAME.search(t.id)
+            for t in node.targets
+        )
+    )
+
+
 _MCP_ARGUMENTS = {"arguments", "args", "params", "tool_input", "input_data", "kwargs"}
 _SANITIZERS = re.compile(
     r"(?:^|\.)(quote|escape|int|float|bool|basename|secure_filename|abs|len|"
@@ -3042,7 +3075,8 @@ def _params(node: ast.AST, method: bool) -> list[str]:
     names = [a.arg for a in [*args.posonlyargs, *args.args]]
     if method and names and names[0] in {"self", "cls"}:
         names = names[1:]
-    return names + [a.arg for a in args.kwonlyargs]
+    variadic = [a.arg for a in (args.vararg, args.kwarg) if a is not None]
+    return names + [a.arg for a in args.kwonlyargs] + variadic
 
 
 def _is_entry(node: ast.AST) -> bool:
@@ -3096,6 +3130,39 @@ class Index:
                 continue
             self.trees[relative] = tree
             self._index_module(relative, tree)
+        self._mark_registered_entries()
+
+    def _mark_registered_entries(self) -> None:
+        """Handlers passed to a route, tool or command registration are entries."""
+        calls = [
+            (self.functions[key], call, module) for key, call, module in self.calls
+        ]
+        for relative, tree in self.trees.items():
+            module = _module_name(relative)
+            for node in tree.body:
+                if _is_handler_registry(node):
+                    for value in node.value.values:
+                        self._mark_reference(value, module, None)
+                if not isinstance(node, _FUNCTION_OR_CLASS):
+                    calls.extend(
+                        (None, call, module)
+                        for call in ast.walk(node)
+                        if isinstance(call, ast.Call)
+                    )
+        for caller, call, module in calls:
+            if _registers_handlers(call):
+                for value in [*call.args, *(k.value for k in call.keywords)]:
+                    self._mark_reference(value, module, caller)
+
+    def _mark_reference(self, value: ast.AST, module: str, caller) -> None:
+        if not isinstance(value, (ast.Name, ast.Attribute)):
+            return
+        if isinstance(value, ast.Name):
+            target = self._resolve_name(value.id, module)
+        else:
+            target = self._resolve_attribute(value, module, caller)
+        if target is not None:
+            target.is_entry = True
 
     @classmethod
     def from_root(cls, root: Path) -> Index:
@@ -3184,6 +3251,7 @@ class Index:
         if (
             isinstance(base, ast.Name)
             and base.id in {"self", "cls"}
+            and caller is not None
             and caller.class_name
         ):
             prefix = caller.key.split(":", 1)[1].split(".")[0]
@@ -3276,19 +3344,25 @@ def _classify(expr: ast.AST, caller: Function, cli_names: set[str]) -> tuple[str
 
 
 def _argument(call: ast.Call, target: Function, param: str) -> ast.AST | None | str:
-    """The expression bound to ``param`` at this call, ``None`` when absent, ``"*"`` when unknown."""
+    """The expression bound to ``param`` at this call.
+
+    ``None`` when the call omits it; the starred or double-starred value when
+    the call forwards ``*args``/``**kwargs`` over it, so pass-through wrappers
+    propagate; ``"*"`` when it cannot be determined.
+    """
     if param in target.params:
         index = target.params.index(param)
-        positional = [a for a in call.args]
-        if any(isinstance(a, ast.Starred) for a in positional[: index + 1]):
-            return "*"
+        positional = list(call.args)
+        starred = [a for a in positional[: index + 1] if isinstance(a, ast.Starred)]
+        if starred:
+            return starred[0].value
         if index < len(positional):
             return positional[index]
     for keyword in call.keywords:
         if keyword.arg == param:
             return keyword.value
         if keyword.arg is None:
-            return "*"
+            return keyword.value
     return None
 
 

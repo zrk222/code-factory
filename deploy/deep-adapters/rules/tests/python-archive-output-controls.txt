@@ -35,6 +35,17 @@ def unpack_zip_checked(archive, dest):
                 out.write(zf.read(name))
 
 
+def unpack_zip_unused_check(archive, dest):
+    root = os.path.realpath(dest)
+    with zipfile.ZipFile(archive) as zf:
+        for name in zf.namelist():
+            target = os.path.realpath(os.path.join(root, name))
+            target.startswith(root + os.sep)
+            # ruleid: python.archive-path-traversal
+            with open(target, "wb") as out:
+                out.write(zf.read(name))
+
+
 def unpack_zip_basename(archive, dest):
     with zipfile.ZipFile(archive) as zf:
         for name in zf.namelist():

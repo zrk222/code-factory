@@ -17070,3 +17070,42 @@ def test_entry_reach_tier_changes_only_needs_context_command_findings(tmp_path):
         entry_reach_tier({**finding, "line": 1}, source_bytes, bindings, decided)
         == decided
     )
+
+
+def test_registered_handlers_and_registries_are_entries(tmp_path):
+    _reach_write(
+        tmp_path,
+        {
+            "tools.py": "import os\n\ndef _ping(host):\n    os.system('ping ' + host)\n\n"
+            "def ping_view(host):\n    _ping(host)\n\ndef dig(name):\n    os.system('dig ' + name)\n\n"
+            "def offline(name):\n    os.system('dig ' + name)\n",
+            "app.py": "from flask import Flask\nfrom tools import ping_view, dig\napp = Flask(__name__)\n"
+            "app.add_url_rule('/ping/<host>', view_func=ping_view)\nTOOL_HANDLERS = {'dig': dig}\n",
+        },
+    )
+    assert (
+        _reach_one(tmp_path, "tools.py", "'ping '", "host")["reach"] == "entry_reached"
+    )
+    rows = reach(
+        tmp_path,
+        [
+            {"rule": "r", "path": "tools.py", "line": 10, "source": "name"},
+            {"rule": "r", "path": "tools.py", "line": 13, "source": "name"},
+        ],
+    )
+    assert [row["reach"] for row in rows] == ["entry_reached", "public_api"]
+
+
+def test_args_and_kwargs_pass_through_wrappers_propagate(tmp_path):
+    _reach_write(
+        tmp_path,
+        {
+            "lib.py": "import os\n\ndef _run(target, *, quiet=False):\n    os.system('ping ' + target)\n\n"
+            "def _wrapped(*args, **kwargs):\n    return _run(*args, **kwargs)\n",
+            "web.py": "from flask import request\nfrom lib import _wrapped\n\n"
+            "@app.route('/p')\ndef view():\n    _wrapped(request.args['h'])\n",
+        },
+    )
+    row = _reach_one(tmp_path, "lib.py", "os.system", "target")
+    assert row["reach"] == "entry_reached"
+    assert row["reach_chain"][0] == "request.args in web:view"

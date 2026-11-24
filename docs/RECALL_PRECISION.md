@@ -87,18 +87,28 @@ command, shell, SQL and path findings from `NEEDS_CONTEXT` to
 evidence (`source_bound_entry_reach`). On five Python control repositories
 it promoted nothing, because they have no such findings.
 
-## Known rule limitations
+## Gaps closed on 24 Nov
 
-- **Containment checks clear taint without proving they guard.** The archive
-  and request-path rules treat a call such as `startswith`, `relative_to`,
-  `filepath.IsLocal` or `getCanonicalPath().startsWith` on the tainted value
-  as clearing it, even when the code ignores the result. This can hide a real
-  defect (a false negative); it never adds an alert.
-- **Go archive guards** count only when they reject an archive entry name
-  (`if !filepath.IsLocal(h.Name)`), not any other value.
-- **Unresolved callers stay unpromoted.** Calls through dynamic dispatch,
-  registries or `*args` are not followed, so a reachable sink can remain
-  `public_api` or `unresolved`.
+- **Containment checks must guard.** The archive and request-path rules for
+  Python, Go, Java, JavaScript, Ruby and PHP clear a value only when a
+  containment check on that same value sits in a rejecting guard (an `if` that
+  raises, returns, continues or throws, or a `try` around `relative_to` whose
+  `except` exits) before the value is used. A bare predicate call no longer
+  counts; each language has a positive control for it. On 32 control
+  repositories this adds two alerts, both in Grav's `ZipArchiver`, where entry
+  names are validated in a separate pre-pass loop (a cross-function check the
+  pattern rules cannot see).
+- **Go archive guards** bind the checked value, so a guard on an unrelated
+  value (for example a label) no longer hides an entry-name write.
+- **Reach follows registered handlers and wrappers.** Functions passed to
+  `add_url_rule`, `add_api_route`, `add_route`, `register_tool`, `add_tool`,
+  `add_command`, `add_handler` and similar calls, `mcp.tool()(handler)`, and
+  values of module-level `*_HANDLERS`/`TOOLS`/`ROUTES` dictionaries are entry
+  points. `*args`/`**kwargs` forwarding wrappers propagate to their callers.
+
+Still open: calls through dynamic imports or string dispatch (for example
+GeoNode's handler loaded by module path) are not resolved, so such sinks stay
+`public_api` or `unresolved`.
 
 ## What a release claim needs
 

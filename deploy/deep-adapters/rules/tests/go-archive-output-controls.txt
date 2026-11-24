@@ -50,6 +50,24 @@ func unzipChecked(src, dest string) error {
 	return nil
 }
 
+func unzipUnusedCheck(src, dest string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	for _, f := range r.File {
+		target := filepath.Join(dest, f.Name)
+		_ = strings.HasPrefix(target, filepath.Clean(dest))
+		// ruleid: go.archive-path-traversal
+		out, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		out.Close()
+	}
+	return nil
+}
+
 func untar(in io.Reader, dest string) error {
 	tr := tar.NewReader(in)
 	for {

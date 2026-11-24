@@ -20,6 +20,30 @@ function unpack_zip_base($file, $dest) {
     }
 }
 
+function unpack_zip_unused_check($file, $dest) {
+    $zip = new ZipArchive();
+    $zip->open($file);
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $target = $dest . '/' . $zip->getNameIndex($i);
+        str_starts_with(realpath($target), $dest);
+        // ruleid: php.archive-path-traversal
+        file_put_contents($target, $zip->getFromIndex($i));
+    }
+}
+
+function unpack_zip_guarded($file, $dest) {
+    $zip = new ZipArchive();
+    $zip->open($file);
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $target = $dest . '/' . $zip->getNameIndex($i);
+        if (!str_starts_with(realpath(dirname($target)), $dest)) {
+            continue;
+        }
+        // ok: php.archive-path-traversal
+        file_put_contents($target, $zip->getFromIndex($i));
+    }
+}
+
 function greet() {
     $name = $_GET['name'];
     // ruleid: php.request-html-injection

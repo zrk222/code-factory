@@ -22,6 +22,17 @@ class Extractor
       end
     end
   end
+
+  def unpack_unused_check(file, dest)
+    Zip::File.open(file) do |zip|
+      zip.each do |entry|
+        target = File.expand_path(File.join(dest, entry.name))
+        target.start_with?(File.expand_path(dest) + "/")
+        # ruleid: ruby.archive-path-traversal
+        FileUtils.mkdir_p(File.dirname(target))
+      end
+    end
+  end
 end
 
 class FilesController < ApplicationController

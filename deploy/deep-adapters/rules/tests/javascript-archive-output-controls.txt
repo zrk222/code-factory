@@ -21,6 +21,15 @@ function unzipChecked(zipfile, dest) {
   });
 }
 
+function unzipUnusedCheck(zipfile, dest) {
+  zipfile.on("entry", (entry) => {
+    const target = path.resolve(dest, entry.fileName);
+    target.startsWith(path.resolve(dest) + path.sep);
+    // ruleid: javascript.archive-path-traversal
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+  });
+}
+
 function unzipAdm(file, dest) {
   const zip = new AdmZip(file);
   for (const entry of zip.getEntries()) {

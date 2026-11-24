@@ -40,6 +40,18 @@ class Archive {
         }
     }
 
+    void unzipUnusedCheck(InputStream in, File dest) throws IOException {
+        ZipInputStream zis = new ZipInputStream(in);
+        ZipEntry entry;
+        while ((entry = zis.getNextEntry()) != null) {
+            File target = new File(dest, entry.getName());
+            boolean inside = target.getCanonicalPath().startsWith(dest.getCanonicalPath());
+            // ruleid: java.archive-path-traversal
+            FileOutputStream out = new FileOutputStream(target);
+            out.close();
+        }
+    }
+
     void unzipNio(InputStream in, Path dest) throws IOException {
         ZipInputStream zis = new ZipInputStream(in);
         ZipEntry entry;
