@@ -19,6 +19,7 @@ from .appforge_evidence_kit import _read_candidate
 from .appforge_surface_matrix import RECEIPT_SCHEMA as MATRIX_SCHEMA
 from .appforge_storefront_story import RECEIPT_SCHEMA as STORY_SCHEMA
 from .revenueforge import _artifact_local, _artifact_json
+from .revenueforge import _artifact_receipt_sealed as _sealed
 from .revenueforge import AUTHORITY, RevenueForgeError
 from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import compat_sha as _sha
@@ -68,18 +69,6 @@ def _read_json(root: Path, path: Path, schema: str) -> tuple[dict[str, Any], Pat
         source, "APPFORGE_FASTLANE_CAPTURE", MAX_BYTES, schema=schema
     )
     return value, source
-
-
-def _sealed(value: dict[str, Any], schema: str, marker: str) -> bool:
-    supplied = value.get("receipt_sha256")
-    return (
-        value.get("schema") == schema
-        and value.get("marker") == marker
-        and isinstance(supplied, str)
-        and len(supplied) == 64
-        and _sha({key: item for key, item in value.items() if key != "receipt_sha256"})
-        == supplied
-    )
 
 
 def _read_text(root: Path, path_value: object, field: str) -> tuple[Path, str]:
