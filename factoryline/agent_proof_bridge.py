@@ -11,7 +11,6 @@ or a release decision.
 from __future__ import annotations
 
 from . import canonical_json_bytes as _canonical_encode
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -37,6 +36,8 @@ from .protocol import (
     IsolationBoundary,
     WorkflowNodeKind,
 )
+from . import utc_stamp as _now
+from . import CodedError
 
 
 ENVELOPE_SCHEMA = "factory.agent-proof-envelope.v1"
@@ -70,12 +71,8 @@ AUTHORITY = {
 }
 
 
-class AgentProofBridgeError(ValueError):
+class AgentProofBridgeError(CodedError):
     """Stable refusal for malformed, unbound, or non-portable evidence."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
 
 
 def _canonical(value: object) -> bytes:
@@ -89,15 +86,6 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
 
 
 def _identifier(value: object, field: str) -> str:

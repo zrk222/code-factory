@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from . import canonical_json_compat_bytes as _canonical
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
-import hashlib
 import json
 import math
 import os
@@ -26,6 +24,8 @@ from .failure_guidance import explain_failure
 from .assembly_process import run_cli_detailed
 from .migration import verify_migration_readiness, verify_repository_context
 from .agent_contract import AgentContractError, validate_verifier_attestation
+from . import utc_iso as _now
+from . import sha256_hex as _sha_bytes
 
 
 PRODUCT_GRAPH_SCHEMA = "factory.product_graph.v1"
@@ -79,14 +79,6 @@ class ProductMissionError(ValueError):
         self.code = code
         self.message = message
         self.guidance = explain_failure(code, message)
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _sha_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
 
 
 def _sha_path(path: Path) -> str:

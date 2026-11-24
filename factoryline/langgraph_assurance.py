@@ -23,6 +23,7 @@ from .graph_forensics import (
     seal_graph_lineage,
     verify_graph_lineage,
 )
+from . import CodedMessageError
 
 
 LANGGRAPH_ASSURANCE_SCHEMA = "factory.langgraph-assurance.v1"
@@ -48,13 +49,8 @@ AUTHORITY = {
 }
 
 
-class LangGraphAssuranceError(ValueError):
+class LangGraphAssuranceError(CodedMessageError):
     """A closed LangGraph assurance input or workspace-boundary failure."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: object) -> bytes:

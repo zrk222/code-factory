@@ -11,7 +11,6 @@ Atomic, executes a command, resumes a checkpoint, or grants authority.
 from __future__ import annotations
 
 from . import canonical_json_bytes as _canonical_encode
-from datetime import datetime, timezone
 from contextlib import contextmanager
 import hashlib
 import json
@@ -37,6 +36,8 @@ from .protocol import (
     IsolationBoundary,
     WorkflowNodeKind,
 )
+from . import utc_stamp as _now
+from . import CodedError
 
 
 ENVELOPE_SCHEMA = "factory.atomic-run-envelope.v1"
@@ -68,12 +69,8 @@ AUTHORITY = {
 }
 
 
-class AtomicProofAdapterError(ValueError):
+class AtomicProofAdapterError(CodedError):
     """A stable local envelope, binding, or continuity failure."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
 
 
 def _canonical(value: object) -> bytes:
@@ -87,15 +84,6 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
 
 
 def _identifier(value: object, field: str) -> str:

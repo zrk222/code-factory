@@ -1,0 +1,38 @@
+import { execSync, execFileSync } from "child_process";
+
+export function numstat(folderPath: string, baseBranch: string): string {
+  // ruleid: javascript.parameter-shell-command
+  return execSync(`git -C "${folderPath}" diff --numstat ${baseBranch}..HEAD`).toString();
+}
+
+export function numstatSafe(folderPath: string, baseBranch: string): string {
+  // ok: javascript.parameter-shell-command
+  return execFileSync("git", ["-C", folderPath, "diff", "--numstat", `${baseBranch}..HEAD`]).toString();
+}
+
+export const branch = (folder: string) => {
+  // ruleid: javascript.parameter-shell-command
+  return execSync("git -C " + folder + " rev-parse HEAD");
+};
+
+export function matchAll(pattern: RegExp, text: string) {
+  // ok: javascript.parameter-shell-command
+  return pattern.exec(text);
+}
+
+export function runner(cmd: string) {
+  // ok: javascript.parameter-shell-command
+  return execSync(cmd);
+}
+
+export class Repo {
+  async findUser(db: any, name: string) {
+    // ruleid: javascript.parameter-sql-text
+    return db.query(`SELECT * FROM users WHERE name = '${name}'`);
+  }
+
+  async findUserBound(db: any, name: string) {
+    // ok: javascript.parameter-sql-text
+    return db.query("SELECT * FROM users WHERE name = $1", [name]);
+  }
+}

@@ -2,7 +2,7 @@ name: deep-audit-coordinator-v1
 language: python
 spec_markdown: |
   # Deep audit coordinator v1 - opt-in amendment
-  Status: ARCHITECTURE_GATED_IMPLEMENTATION_PENDING. No runtime completion claim.
+  Status: PUBLIC_CLI_IMPLEMENTED_QUALIFICATION_PENDING. No full runtime completion claim.
   Owner said "Approve warm coordinator + fresh workers"; the objective remains approved.
   Approval: .factory/daemon-lifecycle/owner-approval-20261119.json; not release authority.
   This versioned exception applies only to the explicit foreground coordinator command.
@@ -20,12 +20,18 @@ spec_markdown: |
   never signals a process and cannot independently eliminate a later PID race.
   Actual cancellation must still use the existing owned Job/process-group handle.
   Module signatures cover the implemented foundation and direct-API worker bridge.
-  The full MUST contract and public command remain unverified.
+  The full MUST contract remains unverified; public CLI acceptance is scoped below.
 
   ## Current foundation and direct-API worker bridge (not full command completion)
   Modify existing assembly_process.py, agentic_control.py and cli_deep_audit.py;
-  add no runtime module, dependency or result database. The coordinator is not
-  registered as a CLI command. The MUST requirements below describe
+  add no runtime module, dependency or result database. The public foreground
+  command is `factory deep-audit coordinator --root ROOT --session-nonce NONCE`
+  with optional integer `--lease-seconds` (default300). The adapter hands owned
+  raw FileIO stdin to the existing service without closing or detaching it,
+  refuses buffered-only wrappers, emits no duplicate result, and exits nonzero
+  on incomplete admission or cleanup. Actual Windows CLI tests cover status,
+  stop, invalid input, open-pipe expiry and a signed fresh-child handshake with
+  owned cleanup. They do not prove a successful six-family audit. The MUST requirements below describe
   the complete target, not a claim of completed daemon operation or speedup.
   Identity objects contain exactly pid (positive non-boolean integer), creation
   (1..256 characters), runtime_sha256 and workspace_sha256 (64 lowercase hex),
@@ -284,6 +290,7 @@ modules:
 # Other danger checks and QA still inspect declared modules. This list grants no
 # executor exemption, callee/transitive safety claim or release authority.
 review_scopes:
+  - {module: cli_deep_audit, symbol: _run_coordinator, max_lines: 26}
   - {module: assembly_process, symbol: _process_creation_identity, max_lines: 13}
   - {module: assembly_process, symbol: _process_identity_absent, max_lines: 14}
   - {module: assembly_process, symbol: _linux_identity_absent, max_lines: 18}

@@ -11,6 +11,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from .runtime_audit_process import run_bounded_command
+from . import CodedError
 
 SCHEMA = "factory.capability-evidence-manifest.v1"
 MATURITY = frozenset(
@@ -23,12 +24,8 @@ MATURITY = frozenset(
 )
 
 
-class CapabilityEvidenceError(ValueError):
+class CapabilityEvidenceError(CodedError):
     """A stable refusal for an invalid capability-evidence contract."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 def _file(root: Path, value: object, field: str) -> dict[str, Any]:

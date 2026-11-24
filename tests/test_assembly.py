@@ -55,6 +55,17 @@ from factoryline.capability_packs import (
 )
 from factoryline.assembly import _cdte_gate
 from factoryline.continuation import _next_action
+from factoryline.contract import Receipt
+from factoryline.protocol import ASSEMBLY_STAGE_KEYS, BASE_REQUIRED_MODULES
+from factoryline.verification import (
+    declare_sequence,
+    quarantine_sequence,
+    record_intent,
+    record_outcome,
+    sequence_binding,
+    verify_feature,
+    verify_sequence,
+)
 
 
 def test_stage_output_evidence_uses_first_valid_meter_and_last_ship():
@@ -270,6 +281,11 @@ def test_assembly_enrolls_and_records_detailed_cli_attempts(tmp_path, monkeypatc
     seen = []
 
     def run_detailed(*args, **kwargs):
+        position = len(seen) + 1
+        (directory,) = (tmp_path / ".factory/run-sequences/repeat").iterdir()
+        assert (directory / "manifest.json").is_file()
+        assert (directory / f"{position:04d}.intent.json").is_file()
+        assert not (directory / f"{position:04d}.outcome.json").exists()
         receipts = list((tmp_path / "receipts").glob("forgeline-repeat-ship-*.json"))
         assert len(receipts) == len(seen) + 1
         enrolled_rows = [
@@ -292,6 +308,11 @@ def test_assembly_enrolls_and_records_detailed_cli_attempts(tmp_path, monkeypatc
         "repeat",
         chain=[("forgeline", ["ship", "{f}"]), ("forgeline", ["ship", "{f}"])],
     )
+    assert report["sequence_recorded"] is True
+    assert report["sequence_run_id"] == report["run_id"]
+    sequence = verify_sequence(tmp_path, "repeat", report["sequence_run_id"], set())
+    assert sequence["ok"]
+    assert len(sequence["stages"]) == 2
     assert [row["status"] for row in report["stages"]] == ["ok", "ok"]
     assert [row["attempt"] for row in seen] == [1, 2]
     assert seen[0]["action_id"] != seen[1]["action_id"]
@@ -310,6 +331,74 @@ def test_assembly_enrolls_and_records_detailed_cli_attempts(tmp_path, monkeypatc
         assert action["cleanup_confirmed"] is True
         assert action["streams_closed"] is True
         assert "args" not in action
+
+
+@pytest.mark.parametrize(
+    "feature, scoped_module",
+    [
+        ("complete", None),
+        ("Checkout API v2", None),
+        ("ui", "prestige"),
+        ("decision", "hsf"),
+    ],
+)
+def test_default_assembly_binds_whole_run_with_optional_scopes_absent(
+    tmp_path, monkeypatch, feature, scoped_module
+):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "factoryline.assembly.detect",
+        lambda: [
+            SimpleNamespace(name=name, installed=name != scoped_module, cli=name)
+            for name in ("specline", "forgeline", "hsf", "prestige")
+        ],
+    )
+    specs = tmp_path / "specs"
+    specs.mkdir()
+    (specs / f"{feature}.md").write_text("# Complete", encoding="utf-8")
+    (specs / f"{feature}.ssat.yaml").write_text("version: 1", encoding="utf-8")
+    forge = tmp_path / ".forge" / feature
+    forge.mkdir(parents=True)
+    (forge / "state.json").write_text('{"state":"architected"}', encoding="utf-8")
+    payload = {"shipped": True, "intent_traceable": True, "intent_hash": "a" * 64}
+    (forge / "receipts.jsonl").write_text(
+        json.dumps({**payload, "phase": "ship", "obligations": "1/1"}) + "\n",
+        encoding="utf-8",
+    )
+
+    if scoped_module:
+        stage = "score" if scoped_module == "prestige" else "compile"
+        Receipt(scoped_module, stage, feature, True).write(tmp_path)
+
+    def detailed(_cli, args, *_args, **_kwargs):
+        output = (
+            json.dumps({**payload, "obligations_met": "1/1"})
+            if args[0] == "ship"
+            else ""
+        )
+        return _detailed_result(output)
+
+    monkeypatch.setattr("factoryline.assembly.run_cli_detailed", detailed)
+    monkeypatch.setattr(
+        "factoryline.assembly._validated_forge_acceptance", lambda *_: True
+    )
+    report = assemble(tmp_path, feature)
+    result = verify_feature(tmp_path, feature)
+
+    if scoped_module:
+        assert report["halted_at"] == f"{scoped_module}:{stage}"
+        result = verify_feature(tmp_path, feature)
+        assert result["whole_run"]["basis"] == report["run_id"]
+        assert result["whole_run"]["status"] == "incomplete"
+        assert not result["shippable"]
+        return
+
+    assert "halted_at" not in report
+    assert "paused_at" not in report
+    assert result["whole_run"]["basis"] == report["run_id"]
+    assert result["whole_run"]["assured"] is True
+    assert result["shippable"] is True, result["blockers"]
 
 
 def test_assembly_cleanup_failure_does_not_mark_cli_action_success(
@@ -1214,3 +1303,476 @@ def test_continuation_offers_a_resolve_command(tmp_path):
     assert action["kind"] == "command"
     assert "cdte resolve" in action["command"]
     assert action["requires_human"] is True
+
+
+# Synthetic whole-run evidence fixtures
+
+STAGES = [f"{m}:{s}" for m, s in ASSEMBLY_STAGE_KEYS if m in BASE_REQUIRED_MODULES]
+
+
+def digest(value):
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode()
+    ).hexdigest()
+
+
+def put(path, value):
+    path.write_text(json.dumps(value))
+
+
+@pytest.fixture
+def run(tmp_path, monkeypatch):
+    import factoryline.verification as module
+
+    # Deterministic producer clock. No trusted-clock claim.
+    ticks = iter(f"2026-11-23T08:{i // 60:02d}:{i % 60:02d}+00:00" for i in range(1000))
+    monkeypatch.setattr(module, "_now", lambda: next(ticks))
+    manifest = declare_sequence(tmp_path, "sample", "run1", STAGES)
+    directory = tmp_path / ".factory/run-sequences/sample/run1"
+    receipts = []
+    for position, stage in enumerate(STAGES, 1):
+        record_intent(tmp_path, "sample", "run1", position)
+        owner, name = stage.split(":")
+        outputs = (
+            {"intent_trace": {"intent_traceable": True, "shipped": True}}
+            if name == "ship"
+            else {}
+        )
+        receipt = Receipt(
+            owner,
+            name,
+            "sample",
+            True,
+            inputs=sequence_binding(manifest, position),
+            outputs=outputs,
+            ts=module._now(),
+        )
+        path = receipt.write(tmp_path)
+        receipts.append(path)
+        record_outcome(tmp_path, "sample", "run1", position, path)
+    return tmp_path, directory, receipts
+
+
+def verify(run):
+    return verify_feature(
+        run[0], "sample", strict_sequence=True, sequence_run_id="run1"
+    )
+
+
+def test_complete_positive_and_default(run):
+    result = verify(run)
+    assert result["shippable"] is True
+    assert result["sequence"]["status"] == "passed"
+    legacy = verify_feature(run[0], "sample")
+    assert legacy["shippable"] is True
+    assert legacy["sequence"]["status"] == "not_requested"
+    assert legacy["whole_run"]["assured"] is True
+    assert legacy["whole_run"]["basis"] == "run1"
+
+
+def test_missing_stage3_intent_is_incomplete(run):
+    (run[1] / "0003.intent.json").unlink()
+    result = verify(run)
+    assert not result["shippable"]
+    assert result["sequence"]["status"] == "incomplete"
+    assert result["sequence"]["missing_positions"] == [
+        {"position": 3, "stage": STAGES[2], "missing": ["intent"]}
+    ]
+
+
+def test_missing_plan_is_unverifiable(run):
+    (run[1] / "manifest.json").unlink()
+    result = verify(run)
+    assert not result["shippable"]
+    assert result["sequence"]["status"] == "unverifiable"
+
+
+def test_late_plan_even_with_rebound_hashes_is_unverifiable(run):
+    manifest_path = run[1] / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["declared_at"] = "2026-11-23T08:00:02+00:00"
+    put(manifest_path, manifest)
+    # Rebind all hashes to avoid merely testing stale hash detection.
+    for position, receipt_path in enumerate(run[2], 1):
+        binding = sequence_binding(manifest, position)
+        intent_path = run[1] / f"{position:04d}.intent.json"
+        intent = json.loads(intent_path.read_text()) | binding
+        put(intent_path, intent)
+        native = json.loads(receipt_path.read_text())
+        native["inputs"].update(binding)
+        put(receipt_path, native)
+        path = run[1] / f"{position:04d}.outcome.json"
+        outcome = json.loads(path.read_text()) | binding
+        outcome.update(intent_sha256=digest(intent), receipt_sha256=digest(native))
+        put(path, outcome)
+    result = verify(run)
+    assert result["sequence"]["status"] == "unverifiable"
+    assert "chronology" in result["sequence"]["blockers"][0]["detail"]
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("sequence_run_id", "different"),
+        ("sequence_position", 1),
+        ("sequence_manifest_sha256", "0" * 64),
+        ("feature", "other"),
+        ("stage", "forgeline:ship"),
+        ("schema", "other"),
+        ("recorded_at", "not-a-date"),
+        ("recorded_at", "2026-11-23T08:00:00"),
+    ],
+)
+def test_bad_intent_rejected(run, name, value):
+    path = run[1] / "0003.intent.json"
+    put(path, json.loads(path.read_text()) | {name: value})
+    assert verify(run)["sequence"]["status"] == "unverifiable"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing",
+        "hash",
+        "intent_hash",
+        "traversal",
+        "other_stage",
+        "failed",
+        "binding",
+        "timestamp",
+    ],
+)
+def test_native_outcome_binding(run, mutation):
+    path = run[1] / "0003.outcome.json"
+    outcome = json.loads(path.read_text())
+    native_path = run[2][2]
+    native = json.loads(native_path.read_text())
+    if mutation == "missing":
+        native_path.unlink()
+    elif mutation == "hash":
+        native["outputs"]["changed"] = True
+        put(native_path, native)
+    elif mutation == "intent_hash":
+        outcome["intent_sha256"] = "0" * 64
+    elif mutation == "traversal":
+        outcome["receipt_path"] = "../elsewhere.json"
+    else:
+        if mutation == "other_stage":
+            native["stage"] = "not-declared"
+        if mutation == "failed":
+            native["ok"] = False
+        if mutation == "binding":
+            native["inputs"]["sequence_run_id"] = "run2"
+        if mutation == "timestamp":
+            native["ts"] = "2026-11-23T08:59:59+00:00"
+        put(native_path, native)
+        outcome["receipt_sha256"] = digest(native)
+    put(path, outcome)
+    result = verify(run)
+    assert not result["shippable"]
+    assert result["sequence"]["status"] == (
+        "failed" if mutation == "failed" else "unverifiable"
+    )
+
+
+def test_missing_outcome_lists_position(run):
+    (run[1] / "0003.outcome.json").unlink()
+    assert verify(run)["sequence"]["missing_positions"][0]["missing"] == ["outcome"]
+
+
+def test_extra_event_not_silently_ignored(run):
+    put(run[1] / "9999.intent.json", {})
+    assert verify(run)["sequence"]["status"] == "unverifiable"
+
+
+def test_selected_run_never_falls_back_to_old_run(run):
+    result = verify_feature(
+        run[0], "sample", strict_sequence=True, sequence_run_id="run2"
+    )
+    assert not result["shippable"]
+    assert result["sequence"]["status"] == "unverifiable"
+
+
+def test_missing_run_id_fail_closed(run):
+    result = verify_feature(run[0], "sample", strict_sequence=True)
+    assert not result["shippable"]
+    assert result["sequence"]["status"] == "unverifiable"
+
+
+def test_plan_cannot_omit_required_gates(run):
+    path = run[1] / "manifest.json"
+    value = json.loads(path.read_text())
+    value["stages"] = value["stages"][:2]
+    put(path, value)
+    assert "omits required" in verify(run)["sequence"]["blockers"][0]["detail"]
+
+
+@pytest.mark.parametrize("identity", ["../escape", "/tmp/escape", "", "a/b", "."])
+def test_safe_ids(tmp_path, identity):
+    with pytest.raises(ValueError):
+        declare_sequence(tmp_path, "f", identity, ["specline:strict"])
+
+
+def test_writer_does_not_rewrite_plan_or_events(run):
+    with pytest.raises(FileExistsError):
+        declare_sequence(run[0], "sample", "run1", STAGES)
+    with pytest.raises(FileExistsError):
+        record_intent(run[0], "sample", "run1", 1)
+    with pytest.raises(FileExistsError):
+        record_outcome(run[0], "sample", "run1", 1, run[2][0])
+
+
+def test_boolean_position_not_integer(run):
+    path = run[1] / "0001.intent.json"
+    put(path, json.loads(path.read_text()) | {"sequence_position": True})
+    assert verify(run)["sequence"]["status"] == "unverifiable"
+
+
+def test_symlink_event_rejected(run, tmp_path):
+    path = run[1] / "0003.intent.json"
+    target = tmp_path / "outside.json"
+    target.write_bytes(path.read_bytes())
+    path.unlink()
+    path.symlink_to(target)
+    assert verify(run)["sequence"]["status"] == "unverifiable"
+
+
+def test_cli_strict_sequence(run, capsys):
+    from factoryline.cli import main
+
+    assert (
+        main(
+            [
+                "verify",
+                "sample",
+                "--root",
+                str(run[0]),
+                "--strict-sequence",
+                "--sequence-run-id",
+                "run1",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["sequence"]["status"] == "passed"
+    (run[1] / "0003.intent.json").unlink()
+    assert (
+        main(
+            [
+                "verify",
+                "sample",
+                "--root",
+                str(run[0]),
+                "--strict-sequence",
+                "--sequence-run-id",
+                "run1",
+            ]
+        )
+        == 1
+    )
+    assert "SEQUENCE INCOMPLETE" in capsys.readouterr().out
+
+
+def test_explicit_run_selection_implies_strict(run):
+    (run[1] / "0003.intent.json").unlink()
+    result = verify_feature(run[0], "sample", sequence_run_id="run1")
+    assert result["strict_sequence"] is True
+    assert not result["shippable"]
+
+
+def test_selected_run_cannot_borrow_ship_intent(run):
+    # Rewrite synthetic selected ship before rebinding its outcome, then add an
+    # unrelated good ship. Legacy sees the good ship, strict must not borrow it.
+    path = run[2][-1]
+    native = json.loads(path.read_text())
+    assert native["stage"] == "ship"
+    native["outputs"] = {}
+    put(path, native)
+    outcome_path = run[1] / f"{len(STAGES):04d}.outcome.json"
+    outcome = json.loads(outcome_path.read_text())
+    outcome["receipt_sha256"] = digest(native)
+    put(outcome_path, outcome)
+    Receipt(
+        "forgeline",
+        "ship",
+        "sample",
+        True,
+        outputs={"intent_trace": {"intent_traceable": True, "shipped": True}},
+    ).write(run[0])
+    default = verify_feature(run[0], "sample")
+    assert not default["shippable"]
+    assert default["whole_run"]["status"] == "superseded"
+    assert not verify(run)["shippable"]
+    assert any(b["code"] == "INTENT_TRACE_MISSING" for b in verify(run)["blockers"])
+
+
+def test_empty_intent_cannot_pass_with_matching_hash(run):
+    put(run[1] / "0003.intent.json", {})
+    path = run[1] / "0003.outcome.json"
+    outcome = json.loads(path.read_text())
+    outcome["intent_sha256"] = digest({})
+    put(path, outcome)
+    assert verify(run)["sequence"]["status"] == "unverifiable"
+
+
+def test_empty_outcome_cannot_pass(run):
+    put(run[1] / "0003.outcome.json", {})
+    assert verify(run)["sequence"]["status"] == "unverifiable"
+
+
+def test_legacy_gate_only_without_recorded_plan(run):
+    (run[1] / "manifest.json").unlink()
+    run[1].rename(run[0] / "archived-run")
+    result = verify_feature(run[0], "sample")
+    assert result["shippable"]
+    assert not result["whole_run"]["assured"]
+    assert result["whole_run"]["status"] == "not_evaluated"
+
+
+def test_newest_whole_plan_blocks_even_with_passing_latest_receipts(run):
+    declare_sequence(run[0], "sample", "paused", STAGES)
+    result = verify_feature(run[0], "sample")
+    assert not result["shippable"]
+    assert result["whole_run"]["basis"] == "paused"
+    assert result["whole_run"]["status"] == "incomplete"
+    assert len(result["whole_run"]["missing_positions"]) == len(STAGES)
+
+
+def test_subset_does_not_displace_whole_basis(run):
+    declare_sequence(run[0], "sample", "subset", STAGES[:1])
+    result = verify_feature(run[0], "sample")
+    assert result["shippable"]
+    assert result["whole_run"]["basis"] == "run1"
+
+
+def test_invalid_inventory_requires_visible_quarantine(run, capsys):
+    from factoryline.cli import main
+
+    directory = run[1].with_name("damaged")
+    directory.mkdir()
+    manifest = directory / "manifest.json"
+    manifest.write_text("{")
+    assert verify_feature(run[0], "sample")["whole_run"]["status"] == "unverifiable"
+    assert (
+        main(
+            [
+                "sequence",
+                "quarantine",
+                "sample",
+                "damaged",
+                "--root",
+                str(run[0]),
+                "--reason",
+                "partially written manifest",
+            ]
+        )
+        == 0
+    )
+    assert manifest.read_text() == "{"
+    with pytest.raises(FileExistsError):
+        quarantine_sequence(run[0], "sample", "damaged", "replace")
+    with pytest.raises(ValueError, match="unverifiable run"):
+        quarantine_sequence(run[0], "sample", "run1", "skip healthy basis")
+    capped = verify_feature(run[0], "sample")
+    assert capped["shippable"]
+    assert capped["whole_run"]["recovered"] == ["damaged"]
+    assert main(["verify", "sample", "--root", str(run[0])]) == 0
+    assert "SEQUENCE RECOVERED" in capsys.readouterr().out
+    put(directory / "quarantine.json", {})
+    assert not verify_feature(run[0], "sample")["shippable"]
+
+
+def test_quarantine_does_not_hide_superseding_native_receipts(run):
+    root = run[0]
+    declare_sequence(root, "sample", "damaged", STAGES)
+    stage_module, stage_name = STAGES[0].split(":")
+    Receipt(stage_module, stage_name, "sample", True).write(root)
+    (run[1].with_name("damaged") / "manifest.json").unlink()
+    quarantine_sequence(root, "sample", "damaged", "missing manifest")
+    result = verify_feature(root, "sample")
+    assert not result["shippable"]
+    assert result["whole_run"]["status"] == "superseded"
+    assert result["whole_run"]["recovered"] == ["damaged"]
+
+
+def test_quarantine_without_older_basis_requires_fresh_run(run):
+    root, directory, _ = run
+    (directory / "manifest.json").unlink()
+    quarantine_sequence(root, "sample", "run1", "missing manifest")
+    result = verify_feature(root, "sample")
+    assert not result["shippable"]
+    assert result["whole_run"]["status"] == "incomplete"
+    assert verify(run)["sequence"]["quarantined"] is True
+
+
+def test_stray_run_inventory_entry_fails_closed(run):
+    (run[1].parent / "unexpected.json").write_text("{}")
+    result = verify_feature(run[0], "sample")
+    assert not result["shippable"]
+    assert result["whole_run"]["status"] == "unverifiable"
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [" " * (1024 * 1024 + 1), "[" * 10000],
+    ids=["oversized", "deeply-nested"],
+)
+def test_invalid_manifest_resource_bounds_fail_closed(run, malformed):
+    (run[1] / "manifest.json").write_text(malformed, encoding="utf-8")
+    result = verify_feature(run[0], "sample")
+    assert not result["shippable"]
+    assert result["whole_run"]["status"] == "unverifiable"
+
+
+def test_existing_gate_only_receipts_accept_legacy_feature_name(tmp_path):
+    feature = "Checkout API v2"
+    for stage_id in STAGES:
+        module, stage = stage_id.split(":")
+        outputs = {"intent_trace": {"shipped": True, "intent_traceable": True}}
+        Receipt(module, stage, feature, True, outputs=outputs).write(tmp_path)
+    verdict = verify_feature(tmp_path, feature)
+    assert verdict["shippable"]
+    assert verdict["whole_run"]["status"] == "not_evaluated"
+
+
+def test_new_scope_blocks_fallback_to_gate_only_after_whole_run(run):
+    root, _, _ = run
+    Receipt("prestige", "score", "sample", True).write(root)
+    result = verify_feature(root, "sample")
+    assert not result["shippable"]
+    assert result["whole_run"]["status"] == "incomplete"
+
+
+def test_mission_ship_handoff_preserves_release_supersession(run):
+    from factoryline.specforge_promotion import _mission_ship_evidence
+    from factoryline.verification import _now
+
+    root, _, _ = run
+    feature, run_id = "sample", "mission"
+    manifest = declare_sequence(root, feature, run_id, ["forgeline:ship"])
+    record_intent(root, feature, run_id, 1)
+    trace = {"shipped": True, "intent_traceable": True, "intent_hash": "a" * 64}
+    ship = Receipt(
+        "forgeline",
+        "ship",
+        feature,
+        True,
+        ts=_now(),
+        inputs=sequence_binding(manifest, 1),
+        outputs={"intent_trace": trace},
+    ).write(root)
+    record_outcome(root, feature, run_id, 1, ship)
+
+    verification = verify_feature(root, feature)
+    assert not verification["shippable"]
+    assert verification["whole_run"]["status"] == "superseded"
+    assert _mission_ship_evidence(root, feature, trace)
+    assert not _mission_ship_evidence(root, feature, {**trace, "intent_hash": "b" * 64})
+    outcome = (
+        root / ".factory" / "run-sequences" / feature / run_id / "0001.outcome.json"
+    )
+    outcome.unlink()
+    assert not _mission_ship_evidence(root, feature, trace)

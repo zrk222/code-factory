@@ -13,7 +13,7 @@ import hashlib
 import os
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1164,13 +1164,18 @@ def _execute_assembly_stage(
         for row in report["stages"]
     )
     action_id = _cli_action_id(run_id, stage, attempt, release_binding)
+    from .verification import _assembly_intent, _assembly_outcome, _sequence_error
+
+    sequence = _assembly_intent(root, feature, run_id, stage.stage_id, report)
+    if sequence is None:
+        return False
     receipt = Receipt(
         module=stage.module,
         stage=stage.name,
         feature=feature,
         ok=False,
         run_id=action_id,
-        inputs=dict(release_binding),
+        inputs={**release_binding, **sequence},
         outputs={
             "assembly_run_id": run_id,
             "cli_action": {
@@ -1190,7 +1195,11 @@ def _execute_assembly_stage(
             },
         },
     )
-    receipt.write(root)
+    try:
+        receipt.write(root)
+    except (OSError, ValueError) as error:
+        _sequence_error(report, stage.stage_id, error)
+        return False
     activity.stage_started(stage.module, stage.name)
     with stopwatch() as sw:
         try:
@@ -1242,7 +1251,12 @@ def _execute_assembly_stage(
         )
     )
     receipt.meter = stage_meter
-    receipt_path = receipt.write(root)
+    try:
+        receipt_path = receipt.write(root)
+    except (OSError, ValueError) as error:
+        _sequence_error(report, stage.stage_id, error)
+        return False
+    ok = _assembly_outcome(root, feature, run_id, sequence, receipt_path, report) and ok
     report["stages"].append(
         {
             "module": stage.module,
@@ -1384,6 +1398,31 @@ def _run_assembly_pipeline(
             dry_run,
         )
 
+    from .verification import _assembly_scope_requirements, _begin_assembly_sequence
+
+    stages = [
+        _plan_assembly_stage(
+            root,
+            feature,
+            module,
+            args,
+            installed,
+            selected_contract_path,
+            policy_snapshot,
+        )
+        for module, args in chain
+    ]
+    if not dry_run:
+        scoped = _assembly_scope_requirements(root, feature)
+        stages = [
+            replace(stage, required=True) if stage.stage_id in scoped else stage
+            for stage in stages
+        ]
+        if not _begin_assembly_sequence(root, feature, run_id, stages, report):
+            _finish_activity(report, activity)
+            persist()
+            return report
+
     if not _assembly_agent_contract(root, report, activity):
         persist()
         return report
@@ -1395,16 +1434,7 @@ def _run_assembly_pipeline(
     if _assembly_cdte_gate(root, feature, dry_run, report, activity):
         persist()
         return report
-    for module, args_tmpl in chain:
-        stage = _plan_assembly_stage(
-            root,
-            feature,
-            module,
-            args_tmpl,
-            installed,
-            selected_contract_path,
-            policy_snapshot,
-        )
+    for stage in stages:
         if _assembly_stage_halts(
             root,
             feature,

@@ -37,6 +37,7 @@ import re
 from typing import Any, Iterable
 
 from .run_metrics import _atomic_json
+from . import CodedError
 
 SCAN_SCHEMA = "factory.cdte-scan.v1"
 PUBLIC_SCHEMA = "factory.cdte-report.public.v1"
@@ -58,12 +59,8 @@ BLOCKING_SEVERITIES = frozenset({"critical", "high"})
 _REGISTRY_PATH = Path(__file__).resolve().parent / "data" / "lethal_pairs.json"
 
 
-class CDTEError(ValueError):
+class CDTEError(CodedError):
     """A typed invalid constraint, registry, or resolution input."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 # ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ from .runtime_audit_common import (
     require_int,
     require_str,
 )
+from . import PrefixedCodedError
 
 
 ATTESTATION_SCHEMA = "factory.supply-chain-attestation.v1"
@@ -51,13 +52,8 @@ COLLECTOR_ROLES = frozenset(
 )
 
 
-class SupplyChainError(ValueError):
+class SupplyChainError(PrefixedCodedError):
     """A stable, reviewable fail-closed supply-chain error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: Any) -> bytes:

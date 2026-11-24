@@ -19,12 +19,12 @@ deployment: local-first Python CLI with IDE, MCP, and read-only WebMCP surfaces
 primary_question: Did the change fulfill approved intent, what could break, and what does the audit evidence support?
 ```
 
-## Current release preview
+## Current release
 
-The current source version is 0.49.7. The requested next bundle is core 0.50.0
-and VS Code/Open VSX/JetBrains 1.3.6; that bundle is not published. Provider
-publication and approval remain separate verified events, not consequences of
-passing local tests or merging a pull request.
+Core 0.50.0 is available on GitHub and PyPI. VS Marketplace lists 1.3.6, and
+JetBrains accepted 1.3.6 for review. [Release channels](RELEASE_CHANNELS.md)
+records provider status. The default static scan analyzes Python. Configure
+native workers for other languages and check whether each scan completed.
 
 The latest source lets an owner-approved Proof Agent run a sealed six-business-lane
 plan using the existing deterministic runner, challenge it with known-bad controls,

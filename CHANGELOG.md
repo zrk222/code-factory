@@ -1,10 +1,42 @@
 # Changelog
 
-## 0.50.0 — 2026-11-21 (release candidate; publication gated)
+## 0.50.1 — 2026-11-23
+
+- Detect Stripe-shaped live credentials in the default Python scan without emitting the value.
+- Report canonical MD5 calls and preserve explicit compatibility-checksum exemptions.
+- Keep license and Python requirements visible for every package. Restore the approved commercial decision record and include its policy JSON in the source archive.
+- Pair the separately installed core with the 1.3.7 VS Code and JetBrains adapters. Native worker setup, signed six-family qualification and cold/warm comparisons are separate from this detector fix.
+
+## 0.50.0 — 2026-11-22
 
 Your AI can propose a repair. Your team needs evidence before trusting it.
 This release makes Code Factory a broader, tool-friendly evidence layer for
 polyglot developers—not another agent that approves its own work.
+
+[GitHub release](https://github.com/zrk222/code-factory/releases/tag/v0.50.0) ·
+[PyPI distributions](https://pypi.org/project/factoryline-code-factory/0.50.0/) ·
+[Release channels](docs/RELEASE_CHANNELS.md).
+
+The core install supports quick static review of Python. Configure native
+workers for other languages and install the optional [companion toolchain](docs/START_HERE.md#install-the-full-toolchain)
+to use its commands. A scan can exit 0 with an `INCOMPLETE` result; check
+coverage and status before relying on it. Use `--require-complete` to make
+incomplete coverage fail a CI job.
+
+Unified six-family signed qualification and the cold/warm comparisons are
+still outstanding. A clean PyPI install reproduced two default Python scanner
+misses with synthetic input: a Stripe-shaped credential with a neutral variable
+name and MD5 used to hash a password.
+
+- **Latest advisory evidence:** the retained 161-case study records CodeQL
+  detections in 15/91 analyzed cases, with 70 not executed. Pattern replay
+  detected 6/161 on exposed cases. These lane-separated observations do not
+  establish blind recall for the entire release; the historical figures below
+  remain tied to their earlier ruleset.
+- **Final integration fixes:** register the opt-in foreground coordinator with
+  real signed-child, replay, restart-owner and cleanup controls; fix the native
+  Gitleaks SARIF build version, pin the browser acceptance OS, reduce verifier
+  complexity without relaxing limits, and correct the JetBrains archive path.
 
 - **Expanded:** 30 native security rules across 12 declared languages, with
   default and review tiers, native source-to-sink traces where observed, SARIF
@@ -24,6 +56,17 @@ polyglot developers—not another agent that approves its own work.
 - **Optimized:** exhausted alias-memo entry/pair budgets reject before redundant
   copying/UTF-8 accounting. Capacity and findings remain unchanged; 2,867 focused
   controls passed. Helper timing is not an overall scan-speed claim.
+- **Recall:** share BM25/BM25F corpus preparation across explicit topics while
+  preserving exact scores, receipts and fresh trust checks. In 11 paired
+  1,000-record synthetic runs, four/eight-topic selection medians fell from
+  46.43/95.09 to 20.97/34.50 ms; no reliable full-API speedup or detector-recall
+  improvement is claimed. No new dependency, memory store or persistent cache.
+- **Visual evidence:** optional fixture-only browser execution links reviewed
+  screenshots, accessible controls, terminal state and a request-correlated API
+  response, with explicit deadlines and process cleanup. Prestige token reports
+  and token-removal challenges are rechecked on replay; stale, missing or failed
+  visual evidence blocks its requested quality-harness inclusion. Legacy use
+  stays compatible, and human release authority is unchanged.
 - **Added:** frozen versioned scan JSON, SARIF 2.1.0 and opt-in pre-commit;
   byte-exact historical mutation diffs preserve CRLF, non-UTF-8 bytes and missing
   final newlines. Existing CI and editors can consume evidence without a new

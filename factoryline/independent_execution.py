@@ -27,6 +27,7 @@ from .runtime_audit_common import (
     require_int,
     require_str,
 )
+from . import PrefixedCodedError
 
 
 SCHEMA = "factory.execution-attestation.v1"
@@ -42,13 +43,8 @@ COMPATIBLE_BACKENDS = {
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
-class ExecutionAttestationError(ValueError):
+class ExecutionAttestationError(PrefixedCodedError):
     """Stable, fail-closed validation error for an observation attestation."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _timestamp(value: object, field: str) -> datetime:

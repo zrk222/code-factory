@@ -17,6 +17,8 @@ import re
 from typing import Any
 
 from .product_missions import verify_mission
+from . import sha256_hex as _sha_bytes
+from . import PrefixedCodedError
 
 
 PROOF_DELTA_SCHEMA = "factory.mission.proof-delta.v1"
@@ -44,13 +46,8 @@ _AUTHORITY = {
 }
 
 
-class ProofDeltaError(ValueError):
+class ProofDeltaError(PrefixedCodedError):
     """Stable fail-closed error for a malformed or stale proof-delta receipt."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: object) -> bytes:
@@ -64,10 +61,6 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return sha256(_canonical(value)).hexdigest()
-
-
-def _sha_bytes(value: bytes) -> str:
-    return sha256(value).hexdigest()
 
 
 def _relative(

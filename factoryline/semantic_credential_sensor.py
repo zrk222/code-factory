@@ -25,6 +25,7 @@ from .credential_endpoint_admission import (
     SECURITY_EFFECT_CONTRACTS as SECURITY_EFFECT_CONTRACTS,
     SECURITY_EFFECT_WITNESS_SCHEMA as SECURITY_EFFECT_WITNESS_SCHEMA,
 )
+from . import node_span as _finite_source_span
 
 _AUTH_CALLS = frozenset({"requests.auth.HTTPBasicAuth", "httpx.BasicAuth"})
 _AUTH_HEADER = re.compile(r"(?i)^\s*(?:bearer|basic)\s+(.+?)\s*$")
@@ -463,7 +464,10 @@ def configuration_and_credential_findings(
 
     findings = configuration_findings(tree, aliases, relative)
     findings.extend(credential_findings(tree, aliases, relative, nodes=nodes))
-    return findings
+    from .provenance import consumed_http_literals, positional_credential_findings
+
+    consumed = consumed_http_literals(tree, aliases, nodes, findings)
+    return findings + positional_credential_findings(tree, relative, nodes, consumed)
 
 
 def validation_modules():
@@ -5118,6 +5122,25 @@ def _sql_sink(
 def _security_builtin_identity_closed(
     module, aliases, names, *, readonly_reflection=None
 ):
+    """Memoize the proof on a scope-bound module; rebinding a reshaped tree resets it."""
+    try:
+        key = (frozenset(aliases.items()), frozenset(names), readonly_reflection)
+        hash(key)
+    except TypeError:
+        key = None
+    cache = getattr(module, "_security_builtin_identity_cache", None)
+    if key is None or cache is None:
+        return _security_builtin_identity_proof(
+            module, aliases, names, readonly_reflection
+        )
+    if key not in cache:
+        cache[key] = _security_builtin_identity_proof(
+            module, aliases, names, readonly_reflection
+        )
+    return cache[key]
+
+
+def _security_builtin_identity_proof(module, aliases, names, readonly_reflection):
     from .review_integrity import _resolve
 
     protected = (
@@ -5752,13 +5775,6 @@ def _security_helper_source_context(call, function):
     return module, index, _security_source_path(index, module)
 
 
-def _finite_source_span(node):
-    return [
-        getattr(node, key, None)
-        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-    ]
-
-
 def source_built_ast_program_witness(node, call_name, *, source_bytes, source_path):
     """Prove a closed AST-to-code builder without executing its generated code."""
     from .finite_capture import (
@@ -5956,3 +5972,28 @@ def _security_input_flow_evidence(value, *, value_type):
         json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return evidence
+
+
+def _literal_keyword_name(key):
+    return isinstance(key, ast.Constant) and isinstance(key.value, str)
+
+
+def definite_compatibility_checksum(node):
+    """Credit one literal false flag only when keyword expansion is unambiguous."""
+    values = []
+    for keyword in node.keywords:
+        if keyword.arg == "usedforsecurity":
+            values.append(keyword.value)
+        elif keyword.arg is None:
+            if not isinstance(keyword.value, ast.Dict):
+                return False
+            for key, value in zip(keyword.value.keys, keyword.value.values):
+                if not _literal_keyword_name(key):
+                    return False
+                if key.value == "usedforsecurity":
+                    values.append(value)
+    return (
+        len(values) == 1
+        and isinstance(values[0], ast.Constant)
+        and values[0].value is False
+    )

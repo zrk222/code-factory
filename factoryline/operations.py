@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .control_plane import canonical_json, sha256
+from . import CodedRuntimeError
 
 
 OPERATIONS_SCHEMA = "factory.operations.v1"
@@ -23,11 +24,8 @@ VULNERABILITY_SCHEMA = "factory.vulnerability.response.v1"
 CONNECTOR_SCHEMA = "factory.connector.event.v1"
 
 
-class OperationsError(RuntimeError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+class OperationsError(CodedRuntimeError):
+    pass
 
 
 def _operation_fields(body: Any, schema: str, keys: set[str]) -> None:

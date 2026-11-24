@@ -1,0 +1,74 @@
+{
+  "baseline_commit": "5c7c21e3",
+  "change": "A test class whose base is a unittest.TestCase subclass defined in another scanned module is now treated as a unittest class, so its self.assert* calls and same-class assertion helpers earn oracle credit.",
+  "claim": "Review-tier volume (QUALITY_UNKNOWN_TEST_ORACLE) fell on 5 control repositories with no added findings and identical security and proven-tier findings. Development evidence, not a detector score.",
+  "claim_boundary": {
+    "adjudicated": false,
+    "held_out": false,
+    "no_recall_claim": true,
+    "not_measured": [
+      "InvenTree",
+      "modoboa",
+      "nautobot (audit exceeded the 900s limit on both runs)"
+    ],
+    "spot_check": "Every removed liberapay finding inspected in the sample (4 of 15) was a test body using self.assertRaises; all daphne removals call same-class self.assert_* helpers whose bodies use self.assertEqual."
+  },
+  "controls": [
+    {
+      "added_by_code": {},
+      "commit": "d7a005258cce3ad7893a759274647f46331d782e",
+      "files_scanned": 26,
+      "findings_after": 6,
+      "findings_before": 34,
+      "removed_by_code": {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 28
+      },
+      "repository": "django/daphne"
+    },
+    {
+      "added_by_code": {},
+      "commit": "951d1e75b1f44aeb17f136cd9641b97bfeb12d14",
+      "files_scanned": 166,
+      "findings_after": 9,
+      "findings_before": 9,
+      "removed_by_code": {},
+      "repository": "awesto/django-shop"
+    },
+    {
+      "added_by_code": {},
+      "commit": "be6be1e6fcee12dd8b0bdee73f3871749c0ff3b4",
+      "files_scanned": 63,
+      "findings_after": 10,
+      "findings_before": 10,
+      "removed_by_code": {},
+      "repository": "jazzband/django-taggit"
+    },
+    {
+      "added_by_code": {},
+      "commit": "a5b10b19beac77270893fa878f0085567395f7a7",
+      "files_scanned": 209,
+      "findings_after": 11,
+      "findings_before": 11,
+      "removed_by_code": {},
+      "repository": "django-wiki/django-wiki"
+    },
+    {
+      "added_by_code": {},
+      "commit": "cf2592f8fd158be38b525cf259ff875b33d5ac12",
+      "files_scanned": 116,
+      "findings_after": 57,
+      "findings_before": 72,
+      "removed_by_code": {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 15
+      },
+      "repository": "liberapay/liberapay.com"
+    }
+  ],
+  "measurement_id": "imported-testcase-oracle-20261123",
+  "schema": "factory.imported-testcase-oracle-measurement.v1",
+  "security_and_proven_tier_findings_identical": true,
+  "totals": {
+    "after": 93,
+    "before": 136
+  }
+}

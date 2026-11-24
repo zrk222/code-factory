@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Code Factory 0.50.0: 12-language native security rules, SARIF review, signed evidence and bounded agent proof. Your team keeps the release decision.">
-  <title>Code Factory | Polyglot evidence for AI-built code</title>
+  <meta name="description" content="Code Factory is a local-first software assembly workflow. Turn an outcome into an inspectable application starting point, with requirements, tests and evidence for human review.">
+  <title>Code Factory | From an idea to an inspectable app</title>
   <style>
     :root {
       --ink: #171610;
@@ -116,9 +116,40 @@
     .module-flow { grid-template-columns:1fr; }
     @media(max-width:50rem) { .story-layout { grid-template-columns:1fr; gap:20px; } .story { max-width:340px; margin:auto; } h1 { font-size:2.6rem; } .lede { font-size:1rem; } }
   </style>
+<style>
+/* Independent presentation repair: keep approved content, expose both video controls. */
+header { padding: 12px 0; }
+.hero { padding: 12px 0 36px; }
+h1 { font-size: clamp(1.8rem,3.2vw,2.8rem); line-height:1.12; margin:10px 0 18px; max-width:28ch; }
+.preview-videos { grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:start; gap:24px; margin:0 0 24px; }
+.preview-videos .story { width:100%; max-width:none; }
+.preview-videos video, .preview-videos .story video { width:100%; height:270px; aspect-ratio:auto; object-fit:contain; background:#111; }
+.preview-videos #operations { padding:0; }
+.preview-videos #operations .shell { width:100%; }
+.preview-videos .section-head { display:block; margin:0 0 12px; }
+.preview-videos .section-head h2 { font-size:1.3rem; letter-spacing:-.025em; margin:0 0 8px; }
+.preview-videos .section-head p { font-size:.92rem; line-height:1.45; }
+.preview-videos figcaption { font-size:.85rem; line-height:1.45; padding:12px 14px; }
+.story-explanation .module-flow { grid-template-columns:repeat(3,minmax(0,1fr)); }
+@media(max-width:50rem) {
+ .shell { width:calc(100% - 28px); }
+ header { padding:10px 0; }
+ .brand { font-size:.95rem; gap:8px; }
+ nav .button { min-height:40px; padding:8px 10px; font-size:.8rem; }
+ .hero { padding-top:8px; }
+ .eyebrow { font-size:.68rem; letter-spacing:.1em; }
+ h1 { font-size:1.65rem; line-height:1.12; margin:8px 0 14px; }
+ .preview-videos { grid-template-columns:1fr; gap:18px; margin-top:0; }
+ .preview-videos video, .preview-videos .story video { height:150px; }
+ .preview-videos figcaption { font-size:.78rem; }
+ .preview-videos .section-head { margin-bottom:10px; }
+ .preview-videos .section-head p { font-size:.86rem; }
+ .story-explanation .module-flow { grid-template-columns:1fr; }
+}
+</style>
 </head>
 <body>
-  <p class="sr-only">A local-first code audit system connecting requirements, architecture, security checks, behavioral evidence, specialty AI review, and actionable repairs.</p>
+  <p class="sr-only">A local-first software assembly workflow connecting an idea, requirements, scoped changes, tests, and evidence for human review.</p>
   <a class="skip-link" href="#main">Skip to product proof</a>
   <div class="shell">
     <header>
@@ -134,12 +165,10 @@
   <main id="main">
     <div class="shell hero">
       <div>
-        <div class="eyebrow">0.50.0 release line · 12-language native security</div>
-        <h1>Your AI writes code. You get the evidence.</h1>
-        <p class="lede"><strong>More languages. Clearer findings. A decision your team can inspect.</strong> Thirty native security rules, source-bound traces, SARIF and bounded agent proof connect the change to what was actually checked. WMM is a real product Code Factory helped assemble, not simply check afterward.</p>
-        <p><strong>Current coverage:</strong> Go/Java/C#/Ruby framework sources and sinks plus wider Ruby/Swift trust checks. New request rules are review-tier; the shipped variant has no fresh precision score. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/polyglot-coverage-round8.json" target="_blank" rel="noopener noreferrer">Inspect coverage evidence</a>.</p>
-        <p><strong>Historical strengths and gaps.</strong> Round 7, the earlier ruleset, supported <strong>38/40 decided default-tier alerts (95%; Wilson 83.5–98.6%)</strong>, with 12 additional unclear. Review tier: 23/40 (57.5%), plus 3 unclear. Advisory recall: 0/161. Six languages had insufficient precision samples; AI labels are not twelve-language accuracy or independent human validation. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/polyglot-readiness-round7.json" target="_blank" rel="noopener noreferrer">Inspect per-language results and limits</a>.</p>
-        <div class="story-layout">
+        <div class="eyebrow">LOCAL-FIRST SOFTWARE ASSEMBLY</div>
+        <h1>From your idea to an app you can inspect.</h1>
+        <p class="lede" style="max-width:68ch;margin:12px 0 24px">Give Code Factory an outcome and choose a target. It brings requirements, scoped implementation, tests and review evidence into one local workflow. You see what is known, what is missing and the next action before deciding what ships.</p>
+        <div class="story-layout preview-videos">
           <figure class="visual story" id="story-video">
             <video controls preload="metadata" playsinline poster="cf-story-v5-poster.jpg" aria-label="From requirements to WMM: Code Factory walkthrough">
               <source src="cf-story-v5-narrated.mp4" type="video/mp4">
@@ -147,6 +176,14 @@
             </video>
             <figcaption>57-second narrated walkthrough. WMM screens use example data; process illustrations are labeled. Not a customer case or independent certification.</figcaption>
           </figure>
+    <section id="operations" aria-labelledby="operations-title">
+      <div class="shell">
+        <div class="section-head"><h2 id="operations-title">How the proof layer works</h2><p>Prepare an approved plan, run its checks and inspect the receipt. This PR 354 walkthrough uses a local test fixture.</p></div>
+        <figure class="visual" style="margin:0"><video controls preload="metadata" playsinline poster="cf-operations-pr354-poster.png" style="display:block;width:100%;aspect-ratio:16/9;background:#111"><source src="cf-operations-pr354-105s.mp4" type="video/mp4"></video><figcaption>1:45 how-to. Command templates and reformatted local test results, not a screen recording or live Devin session. Uses PR 354 source, not the released package.</figcaption></figure>
+      </div>
+    </section>
+        </div>
+        <p class="lede"><strong>WMM is the example: a real app Code Factory helped assemble.</strong> Watch the starting-input-to-product story above, then inspect how the proof layer works. Generated code is a starting point, not a claim of production readiness.</p>
           <div class="story-explanation">
             <div class="module-flow" aria-label="Workflow diagram: requirements, scoped changes, evidence and human review">
               <p><span class="flow-step">01</span><strong>SpecLine</strong> Requirements and acceptance checks.</p>
@@ -157,26 +194,19 @@
               <a class="button primary" href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">Explore Code Factory</a>
               <a class="button" href="#enterprise">See enterprise outcomes</a>
             </div>
-            <p class="story-limit">A static preview, not an online repository scanner. Missing evidence stays visible.</p>
+            <p class="story-limit">This is a product preview, not a running cloud factory. Code Factory runs locally; missing evidence stays visible and people retain approval.</p>
           </div>
-        </div>
       </div>
     </div>
 
-    <section id="operations" aria-labelledby="operations-title">
-      <div class="shell">
-        <div class="section-head"><h2 id="operations-title">How the proof layer works</h2><p>Prepare an approved plan, run its checks and inspect the receipt. This PR 354 walkthrough uses a local test fixture.</p></div>
-        <figure class="visual" style="margin:0"><video controls preload="metadata" playsinline poster="cf-operations-pr354-poster.png" style="display:block;width:100%;aspect-ratio:16/9;background:#111"><source src="cf-operations-pr354-105s.mp4" type="video/mp4"></video><figcaption>1:45 how-to. Command templates and reformatted local test results, not a screen recording or live Devin session. Uses PR 354 source, not the released package.</figcaption></figure>
-      </div>
-    </section>
     <section id="enterprise" aria-labelledby="enterprise-title">
       <div class="shell">
-        <div class="section-head"><div class="eyebrow">For enterprise engineering teams</div><h2 id="enterprise-title">AI writes the change. Your team owns the decision.</h2><p>See what was tested, what is missing and what needs fixing for the exact change under review.</p></div>
+        <div class="section-head"><div class="eyebrow">For enterprise engineering teams</div><h2 id="enterprise-title">One workflow, from intent to evidence.</h2><p>Start a project, clarify what it must do, then inspect the work and its proof. Your team keeps the decision.</p></div>
         <div class="grid">
-          <article class="card"><span>12 languages</span><h3>Review a polyglot project</h3><p>Configured native rules cover C, C++, C#, Go, Java, JavaScript, PHP, Python, Ruby, Rust, Swift and TypeScript. The quick local static scanner remains Python-only.</p></article>
-          <article class="card"><span>Before approval</span><h3>Inspect more than a green check</h3><p>Challenge declared checks and inspect signed-observation receipts. Missing, unsupported or stale evidence stays visible.</p></article>
-          <article class="card"><span>Inside your workflow</span><h3>Find the next repair</h3><p>SARIF 2.1.0, frozen JSON, opt-in pre-commit and byte-exact mutation diffs connect source findings to your existing review tools.</p></article>
-          <article class="card"><span>At handoff</span><h3>Keep the decision with people</h3><p>Review the evidence. People decide whether to merge, deploy or release.</p></article>
+          <article class="card"><span>01 · Define</span><h3>Make the outcome clear</h3><p>PRD Grill surfaces missing decisions before scaffolding. You answer, change or reject them. Silence is not approval.</p></article>
+          <article class="card"><span>02 · Assemble</span><h3>Build a contained starting point</h3><p>SpecLine defines requirements and acceptance checks. ForgeLine coordinates scoped implementation and challenges the checks.</p></article>
+          <article class="card"><span>03 · Inspect</span><h3>See the project and its proof</h3><p>Factory Studio and Graph Ops present requirements, gates, evidence and blocked work in one local, read-only view.</p></article>
+          <article class="card"><span>04 · Decide</span><h3>Keep approval with people</h3><p>FactoryLine connects work to evidence and the next fact-derived action. A completed task or a green check is not automatic permission to release.</p></article>
         </div>
       </div>
     </section>
@@ -192,18 +222,20 @@
       </div>
     </section>
     <section id="start" aria-labelledby="start-title">
-      <div class="shell"><div class="section-head"><h2 id="start-title">Start with one change that matters.</h2><p>Choose a small repository change. Define the outcome, run the declared checks and review the evidence before deciding what ships.</p></div>
+      <div class="shell"><div class="section-head"><h2 id="start-title">Start with the outcome you want.</h2><p>Choose a contained MVP or a web, mobile, API, CLI, worker, MCP or agent-UI starting point. Clarify the requirements, inspect the generated project and review its evidence. Production readiness still needs verification and human judgment.</p></div>
         <div class="actions"><a class="button" href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">Get Code Factory</a><a class="button" href="https://github.com/zrk222/code-factory/pull/354" target="_blank" rel="noopener noreferrer">Inspect PR 354</a></div>
-        <details><summary>Run a first local check</summary><p>After the target release is available on PyPI, install it and run the contained setup demonstration:</p><pre><code>python -m pip install factoryline-code-factory==0.50.0
+        <p><strong>New in this release:</strong> trusted evidence recall across topics, optional visual/Prestige checks and a foreground signed-worker coordinator. Final fixes cover report identity, request replay, owned cleanup and release packaging. Missing proof stays visible; your team retains release authority.</p>
+        <p><strong>Newer advisory evidence:</strong> CodeQL detected 15/91 analyzed cases; 70/161 were not executed. Pattern replay detected 6/161 exposed cases. These are distinct lanes, not whole-CF blind recall or twelve-language precision. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/advisory-recall-factory-20261121.json" target="_blank" rel="noopener noreferrer">Inspect the lane-separated record</a>.</p>
+        <details><summary>Run a first local check</summary><p>Install 0.50.1 from PyPI and run the contained setup demonstration:</p><pre><code>python -m pip install factoryline-code-factory==0.50.1
 factory first-proof --root .</code></pre><p>First Proof uses a generated local sandbox. It checks the demonstration, not your repository. For real work, define the scope and checks before running an audit.</p></details>
         <p>The JetBrains Marketplace listing currently marks FactoryLine AI Proof as free. This preview is not a checkout.</p>
-        <details id="seeded-demo"><summary>Release status, examples and limits</summary><p><strong>Seeded finding example:</strong> sample tenant-read inputs illustrate a finding and repaired case. This is not a live scan, tenant-isolation proof, accuracy benchmark or independent review. Candidate CI verification and human review are still required.</p><p>Core 0.50.0 and plugins 1.3.6 are the prepared release line. Uploads, moderation and publication are verified per channel; this preview is not proof of availability. PR 354 adds the bounded Proof Agent, signed execution-observation checks and Devin evidence profile.</p><p>The Proof Agent runs a human-approved signed plan and records evidence for review. It does not approve its result. Signed-observation checks establish the declared observation binding, not code correctness or release readiness. Local tests do not establish marketplace availability or live provider compatibility.</p><p>Audit depth depends on language, project policy and supplied evidence. The quick security scanner inspects Python ASTs; configured native workers add polyglot rules. Static inventory is not runtime proof. This is a static preview, not a hosted repository scanner.</p><p><a href="https://github.com/zrk222/code-factory/blob/main/docs/AI_CLIENTS.md" target="_blank" rel="noopener noreferrer">Client setup and boundaries</a> · <a href="https://github.com/zrk222/code-factory/blob/main/docs/CODERABBIT_INTEROP.md" target="_blank" rel="noopener noreferrer">CodeRabbit handoff</a></p></details>
+        <details id="seeded-demo"><summary>Release status, examples and limits</summary>        <p><strong>Current coverage:</strong> Go/Java/C#/Ruby framework sources and sinks plus wider Ruby/Swift trust checks. New request rules are review-tier; the shipped variant has no fresh precision score. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/polyglot-coverage-round8.json" target="_blank" rel="noopener noreferrer">Inspect coverage evidence</a>.</p>        <p><strong>Historical strengths and gaps.</strong> Round 7, the earlier ruleset, supported <strong>38/40 decided default-tier alerts (95%; Wilson 83.5–98.6%)</strong>, with 12 additional unclear. Review tier: 23/40 (57.5%), plus 3 unclear. Advisory recall: 0/161. Six languages had insufficient precision samples; AI labels are not twelve-language accuracy or independent human validation. <a href="https://github.com/zrk222/code-factory/blob/main/docs/evidence/polyglot-readiness-round7.json" target="_blank" rel="noopener noreferrer">Inspect per-language results and limits</a>.</p><p><strong>Seeded finding example:</strong> sample tenant-read inputs illustrate a finding and repaired case. This is not a live scan, tenant-isolation proof, accuracy benchmark or independent review. Candidate CI verification and human review are still required.</p><p>Core 0.50.1 addresses Stripe credential and MD5 detection. VS Marketplace lists the 1.3.6 VSIX. JetBrains accepted the 1.3.6 submission for review. <a href="https://github.com/zrk222/code-factory/blob/main/docs/RELEASE_CHANNELS.md" target="_blank" rel="noopener noreferrer">See release channels</a>. PR 354 adds the bounded Proof Agent, signed execution-observation checks and Devin evidence profile.</p><p>The Proof Agent runs a human-approved signed plan and records evidence for review. It does not approve its result. Signed-observation checks establish the declared observation binding, not code correctness or release readiness. Local tests do not establish marketplace availability or live provider compatibility.</p><p>Audit depth depends on language, project policy and supplied evidence. The default static scan analyzes Python. Other native analysis requires configured workers. Check the result status and audited file count, even when the command exits 0. Static inventory is not runtime proof. This is a static preview, not a hosted repository scanner.</p><p><a href="https://github.com/zrk222/code-factory/blob/main/docs/AI_CLIENTS.md" target="_blank" rel="noopener noreferrer">Client setup and boundaries</a> · <a href="https://github.com/zrk222/code-factory/blob/main/docs/CODERABBIT_INTEROP.md" target="_blank" rel="noopener noreferrer">CodeRabbit handoff</a></p></details>
       </div>
     </section>
   </main>
 
   <div class="shell">
-    <footer><span>Code Factory 0.50.0 · Static workflow overview · Provider availability tracked separately</span><span><a href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/0.50.0/" target="_blank" rel="noopener noreferrer">PyPI 0.50.0</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.50.0" target="_blank" rel="noopener noreferrer">GitHub release v0.50.0</a> · <a href="https://doi.org/10.5281/zenodo.21381405" target="_blank" rel="noopener noreferrer">Zenodo</a></span></footer>
+    <footer><span>Code Factory 0.50.1 · Static workflow overview · Provider availability tracked separately</span><span><a href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">GitHub</a> · <a href="https://github.com/zrk222/code-factory/blob/main/docs/commercial-model.md" target="_blank" rel="noopener noreferrer">Package licensing</a> · <a href="https://pypi.org/project/factoryline-code-factory/0.50.1/" target="_blank" rel="noopener noreferrer">PyPI 0.50.1</a> · <a href="https://github.com/zrk222/code-factory/releases/tag/v0.50.1" target="_blank" rel="noopener noreferrer">GitHub release v0.50.1</a> · <a href="https://doi.org/10.5281/zenodo.24451994" target="_blank" rel="noopener noreferrer">Zenodo</a></span></footer>
   </div>
 </body>
-</html>
+  </html>

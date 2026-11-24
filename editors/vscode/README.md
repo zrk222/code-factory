@@ -1,16 +1,16 @@
 # FactoryLine for VS Code
 
-## VS Code 1.3.6
+## VS Code 1.3.7
 
-The VS Code and Open VSX packages share version 1.3.6 with the JetBrains
-plugin. This release pairs with Code Factory core 0.50.0, installed separately.
+The VS Code and Open VSX packages share version 1.3.7 with the JetBrains
+plugin. This release pairs with Code Factory core 0.50.1, installed separately.
 
 You have a change open and a review to finish. FactoryLine keeps local audit
 findings and receipts beside your VS Code workspace, so you can follow a finding
 back to its file, choose what to repair, and check the result before accepting it.
 Start with **FactoryLine: Run CF + ForgeLine Audits**.
 
-### What's new in 1.3.6
+### What's new in 1.3.7
 
 - The separately installed runtime provides **30 native security rules across
   12 languages** when the required workers and toolchains are configured;
@@ -20,6 +20,14 @@ Start with **FactoryLine: Run CF + ForgeLine Audits**.
   read-only mutation-diff inspection does not change the captured diff.
 - IDE receipt reads fail closed for stale, malformed, oversized, escaped, or
   changing files. Junie is optional, and applying changes remains your choice.
+- The optional runtime adds topic-based trusted evidence recall, visual/Prestige
+  checks and a foreground signed-worker coordinator. Missing evidence remains
+  explicit; none of these checks grants merge or release approval.
+
+The newer advisory record reports CodeQL **15/91 analyzed**, with **70/161 not
+executed**; pattern replay reports **6/161 exposed cases**. These are distinct
+lanes, not whole-CF blind recall or a new twelve-language precision score.
+[Inspect the evidence](../../docs/evidence/advisory-recall-factory-20261121.json).
 
 **Run First Proof** is a setup demonstration that checks the local
 CLI; it does not assess repository code. For a repository assessment, run
@@ -284,7 +292,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.3.6.vsix
+code --install-extension factoryline-vscode-1.3.7.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

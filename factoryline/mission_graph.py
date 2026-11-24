@@ -8,10 +8,8 @@ checkpoint never proves that a Code Factory transition is valid.
 from __future__ import annotations
 
 from . import canonical_json_bytes as _canonical_encode
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypedDict
-import hashlib
 import importlib.util
 import json
 import math
@@ -22,6 +20,8 @@ from .failure_guidance import explain_failure
 from .migration import verify_repository_context
 from .product_missions import verify_mission, verify_mission_completion
 from .proof_delta import ProofDeltaError, verify_proof_delta
+from . import utc_iso as _now
+from . import sha256_hex as _sha_bytes
 
 
 GRAPH_SCHEMA = "factory.mission.graph.v1"
@@ -71,10 +71,6 @@ class LangGraphState(TypedDict, total=False):
     result: dict[str, Any]
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _canonical(value: object) -> bytes:
     try:
         return _canonical_encode(value)
@@ -82,10 +78,6 @@ def _canonical(value: object) -> bytes:
         raise MissionGraphError(
             "MISSION_GRAPH_EVENT_INVALID", f"event must be canonical JSON: {exc}"
         ) from exc
-
-
-def _sha_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
 
 
 def _sha_path(path: Path) -> str:

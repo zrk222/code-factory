@@ -8,9 +8,7 @@ local changes; signer identity still requires the enterprise receipt path.
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -18,16 +16,14 @@ from typing import Any
 
 from .oracle_firewall import verify_oracle_contract
 from .protocol import ASSEMBLY_STAGE_KEYS
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import canonical_sha as _sha
 
 
 SCHEMA = "factory.release-contract.v1"
 MAX_BYTES = 1_048_576
 CORE_STAGE_IDS = frozenset(f"{module}:{stage}" for module, stage in ASSEMBLY_STAGE_KEYS)
 EXTERNAL_STAGE_IDS = frozenset({"appforge:mobile-evidence"})
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _inside(root: Path, path: Path) -> Path:
@@ -250,7 +246,7 @@ def _project_contract(workspace: Path, path: Path):
         feature = value.get("feature") if isinstance(value, dict) else None
         if not isinstance(feature, str) or not feature.strip():
             raise ValueError("release contract feature is missing")
-        from .verification import verify_feature
+        from .verification import verify_feature, _whole_run_projection
 
         result = verify_feature(
             workspace, feature, strict_release=True, release_contract_path=path
@@ -261,6 +257,7 @@ def _project_contract(workspace: Path, path: Path):
             "ok": result.get("release_ready") is True,
             "marker": result.get("release_contract", {}).get("marker"),
             "blocker_count": len(result.get("blockers", [])),
+            **_whole_run_projection(result),
             "next_action": result.get("next_action"),
         }, None
     except (

@@ -8,7 +8,6 @@ Safety Case only describes supplied, hash-bound evidence declarations.
 
 from __future__ import annotations
 
-from . import canonical_ascii_json_compat_bytes as _canonical
 
 from datetime import date, datetime, timezone
 import hashlib
@@ -16,6 +15,10 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+from . import utc_stamp as _now
+from . import canonical_ascii_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import ascii_compat_sha as _sha
+from . import CodedError
 
 
 STORE_SCHEMA = "factory.judgment.store.v1"
@@ -75,23 +78,8 @@ AUTHORITY = {
 }
 
 
-class JudgmentError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+class JudgmentError(CodedError):
+    pass
 
 
 def _text(value: object, field: str, *, maximum: int = MAX_TEXT) -> str:

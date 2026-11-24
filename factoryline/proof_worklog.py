@@ -10,7 +10,6 @@ release or an external delivery.
 from __future__ import annotations
 
 from . import canonical_json_bytes as _canonical_encode
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -23,6 +22,8 @@ from typing import Any
 from .agent_proof_bridge import agent_proof_projection
 from .atomic_proof_adapter import atomic_proof_projection
 from .oracle_firewall import verify_oracle_contract
+from . import utc_stamp as _now
+from . import CodedError
 
 
 SCHEMA = "factory.proof-worklog-draft.v1"
@@ -695,12 +696,8 @@ def _literal_workspace_file(
         raise ValueError("unsafe_path") from exc
 
 
-class ProofWorklogError(ValueError):
+class ProofWorklogError(CodedError):
     """Stable refusal for a stale or unsafe local worklog request."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
 
 
 def _canonical(value: object) -> bytes:
@@ -714,15 +711,6 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
 
 
 def _relative(root: Path, value: Path, field: str, *, exists: bool) -> Path:

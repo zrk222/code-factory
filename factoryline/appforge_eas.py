@@ -9,7 +9,6 @@ Apple approval remain separate user-authorized actions.
 from __future__ import annotations
 
 from .contract import write_atomic_json as _atomic_json
-from . import canonical_json_compat_bytes as _canonical
 
 import hashlib
 import json
@@ -19,6 +18,8 @@ from typing import Any
 from .appforge_evidence_kit import _read_candidate
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
 
 
 PREFLIGHT_SCHEMA = "factory.appforge.eas-preflight.v1"
@@ -34,10 +35,6 @@ SENSITIVE_KEYS = {
     "apikey",
     "api_key",
 }
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _local(root: Path, path: Path, *, exists: bool = True) -> Path:

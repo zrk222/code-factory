@@ -9,7 +9,6 @@ and runtime lane. Unknown or not-applicable-without-review blocks the receipt.
 from __future__ import annotations
 
 from .contract import write_atomic_json
-from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +18,8 @@ import json
 
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
 
 
 CONTRACT_SCHEMA = "factory.appforge.quality-audit-contract.v1"
@@ -52,10 +53,6 @@ STACK_CHECKS = (
     "dependency_and_secret_scan",
 )
 CONDITIONAL_CHECKS = ("purchase_and_restore",)
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _text(value: object, field: str, *, limit: int = 500) -> str:

@@ -27,6 +27,8 @@ from typing import Any
 
 from .intake_grill import verify_intake_confirmation
 from .product_missions import MISSION_MAXIMA
+from . import utc_now as _now
+from . import PrefixedCodedError
 
 
 REQUEST_SCHEMA = "factory.intake-parameters-request.v1"
@@ -93,13 +95,8 @@ AUTHORITY = {
 }
 
 
-class IntakeParametersError(ValueError):
+class IntakeParametersError(PrefixedCodedError):
     """Stable, machine-readable intake-parameter failure."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: Any) -> bytes:
@@ -113,10 +110,6 @@ def _canonical(value: Any) -> bytes:
 
 def _sha(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _iso(value: datetime) -> str:

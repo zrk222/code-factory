@@ -15,6 +15,8 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+from . import sha256_hex as _sha_bytes
+from . import PrefixedCodedError
 
 
 BUNDLE_SCHEMA = "factory.external-runtime-bundle.v1"
@@ -71,13 +73,8 @@ _AUTHORITY = {
 }
 
 
-class ExternalEvidenceError(ValueError):
+class ExternalEvidenceError(PrefixedCodedError):
     """Stable fail-closed error for an external evidence boundary."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: object) -> bytes:
@@ -91,10 +88,6 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return sha256(_canonical(value)).hexdigest()
-
-
-def _sha_bytes(value: bytes) -> str:
-    return sha256(value).hexdigest()
 
 
 def _reject(code: str, message: str) -> None:

@@ -7,7 +7,6 @@ evidence using a documented total ordering.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,9 @@ import re
 import tempfile
 
 from .graph_forensics import GraphForensicsError, graph_forensics
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _digest
+from . import CodedError
 
 
 PLAN_SCHEMA = "factory.proofsearch-plan.v1"
@@ -45,16 +47,8 @@ _AUTHORITY = {
 }
 
 
-class ProofSearchError(ValueError):
+class ProofSearchError(CodedError):
     """A closed, user-correctable ProofSearch contract failure."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _digest(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _load(path: Path) -> dict[str, Any]:

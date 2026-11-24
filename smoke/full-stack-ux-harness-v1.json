@@ -3,7 +3,7 @@
     {
       "name": "full_stack_ux_harness_rejects_weakened_evidence_and_authority",
       "kind": "python",
-      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_full_stack_ux_harness.py', 'tests/test_ide_playbook.py']) == 0\n",
+      "run": "import os, pytest\nos.environ['PYTEST_DISABLE_PLUGIN_AUTOLOAD']='1'\nassert pytest.main(['-q', 'tests/test_full_stack_ux_harness.py', 'tests/test_ide_playbook.py', '-k', 'not visual']) == 0\n",
       "covers": [
         "REQ_HARNESS_CLOSED_SET",
         "REQ_HARNESS_PROVENANCE",
@@ -11,7 +11,16 @@
         "REQ_HARNESS_ROUTING"
       ],
       "expect_exit": 0,
-      "timeout_s": 120,
+      "timeout_s": 180,
+      "must_fail_on_stub": true
+    },
+    {
+      "name": "visual_gate_native_cli_optical_runtime_and_prestige",
+      "kind": "python",
+      "run": "import os, pytest\nos.environ['PYTEST_DISABLE_PLUGIN_AUTOLOAD']='1'\nassert pytest.main(['-q','tests/test_full_stack_ux_harness.py','tests/test_full_stack_ux_spec.py','-k','visual or legacy_optional_forge']) == 0\n",
+      "covers": ["REQ_VISUAL_ADMISSION", "REQ_VISUAL_PIXELS", "REQ_VISUAL_SEMANTICS", "REQ_VISUAL_RUNTIME", "REQ_VISUAL_PRESTIGE", "REQ_VISUAL_RECEIPT"],
+      "expect_exit": 0,
+      "timeout_s": 180,
       "must_fail_on_stub": true
     }
   ]

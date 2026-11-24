@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import yaml
+import pytest
 
 from factoryline.cli import main
 from factoryline.full_stack_ux_spec import (
@@ -92,6 +93,54 @@ def test_current_legacy_ssat_projects_to_all_six_mobile_categories(tmp_path: Pat
         "android_parity",
     ]
     assert result["normalized_spec"]["legacy"]["feature"] == "full-stack-ux-harness-v1"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "partial",
+        "module",
+        "module_extra",
+        "signature",
+        "duplicate_function",
+        "dependency",
+        "dependency_extra",
+    ],
+)
+def test_legacy_optional_forge_declarations_fail_closed(tmp_path, mutation):
+    value = yaml.safe_load(
+        (Path(__file__).parents[1] / "full-stack-ux-harness-v1.ssat.yaml").read_text()
+    )
+    if mutation == "partial":
+        del value["language"]
+    elif mutation == "module":
+        value["modules"][0]["path"] = "elsewhere.py"
+    elif mutation == "module_extra":
+        value["modules"][0]["approved"] = True
+    elif mutation == "signature":
+        value["modules"][0]["functions"][0]["args"] = ["not an identifier"]
+    elif mutation == "duplicate_function":
+        value["modules"][0]["functions"] *= 2
+    elif mutation == "dependency":
+        value["dependencies"][0]["from"] = "unrelated"
+    else:
+        value["dependencies"][0]["passed"] = True
+    path = tmp_path / "legacy.yaml"
+    path.write_text(yaml.safe_dump(value))
+    result = validate_ux_harness_spec(tmp_path, path)
+    assert result["ok"] is False
+    assert result["findings"]
+
+
+def test_legacy_without_any_forge_declaration_remains_compatible(tmp_path):
+    value = yaml.safe_load(
+        (Path(__file__).parents[1] / "full-stack-ux-harness-v1.ssat.yaml").read_text()
+    )
+    for key in ("name", "language", "modules", "dependencies"):
+        del value[key]
+    path = tmp_path / "legacy.yaml"
+    path.write_text(yaml.safe_dump(value))
+    assert validate_ux_harness_spec(tmp_path, path)["ok"] is True
 
 
 def test_direct_contract_validates_hashes_paths_and_replays(tmp_path: Path):

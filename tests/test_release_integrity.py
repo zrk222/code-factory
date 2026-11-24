@@ -187,7 +187,7 @@ def test_publish_0495_protected_exception_round_trips_exact_source_run(
     ],
 )
 @pytest.mark.parametrize("recent_count", [1, 4])
-@pytest.mark.parametrize("opt_in_version", ["0.49.6", "0.50.0"])
+@pytest.mark.parametrize("opt_in_version", ["0.49.6", "0.50.0", "0.50.1"])
 def test_publish_0496_guard_keeps_cooldown_cap_and_exact_owner(
     tmp_path, monkeypatch, tag, actor, opt_in, accepted, recent_count, opt_in_version
 ):
@@ -227,6 +227,8 @@ def test_publish_0496_guard_keeps_cooldown_cap_and_exact_owner(
         "CORE_0495_EXCEPTION": "false",
         "CORE_0496_EXCEPTION": opt_in if opt_in_version == "0.49.6" else "false",
         "CORE_0500_EXCEPTION": opt_in if opt_in_version == "0.50.0" else "false",
+        "CORE_0501_EXCEPTION": opt_in if opt_in_version == "0.50.1" else "false",
+        "CORE_ONLY": "true",
     }.items():
         monkeypatch.setenv(key, value)
     code = _snippet(
@@ -239,7 +241,7 @@ def test_publish_0496_guard_keeps_cooldown_cap_and_exact_owner(
             exec(compile(code, str(WORKFLOW), "exec"), {})
 
 
-@pytest.mark.parametrize("version", ["0.49.6", "0.50.0"])
+@pytest.mark.parametrize("version", ["0.49.6", "0.50.0", "0.50.1"])
 def test_publish_0496_exception_record_binds_request_and_candidate_sha(
     tmp_path, monkeypatch, version
 ):
@@ -261,6 +263,8 @@ def test_publish_0496_exception_record_binds_request_and_candidate_sha(
         "CORE_0495_EXCEPTION": "false",
         "CORE_0496_EXCEPTION": "true" if version == "0.49.6" else "false",
         "CORE_0500_EXCEPTION": "true" if version == "0.50.0" else "false",
+        "CORE_0501_EXCEPTION": "true" if version == "0.50.1" else "false",
+        "CORE_ONLY": "true",
     }.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "c" * 40)
@@ -280,7 +284,15 @@ def test_publish_0496_exception_record_binds_request_and_candidate_sha(
     )
     assert result["monthly_cap_exception"] is True
     assert result["one_time_version_opt_in"] == version
-    assert value["owner_request_record"]["request"] == "published now"
+    record = value["owner_request_record"]
+    if version == "0.50.1":
+        assert record["request"] == "apply to this one"
+        assert record["scope"] == ["core 0.50.1"]
+        monkeypatch.setenv("CORE_ONLY", "false")
+        with pytest.raises(SystemExit, match="core-only"):
+            exec(compile(code, str(WORKFLOW), "exec"), {})
+    else:
+        assert record["request"] == "published now"
     assert value["owner_request_record"]["candidate_sha"] == "c" * 40
     assert value["source_commit"] == "c" * 40
     assert "signed_receipts fetch-ci" in WORKFLOW.read_text(encoding="utf-8")
@@ -565,10 +577,10 @@ def test_reuse_wiring_preserves_protected_normal_and_isolated_recovery_paths():
     import yaml
 
     jobs = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
-    for name in ("validate_python", "validate_vscode", "validate_intellij"):
-        assert (
-            jobs[name]["if"] == "${{ needs.guard.outputs.verified_reuse_run_id == '' }}"
-        )
+    fresh = "needs.guard.outputs.verified_reuse_run_id == ''"
+    assert jobs["validate_python"]["if"] == f"${{{{ {fresh} }}}}"
+    for name in ("validate_vscode", "validate_intellij"):
+        assert jobs[name]["if"] == f"${{{{ !inputs.core_only && {fresh} }}}}"
     publisher = jobs["publish"]
     assert publisher["environment"] == "pypi"
     assert (
@@ -585,6 +597,8 @@ def test_reuse_wiring_preserves_protected_normal_and_isolated_recovery_paths():
         if "actions/download-artifact@" in step.get("uses", "")
     ]
     assert len(downloads) == 3
+    assert downloads[0].get("if") is None
+    assert all(step["if"] == "${{ !inputs.core_only }}" for step in downloads[1:])
     assert all(
         step["with"]["run-id"]
         == "${{ needs.guard.outputs.verified_reuse_run_id || github.run_id }}"
@@ -601,6 +615,43 @@ def test_reuse_wiring_preserves_protected_normal_and_isolated_recovery_paths():
     assert scripts.index("Downloaded artifact files differ") < scripts.index(
         "preflight_args=("
     )
+
+
+def test_core_only_dispatch_requires_python_success_and_excludes_editor_artifacts():
+    import yaml
+
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    option = workflow["on"]["workflow_dispatch"]["inputs"]["core_only"]
+    assert (option["type"], option["default"]) == ("boolean", "false")
+    jobs = workflow["jobs"]
+    publisher = jobs["publish"]
+    assert (
+        "inputs.core_only && needs.validate_python.result == 'success' "
+        "&& needs.validate_vscode.result == 'skipped' "
+        "&& needs.validate_intellij.result == 'skipped'" in publisher["if"]
+    )
+    assert (
+        "!inputs.core_only && (needs.guard.outputs.verified_reuse_run_id"
+        in publisher["if"]
+    )
+    guard = next(
+        step for step in jobs["guard"]["steps"] if step.get("id") == "candidate"
+    )
+    assert '[[ "$CORE_ONLY" == "true" && -n "$VALIDATED_RUN_ID" ]]' in guard["run"]
+    steps = {step.get("name"): step for step in publisher["steps"]}
+    preflight = steps[
+        "Require sealed release candidate preflight before external publication"
+    ]
+    upload = steps["Attach distributions to GitHub release"]
+    for step, statement in (
+        (preflight, "preflight_args+=(--artifact-dir release-bundle/editors)"),
+        (upload, "editor_assets=(release-bundle/editors/*)"),
+    ):
+        assert step["env"]["CORE_ONLY"] == "${{ inputs.core_only }}"
+        assert (
+            f'if [[ "$CORE_ONLY" != "true" ]]; then\n  {statement}\nfi' in step["run"]
+        )
+    assert 'release-bundle/python/* "${editor_assets[@]}"' in upload["run"]
 
 
 @pytest.fixture

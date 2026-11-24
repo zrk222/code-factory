@@ -19,6 +19,9 @@ from typing import Any
 
 from .oracle_firewall import OracleFirewallError, verify_oracle_contract
 from .protocol import LifecycleEvent, SessionTraceStage
+from . import utc_stamp as _now
+from . import file_sha256 as _file_sha
+from . import CodedError
 
 
 EVENT_SCHEMA = "factory.lifecycle-event.v1"
@@ -54,10 +57,8 @@ AUTHORITY = {
 }
 
 
-class LifecycleLedgerError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
+class LifecycleLedgerError(CodedError):
+    pass
 
 
 def _canonical(value: object) -> bytes:
@@ -71,23 +72,6 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
 
 
 def _identifier(value: object, label: str) -> str:

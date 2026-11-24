@@ -17,6 +17,8 @@ from typing import Any, Iterable
 
 from .run_metrics import _atomic_json
 from .savings import record_savings_pair
+from . import sha256_hex as _sha_bytes
+from . import CodedError
 
 
 REQUEST_SCHEMA = "factory.proof-request.v1"
@@ -27,16 +29,8 @@ PAIR_NONCE_MODULUS = 1_000_000_000
 SNAPSHOT_CACHE_ENTRY_LIMIT = 512
 
 
-class ProofReuseError(ValueError):
+class ProofReuseError(CodedError):
     """A typed unsafe or invalid proof-reuse request."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
 
 
 def _identity_from_stat(value: os.stat_result) -> dict[str, int]:

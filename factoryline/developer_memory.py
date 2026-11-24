@@ -8,9 +8,7 @@ members, licensed seats, or review approvers.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
-from hashlib import sha256
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -18,6 +16,8 @@ from typing import Any
 from .change_review import AUTHORITY as CHANGE_REVIEW_AUTHORITY
 from .change_review import ChangeReviewError, review_change
 from .continuity import continuity_projection
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
 
 
 DEVELOPER_MEMORY_BRIEF_SCHEMA = "factory.developer-memory-brief.v1"
@@ -30,10 +30,6 @@ _BASE_MARKERS = [
     "DEVELOPER_MEMORY_STUDIO_CACHED",
     "DEVELOPER_MEMORY_VISUAL_EXPLAINED",
 ]
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _safe_text(value: object, *, limit: int = 240) -> str:

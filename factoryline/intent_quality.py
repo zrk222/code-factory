@@ -2684,12 +2684,9 @@ def _sanitizer_path_overlaps(path, attribute, expected):
 def _sanitizer_provider_mutated(module, call, aliases, expected, head, audit):
     from types import SimpleNamespace
 
-    from . import finite_capture
+    from . import finite_capture, tree_index
 
-    nodes = list(ast.walk(module))
-    parents = {
-        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
-    }
+    nodes, parents = tree_index(module)
     mutations = finite_capture.finite_provider_mutation_index(
         nodes,
         aliases,

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import copy
 import base64
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -37,6 +36,8 @@ from .runtime_audit_common import (
     require_str,
     sha256_bytes,
 )
+from . import utc_iso as _now
+from . import PrefixedCodedError
 
 
 REPLAY_MANIFEST_SCHEMA = "factory.replay-manifest.v1"
@@ -82,17 +83,8 @@ IGNORED_TREE_NAMES = {
 }
 
 
-class SeniorAssuranceError(ValueError):
+class SeniorAssuranceError(PrefixedCodedError):
     """A bounded input, execution, or evidence-reuse failure."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _sha(value: object) -> str:

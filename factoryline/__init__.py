@@ -1,8 +1,10 @@
-__version__ = "0.50.0"
+__version__ = "0.50.1"
 
 import ast
 import hashlib
 import json as _json
+from datetime import datetime as _datetime, timezone as _timezone
+from pathlib import Path as _Path
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -28,6 +30,155 @@ def canonical_ascii_json_compat_bytes(value: object) -> bytes:
     return _json.dumps(
         value, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=True
     ).encode("utf-8")
+
+
+def sha256_hex(value: bytes) -> str:
+    """Hex SHA-256 of raw bytes."""
+    return hashlib.sha256(value).hexdigest()
+
+
+def canonical_sha(value: object) -> str:
+    """Hex SHA-256 of strict canonical JSON."""
+    return sha256_hex(canonical_json_bytes(value))
+
+
+def canonical_or_bytes_sha(value: object) -> str:
+    """Hex SHA-256 of raw bytes, or of strict canonical JSON for other values."""
+    return sha256_hex(
+        value if isinstance(value, bytes) else canonical_json_bytes(value)
+    )
+
+
+def compat_sha(value: object) -> str:
+    """Hex SHA-256 of legacy-compatible UTF-8 canonical JSON."""
+    return sha256_hex(canonical_json_compat_bytes(value))
+
+
+def ascii_compat_sha(value: object) -> str:
+    """Hex SHA-256 of legacy-compatible ASCII canonical JSON."""
+    return sha256_hex(canonical_ascii_json_compat_bytes(value))
+
+
+def file_sha256(path) -> str:
+    """Hex SHA-256 of a file, streamed in 1 MiB chunks."""
+    digest = hashlib.sha256()
+    with _Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def atomic_text(path, content: str) -> str:
+    """Replace a UTF-8 text file through a sibling temporary and return its digest."""
+    encoded = content.encode("utf-8")
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_bytes(encoded)
+    temporary.replace(path)
+    return sha256_hex(encoded)
+
+
+def is_sha256_hex(value: object) -> bool:
+    """True for a lowercase 64-character hexadecimal digest string."""
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def utc_now() -> _datetime:
+    """Timezone-aware current UTC time."""
+    return _datetime.now(_timezone.utc)
+
+
+def utc_iso() -> str:
+    """Current UTC time as ISO-8601 with microseconds and +00:00."""
+    return utc_now().isoformat()
+
+
+def utc_stamp() -> str:
+    """Current UTC time as second-precision ISO-8601 with a Z suffix."""
+    return utc_now().replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def node_span(node):
+    """Source span of an AST node as [lineno, col, end_lineno, end_col]."""
+    return [
+        getattr(node, key, None)
+        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+    ]
+
+
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {
+        f"{device}{digit}"
+        for device in ("COM", "LPT")
+        for digit in "123456789\xb9\xb2\xb3"
+    }
+)
+
+
+def windows_reserved_segment(part: str) -> bool:
+    """Match PureWindowsPath.is_reserved() for one segment without its 3.13 deprecation cost."""
+    stem = part.partition(".")[0].partition(":")[0].rstrip(" ")
+    return stem.upper() in _WINDOWS_RESERVED_NAMES
+
+
+def tree_index(tree):
+    """Cached (nodes, parents-by-id) for a scope-bound tree; rebinding resets the index."""
+    index = getattr(tree, "_security_tree_index", None)
+    if index is None:
+        nodes = tuple(ast.walk(tree))
+        parents = {
+            id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+        }
+        index = (nodes, parents)
+        tree._security_tree_index = index
+    return index
+
+
+class CodedError(ValueError):
+    """Fail-closed validation error carrying a stable machine-readable code."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+class CodedMessageError(CodedError):
+    """Coded validation error that also keeps the bare message."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(code, message)
+        self.message = message
+
+
+class PrefixedCodedError(ValueError):
+    """Coded validation error whose text is prefixed with its code."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+
+
+class CodedRuntimeError(RuntimeError):
+    """Coded runtime failure that keeps the bare message."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class PrefixedCodedRuntimeError(RuntimeError):
+    """Coded runtime failure whose text is prefixed with its code."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
 
 
 def _source_call_signature(function):

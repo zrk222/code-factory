@@ -7,15 +7,16 @@ effect.  Recovery output is a review plan, not execution authority.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
-import hashlib
 import json
 import re
 import tempfile
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _digest
+from . import CodedError
 
 
 LINEAGE_SCHEMA = "factory.graph-lineage.v1"
@@ -37,16 +38,8 @@ _AUTHORITY = {
 }
 
 
-class GraphForensicsError(ValueError):
+class GraphForensicsError(CodedError):
     """A closed, user-correctable lineage contract failure."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _digest(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _bounded(value: object, field: str, maximum: int = 160) -> str:

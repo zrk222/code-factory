@@ -1,4 +1,28 @@
 feature: full-stack-ux-harness-v1
+name: full-stack-ux-harness-v1
+language: python
+modules:
+  - name: full_stack_ux_harness
+    path: factoryline/full_stack_ux_harness.py
+    functions:
+      - name: quality_harness_template
+        args: []
+        returns: dict[str, Any]
+      - name: verify_quality_harness
+        args: [root, manifest_path]
+        returns: dict[str, Any]
+      - name: run_visual_behavior_gate
+        args: [root, contract_path, contract_sha256]
+        returns: dict[str, Any]
+      - name: verify_visual_behavior_receipt
+        args: [root, receipt_path]
+        returns: dict[str, Any]
+dependencies:
+  - {from: full_stack_ux_harness, to: factoryline.assembly_process}
+  - {from: full_stack_ux_harness, to: prestige_design.tokens}
+  - {from: full_stack_ux_harness, to: prestige_design.provenance}
+  - {from: full_stack_ux_harness, to: playwright.sync_api}
+  - {from: full_stack_ux_harness, to: PIL}
 version: "1.0"
 intent: "Bind full-stack and UI quality evidence to a closed review contract without granting release authority."
 requirements:

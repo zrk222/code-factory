@@ -69,6 +69,7 @@ from .captured_security_audit import argument_role_proof_helpers
 from .deep_audit_io import local_file
 from .ops_telemetry import _measure_hash, _measure_parse
 from .runtime_audit_common import (
+    MAX_SECURITY_SOURCE_FILES as MAX_SECURITY_SOURCE_FILES,
     RuntimeAuditError,
     runtime_config_sources as runtime_config_sources,
 )
@@ -99,7 +100,6 @@ SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
 SECURITY_SCHEMA = "factory.security-audit.v1"
 TENANT_CONTRACT_SCHEMA = "factory.tenant-read-contract.v1"
-MAX_SECURITY_SOURCE_FILES = 2000
 MAX_BYTES = 1_000_000
 MAX_RULES = 128
 MAX_PATHS = 64
@@ -1442,9 +1442,9 @@ def _security_call_finding(
             call, relative, node, getattr(node, "_security_configuration_aliases", {})
         )
     else:
-        from .security_configuration import tls_finding
+        from .captured_security_audit import configured_call_finding
 
-        return tls_finding(
+        return configured_call_finding(
             call, relative, node, getattr(node, "_security_configuration_aliases", {})
         )
     return closed_shell_finding(call, relative, node) or _security_finding(
@@ -1490,18 +1490,9 @@ def _credential_role_witness(node, target, aliases):
 
 def _literal_credential_candidate(node, target):
     """Share detection eligibility without constructing or classifying a finding."""
-    from .context_efficiency import _SECRET_BYTES
+    from .provenance import literal_credential_candidate
 
-    return isinstance(target, ast.Name) and (
-        bool(_SECRET_ASSIGNMENT.search(target.id))
-        or (value := _secret_literal(node)) is not None
-        and bool(encoded := value.encode(errors="surrogatepass"))
-        and any(
-            not _AWS_DEMO.match(match.string, match.start())
-            for pattern in _SECRET_BYTES
-            for match in pattern.finditer(encoded)
-        )
-    )
+    return literal_credential_candidate(sys.modules[__name__], node, target)
 
 
 def _literal_assignment_diagnostic(
@@ -4377,6 +4368,16 @@ def _build_oracle_context(
             )
             _oracle_helper_edges(
                 root, caller, imports, snapshots, helper_summaries, edges
+            )
+            contexts[path]["mixins"].update(
+                oracle_misuse.imported_testcase_subclasses(
+                    tree,
+                    imports,
+                    snapshots,
+                    lambda mod: _unittest_testcase_classes(
+                        mod, _scope_security_aliases(_module_security_aliases(mod), mod)
+                    ),
+                )
             )
             for source, symbol in _imported_unittest_mixins(tree, aliases, imports):
                 if source in contexts:

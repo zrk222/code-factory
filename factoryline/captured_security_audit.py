@@ -96,6 +96,46 @@ def yaml_loading_finding(provider, relative, call, aliases):
     )
 
 
+def configured_call_finding(provider, relative, call, aliases):
+    """Apply the configuration rule for a resolved provider call."""
+    if provider in {"hashlib.md5", "hashlib.new"}:
+        return _weak_hash_finding(provider, relative, call, aliases)
+
+    from .security_configuration import tls_finding
+
+    return tls_finding(provider, relative, call, aliases)
+
+
+def _weak_hash_finding(call, relative, node, aliases):
+    """Observe confirmed hashlib MD5 calls with no explicit compatibility flag."""
+    from .review_audits import _security_finding
+    from .security_configuration import _canonical, _keyword
+    from .semantic_credential_sensor import definite_compatibility_checksum
+
+    if _canonical(node, aliases) != call:
+        return None
+    if call == "hashlib.new":
+        algorithm = _keyword(node, "name", 0)
+        if not (
+            isinstance(algorithm, ast.Constant)
+            and isinstance(algorithm.value, str)
+            and algorithm.value.lower() == "md5"
+        ):
+            return None
+    if definite_compatibility_checksum(node):
+        return None
+    return _security_finding(
+        "SECURITY_WEAK_HASH",
+        relative,
+        node,
+        "MD5 has known collision weaknesses. Use a suitable hash for security "
+        "operations, or mark a compatibility checksum with usedforsecurity=False.",
+        "MEDIUM",
+        call=call,
+        algorithm="md5",
+    )
+
+
 def _ruamel_loader_closed(call, aliases):
     from . import review_audits as audit
     from .credential_role_constructor_provider import (
@@ -5554,6 +5594,7 @@ def _application_configuration_hashes(class_profiles):
 def _captured_application_source_bytes(
     workspace, findings, bindings, source_bytes, *, capture_all_sources=False
 ):
+    from .captured_operand_audit import REACH_CODES
     from .primitive_observation_binding import fixed_program_proof_dispositions
 
     program_proofs = fixed_program_proof_dispositions()
@@ -5569,8 +5610,10 @@ def _captured_application_source_bytes(
                 if isinstance(row, dict)
             )
     hashes = {row["path"]: row["sha256"] for row in bindings}
+    # Entry reach needs every caller module, not only the files with findings.
     whole_inventory = capture_all_sources or any(
-        finding.get("facts", {}).get("disposition") in program_proofs
+        finding.get("code") in REACH_CODES
+        or finding.get("facts", {}).get("disposition") in program_proofs
         or isinstance(finding.get("facts", {}).get("security_precondition"), dict)
         for finding in findings
     )

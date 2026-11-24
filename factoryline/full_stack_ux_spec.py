@@ -10,10 +10,7 @@ store provider.
 
 from __future__ import annotations
 
-from . import canonical_json_bytes as _canonical
 
-from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path, PureWindowsPath
@@ -22,6 +19,10 @@ import tempfile
 from typing import Any
 
 import yaml
+from . import utc_iso as _now
+from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import canonical_or_bytes_sha as _sha
+from . import CodedMessageError
 
 
 SPEC_SCHEMA = "factory.full-stack-ux-harness.spec.v1"
@@ -95,13 +96,8 @@ LEGACY_REQUIREMENTS = frozenset(
 )
 
 
-class FullStackUXSpecError(ValueError):
+class FullStackUXSpecError(CodedMessageError):
     """Stable fail-closed error for an unavailable or unsafe SSAT source."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -125,16 +121,6 @@ def _construct_unique_mapping(
 _UniqueKeyLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping
 )
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(
-        value if isinstance(value, bytes) else _canonical(value)
-    ).hexdigest()
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _text(value: object, field: str, *, limit: int = 512) -> str:
@@ -514,8 +500,12 @@ def _normalize_direct_triage(raw_triage: Any) -> list[dict[str, str]]:
 
 def _legacy_normalize(value: dict[str, Any], spec_name: str) -> dict[str, Any]:
     _mapping(
-        value, "legacy SSAT", {"feature", "version", "intent", "requirements", "gates"}
+        value,
+        "legacy SSAT",
+        {"feature", "version", "intent", "requirements", "gates"},
+        optional={"name", "language", "modules", "dependencies"},
     )
+    architecture = _legacy_architecture(value)
     if value.get("feature") != LEGACY_FEATURE:
         raise FullStackUXSpecError(
             "E_UX_SPEC_SCHEMA", f"feature must be {LEGACY_FEATURE}"
@@ -538,9 +528,66 @@ def _legacy_normalize(value: dict[str, Any], spec_name: str) -> dict[str, Any]:
             "intent": value["intent"].strip(),
             "requirements": normalized_requirements,
             "gates": normalized_gates,
+            **({"architecture": architecture} if architecture else {}),
         },
         "mobileCategories": _categories(source="derived_from_legacy_harness"),
     }
+
+
+def _legacy_architecture(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate optional Forge declarations without claiming executable coverage."""
+    keys = {"name", "language", "modules", "dependencies"}
+    if not keys.intersection(value):
+        return {}
+    if (
+        not keys <= value.keys()
+        or value["name"] != LEGACY_FEATURE
+        or value["language"] != "python"
+    ):
+        raise FullStackUXSpecError("E_UX_SPEC_SCHEMA", "incomplete Forge declaration")
+    modules = value["modules"]
+    if not isinstance(modules, list) or len(modules) != 1:
+        raise FullStackUXSpecError("E_UX_SPEC_SCHEMA", "one harness module required")
+    module = _mapping(modules[0], "module", {"name", "path", "functions"})
+    if (
+        module["name"] != "full_stack_ux_harness"
+        or module["path"] != "factoryline/full_stack_ux_harness.py"
+    ):
+        raise FullStackUXSpecError("E_UX_SPEC_SCHEMA", "unexpected harness module")
+    functions = module["functions"]
+    if not isinstance(functions, list) or not 1 <= len(functions) <= 16:
+        raise FullStackUXSpecError("E_UX_SPEC_SCHEMA", "bounded functions required")
+    names = [_legacy_function(function) for function in functions]
+    if len(set(names)) != len(names):
+        raise FullStackUXSpecError("E_UX_SPEC_SCHEMA", "duplicate function")
+    dependencies = value["dependencies"]
+    if not isinstance(dependencies, list) or len(dependencies) > 32:
+        raise FullStackUXSpecError("E_UX_SPEC_SCHEMA", "bounded dependencies required")
+    for edge in dependencies:
+        edge = _mapping(edge, "dependency", {"from", "to"})
+        if (
+            edge["from"] != module["name"]
+            or not _text(edge["to"], "dependency.to", limit=128)
+            .replace(".", "_")
+            .isidentifier()
+        ):
+            raise FullStackUXSpecError("E_UX_SPEC_SCHEMA", "invalid dependency")
+    return {key: value[key] for key in sorted(keys)}
+
+
+def _legacy_function(function: object) -> str:
+    function = _mapping(function, "function", {"name", "args", "returns"})
+    name = _text(function["name"], "function.name", limit=128)
+    args = function["args"]
+    if (
+        not name.isidentifier()
+        or not isinstance(args, list)
+        or len(args) > 16
+        or any(not isinstance(arg, str) or not arg.isidentifier() for arg in args)
+    ):
+        raise FullStackUXSpecError("E_UX_SPEC_SCHEMA", "invalid function signature")
+    _text(function["returns"], "function.returns", limit=128)
+    return name
 
 
 def _normalized_legacy_requirements(raw_requirements: Any) -> list[dict[str, Any]]:

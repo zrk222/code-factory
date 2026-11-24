@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from . import canonical_json_compat_bytes as _canonical
 
-import hashlib
 import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from . import sha256_hex as _sha_bytes
+from . import utc_now as _now
+from . import compat_sha as _sha
 
 
 PACK_SCHEMA = "factory.policy-pack.v1"
@@ -41,18 +43,6 @@ class ControlsError(ValueError):
         super().__init__(message)
         self.code = code
         self.details = details
-
-
-def _sha(value: Any) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _sha_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _iso(value: datetime) -> str:

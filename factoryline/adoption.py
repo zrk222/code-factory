@@ -9,7 +9,6 @@ commands, prompts, logs, or user identifiers.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 import copy
 from collections import Counter
@@ -28,8 +27,11 @@ from .e2e_proof import (
     verify_e2e_proof,
     write_e2e_proof_artifacts,
 )
-from .review_audits import MAX_SECURITY_SOURCE_FILES
+from .runtime_audit_common import MAX_SECURITY_SOURCE_FILES
 from .cli_foundations import _SCRIPT_LANGUAGE_SUFFIXES
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
+from . import CodedError
 
 
 FIRST_PROOF_SCHEMA = "factory.first-proof.v1"
@@ -47,16 +49,8 @@ MILESTONES = frozenset(
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 
 
-class AdoptionError(ValueError):
+class AdoptionError(CodedError):
     """Malformed or tampered adoption evidence."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _project_native_worker_execution(result: dict[str, Any]) -> None:

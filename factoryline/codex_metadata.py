@@ -8,7 +8,6 @@ never executes commands, contacts a provider, or grants authority.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 import hashlib
 import json
@@ -16,6 +15,9 @@ import re
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Iterable
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
+from . import CodedMessageError
 
 
 SCHEMA = "factory.codex-metadata-integrity.v1"
@@ -247,17 +249,8 @@ _PROVIDER_COMPLETION_RE = re.compile(
 )
 
 
-class MetadataAuditError(ValueError):
+class MetadataAuditError(CodedMessageError):
     """Stable fail-closed error for metadata input/output boundaries."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
-
-
-def _sha(value: Any) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _relative(workspace: Path, supplied: Path, label: str) -> Path:

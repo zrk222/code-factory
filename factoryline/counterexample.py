@@ -16,6 +16,8 @@ import re
 from typing import Any
 
 from .intent_quality import IntentQualityError, require_clear
+from . import compat_sha as _sha
+from . import CodedError
 
 
 COUNTEREXAMPLE_SOURCE_SCHEMA = "factory.counterexample-source.v1"
@@ -34,14 +36,8 @@ _MUTATIONS = {
 }
 
 
-class CounterexampleError(ValueError):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
+class CounterexampleError(CodedError):
+    pass
 
 
 def _relative(root: Path, path: Path) -> str:

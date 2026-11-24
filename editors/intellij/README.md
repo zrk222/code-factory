@@ -39,10 +39,10 @@ workspace against subsequent edits. See the [JetBrains VFS persistence guidance]
 
 ## Install
 
-JetBrains plugin 1.3.6 pairs with the separately installed Code Factory CLI
-0.50.0. VS Code and Open VSX share the same editor release version.
+JetBrains plugin 1.3.7 pairs with the separately installed Code Factory CLI
+0.50.1. VS Code and Open VSX share the same editor release version.
 
-### What's new in 1.3.6
+### What's new in 1.3.7
 
 - Review source-bound claims and bounded Proof Agent evidence alongside your
   change; verification binds an observation, not code correctness or release

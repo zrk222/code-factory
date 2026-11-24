@@ -13,6 +13,7 @@ from pathlib import Path
 import hashlib
 import json
 from typing import Any
+from . import CodedMessageError
 
 
 POLICY_SCHEMA = "factory.policy.v1"
@@ -50,13 +51,8 @@ _KNOWN_KEYS = {
 _KNOWN_ENUMS = {"risk.default": frozenset({"human", "supervised", "autonomous"})}
 
 
-class PolicyCompileError(ValueError):
+class PolicyCompileError(CodedMessageError):
     """Stable fail-closed policy compiler error."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: Any) -> bytes:

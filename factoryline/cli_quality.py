@@ -40,6 +40,9 @@ def add_quality_parser(sub: Any) -> None:
     quality_verify.add_argument("manifest")
     quality_verify.add_argument("--root", default=".")
     quality_verify.add_argument("--out")
+    quality_verify.add_argument(
+        "--visual-receipt", help="replay optical evidence before quality review"
+    )
     quality_verify.add_argument("--json", action="store_true")
     quality_spec_validate = quality_sub.add_parser(
         "spec-validate",
@@ -59,6 +62,15 @@ def add_quality_parser(sub: Any) -> None:
     quality_spec_verify.add_argument("receipt", help="workspace-contained spec receipt")
     quality_spec_verify.add_argument("--root", default=".")
     quality_spec_verify.add_argument("--json", action="store_true")
+    visual = quality_sub.add_parser(
+        "visual", help="measure a pinned local optical/behavior contract"
+    )
+    visual.add_argument("manifest")
+    visual.add_argument("--contract-sha256", required=True)
+    visual.add_argument("--execute", action="store_true")
+    visual.add_argument("--root", default=".")
+    visual.add_argument("--out")
+    visual.add_argument("--json", action="store_true")
 
 
 def add_evidence_parser(sub: Any) -> None:
@@ -128,10 +140,24 @@ def _execute_quality_command(
     if args.quality_cmd == "spec-verify":
         result = verify_ux_harness_spec_receipt(Path(args.root), Path(args.receipt))
         return result, 0 if result["ok"] else 1
+    if args.quality_cmd == "visual":
+        from .full_stack_ux_harness import run_visual_behavior_gate
+
+        result = run_visual_behavior_gate(
+            Path(args.root),
+            Path(args.manifest),
+            args.contract_sha256,
+            execute=args.execute,
+            out=Path(args.out) if args.out else None,
+        )
+        return result, 0 if result["decision"] == "PASS" else 1
     result = verify_quality_harness(
         Path(args.root),
         Path(args.manifest),
         out=Path(args.out) if args.out else None,
+        visual_receipt=Path(args.visual_receipt)
+        if getattr(args, "visual_receipt", None)
+        else None,
     )
     code = 0 if result["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW" else 1
     return result, code

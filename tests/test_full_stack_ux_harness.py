@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+from http.server import BaseHTTPRequestHandler
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -231,3 +233,632 @@ def test_intent_envelope_binds_the_approved_quality_harness_spec():
     assert envelope["sealed_hash"] == hashlib.sha256(spec.encode("utf-8")).hexdigest()
     assert envelope["coherence_score"] == 100
     assert envelope["assumptions"]
+
+
+def _visual_binding(root: Path, path: Path, kind="source"):
+    return {
+        "path": path.relative_to(root).as_posix(),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "kind": kind,
+    }
+
+
+def _visual_contract(root: Path, target="http://127.0.0.1:8765/"):
+    source = root / "app.html"
+    source.write_text(
+        '<button id="save">Save</button><p id="state">Ready</p>', encoding="utf-8"
+    )
+    return {
+        "schema": "factory.visual-behavior.contract.v1",
+        "fixture_only": True,
+        "project_id": "generic-web",
+        "journey_id": "save",
+        "candidate": [_visual_binding(root, source)],
+        "reviewer": {"name": "Test Owner", "type": "human"},
+        "target": target,
+        "browser": {
+            "executable": sys.executable,
+            "version": "test-unexecuted",
+            "platform": sys.platform,
+            "width": 640,
+            "height": 480,
+        },
+        "design": None,
+        "cases": [
+            {
+                "id": "ready",
+                "baseline": None,
+                "action": None,
+                "element": {
+                    "selector": "#save",
+                    "role": "button",
+                    "name": "Save",
+                    "enabled": True,
+                },
+                "state": {"selector": "#state", "text": "Ready"},
+                "response": None,
+                "tokens": [],
+                "timeout_ms": 500,
+                "max_changed_ratio": 0.0,
+            }
+        ],
+    }
+
+
+def _visual_write(root: Path, contract):
+    path = root / "visual-contract.json"
+    path.write_text(json.dumps(contract, allow_nan=False), encoding="utf-8")
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_visual_noexecute_never_discovers_tools_or_launches(tmp_path, monkeypatch):
+    import factoryline.full_stack_ux_harness as harness
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("noexecute must not discover or launch native tools")
+
+    monkeypatch.setattr(harness, "_visual_tool_identity", forbidden)
+    path, pin = _visual_write(tmp_path, _visual_contract(tmp_path))
+    result = harness.run_visual_behavior_gate(tmp_path, path, pin)
+    assert result["decision"] == "NOT_RUN"
+    assert (tmp_path / "app.html").read_text().startswith("<button")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "pin",
+        "forged",
+        "remote",
+        "agent",
+        "empty",
+        "duplicate",
+        "threshold",
+        "deadline",
+        "response",
+        "escape",
+        "source_hash",
+        "empty_cases",
+        "duplicate_cases",
+        "width",
+        "css_property",
+        "fixture_false",
+        "fixture_absent",
+    ],
+)
+def test_visual_admission_rejects_untrusted_contract_before_execution(
+    tmp_path, monkeypatch, mutation
+):
+    import factoryline.full_stack_ux_harness as harness
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("invalid contract reached tool discovery")
+
+    monkeypatch.setattr(harness, "_visual_tool_identity", forbidden)
+    contract = _visual_contract(tmp_path)
+    case = contract["cases"][0]
+    mutations = {
+        "pin": lambda: None,
+        "forged": lambda: case.update(passed=True),
+        "remote": lambda: contract.update(target="https://example.com/"),
+        "agent": lambda: contract["reviewer"].update(type="agent"),
+        "empty": lambda: contract.update(candidate=[]),
+        "duplicate": lambda: contract.update(candidate=contract["candidate"] * 2),
+        "threshold": lambda: case.update(max_changed_ratio=0.02),
+        "deadline": lambda: case.update(timeout_ms=True),
+        "escape": lambda: contract["candidate"][0].update(path="../outside.html"),
+        "source_hash": lambda: contract["candidate"][0].update(sha256="0" * 64),
+        "empty_cases": lambda: contract.update(cases=[]),
+        "duplicate_cases": lambda: contract.update(cases=contract["cases"] * 2),
+        "width": lambda: contract["browser"].update(width=319),
+        "css_property": lambda: case.update(
+            tokens=[{"selector": "body", "property": "behavior", "value": "evil"}]
+        ),
+        "fixture_false": lambda: contract.update(fixture_only=False),
+        "fixture_absent": lambda: contract.pop("fixture_only"),
+        "response": lambda: case.update(
+            response={
+                "method": "POST",
+                "path": "/save",
+                "status": 200,
+                "field": "saved",
+                "value": True,
+                "correlation": {"header": "x-cf-action", "value": "ready"},
+            }
+        ),
+    }
+    mutations[mutation]()
+    path, pin = _visual_write(tmp_path, contract)
+    with pytest.raises((FullStackUXHarnessError, ValueError)):
+        harness.run_visual_behavior_gate(
+            tmp_path, path, "0" * 64 if mutation == "pin" else pin, execute=True
+        )
+
+
+def test_visual_missing_optional_tool_is_incomplete_not_passed(tmp_path, monkeypatch):
+    import factoryline.full_stack_ux_harness as harness
+
+    def unavailable(*args, **kwargs):
+        raise ImportError("owned missing optional capture tool control")
+
+    monkeypatch.setattr(harness, "_visual_tool_identity", unavailable)
+    path, pin = _visual_write(tmp_path, _visual_contract(tmp_path))
+    result = harness.run_visual_behavior_gate(tmp_path, path, pin, execute=True)
+    assert result["decision"] == "INCOMPLETE"
+    assert result["findings"]
+
+
+@pytest.mark.parametrize("failure", ["crash", "timeout", "cleanup"])
+def test_visual_failed_child_execution_never_passes(tmp_path, monkeypatch, failure):
+    import factoryline.full_stack_ux_harness as harness
+    import factoryline.assembly_process as process
+
+    def failed_child(*args, **kwargs):
+        return {
+            "exit_code": 1 if failure == "crash" else 0,
+            "ok": False,
+            "cleanup_confirmed": failure != "cleanup",
+            "reason": "timeout" if failure == "timeout" else "process_exit",
+            "streams_closed": True,
+            "stdout": b"",
+            "stderr": b"",
+        }
+
+    monkeypatch.setattr(harness, "_visual_tool_identity", lambda: {})
+    monkeypatch.setattr(process, "run_cli_detailed", failed_child)
+    path, pin = _visual_write(tmp_path, _visual_contract(tmp_path))
+    result = harness.run_visual_behavior_gate(tmp_path, path, pin, execute=True)
+    assert result["decision"] == "INCOMPLETE"
+    assert result["execution"]["cleanup_confirmed"] is (failure != "cleanup")
+    assert any(item["code"] == "E_VISUAL_EXECUTION" for item in result["findings"])
+
+
+@pytest.mark.parametrize("missing", ["ok", "reason"])
+def test_visual_process_requires_explicit_success_facts(missing):
+    import factoryline.full_stack_ux_harness as harness
+
+    facts = {
+        "ok": True,
+        "exit_code": 0,
+        "cleanup_confirmed": True,
+        "streams_closed": True,
+        "reason": None,
+        "deadline_seconds": 60,
+        "duration_ms": 1,
+    }
+    del facts[missing]
+    assert harness._visual_process_findings(facts)
+
+
+@pytest.mark.parametrize("reader", ["json", "artifact"])
+def test_visual_file_budget_is_bounded_before_reading_all_bytes(
+    tmp_path, monkeypatch, reader
+):
+    import io
+    import factoryline.full_stack_ux_harness as harness
+
+    path = tmp_path / "oversized.json"
+    path.write_bytes(b"x")
+    requests = []
+
+    class LargeStream(io.BytesIO):
+        def read(self, size=-1):
+            requests.append(size)
+            assert 0 < size <= harness.MAX_EVIDENCE_BYTES + 1
+            return b"x" * size
+
+    original = Path.open
+
+    def bounded_open(current, mode="r", *args, **kwargs):
+        if current == path and mode == "rb":
+            return LargeStream()
+        return original(current, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", bounded_open)
+    with pytest.raises((FullStackUXHarnessError, ValueError)):
+        if reader == "json":
+            harness._visual_read(path)
+        else:
+            harness._visual_artifact(tmp_path, path, "observation")
+    assert requests
+
+
+def _visual_replay_tamper_controls(tmp_path, approved, harness):
+    original_receipt = json.loads(Path(approved["path"]).read_text())
+
+    def reject_resealed(value, name):
+        value["receipt_sha256"] = harness._sha(
+            {key: item for key, item in value.items() if key != "receipt_sha256"}
+        )
+        target = tmp_path / f"tamper-{name}.json"
+        target.write_text(json.dumps(value))
+        try:
+            replay = harness.verify_visual_behavior_receipt(tmp_path, target)
+        except (FullStackUXHarnessError, ValueError, OSError):
+            return
+        assert replay["decision"] != "PASS", name
+
+    for omission in ("all", "screenshot", "accessibility", "observations"):
+        changed = json.loads(json.dumps(original_receipt))
+        changed["artifacts"] = (
+            []
+            if omission == "all"
+            else [item for item in changed["artifacts"] if item["kind"] != omission]
+        )
+        reject_resealed(changed, omission)
+    for field, replacement in (("sha256", "0" * 64), ("path", "reviewed.png")):
+        changed = json.loads(json.dumps(original_receipt))
+        changed["cases"][0]["screenshot"][field] = replacement
+        reject_resealed(changed, field)
+    changed = json.loads(json.dumps(original_receipt))
+    changed["cases"][0]["accessible_snapshot"] = '- button "Invented"'
+    reject_resealed(changed, "inline-aria")
+    aria = next(
+        item
+        for item in original_receipt["artifacts"]
+        if item["kind"] == "accessibility"
+    )
+    aria_path = tmp_path / aria["path"]
+    aria_bytes = aria_path.read_bytes()
+    aria_path.unlink()
+    reject_resealed(json.loads(json.dumps(original_receipt)), "missing-aria")
+    aria_path.write_bytes(aria_bytes)
+    capture_path = tmp_path / original_receipt["cases"][0]["screenshot"]["path"]
+    capture_bytes = capture_path.read_bytes()
+    capture_path.write_bytes(capture_bytes + b"changed")
+    reject_resealed(json.loads(json.dumps(original_receipt)), "changed-png")
+    capture_path.write_bytes(capture_bytes)
+
+
+def _visual_runtime_negative_controls(
+    tmp_path, capsys, contract, behavior, run, baseline, baseline_bytes, quality
+):
+    for mode in ("pixel", "hidden", "unnamed"):
+        behavior["mode"] = mode
+        observed = run()
+        assert observed["decision"] == "FAIL", (mode, observed)
+        if mode == "pixel":
+            assert any(
+                item["code"] == "E_VISUAL_TOKEN" for item in observed["findings"]
+            )
+        assert baseline.read_bytes() == baseline_bytes
+
+    behavior["mode"] = "dishonest"
+    case = contract["cases"][0]
+    case.update(
+        action={"selector": ".control"},
+        state={"selector": "#state", "text": "Saved"},
+        response={
+            "method": "GET",
+            "path": "/api/save",
+            "status": 200,
+            "field": "saved",
+            "value": True,
+            "correlation": {"header": "x-cf-action", "value": "ready"},
+        },
+    )
+    dishonest = run()
+    assert dishonest["decision"] == "FAIL"
+    assert dishonest["cases"][0]["state_text"] == "Saved"
+    assert (
+        main(
+            [
+                "quality-harness",
+                "verify",
+                str(quality),
+                "--visual-receipt",
+                dishonest["path"],
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 1
+    )
+    assert json.loads(capsys.readouterr().out)["decision"] == "BLOCKED"
+    assert any(item["code"] == "E_VISUAL_RUNTIME" for item in dishonest["findings"])
+    assert "PRIVATE_RESPONSE_SENTINEL_8237" not in json.dumps(dishonest)
+    for artifact in dishonest["artifacts"]:
+        if artifact["path"].endswith(".json"):
+            assert (
+                "PRIVATE_RESPONSE_SENTINEL_8237"
+                not in (tmp_path / artifact["path"]).read_text()
+            )
+    behavior["mode"] = "stuck"
+    assert run()["decision"] == "INCOMPLETE"
+    behavior["mode"] = "ready"
+    case["response"]["correlation"]["value"] = "wrong-owned-action"
+    wrong_action = run()
+    assert wrong_action["decision"] == "FAIL"
+    assert any(item["code"] == "E_VISUAL_RUNTIME" for item in wrong_action["findings"])
+    case["response"]["correlation"]["value"] = "ready"
+    for mode in ("missing-length", "oversize-length", "encoded", "chunked"):
+        behavior["mode"] = mode
+        assert run()["decision"] == "INCOMPLETE", mode
+    behavior["mode"] = "multiple"
+    assert run()["decision"] == "INCOMPLETE"
+    case["response"]["path"] = "/never-observed"
+    assert run()["decision"] == "INCOMPLETE"
+
+
+class _VisualApp(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def _api_response(self, mode):
+        body = b'{"saved":true,"private":"PRIVATE_RESPONSE_SENTINEL_8237"}'
+        self.send_response(500 if mode == "dishonest" else 200)
+        self.send_header("Content-Type", "application/json")
+        if mode not in {"missing-length", "chunked"}:
+            self.send_header(
+                "Content-Length",
+                str(10_000_001 if mode == "oversize-length" else len(body)),
+            )
+        if mode == "encoded":
+            self.send_header("Content-Encoding", "identity")
+        if mode == "chunked":
+            self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        self.wfile.write(
+            (f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n")
+            if mode == "chunked"
+            else body
+        )
+
+    def do_GET(self):
+        mode = self.server.visual_behavior["mode"]
+        if self.path == "/api/save":
+            self._api_response(mode)
+            return
+        html = (self.server.visual_root / "app.html").read_text(encoding="utf-8")
+        if mode == "source-drift":
+            (self.server.visual_root / "app.html").write_text(
+                html + "<!-- concurrent drift -->", encoding="utf-8"
+            )
+        if mode == "pixel":
+            html = html.replace("#ffffff", "#000000")
+        if mode == "hidden":
+            html = html.replace('id="save"', 'id="save" hidden')
+        if mode == "unnamed":
+            html = html.replace(">Save</button>", "></button>")
+        if mode == "multiple":
+            html = html.replace(
+                "fetch('/api/save',",
+                "fetch('/api/save',{headers:{'x-cf-action':'ready'}});fetch('/api/save',",
+            )
+        if mode == "stuck":
+            html = html.replace("textContent='Saved'", "textContent='Working'")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(html.encode())
+
+
+def test_visual_route_does_not_follow_redirects(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    import factoryline.full_stack_ux_harness as harness
+
+    pytest.importorskip("playwright.sync_api")
+    monkeypatch.setattr("time.monotonic", lambda: 1.0)
+    target = "http://127.0.0.1:4000/"
+    route = Mock(request=SimpleNamespace(url=target))
+    route.fetch.return_value.status = 302
+    route.fetch.return_value.headers = {"location": "/fixture-next"}
+    harness._visual_route(route, target, 2.0)
+    route.fetch.assert_called_once_with(max_redirects=0, timeout=1000)
+    route.abort.assert_called_once_with("blockedbyclient")
+    route.fulfill.assert_not_called()
+
+
+def test_visual_replay_reports_unavailable_optional_dependencies(monkeypatch, tmp_path):
+    import factoryline.full_stack_ux_harness as harness
+
+    def unavailable(*args):
+        raise ImportError("optional tool unavailable")
+
+    monkeypatch.setattr(harness, "_visual_tool_identity", unavailable)
+    monkeypatch.setattr(harness, "_visual_prestige", unavailable)
+    assert (
+        harness._visual_profile_findings({"browser": {}}, {})[0]["code"]
+        == "E_VISUAL_PROFILE"
+    )
+    assert (
+        harness._visual_prestige_replay(tmp_path, {}, {})[0]["code"]
+        == "E_VISUAL_PRESTIGE"
+    )
+
+
+def test_visual_real_browser_pixels_semantics_runtime_and_prestige(tmp_path, capsys):
+    """Exposed local detector acceptance, never a production accuracy claim."""
+    from http.server import ThreadingHTTPServer
+    import threading
+    import shutil
+    import factoryline.full_stack_ux_harness as harness
+
+    # Required native CI never skips; optional jobs only skip absent packages.
+    if any(
+        __import__("os").environ.get(flag) == "1"
+        for flag in ("FACTORY_REQUIRE_NATIVE_VISUAL", "FACTORY_VISUAL_ACCEPTANCE")
+    ):
+        from playwright.sync_api import sync_playwright
+        import prestige_design
+
+        assert prestige_design.__version__
+    else:
+        sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
+        pytest.importorskip("prestige_design")
+    with sync_playwright() as playwright:
+        executable = playwright.chromium.executable_path
+        browser = playwright.chromium.launch(headless=True)
+        version = browser.version
+        browser.close()
+
+    behavior = {"mode": "ready"}
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _VisualApp)
+    server.visual_root = tmp_path
+    server.visual_behavior = behavior
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        contract = _visual_contract(tmp_path, f"http://127.0.0.1:{server.server_port}/")
+        source = tmp_path / "app.html"
+        source.write_text(
+            "<style>body {background:#ffffff;margin:8px}</style>"
+            "<button id=\"save\" class=\"control\" onclick=\"fetch('/api/save',{headers:{'x-cf-action':'ready'}}).then(()=>document.querySelector('#state').textContent='Saved')\">Save</button>"
+            '<button class="control">Cancel</button>'
+            '<p id="state">Ready</p>',
+            encoding="utf-8",
+        )
+        contract["candidate"] = [_visual_binding(tmp_path, source)]
+        contract["browser"].update(executable=executable, version=version)
+        contract["cases"][0]["timeout_ms"] = 5000
+        contract["cases"][0]["tokens"] = [
+            {
+                "selector": "body",
+                "property": "background-color",
+                "value": "rgb(255, 255, 255)",
+            }
+        ]
+        design = tmp_path / "DESIGN.md"
+        design.write_text(
+            '```design-tokens\n{"spacing":["8px"],"font_size":[],"font_weight":[],"radius":[],"color":["#ffffff"]}\n```',
+            encoding="utf-8",
+        )
+        contract["design"] = {
+            "contract": _visual_binding(tmp_path, design),
+            "html": _visual_binding(tmp_path, source),
+            "css": [],
+        }
+
+        def run():
+            path, pin = _visual_write(tmp_path, contract)
+            code = main(
+                [
+                    "quality-harness",
+                    "visual",
+                    str(path),
+                    "--contract-sha256",
+                    pin,
+                    "--execute",
+                    "--root",
+                    str(tmp_path),
+                    "--json",
+                ]
+            )
+            result = json.loads(capsys.readouterr().out)
+            assert code == (0 if result["decision"] == "PASS" else 1)
+            return result
+
+        path, pin = _visual_write(tmp_path, contract)
+        assert (
+            main(
+                [
+                    "quality-harness",
+                    "visual",
+                    str(path),
+                    "--contract-sha256",
+                    pin,
+                    "--root",
+                    str(tmp_path),
+                    "--json",
+                ]
+            )
+            == 1
+        )
+        assert json.loads(capsys.readouterr().out)["decision"] == "NOT_RUN"
+
+        proposed = run()
+        assert proposed["decision"] == "INCOMPLETE", proposed
+        screenshots = [
+            item for item in proposed["artifacts"] if item["path"].endswith(".png")
+        ]
+        assert len(screenshots) == 1
+        baseline = tmp_path / "reviewed.png"
+        shutil.copyfile(tmp_path / screenshots[0]["path"], baseline)
+        baseline_bytes = baseline.read_bytes()
+        contract["cases"][0]["baseline"] = _visual_binding(
+            tmp_path, baseline, "baseline"
+        )
+        approved = run()
+        assert approved["decision"] == "PASS", approved
+        approved_contract_bytes = (tmp_path / "visual-contract.json").read_bytes()
+        _visual_replay_tamper_controls(tmp_path, approved, harness)
+        quality = _write_manifest(tmp_path)
+        visual_source = Path(approved["path"])
+        visual_before = visual_source.read_bytes()
+        with pytest.raises(
+            harness.FullStackUXHarnessError, match="differ from its inputs"
+        ):
+            harness.verify_quality_harness(
+                tmp_path,
+                quality,
+                visual_receipt=visual_source,
+                out=visual_source.relative_to(tmp_path),
+            )
+        assert visual_source.read_bytes() == visual_before
+        assert (
+            main(
+                [
+                    "quality-harness",
+                    "verify",
+                    str(quality),
+                    "--visual-receipt",
+                    approved["path"],
+                    "--root",
+                    str(tmp_path),
+                    "--json",
+                ]
+            )
+            == 0
+        )
+        included = json.loads(capsys.readouterr().out)
+        assert included["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW"
+        assert (
+            harness.verify_visual_behavior_receipt(tmp_path, Path(approved["path"]))[
+                "decision"
+            ]
+            == "PASS"
+        )
+        tampered = json.loads(Path(approved["path"]).read_text())
+        del tampered["identity"]["executable_sha256"]
+        tampered["receipt_sha256"] = harness._sha(
+            {key: value for key, value in tampered.items() if key != "receipt_sha256"}
+        )
+        tampered_path = tmp_path / "missing-identity.json"
+        tampered_path.write_text(json.dumps(tampered))
+        assert (
+            harness.verify_visual_behavior_receipt(tmp_path, tampered_path)["decision"]
+            == "INCOMPLETE"
+        )
+        _visual_runtime_negative_controls(
+            tmp_path, capsys, contract, behavior, run, baseline, baseline_bytes, quality
+        )
+        contract = json.loads(approved_contract_bytes)
+        behavior["mode"] = "source-drift"
+        clean_source = source.read_bytes()
+        assert run()["decision"] == "INCOMPLETE"
+        source.write_bytes(clean_source)
+        behavior["mode"] = "ready"
+        design_bytes = design.read_bytes()
+        design.write_text(design.read_text().replace('["8px"]', "[]"), encoding="utf-8")
+        contract["design"]["contract"] = _visual_binding(tmp_path, design)
+        assert run()["decision"] == "FAIL"
+        design.write_bytes(design_bytes)
+
+        # Reviewed source and baseline drift must invalidate an earlier PASS.
+        (tmp_path / "visual-contract.json").write_bytes(approved_contract_bytes)
+        source.write_text(source.read_text() + "<!-- drift -->", encoding="utf-8")
+        with pytest.raises((FullStackUXHarnessError, ValueError)):
+            harness.verify_visual_behavior_receipt(tmp_path, Path(approved["path"]))
+        source.write_text(
+            source.read_text().replace("<!-- drift -->", ""), encoding="utf-8"
+        )
+        baseline.write_bytes(baseline_bytes + b"tampered")
+        with pytest.raises((FullStackUXHarnessError, ValueError)):
+            harness.verify_visual_behavior_receipt(tmp_path, Path(approved["path"]))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

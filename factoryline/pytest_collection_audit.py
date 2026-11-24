@@ -2964,11 +2964,6 @@ def _captured_system_exit(node, aliases, result_name):
     )
 
 
-def _pytest_settings_selection_overridden(options):
-    """Do not credit a config default when captured argv selects another source."""
-    return _pytest_effective_settings_options(options) is None
-
-
 def _pytest_effective_settings_options(
     options, *, coverage_provider=False, source_role_only=False
 ):
@@ -4013,14 +4008,6 @@ def _distribution_requirement_file(text, distribution):
     ):
         return None
     return _distribution_declarations(lines, "requirements.txt", distribution)
-
-
-def _pytest_django_project_declarations(project):
-    return _distribution_project_declarations(project, "pytest-django") or []
-
-
-def _pytest_django_requirement(line):
-    return _distribution_requirement(line, "pytest-django")
 
 
 def _supported_pytest_function_patterns(options):

@@ -18,6 +18,7 @@ from .audit_taxonomy import (
 )
 from .benchmark_lab import run_public_benchmark
 from .runtime_coverage import read_runtime_coverage_report
+from . import canonical_sha as _hash
 
 
 MAX_CHANGED_PATHS = 20
@@ -115,10 +116,6 @@ class JunieReviewError(ValueError):
     def __init__(self, message: str, code: str = "JUNIE_REVIEW_INPUT_REJECTED") -> None:
         super().__init__(message)
         self.code = code
-
-
-def _hash(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _changed_paths(root: Path, arguments: object) -> list[str]:

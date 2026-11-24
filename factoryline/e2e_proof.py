@@ -13,13 +13,14 @@ from __future__ import annotations
 from . import canonical_json_compat_bytes as _canonical
 
 from base64 import b64decode, b64encode
-from hashlib import sha256
 import json
 from pathlib import Path
 import re
 import subprocess
 from time import perf_counter_ns
 from typing import Any
+from . import sha256_hex as _sha_bytes
+from . import CodedError
 
 
 E2E_PROOF_MANIFEST_SCHEMA = "factory.e2e_proof_manifest.v1"
@@ -45,16 +46,8 @@ AUTHORITY = {
 }
 
 
-class E2EProofError(ValueError):
+class E2EProofError(CodedError):
     """A malformed manifest or tampered E2E Proof receipt."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
-
-
-def _sha_bytes(value: bytes) -> str:
-    return sha256(value).hexdigest()
 
 
 def _sha(value: object) -> str:

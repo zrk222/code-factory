@@ -6,7 +6,6 @@ This overlay reads local facts and never runs gates or grants authority.
 
 from __future__ import annotations
 
-from . import canonical_json_compat_bytes as _canonical
 
 from collections import Counter
 from importlib import resources
@@ -63,6 +62,9 @@ from .mission_control_status import mission_control_status
 from .senior_engineering import senior_engineering_projection
 from .continuous_controls import continuous_controls_projection, build_control_graph
 from .agentic_control import agentic_control_projection
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
+from . import is_sha256_hex as _adapter_digest_valid
 
 
 GRAPH_OPS_SCHEMA = "factory.graph-ops.v1"
@@ -79,10 +81,6 @@ _AUTHORITY = {
     "credential": False,
     "connector": False,
 }
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _source(root: Path, path: Path) -> tuple[Path, str]:
@@ -3811,14 +3809,6 @@ def _adapter_payload_valid(payload: object, feature: str) -> bool:
         and payload.get("stage") == "ship"
         and payload.get("feature") == feature
         and payload.get("ok") is True
-    )
-
-
-def _adapter_digest_valid(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and all(character in "0123456789abcdef" for character in value)
     )
 
 

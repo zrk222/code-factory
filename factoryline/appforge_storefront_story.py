@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from .contract import write_atomic_json
-from . import canonical_json_compat_bytes as _canonical
 
 from datetime import datetime
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -15,7 +13,11 @@ from typing import Any
 from .appforge_evidence_kit import _read_candidate
 from .appforge_store_media import RECEIPT_SCHEMA as MEDIA_RECEIPT_SCHEMA
 from .revenueforge import _artifact_local, _artifact_json
+from .revenueforge import _artifact_receipt_sealed as _sealed
 from .revenueforge import AUTHORITY, RevenueForgeError
+from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import compat_sha as _sha
+from . import file_sha256 as _file_sha
 
 
 CONTRACT_SCHEMA = "factory.appforge.storefront-story-contract.v1"
@@ -30,14 +32,6 @@ HIGH_RISK_CLAIM = re.compile(
     r"\b(?:guarantee(?:d)?|apple\s+approved|never\s+reject(?:ed)?|save\s+(?:\d+|many)\s+(?:hours?|days?)|\d+\s*%)\b",
     re.IGNORECASE,
 )
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _file_sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _text(value: object, field: str, limit: int) -> str:
@@ -75,18 +69,6 @@ def _read(root: Path, path: Path, schema: str) -> tuple[dict[str, Any], Path]:
         large_message="input exceeds 1 MiB",
     )
     return value, source
-
-
-def _sealed(value: dict[str, Any], schema: str, marker: str) -> bool:
-    supplied = value.get("receipt_sha256")
-    return (
-        value.get("schema") == schema
-        and value.get("marker") == marker
-        and isinstance(supplied, str)
-        and len(supplied) == 64
-        and _sha({key: item for key, item in value.items() if key != "receipt_sha256"})
-        == supplied
-    )
 
 
 def _captures(media: dict[str, Any]) -> dict[tuple[str, str], str]:

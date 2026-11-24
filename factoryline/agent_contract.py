@@ -13,6 +13,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any
+from . import PrefixedCodedError
 
 
 AGENT_CONTRACT_SCHEMA = "factory.agent-contract.v2"
@@ -42,13 +43,8 @@ CONTRACT_KEYS = frozenset(
 SECRET_KEYS = frozenset({"key", "token", "secret", "password", "credential", "api_key"})
 
 
-class AgentContractError(ValueError):
+class AgentContractError(PrefixedCodedError):
     """Closed, machine-readable contract validation failure."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: object) -> bytes:

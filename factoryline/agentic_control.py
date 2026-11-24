@@ -20,6 +20,8 @@ import subprocess
 import threading
 from typing import Any, Iterable, Protocol
 from urllib.parse import urlsplit
+from . import canonical_or_bytes_sha as _sha
+from . import CodedMessageError
 
 
 SCHEMA = "factory.agentic-control.v1"
@@ -93,13 +95,8 @@ _AUTHORITY = {
 }
 
 
-class AgenticControlError(ValueError):
+class AgenticControlError(CodedMessageError):
     """Fail-closed validation error for the agent-access boundary."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 def _a2a_required_text(card, reject):
@@ -410,12 +407,6 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
         "authority": {key: False for key in _AUTHORITY},
         "claim_boundary": "Validates imported Agent Card structure and internal transport/security references only; it does not fetch, authenticate, trust, authorize, or invoke the declared agent.",
     }
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(
-        value if isinstance(value, bytes) else _canonical(value)
-    ).hexdigest()
 
 
 def _id(value: object, label: str) -> str:

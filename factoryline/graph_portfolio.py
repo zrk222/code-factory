@@ -7,12 +7,12 @@ Exact proof reuse remains the separate proof-reuse gate.
 
 from __future__ import annotations
 
-from . import canonical_ascii_json_compat_bytes as _canonical
 
-import hashlib
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
+from . import canonical_ascii_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
+from . import ascii_compat_sha as _sha
 
 
 GRAPH_PORTFOLIO_SCHEMA = "factory.graph-portfolio.v1"
@@ -39,10 +39,6 @@ class _CycleState:
     stack: list[str] = field(default_factory=list)
     on_stack: set[str] = field(default_factory=set)
     components: list[list[str]] = field(default_factory=list)
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _graph_nodes(raw_nodes: list[Any]) -> dict[str, dict[str, Any]]:

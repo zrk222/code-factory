@@ -1,3 +1,10 @@
+diff --git a/report/constants.go b/report/constants.go
+--- a/report/constants.go
++++ b/report/constants.go
+@@ -3,2 +3,2 @@
+-const version = "v8.0.0"
++const version = "8.28.0"
+ const driver = "gitleaks"
 diff --git a/cmd/root.go b/cmd/root.go
 index cddb557..39108d2 100644
 --- a/cmd/root.go

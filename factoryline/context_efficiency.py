@@ -104,6 +104,7 @@ from .import_context import (
     _full_repository_workspace_cached_source_entry as _full_repository_workspace_cached_source_entry,
     _full_repository_workspace_cache_load_source as _full_repository_workspace_cache_load_source,
 )
+from . import PrefixedCodedError
 
 _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = None
 # 64 MiB source retention plus 16 MiB for measured cache rows and containers.
@@ -2678,6 +2679,7 @@ _SECRET_BYTES = (
     re.compile(rb"(?:ghp_|github_pat_|pypi-|vsce[_-]?pat)[A-Za-z0-9_-]{8,}"),
     re.compile(rb"(?:AKIA|ASIA)[0-9A-Z]{16}"),
     re.compile(rb"AIza[0-9A-Za-z_-]{30,}"),
+    re.compile(rb"\b(?:sk|rk)_live_[A-Za-z0-9]{10,99}\b"),
     re.compile(
         rb"(?:sk-(?:live|proj|ant|test)-|xox[baprs]-|ya29\.)[A-Za-z0-9._-]{12,}"
     ),
@@ -2690,13 +2692,8 @@ _REDACT = (
 )
 
 
-class ContextEfficiencyError(ValueError):
+class ContextEfficiencyError(PrefixedCodedError):
     """Stable fail-closed error raised for malformed or changed context."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _canonical(value: Any) -> bytes:

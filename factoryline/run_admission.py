@@ -22,6 +22,8 @@ from .agent_license import (
 from .oracle_firewall import OracleFirewallError, admission_oracle_decision
 from .intake_parameters import REQUIRED_AUDIT_LANES, verify_intake_binding
 from .first_lap import verify_activation_receipt
+from . import ascii_compat_sha as _sha
+from . import CodedError
 
 
 ADMISSION_REQUEST_SCHEMA = "factory.run-admission.request.v1"
@@ -41,16 +43,8 @@ _AUTHORITY = {
 }
 
 
-class AdmissionError(ValueError):
+class AdmissionError(CodedError):
     """Stable admission error with no hidden side effect."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _load(path: Path) -> dict[str, Any]:

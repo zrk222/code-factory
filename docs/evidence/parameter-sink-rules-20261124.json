@@ -1,0 +1,360 @@
+{
+  "claim_boundary": {
+    "held_out": false,
+    "note": "A newly frozen set is needed before a held-out claim.",
+    "production_claim": false
+  },
+  "detection_rule": "Unchanged hunk rule: matching CWE family alert on an old-side line of a git diff -U5 hunk in a changed in-language non-test file.",
+  "measurement_id": "parameter-sink-rules-20261124",
+  "precision_controls": {
+    "alerts_from_new_parameter_rules": 5,
+    "repositories": 19,
+    "review": "Remaining alerts are real interpolation of a function parameter into shell text (rubygems tool/release.rb x3, laravel DevCommand passthru) plus one laravel DynamoDB query-array alert; none is an exploitable public entry point."
+  },
+  "rejected_levers": {
+    "php.html-string-unescaped-concatenation": {
+      "control_alerts": {
+        "grav": 6,
+        "laravel": 1,
+        "phpbb": 76
+      },
+      "dev_hunk_gain": 0,
+      "reason": "No gain on the dev set and 76 alerts in phpBB, which escapes request values upstream; not shipped.",
+      "working_hunk_gain": 4
+    }
+  },
+  "ruleset_sha256": "9b96f4768806ceff89a22b9e08016e8c1b1784c28d7ea95d529044045d1677de",
+  "schema": "factory.pattern-recall-measurement.v1",
+  "sets": {
+    "dev_161_first_fix": {
+      "after": {
+        "file_hit": 24,
+        "hunk_hit": 19,
+        "hunk_hits": [
+          {
+            "ecosystem": "Maven",
+            "ghsa": "GHSA-3xgr-h5hq-7299",
+            "rules": [
+              "java.disabled-hostname-verification"
+            ]
+          },
+          {
+            "ecosystem": "Packagist",
+            "ghsa": "GHSA-463c-jhp2-4mm7",
+            "rules": [
+              "php.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "Packagist",
+            "ghsa": "GHSA-4xf2-7qfv-mgfx",
+            "rules": [
+              "php.parameter-sql-text"
+            ]
+          },
+          {
+            "ecosystem": "Maven",
+            "ghsa": "GHSA-5j9f-5wmp-7f8h",
+            "rules": [
+              "java.disabled-hostname-verification"
+            ]
+          },
+          {
+            "ecosystem": "Go",
+            "ghsa": "GHSA-5jpj-293f-rhvj",
+            "rules": [
+              "go.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "Maven",
+            "ghsa": "GHSA-5m9f-rphj-c435",
+            "rules": [
+              "java.disabled-hostname-verification"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-5xpp-75jx-m839",
+            "rules": [
+              "javascript.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "RubyGems",
+            "ghsa": "GHSA-7359-3c6r-hfc2",
+            "rules": [
+              "ruby.disabled-tls-verification"
+            ]
+          },
+          {
+            "ecosystem": "RubyGems",
+            "ghsa": "GHSA-7vxr-6cxg-j3x8",
+            "rules": [
+              "ruby.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "RubyGems",
+            "ghsa": "GHSA-8832-4mm5-x2r6",
+            "rules": [
+              "ruby.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "RubyGems",
+            "ghsa": "GHSA-ff6c-w6qf-7xqc",
+            "rules": [
+              "ruby.disabled-tls-verification"
+            ]
+          },
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-fhff-qmm8-h2fp",
+            "rules": [
+              "python.parameter-path-join-without-containment",
+              "python.tarfile-extractall-without-filter"
+            ]
+          },
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-fr3h-cpq2-9496",
+            "rules": [
+              "python.parameter-path-join-without-containment"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-gpfj-4j6g-c4w9",
+            "rules": [
+              "javascript.dom-innerhtml-from-variable"
+            ]
+          },
+          {
+            "ecosystem": "Maven",
+            "ghsa": "GHSA-jwhr-h7pc-3974",
+            "rules": [
+              "java.disabled-hostname-verification"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-pmw4-jgxx-pcq9",
+            "rules": [
+              "javascript.parameter-path-join-without-containment"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-rjjv-87mx-6x3h",
+            "rules": [
+              "javascript.html-template-unescaped-interpolation"
+            ]
+          },
+          {
+            "ecosystem": "Packagist",
+            "ghsa": "GHSA-w2pm-r78h-4m7v",
+            "rules": [
+              "php.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "Packagist",
+            "ghsa": "GHSA-w5ff-2mjc-4phc",
+            "rules": [
+              "php.parameter-shell-command"
+            ]
+          }
+        ],
+        "scored": 148
+      },
+      "before": {
+        "hunk_hit": 6,
+        "ruleset_sha256": "34c22d94453328985d056ec34bbc3d61fb0a80c3df52c5b42a56af3ce247333c",
+        "scored": 148
+      },
+      "record": "docs/evidence/advisory-recall-factory-20261121.json",
+      "role": "validation for these rules: fixes in this set were not read while designing them, though the set is exposed to earlier rule work"
+    },
+    "working_113": {
+      "after": {
+        "file_hit": 30,
+        "hunk_hit": 18,
+        "hunk_hits": [
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-259w-wmqg-fp76",
+            "rules": [
+              "python.parameter-path-join-without-containment",
+              "python.tarfile-extractall-without-filter"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-3cgg-c5pp-57h6",
+            "rules": [
+              "javascript.html-template-unescaped-interpolation"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-3f7j-7jwc-fxfj",
+            "rules": [
+              "javascript.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-4xm8-rg9h-jhq2",
+            "rules": [
+              "javascript.parameter-path-join-without-containment"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-58g7-7f52-h92c",
+            "rules": [
+              "javascript.dom-innerhtml-from-variable"
+            ]
+          },
+          {
+            "ecosystem": "Go",
+            "ghsa": "GHSA-8fh7-7q4q-cq52",
+            "rules": [
+              "go.peer-certificate-trusted-without-verified-chain",
+              "go.tls-client-cert-requested-not-verified"
+            ]
+          },
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-9fpx-fr6j-2vh6",
+            "rules": [
+              "python.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-f4j9-crrj-867q",
+            "rules": [
+              "javascript.html-template-unescaped-interpolation"
+            ]
+          },
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-gh9r-c94j-cmp5",
+            "rules": [
+              "python.unsafe-deserialization-unscoped"
+            ]
+          },
+          {
+            "ecosystem": "Packagist",
+            "ghsa": "GHSA-j44m-77cc-p3cc",
+            "rules": [
+              "php.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-jmv2-qgxf-f995",
+            "rules": [
+              "javascript.html-template-unescaped-interpolation"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-jq3q-62jc-fqq9",
+            "rules": [
+              "javascript.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "Go",
+            "ghsa": "GHSA-mmg6-4qmv-6pc8",
+            "rules": [
+              "go.parameter-path-join-without-containment"
+            ]
+          },
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-p34x-fmph-9fjx",
+            "rules": [
+              "python.parameter-path-join-without-containment"
+            ]
+          },
+          {
+            "ecosystem": "Packagist",
+            "ghsa": "GHSA-r7h9-qx4h-77j5",
+            "rules": [
+              "php.parameter-sql-text"
+            ]
+          },
+          {
+            "ecosystem": "Packagist",
+            "ghsa": "GHSA-rw77-vq4g-x3hp",
+            "rules": [
+              "php.parameter-sql-text"
+            ]
+          },
+          {
+            "ecosystem": "PyPI",
+            "ghsa": "GHSA-vvr2-h2jp-838m",
+            "rules": [
+              "python.parameter-path-join-without-containment"
+            ]
+          },
+          {
+            "ecosystem": "Go",
+            "ghsa": "GHSA-w34q-cm8f-9c5x",
+            "rules": [
+              "go.grpc-insecure-transport"
+            ]
+          }
+        ],
+        "scored": 107
+      },
+      "before": {
+        "hunk_hit": 1,
+        "ruleset_sha256": "34c22d94453328985d056ec34bbc3d61fb0a80c3df52c5b42a56af3ce247333c",
+        "scored": 107
+      },
+      "manifest": "docs/evidence/heldout-recall-manifest-20261123.json",
+      "role": "development: rules were designed after reading these fixes, with the user's agreement"
+    }
+  },
+  "steps": [
+    {
+      "added": "parameter-sourced shell and SQL rules, tarfile with-block",
+      "dev_hunk_hit": 16,
+      "ruleset": "e5f091f2",
+      "working_hunk_hit": 8
+    },
+    {
+      "added": "base-directory join of a parameter without containment (Python, Go, JS/TS)",
+      "control_alerts": 3,
+      "dev_hunk_hit": 18,
+      "ruleset": "46a66c52",
+      "working_hunk_hit": 12
+    },
+    {
+      "added": "JS/TS template-attribute interpolation and innerHTML from a variable",
+      "control_alerts": 7,
+      "dev_hunk_hit": 20,
+      "ruleset": "40aaf1d5",
+      "working_hunk_hit": 16
+    },
+    {
+      "added": "Go client-cert modes without verification, PeerCertificates without VerifiedChains, insecure gRPC dial; JS rejectUnauthorized false; Python unverified SSL contexts",
+      "control_alerts": 1,
+      "dev_hunk_hit": 19,
+      "note": "No dev gain from TLS shapes. Merging the two tarfile rules to stay within the 64-rule bound drops one dev hit (onnx GHSA-h36j) that only matched extractall with an explicit members= filter, which is now treated as a mitigation.",
+      "ruleset": "7428f1a3",
+      "working_hunk_hit": 18
+    },
+    {
+      "added": "request/response handler parameters excluded from parameter rules (they are covered by the request rules); recall unchanged",
+      "dev_hunk_hit": 19,
+      "ruleset": "9b96f476",
+      "working_hunk_hit": 18
+    }
+  ]
+}

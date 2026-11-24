@@ -1309,6 +1309,7 @@ def test_ci_template_comments_without_masking_failed_verification():
 def test_dry_run_assemble_plans_all_stages(tmp_path):
     ensure_layout(tmp_path)
     report = assemble(tmp_path, "feat", dry_run=True)
+    assert not (tmp_path / ".factory" / "run-sequences").exists()
     stages = [s for s in report["stages"] if s["status"] in ("would-run", "skipped")]
     assert len(stages) == len(DEFAULT_CHAIN)
 
@@ -2176,3 +2177,104 @@ def test_cli_coverage_outputs_json_and_fails_closed(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["attribution"]["dominant_failure_class"] == "hollow_coverage"
+
+
+def test_shared_digest_helpers_match_their_folded_definitions(tmp_path):
+    import ast
+    import hashlib
+
+    import factoryline as fl
+
+    value = {"b": [1, "é"], "a": None}
+    strict = fl.canonical_json_bytes(value)
+    assert fl.sha256_hex(b"x") == hashlib.sha256(b"x").hexdigest()
+    assert fl.canonical_sha(value) == hashlib.sha256(strict).hexdigest()
+    assert fl.canonical_or_bytes_sha(value) == fl.canonical_sha(value)
+    assert fl.canonical_or_bytes_sha(b"raw") == fl.sha256_hex(b"raw")
+    assert fl.compat_sha(float("nan")) == fl.sha256_hex(b"NaN")
+    assert fl.ascii_compat_sha("é") == fl.sha256_hex(b'"\\u00e9"')
+    with pytest.raises(ValueError):
+        fl.canonical_sha(float("nan"))
+    target = tmp_path / "note.txt"
+    target.write_text("old", encoding="utf-8")
+    assert fl.atomic_text(target, "new") == fl.sha256_hex(b"new")
+    assert target.read_text(encoding="utf-8") == "new"
+    assert not target.with_name(".note.txt.tmp").exists()
+    assert (
+        fl.file_sha256(str(target)) == fl.file_sha256(target) == fl.sha256_hex(b"new")
+    )
+    assert fl.is_sha256_hex(fl.sha256_hex(b""))
+    assert not fl.is_sha256_hex("A" * 64) and not fl.is_sha256_hex(b"0" * 64)
+    node = ast.parse("x = 1").body[0]
+    assert fl.node_span(node) == [1, 0, 1, 5]
+    assert fl.node_span(object()) == [None, None, None, None]
+
+
+def test_shared_clock_helpers_are_utc():
+    import factoryline as fl
+
+    assert fl.utc_now().utcoffset().total_seconds() == 0
+    assert fl.utc_iso().endswith("+00:00")
+    stamp = fl.utc_stamp()
+    assert stamp.endswith("Z") and "." not in stamp and len(stamp) == 20
+
+
+def test_tree_index_is_cached_until_scope_rebinding():
+    import ast
+
+    import factoryline as fl
+    from factoryline.import_context import bind_security_call_scopes
+
+    tree = ast.parse("def f(a):\n    return g(a)\n")
+    nodes, parents = fl.tree_index(tree)
+    assert fl.tree_index(tree) is fl.tree_index(tree)
+    call = tree.body[0].body[0].value
+    assert parents[id(call)] is tree.body[0].body[0] and tree in nodes
+    tree.body.append(ast.parse("h()").body[0])
+    bind_security_call_scopes(tree)
+    assert len(fl.tree_index(tree)[0]) > len(nodes)
+
+
+@pytest.mark.parametrize(
+    ("segment", "reserved"),
+    [
+        ("con", True),
+        ("Nul.txt", True),
+        ("LPT9.log", True),
+        ("com\xb9", True),
+        ("CONOUT$", True),
+        ("console", False),
+        ("com0", False),
+        ("file.py", False),
+    ],
+)
+def test_windows_reserved_segment_matches_pathlib(segment, reserved):
+    import warnings
+    from pathlib import PureWindowsPath
+
+    from factoryline import windows_reserved_segment
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        assert PureWindowsPath(segment).is_reserved() is reserved
+    assert windows_reserved_segment(segment) is reserved
+
+
+@pytest.mark.parametrize(
+    ("base", "text", "message_attr", "parent"),
+    [
+        ("CodedError", "why", False, ValueError),
+        ("CodedMessageError", "why", True, ValueError),
+        ("PrefixedCodedError", "E_X: why", True, ValueError),
+        ("CodedRuntimeError", "why", True, RuntimeError),
+        ("PrefixedCodedRuntimeError", "E_X: why", True, RuntimeError),
+    ],
+)
+def test_coded_error_bases_keep_folded_exception_contracts(
+    base, text, message_attr, parent
+):
+    import factoryline as fl
+
+    error = getattr(fl, base)("E_X", "why")
+    assert isinstance(error, parent) and str(error) == text and error.code == "E_X"
+    assert (getattr(error, "message", None) == "why") is message_attr

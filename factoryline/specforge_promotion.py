@@ -730,13 +730,44 @@ def _job_completion_checkpoints(item, binding, forge_sha, completion_sha):
     )
 
 
-def _native_job_proof(root, envelope, forge, completion, candidate, required_files):
-    from .verification import verify_feature
+def _mission_ship_evidence(root, feature, intent_trace):
+    """Accept an exact ship-only handoff while preserving release supersession."""
+    from .verification import verify_feature, verify_sequence
 
+    verification = verify_feature(root, feature)
+    if verification["shippable"] is True:
+        return True
+    if verification["blockers"] != [
+        {"code": "SEQUENCE_BASIS_SUPERSEDED", "detail": "forgeline:ship"}
+    ]:
+        return False
+    ship = next(
+        row
+        for row in verification["rollup"]["stages"]
+        if row["module"] == "forgeline" and row["stage"] == "ship"
+    )
+    if ship["outputs"].get("intent_trace") != intent_trace:
+        return False
+    run_id = ship["inputs"].get("sequence_run_id", "")
+    selected = verify_sequence(root, feature, run_id, {"forgeline:ship"})
     if (
-        forge.get("intent_evidence") != envelope
-        or not _native_promotion(root, envelope, forge)["ok"]
+        not selected["ok"]
+        or selected.get("quarantined")
+        or len(selected["stages"]) != 1
     ):
+        return False
+    (receipt,) = selected["stages"]
+    return (
+        receipt["receipt_path"] == ship["receipt_path"]
+        and receipt["receipt_sha256"] == ship["receipt_sha256"]
+    )
+
+
+def _native_job_proof(root, envelope, forge, completion, candidate, required_files):
+    if forge.get("intent_evidence") != envelope:
+        return False
+    promotion = _native_promotion(root, envelope, forge)
+    if not promotion["ok"]:
         return False
     evidence = {
         (row.get("path"), row.get("sha256"))
@@ -753,7 +784,7 @@ def _native_job_proof(root, envelope, forge, completion, candidate, required_fil
         }
         and _job_candidate_observed(root, candidate, completion, envelope)
         and set(required_files).issubset(evidence)
-        and verify_feature(root, envelope["feature"])["shippable"] is True
+        and _mission_ship_evidence(root, envelope["feature"], promotion["intent_trace"])
     )
 
 

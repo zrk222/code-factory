@@ -6,6 +6,7 @@ import ast
 import hashlib
 import importlib.metadata
 import json
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -4949,3 +4950,572 @@ def oauth_service_locator_proof_helpers():
         source_symbol_index,
         _root_name,
     )
+
+
+# Value-shape credential routing shared by the assignment and positional sensors.
+_TOKEN_NAME = re.compile(r"(?i)(?:^|[_-])(?:token|passwd|pwd|auth[_-]?key)s?(?:$|[_-])")
+_DOTTED_IDENTIFIER = re.compile(r"(?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*")
+
+
+def _digit_letter_switches(chunk: str) -> int:
+    kinds = [character.isdigit() for character in chunk]
+    return sum(left != right for left, right in zip(kinds, kinds[1:]))
+
+
+def secret_shaped_value(value) -> bool:
+    """True for a literal shaped like generated key material, not prose or a label.
+
+    Words joined by punctuation ("X-Auth-Token-Version-2"), dotted identifiers,
+    locators and digit-free passphrases are labels here; at least one
+    alphanumeric run must switch between letters and digits three times.
+    """
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not 16 <= len(text) <= 512 or not text.isascii() or not text.isprintable():
+        return False
+    if any(character.isspace() for character in text) or "://" in text:
+        return False
+    if text.startswith(("/", "./", "../")) or _DOTTED_IDENTIFIER.fullmatch(text):
+        return False
+    return any(
+        _digit_letter_switches(chunk) >= 3 for chunk in re.split(r"[^A-Za-z0-9]+", text)
+    )
+
+
+def _known_format_secret(audit, value, *, standalone=False) -> bool:
+    """Match a vendor key format; ``standalone`` also requires a token boundary
+    and an uppercase letter or digit, so ``offline-pypi-snapshot`` is a label."""
+    from .context_efficiency import _SECRET_BYTES
+
+    if not isinstance(value, str) or not value.strip():
+        return False
+    encoded = value.encode(errors="surrogatepass")
+    return any(
+        not audit._AWS_DEMO.match(match.string, match.start())
+        and (
+            not standalone
+            or not encoded[max(match.start() - 1, 0) : match.start()].isalnum()
+            and encoded[max(match.start() - 1, 0) : match.start()] not in (b"-", b"_")
+            and any(byte in b"0123456789" or 65 <= byte <= 90 for byte in match.group())
+        )
+        for pattern in _SECRET_BYTES
+        for match in pattern.finditer(encoded)
+    )
+
+
+def _credential_slot_name(audit, name) -> bool:
+    return isinstance(name, str) and bool(
+        audit._SECRET_ASSIGNMENT.search(name) or _TOKEN_NAME.search(name)
+    )
+
+
+def literal_credential_candidate(audit, node, target) -> bool:
+    """Decide assignment eligibility; classification and proofs happen downstream."""
+    if not isinstance(target, ast.Name):
+        return False
+    value = audit._secret_literal(node)
+    if _known_format_secret(audit, value):
+        return True
+    if audit._SECRET_ASSIGNMENT.search(target.id):
+        return True
+    return bool(_TOKEN_NAME.search(target.id)) and secret_shaped_value(value)
+
+
+_PASSWORD_SLOT = re.compile(r"(?i)pass(?:word|wd)|pwd")
+_PASSWORD_HASH = re.compile(
+    r"(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{56}|[0-9a-f]{64}|[0-9a-f]{96}|[0-9a-f]{128})"
+    r"|\$(?:2[abxy]|argon2(?:id|i|d)|scrypt|5|6)\$.+|(?:pbkdf2|bcrypt|argon2|scrypt)[_:$].+"
+)
+
+
+def _stored_password_hash(slot, value) -> bool:
+    """A digest-length hex or tagged hash in a password slot is a verifier, not a password."""
+    return bool(
+        _PASSWORD_SLOT.search(slot) and _PASSWORD_HASH.fullmatch(value.strip().lower())
+    )
+
+
+_CREDENTIAL_CONFIGURATION_KEY = re.compile(
+    r"(?:^|_)(?:SECRET|SECRET_KEY|PASSWORD|PASSWD|PWD|TOKEN|API_KEY|APIKEY|"
+    r"ACCESS_KEY|PRIVATE_KEY|SIGNING_KEY|CLIENT_SECRET|SALT|HMAC|AUTH_KEY)"
+    r"(?:_[0-9]+)?$"
+)
+
+
+def _configuration_key(audit, key) -> bool:
+    """An upper-case configuration key whose last word names the credential itself.
+
+    ``SECRET_KEY``, ``MAIL_PASSWORD`` and ``SECRET_KEY_HMAC_2`` qualify;
+    metadata about a credential (``TOKEN_EXPIRY``, ``PASSWORD_RESET_URL``,
+    ``PASSWORD_HASHERS``) does not.
+    """
+    return (
+        isinstance(key, str)
+        and key.isupper()
+        and key.isidentifier()
+        and bool(_CREDENTIAL_CONFIGURATION_KEY.search(key))
+    )
+
+
+def _configuration_value(audit, value: str) -> bool:
+    text = value.strip()
+    return not (
+        audit._PLACEHOLDER_SECRET.match(text)
+        or text.isdigit()
+        or text.startswith(("/", "./", "../"))
+        or "://" in text
+        or _DOTTED_IDENTIFIER.fullmatch(text)
+    )
+
+
+def _configuration_receiver(node) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr == "config") or (
+        isinstance(node, ast.Name) and node.id == "config"
+    )
+
+
+def _assignment_slots(audit, node, slots):
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    if any(isinstance(target, ast.Name) for target in targets):
+        slots[id(node.value)] = None
+        return
+    for target in targets:
+        if isinstance(target, ast.Attribute):
+            slots[id(node.value)] = (
+                "attribute",
+                target.attr,
+                target.attr == "secret_key",
+            )
+            return
+        if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant):
+            key = target.slice.value
+            configured = _configuration_receiver(target.value) and _configuration_key(
+                audit, key
+            )
+            slots[id(node.value)] = "mapping_value", key, configured
+            return
+
+
+def _literal_slots(audit, nodes):
+    """Map literal node ids to (position, slot name, configuration slot).
+
+    ``None`` marks the value of a ``NAME = literal`` assignment, which the
+    assignment rule owns; literals absent from the map are plain expressions.
+    """
+    slots = {}
+    for node in nodes:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            _assignment_slots(audit, node, slots)
+        elif isinstance(node, ast.Call):
+            configured = (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"update", "from_mapping"}
+                and _configuration_receiver(node.func.value)
+            )
+            for keyword in node.keywords:
+                slots[id(keyword.value)] = (
+                    "keyword",
+                    keyword.arg,
+                    configured and _configuration_key(audit, keyword.arg),
+                )
+        elif isinstance(node, ast.Dict):
+            for key, item in zip(node.keys, node.values):
+                slots[id(item)] = "mapping_value", getattr(key, "value", None), False
+    return slots
+
+
+def _positional_evidence(audit, node, located, consumed):
+    """Name the evidence that makes one located literal a credential candidate."""
+    _, slot, configured = located
+    if _known_format_secret(audit, node.value, standalone=True):
+        return "recognized_key_format"
+    if configured and _configuration_value(audit, node.value):
+        return "configuration_slot"
+    if id(node) in consumed or audit._PLACEHOLDER_SECRET.match(node.value.strip()):
+        return None
+    if not _credential_slot_name(audit, slot) or not secret_shaped_value(node.value):
+        return None
+    return None if _stored_password_hash(slot, node.value) else "generated_shape"
+
+
+def _string_literals(nodes):
+    return [
+        node
+        for node in nodes
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.strip()
+    ]
+
+
+def positional_credential_findings(tree, relative, nodes, consumed=frozenset()):
+    """Report credential literals outside ``NAME = literal`` assignments.
+
+    A literal qualifies by where it sits and what it is: a recognized vendor key
+    format in any position; generated-looking material in a credential-named
+    attribute, keyword or mapping slot (stored password hashes excepted); or any
+    non-placeholder value written to an application signing/credential
+    configuration slot (``app.secret_key``, ``app.config["SECRET_KEY"]``).
+    ``consumed`` holds the ids of literal nodes an HTTP credential finding
+    already reports, so the same literal is not reported twice while other
+    literals in that call still are. The literal itself never enters the finding.
+    """
+    from . import review_audits as audit
+
+    nodes = tuple(ast.walk(tree)) if nodes is None else nodes
+    literals = _string_literals(nodes)
+    if not literals:
+        return []
+    slots = _literal_slots(audit, nodes)
+    findings = []
+    for node in literals:
+        located = slots.get(id(node), ("expression", None, False))
+        evidence = located and _positional_evidence(audit, node, located, consumed)
+        if not evidence:
+            continue
+        slot = located[1]
+        findings.append(
+            audit._security_finding(
+                "SECURITY_HARDCODED_SECRET",
+                relative,
+                node,
+                "Credential-like material is assigned as a source literal.",
+                "CRITICAL",
+                name=slot
+                if isinstance(slot, str) and slot.isidentifier()
+                else "literal",
+                credential_position=located[0],
+                value_evidence=evidence,
+            )
+        )
+    return sorted(findings, key=lambda row: (row["line"], row["column"]))
+
+
+def consumed_http_literals(tree, aliases, nodes, findings):
+    """Ids of the exact literals behind reported HTTP credential findings."""
+    calls = {
+        (row["line"], row["column"])
+        for row in findings
+        if row["code"] == "SECURITY_LITERAL_HTTP_CREDENTIAL"
+    }
+    if not calls:
+        return frozenset()
+    from .semantic_credential_sensor import _auth_literal_nodes
+
+    return frozenset(
+        id(value)
+        for node in (ast.walk(tree) if nodes is None else nodes)
+        if isinstance(node, ast.Call) and (node.lineno, node.col_offset) in calls
+        for value, _, _ in _auth_literal_nodes(node, aliases)
+    )
+
+
+# P1: a module literal credential passed straight to an outbound authentication
+# consumer. Inbound verification keys (JWT, HMAC, framework signing) are left to
+# their own contracts, which also require proof that the verifier runs.
+LITERAL_CONSUMER_SCHEMA = "factory.security.literal-credential-consumer.v1"
+SAME_MODULE_CREDENTIAL_SCOPES = {
+    (
+        "captured_same_module_static_wiring",
+        "factory.security.private-key-auth-flow.v1",
+        "embedded_private_key",
+        "django_password_verifier",
+    ): "source_bound_private_key_http_authentication_flow",
+    **{
+        (
+            "captured_same_module_static_wiring",
+            LITERAL_CONSUMER_SCHEMA,
+            "module_literal_credential",
+            role,
+        ): "source_bound_literal_credential_consumer"
+        for role in (
+            "http_basic_auth",
+            "http_bearer_auth",
+            "database_password",
+            "cloud_sdk_secret",
+            "smtp_login",
+        )
+    },
+}
+_HTTP_VERBS = {"get", "post", "put", "patch", "delete", "head", "options", "request"}
+_DB_CONNECT = {"psycopg2.connect", "pymysql.connect", "MySQLdb.connect"}
+_DB_CONNECT |= {"mysql.connector.connect"}
+_BOTO = {"boto3.client", "boto3.resource", "boto3.Session", "boto3.session.Session"}
+_SMTP = {"smtplib.SMTP", "smtplib.SMTP_SSL"}
+
+
+def _is_test_module(relative: str) -> bool:
+    parts = [part.lower() for part in Path(relative).parts]
+    name = parts[-1] if parts else ""
+    return (
+        any(part in {"test", "tests", "testing"} for part in parts[:-1])
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or name == "conftest.py"
+    )
+
+
+def _references(node, name) -> bool:
+    """The value is the global name itself, ``name.encode(...)`` or a bearer string."""
+    if isinstance(node, ast.Name):
+        return node.id == name
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return node.func.attr == "encode" and _references(node.func.value, name)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        prefix = node.left
+        return (
+            isinstance(prefix, ast.Constant)
+            and prefix.value in {"Bearer ", "Token ", "token "}
+            and _references(node.right, name)
+        )
+    if isinstance(node, ast.JoinedStr) and len(node.values) == 2:
+        prefix, value = node.values
+        return (
+            isinstance(prefix, ast.Constant)
+            and prefix.value in {"Bearer ", "Token ", "token "}
+            and isinstance(value, ast.FormattedValue)
+            and _references(value.value, name)
+        )
+    return False
+
+
+def _argument(call, keyword, position):
+    for item in call.keywords:
+        if item.arg == keyword:
+            return item.value
+    if position is not None and len(call.args) > position:
+        return call.args[position]
+    return None
+
+
+def _http_role(call, name):
+    auth = _argument(call, "auth", None)
+    if isinstance(auth, ast.Tuple) and len(auth.elts) == 2:
+        if _references(auth.elts[1], name):
+            return "http_basic_auth", auth.elts[1]
+    headers = _argument(call, "headers", None)
+    if isinstance(headers, ast.Dict):
+        for key, value in zip(headers.keys, headers.values):
+            if getattr(key, "value", None) == "Authorization" and _references(
+                value, name
+            ):
+                return "http_bearer_auth", value
+    return None
+
+
+def _consumer_role(call, canonical, name):
+    head, _, verb = canonical.rpartition(".")
+    if head == "requests" and verb in _HTTP_VERBS:
+        return _http_role(call, name)
+    table = (
+        (_DB_CONNECT, "database_password", ("password", "passwd"), None),
+        (_BOTO, "cloud_sdk_secret", ("aws_secret_access_key",), None),
+    )
+    for names, role, keywords, position in table:
+        if canonical in names:
+            for keyword in keywords:
+                value = _argument(call, keyword, position)
+                if value is not None and _references(value, name):
+                    return role, value
+    return None
+
+
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _own_scope(function):
+    """Nodes that execute in the function's own scope, nested scopes excluded."""
+    pending = list(function.body)
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(node, _SCOPES):
+            pending.extend(ast.iter_child_nodes(node))
+
+
+def _binds(node, name) -> bool:
+    """Any construct that can bind, rebind or unbind ``name``."""
+    if isinstance(node, ast.Name):
+        return node.id == name and not isinstance(node.ctx, ast.Load)
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    if isinstance(node, ast.alias):
+        return (node.asname or node.name.split(".", 1)[0]) == name or node.name == "*"
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == name
+    if isinstance(node, ast.arg):
+        return node.arg == name
+    if isinstance(node, ast.ExceptHandler):
+        return node.name == name
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+        return node.name == name
+    return isinstance(node, ast.MatchMapping) and node.rest == name
+
+
+def _dynamic_namespace(tree) -> bool:
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"globals", "exec", "eval", "setattr", "vars"}
+        for node in ast.walk(tree)
+    )
+
+
+def _sole_binding(tree, declaration) -> bool:
+    """The declaration is the only place in the whole module that binds its name."""
+    name, target = declaration.targets[0].id, declaration.targets[0]
+    return not _dynamic_namespace(tree) and not any(
+        node is not target and _binds(node, name) for node in ast.walk(tree)
+    )
+
+
+def _smtp_receiver(function, call, aliases) -> bool:
+    """``<name>.login`` where the name is bound once, to an SMTP client, before the call."""
+    from .security_configuration import _canonical
+
+    func = call.func
+    if not (
+        isinstance(func, ast.Attribute)
+        and func.attr == "login"
+        and isinstance(func.value, ast.Name)
+    ):
+        return False
+    receiver = func.value.id
+    if sum(_binds(node, receiver) for node in ast.walk(function)) != 1:
+        return False
+    for node in _own_scope(function):
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if (
+                    _binds(item.optional_vars, receiver)
+                    if item.optional_vars
+                    else False
+                ):
+                    return (
+                        isinstance(item.context_expr, ast.Call)
+                        and _canonical(item.context_expr, aliases) in _SMTP
+                        and any(inner is call for inner in ast.walk(node))
+                    )
+    for statement in function.body:
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and _binds(statement.targets[0], receiver)
+        ):
+            return (
+                isinstance(statement.value, ast.Call)
+                and _canonical(statement.value, aliases) in _SMTP
+                and statement.end_lineno < call.lineno
+            )
+    return False
+
+
+def _literal_declaration(finding, tree):
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and (node.lineno, node.col_offset)
+            == (finding.get("line"), finding.get("column", 0))
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            return node
+    return None
+
+
+def _module_functions(tree):
+    """Module-level functions and methods of module-level classes."""
+    kinds = (ast.FunctionDef, ast.AsyncFunctionDef)
+    for node in tree.body:
+        if isinstance(node, kinds):
+            yield node
+        elif isinstance(node, ast.ClassDef):
+            yield from (item for item in node.body if isinstance(item, kinds))
+
+
+def _consumer_witness(tree, declaration, aliases):
+    from .security_configuration import _canonical
+
+    name = declaration.targets[0].id
+    for function in _module_functions(tree):
+        for call in _own_scope(function):
+            if not isinstance(call, ast.Call):
+                continue
+            canonical = _canonical(call, aliases) or ""
+            found = _consumer_role(call, canonical, name)
+            if found is None and _smtp_receiver(function, call, aliases):
+                value = _argument(call, "password", 1)
+                if value is not None and _references(value, name):
+                    found = "smtp_login", value
+            if found is not None:
+                return found[0], found[1], call
+    return None
+
+
+def _consumer_provider_uncertain(context, tree, aliases, witness):
+    """A repository module named like the provider, or a rebound provider, voids the proof."""
+    from .security_configuration import _canonical
+    from .semantic_credential_sensor import _provider_identity_uncertain
+
+    role, _, call = witness
+    if role == "smtp_login":
+        root = "smtplib"
+    else:
+        root = (_canonical(call, aliases) or "").split(".", 1)[0]
+    shadowed = any(
+        part.removesuffix(".py") == root
+        for item in context["paths"]
+        for part in Path(item).parts
+    )
+    return (
+        not root
+        or shadowed
+        or _provider_identity_uncertain(tree, aliases, roots=(root,))
+    )
+
+
+def literal_credential_consumer_evidence(finding, context):
+    """Bind a module credential literal to a same-module authentication consumer.
+
+    Proof: nothing else anywhere in the module binds the literal's name (no
+    assignment, parameter, import, ``global`` write or dynamic namespace use),
+    the module is not a test module, no repository module shadows the provider,
+    and a module-level function or method passes the name directly, in its own
+    scope, to a closed-list consumer argument. Deployment and validity stay
+    unassessed.
+    """
+    from .semantic_credential_sensor import _signing_source_span
+
+    if context is None or finding.get("code") != "SECURITY_HARDCODED_SECRET":
+        return None
+    path = Path(finding.get("path", ""))
+    index = context["index"]
+    tree = index.snapshots.get(path)
+    if tree is None or not index.validate(path) or _is_test_module(str(path)):
+        return None
+    declaration = _literal_declaration(finding, tree)
+    if declaration is None or not _sole_binding(tree, declaration):
+        return None
+    aliases = context["aliases"][path]
+    witness = _consumer_witness(tree, declaration, aliases)
+    if witness is None or _consumer_provider_uncertain(context, tree, aliases, witness):
+        return None
+    role, reference, call = witness
+    return {
+        "schema": LITERAL_CONSUMER_SCHEMA,
+        "source_role": "module_literal_credential",
+        "consumer_role": role,
+        "transfers": [
+            _signing_source_span(index, path, node)
+            for node in (declaration, reference, call)
+        ],
+        "proof_scope": "captured_same_module_static_wiring",
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "credential_validity": "NOT_ESTABLISHED",
+        "claim": "A module-level credential literal is passed directly to an "
+        "authentication consumer argument in the same non-test module.",
+    }

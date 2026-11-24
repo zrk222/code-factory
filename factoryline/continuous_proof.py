@@ -18,6 +18,9 @@ import os
 from pathlib import Path
 import re
 from typing import Any
+from . import canonical_sha as _sha
+from . import file_sha256 as _file_sha
+from . import CodedError
 
 
 CONTINUOUS_PROOF_SCHEMA = "factory.continuous-proof.v1"
@@ -68,16 +71,8 @@ _ROUTES = {
 }
 
 
-class ContinuousProofError(ValueError):
+class ContinuousProofError(CodedError):
     """A closed, machine-readable continuous-proof failure."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-
-
-def _sha(value: object) -> str:
-    return sha256(_canonical(value)).hexdigest()
 
 
 def _receipt_identity_valid(value: dict[str, Any]) -> bool:
@@ -132,10 +127,6 @@ def _receipt_integrity(value: dict[str, Any]) -> bool:
         and _receipt_evidence_valid(value)
         and _receipt_digest_valid(value)
     )
-
-
-def _file_sha(path: Path) -> str:
-    return sha256(path.read_bytes()).hexdigest()
 
 
 def _workspace(root: Path) -> Path:
