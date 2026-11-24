@@ -7,6 +7,8 @@ import { assertStructuralParity, verifyStructuralBundle } from './verify_codeql_
 
 test('compiled fixture parity ignores known timing fields and detects native evidence drift', () => {
   const expected = [{ path: 'Example.java', sha256: 'source-hash' }];
+  const pins = { profile_sha256: 'profile-hash', ruleset_sha256: 'ruleset-hash',
+    mode: 'interprocedural-full', tool_version: '2.27.1' };
   const bundle = {
     candidate_sha256: 'candidate',
     artifacts: {
@@ -24,15 +26,19 @@ test('compiled fixture parity ignores known timing fields and detects native evi
         }],
       },
       'coverage.json': {
+        ...pins,
         complete: false,
         errors: ['NATIVE_SOURCE_ACCOUNTING_REQUIRED', 'NATIVE_CHALLENGES_REQUIRED'],
         source_accounting: { state: 'COMPLETE', checks: { 'Example.java': { state: 'EXTRACTED', sha256: 'source-hash' } } },
-        codeql_source_execution: { rows: [{ path: 'Example.java', errors: 0 }] },
+        codeql_source_execution: {
+          rows: { 'Example.java': { parse_errors: 0, syntax_nodes: 1 } },
+          archived_sources: { 'Example.java': 'source-hash' },
+        },
       },
       'challenges.json': { observations: [] },
     },
   };
-  const first = verifyStructuralBundle(bundle, 'candidate', expected);
+  const first = verifyStructuralBundle(bundle, 'candidate', expected, pins);
   const repeat = structuredClone(first);
   repeat.sarif.properties.factory_native_raw_sha256 = 'repeat-digest';
   const notification = repeat.sarif.runs[0].invocations[0].toolExecutionNotifications[0];
@@ -47,16 +53,28 @@ test('compiled fixture parity ignores known timing fields and detects native evi
   repeat.sarif.runs[0].results[0].locations[0].physicalLocation.region.startLine = 3;
   assert.throws(() => assertStructuralParity(first, repeat), /Native report or source coverage changed/);
   repeat.sarif.runs[0].results[0].locations[0].physicalLocation.region.startLine = 2;
-  repeat.coverage.codeql_source_execution.rows[0].errors = 1;
+  repeat.coverage.codeql_source_execution.rows['Example.java'].parse_errors = 1;
   assert.throws(() => assertStructuralParity(first, repeat), /Native report or source coverage changed/);
+  for (const change of [
+    coverage => { delete coverage.codeql_source_execution; },
+    coverage => { coverage.codeql_source_execution.rows['Example.java'].syntax_nodes = 0; },
+    coverage => { coverage.codeql_source_execution.rows['Example.java'].parse_errors = 1; },
+    coverage => { coverage.codeql_source_execution.archived_sources['Example.java'] = 'other-bytes'; },
+    coverage => { coverage.profile_sha256 = 'other-profile'; },
+    coverage => { coverage.ruleset_sha256 = 'other-rules'; },
+  ]) {
+    const changed = structuredClone(bundle);
+    change(changed.artifacts['coverage.json']);
+    assert.throws(() => verifyStructuralBundle(changed, 'candidate', expected, pins), /exact native file coverage/);
+  }
   const invalid = structuredClone(bundle);
   invalid.artifacts['native.json'].runs = [{}];
-  assert.throws(() => verifyStructuralBundle(invalid, 'candidate', expected), /exact native file coverage/);
+  assert.throws(() => verifyStructuralBundle(invalid, 'candidate', expected, pins), /exact native file coverage/);
   invalid.artifacts['native.json'] = bundle.artifacts['native.json'];
   invalid.artifacts['coverage.json'].errors.push('ADAPTER_ERROR');
-  assert.throws(() => verifyStructuralBundle(invalid, 'candidate', expected), /exact native file coverage/);
+  assert.throws(() => verifyStructuralBundle(invalid, 'candidate', expected, pins), /exact native file coverage/);
   bundle.artifacts['coverage.json'].source_accounting.checks['Example.java'].sha256 = 'other-bytes';
-  assert.throws(() => verifyStructuralBundle(bundle, 'candidate', expected), /exact native file coverage/);
+  assert.throws(() => verifyStructuralBundle(bundle, 'candidate', expected, pins), /exact native file coverage/);
 });
 
 test('worker workflow path filters cover every Docker build input without framework scope', () => {
@@ -94,6 +112,7 @@ test('worker workflow path filters cover every Docker build input without framew
     assert(paths.includes('scripts/verify_worker_cves*.mjs'));
     assert(paths.includes('scripts/verify_semgrep_surface.mjs'));
     assert(paths.includes('scripts/verify_codeql_cross_file.mjs'));
+    assert(paths.includes('scripts/verify_codeql_structural.mjs'));
     assert(paths.includes('.github/workflows/worker-verification.yml'));
     for (const path of dockerSourceFiles) assert(paths.includes(path), `missing Docker build input ${path}`);
     assert.deepEqual(paths.filter(path => path.startsWith('factoryline/')).sort(), dockerSourceFiles.slice().sort());

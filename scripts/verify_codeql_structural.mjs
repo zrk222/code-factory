@@ -7,34 +7,49 @@ import { isDeepStrictEqual } from 'node:util';
 import { docker } from './verify_worker_cves.mjs';
 
 function hasExactSourceAccounting(accounting, expected) {
-  return accounting?.state === 'COMPLETE'
+  return expected.length > 0 && accounting?.state === 'COMPLETE'
     && Object.keys(accounting.checks ?? {}).length === expected.length
     && expected.every(file => accounting.checks[file.path]?.state === 'EXTRACTED'
       && accounting.checks[file.path]?.sha256 === file.sha256);
 }
 
-export function verifyStructuralBundle(bundle, candidate, expected) {
+function hasBoundNativeSources(execution, expected) {
+  return expected.every(({ path, sha256 }) => {
+    const row = execution?.rows?.[path];
+    const nodes = row?.syntax_nodes;
+    return Number.isInteger(nodes) && nodes > 0 && nodes <= 0x7fffffff
+      && row.parse_errors === 0 && execution.archived_sources?.[path] === sha256;
+  });
+}
+
+function isSuccessfulCodeQLReport(sarif) {
+  return sarif?.version === '2.1.0'
+    && Array.isArray(sarif.runs) && sarif.runs.length > 0
+    && sarif.runs.every(run => run?.tool?.driver?.name === 'CodeQL'
+      && Array.isArray(run.invocations) && run.invocations.length > 0
+      && run.invocations.every(invocation => invocation?.executionSuccessful === true));
+}
+
+export function verifyStructuralBundle(bundle, candidate, expected, pins) {
   const coverage = bundle.artifacts?.['coverage.json'];
-  const accounting = coverage?.source_accounting;
   const sarif = bundle.artifacts?.['native.json'];
   // This unsigned fixture has no signed obligations or independent challenges.
   const fixtureOnly = ['NATIVE_SOURCE_ACCOUNTING_REQUIRED', 'NATIVE_CHALLENGES_REQUIRED'];
-  if (bundle.candidate_sha256 !== candidate || sarif?.version !== '2.1.0'
-      || !Array.isArray(sarif.runs) || !sarif.runs.length
-      || sarif.runs.some(run => run.tool?.driver?.name !== 'CodeQL'
-        || !Array.isArray(run.invocations) || !run.invocations.length
-        || run.invocations.some(invocation => invocation.executionSuccessful !== true))
+  if (bundle.candidate_sha256 !== candidate || !isSuccessfulCodeQLReport(sarif)
       || !Array.isArray(coverage?.errors) || coverage.errors.some(error => !fixtureOnly.includes(error))
-      || !hasExactSourceAccounting(accounting, expected)) {
+      || !hasExactSourceAccounting(coverage.source_accounting, expected)
+      || !hasBoundNativeSources(coverage.codeql_source_execution, expected)
+      || !Object.entries(pins).every(([key, value]) => coverage[key] === value)) {
     throw new Error('Expected exact native file coverage and a source-bound report');
   }
   return { sarif, coverage, challenges: bundle.artifacts['challenges.json'] };
 }
 
+const stableJson = value => JSON.stringify(value, (_, item) =>
+  item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+
 export function assertStructuralParity(first, repeat) {
-  const stableJson = value => JSON.stringify(value, (_, item) =>
-    item && typeof item === 'object' && !Array.isArray(item)
-      ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
   const semantics = ({ sarif, coverage, challenges }) => {
     const report = structuredClone(sarif);
     // The raw digest includes CodeQL telemetry timestamps. Keep it in the stored bundle.
@@ -137,6 +152,9 @@ function main([image, output, target]) {
       '--mount', `type=bind,source=${contractPath},target=/factory-contract.json,readonly`,
       id, profile.engine, '--mode', profile.mode];
     const expected = files.filter(file => file.language === language);
+    // The adapter binds canonical profile JSON. The image check above binds the raw file bytes.
+    const pins = { profile_sha256: hash(stableJson(profile)), ruleset_sha256: profile.ruleset_sha256,
+      mode: profile.mode, tool_version: profile.tool_version };
     receipt.source_bindings = files;
     receipt.candidate_sha256 = candidate;
     receipt.repeat = { scope: 'Two fresh containers and tmpfs mounts on one host with the same local image.', runs: {} };
@@ -148,8 +166,11 @@ function main([image, output, target]) {
       writeFileSync(`${output}${suffix}.stderr.txt`, stderr);
       const execution = { status, elapsed_ms, stdout_sha256: hash(stdout), stderr_sha256: hash(stderr) };
       receipt.repeat.runs[suffix ? 'second' : 'first'] = execution;
-      if (status !== 0) throw new Error('Worker failed the native control');
-      return verifyStructuralBundle(JSON.parse(stdout), candidate, expected);
+      if (status !== 0) {
+        const code = stderr.match(/^E_[A-Z0-9_]+\r?$/m)?.[0].trim() ?? ('exit ' + status);
+        throw new Error('Native control failed (' + code + ')');
+      }
+      return verifyStructuralBundle(JSON.parse(stdout), candidate, expected, pins);
     });
     assertStructuralParity(...runs);
     receipt.state = 'PASS';

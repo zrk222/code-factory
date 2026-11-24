@@ -1,0 +1,57 @@
+import os
+from pathlib import Path
+
+RECIPES = Path("/srv/recipes")
+
+
+def load_recipe(recipe_name):
+    # ruleid: python.parameter-path-join-without-containment
+    path = RECIPES / f"{recipe_name}.yaml"
+    return path.read_text()
+
+
+def include(source_file, relpath):
+    # ruleid: python.parameter-path-join-without-containment
+    dest = os.path.join(os.path.dirname(source_file), relpath)
+    with open(dest, "rb") as f:
+        return f.read()
+
+
+def include_checked(source_file, relpath):
+    source_dir = os.path.dirname(os.path.realpath(source_file))
+    # ok: python.parameter-path-join-without-containment
+    dest = os.path.realpath(os.path.join(source_dir, relpath))
+    if os.path.commonpath([source_dir, dest]) != source_dir:
+        raise ValueError(relpath)
+    with open(dest, "rb") as f:
+        return f.read()
+
+
+def load_resolved(recipe_name):
+    # ok: python.parameter-path-join-without-containment
+    path = (RECIPES / f"{recipe_name}.yaml").resolve()
+    path.relative_to(RECIPES.resolve())
+    return path.read_text()
+
+
+def report_path(base_dir, filename):
+    # ok: python.parameter-path-join-without-containment
+    return os.path.join(base_dir, filename)
+
+
+def write_upload(upload_dir, filename, data):
+    # ok: python.parameter-path-join-without-containment
+    target = os.path.join(upload_dir, os.path.basename(filename))
+    with open(target, "wb") as f:
+        f.write(data)
+
+
+def _rooted(root, path):
+    path.relative_to(root)
+    return path
+
+
+def parent_of(workspace, source, path):
+    # ok: python.parameter-path-join-without-containment
+    parent_file = _rooted(workspace, (source.parent / path).resolve())
+    return parent_file.read_text()

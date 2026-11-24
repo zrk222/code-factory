@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from .contract import write_atomic_json
 
 from datetime import datetime
-import json
 from pathlib import Path
 import re
 from typing import Any
@@ -349,17 +350,19 @@ def verify_storefront_story(
     return {**result, "path": destination.relative_to(workspace).as_posix()}
 
 
-def storefront_story_projection(root: Path) -> dict[str, Any]:
+def storefront_story_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Project valid local storefront-story receipts without generating or uploading media."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
-    for path in sorted(
-        (workspace / ".factory" / "appforge").rglob("*storefront-story*.json")
-    )[:100]:
+    for path in sorted(receipt_paths(workspace, "*storefront-story*.json", inventory))[
+        :100
+    ]:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            value = read_receipt(workspace, path)
+        except (OSError, ValueError):
             invalid.append(path.relative_to(workspace).as_posix())
             continue
         supplied = value.get("receipt_sha256") if isinstance(value, dict) else None
