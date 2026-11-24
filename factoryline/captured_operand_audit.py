@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+from functools import cached_property
 import json
 from pathlib import Path
 import re
@@ -3113,7 +3114,7 @@ class Index:
 
     def __init__(self, sources: dict[str, str]):
         self.functions: dict[str, Function] = {}
-        self.by_path_line: list[tuple[str, int, int, str]] = []
+        self._function_spans: dict[str, list[tuple[int, int, str]]] = {}
         self.imports: dict[str, dict[str, str]] = {}
         self.calls: list[tuple[str, ast.Call, str]] = []  # caller key, call, module
         self.method_names: dict[str, list[str]] = {}
@@ -3131,6 +3132,10 @@ class Index:
             self.trees[relative] = tree
             self._index_module(relative, tree)
         self._mark_registered_entries()
+
+    @cached_property
+    def _callers(self) -> dict[str, list[tuple[Function, ast.Call]]]:
+        return _call_graph(self)
 
     def _mark_registered_entries(self) -> None:
         """Handlers passed to a route, tool or command registration are entries."""
@@ -3209,7 +3214,7 @@ class Index:
             key, module, relative, node, params, class_name, entry, public
         )
         end = getattr(node, "end_lineno", node.lineno)
-        self.by_path_line.append((relative, node.lineno, end, key))
+        self._function_spans.setdefault(relative, []).append((node.lineno, end, key))
         if class_name is not None:
             self.method_names.setdefault(node.name, []).append(key)
         self.cli_args[key] = _parsed_cli_names(node)
@@ -3222,8 +3227,8 @@ class Index:
     def enclosing(self, relative: str, line: int) -> Function | None:
         """The innermost indexed function whose span contains ``line``."""
         best = None
-        for path, start, end, key in self.by_path_line:
-            if path == relative and start <= line <= end:
+        for start, end, key in self._function_spans.get(relative, []):
+            if start <= line <= end:
                 if best is None or start >= self.functions[best].node.lineno:
                     best = key
         return self.functions.get(best) if best else None
@@ -3478,7 +3483,7 @@ def reach(root: Path | Index, findings: list[dict]) -> list[dict]:
     index = root if isinstance(root, Index) else Index.from_root(root)
     summary: dict[str, dict[str, list[str]]] = {}
     seeds = _seed(index, findings, summary)
-    propagation = _Propagation(index, _call_graph(index), summary)
+    propagation = _Propagation(index, index._callers, summary)
     propagation.run()
     annotated = []
     for finding, seed in zip(findings, seeds):
@@ -3541,24 +3546,49 @@ def _reach_call_and_parents(func, finding):
     )
     pending = list(func.node.body)
     parents = {id(statement): func.node for statement in pending}
-    matches = []
+    matches, closure_writes = [], set()
     while pending:
         node = pending.pop()
         if isinstance(node, nested):
+            if isinstance(node, _FUNCTION_OR_CLASS):
+                closure_writes.update(
+                    name
+                    for child in ast.walk(node)
+                    if isinstance(child, ast.Nonlocal)
+                    for name in child.names
+                )
             continue
         if isinstance(node, ast.Call) and _matches_reach_span(node, finding):
             matches.append(node)
         for child in ast.iter_child_nodes(node):
             parents[id(child)] = node
             pending.append(child)
-    return (matches[0] if len(matches) == 1 else None), parents
+    call = matches[0] if len(matches) == 1 else None
+    return call, parents, closure_writes
+
+
+def _parameter_reaches_read(name, scope, parents, closure_writes):
+    from .credential_role_constructor_provider import (
+        binding_dominates,
+        binding_occurrences,
+    )
+
+    # A nested function can reassign the parameter via its closure.
+    if name.id in closure_writes:
+        return False
+    writes = binding_occurrences(scope.body, name.id)
+    if not writes:
+        return True
+    statement = name
+    while parents[id(statement)] is not scope:
+        statement = parents[id(statement)]
+    # A write in the same top-level statement could reach a later loop iteration.
+    return all(binding_dominates(statement, write, parents, scope) for write in writes)
 
 
 def _sink_parameters(func: Function, finding: dict) -> list[str]:
     """Prove parameter reach to the operand of one source-bound call."""
-    from .credential_role_constructor_provider import binding_occurrences
-
-    call, parents = _reach_call_and_parents(func, finding)
+    call, parents, closure_writes = _reach_call_and_parents(func, finding)
     if call is None or not call.args:
         return []
     found, seen, pending = {}, set(), [call.args[0]]
@@ -3568,8 +3598,8 @@ def _sink_parameters(func: Function, finding: dict) -> list[str]:
                 continue
             seen.add(id(name))
             if _argument_binding_is_parameter_or_external(name.id, func.node):
-                if name.id in func.params and not binding_occurrences(
-                    func.node.body, name.id
+                if name.id in func.params and _parameter_reaches_read(
+                    name, func.node, parents, closure_writes
                 ):
                     found[name.id] = None
                 continue

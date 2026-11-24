@@ -17080,9 +17080,20 @@ def test_entry_reach_tier_changes_only_needs_context_command_findings(tmp_path):
         ("observe(label); observe('fixed')", "observe('fixed')", False),
         ("observe('fixed'); observe(label)", "observe(label)", True),
         ("observe(alias)\n    alias = label", "observe(alias)", False),
+        ("observe(label)\n    label = 'fixed'", "observe(label)", True),
+        (
+            "for _ in labels:\n        observe(label)\n        label = 'fixed'",
+            "observe(label)",
+            False,
+        ),
         (
             "alias = label\n    alias = 'fixed'\n    observe(alias)",
             "observe(alias)",
+            False,
+        ),
+        (
+            "def reset():\n        nonlocal label\n        label = 'fixed'\n    reset()\n    observe(label)",
+            "observe(label)",
             False,
         ),
         ("alias = label\n    observe(alias)", "observe(alias)", True),
@@ -17126,6 +17137,39 @@ def test_entry_reach_tier_binds_the_reported_call_and_operand(body, call, expect
         assert outcome[2]["entry_reach"]["parameter"] == "label"
     else:
         assert outcome == decided
+
+
+def test_entry_reach_reuses_call_graph_only_for_the_same_index(monkeypatch):
+    from factoryline import captured_operand_audit
+
+    sources = {
+        "label.py": "def normalize(value):\n    return value.strip()\n",
+        "view.py": "from flask import request\nfrom label import normalize\n"
+        "@app.route('/label')\ndef view():\n    normalize(request.args['value'])\n",
+    }
+    finding = {"rule": "label", "path": "label.py", "line": 2, "source": "value"}
+    seen = []
+    original = captured_operand_audit._call_graph
+
+    def count(index):
+        seen.append(index)
+        return original(index)
+
+    monkeypatch.setattr(captured_operand_audit, "_call_graph", count)
+    index = Index(sources)
+    before = reach(index, [finding])
+    assert before[0]["reach"] == "entry_reached"
+    assert reach(index, [finding]) == before
+    assert seen == [index]
+
+    changed = Index(
+        {
+            **sources,
+            "view.py": sources["view.py"].replace("request.args['value']", "'fixed'"),
+        }
+    )
+    assert reach(changed, [finding])[0]["reach"] != "entry_reached"
+    assert seen == [index, changed]
 
 
 def test_registered_handlers_and_registries_are_entries(tmp_path):
