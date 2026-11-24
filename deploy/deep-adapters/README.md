@@ -437,7 +437,9 @@ python -m pip install '.[blade]' 'tree-sitter-language-pack==1.25.2'
 python -c "from tree_sitter_language_pack import cache_dir, prefetch; prefetch(['blade', 'php']); print(cache_dir())"
 ```
 
-Select the `libs` directory holding the resulting two native grammar files:
+Select the `libs` directory holding the resulting two native grammar files.
+On Linux, keep these files in trusted tool storage on an executable mount. The
+template and report scratch directory can use a no-execute mount.
 
 ```sh
 factory deep-audit blade-structure resources/views/example.blade.php --grammar-dir PATH_TO_LIBS --json

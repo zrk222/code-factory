@@ -502,6 +502,7 @@ def blade_structure(source: Path, grammar_dir: Path) -> dict:
     raw.decode("utf-8", errors="strict")
     names, identities = _BLADE_GRAMMARS[sys.platform]
     source_digest = sha256(raw).hexdigest()
+    grammar_dir = grammar_dir.resolve()
     with TemporaryDirectory(prefix="factory-blade-") as temporary:
         sandbox = Path(temporary)
         (sandbox / "source").write_bytes(raw)
@@ -512,15 +513,17 @@ def blade_structure(source: Path, grammar_dir: Path) -> dict:
                 raise RuntimeAuditError(
                     "E_BLADE_GRAMMAR", f"{kind} parser digest differs"
                 )
-            (sandbox / name).write_bytes(observed)
+            if sys.platform == "win32":
+                (sandbox / name).write_bytes(observed)
         output = sandbox / "report.json"
         command = [
             sys.executable,
             "-I",
             "-c",
             "import sys; sys.path.insert(0, sys.argv[1]); "
-            "from factoryline.deep_audit_contract import _run_blade_parser; _run_blade_parser()",
+            "from factoryline.deep_audit_contract import _run_blade_parser; _run_blade_parser(sys.argv[2])",
             str(Path(__file__).resolve().parent.parent),
+            str(sandbox if sys.platform == "win32" else grammar_dir),
         ]
         facts = run_bounded_command(command, sandbox, 15, sandbox, stdout_path=output)
         if _adapter_command_failed(facts, [0], float("inf")):
@@ -555,16 +558,31 @@ def _blade_php_expression(parser, raw: bytes) -> bool:
     )
 
 
-def _run_blade_parser() -> None:
+def _run_blade_parser(grammar_dir: str) -> None:
     import ctypes
     import sys
+    from contextlib import ExitStack
     from tree_sitter import Language, Parser
 
     names, identities = _BLADE_GRAMMARS[sys.platform]
-    libraries = {
-        kind: ctypes.CDLL(str(Path(names.format(kind)).resolve()))
-        for kind in identities
-    }
+    libraries = {}
+    # Keep both descriptor numbers live until both libraries are loaded.
+    with ExitStack() as assets:
+        for kind, expected in identities.items():
+            path = Path(grammar_dir) / names.format(kind)
+            stream = assets.enter_context(path.open("rb"))
+            if sha256(stream.read(8 * 1024 * 1024 + 1)).hexdigest() != expected:
+                raise RuntimeAuditError(
+                    "E_BLADE_GRAMMAR", f"{kind} parser digest differs"
+                )
+            # On Linux the descriptor keeps the verified file identity across
+            # path replacements and honors the tool volume's execute policy.
+            library_path = (
+                f"/proc/self/fd/{stream.fileno()}"
+                if sys.platform == "linux"
+                else str(path)
+            )
+            libraries[kind] = ctypes.CDLL(library_path)
     capsule = ctypes.pythonapi.PyCapsule_New
     capsule.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
     capsule.restype = ctypes.py_object
