@@ -1321,6 +1321,8 @@ def _visual_style(page, token):
 
 
 def _visual_pixel(root, baseline, screenshot, threshold):
+    from functools import reduce
+
     from PIL import Image, ImageChops
 
     if baseline is None or not _visual_path(root, baseline["path"]).exists():
@@ -1337,9 +1339,10 @@ def _visual_pixel(root, baseline, screenshot, threshold):
             images.append(image.convert("RGBA"))
     if images[0].size != images[1].size:
         return {"state": "FAIL", "reason": "pixel dimensions differ"}
-    difference = ImageChops.difference(*images)
-    changed = sum(any(pixel) for pixel in difference.getdata())
+    channels = ImageChops.difference(*images).split()
+    difference = reduce(ImageChops.lighter, channels)
     total = images[0].width * images[0].height
+    changed = total - difference.histogram()[0]
     return {
         "state": "FAIL" if changed / total > threshold else "PASS",
         "changed_pixels": changed,

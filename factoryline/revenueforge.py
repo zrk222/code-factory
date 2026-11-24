@@ -113,6 +113,18 @@ def _artifact_json(
     return value
 
 
+def _artifact_receipt_sealed(value: dict[str, Any], schema: str, marker: str) -> bool:
+    supplied = value.get("receipt_sha256")
+    return (
+        value.get("schema") == schema
+        and value.get("marker") == marker
+        and isinstance(supplied, str)
+        and len(supplied) == 64
+        and _sha({key: item for key, item in value.items() if key != "receipt_sha256"})
+        == supplied
+    )
+
+
 def _read_yaml(root: Path, path: Path) -> dict[str, Any]:
     source = _local(root, path)
     if source.stat().st_size > MAX_INPUT_BYTES:

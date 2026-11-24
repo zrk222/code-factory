@@ -811,6 +811,7 @@ def _finding_credential_evidence(
         return None, None, None
     from . import semantic_credential_sensor as sensor
     from .audit_action_refs import _verifier_signing_inventory
+    from .provenance import literal_credential_consumer_evidence
 
     if "inventory" not in cache:
         cache["inventory"] = _verifier_signing_inventory(sensor, captured, bindings)
@@ -825,6 +826,8 @@ def _finding_credential_evidence(
         if critical
         else None
     )
+    if credential is None and named:
+        credential = literal_credential_consumer_evidence(finding, inventory)
     if credential is None and named:
         credential = sensor.flask_credential_authority_evidence(finding, inventory)
         return signing, credential, inventory if credential is None else None
@@ -921,18 +924,12 @@ def _decide_finding_tier(
                 else "SUPPORTED_DEFECT"
             )
             return tier, evidence["proof_scope"], details
+        from .provenance import SAME_MODULE_CREDENTIAL_SCOPES as same_module
+
         fields = "proof_scope", "schema", "source_role", "consumer_role"
-        if tuple(map(evidence.get, fields)) == (
-            "captured_same_module_static_wiring",
-            "factory.security.private-key-auth-flow.v1",
-            "embedded_private_key",
-            "django_password_verifier",
-        ):
-            return (
-                "SUPPORTED_DEFECT",
-                "source_bound_private_key_http_authentication_flow",
-                details,
-            )
+        scope = same_module.get(tuple(map(evidence.get, fields)))
+        if scope is not None:
+            return "SUPPORTED_DEFECT", scope, details
     regenerated_precondition = {}
     if bound and _matches_regenerated_precondition_finding(
         finding, native_rows, regenerated_precondition
