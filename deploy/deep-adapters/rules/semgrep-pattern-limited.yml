@@ -1230,8 +1230,15 @@ rules:
     languages: [python]
     patterns:
       - pattern-either:
-          - pattern: $T.extractall(...)
-          - pattern: $T.extract(...)
+          - pattern: $T.extractall(..., filter=None, ...)
+          - pattern: $T.extract(..., filter=None, ...)
+          - patterns:
+              - pattern-either:
+                  - pattern: $T.extractall(...)
+                  - pattern: $T.extract(...)
+              - pattern-not: $T.extractall(..., filter=$F, ...)
+              - pattern-not: $T.extract(..., filter=$F, ...)
+              - pattern-not: $T.extractall(..., members=$M, ...)
       - pattern-either:
           - pattern-inside: |
               $T = tarfile.open(...)
@@ -1245,11 +1252,8 @@ rules:
           - pattern-inside: |
               with tarfile.TarFile(...) as $T:
                 ...
-      - pattern-not: $T.extractall(..., filter=$F, ...)
-      - pattern-not: $T.extract(..., filter=$F, ...)
-      - pattern-not: $T.extractall(..., members=$M, ...)
       - pattern-not-inside: |
-          $T.extraction_filter = $F
+          $T.extraction_filter = $FILTER
           ...
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
@@ -1314,11 +1318,12 @@ rules:
               - pattern: os.Link(..., $P)
               - pattern: os.Rename(..., $P)
               - pattern: os.Chmod($P, ...)
+          # A guard counts only when it rejects an archive entry name itself.
           - pattern-not-inside: |
-              if !filepath.IsLocal($N) { ... }
+              if !filepath.IsLocal($H.Name) { ... }
               ...
           - pattern-not-inside: |
-              if strings.Contains($N, "..") { ... }
+              if strings.Contains($H.Name, "..") { ... }
               ...
           - focus-metavariable: $P
     paths:

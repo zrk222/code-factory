@@ -110,7 +110,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.csharp.disabled-certificate-verification': 1,
   'opt.factory.rules.csharp.request-command-injection': 3,
   'opt.factory.rules.csharp.request-sql-injection': 3,
-  'opt.factory.rules.go.archive-path-traversal': 2,
+  'opt.factory.rules.go.archive-path-traversal': 3,
   'opt.factory.rules.go.disabled-tls-verification': 1,
   'opt.factory.rules.go.grpc-insecure-transport': 1,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
@@ -158,7 +158,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.request-path-traversal': 9,
   'opt.factory.rules.python.request-sql-injection': 1,
   'opt.factory.rules.python.ssl-context-verification-disabled': 1,
-  'opt.factory.rules.python.tarfile-extractall-without-filter': 2,
+  'opt.factory.rules.python.tarfile-extractall-without-filter': 3,
   'opt.factory.rules.python.unsafe-deserialization': 2,
   'opt.factory.rules.python.unsafe-deserialization-unscoped': 3,
   'opt.factory.rules.ruby.archive-path-traversal': 1,
@@ -208,9 +208,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 188 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 190 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 188;
+const REVIEWED_FINDINGS = 190;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

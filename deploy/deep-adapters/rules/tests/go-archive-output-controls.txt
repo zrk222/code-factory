@@ -82,6 +82,23 @@ func untarLocal(in io.Reader, dest string) error {
 	}
 }
 
+func untarUnrelatedGuard(in io.Reader, dest string, label string) error {
+	if !filepath.IsLocal(label) {
+		return fmt.Errorf("bad label")
+	}
+	tr := tar.NewReader(in)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			return err
+		}
+		// ruleid: go.archive-path-traversal
+		if err := os.MkdirAll(filepath.Join(dest, hdr.Name), 0o755); err != nil {
+			return err
+		}
+	}
+}
+
 func download(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("file")
 	// ruleid: go.request-path-traversal

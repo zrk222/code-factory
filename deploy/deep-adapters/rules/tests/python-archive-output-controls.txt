@@ -70,6 +70,12 @@ def extract_filtered(archive, dest):
     tf.extractall(dest, filter="data")
 
 
+def extract_explicit_none(archive, dest):
+    tf = tarfile.open(archive)
+    # ruleid: python.tarfile-extractall-without-filter
+    tf.extractall(dest, filter=None)
+
+
 def extract_zip_all(archive, dest):
     zf = zipfile.ZipFile(archive)
     # ok: python.tarfile-extractall-without-filter

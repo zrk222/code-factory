@@ -87,6 +87,19 @@ command, shell, SQL and path findings from `NEEDS_CONTEXT` to
 evidence (`source_bound_entry_reach`). On five Python control repositories
 it promoted nothing, because they have no such findings.
 
+## Known rule limitations
+
+- **Containment checks clear taint without proving they guard.** The archive
+  and request-path rules treat a call such as `startswith`, `relative_to`,
+  `filepath.IsLocal` or `getCanonicalPath().startsWith` on the tainted value
+  as clearing it, even when the code ignores the result. This can hide a real
+  defect (a false negative); it never adds an alert.
+- **Go archive guards** count only when they reject an archive entry name
+  (`if !filepath.IsLocal(h.Name)`), not any other value.
+- **Unresolved callers stay unpromoted.** Calls through dynamic dispatch,
+  registries or `*args` are not followed, so a reachable sink can remain
+  `public_api` or `unresolved`.
+
 ## What a release claim needs
 
 1. **A new frozen advisory set.** The 113 set has been used to design rules,
