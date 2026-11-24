@@ -4,7 +4,8 @@ import { mkdtempSync, copyFileSync, readFileSync, writeFileSync, mkdirSync, chmo
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname } from 'node:path';
 import { verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix,
-  javascriptControlManifest, verifyJavascriptControlMatrix, tsxQualificationSuffix } from './semgrep_mutation_controls.mjs';
+  javascriptControlManifest, verifyJavascriptControlMatrix, tsxQualificationSuffix,
+  appendExtensionControls } from './semgrep_mutation_controls.mjs';
 
 const [image, output = '.factory/semgrep-surface-verification.json'] = process.argv.slice(2);
 if (!image) throw new Error('Usage: node scripts/verify_semgrep_surface.mjs IMAGE OUTPUT');
@@ -224,8 +225,60 @@ function fixtureExpectations(extension, content) {
   return expected;
 }
 
+function buildFixtures(temp) {
+  copyFileSync(rulesPath, join(temp, 'semgrep-pattern-limited.yml'));
+  copyFileSync('deploy/deep-adapters/rules/tests/python-controls.txt', join(temp, 'semgrep-pattern-limited.py'));
+  for (const extension of ['js', 'ts']) copyFileSync('deploy/deep-adapters/rules/tests/javascript-controls.js', join(temp, `semgrep-pattern-limited.${extension}`));
+  writeFileSync(join(temp, 'semgrep-pattern-limited.tsx'),
+    readFileSync('deploy/deep-adapters/rules/tests/javascript-controls.js', 'utf8') + tsxQualificationSuffix);
+  copyFileSync('deploy/deep-adapters/rules/tests/php-controls.php', join(temp, 'semgrep-pattern-limited.php'));
+  for (const [extension, [, content]] of Object.entries(polyglotControls)) {
+    writeFileSync(join(temp, `semgrep-pattern-limited.${extension}`), `${content}\n`);
+  }
+  for (const [extension, content] of Object.entries(flowControls)) {
+    const path = join(temp, `semgrep-pattern-limited.${extension}`);
+    let original = readFileSync(path, 'utf8');
+    if (extension === 'go') original = original.replace('import "crypto/tls"', 'import "crypto/tls"\nimport "net/http"\nimport "os/exec"\nimport "database/sql"');
+    writeFileSync(path, `${original}\n${content}\n`);
+  }
+  appendExtensionControls(temp, 'deploy/deep-adapters/rules/tests', path => readFileSync(path, 'utf8'),
+    (path, content) => writeFileSync(path, content));
+  fixtureManifest = readdirSync(temp).filter(name => !name.endsWith('.yml')).flatMap(name =>
+    fixtureExpectations(name.split('.').at(-1), readFileSync(join(temp, name), 'utf8')));
+  javascriptExpected = javascriptControlManifest();
+  fixtureManifest = fixtureManifest.map(item => {
+    if (!/\.(?:js|ts|tsx)$/.test(item.path)) return item;
+    const fixed = javascriptExpected.find(expected => expected.path === item.path &&
+      expected.rule === item.rule && expected.line === item.line);
+    if (!fixed) throw new Error('Unreviewed JavaScript fixture expectation');
+    return fixed;
+  });
+  verifyJavascriptControlMatrix(fixtureManifest);
+  expectedRules = [...new Set(fixtureManifest.map(item => item.rule))].sort();
+  configuredRules = [...readFileSync(rulesPath, 'utf8').matchAll(/^  - id: (.+)$/gm)].map(match => `opt.factory.rules.${match[1]}`).sort();
+  const safeCounts = {};
+  for (const content of Object.values(flowControls)) {
+    for (const [, rule] of content.matchAll(/(?:\/\/|#) ok: ([\w.-]+)/g)) {
+      const key = `opt.factory.rules.${rule}`;
+      safeCounts[key] = (safeCounts[key] ?? 0) + 1;
+    }
+  }
+  verifyFlowControlMatrix(fixtureManifest, safeCounts, configuredRules);
+  if (JSON.stringify(expectedRules) !== JSON.stringify(configuredRules)) throw new Error('Configured rule missing explicit fixture expectation');
+  return fixtureManifest;
+}
+
+let fixtureManifest = [], javascriptExpected = [], expectedRules = [], configuredRules = [];
+// `--fixtures-only DIR` writes the exact native fixture inputs and their
+// manifest without Docker, so rule authors can check them before CI.
+if (image === '--fixtures-only') {
+  mkdirSync(output, { recursive: true });
+  const built = buildFixtures(output);
+  writeFileSync(join(output, 'fixture-manifest.json'), `${JSON.stringify(built, null, 1)}\n`);
+  process.exit(0);
+}
+
 const temp = mkdtempSync(join(tmpdir(), 'cf-semgrep-surface-'));
-let fixtureManifest = [];
 function docker(args) {
   const run = spawnSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new Error(`Docker control failed: ${run.error?.message ?? run.stderr}`);
@@ -255,43 +308,7 @@ try {
   if (JSON.stringify(bundled) !== JSON.stringify(profile)) throw new Error('Image profile differs from candidate');
   const bundledRules = docker([...base, '--entrypoint', '/bin/cat', id, '/opt/factory/rules/semgrep-pattern-limited.yml']);
   if (hash(Buffer.from(bundledRules)) !== profile.ruleset_sha256) throw new Error('Image rules differ from candidate');
-  copyFileSync(rulesPath, join(temp, 'semgrep-pattern-limited.yml'));
-  copyFileSync('deploy/deep-adapters/rules/tests/python-controls.txt', join(temp, 'semgrep-pattern-limited.py'));
-  for (const extension of ['js', 'ts']) copyFileSync('deploy/deep-adapters/rules/tests/javascript-controls.js', join(temp, `semgrep-pattern-limited.${extension}`));
-  writeFileSync(join(temp, 'semgrep-pattern-limited.tsx'),
-    readFileSync('deploy/deep-adapters/rules/tests/javascript-controls.js', 'utf8') + tsxQualificationSuffix);
-  copyFileSync('deploy/deep-adapters/rules/tests/php-controls.php', join(temp, 'semgrep-pattern-limited.php'));
-  for (const [extension, [, content]] of Object.entries(polyglotControls)) {
-    writeFileSync(join(temp, `semgrep-pattern-limited.${extension}`), `${content}\n`);
-  }
-  for (const [extension, content] of Object.entries(flowControls)) {
-    const path = join(temp, `semgrep-pattern-limited.${extension}`);
-    let original = readFileSync(path, 'utf8');
-    if (extension === 'go') original = original.replace('import "crypto/tls"', 'import "crypto/tls"\nimport "net/http"\nimport "os/exec"\nimport "database/sql"');
-    writeFileSync(path, `${original}\n${content}\n`);
-  }
-  fixtureManifest = readdirSync(temp).filter(name => !name.endsWith('.yml')).flatMap(name =>
-    fixtureExpectations(name.split('.').at(-1), readFileSync(join(temp, name), 'utf8')));
-  const javascriptExpected = javascriptControlManifest();
-  fixtureManifest = fixtureManifest.map(item => {
-    if (!/\.(?:js|ts|tsx)$/.test(item.path)) return item;
-    const fixed = javascriptExpected.find(expected => expected.path === item.path &&
-      expected.rule === item.rule && expected.line === item.line);
-    if (!fixed) throw new Error('Unreviewed JavaScript fixture expectation');
-    return fixed;
-  });
-  verifyJavascriptControlMatrix(fixtureManifest);
-  const expectedRules = [...new Set(fixtureManifest.map(item => item.rule))].sort();
-  const configuredRules = [...readFileSync(rulesPath, 'utf8').matchAll(/^  - id: (.+)$/gm)].map(match => `opt.factory.rules.${match[1]}`).sort();
-  const safeCounts = {};
-  for (const content of Object.values(flowControls)) {
-    for (const [, rule] of content.matchAll(/(?:\/\/|#) ok: ([\w.-]+)/g)) {
-      const key = `opt.factory.rules.${rule}`;
-      safeCounts[key] = (safeCounts[key] ?? 0) + 1;
-    }
-  }
-  verifyFlowControlMatrix(fixtureManifest, safeCounts, configuredRules);
-  if (JSON.stringify(expectedRules) !== JSON.stringify(configuredRules)) throw new Error('Configured rule missing explicit fixture expectation');
+  fixtureManifest = buildFixtures(temp);
   receipt.fixture_manifest = fixtureManifest;
   // mkdtempSync defaults to 0700. The hardened image runs Semgrep as a
   // non-root user, so make only these synthetic, read-only test inputs

@@ -2,9 +2,11 @@ import { appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+const compiledCodeQLTargets = ['codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker'];
+
 export const sdkTargets = Object.freeze([
   'codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'codeql-ruby-worker',
-  'codeql-java-worker', 'codeql-csharp-worker', 'codeql-go-worker', 'php-interfile-worker',
+  ...compiledCodeQLTargets, 'php-interfile-worker',
   'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker',
 ]);
 
@@ -77,6 +79,9 @@ export function selectWorkerTargets(name, event, git = execFileSync) {
         return { sdk: 'true', matrix: JSON.stringify(['php-interfile-worker']), reason: 'shared-php-rules' };
       }
       return { sdk: 'false', matrix: JSON.stringify(sdkTargets), reason: 'semgrep-only' };
+    }
+    if (paths.every(path => path === 'scripts/verify_codeql_structural.mjs')) {
+      return { ...full, matrix: JSON.stringify(compiledCodeQLTargets), reason: 'compiled-codeql-only' };
     }
     return { ...full, reason: 'common-or-unknown-path' };
   } catch (error) {

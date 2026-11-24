@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { findingKeys, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyFindingCountMatrix,
   fixedReviewedFindingCounts, javascriptControlManifest, verifyJavascriptControlMatrix,
-  tsxQualificationSuffix } from './semgrep_mutation_controls.mjs';
+  tsxQualificationSuffix, appendExtensionControls, typescriptExtensionEndpoints } from './semgrep_mutation_controls.mjs';
 import { readFileSync } from 'node:fs';
 
 const finding = (ruleId, line = 1) => ({ ruleId, locations: [{ physicalLocation: {
@@ -91,8 +91,8 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 137);
-  assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 30);
+  assert.equal(balancedReplacement.length, 196);
+  assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
 });
@@ -101,7 +101,7 @@ test('fixed TSX qualification rejects omitted, substituted and wrong-language co
   const manifest = javascriptControlManifest();
   assert.doesNotThrow(() => verifyJavascriptControlMatrix(manifest));
   assert.equal(manifest.filter(item => item.path.endsWith('.js')).length, 10);
-  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 10);
+  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 21);
   assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 12);
   assert.deepEqual(manifest.filter(item => item.path.endsWith('.tsx')).slice(-2).map(item =>
     [item.source_line, item.line]), [[159, 162], [163, 165]]);
@@ -126,3 +126,26 @@ test('reviewed TSX endpoints bind actual JSX, Unicode, imported aliases and rebo
   assert.match(source, /safe = "echo fixed"/);
   assert.match(source, /function shadowed\(processAlias, req\)/);
 });
+
+test('rule-family controls append as one parseable source per language at fixed lines', () => {
+  const files = new Map([
+    ['/t/semgrep-pattern-limited.ts', readFileSync(new URL('../deploy/deep-adapters/rules/tests/javascript-controls.js', import.meta.url), 'utf8')],
+    ['/t/semgrep-pattern-limited.go', 'package controls\nimport "crypto/tls"\nfunc controls() {}\n'],
+    ['/t/semgrep-pattern-limited.java', 'class Controls {}\n'],
+    ['/t/semgrep-pattern-limited.php', '<?php\n$x = 1;\n'],
+    ['/t/semgrep-pattern-limited.py', 'import os\n'],
+    ['/t/semgrep-pattern-limited.rb', '# controls\n'],
+  ]);
+  const root = new URL('../deploy/deep-adapters/rules/tests', import.meta.url).pathname;
+  appendExtensionControls('/t', root, path => files.get(path) ?? readFileSync(path, 'utf8'), (path, content) => files.set(path, content));
+  const go = files.get('/t/semgrep-pattern-limited.go');
+  assert.equal(go.match(/^package /gm).length, 1);
+  assert.ok(go.indexOf('import "archive/zip"') < go.indexOf('func controls'));
+  assert.equal(files.get('/t/semgrep-pattern-limited.php').match(/<\?php/g).length, 1);
+  assert.ok(!/^package /m.test(files.get('/t/semgrep-pattern-limited.java')));
+  const ts = files.get('/t/semgrep-pattern-limited.ts').split(/\r?\n/);
+  for (const [rule, line] of typescriptExtensionEndpoints) {
+    assert.ok(ts[line - 2].includes(`ruleid: javascript.${rule}`), `${rule} at ${line}`);
+  }
+});
+

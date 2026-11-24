@@ -23,6 +23,7 @@ on:
       - scripts/verify_php_interfile.mjs
       - scripts/semgrep_mutation_controls*.mjs
       - scripts/verify_codeql_cross_file.mjs
+      - scripts/verify_codeql_structural.mjs
       - scripts/select_worker_targets*.mjs
       - .github/workflows/worker-verification.yml
   push:
@@ -49,6 +50,7 @@ on:
       - scripts/verify_php_interfile.mjs
       - scripts/semgrep_mutation_controls*.mjs
       - scripts/verify_codeql_cross_file.mjs
+      - scripts/verify_codeql_structural.mjs
       - scripts/select_worker_targets*.mjs
       - .github/workflows/worker-verification.yml
   workflow_dispatch:
@@ -56,7 +58,7 @@ on:
       target:
         description: Manual worker selection; automatic PR/push checks are unchanged
         type: choice
-        options: [all, osv-worker, semgrep-worker, codeql-python-worker, php-interfile-worker]
+        options: [all, osv-worker, semgrep-worker, codeql-python-worker, codeql-java-worker, codeql-csharp-worker, codeql-go-worker, php-interfile-worker]
         default: all
 
 permissions:
@@ -101,7 +103,7 @@ jobs:
               appendFileSync(process.env.GITHUB_OUTPUT, `sdk=false\nmatrix=${JSON.stringify(targets)}\nreason=manual-semgrep-only\n`);
               process.exit(0);
             }
-            if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && ['osv-worker', 'codeql-python-worker', 'php-interfile-worker'].includes(event.inputs?.target)) {
+            if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && targets.includes(event.inputs?.target)) {
               appendFileSync(process.env.GITHUB_OUTPUT, `sdk=true\nmatrix=${JSON.stringify([event.inputs.target])}\nreason=manual-selected-sdk\n`);
               process.exit(0);
             }
@@ -114,9 +116,12 @@ jobs:
             const selected = JSON.parse(execFileSync(process.execPath, [path], { encoding: 'utf8', timeout: 30000, env: { ...process.env, GITHUB_OUTPUT: '' } }));
             const sharedPhpRules = selected.sdk === 'true' && selected.reason === 'shared-php-rules' &&
               selected.matrix === JSON.stringify(['php-interfile-worker']);
-            if (!['true', 'false'].includes(selected.sdk) ||
-                (!sharedPhpRules && selected.matrix !== JSON.stringify(targets)) ||
-                !/^[a-z-]+$/.test(selected.reason ?? '')) throw new Error('invalid selector output');
+            const compiledTargets = targets.filter(target => /^codeql-(java|csharp|go)-worker$/.test(target));
+            const compiledOnly = selected.sdk === 'true' && selected.reason === 'compiled-codeql-only'
+              && selected.matrix === JSON.stringify(compiledTargets);
+            const fullMatrix = selected.matrix === JSON.stringify(targets);
+            if (!['true', 'false'].includes(selected.sdk) || (!fullMatrix && !compiledOnly && !sharedPhpRules)
+                || !/^[a-z-]+$/.test(selected.reason ?? '')) throw new Error('invalid selector output');
             result = selected;
           } catch {
             // Missing or failing baseline is conservative: build every SDK worker.
@@ -137,7 +142,7 @@ jobs:
       - name: Check candidate worker regression and target selector controls
         run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs scripts/verify_osv_worker.test.mjs scripts/semgrep_mutation_controls.test.mjs
   semgrep-surface:
-    if: github.event_name != 'workflow_dispatch' || (inputs.target != 'osv-worker' && inputs.target != 'codeql-python-worker')
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'semgrep-worker'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
