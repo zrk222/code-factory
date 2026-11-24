@@ -14,6 +14,52 @@
  "cases_sha256": "e9d0fe78171165310fa634699652f3bfd013bad559593c9b4790ea67ba1f476f",
  "scoring_rule": "hunk rule: a CWE-family-matching pattern-lane alert on an old-side line of a git diff -U5 hunk, in an in-language non-test changed file, at the fix commit's parent. Scored once.",
  "claim_boundary": "Pattern lane (opengrep, semgrep-pattern-limited.yml) only. Single scoring run; no rule changes between freeze and score.",
+ "exposure_review": {
+  "status": "post_run_correction",
+  "identity_rule": "Compare the lowercased GitHub repository and full fix commit SHA, irrespective of advisory ID.",
+  "prior_sources": [
+   {
+    "path": "docs/evidence/advisory-recall-factory-20261121.json",
+    "sha256": "9589e1d70365c9aedf95f5adb4760b346fdee1ed1d2f3130cfdb6220b81383c8"
+   },
+   {
+    "path": "docs/evidence/heldout-recall-manifest-20261123.json",
+    "sha256": "b1d2085da3a10fd21c811ac0efa1b6f029c46e6f632a51eee9b190a0ac57d64c"
+   }
+  ],
+  "excluded_cases": [
+   {
+    "advisory_id": "GHSA-3x77-wg38-92r3",
+    "repository": "sonirico/mcp-shell",
+    "fix": "f31377fce6ec31114e5a4398c0e5270552bce09f",
+    "prior_exposure": [
+     {
+      "source": "docs/evidence/advisory-recall-factory-20261121.json",
+      "advisory_id": "GHSA-74hp-mggr-hv58"
+     }
+    ],
+    "recorded_status": "scored",
+    "hunk_hit": false,
+    "file_hit": false
+   },
+   {
+    "advisory_id": "GHSA-f5pj-2738-996m",
+    "repository": "sonirico/mcp-shell",
+    "fix": "f31377fce6ec31114e5a4398c0e5270552bce09f",
+    "prior_exposure": [
+     {
+      "source": "docs/evidence/advisory-recall-factory-20261121.json",
+      "advisory_id": "GHSA-74hp-mggr-hv58"
+     }
+    ],
+    "recorded_status": "scored",
+    "hunk_hit": false,
+    "file_hit": false
+   }
+  ],
+  "future_freeze_rule": "Reject earlier advisory IDs and earlier repository-and-fix identities before freezing an untouched cohort.",
+  "claim_boundary": "A retrospective subset of the one recorded run. The original freeze, outcomes, and scoring policy remain the historical record."
+ },
  "cases": [
   {
    "ghsa": "GHSA-3x77-wg38-92r3",

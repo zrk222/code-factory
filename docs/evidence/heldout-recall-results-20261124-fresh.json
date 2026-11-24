@@ -5,6 +5,48 @@
  "ruleset_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
  "engine": "opengrep 1.15.0 --legacy",
  "runs": 1,
+ "exposure_corrected": {
+  "status": "post_run_correction",
+  "exposure_review": "docs/evidence/heldout-recall-manifest-20261124-fresh.json",
+  "original_summary_role": "Raw as-run counts, including the two previously exposed rows.",
+  "adjusted_summary": {
+   "cases": 89,
+   "scored": 83,
+   "unfetchable": 1,
+   "no_in_language_source_change": 5,
+   "hunk_hits": 10,
+   "hunk_recall_pct": 12.0,
+   "hunk_wilson95": [
+    6.7,
+    20.8
+   ],
+   "file_hits": 19,
+   "file_recall_pct": 22.9,
+   "file_wilson95": [
+    15.2,
+    33.0
+   ],
+   "distinct_fix_commits_hit": 8,
+   "alerts_in_changed_files": 141,
+   "by_ecosystem": {
+    "Go": "2/5",
+    "Maven": "0/8",
+    "Packagist": "2/17",
+    "PyPI": "1/22",
+    "RubyGems": "0/7",
+    "npm": "5/24"
+   },
+   "by_family": {
+    "cmd": "2/8",
+    "deser": "0/5",
+    "path": "1/33",
+    "sql": "2/16",
+    "tls": "2/4",
+    "xss": "3/18"
+   }
+  },
+  "claim_boundary": "Excludes two known overlapping rows from the original recorded outcomes. This is not a newly frozen or rerun holdout."
+ },
  "summary": {
   "cases": 91,
   "scored": 85,
