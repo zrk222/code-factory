@@ -8,6 +8,7 @@ import struct
 import zlib
 from pathlib import Path
 import pytest
+import factoryline.appforge_submission_assurance as assurance_module
 from factoryline.app_review_gate import RULES, verify_app_review_readiness
 from factoryline.appforge_store_media import verify_store_media
 from factoryline.appforge_submission_assurance import (
@@ -458,6 +459,126 @@ def test_submission_dossier_only_emits_markdown_and_pdf_after_all_build_bound_ga
     assert "Audited and passed" in markdown.read_text(encoding="utf-8")
     assert CANDIDATE["bundle_identifier"] in markdown.read_text(encoding="utf-8")
     assert pdf.read_bytes().startswith(b"%PDF-")
+
+
+def test_report_failure_cannot_unlock_rehearsal_and_can_retry_same_paths(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from test_appforge_release_rehearsal import _profile
+    from factoryline.appforge_evidence_kit import CANDIDATE_SCHEMA
+
+    dossier = Path(".factory/appforge/submission-assurance.json")
+    reports = Path(".factory/appforge/reports")
+    quality = _quality(tmp_path)
+    candidate = _write(
+        tmp_path / "candidate.json",
+        {"schema": CANDIDATE_SCHEMA, "candidate": CANDIDATE},
+    )
+    profile = _profile(tmp_path, CANDIDATE)
+    assure = [
+        "revenue",
+        "submission-assurance",
+        "--root",
+        str(tmp_path),
+        "--contract",
+        str(_assurance_contract(tmp_path)),
+        "--app-review",
+        str(_app_review(tmp_path)),
+        "--store-media",
+        str(_media(tmp_path)),
+        "--saas-proof",
+        str(_saas(tmp_path)),
+        "--quality-audit",
+        str(quality),
+        "--out",
+        str(dossier),
+        "--report-dir",
+        str(reports),
+        "--json",
+    ]
+    rehearse = [
+        "revenue",
+        "appforge-rehearse",
+        "--root",
+        str(tmp_path),
+        "--candidate",
+        str(candidate),
+        "--submission-assurance",
+        str(dossier),
+        "--profile",
+        str(profile),
+        "--json",
+    ]
+    status = ["revenue", "appforge-status", "--root", str(tmp_path), "--json"]
+
+    def fail_pdf(path: Path, _receipt: dict) -> None:
+        path.write_bytes(b"interrupted")
+        raise OSError("simulated PDF render failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(assurance_module, "_pdf", fail_pdf)
+        assert main(assure) == 2
+        assert "simulated PDF render failure" in capsys.readouterr().err
+    assert not (tmp_path / dossier).exists()
+    assert not list((tmp_path / reports).glob("*"))
+    assert main(rehearse) == 2
+    capsys.readouterr()
+
+    assert main(assure) == 0
+    ready = json.loads(capsys.readouterr().out)
+    assert ready["marker"] == "APPFORGE_SUBMISSION_DOSSIER_READY"
+    assert len(ready["reports"]) == 2
+    assert main(status) == 0
+    assert json.loads(capsys.readouterr().out)["submission_assurance"]["latest"]["ok"]
+
+    original = quality.read_bytes()
+    failed = json.loads(original)
+    failed.update(marker="APPFORGE_QUALITY_AUDIT_BLOCKED", ok=False)
+    failed.pop("receipt_sha256")
+    _write(quality, {**failed, "receipt_sha256": _receipt_sha(failed)})
+    assert main(rehearse) == 2
+    error = json.loads(capsys.readouterr().err)
+    assert "UX, accessibility, and full-stack audit" in error["message"]
+    assert "submission-assurance" in error["message"]
+    assert main(status) == 0
+    stale = json.loads(capsys.readouterr().out)["submission_assurance"]
+    assert stale["latest"] is None
+    assert (
+        "UX, accessibility, and full-stack audit"
+        in stale["blockers"][str(dossier.as_posix())]
+    )
+
+    quality.write_bytes(original)
+    assert main(rehearse) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["external_ready_count"] == 0
+    assert result["authority"]["execution"] is False
+    assert main(status) == 0
+    assert (
+        json.loads(capsys.readouterr().out)["release_rehearsal"]["current_count"] == 1
+    )
+
+    (tmp_path / ready["reports"]["pdf"]).unlink()
+    assert main(status) == 0
+    projections = json.loads(capsys.readouterr().out)
+    assert (
+        "PDF report"
+        in projections["submission_assurance"]["blockers"][dossier.as_posix()]
+    )
+    assert projections["release_rehearsal"]["current_count"] == 0
+    assert main(rehearse) == 2
+    assert "PDF report" in json.loads(capsys.readouterr().err)["message"]
+
+    replacement = dossier.with_name("submission-assurance-retry.json")
+    assure[assure.index("--out") + 1] = str(replacement)
+    assure[assure.index("--report-dir") + 1] = str(reports / "retry")
+    assert main(assure) == 0
+    capsys.readouterr()
+    assert main(status) == 0
+    assert (
+        json.loads(capsys.readouterr().out)["submission_assurance"]["latest"]["path"]
+        == replacement.as_posix()
+    )
 
 
 def test_submission_dossier_blocks_candidate_mismatch_without_emitting_final_reports(

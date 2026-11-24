@@ -792,6 +792,17 @@ def run(args: Any) -> int:
         print(payload.get("marker", "REVENUEFORGE_OK"))
         if payload.get("receipt_sha256"):
             print(f"receipt     : {payload['receipt_sha256']}")
+        if args.revenue_cmd == "appforge-status":
+            assurance = payload["submission_assurance"]
+            if assurance["latest"] is None:
+                for message in assurance["blockers"].values():
+                    print(message)
+        if args.revenue_cmd == "submission-assurance" and not payload["ok"]:
+            for finding in payload["findings"]:
+                print(f"{finding['gate']}: {finding['detail']}")
+            print(
+                "Fix the listed gates and rerun submission-assurance with a fresh --out path."
+            )
         print(
             "authority   : no App Store write, offer send, experiment promotion, review publication, deployment, or credential access"
         )

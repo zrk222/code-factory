@@ -19,6 +19,7 @@ from typing import Any
 
 from .appforge_evidence_kit import _read_candidate
 from .appforge_submission_assurance import RECEIPT_SCHEMA as ASSURANCE_SCHEMA
+from .appforge_submission_assurance import verify_current_submission_assurance
 from .revenueforge import _artifact_local, _artifact_json
 from .revenueforge import AUTHORITY, RevenueForgeError
 from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module encoder contract
@@ -489,6 +490,30 @@ def _handoff(provider: dict[str, Any]) -> list[str]:
     ]
 
 
+def _ready_assurance(
+    workspace: Path, assurance_path: Path, candidate: dict[str, str]
+) -> tuple[dict[str, Any], Path]:
+    assurance, assurance_source = _read_json(
+        workspace, assurance_path, ASSURANCE_SCHEMA
+    )
+    if not _sealed(assurance, ASSURANCE_SCHEMA):
+        raise RevenueForgeError(
+            "APPFORGE_REHEARSAL_ASSURANCE_TAMPERED",
+            "submission assurance receipt is not hash-valid",
+        )
+    if (
+        assurance.get("ok") is not True
+        or assurance.get("marker") != "APPFORGE_SUBMISSION_DOSSIER_READY"
+        or assurance.get("candidate") != candidate
+    ):
+        raise RevenueForgeError(
+            "APPFORGE_REHEARSAL_ASSURANCE_BLOCKED",
+            "rerun `factory revenue submission-assurance` for the exact candidate and pass all gates before rehearsal",
+        )
+    verify_current_submission_assurance(workspace, assurance, candidate)
+    return assurance, assurance_source
+
+
 def create_release_rehearsal(
     root: Path,
     candidate_path: Path,
@@ -499,19 +524,7 @@ def create_release_rehearsal(
     """Seal a provider-neutral release handoff without invoking any release tool."""
     workspace = Path(root).resolve()
     candidate, candidate_source = _read_candidate(workspace, candidate_path)
-    assurance, assurance_source = _read_json(
-        workspace, assurance_path, ASSURANCE_SCHEMA
-    )
-    if not _sealed(assurance, ASSURANCE_SCHEMA):
-        raise RevenueForgeError(
-            "APPFORGE_REHEARSAL_ASSURANCE_TAMPERED",
-            "submission assurance receipt is not hash-valid",
-        )
-    if assurance.get("ok") is not True or assurance.get("candidate") != candidate:
-        raise RevenueForgeError(
-            "APPFORGE_REHEARSAL_ASSURANCE_BLOCKED",
-            "submission assurance must be ready and bound to the exact candidate",
-        )
+    assurance, assurance_source = _ready_assurance(workspace, assurance_path, candidate)
     profile, profile_source = _read_json(workspace, profile_path, PROFILE_SCHEMA)
     provider = _profile(workspace, profile, candidate)
     matrix = _matrix(provider["release_channel"])
@@ -576,6 +589,21 @@ def release_rehearsal_projection(root: Path) -> dict[str, Any]:
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
                 if _sealed(value, RECEIPT_SCHEMA):
+                    sources = value["sources"]
+                    for key in (
+                        "candidate",
+                        "automation_profile",
+                        "submission_assurance",
+                    ):
+                        reference = sources[key]
+                        source = _local(workspace, Path(reference["path"]))
+                        if _file_sha(source) != reference["sha256"]:
+                            raise ValueError(f"{key} has changed")
+                    _ready_assurance(
+                        workspace,
+                        Path(sources["submission_assurance"]["path"]),
+                        value["candidate"],
+                    )
                     current.append(
                         {
                             "path": path.relative_to(workspace).as_posix(),
@@ -585,7 +613,7 @@ def release_rehearsal_projection(root: Path) -> dict[str, Any]:
                             "receipt_sha256": value.get("receipt_sha256"),
                         }
                     )
-                elif value.get("schema") == RECEIPT_SCHEMA:
+                elif isinstance(value, dict) and value.get("schema") == RECEIPT_SCHEMA:
                     invalid.append(path.relative_to(workspace).as_posix())
             except (
                 OSError,
@@ -593,6 +621,8 @@ def release_rehearsal_projection(root: Path) -> dict[str, Any]:
                 json.JSONDecodeError,
                 TypeError,
                 ValueError,
+                KeyError,
+                RevenueForgeError,
             ):
                 invalid.append(path.relative_to(workspace).as_posix())
     return {

@@ -48,9 +48,14 @@ factory revenue submission-assurance \
   --json
 ```
 
-The last command writes a sealed JSON receipt in either state. It writes the
-human-readable `.md` and `.pdf` only with
-`APPFORGE_SUBMISSION_DOSSIER_READY`.
+The ready receipt is sealed after both reports finish and binds their
+SHA-256 digests. If rendering fails, correct the error and retry the same
+command and paths. If a gate returns a blocked receipt, fix the listed evidence
+and rerun with a fresh `--out` path.
+
+`factory revenue appforge-status --root . --json` identifies any prerequisite
+that has changed since a ready receipt was written. Restore the exact evidence
+or issue a fresh dossier in a new output path and report directory.
 
 ## Strict design and full-stack checks
 

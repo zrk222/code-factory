@@ -27,12 +27,39 @@ from .appforge_oracle import (
 )
 from . import canonical_json_bytes as _canonical  # noqa: F401 - module encoder contract
 from . import canonical_sha as _sha
+from . import file_sha256
 
 
 CONTRACT_SCHEMA = "factory.appforge.submission-assurance-contract.v1"
 RECEIPT_SCHEMA = "factory.appforge.submission-assurance-receipt.v1"
 MAX_BYTES = 1_048_576
 CANDIDATE_KEYS = ("bundle_identifier", "version", "build_number", "source_commit")
+SUBMISSION_GATES = (
+    (
+        "App Review readiness",
+        APP_REVIEW_SCHEMA,
+        "candidate",
+        ("marker", "APP_REVIEW_READY"),
+    ),
+    (
+        "Store media truth",
+        STORE_MEDIA_SCHEMA,
+        "candidate",
+        ("marker", "APPFORGE_STORE_MEDIA_READY"),
+    ),
+    (
+        "SaaS identity to entitlement",
+        SAAS_PROOF_SCHEMA,
+        "release_candidate",
+        ("verdict", "verified"),
+    ),
+    (
+        "UX, accessibility, and full-stack audit",
+        QUALITY_AUDIT_SCHEMA,
+        "candidate",
+        ("marker", "APPFORGE_QUALITY_AUDIT_READY"),
+    ),
+)
 
 
 def _text(value: object, field: str, *, limit: int = 500) -> str:
@@ -115,7 +142,9 @@ def _valid_receipt(value: dict[str, Any], schema: str) -> bool:
     return value.get("schema") == schema and _sha(core) == supplied
 
 
-def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
+def _atomic_json(
+    path: Path, payload: dict[str, Any], *, exclusive: bool = False
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
@@ -126,23 +155,16 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
-
-def _atomic_text(path: Path, contents: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(contents)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        if exclusive:
+            try:
+                os.link(temporary, path)
+            except FileExistsError as exc:
+                raise RevenueForgeError(
+                    "APPFORGE_ASSURANCE_OUTPUT_EXISTS",
+                    "output dossier is immutable; choose a new path",
+                ) from exc
+        else:
+            os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -229,7 +251,9 @@ def _require_receipt(
             "code": "APPFORGE_ASSURANCE_CANDIDATE_MISMATCH",
             "detail": f"{source.name} is not bound to the reviewed candidate",
         }
-    if value.get(ready[0]) != ready[1]:
+    if value.get(ready[0]) != ready[1] or (
+        ready[0] == "marker" and value.get("ok") is not True
+    ):
         return None, {
             "code": "APPFORGE_ASSURANCE_GATE_NOT_READY",
             "detail": f"{source.name} did not pass its local gate",
@@ -271,7 +295,7 @@ def _markdown(receipt: dict[str, Any]) -> str:
             "",
             "## Integrity",
             "",
-            f"- [x] Dossier receipt SHA-256: `{receipt['receipt_sha256']}`",
+            f"- [x] Dossier content SHA-256: `{receipt['content_sha256']}`",
             "",
             "## Claim boundary",
             "",
@@ -378,7 +402,8 @@ def _pdf(path: Path, receipt: dict[str, Any]) -> None:
             Paragraph(receipt["claim_boundary"], styles["BodyText"]),
             Spacer(1, 0.08 * inch),
             Paragraph(
-                f"Receipt SHA-256: {receipt['receipt_sha256']}", styles["BodyText"]
+                f"Dossier content SHA-256: {receipt['content_sha256']}",
+                styles["BodyText"],
             ),
         ]
     )
@@ -392,43 +417,16 @@ def _submission_gate_inputs(
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     audit: list[dict[str, str]] = []
     findings: list[dict[str, str]] = []
-    inputs = (
-        (
-            "App Review readiness",
-            receipt_paths[0],
-            APP_REVIEW_SCHEMA,
-            "candidate",
-            ("marker", "APP_REVIEW_READY"),
-        ),
-        (
-            "Store media truth",
-            receipt_paths[1],
-            STORE_MEDIA_SCHEMA,
-            "candidate",
-            ("marker", "APPFORGE_STORE_MEDIA_READY"),
-        ),
-        (
-            "SaaS identity to entitlement",
-            receipt_paths[2],
-            SAAS_PROOF_SCHEMA,
-            "release_candidate",
-            ("verdict", "verified"),
-        ),
-        (
-            "UX, accessibility, and full-stack audit",
-            receipt_paths[3],
-            QUALITY_AUDIT_SCHEMA,
-            "candidate",
-            ("marker", "APPFORGE_QUALITY_AUDIT_READY"),
-        ),
-    )
-    for name, path, schema, candidate_field, ready in inputs:
+    for path, (name, schema, candidate_field, ready) in zip(
+        receipt_paths, SUBMISSION_GATES, strict=True
+    ):
         value, issue = _require_receipt(
             workspace, path, schema, candidate, candidate_field, ready
         )
         if issue:
             findings.append({"gate": name, **issue})
             continue
+        assert value is not None
         source = _local(workspace, path)
         audit.append(
             {
@@ -596,32 +594,59 @@ def _submission_core(
         },
         "claim_boundary": "hash-bound local readiness dossier only; not App Store Connect upload state, TestFlight completion, App Review submission, Apple policy certification, or Apple approval.",
     }
-    core["receipt_sha256"] = _sha(core)
     return core
 
 
 def _write_submission_reports(
     workspace: Path,
     report_dir: Path,
-    candidate: dict[str, str],
-    receipt: dict[str, Any],
-) -> dict[str, str]:
+    destination: Path,
+    core: dict[str, Any],
+) -> None:
     reports = _local(workspace, report_dir, exists=False)
     reports.mkdir(parents=True, exist_ok=True)
+    candidate = core["candidate"]
     stem = f"{candidate['bundle_identifier'].replace('.', '-')}-{candidate['version']}-{candidate['build_number']}-submission-assurance"
-    markdown = reports / f"{stem}.md"
-    pdf = reports / f"{stem}.pdf"
-    if markdown.exists() or pdf.exists():
+    if Path(stem).name != stem or any(char in stem for char in "/\\:"):
+        raise RevenueForgeError(
+            "APPFORGE_ASSURANCE_CANDIDATE_INVALID",
+            "candidate cannot form a report filename",
+        )
+    paths = {
+        kind: reports / f"{stem}.{suffix}"
+        for kind, suffix in (("markdown", "md"), ("pdf", "pdf"))
+    }
+    if any(path.exists() for path in paths.values()):
         raise RevenueForgeError(
             "APPFORGE_ASSURANCE_OUTPUT_EXISTS",
             "report outputs are immutable; choose a new report directory or candidate build",
         )
-    _atomic_text(markdown, _markdown(receipt))
-    _pdf(pdf, receipt)
-    return {
-        "markdown": markdown.relative_to(workspace).as_posix(),
-        "pdf": pdf.relative_to(workspace).as_posix(),
+    core["reports"] = {
+        kind: path.relative_to(workspace).as_posix() for kind, path in paths.items()
     }
+    # Render against the dossier content, then seal the rendered bytes into the receipt.
+    core["content_sha256"] = _sha(core)
+    with tempfile.TemporaryDirectory(
+        prefix=".submission-assurance-", dir=reports
+    ) as stage:
+        staged = {kind: Path(stage) / path.name for kind, path in paths.items()}
+        staged["markdown"].write_text(_markdown(core), encoding="utf-8", newline="\n")
+        _pdf(staged["pdf"], core)
+        core["report_sha256"] = {
+            kind: file_sha256(path) for kind, path in staged.items()
+        }
+        core["receipt_sha256"] = _sha(core)
+        published = []
+        try:
+            for kind, path in paths.items():
+                os.link(staged[kind], path)
+                published.append(path)
+            verify_current_submission_assurance(workspace, core, candidate)
+            _atomic_json(destination, core, exclusive=True)
+        except BaseException:
+            for path in published:
+                path.unlink(missing_ok=True)
+            raise
 
 
 def verify_submission_assurance(
@@ -672,14 +697,109 @@ def verify_submission_assurance(
         audit,
         findings,
     )
-    _atomic_json(destination, core)
-    result = {**core, "path": destination.relative_to(workspace).as_posix()}
-    if not core["ok"]:
-        return result
-    return {
-        **result,
-        "reports": _write_submission_reports(workspace, report_dir, candidate, core),
-    }
+    core["contract_path"] = contract_source.relative_to(workspace).as_posix()
+    if core["ok"]:
+        _write_submission_reports(workspace, report_dir, destination, core)
+    else:
+        core["receipt_sha256"] = _sha(core)
+        _atomic_json(destination, core, exclusive=True)
+    return {**core, "path": destination.relative_to(workspace).as_posix()}
+
+
+def _assurance_blocked(detail: str) -> RevenueForgeError:
+    return RevenueForgeError(
+        "APPFORGE_ASSURANCE_PREREQUISITE_CHANGED",
+        f"{detail}. Restore the original evidence or rerun `factory revenue submission-assurance` with current evidence and fresh output paths.",
+    )
+
+
+def _verify_file(root: Path, path: object, expected: object, label: str) -> None:
+    if not isinstance(path, str) or not isinstance(expected, str):
+        raise _assurance_blocked(f"{label} is missing from the dossier")
+    try:
+        actual = file_sha256(_local(root, Path(path)))
+    except (RevenueForgeError, OSError) as exc:
+        raise _assurance_blocked(f"{label} is unavailable") from exc
+    if actual != expected:
+        raise _assurance_blocked(f"{label} has changed")
+
+
+def verify_current_submission_assurance(
+    root: Path, receipt: dict[str, Any], candidate: dict[str, str]
+) -> None:
+    """Recheck the prerequisites of a sealed ready dossier without writing files."""
+    _verify_file(
+        root,
+        receipt.get("contract_path"),
+        receipt.get("contract_sha256"),
+        "Submission contract",
+    )
+    audit = receipt.get("audit")
+    if not isinstance(audit, list) or len(audit) != len(SUBMISSION_GATES) + 1:
+        raise _assurance_blocked("Required gate receipts are missing from the dossier")
+    for row, (name, schema, field, ready) in zip(
+        audit[:-1], SUBMISSION_GATES, strict=True
+    ):
+        if (
+            not isinstance(row, dict)
+            or row.get("name") != name
+            or not isinstance(row.get("receipt_path"), str)
+        ):
+            raise _assurance_blocked(f"{name} is missing from the dossier")
+        current, _ = _require_receipt(
+            root, Path(row["receipt_path"]), schema, candidate, field, ready
+        )
+        if current is None or current["receipt_sha256"] != row.get("receipt_sha256"):
+            raise _assurance_blocked(f"{name} no longer matches its passing receipt")
+
+    oracle = receipt.get("oracle_authority")
+    if not isinstance(oracle, dict) or not isinstance(oracle.get("source_path"), str):
+        raise _assurance_blocked("Oracle authority is missing from the dossier")
+    oracle_row = audit[-1]
+    if (
+        not isinstance(oracle_row, dict)
+        or oracle_row.get("name") != "Oracle authority"
+        or not isinstance(oracle_row.get("receipt_path"), str)
+        or oracle_row["receipt_path"] != oracle.get("path")
+        or oracle_row.get("receipt_sha256") != oracle.get("receipt_sha256")
+    ):
+        raise _assurance_blocked("Oracle authority is missing from the audit")
+    try:
+        _verify_file(
+            root,
+            oracle["source_path"],
+            oracle.get("source_sha256"),
+            "Oracle authority source",
+        )
+        current = verify_appforge_oracle_authority(
+            root, Path(oracle["source_path"]), candidate=candidate
+        )
+        sealed, _ = _read_json(
+            root,
+            Path(oracle_row["receipt_path"]),
+            schema=ORACLE_AUTHORITY_RECEIPT_SCHEMA,
+        )
+    except (RevenueForgeError, OSError, ValueError) as exc:
+        raise _assurance_blocked("Oracle authority is unavailable or invalid") from exc
+    if (
+        current != sealed
+        or current.get("ok") is not True
+        or current["receipt_sha256"] != oracle["receipt_sha256"]
+    ):
+        raise _assurance_blocked(
+            "Oracle authority no longer matches its passing receipt"
+        )
+
+    reports = receipt.get("reports")
+    digests = receipt.get("report_sha256")
+    if not isinstance(reports, dict) or not isinstance(digests, dict):
+        raise _assurance_blocked(
+            "Completed Markdown and PDF reports are missing from the dossier"
+        )
+    for kind in ("markdown", "pdf"):
+        _verify_file(
+            root, reports.get(kind), digests.get(kind), f"{kind.upper()} report"
+        )
 
 
 def _projection_ranked(
@@ -700,24 +820,35 @@ def _project_receipt(workspace: Path, path: Path) -> dict[str, Any] | None:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError("submission assurance receipt must be an object")
-    supplied = value.pop("receipt_sha256", None)
-    if (
-        value.get("schema") != RECEIPT_SCHEMA
-        or not isinstance(supplied, str)
-        or _sha(value) != supplied
-    ):
+    if not _valid_receipt(value, RECEIPT_SCHEMA):
         return None
+    if (
+        value.get("ok") is True
+        or value.get("marker") == "APPFORGE_SUBMISSION_DOSSIER_READY"
+    ):
+        if (
+            value.get("ok") is not True
+            or value.get("marker") != "APPFORGE_SUBMISSION_DOSSIER_READY"
+        ):
+            raise _assurance_blocked("Dossier readiness fields disagree")
+        verify_current_submission_assurance(
+            workspace, value, _candidate(value.get("candidate"), "dossier.candidate")
+        )
     return {
         "path": path.relative_to(workspace).as_posix(),
         "marker": value.get("marker"),
         "ok": value.get("ok"),
         "candidate": value.get("candidate"),
-        "receipt_sha256": supplied,
+        "findings": value.get("findings", []),
+        "receipt_sha256": value["receipt_sha256"],
     }
 
 
 def _project_receipts(
-    workspace: Path, ranked: list[tuple[int, Path]], invalid: list[str]
+    workspace: Path,
+    ranked: list[tuple[int, Path]],
+    invalid: list[str],
+    blockers: dict[str, str],
 ) -> list[dict[str, Any]]:
     current: list[dict[str, Any]] = []
     for _mtime, path in sorted(ranked, key=lambda item: (item[0], item[1].as_posix()))[
@@ -729,6 +860,10 @@ def _project_receipts(
                 invalid.append(path.relative_to(workspace).as_posix())
             else:
                 current.append(projected)
+        except RevenueForgeError as error:
+            relative = path.relative_to(workspace).as_posix()
+            invalid.append(relative)
+            blockers[relative] = str(error)
         except (
             OSError,
             UnicodeDecodeError,
@@ -744,12 +879,21 @@ def submission_assurance_projection(root: Path) -> dict[str, Any]:
     """Read only hash-valid dossier state; reports remain evidence, not authorization."""
     workspace = Path(root).resolve()
     invalid: list[str] = []
+    blockers: dict[str, str] = {}
     candidates = list(
         (workspace / ".factory" / "appforge").rglob("submission-assurance*.json")
     )
     truncated = len(candidates) > 1_000
     ranked = _projection_ranked(workspace, candidates, invalid)
-    current = _project_receipts(workspace, ranked, invalid)
+    current = _project_receipts(workspace, ranked, invalid, blockers)
+    newest = max(ranked, key=lambda item: (item[0], item[1].as_posix()), default=None)
+    latest = current[-1] if current else None
+    if (
+        truncated
+        or newest is None
+        or (latest and latest["path"] != newest[1].relative_to(workspace).as_posix())
+    ):
+        latest = None
     if truncated:
         invalid.append(".factory/appforge/<scan-truncated>")
     return {
@@ -760,8 +904,9 @@ def submission_assurance_projection(root: Path) -> dict[str, Any]:
         "current_count": len(current),
         "invalid_count": len(invalid),
         "truncated": truncated,
-        "latest": current[-1] if current and not invalid else None,
+        "latest": latest,
         "invalid": invalid,
+        "blockers": blockers,
         "authority": AUTHORITY,
         "claim_boundary": "hash-verified local dossier status only; not TestFlight, App Review, or Apple approval state.",
     }
