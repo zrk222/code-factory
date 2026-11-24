@@ -17,23 +17,17 @@ MEASUREMENT_STATES = tuple(
     "MEASURED NOT_MEASURED UNSUPPORTED NOT_APPLICABLE UNMEASURABLE BLOCKED".split()
 )
 
+_AGENT_USAGE_PACK = json.loads(
+    files("factoryline").joinpath("data", "junie_pack.json").read_text(encoding="utf-8")
+)
+
 _NATIVE_WORKERS = {
     "codeql": {
         "target": "codeql-python-worker",
         "profile": "codeql-python-full.json",
         "version": "2.27.1",
         "scope": "Full Python security-extended suite, precompiled.",
-        "variants": {
-            name: {"target": f"codeql-{slug}-worker", "profile": f"codeql-{slug}-full.json", "scope": scope}
-            for name, slug, scope in (
-                ("javascript_typescript", "javascript", "JS/TS modeled cross-file flow."),
-                ("ruby", "ruby", "Ruby Rails/Rack/library cross-file flow without a build."),
-                ("github_actions", "actions", "Actions workflow injection and trust configuration."),
-                ("java", "java", "Java source only. Kotlin and generated source need a build."),
-                ("csharp", "csharp", "C# source only. Missing SDK targeting packs or dependencies leave gaps."),
-                ("go", "go", "Go compile-only modules with vendor or in-source dependencies."),
-            )
-        },
+        "variants": _AGENT_USAGE_PACK["codeql_worker_variants"],
     },
     "semgrep": {
         "target": "semgrep-worker",
@@ -41,7 +35,8 @@ _NATIVE_WORKERS = {
         "version": "1.15.0",
         "variants": {
             "php_interfile": {
-                "target": "php-interfile-worker", "version": "2.0.0",
+                "target": "php-interfile-worker",
+                "version": "2.0.0",
                 "profile": "semgrep-php-interfile.json",
             },
         },
@@ -648,9 +643,6 @@ def domain_definition(measurement_id: str) -> dict[str, str] | None:
     return None
 
 
-_AGENT_USAGE_PACK = json.loads(
-    files("factoryline").joinpath("data", "junie_pack.json").read_text(encoding="utf-8")
-)
 _AGENT_USAGE_CONTRACT["six_lane_review"] = _AGENT_USAGE_PACK["agent_six_lane_review"]
 _AGENT_USAGE_CONTRACT["native_harness"] = _AGENT_USAGE_PACK["native_harness"]
 _AGENT_USAGE_CONTRACT["native_test_probes"] = _AGENT_USAGE_PACK["native_test_probes"]

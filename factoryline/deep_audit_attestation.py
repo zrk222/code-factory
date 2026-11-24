@@ -2164,9 +2164,16 @@ _PHP_INTERFILE_FLAGS = (
 
 def _semgrep_rule_prefix(tool_version):
     argv = [
-        "/usr/bin/semgrep", "scan", "--json", "--strict", "--metrics=off",
-        "--disable-version-check", "--no-git-ignore", "--disable-nosem",
-        "--no-rewrite-rule-ids", "--config",
+        "/usr/bin/semgrep",
+        "scan",
+        "--json",
+        "--strict",
+        "--metrics=off",
+        "--disable-version-check",
+        "--no-git-ignore",
+        "--disable-nosem",
+        "--no-rewrite-rule-ids",
+        "--config",
     ]
     if tool_version in {"1.15.0", "2.0.0"}:
         argv[0] = "/usr/bin/opengrep"
@@ -2524,36 +2531,30 @@ def _native_profile_coverage(
             execution["raw_report"],
         )
     errors = ["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"]
-    complete = False
     if lane["engine"] == "gitleaks":
         errors = _deep_audit_io._gitleaks_coverage_errors(
             rule_accounting, challenges, covered_obligations
         )
-        complete = not errors
     elif lane["engine"] == "trivy":
         errors = _deep_audit_io._trivy_coverage_errors(
             execution, report, inventory, lane, challenges, covered_obligations
         )
-        complete = not errors
     elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
         errors = _deep_audit_io._runtime_coverage_errors(
             report, inventory, lane, challenges, covered_obligations
         )
-        complete = not errors
     elif execution.get("semgrep_rule_execution") is not None:
         source_accounting = _deep_audit_io._semgrep_source_accounting(
             execution, inventory, lane, execution_context=execution_context
         )
-        errors = (
-            []
-            if _deep_audit_io._gitleaks_challenges_complete(
+        required = {
+            "NATIVE_CHALLENGES_REQUIRED": _deep_audit_io._gitleaks_challenges_complete(
                 challenges, covered_obligations
-            )
-            else ["NATIVE_CHALLENGES_REQUIRED"]
-        )
-        if source_accounting["state"] != "COMPLETE":
-            errors.append("NATIVE_SOURCE_ACCOUNTING_REQUIRED")
-        complete = not errors
+            ),
+            "NATIVE_SOURCE_ACCOUNTING_REQUIRED": source_accounting["state"]
+            == "COMPLETE",
+        }
+        errors = [error for error, satisfied in required.items() if not satisfied]
     elif lane["engine"] == "osv":
         from .deep_audit_sarif import _osv_lookup_binding_gaps
 
@@ -2567,12 +2568,11 @@ def _native_profile_coverage(
             errors.append("NATIVE_SOURCE_ACCOUNTING_REQUIRED")
         if not _deep_audit_io._osv_challenges_complete(challenges, covered_obligations):
             errors.append("NATIVE_CHALLENGES_REQUIRED")
-        complete = not errors
     coverage = {
         "profile_sha256": _deep_audit_io.digest(profile),
         **_local_provider_coverage_identity(lane),
         "schema": "factory.deep-coverage.v1",
-        "complete": complete,
+        "complete": not errors,
         "sources": {
             item["path"]: item["sha256"]
             for item in inventory["files"]
@@ -2584,7 +2584,8 @@ def _native_profile_coverage(
         "ruleset_sha256": profile["ruleset_sha256"],
         "report_sha256": _deep_audit_io.digest(report),
         "native_report_sha256": _deep_audit_io.digest(execution["raw_report"]),
-        "source_accounting": source_accounting or _deep_audit_io._native_source_accounting(
+        "source_accounting": source_accounting
+        or _deep_audit_io._native_source_accounting(
             execution,
             report,
             inventory,
