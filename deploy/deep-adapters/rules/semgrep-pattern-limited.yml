@@ -3390,6 +3390,29 @@ rules:
                     - pattern: '"..."'
                     - pattern-regex: ^\$\w+$
           - focus-metavariable: $Q
+      # SQL text assembled from a parameter, wherever it is executed later
+      # (query builders, custom store APIs, condition arrays).
+      - patterns:
+          - pattern-either:
+              - pattern: $LIT . $X
+              - pattern: $X . $LIT
+          - metavariable-pattern:
+              metavariable: $LIT
+              patterns:
+                - pattern: '"..."'
+                - pattern-regex: '(?i)\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|\bwhere\s|\border\s+by\s|\blike\s|\band\s+\w+\s*(=|<|>|!=|like|in)\b|\bvalues\s*\()'
+          - focus-metavariable: $X
+      - patterns:
+          - pattern: sprintf($FMT, ..., $X, ...)
+          - metavariable-pattern:
+              metavariable: $FMT
+              patterns:
+                - pattern: '"..."'
+                - pattern-regex: '(?i)\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|\bwhere\s|\border\s+by\s|\blike\s|\band\s+\w+\s*(=|<|>|!=|like|in)\b|\bvalues\s*\()'
+          - metavariable-pattern:
+              metavariable: $FMT
+              pattern-regex: "'%s'|%s"
+          - focus-metavariable: $X
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -3496,6 +3519,19 @@ rules:
               pattern-regex: (?i)\b(select\s[\s\S]+\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|where\s|order\s+by)\b
           - metavariable-regex: {metavariable: $DB, regex: '(?i)(^|\.)(db|database|conn|connection|client|pool|knex|sequelize|prisma|tx|trx|sql|pg|mysql|sqlite|\w*(db|conn|pool|client))$'}
           - focus-metavariable: $Q
+      # SQL text assembled from a parameter, wherever it is executed later.
+      - patterns:
+          - pattern: $LIT + $X
+          - metavariable-pattern:
+              metavariable: $LIT
+              patterns:
+                - pattern: '"..."'
+                - pattern-regex: '(?i)\b(select\s[\s\S]*?\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|where\s|order\s+by\s|values\s*\()'
+          - focus-metavariable: $X
+      # A placeholder right after a SQL comparison inside a template literal
+      # (id = ${userId}, NAME='${t}', name LIKE '${q}', IN (${ids})); reported at the
+      # placeholder. attr="${v}" in HTML and ?q=${v} in URLs do not match.
+      - pattern-regex: '(?i)(?:\s(?:=|<>|!=|<=|>=|<|>|like|in\s*\(|values\s*\()\s*[''"(]?|(?:=|<>|!=|like)\s*'')\s*\K\$\{[^}`]*\}'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:

@@ -133,7 +133,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 2,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 2,
   'opt.factory.rules.javascript.parameter-shell-command': 2,
-  'opt.factory.rules.javascript.parameter-sql-text': 1,
+  'opt.factory.rules.javascript.parameter-sql-text': 2,
   'opt.factory.rules.javascript.request-command-injection': 4,
   'opt.factory.rules.javascript.request-html-injection': 12,
   'opt.factory.rules.javascript.request-path-traversal': 16,
@@ -141,7 +141,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
   'opt.factory.rules.php.parameter-shell-command': 1,
-  'opt.factory.rules.php.parameter-sql-text': 1,
+  'opt.factory.rules.php.parameter-sql-text': 3,
   'opt.factory.rules.php.request-command-injection': 13,
   'opt.factory.rules.php.request-file-inclusion': 2,
   'opt.factory.rules.php.request-html-injection': 1,
@@ -180,7 +180,7 @@ export const typescriptExtensionEndpoints = Object.freeze([
   ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
   ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
   ['request-path-traversal', 305], ['request-path-traversal', 312], ['request-path-traversal', 314],
-  ['parameter-path-join-without-containment', 328],
+  ['parameter-path-join-without-containment', 328], ['parameter-sql-text', 343],
 ]);
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
@@ -210,9 +210,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 226 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 229 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 226;
+const REVIEWED_FINDINGS = 229;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -264,6 +264,7 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'javascript-archive-output-controls.txt'], ['ts', 'tsx-parameter-sink-controls.txt'],
   ['ts', 'tsx-path-join-controls.txt'], ['ts', 'tsx-html-output-controls.txt'],
   ['ts', 'javascript-tls-trust-controls.txt'], ['ts', 'tsx-path-request-controls.txt'],
+  ['ts', 'tsx-sql-text-controls.txt'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],

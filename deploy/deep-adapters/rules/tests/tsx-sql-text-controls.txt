@@ -1,0 +1,14 @@
+export function definitionSql(tableName: string) {
+  // ruleid: javascript.parameter-sql-text
+  return `select * from INFORMATION_SCHEMA.COLUMNS where TABLE_NAME='${tableName}'`;
+}
+
+export function definitionSqlBound(tableName: string) {
+  // ok: javascript.parameter-sql-text
+  return { text: "select * from INFORMATION_SCHEMA.COLUMNS where TABLE_NAME = $1", values: [tableName] };
+}
+
+export function greeting(name: string) {
+  // ok: javascript.parameter-sql-text
+  return `Hello ${name}, see https://example.test/?q=${name}`;
+}

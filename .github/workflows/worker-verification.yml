@@ -21,6 +21,7 @@ on:
       - scripts/verify_worker_cves*.mjs
       - scripts/verify_semgrep_surface.mjs
       - scripts/semgrep_mutation_controls*.mjs
+      - scripts/recall_harness*.mjs
       - scripts/verify_codeql_cross_file.mjs
       - scripts/select_worker_targets*.mjs
       - .github/workflows/worker-verification.yml
@@ -46,6 +47,7 @@ on:
       - scripts/verify_worker_cves*.mjs
       - scripts/verify_semgrep_surface.mjs
       - scripts/semgrep_mutation_controls*.mjs
+      - scripts/recall_harness*.mjs
       - scripts/verify_codeql_cross_file.mjs
       - scripts/select_worker_targets*.mjs
       - .github/workflows/worker-verification.yml
@@ -129,7 +131,7 @@ jobs:
         with:
           node-version: "22"
       - name: Check candidate worker regression and target selector controls
-        run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs scripts/verify_osv_worker.test.mjs scripts/semgrep_mutation_controls.test.mjs
+        run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs scripts/verify_osv_worker.test.mjs scripts/semgrep_mutation_controls.test.mjs scripts/recall_harness.test.mjs
   semgrep-surface:
     if: github.event_name != 'workflow_dispatch' || (inputs.target != 'osv-worker' && inputs.target != 'codeql-python-worker')
     runs-on: ubuntu-latest

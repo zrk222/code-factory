@@ -19,6 +19,7 @@ function run_wrapper($cmd) {
 
 class ListFormatHelper {
     public function rows($connection, array $contentType) {
+        // ruleid: php.parameter-sql-text
         $query = sprintf('SELECT id FROM content WHERE content_type = "%s"', $contentType['slug']);
         // ruleid: php.parameter-sql-text
         return $connection->fetchAllAssociative($query);
@@ -32,5 +33,17 @@ class ListFormatHelper {
     public function rowsCast($connection, $id) {
         // ok: php.parameter-sql-text
         return $connection->query('SELECT id FROM content WHERE id = ' . (int) $id);
+    }
+}
+
+class ReactionStore {
+    public function removeFor($store, string $user) {
+        // ruleid: php.parameter-sql-text
+        return $store->delete('reactions', 'value LIKE \'%user":"' . $user . '"%\'');
+    }
+
+    public function removeForBound($store, string $user) {
+        // ok: php.parameter-sql-text
+        return $store->delete('reactions', ['user' => $user]);
     }
 }
