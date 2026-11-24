@@ -270,6 +270,17 @@ rules:
           - metavariable-regex:
               metavariable: $DO
               regex: ^do_[A-Z]+$
+      # Tool, MCP and job handler arguments: params["input_path"], args.get("file")...
+      - patterns:
+          - pattern-either:
+              - pattern: $ARGS[$KEY]
+              - pattern: $ARGS.get($KEY, ...)
+          - metavariable-regex:
+              metavariable: $ARGS
+              regex: ^(params|arguments|inputs|input_data|tool_input|tool_args|tool_params|payload)$
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: ^["'](?i)\w*(path|file|filename|dir|directory|folder|dest|destination|target|output|input|location)\w*["']$
     pattern-sanitizers:
       - pattern: os.path.basename(...)
       - pattern: secure_filename(...)
@@ -298,12 +309,38 @@ rules:
                     metavariable: $CHECK
                     regex: (?i)^(\w*safe\w*|\w*within\w*|\w*contain\w*|\w*inside\w*|is_relative_to|commonpath|valid\w*|is_valid\w*)$
           - focus-metavariable: $PATH
+      # Opening, copying, moving or deleting through a library call.
+      - patterns:
+          - pattern: $MOD.open($PATH, ...)
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: ^(Image|PIL\.Image|io|codecs|gzip|bz2|lzma|aiofiles)$
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern-either:
+              - pattern: shutil.$OP($PATH, ...)
+              - pattern: shutil.$OP($SRC, $PATH, ...)
+              - pattern: os.$OP($PATH, ...)
+          - metavariable-regex:
+              metavariable: $OP
+              regex: ^(copy|copy2|copyfile|copytree|move|rmtree|remove|unlink|rename|replace|makedirs|mkdir|rmdir|listdir|scandir|chmod)$
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern-either:
+              - pattern: send_file($PATH, ...)
+              - pattern: FileResponse($PATH, ...)
+          - focus-metavariable: $PATH
       # Joining request text under a base directory is the traversal itself,
       # unless the joined value is then put through a containment guard.
       - patterns:
           - pattern-either:
               - pattern: os.path.join($BASE, ..., $PATH, ...)
-              - pattern: $BASE / $PATH
+              - patterns:
+                  - pattern: $BASE / $PATH
+                  # A path operand, not arithmetic.
+                  - metavariable-regex:
+                      metavariable: $BASE
+                      regex: ^.*(?i:path|dir|root|base|folder|home|cwd|tmp|temp|storage|upload|static|media).*$
           - pattern-not-inside:
               patterns:
                 - pattern-either:
@@ -371,6 +408,18 @@ rules:
           - metavariable-regex:
               metavariable: $REQ
               regex: ^(req|request|\w*Req|\w*Request|ctx|ctx\.request|context\.request|event\.request)$
+      # Tool, MCP and API handler arguments: args.path, params.filePath...
+      - patterns:
+          - pattern-either:
+              - pattern: '$ARGS.$KEY'
+              - pattern: '($ARGS || {}).$KEY'
+              - pattern: '$ARGS?.$KEY'
+          - metavariable-regex:
+              metavariable: $ARGS
+              regex: ^(args|params|input|inputs|arguments|toolInput|toolArgs|payload)$
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: ^(?i)\w*(path|file|filename|dir|directory|folder|dest|destination|target|output|location)\w*$
     pattern-sanitizers:
       # Named containment/sanitizing helpers (safeRel, sanitizePath, resolveWithin...).
       - patterns:
@@ -564,8 +613,26 @@ rules:
         exact: true
       - pattern: '$_COOKIE[...]'
         exact: true
+      # The client's name for an uploaded file.
+      - pattern: '$_FILES[$F]["name"]'
+      - pattern: $UPLOAD->getClientOriginalName()
+      - pattern: $UPLOAD->getClientFilename()
+      - pattern: $UPLOAD->getClientName()
+      - patterns:
+          - pattern-inside: |
+              class $C extends $B implements $I { ... }
+          - metavariable-regex:
+              metavariable: $I
+              regex: .*UploadedFileInterface$
+          - pattern: $this->getName()
     pattern-sanitizers:
       - pattern: (int) $VALUE
+      - pattern: basename(...)
+      - patterns:
+          - pattern: $HELPER(...)
+          - metavariable-regex:
+              metavariable: $HELPER
+              regex: (?i).*(sanitize_?file_?name|safe|secure_?filename).*
       - pattern: (integer) $VALUE
       - pattern: intval(...)
     pattern-sinks:
@@ -587,6 +654,10 @@ rules:
               - pattern: '\readfile(..., filename: $VALUE, ...)'
               - pattern: 'file_put_contents(..., filename: $VALUE, ...)'
               - pattern: '\file_put_contents(..., filename: $VALUE, ...)'
+              - pattern: move_uploaded_file($TMP, $VALUE)
+              - pattern: \move_uploaded_file($TMP, $VALUE)
+              - pattern: $UPLOADED->move($VALUE, ...)
+              - pattern: $UPLOADED->moveTo($VALUE)
           - focus-metavariable: $VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
@@ -2157,6 +2228,9 @@ rules:
     - pattern: $Z->statIndex(...)
     - pattern: $Z->statName(...)
     - pattern: zip_entry_name(...)
+    # Metadata read out of the archive itself (a plugin manifest's name...).
+    - pattern: $Z->getFromName(...)
+    - pattern: $Z->getFromIndex(...)
     pattern-sanitizers:
     - pattern: basename(...)
     - patterns:
@@ -2173,6 +2247,7 @@ rules:
         - pattern: copy(..., $P, ...)
         - pattern: rename(..., $P, ...)
         - pattern: symlink(..., $P)
+        - pattern: $Z->extractTo($P, ...)
       - pattern-not-inside: "if (<... str_starts_with(<... $V ...>, ...) ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
       - pattern-not-inside: "if (<... strpos(<... $V ...>, ...) ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
       - pattern-not-inside: "if (<... str_contains(<... $V ...>, '..') ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
@@ -2562,6 +2637,23 @@ rules:
         - pattern: params.fetch(...)
         - pattern: params.dig(...)
       exact: true
+      label: REQUEST
+    # Method parameters: storage keys and relative names may only reach a
+    # File.join under a root; any path-named parameter may reach a file server.
+    - patterns:
+      - pattern-inside: "def $M(..., $P, ...)\n  ...\nend\n"
+      - pattern: $P
+      - metavariable-regex:
+          metavariable: $P
+          regex: ^(?i)(key|blob_key|storage_key|relpath|rel_path|subpath|sub_path|filename|file_name)$
+      label: PARAM_KEY
+    - patterns:
+      - pattern-inside: "def $M(..., $P, ...)\n  ...\nend\n"
+      - pattern: $P
+      - metavariable-regex:
+          metavariable: $P
+          regex: ^(?i)\w*(path|file)\w*$
+      label: PARAM_PATH
     pattern-sanitizers:
     - pattern: File.basename(...)
     - pattern: $X.to_i
@@ -2680,6 +2772,17 @@ rules:
 
           '
       - focus-metavariable: $P
+      requires: REQUEST
+    - patterns:
+      - pattern: File.join($ROOT, ..., $P, ...)
+      - focus-metavariable: $P
+      requires: PARAM_KEY
+    - patterns:
+      - pattern-either:
+        - pattern: _serve_file($P, ...)
+        - pattern: serve_file($P, ...)
+      - focus-metavariable: $P
+      requires: REQUEST or PARAM_KEY or PARAM_PATH
     paths:
       exclude:
       - '**/test/**'

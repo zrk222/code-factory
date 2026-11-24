@@ -1,0 +1,25 @@
+class TenantStorage
+  def path_for(key)
+    tenant, key = key.split("/", 2)
+    # ruleid: ruby.request-path-traversal
+    File.join(root, tenant, key)
+  end
+
+  def path_for_checked(key)
+    # ok: ruby.request-path-traversal
+    File.join(root, File.basename(key))
+  end
+
+  def read_config(path)
+    # ok: ruby.request-path-traversal
+    File.read(path)
+  end
+end
+
+class DevServer
+  def serve(path)
+    # ruleid: ruby.request-path-traversal
+    return _serve_file(path) if readable?(path)
+    not_found
+  end
+end

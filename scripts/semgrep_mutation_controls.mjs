@@ -139,13 +139,13 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.request-path-traversal': 16,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
-  'opt.factory.rules.php.archive-path-traversal': 2,
+  'opt.factory.rules.php.archive-path-traversal': 3,
   'opt.factory.rules.php.parameter-shell-command': 1,
   'opt.factory.rules.php.parameter-sql-text': 1,
   'opt.factory.rules.php.request-command-injection': 13,
   'opt.factory.rules.php.request-file-inclusion': 2,
   'opt.factory.rules.php.request-html-injection': 1,
-  'opt.factory.rules.php.request-path-traversal': 11,
+  'opt.factory.rules.php.request-path-traversal': 12,
   'opt.factory.rules.php.request-sql-injection': 15,
   'opt.factory.rules.php.request-unsafe-deserialization': 4,
   'opt.factory.rules.python.archive-path-traversal': 4,
@@ -155,7 +155,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.parameter-sql-text': 2,
   'opt.factory.rules.python.request-command-injection': 2,
   'opt.factory.rules.python.request-html-injection': 1,
-  'opt.factory.rules.python.request-path-traversal': 11,
+  'opt.factory.rules.python.request-path-traversal': 13,
   'opt.factory.rules.python.request-sql-injection': 1,
   'opt.factory.rules.python.ssl-context-verification-disabled': 1,
   'opt.factory.rules.python.tarfile-extractall-without-filter': 5,
@@ -166,7 +166,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.ruby.parameter-shell-command': 1,
   'opt.factory.rules.ruby.request-command-injection': 3,
   'opt.factory.rules.ruby.request-html-injection': 1,
-  'opt.factory.rules.ruby.request-path-traversal': 1,
+  'opt.factory.rules.ruby.request-path-traversal': 3,
   'opt.factory.rules.ruby.request-sql-injection': 4,
   'opt.factory.rules.rust.reqwest-disabled-tls-verification': 1,
   'opt.factory.rules.swift.trust-exceptions': 3,
@@ -210,9 +210,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 206 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 212 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 206;
+const REVIEWED_FINDINGS = 212;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -265,7 +265,9 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'tsx-path-join-controls.txt'], ['ts', 'tsx-html-output-controls.txt'],
   ['ts', 'javascript-tls-trust-controls.txt'], ['ts', 'tsx-path-request-controls.txt'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
+  ['rb', 'ruby-path-param-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
+  ['php', 'php-path-upload-controls.php'],
 ]);
 
 function splitHeader(extension, content) {
