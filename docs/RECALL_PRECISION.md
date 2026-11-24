@@ -110,6 +110,37 @@ Still open: calls through dynamic imports or string dispatch (for example
 GeoNode's handler loaded by module path) are not resolved, so such sinks stay
 `public_api` or `unresolved`.
 
+## Fresh held-out sets (24 Nov) and path traversal
+
+Two sets of GitHub-reviewed advisories published Jul–Aug 2026 were frozen
+from metadata before any diff was read (`docs/evidence/heldout-recall-manifest-20261124-*.json`).
+
+| Set | Ruleset | Hunk recall | Wilson 95% | Path traversal |
+|---|---|---|---|---|
+| Fresh, 91 cases (85 scored) | #384 head, scored once | 10/85 (11.8%) | 6.5–20.3% | 1/33 |
+| Fresh, after path tuning (now a dev set) | this change | 19/85 (22.4%) | 14.8–32.3% | 10/33 |
+| Overflow, 61 cases (56 scored), never read | #384 head | 4/56 (7.1%) | 2.8–17.0% | 2/26 |
+| Overflow, same cases | this change, scored once | 5/56 (8.9%) | 3.9–19.3% | 3/26 |
+
+The path rules were tuned on the 33 path cases of the fresh set and gain 9
+there. On the overflow set, which they never saw, they gain 1 (litellm's
+parameter join). **The number to quote for this change is the overflow one:
+path traversal 3/26 (11.5%, Wilson 4.0–29.0%), overall 5/56.** The 113 and
+161 sets are unchanged (18/107 and 19/148).
+
+On the controls, the new rules add 11 parameter-join alerts across 48 full
+Python repositories (about half on caller-supplied mapping keys or
+parameters, the rest on internal names) and 5 JavaScript alerts across 7
+control repositories (SvelteKit's dev and preview servers serving `req.url`,
+and one trivial `existsSync(path.join(dir, file))` helper). The Python
+request rule fires on none of the 48 repositories, before or after.
+
+Most remaining path misses are fixes that add a check in front of a sink the
+pattern lane cannot tie to untrusted input: an options field forwarded through
+callbacks, a value read from an archive's own manifest, a resource URL in a
+framework loader, or a missing branch of an existing check (postcss). Those
+need cross-function reach, not more patterns.
+
 ## What a release claim needs
 
 1. **A new frozen advisory set.** The 113 set has been used to design rules,
