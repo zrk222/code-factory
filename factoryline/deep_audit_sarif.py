@@ -1356,7 +1356,7 @@ def _native_ledger_valid(ledger, coverage, lane):
         isinstance(ledger, dict)
         and set(ledger) == keys
         and _native_ledger_identity(ledger, coverage, lane)
-        and _native_ledger_status(ledger)
+        and _deep_audit_io._gitleaks_ledger_status(ledger)
         and isinstance(ledger["rows"], list)
         and len(ledger["rows"]) <= 200_000
     )
@@ -1369,16 +1369,6 @@ def _native_ledger_identity(ledger, coverage, lane):
         and ledger["source_sha256"] == coverage.get("candidate_sha256")
         and ledger["config_sha256"] == lane["ruleset_sha256"]
         and ledger["root_sha256"] == sha256_bytes(b"/src")
-    )
-
-
-def _native_ledger_status(ledger):
-    return (
-        ledger["prefilter_bypassed"] is True
-        and ledger["complete"] is True
-        and ledger["overflow"] is False
-        and type(ledger["invalid_paths"]) is int
-        and ledger["invalid_paths"] == 0
     )
 
 
