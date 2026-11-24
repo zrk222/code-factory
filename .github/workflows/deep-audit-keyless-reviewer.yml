@@ -136,9 +136,21 @@ jobs:
           )
           messages = [{"role": "system", "content": instructions},
                       {"role": "user", "content": Path("review-model-input.json").read_text(encoding="utf-8")}]
+          source = json.loads(Path("review-model-input.json").read_bytes())["sources"]
+          text = {"type": "string", "minLength": 1, "maxLength": 2048}
+          fields = {"id": text, "severity": {"enum": ["critical", "high", "medium", "low"]},
+                    "path": {"enum": sorted(source)}, "evidence": text, "remediation": text}
+          properties = {
+              "decision": {"enum": ["ACCEPT", "FINDINGS", "INCOMPLETE"]},
+              "findings": {"type": "array", "items": {"type": "object", "properties": fields,
+                                                       "required": list(fields), "additionalProperties": False}},
+              "coverage_gaps": {"type": "array", "items": text},
+          }
+          schema = {"type": "object", "properties": properties, "required": list(properties),
+                    "additionalProperties": False}
           request = Request("http://127.0.0.1:18080/v1/chat/completions",
                             data=canonical({"messages": messages, "temperature": 0, "max_tokens": 1600,
-                                            "response_format": {"type": "json_object"}}),
+                                            "response_format": {"type": "json_schema", "schema": schema}}),
                             headers={"Content-Type": "application/json"})
           with urlopen(request, timeout=1200) as response:
               raw = response.read(131_073)
@@ -148,7 +160,6 @@ jobs:
           assert set(result) == {"decision", "findings", "coverage_gaps"}
           assert result["decision"] in {"ACCEPT", "FINDINGS", "INCOMPLETE"}
           assert isinstance(result["findings"], list) and isinstance(result["coverage_gaps"], list)
-          source = json.loads(Path("review-model-input.json").read_bytes())["sources"]
           for finding in result["findings"]:
               assert set(finding) == {"id", "severity", "path", "evidence", "remediation"}
               assert finding["path"] in source
