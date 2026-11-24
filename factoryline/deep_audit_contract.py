@@ -483,17 +483,11 @@ def _stage_blade_grammars(grammar_dir, sandbox, host, grammar_limit):
     return identities
 
 
-def blade_structure(source: Path, grammar_dir: Path) -> dict:
-    """Analyze a bounded source snapshot in a fresh parser process."""
+def _blade_runtime() -> str:
     import sys
     from importlib.metadata import PackageNotFoundError, version
     from platform import machine
-    from tempfile import TemporaryDirectory
 
-    from .runtime_audit_process import run_bounded_command
-
-    if not source.name.lower().endswith(".blade.php"):
-        raise RuntimeAuditError("E_BLADE_INPUT", "Expected a .blade.php template")
     if sys.platform not in _BLADE_GRAMMARS or machine().lower() not in {
         "amd64",
         "x86_64",
@@ -507,11 +501,31 @@ def blade_structure(source: Path, grammar_dir: Path) -> dict:
         runtime = None
     if runtime != "0.27.0":
         raise RuntimeAuditError(
-            "E_BLADE_RUNTIME", "Install the Blade extra on Python 3.11 or later"
+            "E_BLADE_RUNTIME",
+            "Install the Blade extra for tree-sitter 0.27.0 on Python 3.11 or later",
         )
+    return runtime
+
+
+def blade_structure(source: Path, grammar_dir: Path) -> dict:
+    """Analyze a bounded source snapshot in a fresh parser process."""
+    import sys
+    from tempfile import TemporaryDirectory
+
+    from .runtime_audit_process import run_bounded_command
+
+    if not source.name.lower().endswith(".blade.php"):
+        raise RuntimeAuditError("E_BLADE_INPUT", "Expected a .blade.php template")
+    runtime = _blade_runtime()
     size_limit = 1024 * 1024
     raw = _read_blade_input(source, size_limit)
-    raw.decode("utf-8", errors="strict")
+    try:
+        raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise RuntimeAuditError(
+            "E_BLADE_ENCODING",
+            f"Save {source.name} as UTF-8. Invalid byte at offset {error.start}.",
+        ) from error
     source_digest = sha256(raw).hexdigest()
     grammar_dir = grammar_dir.resolve()
     with TemporaryDirectory(prefix="factory-blade-") as temporary:

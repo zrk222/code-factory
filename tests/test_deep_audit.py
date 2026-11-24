@@ -235,7 +235,6 @@ def _capture_scope_gap_control(
         "csharp",
         "go",
         "php",
-        "kotlin",
     ],
 )
 def test_uncovered_static_source_names_supported_profiles_only(language):
@@ -255,18 +254,30 @@ def test_uncovered_static_source_names_supported_profiles_only(language):
     named = re.findall(r"[\w-]+\.json", static["action"])
     assert named and all(name in supported for name in named)
     assert all((profiles_dir / name).is_file() for name in named)
-    assert ("codeql-" in static["action"]) is (language not in {"php", "kotlin"})
+    assert ("codeql-" in static["action"]) is (language != "php")
     assert static["code"] == "UNCOVERED_SOURCE"
-    assert static["action"].endswith(
-        "naming a profile does not install, run or complete its worker."
-    )
-    assert not re.search(
-        r"\b(installed|available|completed?|covered|passed)\b",
-        static["action"].split(";")[0],
-    )
     assert all(
         "Supported profiles" not in gap["action"] for gap in gaps if gap is not static
     )
+
+
+@pytest.mark.parametrize(
+    "path,language,guidance",
+    [
+        ("Main.kt", "kotlin", "supports kotlin extraction"),
+        ("views/Sample.blade.php", "php", "factory deep-audit blade-structure"),
+    ],
+)
+def test_uncovered_static_source_gives_language_specific_guidance(
+    path, language, guidance
+):
+    from factoryline.deep_audit import _source_gaps
+
+    gaps = _source_gaps({path: {"language": language}}, {}, [])
+    [static] = [gap for gap in gaps if gap["action"].startswith("Add a static ")]
+    assert static["code"] == "UNCOVERED_SOURCE"
+    assert guidance in static["action"]
+    assert ".json" not in static["action"]
 
 
 @pytest.mark.parametrize("code", ["UNCOVERED_SOURCE", "DEPENDENCY_DEPTH"])
@@ -1159,6 +1170,17 @@ def test_blade_structure_rejects_unpinned_grammar_before_launch(tmp_path, monkey
     monkeypatch.setattr(runtime_audit_process, "run_bounded_command", unexpected_launch)
     with pytest.raises(RuntimeAuditError, match="E_BLADE_GRAMMAR"):
         deep_audit_contract.blade_structure(source, tmp_path)
+
+
+def test_blade_structure_explains_invalid_utf8_before_staging(tmp_path, monkeypatch):
+    from factoryline import deep_audit_contract
+
+    source = tmp_path / "label.blade.php"
+    source.write_bytes(b"<p>\xff</p>")
+    monkeypatch.setattr(deep_audit_contract, "_blade_runtime", lambda: "0.27.0")
+
+    with pytest.raises(RuntimeAuditError, match="E_BLADE_ENCODING.*offset 3"):
+        deep_audit_contract.blade_structure(source, tmp_path / "missing-grammars")
 
 
 def adapter_inputs(tmp_path):

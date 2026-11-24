@@ -90,22 +90,27 @@ _STATIC_PROFILES = {
 }
 
 
-def _gap_repair(family: str, language: str) -> str:
+def _gap_repair(family: str, language: str, path: str) -> str:
     repair = f"Add a {family} analyzer and source-bound obligation for {language}."
     if family != "static":
         return repair
-    codeql = _STATIC_PROFILES.get(language)
-    profile = (
-        f"codeql-{codeql}-full.json and semgrep-pattern-limited.json"
-        if codeql
-        else "semgrep-pattern-limited.json (no offline interprocedural worker)"
-    )
+    if language == "php" and path.lower().endswith(".blade.php"):
+        return (
+            f"{repair} For Blade syntax evidence, run "
+            "factory deep-audit blade-structure <template> --grammar-dir <pinned-grammars>."
+        )
     if language == "php":
-        profile = "semgrep-pattern-limited.json or semgrep-php-interfile.json (bounded cross-file)"
-    return (
-        f"{repair} Supported profiles for a signed lane: {profile}; "
-        "naming a profile does not install, run or complete its worker."
-    )
+        return (
+            f"{repair} Supported profiles for a signed lane include "
+            "semgrep-pattern-limited.json and semgrep-php-interfile.json (bounded cross-file)."
+        )
+    codeql = _STATIC_PROFILES.get(language)
+    profiles = [f"codeql-{codeql}-full.json"] if codeql else []
+    if language in _deep_audit_io.SEMGREP_SOURCE_LANGUAGES:
+        profiles.append("semgrep-pattern-limited.json")
+    if profiles:
+        return f"{repair} Supported profiles for a signed lane include {', '.join(profiles)}."
+    return f"{repair} Configure a native profile that supports {language} extraction."
 
 
 def _source_gaps(
@@ -124,7 +129,7 @@ def _source_gaps(
                 gaps.append(
                     _execution_gap(
                         "UNCOVERED_SOURCE",
-                        _gap_repair(family, language),
+                        _gap_repair(family, language, path),
                         path,
                     )
                 )

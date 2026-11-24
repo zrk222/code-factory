@@ -38,6 +38,7 @@ _NATIVE_WORKERS = {
                 "target": "php-interfile-worker",
                 "version": "2.0.0",
                 "profile": "semgrep-php-interfile.json",
+                "scope": "Five ordinary PHP rules through at most three calls per flow. Use the Blade structure command for templates.",
             },
         },
         "php_rule_ids": [
@@ -47,7 +48,7 @@ _NATIVE_WORKERS = {
             "php.request-file-inclusion",
             "php.request-unsafe-deserialization",
         ],
-        "scope": "30 rules in 12 languages. PHP .php only; callee identity unresolved; PDO/framework/cross-function flows unsupported. Inline suppression off; ignores can reduce coverage.",
+        "scope": "Default profile with 30 rules in 12 languages. PHP .php checks are local, with callee identity unresolved. Inline suppression is disabled. Ignores can reduce coverage.",
     },
     "osv": {
         "target": "osv-worker",
