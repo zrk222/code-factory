@@ -471,6 +471,18 @@ def _read_blade_input(path: Path, limit: int) -> bytes:
     return raw
 
 
+def _stage_blade_grammars(grammar_dir, sandbox, host, grammar_limit):
+    names, identities = _BLADE_GRAMMARS[host]
+    for kind, expected in identities.items():
+        name = names.format(kind)
+        observed = _read_blade_input(grammar_dir / name, grammar_limit)
+        if sha256(observed).hexdigest() != expected:
+            raise RuntimeAuditError("E_BLADE_GRAMMAR", f"{kind} parser digest differs")
+        if host == "win32":
+            (sandbox / name).write_bytes(observed)
+    return identities
+
+
 def blade_structure(source: Path, grammar_dir: Path) -> dict:
     """Analyze a bounded source snapshot in a fresh parser process."""
     import sys
@@ -500,21 +512,14 @@ def blade_structure(source: Path, grammar_dir: Path) -> dict:
     size_limit = 1024 * 1024
     raw = _read_blade_input(source, size_limit)
     raw.decode("utf-8", errors="strict")
-    names, identities = _BLADE_GRAMMARS[sys.platform]
     source_digest = sha256(raw).hexdigest()
     grammar_dir = grammar_dir.resolve()
     with TemporaryDirectory(prefix="factory-blade-") as temporary:
         sandbox = Path(temporary)
         (sandbox / "source").write_bytes(raw)
-        for kind, expected in identities.items():
-            name = names.format(kind)
-            observed = _read_blade_input(grammar_dir / name, 8 * size_limit)
-            if sha256(observed).hexdigest() != expected:
-                raise RuntimeAuditError(
-                    "E_BLADE_GRAMMAR", f"{kind} parser digest differs"
-                )
-            if sys.platform == "win32":
-                (sandbox / name).write_bytes(observed)
+        identities = _stage_blade_grammars(
+            grammar_dir, sandbox, sys.platform, 8 * size_limit
+        )
         output = sandbox / "report.json"
         command = [
             sys.executable,
