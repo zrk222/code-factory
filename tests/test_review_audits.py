@@ -17,7 +17,12 @@ from factoryline.review_audits import (
     security_scan,
 )
 from factoryline.change_review import ChangeReviewError, review_change
-from factoryline.captured_operand_audit import findings_from_opengrep, reach
+from factoryline.captured_operand_audit import (
+    Index,
+    entry_reach_tier,
+    findings_from_opengrep,
+    reach,
+)
 from factoryline.cli import main
 
 
@@ -17027,3 +17032,41 @@ def test_audit_keeps_needs_context_without_an_untrusted_caller(tmp_path):
         },
     )
     assert _reach_tiers(tmp_path)[("SECURITY_OS_COMMAND", 4)][0] == "NEEDS_CONTEXT"
+
+
+def test_index_from_root_skips_vendored_and_unparseable_sources(tmp_path):
+    _reach_write(
+        tmp_path,
+        {
+            "app/tools.py": "def run(name):\n    return name\n",
+            "venv/lib/x.py": "def vendored(name):\n    return name\n",
+            "broken.py": "def (:\n",
+        },
+    )
+    index = Index.from_root(tmp_path)
+    assert set(index.functions) == {"app.tools:run"}
+    assert index.enclosing("app/tools.py", 2).key == "app.tools:run"
+
+
+def test_entry_reach_tier_changes_only_needs_context_command_findings(tmp_path):
+    files = {
+        "tools.py": "import os\n\ndef archive(name):\n    os.system('tar ' + name)\n",
+        "web.py": "from flask import request\nfrom tools import archive\n\n"
+        "@app.route('/a')\ndef view():\n    archive(request.args['n'])\n",
+    }
+    source_bytes = {path: text.encode() for path, text in files.items()}
+    bindings = {path: "0" * 64 for path in files}
+    finding = {"code": "SECURITY_OS_COMMAND", "path": "tools.py", "line": 4}
+    decided = ("NEEDS_CONTEXT", None, None)
+    tier, scope, details = entry_reach_tier(finding, source_bytes, bindings, decided)
+    assert (tier, scope) == ("SUPPORTED_DEFECT", "source_bound_entry_reach")
+    assert details["entry_reach"]["parameter"] == "name"
+    assert details["entry_reach"]["chain"][0] == "request.args in web:view"
+    supported = ("SUPPORTED_DEFECT", "other", {})
+    assert entry_reach_tier(finding, source_bytes, bindings, supported) == supported
+    other = {**finding, "code": "SECURITY_WEAK_HASH"}
+    assert entry_reach_tier(other, source_bytes, bindings, decided) == decided
+    assert (
+        entry_reach_tier({**finding, "line": 1}, source_bytes, bindings, decided)
+        == decided
+    )

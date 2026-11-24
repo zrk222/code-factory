@@ -145,7 +145,7 @@ test('rule-family controls append as one parseable source per language at fixed 
   assert.ok(!/^package /m.test(files.get('/t/semgrep-pattern-limited.java')));
   const ts = files.get('/t/semgrep-pattern-limited.ts').split(/\r?\n/);
   for (const [rule, line] of typescriptExtensionEndpoints) {
-    assert.match(ts[line - 2], new RegExp(`ruleid: javascript\\.${rule.replace(/[-.]/g, '\\$&')}`));
+    assert.ok(ts[line - 2].includes(`ruleid: javascript.${rule}`), `${rule} at ${line}`);
   }
 });
 

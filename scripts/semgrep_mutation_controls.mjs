@@ -258,9 +258,9 @@ export const extensionControlFiles = Object.freeze([
   ['go', 'go-archive-output-controls.txt'], ['go', 'go-parameter-sink-controls.txt'],
   ['go', 'go-path-join-controls.txt'], ['go', 'go-tls-trust-controls.txt'],
   ['java', 'java-archive-output-controls.txt'],
-  ['ts', 'javascript-archive-output-controls.js'], ['ts', 'tsx-parameter-sink-controls.txt'],
+  ['ts', 'javascript-archive-output-controls.txt'], ['ts', 'tsx-parameter-sink-controls.txt'],
   ['ts', 'tsx-path-join-controls.txt'], ['ts', 'tsx-html-output-controls.txt'],
-  ['ts', 'javascript-tls-trust-controls.js'],
+  ['ts', 'javascript-tls-trust-controls.txt'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
 ]);
