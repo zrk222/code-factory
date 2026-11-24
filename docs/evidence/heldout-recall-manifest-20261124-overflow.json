@@ -1,0 +1,651 @@
+{
+ "frozen_at_utc": "2026-11-24",
+ "selection_rule": "Second held-out: every advisory that met the 20261124-fresh selection rule but fell past its 25-per-ecosystem cap (PyPI and npm overflow). Frozen before any of these fix diffs was read, while path-traversal rules were being tuned on the first fresh set.",
+ "excluded": [
+  "all 276 earlier ids",
+  "the 91 ids of heldout-recall-manifest-20261124-fresh.json"
+ ],
+ "counts": {
+  "npm": 27,
+  "PyPI": 34
+ },
+ "cases_sha256": "a5ab90d8801fd2901061e02eec540a46d4e6d6595514ec09e886e44820ee6411",
+ "scoring_rule": "Same hunk rule as heldout-recall-manifest-20261124-fresh.json. Scored once, after the path-traversal rule changes are final.",
+ "cases": [
+  {
+   "ghsa": "GHSA-pqh8-p93p-2rx7",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89",
+    "CWE-943"
+   ],
+   "published": "2026-07-31",
+   "repository": "dynatrace-oss/dynatrace-mcp",
+   "fix": "15d3546c0618ffbaeaeca477337e08e92f2151bc"
+  },
+  {
+   "ghsa": "GHSA-rxcw-mc6f-6hr3",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-83"
+   ],
+   "published": "2026-07-31",
+   "repository": "xdan/jodit",
+   "fix": "0ebb61692cbe84f9abf10ac76dd594dbb6343b90"
+  },
+  {
+   "ghsa": "GHSA-vccv-cmxp-4j9h",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-31",
+   "repository": "apostrophecms/apostrophe",
+   "fix": "5a88e9630cbbdde33154ef8abe7557ddf7be418b"
+  },
+  {
+   "ghsa": "GHSA-wf43-fpp3-cf65",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-31",
+   "repository": "apostrophecms/apostrophe",
+   "fix": "5a88e9630cbbdde33154ef8abe7557ddf7be418b"
+  },
+  {
+   "ghsa": "GHSA-442q-2j6p-642g",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-200",
+    "CWE-610"
+   ],
+   "published": "2026-07-28",
+   "repository": "datamodel-code-generator/datamodel-code-generator",
+   "fix": "d2d5cecd9fd3a2a6dbf148bf0740b83a11fc6820"
+  },
+  {
+   "ghsa": "GHSA-7wpj-vvmv-pgm8",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-28",
+   "repository": "pionxzh/wakaru",
+   "fix": "1d30383b20a6f768786b8ada2f1b0945de13c316"
+  },
+  {
+   "ghsa": "GHSA-8359-h9fx-j6v9",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-200",
+    "CWE-610"
+   ],
+   "published": "2026-07-28",
+   "repository": "datamodel-code-generator/datamodel-code-generator",
+   "fix": "2ff4a72b4550a2b2069754c5b075b1655067e5fb"
+  },
+  {
+   "ghsa": "GHSA-2xgg-r2wc-c5r2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-07-24",
+   "repository": "Budibase/budibase",
+   "fix": "2c61f389c9986c91ddd8ae161c2b5e8ec21c60ac"
+  },
+  {
+   "ghsa": "GHSA-379c-qx7v-6h59",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-24",
+   "repository": "huggingface/datasets",
+   "fix": "f989ef9b4cc6c0039a7a82458eebca49e2b58b4b"
+  },
+  {
+   "ghsa": "GHSA-4h8q-hh2j-755w",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-24",
+   "repository": "ahujasid/mcp-for-blender",
+   "fix": "30a3308446cd8f81a9446e5a2ed657c0d8d86072"
+  },
+  {
+   "ghsa": "GHSA-53g2-mvcc-q9x3",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-24",
+   "repository": "basecamp/trix",
+   "fix": "9c0a993d9fc2ffe9d56b013b030bc238f9c0557c"
+  },
+  {
+   "ghsa": "GHSA-6p8h-3wgx-97gf",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-78",
+    "CWE-184"
+   ],
+   "published": "2026-07-24",
+   "repository": "gitpython-developers/GitPython",
+   "fix": "ffcb5359e87619f4fe4a70a4aff5f08c5580ba97"
+  },
+  {
+   "ghsa": "GHSA-83w8-p2f5-377r",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-24",
+   "repository": "fastify/fastify-static",
+   "fix": "db4276f846ba56b21f93768cd6636ee5e2fc58b1"
+  },
+  {
+   "ghsa": "GHSA-9xwg-3r6f-jcx2",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-24",
+   "repository": "facelessuser/pymdown-extensions",
+   "fix": "edce35586d11a1ef78bb187bc60497fe6dbf3b64"
+  },
+  {
+   "ghsa": "GHSA-frvj-c5qp-xj4w",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-918"
+   ],
+   "published": "2026-07-24",
+   "repository": "open-webui/open-webui",
+   "fix": "05098d25a58d03738e01c4e85e8852c3b4ad849c"
+  },
+  {
+   "ghsa": "GHSA-hhrp-gw25-jr43",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-94",
+    "CWE-502"
+   ],
+   "published": "2026-07-24",
+   "repository": "ray-project/ray",
+   "fix": "41443a18f9e6403a072de69098a279c23e2d943c"
+  },
+  {
+   "ghsa": "GHSA-pmpg-2mxq-6xwr",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-07-24",
+   "repository": "Budibase/budibase",
+   "fix": "dd8c0654b35cd89ce3645f2355f4bf2ff9a5dd80"
+  },
+  {
+   "ghsa": "GHSA-r28c-9q8g-f849",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-24",
+   "repository": "postcss/postcss",
+   "fix": "95663d3eb7ba26f4854dd19d3b4f4425760cf56c"
+  },
+  {
+   "ghsa": "GHSA-r9mr-m37c-5fr3",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-78",
+    "CWE-88"
+   ],
+   "published": "2026-07-24",
+   "repository": "gitpython-developers/GitPython",
+   "fix": "e8d0fbf774d1f6baa3b481adfe48bd262e43b453"
+  },
+  {
+   "ghsa": "GHSA-h8fp-f39c-q6mh",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-23",
+   "repository": "remix-run/react-router",
+   "fix": "ce596e823f0d7b883a433af1d5a839a8b9fe0242"
+  },
+  {
+   "ghsa": "GHSA-jjmj-jmhj-qwj2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-601"
+   ],
+   "published": "2026-07-23",
+   "repository": "remix-run/react-router",
+   "fix": "3a5b5ad0e5cf9918c646509563f5c41a89226ff3"
+  },
+  {
+   "ghsa": "GHSA-5jmr-gcrj-2c9q",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-22",
+   "repository": "BerriAI/litellm",
+   "fix": "6a15adcd64137d37f73dee76dfe7481f8c2d9196"
+  },
+  {
+   "ghsa": "GHSA-gf29-4f56-r2jf",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-22",
+   "repository": "n8n-io/n8n",
+   "fix": "f69dfc6dd2178a14ea1624d2e1d403c2e755042f"
+  },
+  {
+   "ghsa": "GHSA-rcv6-pvrj-4xcg",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-07-22",
+   "repository": "n8n-io/n8n",
+   "fix": "f69dfc6dd2178a14ea1624d2e1d403c2e755042f"
+  },
+  {
+   "ghsa": "GHSA-2f96-g7mh-g2hx",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-78",
+    "CWE-184"
+   ],
+   "published": "2026-07-21",
+   "repository": "gitpython-developers/GitPython",
+   "fix": "56806080c1348749b07daa4a2024ce47b3cad285"
+  },
+  {
+   "ghsa": "GHSA-5hxg-r395-fqxx",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-21",
+   "repository": "home-assistant/core",
+   "fix": "567fe858289876b68b8162a77bd46e1e1af79752"
+  },
+  {
+   "ghsa": "GHSA-c2j3-45gr-mqc4",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-184",
+    "CWE-693"
+   ],
+   "published": "2026-07-21",
+   "repository": "cure53/DOMPurify",
+   "fix": "a9ca1e537422319a557a9a2aa61f003b23b4a197"
+  },
+  {
+   "ghsa": "GHSA-frvp-7c67-39w9",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-21",
+   "repository": "honojs/node-server",
+   "fix": "cd076e117cfe4cb8d31f9eb11d2e8f38a6cb8faf"
+  },
+  {
+   "ghsa": "GHSA-vcrf-j523-4mrf",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-07-21",
+   "repository": "aws/aws-cdk",
+   "fix": "baa9e1dff469306cc23b8f4bd232d703f98bf68a"
+  },
+  {
+   "ghsa": "GHSA-w62v-xxxg-mg59",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-07-21",
+   "repository": "honojs/hono",
+   "fix": "cd3f6f7194f0e5c9d4b26ae0cf232018d0f388fc"
+  },
+  {
+   "ghsa": "GHSA-4g3v-8h47-v7g6",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-20",
+   "repository": "withastro/astro",
+   "fix": "092da560eea77ee63a3e2c583c80d8238544e42b"
+  },
+  {
+   "ghsa": "GHSA-7pw4-f3q4-r2p2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-83",
+    "CWE-116"
+   ],
+   "published": "2026-07-20",
+   "repository": "withastro/astro",
+   "fix": "7ba0bb1dc7516e88caff9abd7767322af44b0294"
+  },
+  {
+   "ghsa": "GHSA-8c25-4j27-2rv3",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-20",
+   "repository": "lepture/mistune",
+   "fix": "c7101fcbb6e8790e8e39157c5ca2238fc6dd6cbc"
+  },
+  {
+   "ghsa": "GHSA-9jj8-v89v-xjvw",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-20",
+   "repository": "dgtlmoon/changedetection.io",
+   "fix": "9d38b4517364831889b5b0d7b3465fd060403fd4"
+  },
+  {
+   "ghsa": "GHSA-f48w-9m4c-m7f5",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-20",
+   "repository": "withastro/astro",
+   "fix": "5240e26c9dd91f9bc7140dcfacdb48d5a132830d"
+  },
+  {
+   "ghsa": "GHSA-g97x-gvcm-x72h",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-20",
+   "repository": "lepture/mistune",
+   "fix": "a3cb6e5655308797e8be021d6c7b5bab13cbace2"
+  },
+  {
+   "ghsa": "GHSA-pr2v-jx2c-wg9f",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79",
+    "CWE-644"
+   ],
+   "published": "2026-07-20",
+   "repository": "tornadoweb/tornado",
+   "fix": "9c163aebeaad9e6e7d28bac1f33580eb00b0e421"
+  },
+  {
+   "ghsa": "GHSA-qfrw-5rxm-mhh2",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79",
+    "CWE-184"
+   ],
+   "published": "2026-07-20",
+   "repository": "lepture/mistune",
+   "fix": "c7101fcbb6e8790e8e39157c5ca2238fc6dd6cbc"
+  },
+  {
+   "ghsa": "GHSA-r4rv-85jg-w4mf",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-20",
+   "repository": "lepture/mistune",
+   "fix": "1bef343ade163fc3bb95572b15be720084cdb993"
+  },
+  {
+   "ghsa": "GHSA-f7wf-v2vw-mpcx",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-209"
+   ],
+   "published": "2026-07-17",
+   "repository": "mkreyman/mcp-memory-keeper",
+   "fix": "84f6dfa692736a34ff36e2d2cf2188b71facf73b"
+  },
+  {
+   "ghsa": "GHSA-wxhm-2mq7-7697",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-200"
+   ],
+   "published": "2026-07-17",
+   "repository": "microsoft/prompty",
+   "fix": "88ac9948d7d37995edbb2f6d36913436626c39e1"
+  },
+  {
+   "ghsa": "GHSA-62gx-5q78-wrvx",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-15",
+   "repository": "coddingtonbear/obsidian-local-rest-api",
+   "fix": "fdc97f9e652e0d38cb43911d31f827a12b248fc8"
+  },
+  {
+   "ghsa": "GHSA-rrh3-cwwj-g5mg",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-15",
+   "repository": "PreferredAI/cornac",
+   "fix": "8a50be72c11569b6747c6b96d6e31a0a1962f1a8"
+  },
+  {
+   "ghsa": "GHSA-997v-r4v7-9f3g",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-20",
+    "CWE-502"
+   ],
+   "published": "2026-07-13",
+   "repository": "yzhao062/pyod",
+   "fix": "16e6e3ad8921a4e18ccc8c2afe474db7d002c001"
+  },
+  {
+   "ghsa": "GHSA-rwcv-whm8-fmxm",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-13",
+   "repository": "GeoNode/geonode",
+   "fix": "e53bdeff331f4b577918927d60477d4b50cca02f"
+  },
+  {
+   "ghsa": "GHSA-q65p-7p84-495c",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-07-11",
+   "repository": "MervinPraison/PraisonAI",
+   "fix": "3aa9cbc2bd49c23a32be0a89a5e620d13d843eab"
+  },
+  {
+   "ghsa": "GHSA-wgvq-3jxh-4qg7",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-11",
+   "repository": "MervinPraison/PraisonAI",
+   "fix": "3aa9cbc2bd49c23a32be0a89a5e620d13d843eab"
+  },
+  {
+   "ghsa": "GHSA-3f4v-mp44-x4x2",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-10",
+   "repository": "MervinPraison/PraisonAI",
+   "fix": "1620b49f36945d8cc8ee5635b906c960df5097a0"
+  },
+  {
+   "ghsa": "GHSA-g5r6-gv6m-f5jv",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-10",
+   "repository": "sooperset/mcp-atlassian",
+   "fix": "b041733473f95119dd539542a43c280737a8e460"
+  },
+  {
+   "ghsa": "GHSA-rrqj-82cc-g6h4",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-10",
+   "repository": "MervinPraison/PraisonAI",
+   "fix": "3aa9cbc2bd49c23a32be0a89a5e620d13d843eab"
+  },
+  {
+   "ghsa": "GHSA-w37c-cq55-frjp",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-10",
+   "repository": "MervinPraison/PraisonAI",
+   "fix": "1620b49f36945d8cc8ee5635b906c960df5097a0"
+  },
+  {
+   "ghsa": "GHSA-8gh5-qqh8-hq3x",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79",
+    "CWE-87"
+   ],
+   "published": "2026-07-07",
+   "repository": "open-webui/open-webui",
+   "fix": "ef2aeb7c0eb976bac759e59ac359c94a5b8dc7e0"
+  },
+  {
+   "ghsa": "GHSA-9f4f-jv96-8766",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-07",
+   "repository": "open-webui/open-webui",
+   "fix": "6fd082d55ffaf6eb226efdeebc7155e3693d2d01"
+  },
+  {
+   "ghsa": "GHSA-22g5-r2x5-97cx",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-07-06",
+   "repository": "showdownjs/showdown",
+   "fix": "e5cab1e9a5dcea2bb3cbf888863fa7e65ab37edf"
+  },
+  {
+   "ghsa": "GHSA-h9f9-h6gm-wc85",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-306",
+    "CWE-78"
+   ],
+   "published": "2026-07-06",
+   "repository": "flytohub/flyto-core",
+   "fix": "db7f116b1d3c5dcf94aded00d14118f81f3e225e"
+  },
+  {
+   "ghsa": "GHSA-v3mh-27qj-w836",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-06",
+   "repository": "apache/airflow",
+   "fix": "0385bae70553223677753047b3e779d8b86b15c4"
+  },
+  {
+   "ghsa": "GHSA-322x-v876-g883",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-02",
+   "repository": "asymmetric-effort/NogginLessDom",
+   "fix": "785e6ac6e124d1a89b3ccf40bbd75fc8e4cb215d"
+  },
+  {
+   "ghsa": "GHSA-38j7-23hf-9mhc",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-02",
+   "repository": "electerm/electerm",
+   "fix": "fde153d677a170c5816368f6586647f3af4ef284"
+  },
+  {
+   "ghsa": "GHSA-pmch-g965-grmr",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-89"
+   ],
+   "published": "2026-07-02",
+   "repository": "langroid/langroid",
+   "fix": "00b7dd7b79c5d03c94be284cf3459d98195ebfba"
+  },
+  {
+   "ghsa": "GHSA-v5ff-xmfp-p245",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-07-02",
+   "repository": "electerm/electerm",
+   "fix": "aa778818843b9c083bd711cd04644d102fcb5a42"
+  },
+  {
+   "ghsa": "GHSA-j36p-7w88-g82j",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-07-01",
+   "repository": "gradio-app/gradio",
+   "fix": "97d541f3d5fd05b2587a69ecc94b68fe5d2d7004"
+  }
+ ]
+}
