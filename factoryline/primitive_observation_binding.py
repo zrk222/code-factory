@@ -640,8 +640,9 @@ def build_finding_tier_report(
     tiers = {name: counts[name] for name in _FINDING_TIER_POLICY["tiers"]}
     total = len(ledger)
     abstentions = tiers["NEEDS_CONTEXT"]
-    abstention_fraction = abstentions / total if total else None
-    retention_fraction = 1.0 if total else None
+    abstention_fraction, retention_fraction = (
+        (abstentions / total, 1.0) if total else (None, None)
+    )
     source_model_failed = regenerated.get(("independent_source_model",), False) is None
     native_model_state, gate_coverage = (
         ("UNAVAILABLE", False)
