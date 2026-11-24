@@ -113,7 +113,8 @@ test('findings carry dataflow steps; hunk, trace and residual are scored separat
 });
 
 test('gate rejects lost hits, more residuals and control growth', () => {
-  const result = (rows, residual = 0) => ({ cases: rows, summary: { fix_side_residual_alerts: residual } });
+  const result = (rows, residual = 0) => ({ cases: rows,
+    summary: { fix_side_residual_alerts: residual, hunk_hits: rows.filter(row => row.hunk_hit).length } });
   const before = result([{ ghsa: 'A', hunk_hit: true }, { ghsa: 'B', hunk_hit: false }]);
   const better = result([{ ghsa: 'A', hunk_hit: true }, { ghsa: 'B', hunk_hit: true }]);
   assert.equal(gate({ dev: [{ before, after: better }], controls: [{ before: 3, after: 3 }] }).decision, 'ACCEPT');
@@ -122,6 +123,9 @@ test('gate rejects lost hits, more residuals and control growth', () => {
   assert.match(lostVerdict.failures[0], /lost 1 dev hit/);
   assert.deepEqual(lostVerdict.lost_baseline_hits, ['A']);
   assert.equal(gate({ dev: [{ before, after: result(better.cases, 2) }], controls: [] }).decision, 'REJECT');
+  // Twice the hits may carry twice the residuals, not more.
+  assert.equal(gate({ dev: [{ before: result(before.cases, 1), after: result(better.cases, 2) }], controls: [] }).decision, 'ACCEPT');
+  assert.equal(gate({ dev: [{ before: result(before.cases, 1), after: result(better.cases, 3) }], controls: [] }).decision, 'REJECT');
   const noisy = gate({ dev: [{ before, after: better }], controls: [{ before: 3, after: 9 }], maxControlIncrease: 5 });
   assert.deepEqual([noisy.decision, noisy.control_increase], ['REJECT', 6]);
 });

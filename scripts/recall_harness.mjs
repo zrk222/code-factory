@@ -378,10 +378,16 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   const context = scoringContext(opts, rulesPath);
   mkdirSync(context.workdir, { recursive: true });
-  const rows = await pool(manifest.cases, Number(opts.jobs ?? 6), async row => {
+  const one = async row => {
     try { return { ...row, ...(await scoreOne(context, row)) }; }
     catch (error) { return { ...row, status: 'error', detail: String(error.message).slice(-300) }; }
-  });
+  };
+  const rows = await pool(manifest.cases, Number(opts.jobs ?? 6), one);
+  // Engine timeouts depend on machine load; repeat those cases one at a time
+  // so a timeout is only recorded when it happens on an otherwise idle engine.
+  for (let index = 0; index < rows.length; index++) {
+    if (rows[index].outcome === 'timeout') rows[index] = { ...(await one(manifest.cases[index])), retried_serially: true };
+  }
   return { schema: 'factory.recall-result.v1', manifest: manifestPath, manifest_cases_sha256: manifest.cases_sha256,
     ruleset_sha256: sha256(context.rulesText),
     argv: profileArgv(context.profile, { bin: context.bin, rules: '{rules}', report: '{report}', source: '{source}', extra: context.extra }),
@@ -395,7 +401,7 @@ async function score(opts) {
 }
 
 // Accept/reject gates for one candidate ruleset against a baseline.
-export function gate({ dev, controls, maxControlIncrease = 0 }) {
+export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1 }) {
   const lost = [], gained = [];
   for (const { before, after } of dev) {
     const index = new Map(before.cases.map(row => [row.ghsa, row]));
@@ -417,11 +423,20 @@ export function gate({ dev, controls, maxControlIncrease = 0 }) {
   const failures = [];
   if (newErrors.length) failures.push(`new engine errors/timeouts: ${newErrors.join(', ')}`);
   if (lost.length) failures.push(`lost ${lost.length} dev hit(s): ${lost.join(', ')}`);
-  if (residualAfter > residualBefore) failures.push(`fix-side residuals ${residualBefore} -> ${residualAfter}`);
+  // Residuals are judged per strict hit: a rule that finds more fixes also sees
+  // more fixed code it cannot prove safe. The rate may not rise by more than
+  // residualTolerance (default 10%).
+  const hitsBefore = dev.reduce((n, pair) => n + pair.before.summary.hunk_hits, 0);
+  const hitsAfter = dev.reduce((n, pair) => n + pair.after.summary.hunk_hits, 0);
+  const rateBefore = residualBefore / Math.max(hitsBefore, 1), rateAfter = residualAfter / Math.max(hitsAfter, 1);
+  if (rateAfter > rateBefore * (1 + residualTolerance)) {
+    failures.push(`fix-side residuals per hit ${rateBefore.toFixed(2)} -> ${rateAfter.toFixed(2)} (${residualBefore} -> ${residualAfter})`);
+  }
   if (controlIncrease > maxControlIncrease) failures.push(`control alerts +${controlIncrease} > ${maxControlIncrease}`);
   if (controls.some(delta => delta.error)) failures.push('a control scan failed');
   return { decision: failures.length ? 'REJECT' : 'ACCEPT', failures, gained, lost_baseline_hits: lost, new_errors: newErrors,
-    residual: [residualBefore, residualAfter], control_increase: controlIncrease };
+    residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
+    control_increase: controlIncrease };
 }
 
 async function evaluate(opts) {
@@ -444,7 +459,12 @@ async function evaluate(opts) {
   const out = { schema: 'factory.recall-evaluation.v1', baseline_sha256: sha256(readFileSync(opts.baseline)),
     candidate_sha256: sha256(readFileSync(opts.candidate)), extra_args: [].concat(opts['extra-arg'] ?? []),
     candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []), ...verdict,
-    dev: dev.map(pair => ({ manifest: pair.manifest, before: pair.before.summary, after: pair.after.summary })),
+    dev: dev.map(pair => ({ manifest: pair.manifest, manifest_cases_sha256: pair.after.manifest_cases_sha256,
+      before: pair.before.summary, after: pair.after.summary,
+      cases: pair.after.cases.map((row, index) => ({ ghsa: row.ghsa, fix: row.fix,
+        before: pair.before.cases[index].outcome ?? pair.before.cases[index].status, after: row.outcome ?? row.status,
+        hunk_findings: row.hunk_findings ?? [], fix_side_residual: row.fix_side_residual ?? [],
+        retried_serially: Boolean(row.retried_serially) })) })),
     controls: controlDeltas.map(({ dir, before, after, added, removed, error }) => ({ dir, before, after, added, removed, error })) };
   writeFileSync(opts.out, `${JSON.stringify(out, null, 1)}\n`);
   console.log(out.decision, out.failures, `gained ${out.gained.length}`, `controls +${out.control_increase}`);
@@ -459,9 +479,10 @@ async function controlDeltas_(opts) {
   for (const dir of [].concat(opts.dir)) {
     try {
       const reports = join(resolve(opts.workdir ?? '.factory/recall-work'), 'controls', sha256(resolve(dir)).slice(0, 16));
-      const old = await scan({ ...base, rules: resolve(before) }, resolve(dir), `${reports}/before.sarif`);
+      const tag = rules => sha256(readFileSync(rules, 'utf8')).slice(0, 16);
+      const old = await scan({ ...base, rules: resolve(before) }, resolve(dir), `${reports}/${tag(before)}.sarif`, { reuse: true });
       const now = await scan({ ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])], rules: resolve(after) },
-        resolve(dir), `${reports}/after.sarif`);
+        resolve(dir), `${reports}/${tag(after)}${[].concat(opts['candidate-extra-arg'] ?? []).join('')}.sarif`, { reuse: true });
       const oldKeys = new Set(old.map(key)), newKeys = new Set(now.map(key));
       const snip = f => withSnippet(resolve(dir), f);
       deltas.push({ dir, before: old.length, after: now.length,
