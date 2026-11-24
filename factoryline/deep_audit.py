@@ -100,6 +100,8 @@ def _gap_repair(family: str, language: str) -> str:
         if codeql
         else "semgrep-pattern-limited.json (no offline interprocedural worker)"
     )
+    if language == "php":
+        profile = "semgrep-pattern-limited.json or semgrep-php-interfile.json (bounded cross-file)"
     return (
         f"{repair} Supported profiles for a signed lane: {profile}; "
         "naming a profile does not install, run or complete its worker."

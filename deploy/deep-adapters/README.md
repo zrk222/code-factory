@@ -15,6 +15,7 @@ timeouts, memory limits, challenge outcomes, and report completeness.
 | `codeql-csharp-worker` | CodeQL 2.27.1, C# queries 1.10.0, .NET SDK 10.0.404 | SARIF and source accounting | C# source-only extraction. Unavailable dependencies or target packs can leave coverage incomplete. |
 | `codeql-go-worker` | CodeQL 2.27.1, Go queries 1.6.11, Go SDK 1.27.2 | SARIF and source accounting | Compile-only extraction in declared module roots. Supports source-contained and vendored dependencies. Missing modules, cgo and absent external dependencies leave gaps. |
 | `semgrep-worker` | OpenGrep OSS 1.15.0 (Semgrep-compatible), thirty rules across twelve source languages | SARIF with source-bound local flows | Request-to-shell/SQL checks cover Python, JS/TS, PHP, Go, Java, C# and Ruby; explicit unsafe API/trust checks also cover Rust, C/C++ and Swift. Native controls verify safe counterparts, aliases, trace endpoints and detector removal. Pattern-limited only; no interfile or `interprocedural-full` claim. Candidate `.semgrepignore` still requires native source accounting. |
+| `php-interfile-worker` | OpenGrep 2.0.0 | SARIF and native per-rule evidence | Optional cross-file analysis under the five existing PHP rules, bounded to three calls. |
 | `osv-worker` | OSV-Scanner 2.2.0 + immutable PyPI database snapshot | OSV JSON | Offline PyPI dependency scanning only; the pinned database snapshot ages and does not cover other ecosystems. |
 | `syft-worker` | Syft 1.33.0 | Syft JSON | Inventory only; this is not a vulnerability scan. |
 | `gitleaks-worker` | Gitleaks 8.28.0 | SARIF | Built-in rules are pinned with the image; native accounting limitations remain. |
@@ -406,6 +407,16 @@ Semgrep worker through `factory scan --root PATH --deep --worker-config
 .factory/worker-config.json --json`; this cannot satisfy `interprocedural-full`.
 Missing authorization, native execution, challenge or source evidence remains
 INCOMPLETE. Source accounting COMPLETE means processed paths, not full security.
+
+For bounded cross-file PHP analysis, build `php-interfile-worker` and select
+`profiles/semgrep-php-interfile.json` for a signed static lane with engine
+`semgrep`, mode `pattern-limited` and language `php`. Its image derives exactly
+the five rules above from the shared ruleset and verifies their profile hash.
+This lane scans ordinary PHP through at most three calls per flow, with one
+worker thread, a 512 MiB analysis limit and a 30-second interfile limit per
+rule. Blade and the other syntax, framework and rule limitations above still
+apply. A candidate inventory that assigns Blade to this lane stays incomplete.
+The existing worker remains the default for local-flow PHP and other languages.
 
 Native fixture preparation: copy `rules/tests/php-controls.php` as
 `semgrep-pattern-limited.php` alongside the matching rules YAML, then run the

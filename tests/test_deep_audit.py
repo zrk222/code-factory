@@ -1109,6 +1109,30 @@ def test_semgrep_challenge_rejects_weakened_profile(option):
         _semgrep_challenge_command(profile)
 
 
+def test_php_interfile_profile_keeps_bounded_flags_in_challenge_and_rule_execution():
+    from factoryline.deep_audit_attestation import _semgrep_rule_prefix
+    from factoryline.deep_audit_io import _semgrep_challenge_command
+
+    profiles = Path("deploy/deep-adapters/profiles")
+    profile = json.loads((profiles / "semgrep-php-interfile.json").read_text())
+    baseline = json.loads((profiles / "semgrep-pattern-limited.json").read_text())
+    assert "--enable-interfile" not in _semgrep_challenge_command(baseline)["argv"]
+    challenge = _semgrep_challenge_command(profile)["argv"]
+    per_rule = _semgrep_rule_prefix(profile["tool_version"])
+    for flag in (
+        "--enable-interfile",
+        "--interfile-depth=3",
+        "--interfile-timeout=30",
+        "--max-memory=512",
+        "--jobs=1",
+        "--exclude=*.blade.php",
+    ):
+        assert flag in challenge and flag in per_rule
+    profile["commands"][0]["argv"].remove("--enable-interfile")
+    with pytest.raises(RuntimeAuditError, match="E_SEMGREP_PROFILE"):
+        _semgrep_challenge_command(profile)
+
+
 def adapter_inputs(tmp_path):
     import sys
 
@@ -2809,14 +2833,17 @@ def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_p
         "/usr/local/lib/python3.11/site-packages/factoryline/",
         tmp_path / "worker-sdk",
     )
-    sdk_stage, semgrep_stage = dockerfile.split("FROM sdk AS semgrep-worker", 1)
-    semgrep_stage = semgrep_stage.split("FROM sdk AS codeql-python-worker", 1)[0]
+    sdk_stage, remaining = dockerfile.split("FROM sdk AS sdk-yaml", 1)
+    shared, remaining = remaining.split("FROM sdk-yaml AS semgrep-worker", 1)
+    semgrep_stage, remaining = remaining.split("FROM sdk-yaml AS php-interfile-worker", 1)
+    php_stage = remaining.split("FROM sdk AS codeql-python-worker", 1)[0]
     assert "USER 1000:1000" in sdk_stage
     assert 'ENTRYPOINT ["/opt/factory/bin/audit-adapter"]' in sdk_stage
     assert "USER 1000:1000" in semgrep_stage
+    assert "USER 1000:1000" in php_stage
     assert (
         'ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
-        in semgrep_stage
+        in shared
     )
     _assert_missing_worker_module_fails(tmp_path)
 

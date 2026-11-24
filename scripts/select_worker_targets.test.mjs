@@ -32,10 +32,9 @@ function gitFor({ checkout = head, diffPaths = paths('README.md'), ancestors = n
   };
 }
 
-test('Semgrep rule, profile, control and verifier changes skip SDK matrix', () => {
+test('Semgrep profile, control and verifier changes skip SDK matrix', () => {
   const input = prEvent();
   const result = selectWorkerTargets('pull_request', input, gitFor({ diffPaths: paths(
-    'deploy/deep-adapters/rules/semgrep-pattern-limited.yml',
     'deploy/deep-adapters/profiles/semgrep-pattern-limited.json',
     'deploy/deep-adapters/rules/tests/python-controls.txt',
     'deploy/deep-adapters/rules/tests/javascript-controls.js',
@@ -44,6 +43,14 @@ test('Semgrep rule, profile, control and verifier changes skip SDK matrix', () =
   assert.equal(result.sdk, 'false');
   assert.equal(result.reason, 'semgrep-only');
   assert.deepEqual(JSON.parse(result.matrix), sdkTargets);
+});
+
+test('shared Semgrep rules also rebuild their PHP derivative', () => {
+  const diffPaths = paths('deploy/deep-adapters/rules/semgrep-pattern-limited.yml');
+  const result = selectWorkerTargets('pull_request', prEvent(), gitFor({ diffPaths }));
+  assert.equal(result.sdk, 'true');
+  assert.equal(result.reason, 'shared-php-rules');
+  assert.deepEqual(JSON.parse(result.matrix), ['php-interfile-worker']);
 });
 
 test('mixed and common or unknown paths retain every SDK target', () => {
@@ -88,7 +95,7 @@ test('Git failure retains full matrix', () => {
 test('PR paths are selected from the checked-out merge candidate', () => {
   const input = prEvent();
   assert.equal(selectWorkerTargets('pull_request', input, gitFor({ diffPaths: paths('README.md') })).sdk, 'true');
-  assert.equal(selectWorkerTargets('pull_request', input, gitFor({ diffPaths: paths('deploy/deep-adapters/rules/semgrep-pattern-limited.yml') })).sdk, 'false');
+  assert.equal(selectWorkerTargets('pull_request', input, gitFor({ diffPaths: paths('deploy/deep-adapters/profiles/semgrep-pattern-limited.json') })).sdk, 'false');
 });
 
 test('push checkout mismatch and PR non-ancestor fail closed', () => {
@@ -139,7 +146,7 @@ function trustedWorkflowProgram() {
   return program.replace(/^          /gm, '');
 }
 
-for (const target of ['osv-worker', 'semgrep-worker', 'codeql-python-worker', 'unknown-target', { target: 'codeql-python-worker' }]) {
+for (const target of ['osv-worker', 'semgrep-worker', 'codeql-python-worker', 'php-interfile-worker', 'unknown-target', { target: 'codeql-python-worker' }]) {
 test(`manual ${target} selection cannot narrow a PR or push matrix`, () => {
   for (const name of ['workflow_dispatch', 'pull_request', 'push']) {
     const directory = mkdtempSync(join(tmpdir(), 'factory-manual-osv-'));
@@ -150,7 +157,7 @@ test(`manual ${target} selection cannot narrow a PR or push matrix`, () => {
           GITHUB_EVENT_NAME: name, GITHUB_EVENT_JSON: JSON.stringify({ inputs: { target } }) },
       });
       assert.equal(result.status, 0, result.stderr);
-      const expected = name === 'workflow_dispatch' && ['osv-worker', 'codeql-python-worker'].includes(target) ? [target] : sdkTargets;
+      const expected = name === 'workflow_dispatch' && ['osv-worker', 'codeql-python-worker', 'php-interfile-worker'].includes(target) ? [target] : sdkTargets;
       assert.ok(readFileSync(output, 'utf8').includes(`matrix=${JSON.stringify(expected)}\n`));
       const sdk = name === 'workflow_dispatch' && target === 'semgrep-worker' ? 'false' : 'true';
       assert.ok(readFileSync(output, 'utf8').includes(`sdk=${sdk}\n`));

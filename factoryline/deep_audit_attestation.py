@@ -2131,6 +2131,51 @@ def _semgrep_rule_inventory(config, lane):
     }
 
 
+def _build_php_interfile_rules(baseline, profile_path, output):
+    import yaml
+
+    from .audit_taxonomy import _NATIVE_WORKERS
+
+    rule_ids = _NATIVE_WORKERS["semgrep"]["php_rule_ids"]
+    rules = [
+        rule
+        for rule in yaml.safe_load(Path(baseline).read_bytes())["rules"]
+        if rule["id"] in rule_ids
+    ]
+    for rule in rules:
+        if rule["languages"] != ["php"] or rule.get("mode") != "taint":
+            raise RuntimeAuditError("E_SEMGREP_RULESET", "expected PHP taint rule")
+        rule.setdefault("options", {})["taint_interfile"] = True
+    raw = _deep_audit_io.canonical_bytes({"rules": rules})
+    profile = strict_json(Path(profile_path).read_bytes())
+    _semgrep_rule_inventory(raw, {**profile, "rule_ids": sorted(rule_ids)})
+    Path(output).write_bytes(raw)
+
+
+_PHP_INTERFILE_FLAGS = (
+    "--enable-interfile",
+    "--interfile-depth=3",
+    "--interfile-timeout=30",
+    "--max-memory=512",
+    "--jobs=1",
+    "--exclude=*.blade.php",
+)
+
+
+def _semgrep_rule_prefix(tool_version):
+    argv = [
+        "/usr/bin/semgrep", "scan", "--json", "--strict", "--metrics=off",
+        "--disable-version-check", "--no-git-ignore", "--disable-nosem",
+        "--no-rewrite-rule-ids", "--config",
+    ]
+    if tool_version in {"1.15.0", "2.0.0"}:
+        argv[0] = "/usr/bin/opengrep"
+        argv.remove("--metrics=off")
+    if tool_version == "2.0.0":
+        argv[-1:-1] = _PHP_INTERFILE_FLAGS
+    return argv
+
+
 def _semgrep_rule_runs(
     profile,
     lane,
@@ -2173,24 +2218,13 @@ def _semgrep_rule_runs(
         config = _deep_audit_io.canonical_bytes({"rules": [rule]})
         config_path, report_path = directory / "rule.json", directory / "report.json"
         config_path.write_bytes(config)
-        argv = [
-            profile["commands"][0]["argv"][0],
-            "scan",
-            "--json",
-            "--strict",
-            "--metrics=off",
-            "--disable-version-check",
-            "--no-git-ignore",
-            "--disable-nosem",
-            "--no-rewrite-rule-ids",
-            "--config",
+        argv = _semgrep_rule_prefix(profile.get("tool_version")) + [
             str(config_path),
             "--json-output",
             str(report_path),
             str(source),
         ]
-        if profile.get("tool_version") == "1.15.0":
-            argv.remove("--metrics=off")
+        argv[0] = profile["commands"][0]["argv"][0]
         options = (
             {"tool_context": execution_context["tool_context"]}
             if execution_context
@@ -2374,21 +2408,7 @@ def _semgrep_raw_bindings(observation, index, *, execution_context=None):
     from pathlib import PurePosixPath
 
     argv = observation["argv"]
-    prefix = [
-        "/usr/bin/semgrep",
-        "scan",
-        "--json",
-        "--strict",
-        "--metrics=off",
-        "--disable-version-check",
-        "--no-git-ignore",
-        "--disable-nosem",
-        "--no-rewrite-rule-ids",
-        "--config",
-    ]
-    if observation["native_report"].get("version") == "1.15.0":
-        prefix[0] = "/usr/bin/opengrep"
-        prefix.remove("--metrics=off")
+    prefix = _semgrep_rule_prefix(observation["native_report"].get("version"))
     if execution_context:
         _local_semgrep_raw_argv(observation, index, execution_context, prefix)
     else:

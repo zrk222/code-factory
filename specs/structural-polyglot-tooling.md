@@ -11,6 +11,7 @@ Give operators qualified native analysis for Java, C# and Go when their sources 
 - The system shall verify `REQ_OFFLINE_RECEIPT` and emit the source-bound receipt under network isolation.
 - The system shall verify `REQ_MISSING_PREREQUISITE` and return incomplete for an unavailable SDK, module root, local dependency or extractor.
 - The system shall verify `REQ_PHP_FALLBACK` and return the existing local-pattern lane for PHP when CodeQL extraction is unsupported.
+- The system shall verify `REQ_PHP_INTERFILE` and account for ordinary PHP sources under the explicitly selected cross-file profile while leaving Blade inventories incomplete.
 - The system shall verify `REQ_QUALIFICATION_EVIDENCE` and record the candidate, image, host and each control result.
 - The system shall verify `REQ_COMPARISON_INVARIANCE` and reject a cold/warm comparison if output or coverage differs.
 
@@ -32,6 +33,11 @@ Scenario: Compare measured execution
   Given matched cold and warm runs
   When either output or coverage differs
   Then REQ_COMPARISON_INVARIANCE rejects the comparison
+
+Scenario: Opt-in PHP cross-file execution
+  Given REQ_PHP_INTERFILE and an exact two-file PHP marker fixture
+  When the worker runs with its inspected image, profile and rule hashes
+  Then the positive trace includes both source files and the safe and disabled controls contain no findings
 ```
 
 ## SHOULD — Technical/structural

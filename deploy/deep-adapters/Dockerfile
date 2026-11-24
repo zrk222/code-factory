@@ -25,12 +25,15 @@ USER 1000:1000
 WORKDIR /src
 ENTRYPOINT ["/opt/factory/bin/audit-adapter"]
 
-FROM sdk AS semgrep-worker
+FROM sdk AS sdk-yaml
 USER 0:0
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
-# Restore the existing CF YAML dependency previously supplied by the tool image.
+# The two Semgrep-compatible profiles share the pinned YAML parser.
 ADD --checksum=sha256:b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl /tmp/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
 RUN python -m pip install --no-cache-dir --no-index --no-deps /tmp/pyyaml-*.whl && rm /tmp/pyyaml-*.whl
+ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
+
+FROM sdk-yaml AS semgrep-worker
 # The Semgrep-compatible OSS fork emits native source/sink traces without login.
 # Reuse the shared Python/module closure instead of another interpreter image.
 ADD --checksum=sha256:f81fe0abd4379a729436aeeb1d4696eeb6cde8b6729c72a08543d1c476469656 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v1.15.0/opengrep_manylinux_x86 /usr/bin/opengrep
@@ -49,7 +52,16 @@ USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="pattern-limited"
 RUN HOME=/tmp /usr/bin/opengrep --version
 
-ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
+FROM sdk-yaml AS php-interfile-worker
+ADD --checksum=sha256:37e93f4da5fd04a18c5c1febbdd12f7e98dfccd4d0c9cf2593bcb25eeb462da0 --chmod=0555 https://github.com/opengrep/opengrep/releases/download/v2.0.0/opengrep_linux_x86 /usr/bin/opengrep
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-php-interfile.json /opt/factory/adapter-profile.json
+RUN --mount=type=bind,source=deploy/deep-adapters/rules/semgrep-pattern-limited.yml,target=/tmp/baseline-rules.yml,readonly \
+    python -I -c 'import sys; from factoryline.deep_audit_attestation import _build_php_interfile_rules; _build_php_interfile_rules(*sys.argv[1:])' \
+    /tmp/baseline-rules.yml /opt/factory/adapter-profile.json /opt/factory/rules/semgrep-pattern-limited.yml
+USER 1000:1000
+RUN HOME=/tmp /usr/bin/opengrep --version | grep -Fx 2.0.0
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="pattern-limited" io.code-factory.language="php"
+
 FROM sdk AS codeql-python-worker
 USER 0:0
 ADD --checksum=sha256:1ec99cfa9420f04c2330784b4ddb8363a0dd67c3e4471cd93963c50e6c433717 https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.1/codeql-bundle-linux64.tar.zst /tmp/codeql-bundle.tar.zst
