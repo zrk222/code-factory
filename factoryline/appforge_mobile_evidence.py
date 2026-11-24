@@ -9,6 +9,8 @@ or an explicit ``not_attempted`` release stage.
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from .contract import write_atomic_json
 
 import hashlib
@@ -760,10 +762,9 @@ def _mobile_receipt_review(exc: Exception) -> dict[str, Any]:
 
 def _rank_mobile_receipts(
     workspace: Path,
+    inventory: tuple[Path, ...] | None,
 ) -> tuple[list[tuple[int, Path]], bool, list[str]]:
-    candidates = list(
-        (workspace / ".factory" / "appforge").rglob("*mobile-evidence*.json")
-    )
+    candidates = list(receipt_paths(workspace, "*mobile-evidence*.json", inventory))
     truncated = len(candidates) > 1_000
     ranked: list[tuple[int, Path]] = []
     invalid: list[str] = []
@@ -779,9 +780,7 @@ def _project_mobile_receipt(workspace: Path, path: Path) -> dict[str, Any] | Non
     try:
         if path.stat().st_size > MAX_BYTES:
             raise ValueError("mobile evidence receipt exceeds 1 MiB")
-        value = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError("mobile evidence receipt must be an object")
+        value = read_receipt(workspace, path)
         verified = verify_mobile_evidence_receipt(workspace, path)
         if not verified.get("ok"):
             return None
@@ -848,11 +847,13 @@ def verify_mobile_evidence_receipt(root: Path, receipt_path: Path) -> dict[str, 
         return _mobile_receipt_review(exc)
 
 
-def mobile_evidence_projection(root: Path) -> dict[str, Any]:
+def mobile_evidence_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read valid mobile evidence receipts without invoking tools or providers."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
-    ranked, truncated, invalid = _rank_mobile_receipts(workspace)
+    ranked, truncated, invalid = _rank_mobile_receipts(workspace, inventory)
     # A projection is a current-state UI, not an archive browser.  Select the
     # 100 newest stable files by observed filesystem time, then read them. A
     # file vanishing during selection is recorded as invalid instead of

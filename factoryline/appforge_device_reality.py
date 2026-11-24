@@ -10,6 +10,8 @@ Oracle intent contract and named human supervision.
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from .contract import write_atomic_json as _atomic_json
 
 import json
@@ -647,16 +649,20 @@ def verify_device_reality(
     return {**receipt, "path": destination.relative_to(workspace).as_posix()}
 
 
-def device_reality_projection(root: Path) -> dict[str, Any]:
+def device_reality_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read hash-valid Device Reality receipts without touching a device or candidate."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
     base = workspace / ".factory" / "appforge"
     if base.exists():
-        for path in sorted(base.rglob("*device-reality*.json"))[:100]:
+        for path in sorted(
+            receipt_paths(workspace, "*device-reality*.json", inventory)
+        )[:100]:
             try:
-                value = json.loads(path.read_text(encoding="utf-8"))
+                value = read_receipt(workspace, path)
                 if _valid_hash_seal(value, RECEIPT_SCHEMA, "receipt_sha256"):
                     current.append(
                         {

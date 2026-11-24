@@ -1,0 +1,67 @@
+import os
+import shlex
+import subprocess
+import tarfile
+from subprocess import Popen
+
+
+def convert(input_file, layer_name):
+    options = f'"{input_file}" -nln {layer_name}'
+    commands = ["ogr2ogr"] + options.split(" ")
+    # ruleid: python.parameter-shell-command
+    process = Popen(" ".join(commands), shell=True)
+    return process
+
+
+def convert_quoted(input_file):
+    # ok: python.parameter-shell-command
+    return subprocess.run(f"ogr2ogr {shlex.quote(input_file)}", shell=True)
+
+
+def convert_argv(input_file):
+    # ok: python.parameter-shell-command
+    return subprocess.run(["ogr2ogr", input_file])
+
+
+def run_wrapper(cmd):
+    # ok: python.parameter-shell-command
+    return os.system(cmd)
+
+
+def archive_name(name):
+    # ruleid: python.parameter-shell-command
+    os.system("tar czf /tmp/out.tgz " + name)
+
+
+def find_user(cursor, username):
+    # ruleid: python.parameter-sql-text
+    cursor.execute(f"SELECT * FROM users WHERE name = '{username}'")
+
+
+def find_user_bound(cursor, username):
+    # ok: python.parameter-sql-text
+    cursor.execute("SELECT * FROM users WHERE name = %s", (username,))
+
+
+def find_user_var(cursor, username):
+    query = "SELECT * FROM users WHERE name = '%s'" % username
+    # ruleid: python.parameter-sql-text
+    cursor.execute(query)
+
+
+def run_sql(cursor, sql):
+    # ok: python.parameter-sql-text
+    cursor.execute(sql)
+
+
+def restore(archive, dest):
+    with tarfile.open(archive) as tf:
+        for member in tf.getmembers():
+            # ruleid: python.tarfile-extractall-without-filter
+            tf.extract(member, dest, set_attrs=True)
+
+
+def restore_filtered(archive, dest):
+    with tarfile.open(archive) as tf:
+        # ok: python.tarfile-extractall-without-filter
+        tf.extractall(dest, filter="data")

@@ -1,0 +1,1768 @@
+{
+  "claim_boundary": {
+    "held_out": true,
+    "production_claim": false,
+    "single_scorer": "automated rule only, no human adjudication"
+  },
+  "conclusions": [
+    "Pattern-lane held-out recall is 1/107 (0.93%), against 6/148 (4.1%) for the same runner on the exposed dev cases; the dev figure overstated generalization.",
+    "The new rules did not change registered held-out recall (1/107). They raised matching-family alerts in 4 more changed files (2 to 6), all outside the fix hunks.",
+    "Path traversal (47) and XSS (31) are 78 of the 107 scored held-out cases."
+  ],
+  "detection_rule": "Pre-registered and unchanged from the 161-case study: a rule whose CWE family matches an advisory CWE family reports a line inside the old-side lines of a git diff -U5 hunk of an in-language, non-test file changed by the fix. file_hit (any matching-family alert in a changed file) is descriptive only.",
+  "dev_comparison": {
+    "same_runner_first_fix_only": {
+      "new_ruleset": {
+        "hunk_hit": 6,
+        "scored": 148
+      },
+      "old_ruleset": {
+        "hunk_hit": 6,
+        "scored": 148
+      }
+    }
+  },
+  "exposure": {
+    "after_new_rules": "One-shot run after the rules were committed. Not fully blind: archive extraction was chosen partly because archive-related advisory titles appeared in the held-out listing. No held-out diff was read before or after.",
+    "baseline": "Measured before any rule change; held out.",
+    "reuse": "This held-out set has now scored two scanner versions; further tuning should use a newly frozen set."
+  },
+  "heldout_family_mix": {
+    "cmd": 12,
+    "code": 4,
+    "deser": 5,
+    "incl": 2,
+    "path": 47,
+    "sql": 7,
+    "tls": 6,
+    "xss": 31
+  },
+  "manifest": "docs/evidence/heldout-recall-manifest-20261123.json",
+  "manifest_sha256": "22933eec13576d716128dfc4e43daa7654517e5a06861377276f298ec8de40df",
+  "measurement_id": "heldout-recall-results-20261123",
+  "runs": {
+    "after_new_rules_pattern_lane": {
+      "by_ecosystem": {
+        "Go": {
+          "file_hit": 3,
+          "hunk_hit": 0,
+          "scored": 24
+        },
+        "Maven": {
+          "file_hit": 0,
+          "hunk_hit": 0,
+          "scored": 5
+        },
+        "Packagist": {
+          "file_hit": 1,
+          "hunk_hit": 0,
+          "scored": 24
+        },
+        "PyPI": {
+          "file_hit": 2,
+          "hunk_hit": 1,
+          "scored": 23
+        },
+        "RubyGems": {
+          "file_hit": 0,
+          "hunk_hit": 0,
+          "scored": 7
+        },
+        "npm": {
+          "file_hit": 0,
+          "hunk_hit": 0,
+          "scored": 24
+        }
+      },
+      "cases": [
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-259w-wmqg-fp76",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-2h4w-29cv-2cmv",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-2w9f-fxwj-w2qf",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-35rr-xwfh-x789",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-38xv-hf3p-h7mq",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-396x-xmvh-p563",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-3cgg-c5pp-57h6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-3f7j-7jwc-fxfj",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-3fx2-cqw9-xr3c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-3gg2-335m-rxc6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-3mgh-93r5-r7jf",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-4487-j8r4-4g2f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-47m2-wp7j-p9vc",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-48v2-6jcm-fc99",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-4c2f-96cf-f5fc",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": true,
+          "ghsa": "GHSA-4fjg-2h4q-fwg3",
+          "hunk_hit": false,
+          "rules": [
+            "go.archive-path-traversal"
+          ],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-4vjg-vx72-qq4g",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-4xm8-rg9h-jhq2",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-5793-x2q3-c3q7",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-58g7-7f52-h92c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-59f9-gqg8-mqpj",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-5m6c-38r8-5w76",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-5x38-2vff-x55p",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-628f-v4f6-p37r",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": true,
+          "ghsa": "GHSA-6757-hggm-hp2w",
+          "hunk_hit": false,
+          "rules": [
+            "python.unsafe-deserialization-unscoped"
+          ],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-6w3r-xr62-4xcp",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-6wcv-rj3c-mhv3",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-7952-gx68-cjqr",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-85gg-2gfq-q95m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-89m4-43j5-vhhx",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-8fh7-7q4q-cq52",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-8gmh-2hhj-2hv9",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-97jj-33gv-5xf9",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-9fpx-fr6j-2vh6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": true,
+          "ghsa": "GHSA-9hq4-hm3j-jmph",
+          "hunk_hit": false,
+          "rules": [
+            "go.archive-path-traversal"
+          ],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-9qw7-j9xw-fv9c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-9rjx-3jch-6vjf",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-9vhv-g5hf-m7m7",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-c3cj-3p6p-j822",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-c59x-vh6j-3w8v",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-c7r6-vx3h-w5g2",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-crq5-92j2-j7wv",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-cw2g-2vwq-88w6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-f46q-3v67-fmm4",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-f4j9-crrj-867q",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-f8ff-652m-j5rx",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-f9j4-qggq-h239",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-fg9w-wfp5-j933",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-g29j-rwfv-h99w",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-g3qx-frcg-j979",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-g4c3-4g96-6g4m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-g5ff-637f-6q2m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": true,
+          "ghsa": "GHSA-gh9r-c94j-cmp5",
+          "hunk_hit": true,
+          "rules": [
+            "python.unsafe-deserialization-unscoped"
+          ],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-gj7r-p794-hhq5",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-gq48-pqfc-9p58",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-gx83-3vf8-gh7j",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-h46v-rmh6-fq4f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-h7wh-q2qr-458c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-h7ww-273w-6cm8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-hhww-mrg2-969h",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-hhxq-47xx-j5xx",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-hq2p-f2vj-v3cm",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-j44m-77cc-p3cc",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jcff-cj73-4w4f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jg26-q8hg-3pq4",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jmv2-qgxf-f995",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jpf4-98qj-qr67",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jq3q-62jc-fqq9",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jrjx-9jjw-747m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jrq7-xrjx-pcfw",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jw3m-8q7m-f35r",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jwgx-mp9m-jwcr",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": true,
+          "ghsa": "GHSA-m37j-52j7-pjw7",
+          "hunk_hit": false,
+          "rules": [
+            "go.archive-path-traversal"
+          ],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-m65p-9j7q-6w33",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mc8w-wjhw-45x5",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mf2p-wjp4-99pq",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mh32-jxcr-mh9f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mmg6-4qmv-6pc8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mqwx-84vv-mp26",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mrvp-7wmx-5m4h",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p23f-cm6q-2qp8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p34x-fmph-9fjx",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-p623-mxf7-qxjm",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p74g-f95m-7fx7",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p9h3-gvpq-5539",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p9wj-w8xq-vjx6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-pgwp-vc7q-cvj3",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-qqrg-8jpm-8mph",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-qr6x-7v33-6qmg",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-qxg3-46rw-79j8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-r2q3-7m4h-63qg",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-r3h5-4585-7x3w",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-r4mx-2gr2-8277",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-r7h9-qx4h-77j5",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-rr8v-fxxf-c986",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-rw77-vq4g-x3hp",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": true,
+          "ghsa": "GHSA-rx7m-wxwq-vxr9",
+          "hunk_hit": false,
+          "rules": [
+            "php.request-html-injection"
+          ],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-v65j-hff3-753c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vcx7-pfrh-mcfg",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vj3q-vp3g-j9c8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vp3w-52v9-q57f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vr5f-w35q-98jp",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vvr2-h2jp-838m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vx32-xf7g-9ghr",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-w34q-cm8f-9c5x",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-w42c-h7hr-f67p",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-w6x2-f5m4-xw82",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-w998-qmw9-mf4m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xgjr-7j9q-2h4r",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xhv5-8fpq-g7hf",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xvcc-vqjv-phqh",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xwg4-8hqh-79jq",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xxph-c9ww-hj94",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        }
+      ],
+      "file_hit": 6,
+      "hunk_hit": 1,
+      "ruleset_sha256": "2190513bad5f3135bb30460422cef77ec732fcc2706b15e94d11c22d95ab3270",
+      "scanner_commit": "8ec98a8cb9c414a37f0c85be3bc986a6473b1ceb",
+      "scored": 107,
+      "statuses": {
+        "no_in_language_source_change": 6,
+        "scored": 107
+      }
+    },
+    "baseline_pattern_lane": {
+      "by_ecosystem": {
+        "Go": {
+          "file_hit": 0,
+          "hunk_hit": 0,
+          "scored": 24
+        },
+        "Maven": {
+          "file_hit": 0,
+          "hunk_hit": 0,
+          "scored": 5
+        },
+        "Packagist": {
+          "file_hit": 0,
+          "hunk_hit": 0,
+          "scored": 24
+        },
+        "PyPI": {
+          "file_hit": 2,
+          "hunk_hit": 1,
+          "scored": 23
+        },
+        "RubyGems": {
+          "file_hit": 0,
+          "hunk_hit": 0,
+          "scored": 7
+        },
+        "npm": {
+          "file_hit": 0,
+          "hunk_hit": 0,
+          "scored": 24
+        }
+      },
+      "cases": [
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-259w-wmqg-fp76",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-2h4w-29cv-2cmv",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-2w9f-fxwj-w2qf",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-35rr-xwfh-x789",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-38xv-hf3p-h7mq",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-396x-xmvh-p563",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-3cgg-c5pp-57h6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-3f7j-7jwc-fxfj",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-3fx2-cqw9-xr3c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-3gg2-335m-rxc6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-3mgh-93r5-r7jf",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-4487-j8r4-4g2f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-47m2-wp7j-p9vc",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-48v2-6jcm-fc99",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-4c2f-96cf-f5fc",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-4fjg-2h4q-fwg3",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-4vjg-vx72-qq4g",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-4xm8-rg9h-jhq2",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-5793-x2q3-c3q7",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-58g7-7f52-h92c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-59f9-gqg8-mqpj",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-5m6c-38r8-5w76",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-5x38-2vff-x55p",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-628f-v4f6-p37r",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": true,
+          "ghsa": "GHSA-6757-hggm-hp2w",
+          "hunk_hit": false,
+          "rules": [
+            "python.unsafe-deserialization-unscoped"
+          ],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-6w3r-xr62-4xcp",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-6wcv-rj3c-mhv3",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-7952-gx68-cjqr",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-85gg-2gfq-q95m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-89m4-43j5-vhhx",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-8fh7-7q4q-cq52",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-8gmh-2hhj-2hv9",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-97jj-33gv-5xf9",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-9fpx-fr6j-2vh6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-9hq4-hm3j-jmph",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-9qw7-j9xw-fv9c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-9rjx-3jch-6vjf",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-9vhv-g5hf-m7m7",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-c3cj-3p6p-j822",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-c59x-vh6j-3w8v",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-c7r6-vx3h-w5g2",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-crq5-92j2-j7wv",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-cw2g-2vwq-88w6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-f46q-3v67-fmm4",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-f4j9-crrj-867q",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-f8ff-652m-j5rx",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-f9j4-qggq-h239",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-fg9w-wfp5-j933",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-g29j-rwfv-h99w",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-g3qx-frcg-j979",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-g4c3-4g96-6g4m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-g5ff-637f-6q2m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": true,
+          "ghsa": "GHSA-gh9r-c94j-cmp5",
+          "hunk_hit": true,
+          "rules": [
+            "python.unsafe-deserialization-unscoped"
+          ],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-gj7r-p794-hhq5",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-gq48-pqfc-9p58",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-gx83-3vf8-gh7j",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-h46v-rmh6-fq4f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-h7wh-q2qr-458c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-h7ww-273w-6cm8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-hhww-mrg2-969h",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-hhxq-47xx-j5xx",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-hq2p-f2vj-v3cm",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-j44m-77cc-p3cc",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jcff-cj73-4w4f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jg26-q8hg-3pq4",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jmv2-qgxf-f995",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jpf4-98qj-qr67",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jq3q-62jc-fqq9",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jrjx-9jjw-747m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jrq7-xrjx-pcfw",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jw3m-8q7m-f35r",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-jwgx-mp9m-jwcr",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-m37j-52j7-pjw7",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-m65p-9j7q-6w33",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mc8w-wjhw-45x5",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mf2p-wjp4-99pq",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mh32-jxcr-mh9f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mmg6-4qmv-6pc8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mqwx-84vv-mp26",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-mrvp-7wmx-5m4h",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p23f-cm6q-2qp8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p34x-fmph-9fjx",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-p623-mxf7-qxjm",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p74g-f95m-7fx7",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p9h3-gvpq-5539",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-p9wj-w8xq-vjx6",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-pgwp-vc7q-cvj3",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-qqrg-8jpm-8mph",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-qr6x-7v33-6qmg",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-qxg3-46rw-79j8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-r2q3-7m4h-63qg",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-r3h5-4585-7x3w",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-r4mx-2gr2-8277",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-r7h9-qx4h-77j5",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-rr8v-fxxf-c986",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-rw77-vq4g-x3hp",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-rx7m-wxwq-vxr9",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-v65j-hff3-753c",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vcx7-pfrh-mcfg",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vj3q-vp3g-j9c8",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vp3w-52v9-q57f",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vr5f-w35q-98jp",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vvr2-h2jp-838m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-vx32-xf7g-9ghr",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-w34q-cm8f-9c5x",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-w42c-h7hr-f67p",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": null,
+          "ghsa": "GHSA-w6x2-f5m4-xw82",
+          "hunk_hit": null,
+          "rules": [],
+          "status": "no_in_language_source_change"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-w998-qmw9-mf4m",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xgjr-7j9q-2h4r",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xhv5-8fpq-g7hf",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xvcc-vqjv-phqh",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xwg4-8hqh-79jq",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        },
+        {
+          "file_hit": false,
+          "ghsa": "GHSA-xxph-c9ww-hj94",
+          "hunk_hit": false,
+          "rules": [],
+          "status": "scored"
+        }
+      ],
+      "file_hit": 2,
+      "hunk_hit": 1,
+      "ruleset_sha256": "34c22d94453328985d056ec34bbc3d61fb0a80c3df52c5b42a56af3ce247333c",
+      "scanner_commit": "5c7c21e356529c693077d424f9141470b4080a03",
+      "scored": 107,
+      "statuses": {
+        "no_in_language_source_change": 6,
+        "scored": 107
+      }
+    },
+    "python_audit_security_changed_files": {
+      "dev_161_pypi": {
+        "by_ecosystem": {
+          "PyPI": {
+            "file_hit": 2,
+            "hunk_hit": 1,
+            "scored": 25
+          }
+        },
+        "file_hit": 2,
+        "hunk_hit": 1,
+        "scored": 25,
+        "statuses": {
+          "scored": 25
+        }
+      },
+      "heldout_pypi": {
+        "by_ecosystem": {
+          "PyPI": {
+            "file_hit": 3,
+            "hunk_hit": 2,
+            "scored": 23
+          }
+        },
+        "file_hit": 3,
+        "hunk_hit": 2,
+        "scored": 23,
+        "statuses": {
+          "no_in_language_source_change": 2,
+          "scored": 23
+        }
+      },
+      "scanner_commit": "5c7c21e356529c693077d424f9141470b4080a03"
+    }
+  },
+  "schema": "factory.heldout-recall-results.v1"
+}
