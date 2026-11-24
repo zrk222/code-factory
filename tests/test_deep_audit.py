@@ -1133,6 +1133,34 @@ def test_php_interfile_profile_keeps_bounded_flags_in_challenge_and_rule_executi
         _semgrep_challenge_command(profile)
 
 
+def test_blade_structure_rejects_unpinned_grammar_before_launch(tmp_path, monkeypatch):
+    import importlib.metadata
+    import platform
+    import sys
+
+    from factoryline import deep_audit_contract, runtime_audit_process
+
+    source = tmp_path / "label.blade.php"
+    source.write_bytes(b"<p>{{ $label }}</p>")
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.27.0")
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        deep_audit_contract,
+        "_BLADE_GRAMMARS",
+        {
+            sys.platform: ("{}.bin", {"blade": "a" * 64, "php": "b" * 64}),
+        },
+    )
+    (tmp_path / "blade.bin").write_bytes(b"untrusted bytes")
+
+    def unexpected_launch(*args, **kwargs):
+        pytest.fail("An unpinned parser must never launch")
+
+    monkeypatch.setattr(runtime_audit_process, "run_bounded_command", unexpected_launch)
+    with pytest.raises(RuntimeAuditError, match="E_BLADE_GRAMMAR"):
+        deep_audit_contract.blade_structure(source, tmp_path)
+
+
 def adapter_inputs(tmp_path):
     import sys
 

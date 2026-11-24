@@ -419,6 +419,35 @@ apply. A candidate inventory that assigns Blade to this lane stays incomplete
 and retains verified per-rule evidence for its ordinary PHP files.
 The existing worker remains the default for local-flow PHP and other languages.
 
+### Blade source structure
+
+The opt-in `blade-structure` command binds active escaped and raw echo
+expressions to byte spans and a SHA-256 digest of the original template. It
+parses the Blade syntax first, then parses the full interior of each active
+echo as one PHP expression. Comments, escaped literal echoes, and verbatim
+regions are excluded from active-echo accounting. A malformed template or
+expression produces exit 2 and an incomplete report.
+
+Use Python 3.11 or later on Windows or Linux x86-64. Install the `blade` extra
+from this repo and provision the Blade and PHP grammars from
+tree-sitter-language-pack 1.25.2 into a trusted directory:
+
+```sh
+python -m pip install '.[blade]' 'tree-sitter-language-pack==1.25.2'
+python -c "from tree_sitter_language_pack import cache_dir, prefetch; prefetch(['blade', 'php']); print(cache_dir())"
+```
+
+Select the `libs` directory holding the resulting two native grammar files:
+
+```sh
+factory deep-audit blade-structure resources/views/example.blade.php --grammar-dir PATH_TO_LIBS --json
+```
+
+The command checks the platform-specific file hashes and runs the parser over
+a private source snapshot. This report covers structural syntax and echo
+spans. Custom directives, component evaluation, and signed scanner coverage
+require their own evidence.
+
 Native fixture preparation: copy `rules/tests/php-controls.php` as
 `semgrep-pattern-limited.php` alongside the matching rules YAML, then run the
 existing pinned image's `semgrep --test --metrics=off --disable-version-check`
