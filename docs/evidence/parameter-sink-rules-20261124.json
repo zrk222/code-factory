@@ -11,13 +11,25 @@
     "repositories": 19,
     "review": "Remaining alerts are real interpolation of a function parameter into shell text (rubygems tool/release.rb x3, laravel DevCommand passthru) plus one laravel DynamoDB query-array alert; none is an exploitable public entry point."
   },
-  "ruleset_sha256": "46a66c52e48c4b99d45d2251507d6110f27bce80fd9b036dfab9ec67c23b641d",
+  "rejected_levers": {
+    "php.html-string-unescaped-concatenation": {
+      "control_alerts": {
+        "grav": 6,
+        "laravel": 1,
+        "phpbb": 76
+      },
+      "dev_hunk_gain": 0,
+      "reason": "No gain on the dev set and 76 alerts in phpBB, which escapes request values upstream; not shipped.",
+      "working_hunk_gain": 4
+    }
+  },
+  "ruleset_sha256": "40aaf1d5b72f0eaf3786df6f11e4728cc726c517e56b62bc7be780c0a2a92b11",
   "schema": "factory.pattern-recall-measurement.v1",
   "sets": {
     "dev_161_first_fix": {
       "after": {
-        "file_hit": 22,
-        "hunk_hit": 18,
+        "file_hit": 25,
+        "hunk_hit": 20,
         "hunk_hits": [
           {
             "ecosystem": "Maven",
@@ -112,6 +124,13 @@
             ]
           },
           {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-gpfj-4j6g-c4w9",
+            "rules": [
+              "javascript.dom-innerhtml-from-variable"
+            ]
+          },
+          {
             "ecosystem": "PyPI",
             "ghsa": "GHSA-h36j-8vv3-cj52",
             "rules": [
@@ -130,6 +149,13 @@
             "ghsa": "GHSA-pmw4-jgxx-pcq9",
             "rules": [
               "javascript.parameter-path-join-without-containment"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-rjjv-87mx-6x3h",
+            "rules": [
+              "javascript.html-template-unescaped-interpolation"
             ]
           },
           {
@@ -159,8 +185,8 @@
     },
     "working_113": {
       "after": {
-        "file_hit": 23,
-        "hunk_hit": 12,
+        "file_hit": 28,
+        "hunk_hit": 16,
         "hunk_hits": [
           {
             "ecosystem": "PyPI",
@@ -168,6 +194,13 @@
             "rules": [
               "python.parameter-path-join-without-containment",
               "python.tarfile-member-extract-without-filter"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-3cgg-c5pp-57h6",
+            "rules": [
+              "javascript.html-template-unescaped-interpolation"
             ]
           },
           {
@@ -185,10 +218,24 @@
             ]
           },
           {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-58g7-7f52-h92c",
+            "rules": [
+              "javascript.dom-innerhtml-from-variable"
+            ]
+          },
+          {
             "ecosystem": "PyPI",
             "ghsa": "GHSA-9fpx-fr6j-2vh6",
             "rules": [
               "python.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-f4j9-crrj-867q",
+            "rules": [
+              "javascript.html-template-unescaped-interpolation"
             ]
           },
           {
@@ -203,6 +250,13 @@
             "ghsa": "GHSA-j44m-77cc-p3cc",
             "rules": [
               "php.parameter-shell-command"
+            ]
+          },
+          {
+            "ecosystem": "npm",
+            "ghsa": "GHSA-jmv2-qgxf-f995",
+            "rules": [
+              "javascript.html-template-unescaped-interpolation"
             ]
           },
           {
@@ -272,6 +326,13 @@
       "dev_hunk_hit": 18,
       "ruleset": "46a66c52",
       "working_hunk_hit": 12
+    },
+    {
+      "added": "JS/TS template-attribute interpolation and innerHTML from a variable",
+      "control_alerts": 7,
+      "dev_hunk_hit": 20,
+      "ruleset": "40aaf1d5",
+      "working_hunk_hit": 16
     }
   ]
 }
