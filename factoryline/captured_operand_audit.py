@@ -3656,6 +3656,24 @@ def _parameter_reaches_read(name, scope, parents, closure_writes):
     return all(binding_dominates(statement, write, parents, scope) for write in writes)
 
 
+def _reach_shell_sequence_command(operand, call, finding):
+    if not isinstance(operand, (ast.List, ast.Tuple)):
+        return operand
+    if finding["code"] != "SECURITY_SHELL_COMMAND" or not operand.elts:
+        return None
+
+    from .finite_capture import shell_execution_calls
+    from .review_integrity import shell_execution_enabled
+
+    if finding.get(
+        "call"
+    ) not in shell_execution_calls() or not shell_execution_enabled(call):
+        return None
+    # The first element supplies the shell command on POSIX. Later elements
+    # require platform-specific proof before they can support a promotion.
+    return operand.elts[0]
+
+
 def _sink_parameters(func: Function, finding: dict) -> list[str]:
     """Prove parameter reach to the operand of one source-bound call."""
     call, parents, closure_writes = _reach_call_and_parents(func, finding)
@@ -3663,7 +3681,8 @@ def _sink_parameters(func: Function, finding: dict) -> list[str]:
         return []
     found, seen, pending = {}, set(), [call.args[0]]
     while pending:
-        for name in _reach_operand_names(pending.pop()):
+        operand = _reach_shell_sequence_command(pending.pop(), call, finding)
+        for name in _reach_operand_names(operand):
             if id(name) in seen:
                 continue
             seen.add(id(name))

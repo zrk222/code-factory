@@ -17128,6 +17128,26 @@ def test_entry_reach_tier_changes_only_needs_context_command_findings(tmp_path):
             False,
         ),
         ("[observe(label) for label in ('fixed',)]", "observe(label)", False),
+        (
+            "observe([label, 'fixed'], shell=True)",
+            "observe([label, 'fixed'], shell=True)",
+            True,
+        ),
+        (
+            "observe(['fixed', label], shell=True)",
+            "observe(['fixed', label], shell=True)",
+            False,
+        ),
+        (
+            "alias = (label, 'fixed')\n    observe(alias, shell=True)",
+            "observe(alias, shell=True)",
+            True,
+        ),
+        (
+            "observe([*label, 'fixed'], shell=True)",
+            "observe([*label, 'fixed'], shell=True)",
+            False,
+        ),
         ("observe('fixed'); observe(label)", None, False),
     ],
 )
@@ -17146,6 +17166,8 @@ def test_entry_reach_tier_binds_the_reported_call_and_operand(body, call, expect
         if "observe(" in text
     )
     finding = {"code": "SECURITY_PATH_TRAVERSAL", "path": "labels.py", "line": line}
+    if call and "shell=True" in call:
+        finding.update(code="SECURITY_SHELL_COMMAND", call="subprocess.run")
     if call is not None:
         column = source.splitlines()[line - 1].index(call)
         finding.update(column=column, end_line=line, end_column=column + len(call))
