@@ -88,7 +88,7 @@ jobs:
           git -C llama fetch --depth 1 origin b1b770d90d94cad9e9ea5b993bdbc383a522fb28
           git -C llama checkout --detach FETCH_HEAD
           test "$(git -C llama rev-parse HEAD)" = b1b770d90d94cad9e9ea5b993bdbc383a522fb28
-          cmake -S llama -B llama/build -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake -S llama -B llama/build -DGGML_NATIVE=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build llama/build --config Release --target llama-server --parallel 4
           curl --fail --silent --show-error --location --max-time 600 -o review.gguf 'https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/f74adce6aa16316c625447af059dbebe4983757c/qwen2.5-coder-3b-instruct-q4_k_m.gguf'
           printf '%s  %s\n' '724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7' review.gguf | sha256sum -c -
