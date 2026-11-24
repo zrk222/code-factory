@@ -1,0 +1,196 @@
+name: Keyless six-family audit coordinator
+
+on:
+  push:
+    branches: [codex/keyless-audit-qualification]
+    paths: ['.github/workflows/deep-audit-keyless-*.yml', 'scripts/deep-audit-keyless-plan.json']
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [authorize, review]
+        default: authorize
+      review_packet:
+        description: Base64 gzip containing the exact synthetic candidate and audit evidence
+        type: string
+        required: false
+
+permissions: {}
+
+jobs:
+  authorize:
+    if: github.repository == 'zrk222/code-factory' && (github.event_name == 'push' || inputs.operation == 'authorize')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.11'
+      - name: Bind only the approved candidate to exact role workflows
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          from hashlib import sha256
+          import json
+          import os
+          from pathlib import Path
+
+          def canonical(value):
+              return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+          def pin(data):
+              return sha256(data).hexdigest()
+
+          plan = json.loads(Path("scripts/deep-audit-keyless-plan.json").read_bytes())
+          assert plan["candidate_sha256"] == "b0f44e6fb579fe5cb9fb44599b0f6a56fd56c61b5a26da01ae2793845b6bd6cc"
+          assert len(plan["lanes"]) == 6 and len(plan["obligations"]) == 9
+          workflows = {
+              "implementer": "signed-receipts.yml",
+              "reviewer": "deep-audit-keyless-reviewer.yml",
+              "coordinator": "deep-audit-keyless-coordinator.yml",
+          }
+          base = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/.github/workflows/"
+          roles = {
+              role: {
+                  "identity": f"{base}{file}@{os.environ['GITHUB_REF']}",
+                  "keyid": role,
+                  "workflow_digest": os.environ["GITHUB_SHA"],
+              }
+              for role, file in workflows.items()
+          }
+          trust = canonical({"schema": "factory.deep-audit-sigstore-trust.v1", "roles": roles})
+          names = {"implementer": "implementer_id", "reviewer": "reviewer_identity",
+                   "coordinator": "coordinator_identity"}
+          plan["trust_root_sha256"] = pin(trust)
+          for role, field in names.items():
+              plan[field] = roles[role]["identity"]
+              plan[f"{role}_keyid"] = roles[role]["keyid"]
+          manifest = canonical(plan)
+          directory = Path("control")
+          directory.mkdir()
+          (directory / "trust-root.json").write_bytes(trust)
+          (directory / "manifest.json").write_bytes(manifest)
+          now = datetime.now(timezone.utc)
+          payload = {
+              "schema": "factory.deep-execution-authorization.v1",
+              "manifest_sha256": pin(manifest),
+              "manifest_content_sha256": pin(manifest),
+              "candidate_sha256": plan["candidate_sha256"],
+              "adapter_images": {entry["id"]: entry["image"] for entry in plan["lanes"]},
+              "authority": "none",
+              "issued_at": (now - timedelta(seconds=5)).isoformat(),
+              "expires_at": (now + timedelta(minutes=59)).isoformat(),
+          }
+          (directory / "authorization-payload.json").write_bytes(canonical(payload))
+          PY
+      - uses: sigstore/gh-action-sigstore-python@a5caf349bc536fbef3668a10ed7f5cd309a4b53d
+        with:
+          inputs: control/authorization-payload.json
+          verify: true
+          verify-cert-identity: https://github.com/${{ github.workflow_ref }}
+          verify-oidc-issuer: https://token.actions.githubusercontent.com
+      - name: Package signed authorization
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("control")
+          envelope = {
+              "schema": "factory.deep-audit-sigstore-envelope.v1",
+              "payload": json.loads((root / "authorization-payload.json").read_bytes()),
+              "bundle": json.loads((root / "authorization-payload.json.sigstore.json").read_bytes()),
+          }
+          (root / "authorization.json").write_text(json.dumps(envelope, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: keyless-audit-authorization
+          path: |
+            control/trust-root.json
+            control/manifest.json
+            control/authorization.json
+          if-no-files-found: error
+
+  reviewer:
+    if: github.repository == 'zrk222/code-factory' && inputs.operation == 'review'
+    uses: ./.github/workflows/deep-audit-keyless-reviewer.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      review_packet: ${{ inputs.review_packet }}
+
+  attest-invocation:
+    needs: reviewer
+    if: github.repository == 'zrk222/code-factory' && inputs.operation == 'review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: keyless-specialty-review
+          path: verified-review
+      - name: Verify the separately signed review and bind the invocation
+        env:
+          REVIEWER_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/deep-audit-keyless-reviewer.yml@${{ github.ref }}
+        run: |
+          python -m pip install 'sigstore==4.5.1'
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          from hashlib import sha256
+          from sigstore.models import Bundle
+          from sigstore.verify import Verifier, policy
+
+          def canonical(value):
+              return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+          root = Path("verified-review")
+          review_bytes = (root / "review.json").read_bytes()
+          role = os.environ["REVIEWER_IDENTITY"]
+          pins = policy.AllOf([
+              policy.Identity(identity=role, issuer="https://token.actions.githubusercontent.com"),
+              policy.OIDCBuildSignerURI(role),
+              policy.OIDCBuildSignerDigest(os.environ["GITHUB_SHA"]),
+              policy.OIDCRunnerEnvironment("github-hosted"),
+          ])
+          Verifier.production(offline=True).verify_artifact(
+              review_bytes, Bundle.from_json((root / "review.json.sigstore.json").read_bytes()), pins
+          )
+          review = json.loads(review_bytes)
+          assert review_bytes == canonical(review)
+          assert review["schema"] == "factory.deep-specialty-review.v1"
+          assert review["invocation_id"].startswith(f"github:{os.environ['GITHUB_RUN_ID']}:")
+          assert review["candidate_sha256"] == "b0f44e6fb579fe5cb9fb44599b0f6a56fd56c61b5a26da01ae2793845b6bd6cc"
+          invocation = {key: value for key, value in review.items()
+                        if key not in {"decision", "findings", "coverage_gaps"}}
+          invocation.update(schema="factory.deep-review-invocation.v1",
+                            review_payload_sha256=sha256(review_bytes).hexdigest(), read_only=True)
+          Path("invocation.json").write_bytes(canonical(invocation))
+          PY
+      - uses: sigstore/gh-action-sigstore-python@a5caf349bc536fbef3668a10ed7f5cd309a4b53d
+        with:
+          inputs: invocation.json
+          verify: true
+          verify-cert-identity: https://github.com/${{ github.workflow_ref }}
+          verify-oidc-issuer: https://token.actions.githubusercontent.com
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: keyless-review-invocation
+          path: |
+            invocation.json
+            invocation.json.sigstore.json
+          if-no-files-found: error
