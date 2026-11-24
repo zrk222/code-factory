@@ -4,6 +4,7 @@ import { findingKeys, verifyRuleMutation, verifySourceSinkFlows, verifyFlowContr
   fixedReviewedFindingCounts, javascriptControlManifest, verifyJavascriptControlMatrix,
   tsxQualificationSuffix, appendExtensionControls, typescriptExtensionEndpoints } from './semgrep_mutation_controls.mjs';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const finding = (ruleId, line = 1) => ({ ruleId, locations: [{ physicalLocation: {
   artifactLocation: { uri: '/cases/control.py' }, region: { startLine: line },
@@ -91,7 +92,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 212);
+  assert.equal(balancedReplacement.length, 226);
   assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
@@ -136,7 +137,7 @@ test('rule-family controls append as one parseable source per language at fixed 
     ['/t/semgrep-pattern-limited.py', 'import os\n'],
     ['/t/semgrep-pattern-limited.rb', '# controls\n'],
   ]);
-  const root = new URL('../deploy/deep-adapters/rules/tests', import.meta.url).pathname;
+  const root = fileURLToPath(new URL('../deploy/deep-adapters/rules/tests', import.meta.url));
   appendExtensionControls('/t', root, path => files.get(path) ?? readFileSync(path, 'utf8'), (path, content) => files.set(path, content));
   const go = files.get('/t/semgrep-pattern-limited.go');
   assert.equal(go.match(/^package /gm).length, 1);

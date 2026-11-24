@@ -968,5 +968,68 @@
  "precision_controls": {
   "python_48_repos": "+11 parameter-join alerts, request rule 0 before and after",
   "javascript_7_repos": "+5 alerts (5 -> 10)"
+ },
+ "exposure_adjustment": {
+  "status": "retrospective_candidate_only",
+  "identity": [
+   "casefolded_repository",
+   "full_fix_sha"
+  ],
+  "overflow_manifest_sha256": "4ea2805eb74ad97aa19e506cf81b98696e0a27e38314b7542df4c8055d0559ba",
+  "prior_manifest_sha256": {
+   "20261121-development": "9589e1d70365c9aedf95f5adb4760b346fdee1ed1d2f3130cfdb6220b81383c8",
+   "20261123-heldout": "b1d2085da3a10fd21c811ac0efa1b6f029c46e6f632a51eee9b190a0ac57d64c",
+   "20261124-fresh": "57f702667856bd60df0f0b0431bb1dbb7785d25b3a5ec2cf9f801cfd0b717753"
+  },
+  "excluded": [
+   {
+    "ghsa": "GHSA-r4rv-85jg-w4mf",
+    "repository": "lepture/mistune",
+    "fix": "1bef343ade163fc3bb95572b15be720084cdb993",
+    "status": "scored",
+    "hunk_hit": false,
+    "prior_exposure": [
+     "20261123-heldout"
+    ]
+   },
+   {
+    "ghsa": "GHSA-3f4v-mp44-x4x2",
+    "repository": "MervinPraison/PraisonAI",
+    "fix": "1620b49f36945d8cc8ee5635b906c960df5097a0",
+    "status": "scored",
+    "hunk_hit": false,
+    "prior_exposure": [
+     "20261121-development"
+    ]
+   },
+   {
+    "ghsa": "GHSA-g5r6-gv6m-f5jv",
+    "repository": "sooperset/mcp-atlassian",
+    "fix": "b041733473f95119dd539542a43c280737a8e460",
+    "status": "scored",
+    "hunk_hit": false,
+    "prior_exposure": [
+     "20261121-development"
+    ]
+   },
+   {
+    "ghsa": "GHSA-w37c-cq55-frjp",
+    "repository": "MervinPraison/PraisonAI",
+    "fix": "1620b49f36945d8cc8ee5635b906c960df5097a0",
+    "status": "scored",
+    "hunk_hit": false,
+    "prior_exposure": [
+     "20261121-development"
+    ]
+   }
+  ],
+  "candidate": {
+   "scored_rows": 52,
+   "distinct_fixes": 49,
+   "hunk_hits": 5,
+   "path_rows": 22,
+   "path_hunk_hits": 3
+  },
+  "baseline": "Historical baseline is aggregate only. Adjusted baseline, paired gain, and baseline-hit retention are unmeasured."
  }
 }

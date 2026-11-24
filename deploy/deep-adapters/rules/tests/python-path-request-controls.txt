@@ -1,4 +1,5 @@
 import os
+import pathlib
 import shutil
 import tarfile
 from http.server import BaseHTTPRequestHandler
@@ -35,13 +36,13 @@ def download_report(request):
     return os.path.join(REPORT_DIR, name)
 
 
-def download_checked(request):
+def download_using_unverified_validator(request):
     name = request.GET["name"]
-    # ok: python.request-path-traversal
+    # ruleid: python.request-path-traversal
     report = Path(REPORT_DIR) / name
     if not is_safe_path(REPORT_DIR, report):
         raise ValueError("outside the report directory")
-    # ok: python.request-path-traversal
+    # ruleid: python.request-path-traversal
     with open(report) as handle:
         return handle.read()
 
@@ -128,3 +129,88 @@ def convert_named_image(params):
     # ok: python.request-path-traversal
     with Image.open(os.path.join(REPORT_DIR, name)) as img:
         return img.size
+
+
+def observe_ignored_validator(request, root):
+    name = request.GET["name"]
+    # ruleid: python.request-path-traversal
+    candidate = (pathlib.Path(root) / name).resolve()
+    validate_name(candidate)
+    # ruleid: python.request-path-traversal
+    return open(candidate)
+
+
+def observe_non_rejecting_guard(request, root):
+    name = request.GET["name"]
+    # ruleid: python.request-path-traversal
+    candidate = (pathlib.Path(root) / name).resolve()
+    if is_safe(candidate):
+        record(candidate)
+    # ruleid: python.request-path-traversal
+    return open(candidate)
+
+
+def observe_rejecting_guard(request, root):
+    name = request.GET["name"]
+    base = pathlib.Path(root).resolve()
+    # ok: python.request-path-traversal
+    candidate = (base / name).resolve()
+    if not candidate.is_relative_to(base):
+        raise ValueError("Outside the allowed directory")
+    # ok: python.request-path-traversal
+    open(candidate)
+
+
+def observe_raising_validator(request, root):
+    name = request.GET["name"]
+    base = pathlib.Path(root).resolve()
+    # ok: python.request-path-traversal
+    candidate = (base / name).resolve()
+    candidate.relative_to(base)
+    # ok: python.request-path-traversal
+    open(candidate)
+
+
+def observe_reassigned_path(request, root):
+    name = request.GET["name"]
+    base = pathlib.Path(root).resolve()
+    # ok: python.request-path-traversal
+    candidate = (base / name).resolve()
+    candidate.relative_to(base)
+    # ruleid: python.request-path-traversal
+    candidate = base / request.GET["replacement"]
+    # ruleid: python.request-path-traversal
+    open(candidate)
+
+
+def observe_unrelated_validation(request, root):
+    name = request.GET["name"]
+    base = pathlib.Path(root).resolve()
+    # ruleid: python.request-path-traversal
+    candidate = (base / name).resolve()
+    base.relative_to(base)
+    # ruleid: python.request-path-traversal
+    open(candidate)
+
+
+def observe_handled_validation(request, root):
+    name = request.GET["name"]
+    base = pathlib.Path(root).resolve()
+    # ruleid: python.request-path-traversal
+    candidate = (base / name).resolve()
+    try:
+        candidate.relative_to(base)
+    except ValueError:
+        record(candidate)
+    # ruleid: python.request-path-traversal
+    open(candidate)
+
+
+def secure_filename(value):
+    return value
+
+
+def observe_shadowed_normalizer(request):
+    name = secure_filename(request.GET["name"])
+    # ruleid: python.request-path-traversal
+    return open(name)

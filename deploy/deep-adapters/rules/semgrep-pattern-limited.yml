@@ -283,31 +283,25 @@ rules:
               regex: ^["'](?i)\w*(path|file|filename|dir|directory|folder|dest|destination|target|output|input|location)\w*["']$
     pattern-sanitizers:
       - pattern: os.path.basename(...)
-      - pattern: secure_filename(...)
-      # if not is_md5(h): return; is_safe_path(root, p); re.fullmatch(..., v)
-      - by-side-effect: true
-        patterns:
-          - pattern-either:
-              - pattern: $CHECK(..., $X, ...)
-              - pattern: $OBJ.$CHECK(..., $X, ...)
-          - metavariable-regex:
-              metavariable: $CHECK
-              regex: ^(is_\w+|valid\w*|validate\w*|check\w*|\w*safe\w*|\w*within\w*|\w*contain\w*|fullmatch|match)$
-          - focus-metavariable: $X
+      - pattern: werkzeug.utils.secure_filename(...)
     pattern-sinks:
       - patterns:
           - pattern: open($PATH, ...)
-          # Used only after a containment guard that names the same value.
           - pattern-not-inside:
               patterns:
-                - pattern-inside: |
-                    if <... $CHECK(..., <... $V ...>, ...) ...>:
-                      ...
-                    ...
-                - pattern: open(<... $V ...>, ...)
-                - metavariable-regex:
-                    metavariable: $CHECK
-                    regex: (?i)^(\w*safe\w*|\w*within\w*|\w*contain\w*|\w*inside\w*|is_relative_to|commonpath|valid\w*|is_valid\w*)$
+                - pattern-either:
+                    - pattern-inside: |
+                        $ROOT = pathlib.Path(...).resolve()
+                        $PATH = ($ROOT / $NAME).resolve()
+                        if not $PATH.is_relative_to($ROOT):
+                          raise ...
+                        open($PATH, ...)
+                    - pattern-inside: |
+                        $ROOT = pathlib.Path(...).resolve()
+                        $PATH = ($ROOT / $NAME).resolve()
+                        $PATH.relative_to($ROOT)
+                        open($PATH, ...)
+                - pattern: open($PATH, ...)
           - focus-metavariable: $PATH
       # Opening, copying, moving or deleting through a library call.
       - patterns:
@@ -345,24 +339,15 @@ rules:
               patterns:
                 - pattern-either:
                     - pattern-inside: |
-                        $V = $JOIN
-                        ...
-                        if <... $CHECK(..., <... $V ...>, ...) ...>:
-                          ...
+                        $ROOT = pathlib.Path(...).resolve()
+                        $TARGET = ($ROOT / $PATH).resolve()
+                        if not $TARGET.is_relative_to($ROOT):
+                          raise ...
                     - pattern-inside: |
-                        $V = $JOIN
-                        ...
-                        if <... $V.$CHECK(...) ...>:
-                          ...
-                    - pattern-inside: |
-                        $V = $JOIN
-                        ...
-                        if <... str($V).$CHECK(...) ...>:
-                          ...
-                - pattern: $JOIN
-                - metavariable-regex:
-                    metavariable: $CHECK
-                    regex: (?i)^(\w*safe\w*|\w*within\w*|\w*contain\w*|\w*inside\w*|startswith|is_relative_to|relative_to|commonpath|valid\w*|is_valid\w*|check\w*)$
+                        $ROOT = pathlib.Path(...).resolve()
+                        $TARGET = ($ROOT / $PATH).resolve()
+                        $TARGET.relative_to($ROOT)
+                - pattern: $ROOT / $PATH
           - focus-metavariable: $PATH
       - patterns:
           - pattern: pathlib.Path($PATH).read_text(...)

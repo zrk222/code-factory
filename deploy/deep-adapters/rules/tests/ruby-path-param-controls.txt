@@ -1,8 +1,13 @@
 class TenantStorage
   def path_for(key)
     tenant, key = key.split("/", 2)
-    # ruleid: ruby.request-path-traversal
-    File.join(root, tenant, key)
+    File.join(
+      root,
+      # ruleid: ruby.request-path-traversal
+      tenant,
+      # ruleid: ruby.request-path-traversal
+      key
+    )
   end
 
   def path_for_checked(key)
