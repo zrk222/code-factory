@@ -4369,6 +4369,16 @@ def _build_oracle_context(
             _oracle_helper_edges(
                 root, caller, imports, snapshots, helper_summaries, edges
             )
+            contexts[path]["mixins"].update(
+                oracle_misuse.imported_testcase_subclasses(
+                    tree,
+                    imports,
+                    snapshots,
+                    lambda mod: _unittest_testcase_classes(
+                        mod, _scope_security_aliases(_module_security_aliases(mod), mod)
+                    ),
+                )
+            )
             for source, symbol in _imported_unittest_mixins(tree, aliases, imports):
                 if source in contexts:
                     contexts[source]["mixins"].add(symbol)
