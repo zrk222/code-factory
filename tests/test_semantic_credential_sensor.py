@@ -6409,3 +6409,128 @@ def test_consumed_http_literals_names_only_the_reported_literals():
     )
     assert consumed == {id(first.keywords[0].value.elts[1])}
     assert consumed_http_literals(tree, {}, None, []) == frozenset()
+
+
+_P1_CONSUMERS = {
+    "http_bearer_auth": (
+        "import requests\nAPI_TOKEN = {k!r}\n\ndef fetch():\n"
+        "    return requests.get('https://api.example.com', "
+        "headers={{'Authorization': 'Bearer ' + API_TOKEN}}, timeout=5)\n"
+    ),
+    "http_basic_auth": (
+        "import requests\nSERVICE_PASSWORD = {k!r}\n\ndef sync():\n"
+        "    return requests.post('https://erp.example.com', "
+        "auth=('svc', SERVICE_PASSWORD), timeout=5)\n"
+    ),
+    "smtp_login": (
+        "import smtplib\nSMTP_PASSWORD = {k!r}\n\ndef send(message):\n"
+        "    with smtplib.SMTP_SSL('smtp.example.com', 465) as server:\n"
+        "        server.login('alerts@example.com', SMTP_PASSWORD)\n"
+    ),
+    "database_password": (
+        "import psycopg2\nDB_PASSWORD = {k!r}\n\ndef connect():\n"
+        "    return psycopg2.connect(host='db', user='u', password=DB_PASSWORD)\n"
+    ),
+    "cloud_sdk_secret": (
+        "import boto3\nAWS_SECRET_ACCESS_KEY = {k!r}\n\ndef bucket():\n"
+        "    return boto3.client('s3', aws_secret_access_key=AWS_SECRET_ACCESS_KEY)\n"
+    ),
+}
+
+
+def _p1_tier(source):
+    report = _private_key_auth_tiers(source)
+    rows = [
+        row
+        for row in report["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(rows) == 1
+    return rows[0]
+
+
+@pytest.mark.parametrize("role", sorted(_P1_CONSUMERS))
+def test_literal_credential_reaching_a_closed_consumer_is_supported(role):
+    row = _p1_tier(_P1_CONSUMERS[role].format(k=_SHAPED))
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["evidence"] == "source_bound_literal_credential_consumer"
+    observation = row["credential_authority_observation"]
+    assert observation["consumer_role"] == role
+    assert observation["deployment"] == "UNASSESSED"
+    assert _SHAPED not in repr(observation)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        # rebound at module level
+        lambda s: s + "API_TOKEN = load()\n",
+        # parameter shadows the global inside the consumer function
+        lambda s: s.replace("def fetch():", "def fetch(API_TOKEN):"),
+        # value reaches the consumer through an intermediate name
+        lambda s: s.replace("'Bearer ' + API_TOKEN", "header").replace(
+            "def fetch():\n", "def fetch():\n    header = 'Bearer ' + API_TOKEN\n"
+        ),
+        # consumer outside the closed list
+        lambda s: s.replace("requests.get(", "client.get("),
+        # used only at module level, never inside a function
+        lambda s: s.split("\ndef ")[0] + "\nheaders = {'Authorization': API_TOKEN}\n",
+    ],
+)
+def test_literal_credential_without_a_direct_consumer_stays_in_review(mutation):
+    source = mutation(_P1_CONSUMERS["http_bearer_auth"].format(k=_SHAPED))
+    assert _p1_tier(source)["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import jwt\nJWT_SECRET = {k!r}\n\ndef issue(uid):\n"
+        "    return jwt.encode({{'sub': uid}}, JWT_SECRET, algorithm='HS256')\n",
+        "import hashlib\nimport hmac\nWEBHOOK_SECRET = {k!r}\n\ndef sign(body):\n"
+        "    return hmac.new(WEBHOOK_SECRET.encode(), body, hashlib.sha256)\n",
+    ],
+)
+def test_inbound_verification_keys_are_left_to_their_own_contracts(source):
+    assert _p1_tier(source.format(k=_SHAPED))["tier"] == "NEEDS_CONTEXT"
+
+
+def test_rebound_provider_voids_the_consumer_proof():
+    source = _P1_CONSUMERS["database_password"].format(k=_SHAPED)
+    assert _p1_tier(source + "psycopg2.connect = replacement\n")["tier"] == (
+        "NEEDS_CONTEXT"
+    )
+
+
+def test_literal_credential_consumer_evidence_refuses_tests_and_shadowed_libraries():
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from factoryline.provenance import literal_credential_consumer_evidence as proof
+
+    source = _P1_CONSUMERS["database_password"].format(k=_SHAPED)
+    tree = ast.parse(source)
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "line": 2,
+        "column": 0,
+        "facts": {"name": "DB_PASSWORD"},
+    }
+
+    def context(path, paths):
+        index = SimpleNamespace(
+            snapshots={Path(path): tree},
+            validate=lambda _: True,
+            relative=str,
+            inventory={Path(path): "0" * 64},
+        )
+        aliases = {Path(path): _security_aliases(list(ast.walk(tree)))}
+        return {"index": index, "paths": paths, "aliases": aliases}
+
+    assert proof({**finding, "path": "app/db.py"}, context("app/db.py", ["app/db.py"]))
+    for path in ("tests/db.py", "app/test_db.py", "app/conftest.py"):
+        assert proof({**finding, "path": path}, context(path, [path])) is None
+    for shadow in ("psycopg2.py", "service/psycopg2/__init__.py"):
+        shadowed = context("app/db.py", ["app/db.py", shadow])
+        assert proof({**finding, "path": "app/db.py"}, shadowed) is None
+    assert proof({**finding, "code": "SECURITY_WEAK_HASH"}, None) is None

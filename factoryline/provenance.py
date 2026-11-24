@@ -5209,3 +5209,262 @@ def consumed_http_literals(tree, aliases, nodes, findings):
         if isinstance(node, ast.Call) and (node.lineno, node.col_offset) in calls
         for value, _, _ in _auth_literal_nodes(node, aliases)
     )
+
+
+# P1: a module literal credential passed straight to an outbound authentication
+# consumer. Inbound verification keys (JWT, HMAC, framework signing) are left to
+# their own contracts, which also require proof that the verifier runs.
+LITERAL_CONSUMER_SCHEMA = "factory.security.literal-credential-consumer.v1"
+SAME_MODULE_CREDENTIAL_SCOPES = {
+    (
+        "captured_same_module_static_wiring",
+        "factory.security.private-key-auth-flow.v1",
+        "embedded_private_key",
+        "django_password_verifier",
+    ): "source_bound_private_key_http_authentication_flow",
+    **{
+        (
+            "captured_same_module_static_wiring",
+            LITERAL_CONSUMER_SCHEMA,
+            "module_literal_credential",
+            role,
+        ): "source_bound_literal_credential_consumer"
+        for role in (
+            "http_basic_auth",
+            "http_bearer_auth",
+            "database_password",
+            "cloud_sdk_secret",
+            "smtp_login",
+        )
+    },
+}
+_HTTP_VERBS = {"get", "post", "put", "patch", "delete", "head", "options", "request"}
+_DB_CONNECT = {"psycopg2.connect", "pymysql.connect", "MySQLdb.connect"}
+_DB_CONNECT |= {"mysql.connector.connect"}
+_BOTO = {"boto3.client", "boto3.resource", "boto3.Session", "boto3.session.Session"}
+_SMTP = {"smtplib.SMTP", "smtplib.SMTP_SSL"}
+
+
+def _is_test_module(relative: str) -> bool:
+    parts = [part.lower() for part in Path(relative).parts]
+    name = parts[-1] if parts else ""
+    return (
+        any(part in {"test", "tests", "testing"} for part in parts[:-1])
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or name == "conftest.py"
+    )
+
+
+def _references(node, name) -> bool:
+    """The value is the global name itself, ``name.encode(...)`` or a bearer string."""
+    if isinstance(node, ast.Name):
+        return node.id == name
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return node.func.attr == "encode" and _references(node.func.value, name)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        prefix = node.left
+        return (
+            isinstance(prefix, ast.Constant)
+            and prefix.value in {"Bearer ", "Token ", "token "}
+            and _references(node.right, name)
+        )
+    if isinstance(node, ast.JoinedStr) and len(node.values) == 2:
+        prefix, value = node.values
+        return (
+            isinstance(prefix, ast.Constant)
+            and prefix.value in {"Bearer ", "Token ", "token "}
+            and isinstance(value, ast.FormattedValue)
+            and _references(value.value, name)
+        )
+    return False
+
+
+def _argument(call, keyword, position):
+    for item in call.keywords:
+        if item.arg == keyword:
+            return item.value
+    if position is not None and len(call.args) > position:
+        return call.args[position]
+    return None
+
+
+def _http_role(call, name):
+    auth = _argument(call, "auth", None)
+    if isinstance(auth, ast.Tuple) and len(auth.elts) == 2:
+        if _references(auth.elts[1], name):
+            return "http_basic_auth", auth.elts[1]
+    headers = _argument(call, "headers", None)
+    if isinstance(headers, ast.Dict):
+        for key, value in zip(headers.keys, headers.values):
+            if getattr(key, "value", None) == "Authorization" and _references(
+                value, name
+            ):
+                return "http_bearer_auth", value
+    return None
+
+
+def _consumer_role(call, canonical, name, smtp_receivers):
+    head, _, verb = canonical.rpartition(".")
+    if head == "requests" and verb in _HTTP_VERBS:
+        return _http_role(call, name)
+    table = (
+        (_DB_CONNECT, "database_password", ("password", "passwd"), None),
+        (_BOTO, "cloud_sdk_secret", ("aws_secret_access_key",), None),
+    )
+    for names, role, keywords, position in table:
+        if canonical in names:
+            for keyword in keywords:
+                value = _argument(call, keyword, position)
+                if value is not None and _references(value, name):
+                    return role, value
+    func = call.func
+    if (
+        isinstance(func, ast.Attribute)
+        and func.attr == "login"
+        and isinstance(func.value, ast.Name)
+        and func.value.id in smtp_receivers
+    ):
+        value = _argument(call, "password", 1)
+        if value is not None and _references(value, name):
+            return "smtp_login", value
+    return None
+
+
+def _smtp_receivers(function, aliases):
+    from .security_configuration import _canonical
+
+    receivers = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.withitem) and isinstance(node.optional_vars, ast.Name):
+            if isinstance(node.context_expr, ast.Call):
+                if _canonical(node.context_expr, aliases) in _SMTP:
+                    receivers.add(node.optional_vars.id)
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+            if isinstance(target, ast.Name) and isinstance(value, ast.Call):
+                if _canonical(value, aliases) in _SMTP:
+                    receivers.add(target.id)
+    return receivers
+
+
+def _locally_bound(function, name) -> bool:
+    arguments = function.args
+    parameters = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+    parameters += [arguments.vararg, arguments.kwarg]
+    if any(item is not None and item.arg == name for item in parameters):
+        return True
+    return any(
+        isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, ast.Store)
+        or isinstance(node, (ast.Global, ast.Nonlocal))
+        and name in node.names
+        for node in ast.walk(function)
+    )
+
+
+def _literal_declaration(finding, tree):
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and (node.lineno, node.col_offset)
+            == (finding.get("line"), finding.get("column", 0))
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            return node
+    return None
+
+
+def _consumer_witness(tree, declaration, aliases):
+    from .security_configuration import _canonical
+
+    name = declaration.targets[0].id
+    functions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for function in functions:
+        if _locally_bound(function, name):
+            continue
+        receivers = _smtp_receivers(function, aliases)
+        for call in ast.walk(function):
+            if isinstance(call, ast.Call):
+                canonical = _canonical(call, aliases) or ""
+                found = _consumer_role(call, canonical, name, receivers)
+                if found is not None:
+                    return found[0], found[1], call
+    return None
+
+
+def _consumer_provider_uncertain(context, tree, aliases, witness):
+    """A repository module named like the provider, or a rebound provider, voids the proof."""
+    from .security_configuration import _canonical
+    from .semantic_credential_sensor import _provider_identity_uncertain
+
+    role, _, call = witness
+    if role == "smtp_login":
+        root = "smtplib"
+    else:
+        root = (_canonical(call, aliases) or "").split(".", 1)[0]
+    shadowed = any(
+        part.removesuffix(".py") == root
+        for item in context["paths"]
+        for part in Path(item).parts
+    )
+    return (
+        not root
+        or shadowed
+        or _provider_identity_uncertain(tree, aliases, roots=(root,))
+    )
+
+
+def literal_credential_consumer_evidence(finding, context):
+    """Bind a module credential literal to a same-module authentication consumer.
+
+    Proof: the literal is the single module binding of its name, the module is
+    not a test module and no repository module shadows a consumer library, and
+    a function with no local binding of that name passes it directly to a
+    closed-list consumer argument. Deployment and validity stay unassessed.
+    """
+    from .semantic_credential_sensor import (
+        _credential_module_rebound,
+        _signing_source_span,
+    )
+
+    if context is None or finding.get("code") != "SECURITY_HARDCODED_SECRET":
+        return None
+    path = Path(finding.get("path", ""))
+    index = context["index"]
+    tree = index.snapshots.get(path)
+    if tree is None or not index.validate(path) or _is_test_module(str(path)):
+        return None
+    declaration = _literal_declaration(finding, tree)
+    if declaration is None or _credential_module_rebound(
+        tree, declaration.targets[0].id, declaration
+    ):
+        return None
+    aliases = context["aliases"][path]
+    witness = _consumer_witness(tree, declaration, aliases)
+    if witness is None or _consumer_provider_uncertain(context, tree, aliases, witness):
+        return None
+    role, reference, call = witness
+    return {
+        "schema": LITERAL_CONSUMER_SCHEMA,
+        "source_role": "module_literal_credential",
+        "consumer_role": role,
+        "transfers": [
+            _signing_source_span(index, path, node)
+            for node in (declaration, reference, call)
+        ],
+        "proof_scope": "captured_same_module_static_wiring",
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "credential_validity": "NOT_ESTABLISHED",
+        "claim": "A module-level credential literal is passed directly to an "
+        "authentication consumer argument in the same non-test module.",
+    }
