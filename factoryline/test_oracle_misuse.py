@@ -4433,3 +4433,36 @@ def _protocol_chain_bindings(chain):
     return set().union(
         *(context._protocol_class_bound_names(n) for _, cls in chain for n in cls.body)
     )
+
+
+def imported_testcase_subclasses(tree, imports, snapshots, testcase_info) -> set[str]:
+    """Return local classes deriving from a ``unittest.TestCase`` class that another scanned module defines.
+
+    ``testcase_info(module)`` returns ``(classes, base_names, testcase_classes)``.
+    """
+    classes, base_names, testcase_classes = testcase_info(tree)
+    cases: dict = {}
+
+    def imported_testcase(base_name: str) -> bool:
+        reference = imports.get(base_name) or imports.get(base_name.rsplit(".", 1)[-1])
+        target = snapshots.get(reference[0]) if reference and reference[1] else None
+        if target is None:
+            return False
+        if reference[0] not in cases:
+            cases[reference[0]] = testcase_info(target)[2]
+        return reference[1] in cases[reference[0]]
+
+    derived: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name in classes:
+            if name in testcase_classes or name in derived:
+                continue
+            if any(
+                base in derived or imported_testcase(base)
+                for base in base_names.get(name, ())
+            ):
+                derived.add(name)
+                changed = True
+    return derived

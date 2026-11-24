@@ -1,0 +1,17 @@
+class PluginModel
+  def install(pypi_url, gem_path)
+    pip_args = "-i #{pypi_url} #{gem_path}"
+    # ruleid: ruby.parameter-shell-command
+    system("pip install #{pip_args}")
+  end
+
+  def install_argv(pypi_url, gem_path)
+    # ok: ruby.parameter-shell-command
+    system("pip", "install", "-i", pypi_url, gem_path)
+  end
+
+  def run(cmd)
+    # ok: ruby.parameter-shell-command
+    system(cmd)
+  end
+end
