@@ -1968,7 +1968,7 @@ rules:
               def $F(..., $P, ...):
                 ...
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:self|cls|cmd|cmds|command|commands|cmdline|cmd_line|shell_cmd|script|argv|args)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|self|cls|cmd|cmds|command|commands|cmdline|cmd_line|shell_cmd|script|argv|args)$)\w+$'}
     pattern-sanitizers:
       - pattern: shlex.quote(...)
       - pattern: pipes.quote(...)
@@ -2011,7 +2011,7 @@ rules:
               - pattern-inside: |
                   class $C { ... async $M(..., $P, ...) { ... } ... }
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
     pattern-sanitizers:
       - pattern: quote(...)
       - pattern: shellQuote.quote(...)
@@ -2059,7 +2059,7 @@ rules:
       - patterns:
           - pattern-inside: function $F(..., $P, ...) { ... }
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
     pattern-sanitizers:
       - pattern: escapeshellarg(...)
       - pattern: escapeshellcmd(...)
@@ -2108,7 +2108,7 @@ rules:
               - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
               - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:cmd|cmds|command|commands|cmdline|script|args|argv|ctx)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv|ctx)$)\w+$'}
     pattern-sanitizers:
       - pattern: strconv.Itoa(...)
       - pattern: strconv.Quote(...)
@@ -2141,7 +2141,7 @@ rules:
                 ...
               end
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
     pattern-sanitizers:
       - pattern: Shellwords.escape(...)
       - pattern: $X.shellescape
@@ -2183,7 +2183,7 @@ rules:
               def $F(..., $P, ...):
                 ...
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:self|cls|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|raw_sql|apps|schema_editor)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|self|cls|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|raw_sql|apps|schema_editor)$)\w+$'}
     pattern-sanitizers:
       - pattern: int(...)
       - pattern: float(...)
@@ -2227,7 +2227,7 @@ rules:
       - patterns:
           - pattern-inside: function $F(..., $P, ...) { ... }
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|rawsql|table|column|columns|grammar|builder|config|options|connection)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|rawsql|table|column|columns|grammar|builder|config|options|connection)$)\w+$'}
     pattern-sanitizers:
       - pattern: intval(...)
       - pattern: (int) $V
@@ -2305,7 +2305,7 @@ rules:
               - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
               - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|ctx|tx|db)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|ctx|tx|db)$)\w+$'}
     pattern-sanitizers:
       - pattern: strconv.Itoa(...)
       - pattern: strconv.FormatInt(...)
@@ -2358,7 +2358,7 @@ rules:
               - pattern-inside: |
                   class $C { ... async $M(..., $P, ...) { ... } ... }
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex)$)\w+$'}
     pattern-sanitizers:
       - pattern: parseInt(...)
       - pattern: Number(...)
@@ -2413,7 +2413,7 @@ rules:
           - pattern: $BASE / f"...{$P}..."
           - pattern: Path($BASE, ..., $P, ...)
       - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|filename|path|relpath|rel_path|subpath|sub_path|key|id|slug|target|dest|destination|member|entry|recipe|template|page|doc|document|resource|asset|upload|attachment)\w*$'}
-      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
       - metavariable-pattern:
           metavariable: $BASE
           patterns:
@@ -2531,7 +2531,7 @@ rules:
           patterns:
             - pattern: $H(...)
             - metavariable-regex: {metavariable: $H, regex: '(?i)^(\w+\.)*_?\w*(rooted|contain|confine|within|inside|safe_join|safejoin|ensure_under|under_root)\w*$'}
-      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:keyid|uuid|pk)$)'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|keyid|uuid|pk)$)'}
       - pattern-not: os.path.join($BASE, ..., os.path.basename($P), ...)
       - pattern-not: os.path.join($BASE, ..., secure_filename($P), ...)
     paths:
@@ -2556,7 +2556,7 @@ rules:
           - pattern: filepath.Join($BASE, ..., $P, ...)
           - pattern: path.Join($BASE, ..., $P, ...)
       - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
-      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
       - metavariable-pattern:
           metavariable: $BASE
           patterns:
@@ -2698,7 +2698,7 @@ rules:
           - pattern: join($BASE, ..., $P, ...)
           - pattern: resolve($BASE, ..., $P, ...)
       - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
-      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
       - metavariable-pattern:
           metavariable: $BASE
           patterns:

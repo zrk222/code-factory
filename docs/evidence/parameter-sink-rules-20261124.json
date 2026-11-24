@@ -23,7 +23,7 @@
       "working_hunk_gain": 4
     }
   },
-  "ruleset_sha256": "7428f1a33e1b05dc0e3bb66a3e68ced557dcef31903d6a80d7695f2cc2460386",
+  "ruleset_sha256": "9b96f4768806ceff89a22b9e08016e8c1b1784c28d7ea95d529044045d1677de",
   "schema": "factory.pattern-recall-measurement.v1",
   "sets": {
     "dev_161_first_fix": {
@@ -348,6 +348,12 @@
       "dev_hunk_hit": 19,
       "note": "No dev gain from TLS shapes. Merging the two tarfile rules to stay within the 64-rule bound drops one dev hit (onnx GHSA-h36j) that only matched extractall with an explicit members= filter, which is now treated as a mitigation.",
       "ruleset": "7428f1a3",
+      "working_hunk_hit": 18
+    },
+    {
+      "added": "request/response handler parameters excluded from parameter rules (they are covered by the request rules); recall unchanged",
+      "dev_hunk_hit": 19,
+      "ruleset": "9b96f476",
       "working_hunk_hit": 18
     }
   ]
