@@ -403,3 +403,10 @@ test('parse warnings stay diagnostics; timeouts and failed scans make a case inc
   assert.equal(outcomeOf(side({ timeouts: 0, parse_errors: 0, other: 1 })), 'error');
   assert.equal(outcomeOf(side({ timeouts: 0, failed_exit: true })), 'error');
 });
+
+test('scannable scope widens file types; the primary scope stays the ecosystem language', async () => {
+  const { scopeExtensions, SCANNABLE_EXTENSIONS } = await import('./recall_harness.mjs');
+  assert.deepEqual(scopeExtensions('PyPI'), ['py']);
+  assert.equal(scopeExtensions('PyPI', 'scannable'), SCANNABLE_EXTENSIONS);
+  assert.ok(SCANNABLE_EXTENSIONS.includes('ts') && SCANNABLE_EXTENSIONS.includes('rs') && !SCANNABLE_EXTENSIONS.includes('svelte'));
+});

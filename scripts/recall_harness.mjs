@@ -37,6 +37,15 @@ export const LANGUAGES = Object.freeze({
   PyPI: ['py'], npm: ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts'], Packagist: ['php'],
   Go: ['go'], Maven: ['java'], RubyGems: ['rb'],
 });
+
+// Secondary, pre-registered scope: every file type the production semgrep lane
+// receives (deep_audit_io.SEMGREP_SOURCE_LANGUAGES), whatever the advisory's
+// ecosystem. The primary score keeps the ecosystem-language scope.
+export const SCANNABLE_EXTENSIONS = Object.freeze(['py', 'pyi', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts',
+  'php', 'go', 'rs', 'java', 'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'cs', 'rb', 'swift']);
+export const scopeExtensions = (ecosystem, scope = 'ecosystem') =>
+  scope === 'scannable' ? SCANNABLE_EXTENSIONS : LANGUAGES[ecosystem];
+
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec|specs|testdata|fixtures?)(\/|$)|_test\.|\.test\.|\.spec\.|Tests?\.(java|cs)$/;
 
 export const isTestPath = path => TEST_PATH.test(path);
@@ -428,7 +437,7 @@ function readPreparedInventory(directory, digest) {
 
 // Fetch once per case and keep the old/new trees, so several rulesets can be
 // scored against the same materialized fixes.
-function bindPreparedCase(directory, record, key, row) {
+function bindPreparedCase(directory, record, key, row, scope) {
   if (record.case_sha256 !== key) throw new Error('Prepared case fingerprint differs');
   if (record.status !== 'ready') return record;
   if (record.revisions?.fixed !== row.fix || !/^[0-9a-f]{40}$/.test(record.revisions?.old ?? '')) {
@@ -437,7 +446,7 @@ function bindPreparedCase(directory, record, key, row) {
   const patch = readFileSync(join(directory, 'diff.patch'));
   if (sha256(patch) !== record.diff_sha256) throw new Error('Prepared diff byte fingerprint differs');
   return { ...record, changes: readPreparedInventory(directory, record.changed_files_sha256),
-    hunks: parseHunks(patch.toString('utf8'), LANGUAGES[row.ecosystem]),
+    hunks: parseHunks(patch.toString('utf8'), scopeExtensions(row.ecosystem, scope)),
     old: record.source_packets.old.length ? join(directory, 'old') : null,
     new: record.source_packets.fixed.length ? join(directory, 'new') : null };
 }
@@ -460,7 +469,7 @@ async function prepareChanges(repo, dir, parent, fix, extensions) {
     changed_files_sha256: sha256(inventory.stdout), diff_sha256: sha256(diff.stdout), source_packets: { old, fixed } };
 }
 
-async function buildPreparedCase(dir, row) {
+async function buildPreparedCase(dir, row, scope) {
   const repo = join(dir, 'repo');
   mkdirSync(repo, { recursive: true });
   await git(repo, 'init', '-q');
@@ -470,20 +479,20 @@ async function buildPreparedCase(dir, row) {
   if (fix !== row.fix) throw new Error('Fetched case revision differs from the manifest');
   const parent = (await git(repo, 'rev-parse', `${fix}^`)).stdout.trim();
   if (!parent) return { status: 'no_parent' };
-  return prepareChanges(repo, dir, parent, fix, LANGUAGES[row.ecosystem]);
+  return prepareChanges(repo, dir, parent, fix, scopeExtensions(row.ecosystem, scope));
 }
 
-async function prepareCase(workdir, row) {
+async function prepareCase(workdir, row, scope = 'ecosystem') {
   const key = caseDigest([row]);
-  const cache = join(workdir, 'cases-v4'), directory = join(cache, key);
+  const cache = join(workdir, scope === 'scannable' ? 'cases-v4-scannable' : 'cases-v4'), directory = join(cache, key);
   const record = join(directory, 'case.json');
-  const read = () => bindPreparedCase(directory, JSON.parse(readFileSync(record, 'utf8')), key, row);
+  const read = () => bindPreparedCase(directory, JSON.parse(readFileSync(record, 'utf8')), key, row, scope);
   if (existsSync(record)) return read();
 
   mkdirSync(cache, { recursive: true });
   const staging = mkdtempSync(join(cache, key + '-'));
   try {
-    const data = await buildPreparedCase(staging, row);
+    const data = await buildPreparedCase(staging, row, scope);
     if (data.status === 'unfetchable') return data;
     rmSync(join(staging, 'repo'), { recursive: true, force: true });
     writeFileSync(join(staging, 'case.json'), JSON.stringify({ ...data, case_sha256: key }));
@@ -521,7 +530,7 @@ async function observeSide(context, source, report, expected) {
 }
 
 async function scoreOne(context, row) {
-  const prepared = await prepareCase(context.workdir, row);
+  const prepared = await prepareCase(context.workdir, row, context.scope);
   if (prepared.status !== 'ready') return { status: prepared.status };
   const reports = join(context.scanRoot, row.ghsa);
   const { old: oldPackets, fixed: fixedPackets } = prepared.source_packets;
@@ -531,7 +540,7 @@ async function scoreOne(context, row) {
   const result = scoreCase({ families, hunks: prepared.hunks, oldFindings: old.findings,
     newFindings: fixed.findings, rules: context.ruleMap });
   const coverage = fileCoverage(prepared.changes, { packets: prepared.source_packets,
-    scans: { old, fixed }, extensions: LANGUAGES[row.ecosystem], isTestPath });
+    scans: { old, fixed }, extensions: scopeExtensions(row.ecosystem, context.scope), isTestPath });
   const status = oldPackets.length ? 'scored' : fixedPackets.length ? 'no_old_side_source' : 'no_in_language_source_change';
   const rowResult = { status, families, changed_files: Object.keys(prepared.hunks).sort(),
     revisions: prepared.revisions, source_packets: prepared.source_packets, diff_sha256: prepared.diff_sha256,
@@ -584,7 +593,8 @@ function scoringContext(opts, rulesPath) {
   return { profile: JSON.parse(utf8(profileBytes)), profileSha256: sha256(profileBytes),
     bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', rules: resolve(rulesPath),
     rulesSha256: sha256(rulesBytes), ruleMap: ruleFamilies(utf8(rulesBytes)),
-    extra: [].concat(opts['extra-arg'] ?? []), workdir: resolve(opts.workdir ?? '.factory/recall-work') };
+    extra: [].concat(opts['extra-arg'] ?? []), workdir: resolve(opts.workdir ?? '.factory/recall-work'),
+    scope: opts.scope === 'scannable' ? 'scannable' : 'ecosystem' };
 }
 
 export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
@@ -610,6 +620,7 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
   }
   return { schema: 'factory.recall-result.v1', manifest: manifestPath, manifest_cases_sha256: manifestDigest,
     manifest_sha256: sha256(manifestBytes), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
+    scope: context.scope,
     scan_directory: basename(context.scanRoot),
     argv: profileArgv(context.profile, { bin: context.bin, rules: '{rules}', report: '{report}', source: '{source}', extra: context.extra }),
     summary: summarize(rows), cases: rows };
