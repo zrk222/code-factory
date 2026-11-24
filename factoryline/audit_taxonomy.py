@@ -39,6 +39,12 @@ _NATIVE_WORKERS = {
         "target": "semgrep-worker",
         "profile": "semgrep-pattern-limited.json",
         "version": "1.15.0",
+        "variants": {
+            "php_interfile": {
+                "target": "php-interfile-worker", "version": "2.0.0",
+                "profile": "semgrep-php-interfile.json",
+            },
+        },
         "php_rule_ids": [
             "php.request-command-injection",
             "php.request-sql-injection",
@@ -46,7 +52,7 @@ _NATIVE_WORKERS = {
             "php.request-file-inclusion",
             "php.request-unsafe-deserialization",
         ],
-        "scope": "OpenGrep OSS: thirty rules across twelve source languages; native source-bound local request-to-sink traces and unsafe API/configuration checks. PHP .php only; callee identity unresolved; PDO/framework/cross-function flows unsupported. No interfile or general accuracy claim. Inline suppression disabled; candidate ignore rules can reduce inspection.",
+        "scope": "30 rules in 12 languages. PHP .php only; callee identity unresolved; PDO/framework/cross-function flows unsupported. Inline suppression off; ignores can reduce coverage.",
     },
     "osv": {
         "target": "osv-worker",
