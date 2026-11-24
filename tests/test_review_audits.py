@@ -17072,6 +17072,62 @@ def test_entry_reach_tier_changes_only_needs_context_command_findings(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "body,call,expected",
+    [
+        ("observe(label)", "observe(label)", True),
+        ("observe('fixed')", "observe('fixed')", False),
+        ("observe(label); observe('fixed')", "observe('fixed')", False),
+        ("observe('fixed'); observe(label)", "observe(label)", True),
+        ("observe(alias)\n    alias = label", "observe(alias)", False),
+        (
+            "alias = label\n    alias = 'fixed'\n    observe(alias)",
+            "observe(alias)",
+            False,
+        ),
+        ("alias = label\n    observe(alias)", "observe(alias)", True),
+        (
+            "alias = label\n    label = 'fixed'\n    observe(label)",
+            "observe(label)",
+            False,
+        ),
+        (
+            "if condition:\n        alias = label\n    observe(alias)",
+            "observe(alias)",
+            False,
+        ),
+        ("[observe(label) for label in ('fixed',)]", "observe(label)", False),
+        ("observe('fixed'); observe(label)", None, False),
+    ],
+)
+def test_entry_reach_tier_binds_the_reported_call_and_operand(body, call, expected):
+    source = "def collect(label):\n    " + body + "\n"
+    files = {
+        "labels.py": source.encode(),
+        "entry.py": (
+            "from flask import request\nfrom labels import collect\n"
+            "@app.route('/labels')\ndef view():\n    collect(request.args['label'])\n"
+        ).encode(),
+    }
+    bindings = {path: hashlib.sha256(data).hexdigest() for path, data in files.items()}
+    line = next(
+        number
+        for number, text in enumerate(source.splitlines(), 1)
+        if "observe(" in text
+    )
+    finding = {"code": "SECURITY_PATH_TRAVERSAL", "path": "labels.py", "line": line}
+    if call is not None:
+        column = source.splitlines()[line - 1].index(call)
+        finding.update(column=column, end_line=line, end_column=column + len(call))
+    decided = ("NEEDS_CONTEXT", None, None)
+    outcome = entry_reach_tier(finding, files, bindings, decided)
+    if expected:
+        assert outcome[0] == "SUPPORTED_DEFECT"
+        assert outcome[2]["entry_reach"]["parameter"] == "label"
+    else:
+        assert outcome == decided
+
+
 def test_registered_handlers_and_registries_are_entries(tmp_path):
     _reach_write(
         tmp_path,

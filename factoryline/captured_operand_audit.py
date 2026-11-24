@@ -3473,6 +3473,8 @@ class _Propagation:
 
 def reach(root: Path | Index, findings: list[dict]) -> list[dict]:
     """Annotate ``findings`` ({rule, path, line, source}) with reach state and chain."""
+    if not findings:
+        return []
     index = root if isinstance(root, Index) else Index.from_root(root)
     summary: dict[str, dict[str, list[str]]] = {}
     seeds = _seed(index, findings, summary)
@@ -3497,49 +3499,84 @@ REACH_CODES = {
 _INDEX_CACHE: dict[str, Index] = {}
 
 
-def _local_assignments(func: Function) -> dict[str, list[ast.AST]]:
-    assigned: dict[str, list[ast.AST]] = {}
-    for node in ast.walk(func.node):
-        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)) and node.value:
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                if isinstance(target, ast.Name):
-                    assigned.setdefault(target.id, []).append(node.value)
-    return assigned
+def _matches_reach_span(node: ast.Call, finding: dict) -> bool:
+    if node.lineno != finding["line"]:
+        return False
+    return all(
+        finding.get(key, value) == value
+        for key, value in (
+            ("column", node.col_offset),
+            ("end_line", node.end_lineno),
+            ("end_column", node.end_col_offset),
+        )
+    )
 
 
-def _unsanitized_names(expr: ast.AST) -> list[str]:
-    """Names in ``expr`` outside any sanitizer call."""
-    if isinstance(expr, ast.Call) and _SANITIZERS.search(_dotted(expr.func)):
-        return []
-    if isinstance(expr, ast.Name):
-        return [expr.id]
-    return [
-        n for child in ast.iter_child_nodes(expr) for n in _unsanitized_names(child)
-    ]
+def _reach_operand_names(expr: ast.AST):
+    match expr:
+        case ast.Name(ctx=ast.Load()):
+            yield expr
+        case ast.BinOp(op=ast.Add() | ast.Mod() | ast.Div(), left=left, right=right):
+            yield from _reach_operand_names(left)
+            yield from _reach_operand_names(right)
+        case ast.JoinedStr(values=values):
+            for value in values:
+                yield from _reach_operand_names(value)
+        case (
+            ast.FormattedValue(value=value)
+            | ast.Attribute(value=value)
+            | ast.Subscript(value=value)
+        ):
+            yield from _reach_operand_names(value)
 
 
-def _sink_parameters(func: Function, line: int) -> list[str]:
-    """Parameters that reach the first argument of the call at ``line``."""
-    calls = [
-        node
-        for node in ast.walk(func.node)
-        if isinstance(node, ast.Call) and node.lineno == line and node.args
-    ]
-    if not calls:
-        return []
-    assigned = _local_assignments(func)
-    found, seen, pending = [], set(), [calls[0].args[0]]
+def _reach_call_and_parents(func, finding):
+    nested = (
+        *_FUNCTION_OR_CLASS,
+        ast.Lambda,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+    pending = list(func.node.body)
+    parents = {id(statement): func.node for statement in pending}
+    matches = []
     while pending:
-        expr = pending.pop()
-        if isinstance(expr, ast.Call) and _SANITIZERS.search(_dotted(expr.func)):
+        node = pending.pop()
+        if isinstance(node, nested):
             continue
-        names = _unsanitized_names(expr)
-        for name in (n for n in names if n not in seen):
-            seen.add(name)
-            found.extend([name] if name in func.params else [])
-            pending.extend(assigned.get(name, []))
-    return found
+        if isinstance(node, ast.Call) and _matches_reach_span(node, finding):
+            matches.append(node)
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+            pending.append(child)
+    return (matches[0] if len(matches) == 1 else None), parents
+
+
+def _sink_parameters(func: Function, finding: dict) -> list[str]:
+    """Prove parameter reach to the operand of one source-bound call."""
+    from .credential_role_constructor_provider import binding_occurrences
+
+    call, parents = _reach_call_and_parents(func, finding)
+    if call is None or not call.args:
+        return []
+    found, seen, pending = {}, set(), [call.args[0]]
+    while pending:
+        for name in _reach_operand_names(pending.pop()):
+            if id(name) in seen:
+                continue
+            seen.add(id(name))
+            if _argument_binding_is_parameter_or_external(name.id, func.node):
+                if name.id in func.params and not binding_occurrences(
+                    func.node.body, name.id
+                ):
+                    found[name.id] = None
+                continue
+            value = _captured_argument_definition(name, name, parents, None)
+            if value is not None:
+                pending.append(value)
+    return list(found)
 
 
 def _source_index(source_bytes: dict, bindings: dict) -> Index:
@@ -3582,7 +3619,7 @@ def entry_reach_tier(finding, source_bytes, bindings, decided):
         return decided
     rows = [
         {"rule": finding["code"], "path": path, "line": line, "source": param}
-        for param in _sink_parameters(func, line)
+        for param in _sink_parameters(func, finding)
     ]
     for row in reach(index, rows):
         if row["reach"] == "entry_reached":
