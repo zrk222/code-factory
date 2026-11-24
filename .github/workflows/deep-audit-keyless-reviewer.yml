@@ -30,41 +30,47 @@ jobs:
           python - <<'PY'
           from base64 import b64decode
           from gzip import GzipFile
+          from hashlib import sha256
           from io import BytesIO
           import json
           import os
           from pathlib import Path
-          import subprocess
-          from factoryline.deep_audit_io import inventory_candidate, digest, relative_path
+          from factoryline.deep_audit_io import digest, relative_path, strict_json
 
           value = b64decode(os.environ["REVIEW_PACKET"], validate=True)
           with GzipFile(fileobj=BytesIO(value)) as stream:
               raw = stream.read(4_194_305)
-          assert len(raw) <= 4_194_304
-          from factoryline.deep_audit_io import strict_json
+          if len(raw) > 4_194_304:
+              raise ValueError("review packet exceeds the decoded size limit")
           packet = strict_json(raw)
-          assert set(packet) == {"inventory", "evidence", "files"}
+          if set(packet) != {"inventory", "evidence", "files"}:
+              raise ValueError("unexpected review packet fields")
           expected = packet["inventory"]
-          evidence = packet["evidence"]
-          assert evidence["analysis_complete"] is True and not evidence["gaps"]
-          assert evidence["candidate_sha256"] == expected["candidate_sha256"] == "b0f44e6fb579fe5cb9fb44599b0f6a56fd56c61b5a26da01ae2793845b6bd6cc"
-          assert set(packet["files"]) == {item["path"] for item in expected["files"]}
-          assert len(expected["files"]) == 19
-          target = Path("review-source").resolve()
-          target.mkdir()
-          for item in expected["files"]:
+          rows = expected["files"]
+          candidate = expected["candidate_sha256"]
+          if (len(rows) != 19 or digest(rows) != candidate
+              or candidate != "b0f44e6fb579fe5cb9fb44599b0f6a56fd56c61b5a26da01ae2793845b6bd6cc"):
+              raise ValueError("review inventory differs from the pinned synthetic candidate")
+          if expected["state"] != "COMPLETE" or expected["gaps"]:
+              raise ValueError("review inventory is incomplete")
+          if set(packet["files"]) != {item["path"] for item in rows}:
+              raise ValueError("review source paths do not match the pinned inventory")
+
+          evidence = {key: value for key, value in packet["evidence"].items() if key != "sha256"}
+          evidence_sha256 = digest(evidence)
+          if packet["evidence"].get("sha256", evidence_sha256) != evidence_sha256:
+              raise ValueError("stored audit evidence checksum differs")
+          if evidence["analysis_complete"] is not True or evidence["gaps"] or evidence["candidate_sha256"] != candidate:
+              raise ValueError("audit evidence does not complete the pinned candidate")
+
+          # Treat packet paths and bytes only as data. Never stage them in a worktree.
+          sources = {}
+          for item in rows:
               relative = relative_path(item["path"])
-              path = target / relative
-              path.parent.mkdir(parents=True, exist_ok=True)
-              path.write_bytes(b64decode(packet["files"][relative], validate=True))
-              mode = item["mode"]
-              assert type(mode) is int and 0 <= mode <= 0o777
-              path.chmod(mode)
-          subprocess.run(["git", "init", "-q", str(target)], check=True)
-          subprocess.run(["git", "-C", str(target), "add", "-f", "--", "."], check=True)
-          actual = inventory_candidate(target)
-          assert actual["candidate_sha256"] == expected["candidate_sha256"]
-          assert actual["files"] == expected["files"] and not actual["gaps"]
+              source = b64decode(packet["files"][relative], validate=True)
+              if len(source) != item["bytes"] or sha256(source).hexdigest() != item["sha256"]:
+                  raise ValueError("review source bytes differ from the pinned inventory")
+              sources[relative] = source.decode("utf-8")
           observations = [
               {key: lane[key] for key in ("lane_id", "engine", "state", "gaps", "findings", "metrics",
                                           "obligations", "report_sha256", "coverage_sha256", "challenge_sha256")}
@@ -72,13 +78,13 @@ jobs:
           ]
           binding = {
               "run_id": evidence["run_id"], "candidate_sha256": evidence["candidate_sha256"],
-              "manifest_sha256": evidence["manifest_sha256"], "evidence_sha256": digest(evidence),
+              "manifest_sha256": evidence["manifest_sha256"], "evidence_sha256": evidence_sha256,
               "read_set_sha256": digest(expected["files"]),
           }
           Path("review-binding.json").write_text(json.dumps(binding))
           Path("review-model-input.json").write_text(json.dumps({
               "binding": binding, "observations": observations,
-              "sources": {key: (target / key).read_text(encoding="utf-8") for key in sorted(packet["files"])},
+              "sources": sources,
           }, ensure_ascii=False))
           PY
       - name: Prepare the pinned offline reviewer
