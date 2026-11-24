@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate,
-  familiesFor, isTestPath, caseDigest } from './recall_harness.mjs';
+  familiesFor, isTestPath, caseDigest, sha256, scoreManifest, validateRecallManifest } from './recall_harness.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
 --- a/app/files.py
@@ -158,4 +162,180 @@ test('observation loop queues control alerts once and gates on labels', async ()
   const tp = { ...queued, labels: [{ ...queued.labels[0], verdict: 'TP' }] };
   assert.equal(checkLabels(tp, [{ dir: '/ctl/rubygems', emitted: [] }]).tp_dropped.length, 1);
   assert.deepEqual(checkLabels(tp, deltas).labeled_precision.tp, 1);
+});
+
+
+const feederRow = { ghsa: 'GHSA-xxxx-yyyy-zzzz', ecosystem: 'PyPI', cwes: ['CWE-79'],
+  published: '2026-09-10', repository: 'example/label-demo', fix: '1'.repeat(40) };
+
+test('the feeder coalesces repeated metadata and rejects an ambiguous fix', () => {
+  const window = { from: '2026-09-01', to: '2026-10-01' };
+  const same = selectCases([feederRow, { ...feederRow }], window);
+  assert.equal(same.cases.length, 1);
+  assert.deepEqual(same.dropped, { duplicate_case: 1 });
+  assert.throws(() => selectCases([feederRow, { ...feederRow, fix: '2'.repeat(40) }], window),
+    /Conflicting advisory metadata/);
+});
+
+test('manifest validation preserves old seals and refuses changed case bytes', () => {
+  for (const day of ['20261123', '20261124-overflow']) {
+    const value = JSON.parse(readFileSync('docs/evidence/heldout-recall-manifest-' + day + '.json', 'utf8'));
+    assert.equal(validateRecallManifest(value), value.cases_sha256 ?? value.manifest_sha256);
+  }
+  const cases = [feederRow];
+  const sealed = { cases, cases_sha256: caseDigest(cases) };
+  assert.equal(validateRecallManifest(sealed), sealed.cases_sha256);
+  assert.throws(() => validateRecallManifest({ ...sealed, cases: [{ ...feederRow, fix: '2'.repeat(40) }] }),
+    /case digest differs/);
+  assert.throws(() => validateRecallManifest({ cases: [feederRow, feederRow] }), /Duplicate advisory ID/);
+  assert.throws(() => validateRecallManifest({ cases }), /case digest differs/);
+});
+
+async function feederFixture(run) {
+  const root = mkdtempSync(join(tmpdir(), 'recall-feeder-'));
+  try {
+    const workdir = join(root, 'work'), caseKey = caseDigest([feederRow]);
+    const prepared = join(workdir, 'cases-v3', caseKey);
+    const source = join(prepared, 'old', 'sample.py');
+    const old = Buffer.from('print("before")\r\n'), fixed = Buffer.from('print("after")\n');
+    const diff = Buffer.from([
+      'diff --git a/sample.py b/sample.py', '--- a/sample.py', '+++ b/sample.py', '@@ -1 +1 @@',
+      '-print("before")', '+print("after")', '',
+    ].join('\n'));
+    const fingerprints = bytes => [{ path: 'sample.py', bytes: bytes.length, sha256: sha256(bytes) }];
+    mkdirSync(join(prepared, 'old'), { recursive: true });
+    mkdirSync(join(prepared, 'new'), { recursive: true });
+    writeFileSync(source, old);
+    writeFileSync(join(prepared, 'new', 'sample.py'), fixed);
+    const diffPath = join(prepared, 'diff.patch');
+    writeFileSync(diffPath, diff);
+    writeFileSync(join(prepared, 'case.json'), JSON.stringify({ status: 'ready', case_sha256: caseKey,
+      revisions: { old: '3'.repeat(40), fixed: feederRow.fix }, diff_sha256: sha256(diff),
+      source_packets: { old: fingerprints(old), fixed: fingerprints(fixed) } }));
+
+    const scanner = join(root, 'scanner.mjs');
+    writeFileSync(scanner, [
+      "import { readFileSync, writeFileSync } from 'node:fs';",
+      "import { basename } from 'node:path';",
+      "const rules = process.argv[process.argv.indexOf('--config') + 1];",
+      "const report = process.argv[process.argv.indexOf('--sarif') + 1];",
+      "const old = basename(process.cwd()) === 'old';",
+      "const incomplete = !old && readFileSync(rules, 'utf8').includes('# incomplete');",
+      "const results = old ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
+      "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
+      "writeFileSync(report, JSON.stringify({ runs: [{ results, invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: issues }] }] }));",
+      "process.exitCode = incomplete ? 2 : 0;",
+    ].join('\n'));
+    const profile = join(root, 'profile.json');
+    writeFileSync(profile, JSON.stringify({ commands: [{ argv: ['scanner', scanner, '--config', '{rules}',
+      '--sarif', '{report}', '{source}'] }] }));
+    const rowText = JSON.stringify({ cases: [feederRow], cases_sha256: caseKey }, null, 2) + '\n';
+    const manifest = join(root, 'manifest.json');
+    writeFileSync(manifest, rowText);
+    const baseline = join(root, 'baseline.yml'), candidate = join(root, 'candidate.yml');
+    const rules = 'rules:\n  - id: fixture.review\n    metadata:\n      cwe: ["CWE-79"]\n';
+    writeFileSync(baseline, rules);
+    writeFileSync(candidate, rules + '# incomplete\n');
+    await run({ root, workdir, source, manifest, profile, baseline, candidate, diffPath, old, diff,
+      opts: { workdir, profile, opengrep: process.execPath, jobs: 1 } });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test('score and evaluation carry exact bytes and fixed-side diagnostics', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, profile, baseline, candidate, old, diff, opts } = fixture;
+  const before = await scoreManifest(manifest, baseline, opts);
+  assert.equal(before.summary.hunk_hits, 1);
+  assert.equal(before.manifest_sha256, sha256(readFileSync(manifest)));
+  assert.equal(before.profile_sha256, sha256(readFileSync(profile)));
+  assert.equal(before.ruleset_sha256, sha256(readFileSync(baseline)));
+  assert.equal(before.cases[0].source_packets.old[0].sha256, sha256(old));
+  assert.equal(before.cases[0].diff_sha256, sha256(diff));
+  assert.equal(before.cases[0].scan_sides.old.report_sha256,
+    sha256(readFileSync(join(workdir, before.scan_directory, feederRow.ghsa, 'old.sarif'))));
+
+  const output = join(root, 'evaluation.json');
+  const engine = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
+    '--baseline', baseline, '--candidate', candidate, '--profile', profile, '--workdir', workdir,
+    '--opengrep', process.execPath, '--jobs', '1', '--out', output], { encoding: 'utf8' });
+  assert.equal(engine.status, 2, engine.stderr);
+  const evaluation = JSON.parse(readFileSync(output, 'utf8'));
+  const dev = evaluation.dev[0];
+  const observed = dev.after_evidence.cases[0];
+  assert.equal(evaluation.decision, 'REJECT');
+  assert.deepEqual(evaluation.new_errors, [feederRow.ghsa]);
+  assert.equal(dev.after.scored, 0);
+  assert.equal(dev.after.outcomes.error, 1);
+  assert.equal(observed.status, 'incomplete');
+  assert.equal(observed.scan_sides.fixed.parse_errors, 1);
+  assert.equal(observed.scan_sides.fixed.exit_code, 2);
+  assert.equal(observed.scan_sides.fixed.report_sha256,
+    sha256(readFileSync(join(workdir, dev.after_evidence.scan_directory, feederRow.ghsa, 'new.sarif'))));
+
+  const drifted = structuredClone(before);
+  drifted.cases[0].source_packets.old[0].sha256 = '0'.repeat(64);
+  assert.match(gate({ dev: [{ before, after: drifted }], controls: [] }).failures[0], /source byte fingerprints differ/);
+}));
+
+test('changed prepared source and diff bytes cannot yield a measured case', () => feederFixture(async fixture => {
+  const { source, manifest, baseline, diffPath, opts, old } = fixture;
+  writeFileSync(source, Buffer.from('print("before")\n'));
+  const sourceDrift = await scoreManifest(manifest, baseline, opts);
+  assert.equal(sourceDrift.summary.scored, 0);
+  assert.match(sourceDrift.cases[0].scan_sides.old.detail, /source byte fingerprints differ/);
+  writeFileSync(source, old);
+  writeFileSync(diffPath, 'changed\n');
+  const diffDrift = await scoreManifest(manifest, baseline, opts);
+  assert.equal(diffDrift.summary.scored, 0);
+  assert.match(diffDrift.cases[0].detail, /diff byte fingerprint differs/);
+}));
+
+
+test('local Git source bytes survive preparation, scanning, and the reported packet inventory', () =>
+  feederFixture(async ({ root, workdir, manifest, baseline, profile }) => {
+    const repository = join(root, 'local-repo');
+    mkdirSync(repository);
+    const git = (...args) => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8' }).trim();
+    const commit = message => git('-c', 'user.name=Factory Test', '-c', 'user.email=test@example.invalid',
+      '-c', 'commit.gpgsign=false', 'commit', '-qm', message);
+    git('init', '-q');
+    git('config', 'core.autocrlf', 'false');
+    const beforeBytes = Buffer.from('print("before")\r\n');
+    const afterBytes = Buffer.from('print("after")\n');
+    const source = join(repository, 'sample.py');
+    writeFileSync(source, beforeBytes);
+    git('add', 'sample.py');
+    commit('old label');
+    const parent = git('rev-parse', 'HEAD');
+    writeFileSync(source, afterBytes);
+    git('add', 'sample.py');
+    commit('new label');
+    const fix = git('rev-parse', 'HEAD');
+    const current = { ...feederRow, fix };
+    writeFileSync(manifest, JSON.stringify({ cases: [current], cases_sha256: caseDigest([current]) }));
+    const out = join(root, 'score.json');
+    const override = 'url.' + pathToFileURL(repository).href + '.insteadOf';
+    const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'score', '--manifest', manifest,
+      '--rules', baseline, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
+      '--jobs', '1', '--out', out], { encoding: 'utf8', timeout: 20000, env: { ...process.env,
+        GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: override,
+        GIT_CONFIG_VALUE_0: 'https://github.com/example/label-demo.git', GIT_ALLOW_PROTOCOL: 'file' } });
+    assert.equal(result.status, 0, result.stderr);
+    const captured = JSON.parse(readFileSync(out, 'utf8')).cases[0];
+    const directory = join(workdir, 'cases-v3', caseDigest([current]));
+    assert.equal(captured.status, 'scored', captured.detail);
+    assert.deepEqual(captured.revisions, { old: parent, fixed: fix });
+    assert.deepEqual(readFileSync(join(directory, 'old', 'sample.py')), beforeBytes);
+    assert.deepEqual(readFileSync(join(directory, 'new', 'sample.py')), afterBytes);
+    assert.equal(captured.source_packets.old[0].sha256, sha256(beforeBytes));
+    assert.equal(captured.source_packets.fixed[0].sha256, sha256(afterBytes));
+    assert.equal(captured.diff_sha256, sha256(readFileSync(join(directory, 'diff.patch'))));
+  }));
+
+test('parse warnings stay diagnostics; timeouts and failed scans make a case incomplete', async () => {
+  const { outcomeOf } = await import('./recall_harness.mjs');
+  const side = notes => ({ status: 'scored', hunk_hit: true, scan_sides: { old: notes, fixed: { timeouts: 0 } } });
+  assert.equal(outcomeOf(side({ timeouts: 0, parse_errors: 2, other: 0 })), 'hit');
+  assert.equal(outcomeOf(side({ timeouts: 1, parse_errors: 0, other: 0 })), 'timeout');
+  assert.equal(outcomeOf(side({ timeouts: 0, parse_errors: 0, other: 1 })), 'error');
+  assert.equal(outcomeOf(side({ timeouts: 0, failed_exit: true })), 'error');
 });
