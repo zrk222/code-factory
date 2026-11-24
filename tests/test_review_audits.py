@@ -7934,6 +7934,57 @@ def test_security_scan_accepts_aliased_indirect_testcase_mixin(tmp_path):
     assert security_scan(tmp_path)["findings"] == []
 
 
+def _write_imported_testcase_base(tmp_path, base_source):
+    (tmp_path / "base.py").write_text(base_source, encoding="utf-8")
+    (tmp_path / "test_case.py").write_text(
+        "from base import Base\n"
+        "class TestValue(Base):\n"
+        "    def check_value(self, value):\n"
+        "        self.assertEqual(value, 4)\n"
+        "    def test_direct(self):\n"
+        "        self.assertEqual(compute_value(), 4)\n"
+        "    def test_through_helper(self):\n"
+        "        self.check_value(compute_value())\n"
+        "    def test_no_oracle(self):\n"
+        "        compute_value()\n",
+        encoding="utf-8",
+    )
+    return [finding["line"] for finding in security_scan(tmp_path)["findings"]]
+
+
+def test_security_scan_credits_unittest_methods_of_imported_testcase_base(tmp_path):
+    flagged = _write_imported_testcase_base(
+        tmp_path,
+        "import unittest\nclass Base(unittest.TestCase):\n    pass\n",
+    )
+    assert flagged == [9]
+
+
+def test_security_scan_does_not_credit_assertions_of_non_testcase_import(tmp_path):
+    flagged = _write_imported_testcase_base(tmp_path, "class Base:\n    pass\n")
+    assert flagged == [5, 7, 9]
+
+
+def test_security_scan_credits_chained_imported_testcase_bases(tmp_path):
+    (tmp_path / "root.py").write_text(
+        "import unittest\nclass Root(unittest.TestCase):\n    pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "base.py").write_text(
+        "from root import Root\nclass Base(Root):\n    pass\n", encoding="utf-8"
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from base import Base\n"
+        "class Case(Base):\n"
+        "    def check_value(self, value):\n"
+        "        self.assertEqual(value, 4)\n"
+        "    def test_through_helper(self):\n"
+        "        self.check_value(compute_value())\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
 def test_security_scan_resolves_assertion_submodule_imports(tmp_path):
     package = tmp_path / "checks"
     package.mkdir()
