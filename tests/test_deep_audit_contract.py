@@ -18,6 +18,102 @@ from factoryline.enterprise_receipts import (
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+def _keyless_authorization_fixture(tmp_path):
+    from factoryline.deep_audit_io import digest, sha256_bytes
+
+    identities = {
+        role: f"https://github.com/example/repo/.github/workflows/{role}.yml@refs/heads/main"
+        for role in ("implementer", "reviewer", "coordinator")
+    }
+    roles = {
+        role: {"identity": identity, "keyid": role, "workflow_digest": "a" * 40}
+        for role, identity in identities.items()
+    }
+    trust = tmp_path / "trust.json"
+    trust.write_text(
+        json.dumps({"schema": "factory.deep-audit-sigstore-trust.v1", "roles": roles}),
+        encoding="utf-8",
+    )
+    plan = {
+        "implementer_id": identities["implementer"],
+        "reviewer_identity": identities["reviewer"],
+        "coordinator_identity": identities["coordinator"],
+        **{f"{role}_keyid": role for role in roles},
+        "trust_root_sha256": sha256_bytes(trust.read_bytes()),
+        "candidate_sha256": "b" * 64,
+        "lanes": [{"id": "osv", "image": "sha256:" + "c" * 64}],
+    }
+    pin = "d" * 64
+    now = datetime.now(timezone.utc)
+    payload = {
+        "schema": "factory.deep-execution-authorization.v1",
+        "manifest_sha256": pin,
+        "manifest_content_sha256": digest(plan),
+        "candidate_sha256": plan["candidate_sha256"],
+        "adapter_images": {"osv": plan["lanes"][0]["image"]},
+        "authority": "none",
+        "issued_at": (now - timedelta(seconds=10)).isoformat(),
+        "expires_at": (now + timedelta(minutes=10)).isoformat(),
+    }
+    return roles, trust, plan, pin, payload
+
+
+def test_keyless_authorization_verifies_pinned_bytes_and_native_bindings(
+    tmp_path, monkeypatch
+):
+    from factoryline import deep_audit_attestation as module
+    from factoryline.deep_audit_io import canonical_bytes, digest
+
+    roles, trust, plan, pin, payload = _keyless_authorization_fixture(tmp_path)
+    envelope = {"schema": module._KEYLESS_ENVELOPE, "payload": payload, "bundle": {}}
+    authorization = tmp_path / "authorization.json"
+    authorization.write_bytes(canonical_bytes(envelope))
+    observed = []
+    monkeypatch.setattr(
+        module, "_verify_keyless_artifact", lambda *args: observed.append(args)
+    )
+    assert module.verify_execution_authorization(
+        plan,
+        pin,
+        authorization,
+        trust,
+        plan["trust_root_sha256"],
+        return_envelope_sha256=True,
+    ) == (payload, digest(envelope))
+    assert observed == [(canonical_bytes(payload), {}, roles["coordinator"])]
+    payload["adapter_images"] = {}
+    authorization.write_bytes(canonical_bytes(envelope))
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_AUTHORIZATION"):
+        module.verify_execution_authorization(
+            plan, pin, authorization, trust, plan["trust_root_sha256"]
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["shared", "same_workflow_other_ref", "different_manifest_role", "bad_commit"],
+)
+def test_keyless_roles_reject_shared_or_drifted_identity(tmp_path, change):
+    from factoryline import deep_audit_attestation as module
+
+    roles, trust, plan, _, _ = _keyless_authorization_fixture(tmp_path)
+    if change == "shared":
+        roles["reviewer"]["identity"] = roles["coordinator"]["identity"]
+    elif change == "same_workflow_other_ref":
+        roles["reviewer"]["identity"] = roles["coordinator"]["identity"].replace(
+            "refs/heads/main", "refs/tags/v1"
+        )
+    elif change == "different_manifest_role":
+        plan["reviewer_keyid"] = "coordinator"
+    else:
+        roles["reviewer"]["workflow_digest"] = "refs/heads/main"
+    trust.write_text(
+        json.dumps({"schema": module._KEYLESS_TRUST, "roles": roles}), encoding="utf-8"
+    )
+    with pytest.raises(RuntimeAuditError, match="E_REVIEW_TRUST|E_REVIEW_IDENTITY"):
+        module._execution_keys(plan, trust)
+
+
 def _coordinator_test_request(root, operation="status"):
     return dict(
         version=1,

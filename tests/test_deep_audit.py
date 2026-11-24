@@ -4696,6 +4696,22 @@ def test_syft_native_metadata_source_is_exactly_bound(target):
         )
 
 
+def test_syft_native_accounting_rejects_an_unmeasured_manifest():
+    from factoryline.deep_audit_sarif import _native_syft_accounting
+
+    observed = {"artifacts": [{"locations": [{"path": "/src/requirements.txt"}]}]}
+    assert _native_syft_accounting(observed, {"requirements.txt": "a" * 64}) == {
+        "state": "COMPLETE",
+        "required_paths": ["requirements.txt"],
+        "measured_paths": ["requirements.txt"],
+        "missing_paths": [],
+    }
+    with pytest.raises(RuntimeAuditError, match="E_DEPENDENCY_COVERAGE"):
+        _native_syft_accounting(
+            observed, {"requirements.txt": "a" * 64, "extra/requirements.txt": "b" * 64}
+        )
+
+
 def test_native_unbound_absolute_source_still_rejected():
     from factoryline.deep_audit_io import _native_artifact_path
 
@@ -7965,6 +7981,58 @@ def test_osv_replay_receipt_accepts_source_database_and_all_control_bindings():
         for kind in ("mutation", "negative", "positive")
     ]
     assert expected["source_paths"] == ["requirements.txt"]
+
+
+@pytest.mark.parametrize("changed", [None, "database", "controls", "cleanup"])
+def test_retained_osv_replay_revalidates_before_closing_review_gap(changed):
+    from factoryline.deep_audit import apply_retained_native_completion
+
+    _, facts, request, receipt = _osv_replay_receipt_inputs()
+    lane = request["lane"]
+    replay = {
+        **receipt,
+        "execution": facts,
+        "image": lane["image"],
+        "cleanup_confirmed": True,
+        "runtime_sha256": "a" * 64,
+        "command_sha256": "b" * 64,
+    }
+    artifacts = {
+        lane[field]: request[key]
+        for field, key in (
+            ("coverage", "coverage"),
+            ("report", "report"),
+            ("challenge_report", "challenges"),
+        )
+    }
+    result = {
+        "state": "INCOMPLETE",
+        "gaps": ["OSV_NATIVE_REPLAY_REQUIRED", "OTHER_GAP"],
+    }
+    if changed is not None:
+        replay.update(
+            {
+                "database": {"database_sha256": "0" * 64},
+                "controls": {"controls": []},
+                "cleanup": {"cleanup_confirmed": False},
+            }[changed]
+        )
+    args = (
+        result,
+        {"osv_replay": replay},
+        lane,
+        {"artifacts": artifacts},
+        request["inventory"],
+        request["obligations"],
+        "run-id",
+    )
+    if changed:
+        with pytest.raises(RuntimeAuditError):
+            apply_retained_native_completion(*args)
+        assert result["gaps"] == ["OSV_NATIVE_REPLAY_REQUIRED", "OTHER_GAP"]
+    else:
+        apply_retained_native_completion(*args)
+        assert result == {"state": "INCOMPLETE", "gaps": ["OTHER_GAP"]}
 
 
 @pytest.mark.parametrize(

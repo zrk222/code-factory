@@ -188,10 +188,28 @@ jobs:
           verify: true
           verify-cert-identity: https://github.com/${{ github.workflow_ref }}
           verify-oidc-issuer: https://token.actions.githubusercontent.com
+      - name: Package keyless review and invocation for the audit CLI
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for name, directory in (("review", Path("verified-review")), ("invocation", Path("."))):
+              payload = directory / f"{name}.json"
+              bundle = directory / f"{name}.json.sigstore.json"
+              envelope = {
+                  "schema": "factory.deep-audit-sigstore-envelope.v1",
+                  "payload": json.loads(payload.read_bytes()),
+                  "bundle": json.loads(bundle.read_bytes()),
+              }
+              Path(f"{name}-envelope.json").write_text(json.dumps(envelope, sort_keys=True))
+          PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: keyless-review-invocation
           path: |
             invocation.json
             invocation.json.sigstore.json
+            review-envelope.json
+            invocation-envelope.json
           if-no-files-found: error
