@@ -1,5 +1,32 @@
 # GitHub Proof Review
 
+## Find the next pull-request blocker
+
+```powershell
+factory github pr-readiness 42 --root . --json
+factory github pr-readiness 42 --root . --head-sha <expected-sha> --require-clear
+```
+
+The command uses the connected GitHub CLI and the checkout's `origin`. A single
+read retrieves the PR state, base conflicts or lag, unresolved review threads,
+CI check rollup, and review decision for the current head. The terminal view
+leads with the first blocker. JSON includes the SHA, ordered blockers,
+unresolved thread IDs and locations, and check states. When supplied, the
+expected SHA must match both the PR and the commit that owns the check rollup.
+
+Without `--require-clear`, a successful read exits 0. With it, blocked or
+incomplete evidence exits 3. Invalid requests, unavailable provider evidence,
+and head mismatches exit 2. The snapshot reads up to 100 threads and 100 check
+contexts. Pagination, missing checks, and unknown mergeability prevent a clear
+result. GitHub names and paths are untrusted data.
+
+`NO_OBSERVED_BLOCKERS` is an advisory snapshot. Use your repository's merge
+policy for the actual decision. This workflow performs no remote writes and
+does not fetch review text. Its blocker ordering is inspired by the
+[Pstack PR triage playbook](https://github.com/cursor/plugins/blob/ca782ed8b3c2c521cead8e1720d55c3a5dbf2347/pstack/skills/poteto-mode/playbooks/babysit.md).
+
+## Compile local proof for review
+
 `factory github proof-review` turns the existing local Diff-to-Proof Review
 into a compact, evidence-bound GitHub pull-request surface. It answers a
 narrow question: **what changed, what declared evidence is missing or stale,
