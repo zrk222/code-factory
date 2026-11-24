@@ -1490,18 +1490,9 @@ def _credential_role_witness(node, target, aliases):
 
 def _literal_credential_candidate(node, target):
     """Share detection eligibility without constructing or classifying a finding."""
-    from .context_efficiency import _SECRET_BYTES
+    from .provenance import literal_credential_candidate
 
-    return isinstance(target, ast.Name) and (
-        bool(_SECRET_ASSIGNMENT.search(target.id))
-        or (value := _secret_literal(node)) is not None
-        and bool(encoded := value.encode(errors="surrogatepass"))
-        and any(
-            not _AWS_DEMO.match(match.string, match.start())
-            for pattern in _SECRET_BYTES
-            for match in pattern.finditer(encoded)
-        )
-    )
+    return literal_credential_candidate(sys.modules[__name__], node, target)
 
 
 def _literal_assignment_diagnostic(

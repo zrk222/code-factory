@@ -6153,3 +6153,259 @@ def test_logging_domain_guarded_matches_bound_endpoint_proof(monkeypatch, guarde
     assert captured
     assert roles.logging_domain_guarded(*captured[-1]) is guarded
     assert any(row["code"] == "SECURITY_LOG_INJECTION" for row in rows) is not guarded
+
+
+# Synthetic material assembled at runtime so no key-shaped literal is committed.
+# Corpus measurement: docs/evidence/credential-literal-sensor-20261123.json
+_SHAPED = "q7Lx9vT2mZ4b" + "K8nR1cF6yH3w" + "J5sD0aGe"
+_VENDOR = "sk_" + "live_" + "4eC39HqLyjWDarjt" + "T1zdp7dcQ9xLm2Zk"
+
+
+def _positional(source, relative="app/client.py"):
+    tree = ast.parse(source)
+    rows = configuration_and_credential_findings(
+        tree, _security_aliases(list(ast.walk(tree))), relative
+    )
+    return [
+        (row["line"], row["facts"]["name"], row["facts"]["credential_position"])
+        for row in rows
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+
+
+def test_positional_sensor_reports_vendor_format_keys_in_any_position():
+    source = (
+        "import stripe\n"
+        f"stripe.api_key = {_VENDOR!r}\n"
+        f"HEADERS = {{'Authorization': 'Bearer ' + {_VENDOR!r}}}\n"
+        f"client = make_client({_VENDOR!r})\n"
+        f"settings['billing'] = {_VENDOR!r}\n"
+    )
+    assert _positional(source) == [
+        (2, "api_key", "attribute"),
+        (3, "literal", "expression"),
+        (4, "literal", "expression"),
+        (5, "billing", "mapping_value"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["offline-pypi-snapshot", "mirror_ghp_snapshot_cache", "vscepat-settings-page"],
+)
+def test_positional_sensor_requires_a_standalone_opaque_vendor_key(label):
+    assert _positional(f"lane = {{'mode': {label!r}}}\nrun({label!r})\n") == []
+
+
+def test_positional_sensor_reports_generated_material_only_in_credential_slots():
+    source = (
+        "class Mailer:\n"
+        "    def __init__(self):\n"
+        f"        self.password = {_SHAPED!r}\n"
+        f"        self.nickname = {_SHAPED!r}\n"
+        f"connect(host='db', password={_SHAPED!r}, application_name={_SHAPED!r})\n"
+        f"CONFIG = {{'api_key': {_SHAPED!r}, 'region': {_SHAPED!r}}}\n"
+    )
+    assert _positional(source) == [
+        (3, "password", "attribute"),
+        (5, "password", "keyword"),
+        (6, "api_key", "mapping_value"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Your password must contain at least 8 characters.",
+        "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+        "https://accounts.example.com/oauth2/token",
+        "/accounts/password/reset/",
+        "correct-horse-battery-staple",
+        "password",
+        "<your-api-key-goes-here>",
+    ],
+)
+def test_positional_sensor_ignores_prose_labels_and_locators_in_credential_slots(value):
+    source = f"self.password = {value!r}\nconnect(password={value!r})\n"
+    assert _positional(source) == []
+
+
+def test_positional_sensor_reports_application_configuration_slots_without_a_shape():
+    source = (
+        "app.secret_key = 'dev'\n"
+        "app.config['SECRET_KEY'] = 'insecure-secret-key'\n"
+        "app.config.from_mapping(SECRET_KEY='dev', DEBUG_LABEL='dev')\n"
+        "config['MAIL_PASSWORD'] = 'hunter2'\n"
+    )
+    assert _positional(source) == [
+        (1, "secret_key", "attribute"),
+        (2, "SECRET_KEY", "mapping_value"),
+        (3, "SECRET_KEY", "keyword"),
+        (4, "MAIL_PASSWORD", "mapping_value"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "app.secret_key = 'changeme'\n",
+        "app.config['SECRET_KEY'] = ''\n",
+        "app.config['SECRET_KEY'] = os.environ['SECRET_KEY']\n",
+        "app.config['secret_key'] = 'dev'\n",
+        "app.config['SESSION_TYPE'] = 'filesystem'\n",
+        "form['PASSWORD'] = 'hunter2'\n",
+        "user.password = 'admin123'\n",
+        "settings.update(SECRET_KEY='dev')\n",
+    ],
+)
+def test_positional_configuration_slot_is_limited_to_named_config_receivers(source):
+    assert _positional(source) == []
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "0b14d501a594442a01c6859541bcb3e8164d183d32937b851835442f69d5c94e",
+        "5f4dcc3b5aa765d61d8327deb882cf99",
+        "$2b$12$KIXQ4p1c0x9yJ8r6s7t8uOeW3a5b7c9d1e3f5g7h9i1j3k5l7m9n1",
+        "pbkdf2_sha256$600000$a1b2c3d4e5f6$Zm9vYmFyMTIzNDU2Nzg5MA==",
+    ],
+)
+def test_positional_sensor_treats_stored_password_hashes_as_verifiers(stored):
+    assert _positional(f"USERS = {{'alice': {{'password': {stored!r}}}}}\n") == []
+
+
+def test_positional_sensor_keeps_digest_shaped_material_in_key_slots():
+    digest = (
+        "0b14d501a594442a"
+        + "01c6859541bcb3e8"
+        + "164d183d32937b85"
+        + "1835442f69d5c94e"
+    )
+    assert _positional(f"CLIENT = {{'api_key': {digest!r}}}\n") == [
+        (1, "api_key", "mapping_value")
+    ]
+
+
+def test_positional_sensor_leaves_name_assignments_to_the_assignment_rule():
+    assert _positional(f"API_KEY = {_VENDOR!r}\nPASSWORD = {_SHAPED!r}\n") == []
+
+
+def test_positional_finding_never_carries_the_literal():
+    tree = ast.parse(f"client.token = {_SHAPED!r}\n")
+    rows = configuration_and_credential_findings(tree, {}, "app/x.py")
+    assert len(rows) == 1 and _SHAPED not in repr(rows)
+    assert rows[0]["facts"]["value_evidence"] == "generated_shape"
+
+
+def _assignment_candidate(source):
+    from factoryline.provenance import literal_credential_candidate
+
+    node = ast.parse(source).body[0]
+    return literal_credential_candidate(audit, node, node.targets[0])
+
+
+def test_assignment_candidate_adds_token_names_only_with_generated_values():
+    assert _assignment_candidate(f"API_TOKEN = {_SHAPED!r}\n")
+    assert _assignment_candidate(f"db_passwd = {_SHAPED!r}\n")
+    assert not _assignment_candidate("TOKEN_HEADER = 'X-Auth-Token-Version-2'\n")
+    assert not _assignment_candidate("TOKEN_TYPE = 'Bearer'\n")
+    assert not _assignment_candidate(f"tokenizer_name = {_SHAPED!r}\n")
+
+
+def test_assignment_candidate_keeps_every_existing_name_match():
+    assert _assignment_candidate("PASSWORD = 'hunter2'\n")
+    assert _assignment_candidate("password = lookup()\n")
+    assert _assignment_candidate(f"build_label = {_VENDOR!r}\n")
+    assert _assignment_candidate(
+        "access_token_url = 'https://gitlab.com/oauth/token'\n"
+    )
+
+
+def test_secret_shaped_value_separates_generated_material_from_labels():
+    from factoryline.provenance import secret_shaped_value
+
+    assert secret_shaped_value(_SHAPED)
+    assert secret_shaped_value("9f86d081884c7d65" + "9a2feaa0c55ad015")
+    for label in (
+        "X-Auth-Token-Version-2",
+        "correct-horse-battery-staple",
+        "django.contrib.auth.hashers.MD5PasswordHasher",
+        "https://example.com/a1b2c3d4e5f6",
+        "/var/run/secrets/a1b2c3d4e5f6",
+        "two words a1b2c3d4e5f6",
+        "a1b2c3",
+        None,
+    ):
+        assert not secret_shaped_value(label)
+
+
+def test_positional_credential_findings_walks_the_tree_when_no_inventory_is_given():
+    from factoryline.provenance import positional_credential_findings
+
+    tree = ast.parse(f"client.token = {_SHAPED!r}\nauth(password={_SHAPED!r})\n")
+    consumed = {id(tree.body[1].value.keywords[0].value)}
+    rows = positional_credential_findings(tree, "app/x.py", None, consumed)
+    assert [(row["line"], row["severity"]) for row in rows] == [(1, "CRITICAL")]
+    assert positional_credential_findings(ast.parse("x = 1\n"), "a.py", None) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "app.config['TOKEN_EXPIRY'] = '3600'\n",
+        "app.config['PASSWORD_RESET_URL'] = '/reset/password'\n",
+        "app.config['PASSWORD_HASHERS'] = 'django.contrib.auth.hashers.Argon2'\n",
+        "app.config['SECRET_KEY'] = '${APP_SECRET}'\n",
+        "app.config['SECRET_KEY'] = 'https://vault.example.com/v1/app'\n",
+        "app.config.update(TOKEN_LIFETIME='86400', SECRET_KEY_FILE='/run/key')\n",
+    ],
+)
+def test_configuration_slot_skips_credential_metadata_and_placeholders(source):
+    assert _positional(source) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "connect(password='${oauth2ClientSecretV2}')\n",
+        "CLIENT = {'client_secret': '${oauth2ClientSecretV2}'}\n",
+        "self.token = '<generated-token-goes-here-1a2b3c>'\n",
+    ],
+)
+def test_generated_shape_rule_skips_placeholders(source):
+    assert _positional(source) == []
+
+
+def test_http_credential_dedupe_is_per_literal_not_per_call():
+    source = (
+        "import requests\n"
+        "requests.get('https://api.example.org', headers={\n"
+        f"    'Authorization': {'Bearer ' + _SHAPED!r},\n"
+        f"    'X-API-Key': {_SHAPED[::-1]!r},\n"
+        "})\n"
+    )
+    tree = ast.parse(source)
+    rows = configuration_and_credential_findings(
+        tree, _security_aliases(list(ast.walk(tree))), "app/client.py"
+    )
+    codes = [(row["code"], row["line"]) for row in rows]
+    assert ("SECURITY_LITERAL_HTTP_CREDENTIAL", 2) in codes
+    assert ("SECURITY_HARDCODED_SECRET", 4) in codes
+
+
+def test_consumed_http_literals_names_only_the_reported_literals():
+    from factoryline.provenance import consumed_http_literals
+
+    tree = ast.parse(
+        "import requests\n"
+        f"requests.get('https://a.example', auth=('svc', {_SHAPED!r}))\n"
+        f"requests.get('https://b.example', auth=('svc', {_SHAPED[::-1]!r}))\n"
+    )
+    first = tree.body[1].value
+    rows = [{"code": "SECURITY_LITERAL_HTTP_CREDENTIAL", "line": 2, "column": 0}]
+    consumed = consumed_http_literals(
+        tree, _security_aliases(list(ast.walk(tree))), None, rows
+    )
+    assert consumed == {id(first.keywords[0].value.elts[1])}
+    assert consumed_http_literals(tree, {}, None, []) == frozenset()

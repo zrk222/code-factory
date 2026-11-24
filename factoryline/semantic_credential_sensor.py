@@ -464,7 +464,10 @@ def configuration_and_credential_findings(
 
     findings = configuration_findings(tree, aliases, relative)
     findings.extend(credential_findings(tree, aliases, relative, nodes=nodes))
-    return findings
+    from .provenance import consumed_http_literals, positional_credential_findings
+
+    consumed = consumed_http_literals(tree, aliases, nodes, findings)
+    return findings + positional_credential_findings(tree, relative, nodes, consumed)
 
 
 def validation_modules():
