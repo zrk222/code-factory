@@ -410,3 +410,11 @@ test('scannable scope widens file types; the primary scope stays the ecosystem l
   assert.equal(scopeExtensions('PyPI', 'scannable'), SCANNABLE_EXTENSIONS);
   assert.ok(SCANNABLE_EXTENSIONS.includes('ts') && SCANNABLE_EXTENSIONS.includes('rs') && !SCANNABLE_EXTENSIONS.includes('svelte'));
 });
+
+test('a control incomplete on both rulesets in the same way is recorded, not failed', async () => {
+  const { gate } = await import('./recall_harness.mjs');
+  const result = rows => ({ cases: rows, summary: { fix_side_residual_alerts: 0, hunk_hits: 0 } });
+  const pair = { before: result([]), after: result([]) };
+  assert.equal(gate({ dev: [pair], controls: [{ dir: 'pdf.js', before: 4, after: 4, incomplete_on_both: 'timeout' }] }).decision, 'ACCEPT');
+  assert.equal(gate({ dev: [pair], controls: [{ dir: 'pdf.js', error: 'Control scan incomplete' }] }).decision, 'REJECT');
+});

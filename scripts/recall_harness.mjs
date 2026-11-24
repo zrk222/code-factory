@@ -727,8 +727,8 @@ async function evaluate(opts) {
         before: pair.before.cases[index].outcome ?? pair.before.cases[index].status, after: row.outcome ?? row.status,
         hunk_findings: row.hunk_findings ?? [], fix_side_residual: row.fix_side_residual ?? [],
         retried_serially: Boolean(row.retried_serially) })) })),
-    controls: controlDeltas.map(({ dir, before, after, added, removed, error, scan_sides }) =>
-      ({ dir, before, after, added, removed, error, scan_sides })) };
+    controls: controlDeltas.map(({ dir, before, after, added, removed, error, scan_sides, incomplete_on_both }) =>
+      ({ dir, before, after, added, removed, error, scan_sides, incomplete_on_both })) };
   writeFileSync(opts.out, `${JSON.stringify(out, null, 1)}\n`);
   console.log(out.decision, out.failures, `gained ${out.gained.length}`, `controls +${out.control_increase}`);
   if (out.decision === 'REJECT') process.exitCode = 2;
@@ -750,13 +750,19 @@ async function controlDeltas_(opts) {
       const now = await scan({ ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])], rules: resolve(after) },
         resolve(dir), `${reports}/after.sarif`);
       const scan_sides = { before: old.notes, after: now.notes };
-      if (Object.values(scan_sides).some(scanIssue)) {
+      // An engine limit the baseline hits too (same issue class, no more
+      // timeouts for the candidate) is not a candidate regression; record it
+      // with the delta instead of failing the control.
+      const issues = Object.values(scan_sides).map(scanIssue);
+      const sameIncomplete = Boolean(issues[0]) && issues[0] === issues[1]
+        && (scan_sides.after.timeouts ?? 0) <= (scan_sides.before.timeouts ?? 0);
+      if (issues.some(Boolean) && !sameIncomplete) {
         deltas.push({ dir, error: 'Control scan incomplete', scan_sides });
         continue;
       }
       const oldKeys = new Set(old.map(key)), newKeys = new Set(now.map(key));
       const snip = f => withSnippet(resolve(dir), f);
-      deltas.push({ dir, before: old.length, after: now.length, scan_sides,
+      deltas.push({ dir, before: old.length, after: now.length, scan_sides, ...(sameIncomplete ? { incomplete_on_both: issues[0] } : {}),
         added: now.filter(f => !oldKeys.has(key(f))).map(snip), removed: old.filter(f => !newKeys.has(key(f))).map(snip),
         emitted: now.map(snip) });
     } catch (error) { deltas.push({ dir, error: String(error.message).slice(-300) }); }
