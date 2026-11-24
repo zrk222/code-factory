@@ -137,15 +137,107 @@ def _select(root, rows, latest):
     return accepted, excluded
 
 
+def _recall_queries(queries, limit):
+    if queries is None and limit is None:
+        return None
+    from .audit_rule_search import _tokens
+
+    if (
+        not isinstance(queries, list)
+        or not 1 <= len(queries) <= 8
+        or any(
+            type(query) is not str
+            or not 1 <= len(query) <= 512
+            or any(ord(char) < 32 or ord(char) == 127 for char in query)
+            or not _tokens(query)
+            for query in queries
+        )
+    ):
+        raise ValueError("recall requires 1..8 printable, token-bearing queries")
+    limit = 5 if limit is None else limit
+    if type(limit) is not int or not 1 <= limit <= 20:
+        raise ValueError("recall limit must be an integer in 1..20")
+    return [query.strip() for query in queries], limit
+
+
+def _recall_rankings(records, queries):
+    from .audit_rule_search import _bm25_scores
+
+    documents = [
+        {
+            "ruleId": row["record_id"],
+            "name": row["record_id"],
+            "description": row["summary"],
+            "sourceModule": " ".join(item["path"] for item in row["evidence"]),
+        }
+        for row in records
+    ]
+    rankings = []
+    for query in queries:
+        scores = _bm25_scores(documents, query, fielded=True)
+        rankings.append(
+            sorted(
+                (key for key, score in scores.items() if score > 0),
+                key=lambda key: (-scores[key], key),
+            )
+        )
+    return rankings
+
+
+def _balanced_recall(records, selection):
+    queries, limit = selection
+    rankings = _recall_rankings(records, queries)
+    selected = []
+    for _ in range(limit):
+        before = len(selected)
+        for ranked in rankings:
+            key = next((key for key in ranked if key not in selected), None)
+            if len(selected) < limit and key is not None:
+                selected.append(key)
+        if len(selected) in {before, limit}:
+            break
+    per_query = [[key for key in selected if key in ranked] for ranked in rankings]
+    by_id = {row["record_id"]: row for row in records}
+    hops = [
+        {
+            "query_sha256": _sha(query),
+            "matched": len(ranked),
+            "selected_record_ids": per_query[index],
+            "gap": None
+            if per_query[index]
+            else ("budget_exhausted" if ranked else "no_admissible_lexical_match"),
+        }
+        for index, (query, ranked) in enumerate(zip(queries, rankings))
+    ]
+    trace = {
+        "schema": "factory.evidence-recall-selection.v1",
+        "method": "trust-first-bm25f-round-robin",
+        "limit": limit,
+        "admissible": len(records),
+        "matched": len(set().union(*map(set, rankings))),
+        "queries": hops,
+        "status": "PARTIAL_CONTEXT"
+        if any(hop["gap"] for hop in hops)
+        else "MATCHED_CONTEXT",
+        "authority": "none",
+        "claim_boundary": "Lexical context matches, not semantic completeness, defect recall or proof authority.",
+    }
+    return [by_id[key] for key in selected], {**trace, "selection_sha256": _sha(trace)}
+
+
 def recall_engineering_memory(
     root: Path,
     principal: ContinuityPrincipal,
     tenant_id: str,
     purpose_ref: str,
     scope_ref: str,
+    *,
+    queries: list[str] | None = None,
+    limit: int | None = None,
 ) -> dict:
     """Recall current exact-scope evidence metadata without writing, promoting or authenticating identities."""
     _authorize(principal, "continuity.read", tenant_id, purpose_ref)
+    selection = _recall_queries(queries, limit)
     root = Path(root).resolve()
     path = local_file(root, ".factory/continuity.sqlite3")
     connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
@@ -161,6 +253,10 @@ def recall_engineering_memory(
         accepted, excluded = _select(root, rows, _audit_events(connection, tenant_id))
     finally:
         connection.close()
+    retrieval = {}
+    if selection is not None:
+        accepted, trace = _balanced_recall(accepted, selection)
+        retrieval["retrieval"] = trace
     result = {
         "schema": "factory.engineering-evidence-memory.v1",
         "records": accepted,
@@ -181,6 +277,7 @@ def recall_engineering_memory(
         "governance": "human_controlled",
         "action_summary": "Recheck promoted memory evidence and expose its influence; never change a gate.",
         "limits": "Local unsigned ledger and declared identities; hashes do not establish truth or authentication. Evidence is checked at read time, not locked afterward.",
+        **retrieval,
     }
     return {**result, "influence_sha256": _sha(result)}
 

@@ -13,7 +13,8 @@
         "REQ_EVIDENCE",
         "REQ_WITHDRAW",
         "REQ_HANDOFF",
-        "REQ_INFLUENCE"
+        "REQ_INFLUENCE",
+        "REQ_TOPIC_RECALL"
       ]
     }
   ]
