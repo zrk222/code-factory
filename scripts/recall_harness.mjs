@@ -416,9 +416,16 @@ export function scanNotes(sarif) {
     for (const invocation of run.invocations ?? []) {
       if (invocation.executionSuccessful === false) notes.other++;
       for (const note of invocation.toolExecutionNotifications ?? []) {
-        const id = `${note.descriptor?.id ?? ''} ${note.message?.text ?? ''}`;
-        if (/timeout|timed out/i.test(id)) notes.timeouts++;
-        else if (/syntax|pars/i.test(id)) {
+        // A parse message quotes the target source, which can contain any word
+        // (a file with setConnectionTimeout once read as an engine timeout), so
+        // the descriptor decides first and only the message's own first line
+        // before any quoted excerpt is consulted after it.
+        const descriptor = note.descriptor?.id ?? '';
+        const own = (note.message?.text ?? '').split(/\n|`/)[0];
+        const parse = /syntax|pars/i.test(descriptor)
+          || (!/timeout|timed out/i.test(descriptor) && /syntax|pars/i.test(own) && !/timeout|timed out/i.test(own));
+        if (!parse && /timeout|timed out/i.test(`${descriptor} ${own}`)) notes.timeouts++;
+        else if (parse) {
           notes.parse_errors++;
           if (note.level !== 'warning' && note.level !== 'note') notes.blocking_parse_errors++;
         }
