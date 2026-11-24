@@ -1,0 +1,46 @@
+require "zip"
+require "fileutils"
+
+class Extractor
+  def unpack(file, dest)
+    Zip::File.open(file) do |zip|
+      zip.each do |entry|
+        target = File.join(dest, entry.name)
+        # ruleid: ruby.archive-path-traversal
+        FileUtils.mkdir_p(File.dirname(target))
+      end
+    end
+  end
+
+  def unpack_checked(file, dest)
+    Zip::File.open(file) do |zip|
+      zip.each do |entry|
+        target = File.expand_path(File.join(dest, entry.name))
+        raise "bad" unless target.start_with?(File.expand_path(dest) + "/")
+        # ok: ruby.archive-path-traversal
+        FileUtils.mkdir_p(File.dirname(target))
+      end
+    end
+  end
+end
+
+class FilesController < ApplicationController
+  def show
+    path = File.join("/srv/files", params[:name])
+    # ruleid: ruby.request-path-traversal
+    send_file(path)
+  end
+
+  def show_base
+    path = File.join("/srv/files", File.basename(params[:name]))
+    # ok: ruby.request-path-traversal
+    send_file(path)
+  end
+
+  def bio
+    # ruleid: ruby.request-html-injection
+    @bio = params[:bio].html_safe
+    # ok: ruby.request-html-injection
+    @safe = ERB::Util.html_escape(params[:bio]).html_safe
+  end
+end

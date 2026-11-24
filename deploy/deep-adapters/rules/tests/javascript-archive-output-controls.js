@@ -1,0 +1,36 @@
+const fs = require("fs");
+const path = require("path");
+const AdmZip = require("adm-zip");
+
+function unzipYauzl(zipfile, dest) {
+  zipfile.on("entry", (entry) => {
+    const target = path.join(dest, entry.fileName);
+    // ruleid: javascript.archive-path-traversal
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+  });
+}
+
+function unzipChecked(zipfile, dest) {
+  zipfile.on("entry", (entry) => {
+    const target = path.resolve(dest, entry.fileName);
+    if (!target.startsWith(path.resolve(dest) + path.sep)) {
+      throw new Error("bad entry");
+    }
+    // ok: javascript.archive-path-traversal
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+  });
+}
+
+function unzipAdm(file, dest) {
+  const zip = new AdmZip(file);
+  for (const entry of zip.getEntries()) {
+    const target = path.join(dest, entry.entryName);
+    // ruleid: javascript.archive-path-traversal
+    fs.writeFileSync(target, entry.getData());
+  }
+}
+
+function writeFixed(dest, body) {
+  // ok: javascript.archive-path-traversal
+  fs.writeFileSync(path.join(dest, "report.txt"), body);
+}
