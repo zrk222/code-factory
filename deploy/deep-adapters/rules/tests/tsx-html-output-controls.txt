@@ -1,0 +1,28 @@
+export function span(css: string, html: string) {
+  // ruleid: javascript.html-template-unescaped-interpolation
+  return `<span style="${css}">${html}</span>`;
+}
+
+export function spanSafe(css: string, html: string) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return `<span style="${escapeAttr(css)}">${html}</span>`;
+}
+
+export function slot(tagName: string, name: string, value: string) {
+  // ruleid: javascript.html-template-unescaped-interpolation
+  return `<${tagName} name="${name}">${value}</${tagName}>`;
+}
+
+export function text(name: string) {
+  // ok: javascript.html-template-unescaped-interpolation
+  return `Hello ${name}`;
+}
+
+export function setLabel(el: HTMLElement, label: string) {
+  // ruleid: javascript.dom-innerhtml-from-variable
+  el.innerHTML = label;
+  // ok: javascript.dom-innerhtml-from-variable
+  el.innerHTML = "";
+  // ok: javascript.dom-innerhtml-from-variable
+  el.innerHTML = DOMPurify.sanitize(label);
+}

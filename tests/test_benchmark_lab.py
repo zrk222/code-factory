@@ -1266,13 +1266,11 @@ def test_advisory_recall_record_recomputes_lane_separated_summary(recall_record)
 def test_advisory_recall_record_binds_revisions_files_and_tools(recall_record):
     candidate = recall_record["candidate"]
     assert candidate["measured_commit"].startswith("dd6fc8ab")
+    # The record measured the ruleset at dd6fc8ab; later rule additions change the
+    # live profile digest, so bind the record to the digest it was measured with.
     assert (
         candidate["pattern_lane"]["ruleset_sha256"]
-        == json.loads(
-            (
-                _ROOT / "deploy/deep-adapters/profiles/semgrep-pattern-limited.json"
-            ).read_text()
-        )["ruleset_sha256"]
+        == "34c22d94453328985d056ec34bbc3d61fb0a80c3df52c5b42a56af3ce247333c"
     )
     assert candidate["codeql_lane"]["cli_version"] == "2.27.1"
     assert all(

@@ -1,0 +1,81 @@
+package controls;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import org.owasp.encoder.Encode;
+
+class Archive {
+    void unzip(InputStream in, File dest) throws IOException {
+        ZipInputStream zis = new ZipInputStream(in);
+        ZipEntry entry;
+        while ((entry = zis.getNextEntry()) != null) {
+            File target = new File(dest, entry.getName());
+            // ruleid: java.archive-path-traversal
+            FileOutputStream out = new FileOutputStream(target);
+            out.close();
+        }
+    }
+
+    void unzipChecked(InputStream in, File dest) throws IOException {
+        ZipInputStream zis = new ZipInputStream(in);
+        ZipEntry entry;
+        while ((entry = zis.getNextEntry()) != null) {
+            File target = new File(dest, entry.getName());
+            if (!target.getCanonicalPath().startsWith(dest.getCanonicalPath() + File.separator)) {
+                throw new IOException("bad entry");
+            }
+            // ok: java.archive-path-traversal
+            FileOutputStream out = new FileOutputStream(target);
+            out.close();
+        }
+    }
+
+    void unzipUnusedCheck(InputStream in, File dest) throws IOException {
+        ZipInputStream zis = new ZipInputStream(in);
+        ZipEntry entry;
+        while ((entry = zis.getNextEntry()) != null) {
+            File target = new File(dest, entry.getName());
+            boolean inside = target.getCanonicalPath().startsWith(dest.getCanonicalPath());
+            // ruleid: java.archive-path-traversal
+            FileOutputStream out = new FileOutputStream(target);
+            out.close();
+        }
+    }
+
+    void unzipNio(InputStream in, Path dest) throws IOException {
+        ZipInputStream zis = new ZipInputStream(in);
+        ZipEntry entry;
+        while ((entry = zis.getNextEntry()) != null) {
+            Path target = dest.resolve(entry.getName());
+            // ruleid: java.archive-path-traversal
+            Files.copy(zis, target);
+        }
+    }
+
+    void writeFixed(Path dest, byte[] body) throws IOException {
+        // ok: java.archive-path-traversal
+        Files.write(dest.resolve("report.txt"), body);
+    }
+
+    void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        String name = req.getParameter("file");
+        // ruleid: java.request-path-traversal
+        byte[] data = Files.readAllBytes(Paths.get("/srv/files", name));
+        PrintWriter writer = resp.getWriter();
+        String who = req.getParameter("who");
+        // ruleid: java.request-html-injection
+        resp.getWriter().write("<p>" + who + "</p>");
+        // ok: java.request-html-injection
+        resp.getWriter().write("<p>" + Encode.forHtml(who) + "</p>");
+    }
+}

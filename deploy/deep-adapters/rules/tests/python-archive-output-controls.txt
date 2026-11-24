@@ -1,0 +1,116 @@
+import os
+import shutil
+import tarfile
+import zipfile
+from flask import Flask, request, Markup
+from markupsafe import escape
+
+
+def unpack_zip(archive, dest):
+    with zipfile.ZipFile(archive) as zf:
+        for name in zf.namelist():
+            target = os.path.join(dest, name)
+            # ruleid: python.archive-path-traversal
+            with open(target, "wb") as out:
+                out.write(zf.read(name))
+
+
+def unpack_zip_info(archive, dest):
+    zf = zipfile.ZipFile(archive)
+    for info in zf.infolist():
+        target = os.path.join(dest, info.filename)
+        # ruleid: python.archive-path-traversal
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+
+
+def unpack_zip_checked(archive, dest):
+    root = os.path.realpath(dest)
+    with zipfile.ZipFile(archive) as zf:
+        for name in zf.namelist():
+            target = os.path.realpath(os.path.join(root, name))
+            if not target.startswith(root + os.sep):
+                raise ValueError(name)
+            # ok: python.archive-path-traversal
+            with open(target, "wb") as out:
+                out.write(zf.read(name))
+
+
+def unpack_zip_unused_check(archive, dest):
+    root = os.path.realpath(dest)
+    with zipfile.ZipFile(archive) as zf:
+        for name in zf.namelist():
+            target = os.path.realpath(os.path.join(root, name))
+            target.startswith(root + os.sep)
+            # ruleid: python.archive-path-traversal
+            with open(target, "wb") as out:
+                out.write(zf.read(name))
+
+
+def unpack_zip_basename(archive, dest):
+    with zipfile.ZipFile(archive) as zf:
+        for name in zf.namelist():
+            target = os.path.join(dest, os.path.basename(name))
+            # ok: python.archive-path-traversal
+            with open(target, "wb") as out:
+                out.write(zf.read(name))
+
+
+def unpack_tar_members(archive, dest):
+    with tarfile.open(archive) as tf:
+        for member in tf.getmembers():
+            path = os.path.join(dest, member.name)
+            # ruleid: python.archive-path-traversal
+            shutil.copyfile(tf.extractfile(member).name, path)
+
+
+def write_report(dest, rows):
+    # ok: python.archive-path-traversal
+    with open(os.path.join(dest, "report.csv"), "w") as out:
+        out.write(rows)
+
+
+def extract_everything(archive, dest):
+    tf = tarfile.open(archive)
+    # ruleid: python.tarfile-extractall-without-filter
+    tf.extractall(dest)
+
+
+def extract_filtered(archive, dest):
+    tf = tarfile.open(archive)
+    # ok: python.tarfile-extractall-without-filter
+    tf.extractall(dest, filter="data")
+
+
+def extract_explicit_none(archive, dest):
+    tf = tarfile.open(archive)
+    # ruleid: python.tarfile-extractall-without-filter
+    tf.extractall(dest, filter=None)
+
+
+def extract_zip_all(archive, dest):
+    zf = zipfile.ZipFile(archive)
+    # ok: python.tarfile-extractall-without-filter
+    zf.extractall(dest)
+
+
+app = Flask(__name__)
+
+
+@app.route("/hello")
+def hello():
+    name = request.args.get("name")
+    # ruleid: python.request-html-injection
+    return Markup("<b>" + name + "</b>")
+
+
+@app.route("/hello-safe")
+def hello_safe():
+    name = escape(request.args.get("name"))
+    # ok: python.request-html-injection
+    return Markup("<b>" + name + "</b>")
+
+
+@app.route("/static")
+def static_markup():
+    # ok: python.request-html-injection
+    return Markup("<b>fixed</b>")
