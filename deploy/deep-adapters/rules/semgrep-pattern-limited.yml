@@ -1163,3 +1163,2729 @@ rules:
       confidence: MEDIUM
       cwe: ["CWE-89"]
       scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+  - id: python.archive-path-traversal
+    message: An archive member name reaches a filesystem write; reject absolute and parent-relative names and enforce containment under the destination.
+    severity: WARNING
+    languages:
+    - python
+    mode: taint
+    pattern-sources:
+    - pattern: $A.namelist()
+    - pattern: $A.infolist()
+    - pattern: $A.getmembers()
+    - pattern: $A.getnames()
+    - pattern: $A.getinfo(...)
+    - pattern: $A.getmember(...)
+    - pattern: $A.next()
+    pattern-propagators:
+    - pattern: "for $X in $S:\n  ...\n"
+      from: $S
+      to: $X
+    pattern-sanitizers:
+    - pattern: os.path.basename(...)
+    - pattern: secure_filename(...)
+    - patterns:
+      - pattern: $HELPER(...)
+      - metavariable-regex:
+          metavariable: $HELPER
+          regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure|is_relative|validate).*
+    pattern-sinks:
+    - patterns:
+      - pattern-either:
+        - pattern: open($P, ...)
+        - pattern: io.open($P, ...)
+        - pattern: os.makedirs($P, ...)
+        - pattern: os.mkdir($P, ...)
+        - pattern: os.symlink(..., $P)
+        - pattern: os.link(..., $P)
+        - pattern: os.rename(..., $P)
+        - pattern: os.replace(..., $P)
+        - pattern: shutil.copyfile(..., $P)
+        - pattern: shutil.copy(..., $P)
+        - pattern: shutil.move(..., $P)
+        - pattern: pathlib.Path($P).write_bytes(...)
+        - pattern: pathlib.Path($P).write_text(...)
+        - pattern: Path($P).write_bytes(...)
+        - pattern: Path($P).write_text(...)
+        - pattern: Path($P).mkdir(...)
+      - pattern-not-inside: "if <... $V.startswith(...) ...>:\n  ...\n  raise ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... $V.startswith(...) ...>:\n  ...\n  raise ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... $V.is_relative_to(...) ...>:\n  ...\n  raise ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... $V.is_relative_to(...) ...>:\n  ...\n  raise ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... os.path.commonpath([..., $V, ...]) ...>:\n  ...\n  raise ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... os.path.commonpath([..., $V, ...]) ...>:\n  ...\n  raise ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... os.path.commonprefix([..., $V, ...]) ...>:\n  ...\n  raise ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... os.path.commonprefix([..., $V, ...]) ...>:\n  ...\n  raise ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... '..' in $V ...>:\n  ...\n  raise ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... '..' in $V ...>:\n  ...\n  raise ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... $X not in $V.parents ...>:\n  ...\n  raise ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... $X not in $V.parents ...>:\n  ...\n  raise ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "try:\n  ...\n  <... $V.relative_to(...) ...>\n  ...\nexcept $EX:\n  ...\n  raise ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "try:\n  ...\n  <... $V.relative_to(...) ...>\n  ...\nexcept $EX:\n  ...\n  raise ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... $V.startswith(...) ...>:\n  ...\n  return ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... $V.startswith(...) ...>:\n  ...\n  return ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... $V.is_relative_to(...) ...>:\n  ...\n  return ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... $V.is_relative_to(...) ...>:\n  ...\n  return ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... os.path.commonpath([..., $V, ...]) ...>:\n  ...\n  return ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... os.path.commonpath([..., $V, ...]) ...>:\n  ...\n  return ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... os.path.commonprefix([..., $V, ...]) ...>:\n  ...\n  return ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... os.path.commonprefix([..., $V, ...]) ...>:\n  ...\n  return ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... '..' in $V ...>:\n  ...\n  return ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... '..' in $V ...>:\n  ...\n  return ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... $X not in $V.parents ...>:\n  ...\n  return ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... $X not in $V.parents ...>:\n  ...\n  return ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "try:\n  ...\n  <... $V.relative_to(...) ...>\n  ...\nexcept $EX:\n  ...\n  return ...\n...\n<... $V ...>\n"
+      - pattern-not-inside: "try:\n  ...\n  <... $V.relative_to(...) ...>\n  ...\nexcept $EX:\n  ...\n  return ...\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... $V.startswith(...) ...>:\n  ...\n  continue\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... $V.startswith(...) ...>:\n  ...\n  continue\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... $V.is_relative_to(...) ...>:\n  ...\n  continue\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... $V.is_relative_to(...) ...>:\n  ...\n  continue\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... os.path.commonpath([..., $V, ...]) ...>:\n  ...\n  continue\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... os.path.commonpath([..., $V, ...]) ...>:\n  ...\n  continue\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... os.path.commonprefix([..., $V, ...]) ...>:\n  ...\n  continue\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... os.path.commonprefix([..., $V, ...]) ...>:\n  ...\n  continue\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... '..' in $V ...>:\n  ...\n  continue\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... '..' in $V ...>:\n  ...\n  continue\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "if <... $X not in $V.parents ...>:\n  ...\n  continue\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... $X not in $V.parents ...>:\n  ...\n  continue\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - pattern-not-inside: "try:\n  ...\n  <... $V.relative_to(...) ...>\n  ...\nexcept $EX:\n  ...\n  continue\n...\n<... $V ...>\n"
+      - pattern-not-inside: "try:\n  ...\n  <... $V.relative_to(...) ...>\n  ...\nexcept $EX:\n  ...\n  continue\n...\nwith <... $V ...> as $FH:\n  ...\n"
+      - focus-metavariable: $P
+    paths:
+      exclude:
+      - '**/test/**'
+      - '**/tests/**'
+      - '**/__tests__/**'
+      - '**/testdata/**'
+      - '**/test_data/**'
+      - '**/test-data/**'
+      - '**/fixtures/**'
+      - '**/src/test/**'
+      - '**/*_test.go'
+      - '**/test_*.py'
+      - '**/*_test.py'
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*Test.java'
+      - '**/*Tests.java'
+      - '**/*Test.cs'
+      - '**/*Tests.cs'
+      - '**/*_test.rs'
+      - '**/*_spec.rb'
+      - '**/exploits/**'
+      - '**/exploit/**'
+      - '**/poc/**'
+      - '**/pocs/**'
+      - '**/CVE-*/**'
+      - '**/cve-*/**'
+      - '**/*Generated*'
+      - '**/*generated*'
+      - '**/*_pb2.py'
+      - '**/*.pb.go'
+      - '**/Lib/**'
+      - '**/site-packages/**'
+      - '**/*venv*/**'
+      - '**/node_modules/**'
+      - '**/vendor/**'
+      - '**/third_party/**'
+      - '**/third-party/**'
+      - '**/bower_components/**'
+      - '**/.history/**'
+      - '**/*.min.js'
+      - '**/wp-admin/**'
+      - '**/wp-includes/**'
+      - '**/tests.rs'
+      - '**/test_utils.rs'
+      - '**/test_util.rs'
+      - '**/testutil/**'
+      - '**/testutils/**'
+      - '**/TestUtils/**'
+      - '**/Pods/**'
+      - '**/Carthage/**'
+      - '**/spec/**'
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe:
+      - CWE-22
+      scope: Archive member names from zipfile/tarfile listings to local file writes; a containment check clears the value only as a rejecting guard (raise, return, continue or throw) on the same value before its use.
+  - id: python.tarfile-extractall-without-filter
+    message: tarfile extraction without a filter trusts member paths and links; pass filter="data" or validate every member before extracting.
+    severity: INFO
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: $T.extractall(..., filter=None, ...)
+          - pattern: $T.extract(..., filter=None, ...)
+          - patterns:
+              - pattern-either:
+                  - pattern: $T.extractall(...)
+                  - pattern: $T.extract(...)
+              - pattern-not: $T.extractall(..., filter=$F, ...)
+              - pattern-not: $T.extract(..., filter=$F, ...)
+              - pattern-not: $T.extractall(..., members=$M, ...)
+      - pattern-either:
+          - pattern-inside: |
+              $T = tarfile.open(...)
+              ...
+          - pattern-inside: |
+              $T = tarfile.TarFile(...)
+              ...
+          - pattern-inside: |
+              with tarfile.open(...) as $T:
+                ...
+          - pattern-inside: |
+              with tarfile.TarFile(...) as $T:
+                ...
+      - pattern-not-inside: |
+          $T.extraction_filter = $FILTER
+          ...
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-22"]
+      scope: tarfile.open/TarFile handles, assigned or in a with-block, extracted without filter= or explicit members.
+  - id: go.archive-path-traversal
+    message: An archive entry name reaches a filesystem write; reject absolute and parent-relative names and enforce containment under the destination.
+    severity: WARNING
+    languages:
+    - go
+    mode: taint
+    pattern-sources:
+    - patterns:
+      - pattern-inside: "for $I, $F := range $R.File {\n  ...\n}\n"
+      - pattern: $F.Name
+    - patterns:
+      - pattern-inside: "for $I, $F := range $R.Reader.File {\n  ...\n}\n"
+      - pattern: $F.Name
+    - patterns:
+      - pattern-inside: '$TR := tar.NewReader(...)
+
+          ...
+
+          '
+      - pattern-inside: '$H, $E := $TR.Next()
+
+          ...
+
+          '
+      - pattern-either:
+        - pattern: $H.Name
+        - pattern: $H.Linkname
+    pattern-sanitizers:
+    - pattern: filepath.Base(...)
+    - pattern: path.Base(...)
+    - pattern: securejoin.SecureJoin(...)
+    - patterns:
+      - pattern: $HELPER(...)
+      - metavariable-regex:
+          metavariable: $HELPER
+          regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure|validate).*
+    pattern-sinks:
+    - patterns:
+      - pattern-either:
+        - pattern: os.Create($P)
+        - pattern: os.OpenFile($P, ...)
+        - pattern: os.WriteFile($P, ...)
+        - pattern: os.MkdirAll($P, ...)
+        - pattern: os.Mkdir($P, ...)
+        - pattern: os.Symlink(..., $P)
+        - pattern: os.Link(..., $P)
+        - pattern: os.Rename(..., $P)
+        - pattern: os.Chmod($P, ...)
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  return ...\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  return ...\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  return ...\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  return ...\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  return ...\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  return ...\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  return ...\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  return ...\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  return ...\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  return ...\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  return ...\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  return ...\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  continue\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  continue\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  continue\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  continue\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  continue\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  continue\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  continue\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  continue\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  continue\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  continue\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  continue\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  continue\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - focus-metavariable: $P
+    paths:
+      exclude:
+      - '**/test/**'
+      - '**/tests/**'
+      - '**/__tests__/**'
+      - '**/testdata/**'
+      - '**/test_data/**'
+      - '**/test-data/**'
+      - '**/fixtures/**'
+      - '**/src/test/**'
+      - '**/*_test.go'
+      - '**/test_*.py'
+      - '**/*_test.py'
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*Test.java'
+      - '**/*Tests.java'
+      - '**/*Test.cs'
+      - '**/*Tests.cs'
+      - '**/*_test.rs'
+      - '**/*_spec.rb'
+      - '**/exploits/**'
+      - '**/exploit/**'
+      - '**/poc/**'
+      - '**/pocs/**'
+      - '**/CVE-*/**'
+      - '**/cve-*/**'
+      - '**/*Generated*'
+      - '**/*generated*'
+      - '**/*_pb2.py'
+      - '**/*.pb.go'
+      - '**/Lib/**'
+      - '**/site-packages/**'
+      - '**/*venv*/**'
+      - '**/node_modules/**'
+      - '**/vendor/**'
+      - '**/third_party/**'
+      - '**/third-party/**'
+      - '**/bower_components/**'
+      - '**/.history/**'
+      - '**/*.min.js'
+      - '**/wp-admin/**'
+      - '**/wp-includes/**'
+      - '**/tests.rs'
+      - '**/test_utils.rs'
+      - '**/test_util.rs'
+      - '**/testutil/**'
+      - '**/testutils/**'
+      - '**/TestUtils/**'
+      - '**/Pods/**'
+      - '**/Carthage/**'
+      - '**/spec/**'
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe:
+      - CWE-22
+      scope: archive/zip range loops and tar.NewReader headers to local file writes; a containment check clears the value only as a rejecting guard (raise, return, continue or throw) on the same value before its use.
+  - id: java.archive-path-traversal
+    message: An archive entry name reaches a filesystem write; check the canonical destination stays under the target directory before writing.
+    severity: WARNING
+    languages:
+    - java
+    mode: taint
+    pattern-sources:
+    - pattern: (ZipEntry $E).getName()
+    - pattern: (java.util.zip.ZipEntry $E).getName()
+    - pattern: (JarEntry $E).getName()
+    - pattern: (ZipArchiveEntry $E).getName()
+    - pattern: (TarArchiveEntry $E).getName()
+    - pattern: (ArchiveEntry $E).getName()
+    - pattern: (FileHeader $E).getFileName()
+    - pattern: (FileHeader $E).getFileNameString()
+    - pattern: (FileHeader $E).getFileNameW()
+    pattern-sanitizers:
+    - pattern: FilenameUtils.getName(...)
+    - pattern: (Path $P).getFileName()
+    - patterns:
+      - pattern: $HELPER(...)
+      - metavariable-regex:
+          metavariable: $HELPER
+          regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure|validate).*
+    pattern-sinks:
+    - patterns:
+      - pattern-either:
+        - pattern: new FileOutputStream($P, ...)
+        - pattern: new java.io.FileOutputStream($P, ...)
+        - pattern: new RandomAccessFile($P, ...)
+        - pattern: new FileWriter($P, ...)
+        - pattern: Files.newOutputStream($P, ...)
+        - pattern: Files.write($P, ...)
+        - pattern: Files.copy($IN, $P, ...)
+        - pattern: Files.createDirectories($P, ...)
+        - pattern: Files.createSymbolicLink($P, ...)
+        - pattern: FileUtils.copyInputStreamToFile($IN, $P)
+        - pattern: FileUtils.writeByteArrayToFile($P, ...)
+        - pattern: (File $P).mkdirs()
+        - pattern: (File $P).createNewFile()
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - focus-metavariable: $P
+    paths:
+      exclude:
+      - '**/test/**'
+      - '**/tests/**'
+      - '**/__tests__/**'
+      - '**/testdata/**'
+      - '**/test_data/**'
+      - '**/test-data/**'
+      - '**/fixtures/**'
+      - '**/src/test/**'
+      - '**/*_test.go'
+      - '**/test_*.py'
+      - '**/*_test.py'
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*Test.java'
+      - '**/*Tests.java'
+      - '**/*Test.cs'
+      - '**/*Tests.cs'
+      - '**/*_test.rs'
+      - '**/*_spec.rb'
+      - '**/exploits/**'
+      - '**/exploit/**'
+      - '**/poc/**'
+      - '**/pocs/**'
+      - '**/CVE-*/**'
+      - '**/cve-*/**'
+      - '**/*Generated*'
+      - '**/*generated*'
+      - '**/*_pb2.py'
+      - '**/*.pb.go'
+      - '**/Lib/**'
+      - '**/site-packages/**'
+      - '**/*venv*/**'
+      - '**/node_modules/**'
+      - '**/vendor/**'
+      - '**/third_party/**'
+      - '**/third-party/**'
+      - '**/bower_components/**'
+      - '**/.history/**'
+      - '**/*.min.js'
+      - '**/wp-admin/**'
+      - '**/wp-includes/**'
+      - '**/tests.rs'
+      - '**/test_utils.rs'
+      - '**/test_util.rs'
+      - '**/testutil/**'
+      - '**/testutils/**'
+      - '**/TestUtils/**'
+      - '**/Pods/**'
+      - '**/Carthage/**'
+      - '**/spec/**'
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe:
+      - CWE-22
+      scope: Typed archive entry names to local file writes; a containment check clears the value only as a rejecting guard (raise, return, continue or throw) on the same value before its use.
+  - id: javascript.archive-path-traversal
+    message: An archive entry name reaches a filesystem write; reject absolute and parent-relative names and enforce containment under the destination.
+    severity: WARNING
+    languages:
+    - javascript
+    - typescript
+    mode: taint
+    pattern-sources:
+    - patterns:
+      - pattern-either:
+        - pattern-inside: $Z.on("entry", function ($E, ...) { ... })
+        - pattern-inside: $Z.on("entry", ($E, ...) => { ... })
+        - pattern-inside: $Z.on("entry", async ($E, ...) => { ... })
+        - pattern-inside: $Z.on("entry", async function ($E, ...) { ... })
+      - pattern-either:
+        - pattern: $E.path
+        - pattern: $E.fileName
+        - pattern: $E.name
+        - pattern: $E.entryName
+        - pattern: $E.linkpath
+    - pattern: $Z.getEntries()
+    - pattern: (await $Z.entries())
+    pattern-propagators:
+    - pattern: for (const $X of $S) { ... }
+      from: $S
+      to: $X
+    pattern-sanitizers:
+    - pattern: path.basename(...)
+    - patterns:
+      - pattern: $HELPER(...)
+      - metavariable-regex:
+          metavariable: $HELPER
+          regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure|validate).*
+    pattern-sinks:
+    - patterns:
+      - pattern-either:
+        - pattern: fs.writeFile($P, ...)
+        - pattern: fs.writeFileSync($P, ...)
+        - pattern: fs.createWriteStream($P, ...)
+        - pattern: fs.mkdir($P, ...)
+        - pattern: fs.mkdirSync($P, ...)
+        - pattern: fs.symlink(..., $P, ...)
+        - pattern: fs.symlinkSync(..., $P, ...)
+        - pattern: fs.promises.writeFile($P, ...)
+        - pattern: fs.promises.mkdir($P, ...)
+        - pattern: fsPromises.writeFile($P, ...)
+        - pattern: fsPromises.mkdir($P, ...)
+        - pattern: $ENTRY.extractEntryTo(..., $P, ...)
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... $V.startsWith(...) ...>) throw $E;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... $V.includes(\"..\") ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... $V.includes("..") ...>) throw $E;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... path.isAbsolute($V) ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... path.isAbsolute($V) ...>) throw $E;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... path.relative(..., $V) ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... path.relative(..., $V) ...>) throw $E;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... $V.startsWith(...) ...>) return ...;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... $V.includes(\"..\") ...>) {\n  ...\n  return ...;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... $V.includes("..") ...>) return ...;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... path.isAbsolute($V) ...>) {\n  ...\n  return ...;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... path.isAbsolute($V) ...>) return ...;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... path.relative(..., $V) ...>) {\n  ...\n  return ...;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... path.relative(..., $V) ...>) return ...;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... $V.startsWith(...) ...>) continue;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... $V.includes(\"..\") ...>) {\n  ...\n  continue;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... $V.includes("..") ...>) continue;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... path.isAbsolute($V) ...>) {\n  ...\n  continue;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... path.isAbsolute($V) ...>) continue;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - pattern-not-inside: "if (<... path.relative(..., $V) ...>) {\n  ...\n  continue;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: 'if (<... path.relative(..., $V) ...>) continue;
+
+          ...
+
+          <... $V ...>;
+
+          '
+      - focus-metavariable: $P
+    paths:
+      exclude:
+      - '**/test/**'
+      - '**/tests/**'
+      - '**/__tests__/**'
+      - '**/testdata/**'
+      - '**/test_data/**'
+      - '**/test-data/**'
+      - '**/fixtures/**'
+      - '**/src/test/**'
+      - '**/*_test.go'
+      - '**/test_*.py'
+      - '**/*_test.py'
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*Test.java'
+      - '**/*Tests.java'
+      - '**/*Test.cs'
+      - '**/*Tests.cs'
+      - '**/*_test.rs'
+      - '**/*_spec.rb'
+      - '**/exploits/**'
+      - '**/exploit/**'
+      - '**/poc/**'
+      - '**/pocs/**'
+      - '**/CVE-*/**'
+      - '**/cve-*/**'
+      - '**/*Generated*'
+      - '**/*generated*'
+      - '**/*_pb2.py'
+      - '**/*.pb.go'
+      - '**/Lib/**'
+      - '**/site-packages/**'
+      - '**/*venv*/**'
+      - '**/node_modules/**'
+      - '**/vendor/**'
+      - '**/third_party/**'
+      - '**/third-party/**'
+      - '**/bower_components/**'
+      - '**/.history/**'
+      - '**/*.min.js'
+      - '**/wp-admin/**'
+      - '**/wp-includes/**'
+      - '**/tests.rs'
+      - '**/test_utils.rs'
+      - '**/test_util.rs'
+      - '**/testutil/**'
+      - '**/testutils/**'
+      - '**/TestUtils/**'
+      - '**/Pods/**'
+      - '**/Carthage/**'
+      - '**/spec/**'
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe:
+      - CWE-22
+      scope: entry-event and getEntries archive names to local fs writes; a containment check clears the value only as a rejecting guard (raise, return, continue or throw) on the same value before its use.
+  - id: ruby.archive-path-traversal
+    message: An archive entry name reaches a filesystem write; reject absolute and parent-relative names and enforce containment under the destination.
+    severity: WARNING
+    languages:
+    - ruby
+    mode: taint
+    pattern-sources:
+    - patterns:
+      - pattern-either:
+        - pattern-inside: "$Z.each do |$E|\n  ...\nend\n"
+        - pattern-inside: "$Z.each_entry do |$E|\n  ...\nend\n"
+        - pattern-inside: '$Z.each { |$E| ... }
+
+            '
+      - pattern-either:
+        - patterns:
+          - pattern-inside: "Zip::File.open(...) do |$Z|\n  ...\nend\n"
+          - pattern-either:
+            - pattern: $E.name
+            - pattern: $E.to_s
+        - patterns:
+          - pattern-inside: "Gem::Package::TarReader.new(...) do |$Z|\n  ...\nend\n"
+          - pattern-either:
+            - pattern: $E.full_name
+            - pattern: $E.header.linkname
+    pattern-sanitizers:
+    - pattern: File.basename(...)
+    - patterns:
+      - pattern: $HELPER(...)
+      - metavariable-regex:
+          metavariable: $HELPER
+          regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure|validate).*
+    pattern-sinks:
+    - patterns:
+      - pattern-either:
+        - pattern: File.open($P, ...)
+        - pattern: File.write($P, ...)
+        - pattern: File.binwrite($P, ...)
+        - pattern: File.symlink(..., $P)
+        - pattern: FileUtils.mkdir_p($P, ...)
+        - pattern: FileUtils.cp(..., $P, ...)
+        - pattern: FileUtils.mv(..., $P, ...)
+        - pattern: IO.copy_stream(..., $P)
+        - pattern: $E.extract($P, ...)
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  raise $M\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  raise $M\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'raise $M unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'raise $M unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  raise $M\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  raise $M\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'raise $M unless <... $V.include?("..") ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'raise $M unless <... $V.include?("..") ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  return\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  return\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'return unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'return unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  return\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  return\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'return unless <... $V.include?("..") ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'return unless <... $V.include?("..") ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  next\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  next\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'next unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'next unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  next\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  next\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'next unless <... $V.include?("..") ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'next unless <... $V.include?("..") ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - focus-metavariable: $P
+    paths:
+      exclude:
+      - '**/test/**'
+      - '**/tests/**'
+      - '**/__tests__/**'
+      - '**/testdata/**'
+      - '**/test_data/**'
+      - '**/test-data/**'
+      - '**/fixtures/**'
+      - '**/src/test/**'
+      - '**/*_test.go'
+      - '**/test_*.py'
+      - '**/*_test.py'
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*Test.java'
+      - '**/*Tests.java'
+      - '**/*Test.cs'
+      - '**/*Tests.cs'
+      - '**/*_test.rs'
+      - '**/*_spec.rb'
+      - '**/exploits/**'
+      - '**/exploit/**'
+      - '**/poc/**'
+      - '**/pocs/**'
+      - '**/CVE-*/**'
+      - '**/cve-*/**'
+      - '**/*Generated*'
+      - '**/*generated*'
+      - '**/*_pb2.py'
+      - '**/*.pb.go'
+      - '**/Lib/**'
+      - '**/site-packages/**'
+      - '**/*venv*/**'
+      - '**/node_modules/**'
+      - '**/vendor/**'
+      - '**/third_party/**'
+      - '**/third-party/**'
+      - '**/bower_components/**'
+      - '**/.history/**'
+      - '**/*.min.js'
+      - '**/wp-admin/**'
+      - '**/wp-includes/**'
+      - '**/tests.rs'
+      - '**/test_utils.rs'
+      - '**/test_util.rs'
+      - '**/testutil/**'
+      - '**/testutils/**'
+      - '**/TestUtils/**'
+      - '**/Pods/**'
+      - '**/Carthage/**'
+      - '**/spec/**'
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe:
+      - CWE-22
+      scope: Zip::File and TarReader entry names to local file writes; a containment check clears the value only as a rejecting guard (raise, return, continue or throw) on the same value before its use.
+  - id: php.archive-path-traversal
+    message: An archive entry name reaches a filesystem write; reject absolute and parent-relative names and enforce containment under the destination.
+    severity: WARNING
+    languages:
+    - php
+    mode: taint
+    pattern-sources:
+    - pattern: $Z->getNameIndex(...)
+    - pattern: $Z->statIndex(...)
+    - pattern: $Z->statName(...)
+    - pattern: zip_entry_name(...)
+    pattern-sanitizers:
+    - pattern: basename(...)
+    - patterns:
+      - pattern: $HELPER(...)
+      - metavariable-regex:
+          metavariable: $HELPER
+          regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure|validate).*
+    pattern-sinks:
+    - patterns:
+      - pattern-either:
+        - pattern: file_put_contents($P, ...)
+        - pattern: fopen($P, ...)
+        - pattern: mkdir($P, ...)
+        - pattern: copy(..., $P, ...)
+        - pattern: rename(..., $P, ...)
+        - pattern: symlink(..., $P)
+      - pattern-not-inside: "if (<... str_starts_with(<... $V ...>, ...) ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: "if (<... strpos(<... $V ...>, ...) ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: "if (<... str_contains(<... $V ...>, '..') ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: "if (<... str_starts_with(<... $V ...>, ...) ...>) {\n  ...\n  return ...;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: "if (<... strpos(<... $V ...>, ...) ...>) {\n  ...\n  return ...;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: "if (<... str_contains(<... $V ...>, '..') ...>) {\n  ...\n  return ...;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: "if (<... str_starts_with(<... $V ...>, ...) ...>) {\n  ...\n  continue;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: "if (<... strpos(<... $V ...>, ...) ...>) {\n  ...\n  continue;\n}\n...\n<... $V ...>;\n"
+      - pattern-not-inside: "if (<... str_contains(<... $V ...>, '..') ...>) {\n  ...\n  continue;\n}\n...\n<... $V ...>;\n"
+      - focus-metavariable: $P
+    paths:
+      exclude:
+      - '**/test/**'
+      - '**/tests/**'
+      - '**/__tests__/**'
+      - '**/testdata/**'
+      - '**/test_data/**'
+      - '**/test-data/**'
+      - '**/fixtures/**'
+      - '**/src/test/**'
+      - '**/*_test.go'
+      - '**/test_*.py'
+      - '**/*_test.py'
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*Test.java'
+      - '**/*Tests.java'
+      - '**/*Test.cs'
+      - '**/*Tests.cs'
+      - '**/*_test.rs'
+      - '**/*_spec.rb'
+      - '**/exploits/**'
+      - '**/exploit/**'
+      - '**/poc/**'
+      - '**/pocs/**'
+      - '**/CVE-*/**'
+      - '**/cve-*/**'
+      - '**/*Generated*'
+      - '**/*generated*'
+      - '**/*_pb2.py'
+      - '**/*.pb.go'
+      - '**/Lib/**'
+      - '**/site-packages/**'
+      - '**/*venv*/**'
+      - '**/node_modules/**'
+      - '**/vendor/**'
+      - '**/third_party/**'
+      - '**/third-party/**'
+      - '**/bower_components/**'
+      - '**/.history/**'
+      - '**/*.min.js'
+      - '**/wp-admin/**'
+      - '**/wp-includes/**'
+      - '**/tests.rs'
+      - '**/test_utils.rs'
+      - '**/test_util.rs'
+      - '**/testutil/**'
+      - '**/testutils/**'
+      - '**/TestUtils/**'
+      - '**/Pods/**'
+      - '**/Carthage/**'
+      - '**/spec/**'
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe:
+      - CWE-22
+      scope: ZipArchive entry names to local file writes; a containment check clears the value only as a rejecting guard (raise, return, continue or throw) on the same value before its use.
+  - id: go.request-path-traversal
+    message: Request data reaches a filesystem path; resolve against an allowed root and enforce containment before access.
+    severity: INFO
+    languages:
+    - go
+    mode: taint
+    pattern-sources:
+    - patterns:
+      - pattern-either:
+        - pattern-inside: func $F(..., $REQ *http.Request, ...) { ... }
+        - pattern-inside: func ($RECV $RT) $F(..., $REQ *http.Request, ...) { ... }
+        - pattern-inside: func $F(..., $REQ *http.Request, ...) $RET { ... }
+        - pattern-inside: func ($RECV $RT) $F(..., $REQ *http.Request, ...) $RET { ... }
+      - pattern-either:
+        - pattern: $REQ.FormValue(...)
+        - pattern: $REQ.PostFormValue(...)
+        - pattern: $REQ.URL.Query().Get(...)
+        - pattern: $REQ.URL.Path
+        - pattern: $REQ.PathValue(...)
+        - pattern: mux.Vars($REQ)[...]
+      exact: true
+    - patterns:
+      - pattern-either:
+        - pattern-inside: func $F(..., $CTX *gin.Context, ...) { ... }
+        - pattern-inside: func ($RECV $RT) $F(..., $CTX *gin.Context, ...) { ... }
+        - pattern-inside: func $F(..., $CTX echo.Context, ...) $RET { ... }
+        - pattern-inside: func ($RECV $RT) $F(..., $CTX echo.Context, ...) $RET { ... }
+      - pattern-either:
+        - pattern: $CTX.Query(...)
+        - pattern: $CTX.DefaultQuery(...)
+        - pattern: $CTX.Param(...)
+        - pattern: $CTX.PostForm(...)
+        - pattern: $CTX.QueryParam(...)
+        - pattern: $CTX.FormValue(...)
+      exact: true
+    pattern-sanitizers:
+    - pattern: filepath.Base(...)
+    - pattern: path.Base(...)
+    - pattern: securejoin.SecureJoin(...)
+    - pattern: strconv.Atoi(...)
+    - patterns:
+      - pattern: $HELPER(...)
+      - metavariable-regex:
+          metavariable: $HELPER
+          regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure|validate).*
+    pattern-sinks:
+    - patterns:
+      - pattern-either:
+        - pattern: os.Open($P)
+        - pattern: os.OpenFile($P, ...)
+        - pattern: os.ReadFile($P)
+        - pattern: os.Create($P)
+        - pattern: os.WriteFile($P, ...)
+        - pattern: os.Remove($P)
+        - pattern: os.RemoveAll($P)
+        - pattern: os.ReadDir($P)
+        - pattern: http.ServeFile($W, $R, $P)
+        - pattern: $CTX.File($P)
+        - pattern: $CTX.FileAttachment($P, ...)
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  return ...\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  return ...\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  return ...\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  return ...\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  return ...\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  return ...\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  return ...\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  return ...\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  return ...\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  return ...\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  return ...\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  return ...\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  continue\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  continue\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  continue\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.HasPrefix($V, ...) ...> {\n  ...\n  continue\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  continue\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  continue\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  continue\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... filepath.IsLocal($V) ...> {\n  ...\n  continue\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  continue\n}\n...\n<... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  continue\n}\n...\n$X, $Y := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  continue\n}\n...\n$X := <... $V ...>\n"
+      - pattern-not-inside: "if <... strings.Contains($V, \"..\") ...> {\n  ...\n  continue\n}\n...\nif $X := <... $V ...>; $COND {\n  ...\n}\n"
+      - focus-metavariable: $P
+    paths:
+      exclude:
+      - '**/test/**'
+      - '**/tests/**'
+      - '**/__tests__/**'
+      - '**/testdata/**'
+      - '**/test_data/**'
+      - '**/test-data/**'
+      - '**/fixtures/**'
+      - '**/src/test/**'
+      - '**/*_test.go'
+      - '**/test_*.py'
+      - '**/*_test.py'
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*Test.java'
+      - '**/*Tests.java'
+      - '**/*Test.cs'
+      - '**/*Tests.cs'
+      - '**/*_test.rs'
+      - '**/*_spec.rb'
+      - '**/exploits/**'
+      - '**/exploit/**'
+      - '**/poc/**'
+      - '**/pocs/**'
+      - '**/CVE-*/**'
+      - '**/cve-*/**'
+      - '**/*Generated*'
+      - '**/*generated*'
+      - '**/*_pb2.py'
+      - '**/*.pb.go'
+      - '**/Lib/**'
+      - '**/site-packages/**'
+      - '**/*venv*/**'
+      - '**/node_modules/**'
+      - '**/vendor/**'
+      - '**/third_party/**'
+      - '**/third-party/**'
+      - '**/bower_components/**'
+      - '**/.history/**'
+      - '**/*.min.js'
+      - '**/wp-admin/**'
+      - '**/wp-includes/**'
+      - '**/tests.rs'
+      - '**/test_utils.rs'
+      - '**/test_util.rs'
+      - '**/testutil/**'
+      - '**/testutils/**'
+      - '**/TestUtils/**'
+      - '**/Pods/**'
+      - '**/Carthage/**'
+      - '**/spec/**'
+    metadata:
+      tier: review
+      category: security
+      confidence: MEDIUM
+      cwe:
+      - CWE-22
+      scope: Typed net/http, gin and echo handler request values to local file operations.; a containment check clears the value only as a rejecting guard (raise, return, continue or throw) on the same value before its use.
+  - id: java.request-path-traversal
+    message: Request data reaches a filesystem path; resolve against an allowed root and enforce containment before access.
+    severity: INFO
+    languages:
+    - java
+    mode: taint
+    pattern-sources:
+    - patterns:
+      - pattern-either:
+        - pattern-inside: $RET $F(..., javax.servlet.http.HttpServletRequest $REQ, ...) { ... }
+        - pattern-inside: $RET $F(..., jakarta.servlet.http.HttpServletRequest $REQ, ...) { ... }
+        - pattern-inside: $RET $F(..., HttpServletRequest $REQ, ...) { ... }
+      - pattern-either:
+        - pattern: $REQ.getParameter(...)
+        - pattern: $REQ.getPathInfo()
+        - pattern: $REQ.getHeader(...)
+      exact: true
+    - patterns:
+      - pattern-either:
+        - pattern-inside: $RET $F(..., @RequestParam $T $P, ...) { ... }
+        - pattern-inside: $RET $F(..., @RequestParam(...) $T $P, ...) { ... }
+        - pattern-inside: $RET $F(..., @PathVariable $T $P, ...) { ... }
+        - pattern-inside: $RET $F(..., @PathVariable(...) $T $P, ...) { ... }
+        - pattern-inside: $RET $F(..., @QueryParam(...) $T $P, ...) { ... }
+        - pattern-inside: $RET $F(..., @PathParam(...) $T $P, ...) { ... }
+      - pattern: $P
+    pattern-sanitizers:
+    - pattern: FilenameUtils.getName(...)
+    - pattern: Integer.parseInt(...)
+    - pattern: (Path $X).getFileName()
+    - patterns:
+      - pattern: $HELPER(...)
+      - metavariable-regex:
+          metavariable: $HELPER
+          regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure|validate).*
+    pattern-sinks:
+    - patterns:
+      - pattern-either:
+        - pattern: new FileInputStream($P, ...)
+        - pattern: new FileOutputStream($P, ...)
+        - pattern: new FileReader($P, ...)
+        - pattern: new FileWriter($P, ...)
+        - pattern: Files.readAllBytes($P)
+        - pattern: Files.readString($P, ...)
+        - pattern: Files.newInputStream($P, ...)
+        - pattern: Files.newOutputStream($P, ...)
+        - pattern: Files.lines($P, ...)
+        - pattern: Files.delete($P)
+        - pattern: Files.write($P, ...)
+        - pattern: Files.copy($P, ...)
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  throw $E;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  return ...;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.getCanonicalFile().toPath().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.toPath().normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.normalize().startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$T $X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$X = <... $V ...>;\n"
+      - pattern-not-inside: "if (<... $V.startsWith(...) ...>) {\n  ...\n  continue;\n}\n...\n$O.$M(..., <... $V ...>, ...);\n"
+      - focus-metavariable: $P
+    paths:
+      exclude:
+      - '**/test/**'
+      - '**/tests/**'
+      - '**/__tests__/**'
+      - '**/testdata/**'
+      - '**/test_data/**'
+      - '**/test-data/**'
+      - '**/fixtures/**'
+      - '**/src/test/**'
+      - '**/*_test.go'
+      - '**/test_*.py'
+      - '**/*_test.py'
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*Test.java'
+      - '**/*Tests.java'
+      - '**/*Test.cs'
+      - '**/*Tests.cs'
+      - '**/*_test.rs'
+      - '**/*_spec.rb'
+      - '**/exploits/**'
+      - '**/exploit/**'
+      - '**/poc/**'
+      - '**/pocs/**'
+      - '**/CVE-*/**'
+      - '**/cve-*/**'
+      - '**/*Generated*'
+      - '**/*generated*'
+      - '**/*_pb2.py'
+      - '**/*.pb.go'
+      - '**/Lib/**'
+      - '**/site-packages/**'
+      - '**/*venv*/**'
+      - '**/node_modules/**'
+      - '**/vendor/**'
+      - '**/third_party/**'
+      - '**/third-party/**'
+      - '**/bower_components/**'
+      - '**/.history/**'
+      - '**/*.min.js'
+      - '**/wp-admin/**'
+      - '**/wp-includes/**'
+      - '**/tests.rs'
+      - '**/test_utils.rs'
+      - '**/test_util.rs'
+      - '**/testutil/**'
+      - '**/testutils/**'
+      - '**/TestUtils/**'
+      - '**/Pods/**'
+      - '**/Carthage/**'
+      - '**/spec/**'
+    metadata:
+      tier: review
+      category: security
+      confidence: MEDIUM
+      cwe:
+      - CWE-22
+      scope: Typed servlet and Spring/JAX-RS handler parameters to local file streams.; a containment check clears the value only as a rejecting guard (raise, return, continue or throw) on the same value before its use.
+  - id: ruby.request-path-traversal
+    message: Request data reaches a filesystem path; resolve against an allowed root and enforce containment before access.
+    severity: INFO
+    languages:
+    - ruby
+    mode: taint
+    pattern-sources:
+    - patterns:
+      - pattern-inside: "class $C < $BASE\n  ...\nend\n"
+      - metavariable-regex:
+          metavariable: $BASE
+          regex: ^(.*Controller|.*ControllerBase|ActionController::(Base|API)|Sinatra::Base|Grape::API)$
+      - pattern-either:
+        - pattern: params[...]
+        - pattern: params.fetch(...)
+        - pattern: params.dig(...)
+      exact: true
+    pattern-sanitizers:
+    - pattern: File.basename(...)
+    - pattern: $X.to_i
+    - patterns:
+      - pattern: $HELPER(...)
+      - metavariable-regex:
+          metavariable: $HELPER
+          regex: (?i).*(safe|saniti[sz]e|contain|within|inside|secure|validate).*
+    pattern-sinks:
+    - patterns:
+      - pattern-either:
+        - pattern: File.open($P, ...)
+        - pattern: File.read($P, ...)
+        - pattern: File.binread($P, ...)
+        - pattern: File.readlines($P, ...)
+        - pattern: File.write($P, ...)
+        - pattern: File.delete($P)
+        - pattern: IO.read($P, ...)
+        - pattern: send_file($P, ...)
+        - pattern: FileUtils.rm_rf($P)
+        - pattern: FileUtils.rm($P, ...)
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  raise $M\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  raise $M\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'raise $M unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'raise $M unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  raise $M\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  raise $M\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'raise $M unless <... $V.include?("..") ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'raise $M unless <... $V.include?("..") ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  return\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  return\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'return unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'return unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  return\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  return\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'return unless <... $V.include?("..") ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'return unless <... $V.include?("..") ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  next\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.start_with?(...) ...>\n  ...\n  next\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'next unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'next unless <... $V.start_with?(...) ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  next\nend\n...\n$C.$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: "unless <... $V.include?(\"..\") ...>\n  ...\n  next\nend\n...\n$F(<... $V ...>, ...)\n"
+      - pattern-not-inside: 'next unless <... $V.include?("..") ...>
+
+          ...
+
+          $C.$F(<... $V ...>, ...)
+
+          '
+      - pattern-not-inside: 'next unless <... $V.include?("..") ...>
+
+          ...
+
+          $F(<... $V ...>, ...)
+
+          '
+      - focus-metavariable: $P
+    paths:
+      exclude:
+      - '**/test/**'
+      - '**/tests/**'
+      - '**/__tests__/**'
+      - '**/testdata/**'
+      - '**/test_data/**'
+      - '**/test-data/**'
+      - '**/fixtures/**'
+      - '**/src/test/**'
+      - '**/*_test.go'
+      - '**/test_*.py'
+      - '**/*_test.py'
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*Test.java'
+      - '**/*Tests.java'
+      - '**/*Test.cs'
+      - '**/*Tests.cs'
+      - '**/*_test.rs'
+      - '**/*_spec.rb'
+      - '**/exploits/**'
+      - '**/exploit/**'
+      - '**/poc/**'
+      - '**/pocs/**'
+      - '**/CVE-*/**'
+      - '**/cve-*/**'
+      - '**/*Generated*'
+      - '**/*generated*'
+      - '**/*_pb2.py'
+      - '**/*.pb.go'
+      - '**/Lib/**'
+      - '**/site-packages/**'
+      - '**/*venv*/**'
+      - '**/node_modules/**'
+      - '**/vendor/**'
+      - '**/third_party/**'
+      - '**/third-party/**'
+      - '**/bower_components/**'
+      - '**/.history/**'
+      - '**/*.min.js'
+      - '**/wp-admin/**'
+      - '**/wp-includes/**'
+      - '**/tests.rs'
+      - '**/test_utils.rs'
+      - '**/test_util.rs'
+      - '**/testutil/**'
+      - '**/testutils/**'
+      - '**/TestUtils/**'
+      - '**/Pods/**'
+      - '**/Carthage/**'
+      - '**/spec/**'
+    metadata:
+      tier: review
+      category: security
+      confidence: MEDIUM
+      cwe:
+      - CWE-22
+      scope: Controller params to local file operations; a containment check clears the value only as a rejecting guard (raise, return, continue or throw) on the same value before its use.
+  - id: python.request-html-injection
+    message: Request data is marked safe or returned as HTML without escaping; escape it or render it through an autoescaping template.
+    severity: INFO
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form[...]
+      - pattern: request.values.get(...)
+      - pattern: request.GET.get(...)
+      - pattern: request.POST.get(...)
+      - pattern: request.GET[...]
+      - pattern: request.POST[...]
+    pattern-sanitizers:
+      - pattern: escape(...)
+      - pattern: html.escape(...)
+      - pattern: markupsafe.escape(...)
+      - pattern: conditional_escape(...)
+      - pattern: bleach.clean(...)
+      - pattern: int(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: Markup($P)
+              - pattern: markupsafe.Markup($P)
+              - pattern: mark_safe($P)
+              - pattern: format_html($P, ...)
+              - pattern: SafeString($P)
+          - focus-metavariable: $P
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-79"]
+      scope: Flask/Django request values to explicit trust markers (Markup, mark_safe, SafeString, format_html format string).
+  - id: php.request-html-injection
+    message: Request data is written into HTML output without escaping; use htmlspecialchars with ENT_QUOTES or a template that escapes by default.
+    severity: INFO
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - pattern: $_GET[...]
+        exact: true
+      - pattern: $_POST[...]
+        exact: true
+      - pattern: $_REQUEST[...]
+        exact: true
+      - pattern: $_COOKIE[...]
+        exact: true
+      - pattern: $_SERVER['PHP_SELF']
+        exact: true
+      - pattern: $_SERVER['REQUEST_URI']
+        exact: true
+      - pattern: $_SERVER['QUERY_STRING']
+        exact: true
+    pattern-sanitizers:
+      - pattern: htmlspecialchars(...)
+      - pattern: htmlentities(...)
+      - pattern: strip_tags(...)
+      - pattern: intval(...)
+      - pattern: (int) $V
+      - pattern: (float) $V
+      - pattern: urlencode(...)
+      - pattern: rawurlencode(...)
+      - pattern: esc_html(...)
+      - pattern: esc_attr(...)
+      - pattern: e(...)
+      - pattern: filter_var(...)
+      - pattern: json_encode(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: echo $P;
+              - pattern: print $P;
+              - pattern: printf(..., $P, ...)
+              - pattern: die($P)
+              - pattern: exit($P)
+          - focus-metavariable: $P
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-79"]
+      scope: PHP superglobals echoed or printed without an HTML encoder in the same flow.
+  - id: go.request-html-injection
+    message: Request data reaches an HTML response or a trusted template type without escaping; escape it with html.EscapeString or let html/template escape it.
+    severity: INFO
+    languages: [go]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: func $F(..., $REQ *http.Request, ...) { ... }
+              - pattern-inside: func ($RECV $RT) $F(..., $REQ *http.Request, ...) { ... }
+              - pattern-inside: func $F(..., $REQ *http.Request, ...) $RET { ... }
+              - pattern-inside: func ($RECV $RT) $F(..., $REQ *http.Request, ...) $RET { ... }
+          - pattern-either:
+              - pattern: $REQ.FormValue(...)
+              - pattern: $REQ.PostFormValue(...)
+              - pattern: $REQ.URL.Query().Get(...)
+              - pattern: $REQ.PathValue(...)
+              - pattern: mux.Vars($REQ)[...]
+        exact: true
+    pattern-sanitizers:
+      - pattern: html.EscapeString(...)
+      - pattern: template.HTMLEscapeString(...)
+      - pattern: template.JSEscapeString(...)
+      - pattern: url.QueryEscape(...)
+      - pattern: url.PathEscape(...)
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.Quote(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: template.HTML($P)
+              - pattern: template.JS($P)
+              - pattern: template.HTMLAttr($P)
+              - pattern: template.URL($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern-either:
+              - pattern: fmt.Fprintf($W, ..., $P, ...)
+              - pattern: fmt.Fprint($W, ..., $P, ...)
+              - pattern: fmt.Fprintln($W, ..., $P, ...)
+              - pattern: io.WriteString($W, $P)
+              - pattern: $W.Write([]byte($P))
+          - metavariable-pattern:
+              metavariable: $W
+              patterns:
+                - pattern-not: os.Stdout
+                - pattern-not: os.Stderr
+                - pattern-not: $B.Buffer
+          - focus-metavariable: $P
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-79"]
+      scope: Typed net/http handler request values to trusted template types or direct writes; content type is not proven HTML.
+  - id: ruby.request-html-injection
+    message: Request data is marked html_safe or rendered raw; escape it or let the view escape it.
+    severity: INFO
+    languages: [ruby]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: "class $C < $BASE\n  ...\nend\n"
+          - metavariable-regex:
+              metavariable: $BASE
+              regex: ^(.*Controller|.*ControllerBase|ActionController::(Base|API)|Sinatra::Base|Grape::API|.*Helper)$
+          - pattern-either:
+              - pattern: params[...]
+              - pattern: params.fetch(...)
+              - pattern: params.dig(...)
+        exact: true
+    pattern-sanitizers:
+      - pattern: ERB::Util.html_escape(...)
+      - pattern: h(...)
+      - pattern: sanitize(...)
+      - pattern: CGI.escapeHTML(...)
+      - pattern: $X.to_i
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $P.html_safe
+              - pattern: raw($P)
+              - pattern: 'render(..., html: $P, ...)'
+              - pattern: 'render(..., inline: $P, ...)'
+              - pattern: 'render html: $P'
+              - pattern: 'render inline: $P'
+          - focus-metavariable: $P
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-79"]
+      scope: Controller params to html_safe, raw or render html/inline.
+  - id: java.request-html-injection
+    message: Request data is written to the HTTP response without HTML encoding; encode it for the output context.
+    severity: INFO
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $F(..., javax.servlet.http.HttpServletRequest $REQ, ...) { ... }
+              - pattern-inside: $RET $F(..., jakarta.servlet.http.HttpServletRequest $REQ, ...) { ... }
+              - pattern-inside: $RET $F(..., HttpServletRequest $REQ, ...) { ... }
+          - pattern-either:
+              - pattern: $REQ.getParameter(...)
+              - pattern: $REQ.getQueryString()
+              - pattern: $REQ.getHeader(...)
+        exact: true
+    pattern-sanitizers:
+      - pattern: Encode.$FOR(...)
+      - pattern: StringEscapeUtils.escapeHtml4(...)
+      - pattern: StringEscapeUtils.escapeHtml(...)
+      - pattern: HtmlUtils.htmlEscape(...)
+      - pattern: ESAPI.encoder().$ENC(...)
+      - pattern: Integer.parseInt(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $RESP.getWriter().$WRITE($P)
+              - pattern: $RESP.getOutputStream().$WRITE($P)
+              - pattern: (PrintWriter $W).$WRITE($P)
+          - metavariable-regex: {metavariable: $WRITE, regex: '^(write|print|println|printf|append|format)$'}
+          - focus-metavariable: $P
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-79"]
+      scope: Typed servlet request values written to the response writer or stream.
+  - id: python.parameter-shell-command
+    message: A function parameter is built into a shell command; pass an argv list without shell=True, or quote it with shlex.quote.
+    severity: INFO
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def $F(..., $P, ...):
+                ...
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|self|cls|cmd|cmds|command|commands|cmdline|cmd_line|shell_cmd|script|argv|args)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+      - pattern: pipes.quote(...)
+      - pattern: int(...)
+      - pattern: str(int(...))
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FN($CMD, ..., shell=True, ...)
+              - pattern: Popen($CMD, ..., shell=True, ...)
+              - pattern: os.system($CMD)
+              - pattern: os.popen($CMD, ...)
+              - pattern: subprocess.getoutput($CMD)
+              - pattern: subprocess.getstatusoutput($CMD)
+              - pattern: asyncio.create_subprocess_shell($CMD, ...)
+          - focus-metavariable: $CMD
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Function parameters to shell-parsed command text in the same function; callers are not checked.
+  - id: javascript.parameter-shell-command
+    message: A function parameter is built into a shell command; use execFile or spawn with an argument array instead of shell text.
+    severity: INFO
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $F(..., $P, ...) { ... }
+              - pattern-inside: function (..., $P, ...) { ... }
+              - pattern-inside: (..., $P, ...) => { ... }
+              - pattern-inside: async (..., $P, ...) => { ... }
+              - pattern-inside: async function $F(..., $P, ...) { ... }
+              - pattern-inside: |
+                  class $C { ... $M(..., $P, ...) { ... } ... }
+              - pattern-inside: |
+                  class $C { ... async $M(..., $P, ...) { ... } ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: quote(...)
+      - pattern: shellQuote.quote(...)
+      - pattern: shellescape(...)
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+              - pattern: execAsync($CMD, ...)
+              - pattern: $CP.exec($CMD, ...)
+              - pattern: $CP.execSync($CMD, ...)
+              - pattern: 'spawn($CMD, $A, {..., shell: true, ...})'
+              - pattern: 'spawnSync($CMD, $A, {..., shell: true, ...})'
+          - pattern-not-inside: $RE.exec(...)
+          - pattern-not-inside: function (..., exec, ...) { ... }
+          - pattern-not-inside: function $FN(..., exec, ...) { ... }
+          - metavariable-regex: {metavariable: $CP, regex: '^(cp|child_process|childProcess|child|proc|shell)$'}
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: execSync($CMD, ...)
+              - pattern: execAsync($CMD, ...)
+          - pattern-not-inside: function (..., exec, ...) { ... }
+          - pattern-not-inside: function $FN(..., exec, ...) { ... }
+          - pattern-not-inside: (..., exec, ...) => { ... }
+          - focus-metavariable: $CMD
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Function parameters to child_process exec/execSync or shell spawn text in the same function.
+  - id: php.parameter-shell-command
+    message: A function parameter is built into a shell command; wrap each operand in escapeshellarg or use an argument array with proc_open.
+    severity: INFO
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: function $F(..., $P, ...) { ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: escapeshellarg(...)
+      - pattern: escapeshellcmd(...)
+      - pattern: intval(...)
+      - pattern: (int) $V
+      - pattern: ProcessUtils::escapeArgument(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec($CMD, ...)
+              - pattern: shell_exec($CMD)
+              - pattern: system($CMD, ...)
+              - pattern: passthru($CMD, ...)
+              - pattern: popen($CMD, ...)
+              - pattern: proc_open($CMD, ...)
+              - pattern: pcntl_exec($CMD, ...)
+              - pattern: \exec($CMD, ...)
+              - pattern: \shell_exec($CMD)
+              - pattern: \system($CMD, ...)
+              - pattern: \passthru($CMD, ...)
+              - pattern: \popen($CMD, ...)
+              - pattern: \proc_open($CMD, ...)
+          - metavariable-pattern:
+              metavariable: $CMD
+              patterns:
+                - pattern-not: '[...]'
+          - focus-metavariable: $CMD
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Function parameters to shell-parsed exec/system/popen text in the same function.
+  - id: go.parameter-shell-command
+    message: A function parameter is built into shell command text; pass it as a separate exec.Command argument instead of through sh -c.
+    severity: INFO
+    languages: [go]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: func $F(..., $P $T, ...) { ... }
+              - pattern-inside: func $F(..., $P $T, ...) $R { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv|ctx)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: strconv.Itoa(...)
+      - pattern: strconv.Quote(...)
+      - pattern: shellescape.Quote(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command($SHELL, $FLAG, $CMD, ...)
+              - pattern: exec.CommandContext($C, $SHELL, $FLAG, $CMD, ...)
+          - metavariable-regex: {metavariable: $SHELL, regex: '^"(/bin/|/usr/bin/)?(sh|bash|zsh|cmd|cmd\.exe|powershell|pwsh)"$'}
+          - metavariable-regex: {metavariable: $FLAG, regex: '^"(-c|/c|/C|-Command)"$'}
+          - focus-metavariable: $CMD
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Function parameters to the text of an sh -c style exec.Command in the same function.
+  - id: ruby.parameter-shell-command
+    message: A method parameter is interpolated into a shell command string; pass separate arguments to system or Open3 instead.
+    severity: INFO
+    languages: [ruby]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def $F(..., $P, ...)
+                ...
+              end
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: Shellwords.escape(...)
+      - pattern: $X.shellescape
+      - pattern: $X.to_i
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: system($CMD)
+              - pattern: Kernel.system($CMD)
+              - pattern: exec($CMD)
+              - pattern: spawn($CMD)
+              - pattern: IO.popen($CMD, ...)
+              - pattern: Open3.$FN($CMD)
+              - pattern: Open3.$FN($CMD, {...})
+              - pattern: '`...`'
+          - pattern-not: Open3.$FN(*$X, ...)
+          - metavariable-pattern:
+              metavariable: $CMD
+              patterns:
+                - pattern-not: '[...]'
+          - focus-metavariable: $CMD
+      - pattern: '`...#{$X}...`'
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-78"]
+      scope: Method parameters to single-string shell commands or backticks in the same method.
+  - id: python.parameter-sql-text
+    message: A function parameter is formatted into SQL text; pass it as a bound query parameter instead.
+    severity: INFO
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def $F(..., $P, ...):
+                ...
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|self|cls|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|raw_sql|apps|schema_editor)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      - pattern: $C.quote(...)
+      - pattern: sql.Identifier(...)
+      - pattern: sql.Literal(...)
+      - pattern: $X.quote_name(...)
+      - pattern: $X.quote_ident(...)
+      - pattern: $X.escape_string(...)
+      - pattern: $X.literal(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $CUR.execute($Q, ...)
+              - pattern: $CUR.executemany($Q, ...)
+              - pattern: $CUR.executescript($Q)
+              - pattern: $CUR.mogrify($Q, ...)
+          - metavariable-regex: {metavariable: $CUR, regex: '(?i)^(self\.|cls\.)?_?(\w*cursor|cur|cr|curs|c|conn|connection|db|dbconn|database|cnx|cx|con)$'}
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: f"..."
+                    - pattern: '"..." % $X'
+                    - pattern: '"...".format(...)'
+                    - pattern: '"..." + $X'
+                    - pattern: '$X + "..."'
+                    - pattern: $NAME
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern-either:
+              - pattern: $MODEL.objects.raw($Q, ...)
+              - pattern: $MODEL.objects.extra(..., where=$Q, ...)
+          - focus-metavariable: $Q
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-89"]
+      scope: Function parameters to execute/raw/text SQL text in the same function; bound parameters in the second argument are not sinks.
+  - id: php.parameter-sql-text
+    message: A function parameter is concatenated or formatted into SQL text; bind it as a prepared-statement parameter instead.
+    severity: INFO
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: function $F(..., $P, ...) { ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|rawsql|table|column|columns|grammar|builder|config|options|connection)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: intval(...)
+      - pattern: (int) $V
+      - pattern: (float) $V
+      - pattern: $DB->quote(...)
+      - pattern: $DB->escape(...)
+      - pattern: $DB->escapeString(...)
+      - pattern: $DB->real_escape_string(...)
+      - pattern: mysqli_real_escape_string(...)
+      - pattern: $DB->quoteIdentifier(...)
+      - pattern: esc_sql(...)
+      - pattern: $DB->prepare(...)
+      - patterns:
+          - pattern: $OBJ->$M(...)
+          - metavariable-regex: {metavariable: $M, regex: '^(?i:compile|wrap|quote|escape|sanitize|grammar)\w*$'}
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB->query($Q, ...)
+              - pattern: $DB->exec($Q)
+              - pattern: $DB->executeQuery($Q, ...)
+              - pattern: $DB->executeStatement($Q, ...)
+              - pattern: $DB->fetchAllAssociative($Q, ...)
+              - pattern: $DB->fetchAssociative($Q, ...)
+              - pattern: $DB->fetchOne($Q, ...)
+              - pattern: $DB->fetchFirstColumn($Q, ...)
+              - pattern: $DB->get_results($Q, ...)
+              - pattern: $DB->get_row($Q, ...)
+              - pattern: $DB->get_var($Q, ...)
+          - metavariable-regex: {metavariable: $DB, regex: '^\$'}
+          - metavariable-regex: {metavariable: $Q, regex: '^[^\[]'}
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: $A . $B
+                    - pattern: sprintf(...)
+                    - pattern: \sprintf(...)
+                    - pattern: '"..."'
+                    - pattern-regex: ^\$\w+$
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern-either:
+              - pattern: mysqli_query($C, $Q, ...)
+              - pattern: DB::select($Q, ...)
+              - pattern: DB::statement($Q, ...)
+              - pattern: DB::unprepared($Q)
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: $A . $B
+                    - pattern: sprintf(...)
+                    - pattern: '"..."'
+                    - pattern-regex: ^\$\w+$
+          - focus-metavariable: $Q
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-89"]
+      scope: Function parameters to query/fetch/exec SQL text in the same function; bound parameter arrays are not sinks.
+  - id: go.parameter-sql-text
+    message: A function parameter is formatted into SQL text; pass it as a query argument with a placeholder instead.
+    severity: INFO
+    languages: [go]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: func $F(..., $P $T, ...) { ... }
+              - pattern-inside: func $F(..., $P $T, ...) $R { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|ctx|tx|db)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: strconv.Itoa(...)
+      - pattern: strconv.FormatInt(...)
+      - pattern: pq.QuoteIdentifier(...)
+      - pattern: pq.QuoteLiteral(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.Query($Q, ...)
+              - pattern: $DB.QueryContext($C, $Q, ...)
+              - pattern: $DB.QueryRow($Q, ...)
+              - pattern: $DB.QueryRowContext($C, $Q, ...)
+              - pattern: $DB.Exec($Q, ...)
+              - pattern: $DB.ExecContext($C, $Q, ...)
+              - pattern: $DB.Raw($Q, ...)
+              - pattern: $DB.Select($DST, $Q, ...)
+              - pattern: $DB.Get($DST, $Q, ...)
+          - metavariable-regex: {metavariable: $DB, regex: '(?i)(^|\.)(db|tx|conn|sqlx?|pool|database|dbconn|dbpool|\w*(db|tx|conn|pool))$'}
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: fmt.Sprintf(...)
+                    - pattern: $A + $B
+                    - pattern: $V
+                    - pattern: $V.String()
+          - focus-metavariable: $Q
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-89"]
+      scope: Function parameters to database/sql, sqlx or gorm query text in the same function.
+  - id: javascript.parameter-sql-text
+    message: A function parameter is interpolated into SQL text; use a placeholder and pass the value in the parameters array.
+    severity: INFO
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $F(..., $P, ...) { ... }
+              - pattern-inside: async function $F(..., $P, ...) { ... }
+              - pattern-inside: (..., $P, ...) => { ... }
+              - pattern-inside: async (..., $P, ...) => { ... }
+              - pattern-inside: |
+                  class $C { ... $M(..., $P, ...) { ... } ... }
+              - pattern-inside: |
+                  class $C { ... async $M(..., $P, ...) { ... } ... }
+          - pattern: $P
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex)$)\w+$'}
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: $DB.escape(...)
+      - pattern: $DB.escapeId(...)
+      - pattern: mysql.escape(...)
+      - pattern: format(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.query($Q, ...)
+              - pattern: $DB.execute($Q, ...)
+              - pattern: $DB.raw($Q, ...)
+              - pattern: $DB.$queryRawUnsafe($Q, ...)
+              - pattern: $DB.$executeRawUnsafe($Q, ...)
+              - pattern: $DB.exec($Q)
+              - pattern: $DB.prepare($Q)
+              - pattern: $DB.all($Q, ...)
+              - pattern: $DB.get($Q, ...)
+              - pattern: $DB.run($Q, ...)
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: '`...`'
+                    - pattern: $A + $B
+          - metavariable-pattern:
+              metavariable: $Q
+              pattern-regex: (?i)\b(select\s[\s\S]+\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|where\s|order\s+by)\b
+          - metavariable-regex: {metavariable: $DB, regex: '(?i)(^|\.)(db|database|conn|connection|client|pool|knex|sequelize|prisma|tx|trx|sql|pg|mysql|sqlite|\w*(db|conn|pool|client))$'}
+          - focus-metavariable: $Q
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-89"]
+      scope: Function parameters interpolated into template or concatenated SQL passed to a driver call in the same function.
+  - id: python.parameter-path-join-without-containment
+    message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
+    severity: INFO
+    languages: [python]
+    patterns:
+      - pattern-inside: |
+          def $F(..., $P, ...):
+            ...
+      - pattern-either:
+          - pattern: os.path.join($BASE, ..., $P, ...)
+          - pattern: os.path.join($BASE, ..., f"...{$P}...", ...)
+          - pattern: $BASE / $P
+          - pattern: $BASE / f"...{$P}..."
+          - pattern: Path($BASE, ..., $P, ...)
+      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|filename|path|relpath|rel_path|subpath|sub_path|key|id|slug|target|dest|destination|member|entry|recipe|template|page|doc|document|resource|asset|upload|attachment)\w*$'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+      - metavariable-pattern:
+          metavariable: $BASE
+          patterns:
+            - pattern-not: $P
+            - pattern-not: '"..."'
+      - pattern-either:
+          - pattern-inside: |
+              def $F(...):
+                ...
+                $SINK(...)
+                ...
+          - pattern-inside: |
+              def $F(...):
+                ...
+                with $SINK(...) as $FH:
+                  ...
+                ...
+      - metavariable-regex: {metavariable: $SINK, regex: '^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$'}
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $C.relative_to(...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $C.is_relative_to(...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            os.path.commonpath(...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $S.startswith(...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $V = os.path.basename($P)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $V = secure_filename($P)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            $CHECK($P, ...)
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... os.path.commonpath(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... os.path.commonprefix(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $S.startswith(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $C.is_relative_to(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $C.relative_to(...) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $X in $Y.parents ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... $X not in $Y.parents ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... os.path.isabs($P) ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... '..' in $P ...>:
+              ...
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            if <... ".." in $P ...>:
+              ...
+            ...
+      - pattern-not-inside:
+          patterns:
+            - pattern: $H(...)
+            - metavariable-regex: {metavariable: $H, regex: '(?i)^(\w+\.)*_?\w*(rooted|contain|confine|within|inside|safe_join|safejoin|ensure_under|under_root)\w*$'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|keyid|uuid|pk)$)'}
+      - pattern-not: os.path.join($BASE, ..., os.path.basename($P), ...)
+      - pattern-not: os.path.join($BASE, ..., secure_filename($P), ...)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-22"]
+      scope: Function parameters joined under a base path in a function that touches the filesystem and has no containment check; callers are not checked.
+  - id: go.parameter-path-join-without-containment
+    message: A function parameter is joined under a base directory and used for file access with no containment check; reject names that escape the base (filepath.IsLocal, or Rel/HasPrefix on the cleaned result).
+    severity: INFO
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern-inside: func $F(..., $P string, ...) { ... }
+          - pattern-inside: func $F(..., $P string, ...) $R { ... }
+          - pattern-inside: func ($RV $RT) $F(..., $P string, ...) { ... }
+          - pattern-inside: func ($RV $RT) $F(..., $P string, ...) $R { ... }
+      - pattern-either:
+          - pattern: filepath.Join($BASE, ..., $P, ...)
+          - pattern: path.Join($BASE, ..., $P, ...)
+      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+      - metavariable-pattern:
+          metavariable: $BASE
+          patterns:
+            - pattern-not: $P
+      - pattern-either:
+          - pattern-inside: |
+              func $F(...) {
+                ...
+                $SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              func $F(...) $R {
+                ...
+                $SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              func ($RV $RT) $F(...) {
+                ...
+                $SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              func ($RV $RT) $F(...) $R {
+                ...
+                $SINK(...)
+                ...
+              }
+      - metavariable-regex: {metavariable: $SINK, regex: '^(os\.(Open|OpenFile|ReadFile|Create|WriteFile|MkdirAll|Mkdir|Remove|RemoveAll|Rename|ReadDir|Symlink|Chmod|Lstat|Stat)|ioutil\.(ReadFile|WriteFile)|http\.ServeFile)$'}
+      - pattern-not-inside: |
+          func $F(...) {
+            ...
+            if <... strings.HasPrefix(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) $R {
+            ...
+            if <... strings.HasPrefix(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) $R {
+            ...
+            if <... strings.HasPrefix(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) {
+            ...
+            if <... strings.HasPrefix(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) $R {
+            ...
+            if <... filepath.Rel(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) $R {
+            ...
+            if <... filepath.Rel(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) $R {
+            ...
+            if <... filepath.IsLocal(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) $R {
+            ...
+            if <... filepath.IsLocal(...) ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) $R {
+            ...
+            if <... strings.Contains($P, "..") ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not-inside: |
+          func ($RV $RT) $F(...) $R {
+            ...
+            if <... strings.Contains($P, "..") ...> {
+              ...
+            }
+            ...
+          }
+      - pattern-not: filepath.Join($BASE, ..., filepath.Base($P), ...)
+      - pattern-not: path.Join($BASE, ..., path.Base($P), ...)
+      - pattern-not-inside: securejoin.SecureJoin(...)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-22"]
+      scope: String parameters joined under a base path in a function that touches the filesystem and has no containment check; callers are not checked.
+  - id: javascript.parameter-path-join-without-containment
+    message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
+    severity: INFO
+    languages: [javascript, typescript]
+    patterns:
+      - pattern-either:
+          - pattern-inside: function $F(..., $P, ...) { ... }
+          - pattern-inside: async function $F(..., $P, ...) { ... }
+          - pattern-inside: (..., $P, ...) => { ... }
+          - pattern-inside: async (..., $P, ...) => { ... }
+          - pattern-inside: |
+              class $C { ... $M(..., $P, ...) { ... } ... }
+          - pattern-inside: |
+              class $C { ... async $M(..., $P, ...) { ... } ... }
+      - pattern-either:
+          - pattern: path.join($BASE, ..., $P, ...)
+          - pattern: path.resolve($BASE, ..., $P, ...)
+          - pattern: join($BASE, ..., $P, ...)
+          - pattern: resolve($BASE, ..., $P, ...)
+      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+      - metavariable-pattern:
+          metavariable: $BASE
+          patterns:
+            - pattern-not: $P
+      - pattern-either:
+          - pattern-inside: |
+              function $F(...) {
+                ...
+                $FS.$SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              async function $F(...) {
+                ...
+                $FS.$SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              (...) => {
+                ...
+                $FS.$SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              async (...) => {
+                ...
+                $FS.$SINK(...)
+                ...
+              }
+          - pattern-inside: |
+              class $C { ... $M(...) {
+                ...
+                $FS.$SINK(...)
+                ...
+              } ... }
+          - pattern-inside: |
+              class $C { ... async $M(...) {
+                ...
+                $FS.$SINK(...)
+                ...
+              } ... }
+      - metavariable-regex: {metavariable: $FS, regex: '^(fs|fsp|fsPromises|fse|promises|fs\.promises)$'}
+      - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync)$'}
+      - pattern-not-inside: |
+          function $F(...) {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          async function $F(...) {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          (...) => {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          async (...) => {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          class $C { ... $M(...) {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          } ... }
+      - pattern-not-inside: |
+          class $C { ... async $M(...) {
+            ...
+            <... $X.startsWith(...) ...>
+            ...
+          } ... }
+      - pattern-not-inside: |
+          function $F(...) {
+            ...
+            <... path.relative(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          async function $F(...) {
+            ...
+            <... path.relative(...) ...>
+            ...
+          }
+      - pattern-not-inside: |
+          class $C { ... async $M(...) {
+            ...
+            <... path.relative(...) ...>
+            ...
+          } ... }
+      - pattern-not-inside: |
+          function $F(...) {
+            ...
+            <... $P.includes("..") ...>
+            ...
+          }
+      - pattern-not-inside: |
+          async function $F(...) {
+            ...
+            <... $P.includes("..") ...>
+            ...
+          }
+      - pattern-not: path.join($BASE, ..., path.basename($P), ...)
+      - pattern-not: path.resolve($BASE, ..., path.basename($P), ...)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-22"]
+      scope: Function parameters joined under a base path in a function that calls fs and has no containment check; callers are not checked.
+  - id: javascript.html-template-unescaped-interpolation
+    message: A value is interpolated into an HTML tag name or quoted attribute of a template string without an escaper; escape it for the attribute context or build the element with DOM APIs.
+    severity: INFO
+    languages: [javascript, typescript]
+    patterns:
+      - pattern: '`...${$X}...`'
+      - metavariable-pattern:
+          metavariable: $X
+          patterns:
+            - pattern-not: $ESC(...)
+            - pattern-not: $O.$ESC(...)
+      - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})[A-Za-z_$][\w$.\[\]'"]*\s*\}"
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-79"]
+      scope: Template strings whose markup interpolates a plain identifier or member access into a double-quoted attribute; escaper calls and UPPER_CASE constants are excluded.
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/examples/**", "**/scripts/**", "**/build/**", "**/dist/**", "**/gulpfile*", "**/node_modules/**", "**/*.min.js"]
+  - id: javascript.dom-innerhtml-from-variable
+    message: A non-literal value is assigned to innerHTML or outerHTML; use textContent, or sanitize the markup first.
+    severity: INFO
+    languages: [javascript, typescript]
+    patterns:
+      - pattern-either:
+          - pattern: $E.innerHTML = $V
+          - pattern: $E.outerHTML = $V
+          - pattern: $E.insertAdjacentHTML($POS, $V)
+      - metavariable-pattern:
+          metavariable: $V
+          patterns:
+            - pattern-not: '"..."'
+            - pattern-not: "''"
+            - pattern-not: '`...`'
+            - pattern-not: $S.sanitize(...)
+            - pattern-not: DOMPurify.sanitize(...)
+            - pattern-not: sanitize(...)
+            - pattern-not: $ESC(...)
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-79"]
+      scope: innerHTML/outerHTML/insertAdjacentHTML with an identifier or member expression; call results are excluded.
+  - id: go.tls-client-cert-requested-not-verified
+    message: Client certificates are requested but not verified against a CA; any self-signed certificate is accepted. Use tls.VerifyClientCertIfGiven or tls.RequireAndVerifyClientCert with ClientCAs.
+    severity: WARNING
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: 'tls.Config{..., ClientAuth: tls.RequestClientCert, ...}'
+          - pattern: 'tls.Config{..., ClientAuth: tls.RequireAnyClientCert, ...}'
+          - pattern: $CFG.ClientAuth = tls.RequestClientCert
+          - pattern: $CFG.ClientAuth = tls.RequireAnyClientCert
+      - pattern-not-inside: |
+          switch $MODE {
+          case $V:
+            ...
+          }
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-295"]
+      scope: tls.Config ClientAuth set to a mode that requests or requires client certificates without chain verification.
+  - id: go.peer-certificate-trusted-without-verified-chain
+    message: A request's TLS peer certificate is used without checking that it verified; when client certificates are optional or unverified, PeerCertificates holds whatever the client sent. Require len(r.TLS.VerifiedChains) > 0 first.
+    severity: INFO
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: $R.TLS.PeerCertificates[0]
+          - pattern: $CS.PeerCertificates[0]
+      - pattern-either:
+          - pattern-inside: |
+              if <... len($R.TLS.PeerCertificates) ...> {
+                ...
+              }
+          - pattern-inside: |
+              if <... len($CS.PeerCertificates) ...> {
+                ...
+              }
+      - pattern-not-inside: |
+          if <... $X.VerifiedChains ...> {
+            ...
+          }
+      - pattern-either:
+          - pattern-inside: func $F(..., $R *http.Request, ...) { ... }
+          - pattern-inside: func $F(..., $R *http.Request, ...) $RET { ... }
+          - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) { ... }
+          - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) $RET { ... }
+          - pattern-inside: func ($CS tls.ConnectionState) error { ... }
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-295"]
+      scope: Handlers that read the first peer certificate under a length check without consulting VerifiedChains.
+  - id: go.grpc-insecure-transport
+    message: A gRPC client is dialed without transport security; configure credentials.NewTLS or credentials.NewClientTLSFromCert.
+    severity: INFO
+    languages: [go]
+    patterns:
+      - pattern-either:
+          - pattern: grpc.WithInsecure()
+          - pattern: grpc.WithTransportCredentials(insecure.NewCredentials())
+      - pattern-not-inside: |
+          if $OPTIN { ... }
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-295", "CWE-319"]
+      scope: Unconditional insecure gRPC dial options; branches guarded by a configuration condition are excluded.
+  - id: javascript.tls-reject-unauthorized-disabled
+    message: Certificate verification is disabled for a TLS connection; remove rejectUnauthorized false and trust the needed CA instead.
+    severity: INFO
+    languages: [javascript, typescript]
+    patterns:
+      - pattern-either:
+          - pattern: '{..., rejectUnauthorized: false, ...}'
+          - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+          - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+      - pattern-not-inside: |
+          if ($OPTIN) { ... }
+      - pattern-not-inside: '$OPTIN ? $A : $B'
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-295"]
+      scope: Unconditional rejectUnauthorized false or NODE_TLS_REJECT_UNAUTHORIZED=0; option-guarded branches are excluded.
+  - id: python.ssl-context-verification-disabled
+    message: An SSL context with certificate or hostname verification disabled is created; use ssl.create_default_context() and load the needed CA instead.
+    severity: INFO
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: ssl._create_unverified_context(...)
+          - pattern: $CTX.check_hostname = False
+          - pattern: $CTX.verify_mode = ssl.CERT_NONE
+          - pattern: 'ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)'
+          - pattern: urllib3.disable_warnings(...)
+      - pattern-not-inside: |
+          if $OPTIN:
+            ...
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-295"]
+      scope: Unconditional SSL contexts without certificate or hostname checks; option-guarded branches are excluded.

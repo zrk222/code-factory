@@ -216,16 +216,20 @@ def shell_adjacent_literal_safe():
 
 def shell_interpolated_bad(filename):
     template = "git log --format='format:%%at' '%s'"
+    # ruleid: python.parameter-shell-command
     subprocess.check_output(template % filename, shell=True)
 
 def shell_format_bad(name):
+    # ruleid: python.parameter-shell-command
     subprocess.check_output("./main.lua {}".format(name), shell=True)
 
 def shell_fstring_bad(name):
+    # ruleid: python.parameter-shell-command
     subprocess.run(f"convert {name} out.png", shell=True)
 
 def shell_concatenated_variable_bad(branch):
     command = "git checkout " + branch
+    # ruleid: python.parameter-shell-command
     subprocess.run(command, shell=True)
 
 def shell_passthrough_wrapper_safe(command):

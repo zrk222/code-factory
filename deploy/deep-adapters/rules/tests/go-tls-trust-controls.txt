@@ -1,0 +1,48 @@
+package controls
+
+import (
+	"crypto/tls"
+	"net/http"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+func serverConfig(optional bool) *tls.Config {
+	cfg := &tls.Config{}
+	if optional {
+		// ruleid: go.tls-client-cert-requested-not-verified
+		cfg.ClientAuth = tls.RequestClientCert
+	}
+	// ok: go.tls-client-cert-requested-not-verified
+	strict := &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert}
+	_ = strict
+	return cfg
+}
+
+func authenticate(w http.ResponseWriter, r *http.Request) {
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		// ruleid: go.peer-certificate-trusted-without-verified-chain
+		cert := r.TLS.PeerCertificates[0]
+		_ = cert
+	}
+	if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.PeerCertificates) > 0 {
+		// ok: go.peer-certificate-trusted-without-verified-chain
+		cert := r.TLS.PeerCertificates[0]
+		_ = cert
+	}
+}
+
+func dial(addr string, plaintext bool) (*grpc.ClientConn, error) {
+	// ruleid: go.grpc-insecure-transport
+	return grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+}
+
+func dialOpt(addr string, plaintext bool) (*grpc.ClientConn, error) {
+	opts := []grpc.DialOption{}
+	if plaintext {
+		// ok: go.grpc-insecure-transport
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+	return grpc.Dial(addr, opts...)
+}

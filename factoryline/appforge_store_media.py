@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 import hashlib
 import json
 import os
@@ -117,16 +117,16 @@ def _dimensions(value: object, field: str) -> tuple[int, int]:
             "APPFORGE_MEDIA_CONTRACT_INVALID",
             f"{field} must contain positive bounded dimensions",
         )
-    return width, height
+    return cast(int, width), cast(int, height)
 
 
 def _media_set_counts(item: dict[str, Any], index: int) -> tuple[int, int]:
     minimum, maximum = item.get("min_count"), item.get("max_count")
     if (
-        any(
-            isinstance(number, bool) or not isinstance(number, int)
-            for number in (minimum, maximum)
-        )
+        isinstance(minimum, bool)
+        or not isinstance(minimum, int)
+        or isinstance(maximum, bool)
+        or not isinstance(maximum, int)
         or not 1 <= minimum <= maximum <= 10
     ):
         raise StoreMediaError(
@@ -344,13 +344,18 @@ def _jpeg_info(path: Path, raw: bytes) -> tuple[str, int, int, bool]:
     )
 
 
-def _image_info(path: Path) -> tuple[str, int, int, bool]:
-    raw = path.read_bytes()
+def _read_image(path: Path) -> bytes:
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_MEDIA_BYTES + 1)
     if len(raw) > MAX_MEDIA_BYTES:
         raise StoreMediaError(
             "APPFORGE_MEDIA_FILE_TOO_LARGE",
             f"{path.name} exceeds {MAX_MEDIA_BYTES} bytes",
         )
+    return raw
+
+
+def _image_info(path: Path, raw: bytes) -> tuple[str, int, int, bool]:
     if raw.startswith(b"\x89PNG\r\n\x1a\n"):
         return _png_info(path, raw)
     if raw.startswith(b"\xff\xd8"):
@@ -459,7 +464,8 @@ def _verify_capture_media(
         workspace,
         Path(_text(capture.get("path"), f"captures[{index}].path", limit=600)),
     )
-    actual_hash = hashlib.sha256(image.read_bytes()).hexdigest()
+    raw = _read_image(image)
+    actual_hash = hashlib.sha256(raw).hexdigest()
     if actual_hash != values["sha256"]:
         raise StoreMediaError(
             "APPFORGE_MEDIA_HASH_MISMATCH",
@@ -470,7 +476,7 @@ def _verify_capture_media(
             "APPFORGE_MEDIA_DUPLICATE", f"capture {capture_id} duplicates another image"
         )
     hashes.add(actual_hash)
-    _format, width, height, has_alpha = _image_info(image)
+    _format, width, height, has_alpha = _image_info(image, raw)
     if (width, height) not in sets[set_id]["dimensions"]:
         raise StoreMediaError(
             "APPFORGE_MEDIA_DIMENSIONS_INVALID",

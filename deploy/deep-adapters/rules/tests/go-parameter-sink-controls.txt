@@ -1,0 +1,33 @@
+package controls
+
+import (
+	"database/sql"
+	"fmt"
+	"os/exec"
+)
+
+func archive(name string) error {
+	// ruleid: go.parameter-shell-command
+	return exec.Command("sh", "-c", "tar czf /tmp/out.tgz "+name).Run()
+}
+
+func archiveArgv(name string) error {
+	// ok: go.parameter-shell-command
+	return exec.Command("tar", "czf", "/tmp/out.tgz", name).Run()
+}
+
+func findUser(db *sql.DB, name string) (*sql.Rows, error) {
+	q := fmt.Sprintf("SELECT * FROM users WHERE name = '%s'", name)
+	// ruleid: go.parameter-sql-text
+	return db.Query(q)
+}
+
+func findUserBound(db *sql.DB, name string) (*sql.Rows, error) {
+	// ok: go.parameter-sql-text
+	return db.Query("SELECT * FROM users WHERE name = $1", name)
+}
+
+func (s *Store) Sorted(db *sql.DB, column string) (*sql.Rows, error) {
+	// ruleid: go.parameter-sql-text
+	return db.Query("SELECT * FROM users ORDER BY " + column)
+}

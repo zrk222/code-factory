@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from . import canonical_json_compat_bytes as _canonical_encode
 
 import hashlib
@@ -353,19 +355,20 @@ def _revalidate_integrity(workspace: Path, integrity: dict[str, Any]) -> None:
         )
 
 
-def submission_integrity_projection(root: Path) -> dict[str, Any]:
+def submission_integrity_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Project hash-valid local submission-integrity receipts without accessing Apple systems."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
     base = workspace / ".factory" / "appforge"
     if base.exists():
-        for path in sorted(base.rglob("*submission-integrity*.json"))[:100]:
+        for path in sorted(
+            receipt_paths(workspace, "*submission-integrity*.json", inventory)
+        )[:100]:
             try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(value, dict):
-                    invalid.append(path.relative_to(workspace).as_posix())
-                    continue
+                value = read_receipt(workspace, path)
                 supplied = value.get("receipt_sha256")
                 if (
                     value.get("schema") == RECEIPT_SCHEMA
@@ -384,7 +387,7 @@ def submission_integrity_projection(root: Path) -> dict[str, Any]:
                     )
                 else:
                     invalid.append(path.relative_to(workspace).as_posix())
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            except (OSError, ValueError, TypeError):
                 invalid.append(path.relative_to(workspace).as_posix())
     return {
         "schema": "factory.appforge.submission-integrity-projection.v1",
