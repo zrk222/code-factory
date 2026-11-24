@@ -74,9 +74,17 @@ try {
   receipt.adapter_sha256 = hash(adapter.stdout);
   receipt.source_bindings = files;
   const unsupported = runAdapter(mixed, [...files, { path: 'view.blade.php', language: 'php', sha256: hash(template) }]);
-  assert.equal(unsupported.status, 2, 'A Blade template must prevent full source accounting');
-  assert.match(unsupported.stderr, /E_SEMGREP_EXECUTION/);
-  receipt.blade_scope = { state: 'INCOMPLETE', exit_code: unsupported.status, stderr_sha256: hash(unsupported.stderr) };
+  assert.equal(unsupported.status, 0, 'A Blade template should preserve ordinary PHP evidence');
+  writeFileSync(`${output}.mixed.adapter.json`, unsupported.stdout);
+  const mixedCoverage = JSON.parse(unsupported.stdout).artifacts['coverage.json'];
+  const accounting = mixedCoverage.source_accounting;
+  assert.equal(mixedCoverage.complete, false);
+  assert.ok(mixedCoverage.errors.includes('NATIVE_SOURCE_ACCOUNTING_REQUIRED'));
+  assert.equal(accounting.state, 'INCOMPLETE');
+  assert.deepEqual(accounting.measured_paths, ['helper.php', 'main.php']);
+  assert.deepEqual(accounting.missing_paths, ['view.blade.php']);
+  receipt.blade_scope = { state: accounting.state, missing_paths: accounting.missing_paths,
+    retained_php_paths: accounting.measured_paths, sha256: hash(unsupported.stdout) };
 
   const marker = join(root, 'marker.json');
   writeFileSync(marker, JSON.stringify({ rules: [{ id: 'benign-cross-file-marker', languages: ['php'],

@@ -2505,6 +2505,7 @@ def _native_profile_coverage(
     rule_accounting = None
     native_source_inventory = None
     native_source_inventory_sha256 = None
+    source_accounting = None
     if lane["engine"] == "gitleaks" and ledger is not None and ledger_sha256:
         _deep_audit_io._gitleaks_coverage_preflight(
             execution, report, inventory, lane, challenges, covered_obligations
@@ -2540,7 +2541,7 @@ def _native_profile_coverage(
         )
         complete = not errors
     elif execution.get("semgrep_rule_execution") is not None:
-        _deep_audit_io._semgrep_source_accounting(
+        source_accounting = _deep_audit_io._semgrep_source_accounting(
             execution, inventory, lane, execution_context=execution_context
         )
         errors = (
@@ -2550,6 +2551,8 @@ def _native_profile_coverage(
             )
             else ["NATIVE_CHALLENGES_REQUIRED"]
         )
+        if source_accounting["state"] != "COMPLETE":
+            errors.append("NATIVE_SOURCE_ACCOUNTING_REQUIRED")
         complete = not errors
     elif lane["engine"] == "osv":
         from .deep_audit_sarif import _osv_lookup_binding_gaps
@@ -2581,7 +2584,7 @@ def _native_profile_coverage(
         "ruleset_sha256": profile["ruleset_sha256"],
         "report_sha256": _deep_audit_io.digest(report),
         "native_report_sha256": _deep_audit_io.digest(execution["raw_report"]),
-        "source_accounting": _deep_audit_io._native_source_accounting(
+        "source_accounting": source_accounting or _deep_audit_io._native_source_accounting(
             execution,
             report,
             inventory,
@@ -3277,12 +3280,17 @@ def _semgrep_source_accounting(execution, inventory, lane, *, execution_context=
         if item["language"] in lane["languages"]
     }
     missing = sorted(required - measured)
-    if missing:
+    blade_gap = (
+        lane.get("tool_version") == "2.0.0"
+        and "php" in lane["languages"]
+        and all(path.lower().endswith(".blade.php") for path in missing)
+    )
+    if missing and not blade_gap:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "native source accounting incomplete"
         )
     return {
-        "state": "COMPLETE",
+        "state": "INCOMPLETE" if missing else "COMPLETE",
         "required_paths": sorted(required),
         "measured_paths": sorted(measured),
         "missing_paths": missing,

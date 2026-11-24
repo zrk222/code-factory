@@ -415,7 +415,8 @@ the five rules above from the shared ruleset and verifies their profile hash.
 This lane scans ordinary PHP through at most three calls per flow, with one
 worker thread, a 512 MiB analysis limit and a 30-second interfile limit per
 rule. Blade and the other syntax, framework and rule limitations above still
-apply. A candidate inventory that assigns Blade to this lane stays incomplete.
+apply. A candidate inventory that assigns Blade to this lane stays incomplete
+and retains verified per-rule evidence for its ordinary PHP files.
 The existing worker remains the default for local-flow PHP and other languages.
 
 Native fixture preparation: copy `rules/tests/php-controls.php` as
