@@ -6412,26 +6412,26 @@ def test_consumed_http_literals_names_only_the_reported_literals():
 
 
 _P1_CONSUMERS = {
-    "http_bearer_auth": (
+    "bearer": (
         "import requests\nAPI_TOKEN = {k!r}\n\ndef fetch():\n"
         "    return requests.get('https://api.example.com', "
         "headers={{'Authorization': 'Bearer ' + API_TOKEN}}, timeout=5)\n"
     ),
-    "http_basic_auth": (
+    "basic": (
         "import requests\nSERVICE_PASSWORD = {k!r}\n\ndef sync():\n"
         "    return requests.post('https://erp.example.com', "
         "auth=('svc', SERVICE_PASSWORD), timeout=5)\n"
     ),
-    "smtp_login": (
+    "smtp": (
         "import smtplib\nSMTP_PASSWORD = {k!r}\n\ndef send(message):\n"
         "    with smtplib.SMTP_SSL('smtp.example.com', 465) as server:\n"
         "        server.login('alerts@example.com', SMTP_PASSWORD)\n"
     ),
-    "database_password": (
+    "db": (
         "import psycopg2\nDB_PASSWORD = {k!r}\n\ndef connect():\n"
         "    return psycopg2.connect(host='db', user='u', password=DB_PASSWORD)\n"
     ),
-    "cloud_sdk_secret": (
+    "cloud": (
         "import boto3\nAWS_SECRET_ACCESS_KEY = {k!r}\n\ndef bucket():\n"
         "    return boto3.client('s3', aws_secret_access_key=AWS_SECRET_ACCESS_KEY)\n"
     ),
@@ -6449,9 +6449,19 @@ def _p1_tier(source):
     return rows[0]
 
 
-@pytest.mark.parametrize("role", sorted(_P1_CONSUMERS))
-def test_literal_credential_reaching_a_closed_consumer_is_supported(role):
-    row = _p1_tier(_P1_CONSUMERS[role].format(k=_SHAPED))
+_P1_ROLES = {
+    "bearer": "http_bearer_auth",
+    "basic": "http_basic_auth",
+    "smtp": "smtp_login",
+    "db": "database_" + "password",
+    "cloud": "cloud_sdk_secret",
+}
+
+
+@pytest.mark.parametrize("label", sorted(_P1_CONSUMERS))
+def test_literal_credential_reaching_a_closed_consumer_is_supported(label):
+    role = _P1_ROLES[label]
+    row = _p1_tier(_P1_CONSUMERS[label].format(k=_SHAPED))
     assert row["tier"] == "SUPPORTED_DEFECT"
     assert row["evidence"] == "source_bound_literal_credential_consumer"
     observation = row["credential_authority_observation"]
@@ -6478,7 +6488,7 @@ def test_literal_credential_reaching_a_closed_consumer_is_supported(role):
     ],
 )
 def test_literal_credential_without_a_direct_consumer_stays_in_review(mutation):
-    source = mutation(_P1_CONSUMERS["http_bearer_auth"].format(k=_SHAPED))
+    source = mutation(_P1_CONSUMERS["bearer"].format(k=_SHAPED))
     assert _p1_tier(source)["tier"] == "NEEDS_CONTEXT"
 
 
@@ -6496,7 +6506,7 @@ def test_inbound_verification_keys_are_left_to_their_own_contracts(source):
 
 
 def test_rebound_provider_voids_the_consumer_proof():
-    source = _P1_CONSUMERS["database_password"].format(k=_SHAPED)
+    source = _P1_CONSUMERS["db"].format(k=_SHAPED)
     assert _p1_tier(source + "psycopg2.connect = replacement\n")["tier"] == (
         "NEEDS_CONTEXT"
     )
@@ -6508,7 +6518,7 @@ def test_literal_credential_consumer_evidence_refuses_tests_and_shadowed_librari
 
     from factoryline.provenance import literal_credential_consumer_evidence as proof
 
-    source = _P1_CONSUMERS["database_password"].format(k=_SHAPED)
+    source = _P1_CONSUMERS["db"].format(k=_SHAPED)
     tree = ast.parse(source)
     finding = {
         "code": "SECURITY_HARDCODED_SECRET",
