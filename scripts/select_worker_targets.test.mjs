@@ -159,8 +159,9 @@ test(`manual ${target} selection cannot narrow a PR or push matrix`, () => {
 });
 }
 
+for (const variant of ['python', 'ruby']) {
 for (const scenario of ['pass', 'missing-finding', 'reverse-flow', 'wrong-rule', 'safe-finding', 'wrong-candidate', 'profile-mismatch', 'missing-mutation', 'duplicate-mutation', 'malformed-json', 'nonzero-exit', 'timeout', 'missing-report']) {
-  test(`Python cross-file verifier wiring with MOCKED Docker: ${scenario}`, () => {
+  test(`${variant} cross-file verifier wiring with MOCKED Docker: ${scenario}`, () => {
     const directory = mkdtempSync(join(tmpdir(), 'factory-python-codeql-wiring-'));
     const output = join(directory, 'receipt.json');
     const program = fileURLToPath(new URL('./verify_codeql_cross_file.mjs', import.meta.url));
@@ -172,13 +173,17 @@ for (const scenario of ['pass', 'missing-finding', 'reverse-flow', 'wrong-rule',
       import fs from 'node:fs';
       import {syncBuiltinESMExports} from 'node:module';
       import {pathToFileURL} from 'node:url';
-      const [program, output, scenario] = process.argv.slice(1);
+      const [program, output, scenario, variant] = process.argv.slice(1);
+      const ruby = variant === 'ruby';
+      const fixture = ruby ? 'ruby-exporter.fixture' : 'python-service.fixture';
+      const filenames = ruby ? ['app/controllers/application_controller.rb','app/controllers/reports_controller.rb','lib/exporter.rb'] : ['route.py','service.py'];
+      const rule = ruby ? 'rb/command-line-injection' : 'py/sql-injection';
       const read = fs.readFileSync;
       fs.readFileSync = (path, ...options) => {
         const value = read(path, ...options);
-        if (!String(path).endsWith('python-service.fixture')) return value;
+        if (!String(path).endsWith(fixture)) return value;
         let text = value.toString();
-        if (scenario === 'missing-mutation') text = text.replace('connection.execute', 'connection.missing');
+        if (scenario === 'missing-mutation') text = text.replace(ruby ? 'system(' : 'connection.execute', 'missing(');
         if (scenario === 'duplicate-mutation') text += text;
         return Buffer.isBuffer(value) ? Buffer.from(text) : text;
       };
@@ -188,44 +193,46 @@ for (const scenario of ['pass', 'missing-finding', 'reverse-flow', 'wrong-rule',
         if (args[0] === 'image') return {status:0,stdout:'sha256:'+'a'.repeat(64),stderr:''};
         assert.ok(args.includes('--pull=never') && args.includes('--network=none') && args.includes('--read-only'));
         if (args.includes('/bin/cat')) {
-          const profile = JSON.parse(read('deploy/deep-adapters/profiles/codeql-python-full.json'));
+          const profile = JSON.parse(read('deploy/deep-adapters/profiles/codeql-'+variant+'-full.json'));
           if (scenario === 'profile-mismatch') profile.mode = 'wrong';
           return result(profile);
         }
         const mount = target => args.find(x => x.startsWith('type=bind,source=') && x.endsWith(',target='+target+',readonly'))
           .slice('type=bind,source='.length).split(',target=')[0];
         const contract = JSON.parse(read(mount('/factory-contract.json')));
-        assert.deepEqual(contract.lane.languages, ['python']);
-        assert.deepEqual(contract.inventory.files.map(x=>x.path), ['route.py','service.py']);
-        const source = read(mount('/src')+'/service.py','utf8');
-        const positive = source.includes('+ name +');
-        if (!positive) assert.ok(source.includes('WHERE name = ?", (name,)'));
+        assert.deepEqual(contract.lane.languages, [variant]);
+        assert.deepEqual(contract.inventory.files.map(x=>x.path), filenames);
+        const source = read(mount('/src')+'/'+filenames.at(-1),'utf8');
+        const positive = source.includes(ruby ? '#{format}' : '+ name +');
+        if (!positive) assert.ok(source.includes(ruby ? 'system("report-tool", "--format", format)' : 'WHERE name = ?", (name,)'));
         if (scenario === 'nonzero-exit') return {status:2,stdout:'partial native output',stderr:'native failure diagnostics'};
         if (scenario === 'timeout') return {status:null,signal:'SIGTERM',stdout:'partial timeout output',stderr:'timeout diagnostics',error:Object.assign(new Error('native timeout'),{code:'ETIMEDOUT'})};
         if (scenario === 'malformed-json') return {status:0,stdout:'NOT_JSON preserved native output',stderr:''};
         const report = (positive || scenario === 'safe-finding') && scenario !== 'missing-finding';
-        const paths = scenario === 'reverse-flow' ? ['service.py','route.py'] : ['route.py','service.py'];
-        const results = report ? [{ruleId:scenario === 'wrong-rule' ? 'unrelated' : 'py/sql-injection',
+        const paths = ruby ? filenames.slice(1) : filenames.slice();
+        if (scenario === 'reverse-flow') paths.reverse();
+        const results = report ? [{ruleId:scenario === 'wrong-rule' ? 'unrelated' : rule,
           codeFlows:[{threadFlows:[{locations:paths.map(uri=>({location:{physicalLocation:{artifactLocation:{uri}}}}))}]}]}] : [];
         return result({candidate_sha256:scenario === 'wrong-candidate' ? '0'.repeat(64) : contract.inventory.candidate_sha256,
           artifacts:scenario === 'missing-report' ? {} : {'native.json':{runs:[{results}]}}});
       };
       syncBuiltinESMExports();
-      process.argv = [process.execPath, program, 'factory-python:test', output, 'python'];
+      process.argv = [process.execPath, program, 'factory-codeql:test', output, variant];
       await import(pathToFileURL(program).href);
     `;
     try {
-      const result = spawnSync(process.execPath, ['--input-type=module', '-e', bootstrap, program, output, scenario], {encoding:'utf8'});
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', bootstrap, program, output, scenario, variant], {encoding:'utf8'});
       assert.equal(result.status, scenario === 'pass' ? 0 : 1, result.stderr);
       const receipt = JSON.parse(readFileSync(output, 'utf8'));
       assert.equal(receipt.state, scenario === 'pass' ? 'PASS' : 'BLOCKED');
       if (scenario === 'pass') {
-        assert.equal(receipt.variant, 'python');
+        assert.equal(receipt.variant, variant);
         assert.equal(receipt.controls.length, 2);
         assert.equal(receipt.controls[0].target_rule_findings, 1);
         assert.equal(receipt.controls[0].cross_file_flow_observed, true);
         assert.equal(receipt.controls[1].findings, 0);
-        assert.ok(!('command_injection_findings' in receipt.controls[0]));
+        if (variant === 'python') assert.ok(!('command_injection_findings' in receipt.controls[0]));
+        else assert.equal(receipt.controls[0].command_injection_findings, 1);
       } else assert.ok(receipt.error);
       const executions = receipt.executions.map(row => JSON.parse(readFileSync(join(directory,row.path),'utf8')));
       assert.ok(executions.length >= 2);
@@ -245,6 +252,7 @@ for (const scenario of ['pass', 'missing-finding', 'reverse-flow', 'wrong-rule',
       if (scenario === 'wrong-candidate' || scenario === 'missing-report') assert.ok(readFileSync(`${output}.vulnerable.bundle.json`,'utf8').includes('candidate_sha256'));
     } finally { rmSync(directory, {recursive:true,force:true}); }
   });
+}
 }
 
 for (const scenario of ['candidate sabotage', 'missing baseline', 'manual']) {

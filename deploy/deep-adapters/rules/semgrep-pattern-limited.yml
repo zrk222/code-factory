@@ -587,7 +587,9 @@ rules:
             - metavariable-regex:
                 metavariable: $OPTIN
                 regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
-      - pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+      - pattern-either:
+          - pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+          - pattern: "$CONFIG.InsecureSkipVerify = true"
       # Report only functions whose traffic carries credentials or session material.
       - pattern-either:
           - pattern-inside: |
@@ -653,7 +655,18 @@ rules:
     severity: INFO
     languages: [java]
     patterns:
-      - pattern: "javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(($HOST, $SESSION) -> true)"
+      - pattern-either:
+          - pattern: "javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(($HOST, $SESSION) -> true)"
+          - pattern: "$CONN.setHostnameVerifier(($HOST, $SESSION) -> true)"
+          - pattern: "org.apache.http.conn.ssl.NoopHostnameVerifier.INSTANCE"
+          - pattern: "new org.apache.http.conn.ssl.NoopHostnameVerifier()"
+          - pattern: "org.apache.http.conn.ssl.SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER"
+          - pattern: "org.apache.http.conn.ssl.TrustAllStrategy.INSTANCE"
+          - pattern: "$BUILDER.loadTrustMaterial($STORE, ($CHAIN, $AUTH) -> true)"
+          - pattern: |
+              public boolean verify(String $HOST, javax.net.ssl.SSLSession $SESSION) { return true; }
+          - pattern: |
+              public void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, String $AUTH) {}
       - pattern-not-inside: |
           @Profile("test")
           $RET $METHOD(...) { ... }
@@ -669,7 +682,7 @@ rules:
       tier: review
       category: security
       confidence: MEDIUM
-      cwe: ["CWE-297"]
+      cwe: ["CWE-297", "CWE-295"]
       scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
   - id: c.unsafe-gets
     message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
