@@ -968,7 +968,14 @@ def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
     manifest = junie_manifest(tmp_path)
     assert manifest["native_workers"] == workers
     variants = workers["codeql"]["variants"]
-    assert set(variants) == {"javascript_typescript", "ruby", "github_actions"}
+    assert set(variants) == {
+        "javascript_typescript",
+        "ruby",
+        "github_actions",
+        "java",
+        "csharp",
+        "go",
+    }
     for variant in variants.values():
         profile = json.loads(
             (

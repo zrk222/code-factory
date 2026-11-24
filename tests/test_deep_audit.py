@@ -2863,7 +2863,9 @@ def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_p
     )
     sdk_stage, remaining = dockerfile.split("FROM sdk AS sdk-yaml", 1)
     shared, remaining = remaining.split("FROM sdk-yaml AS semgrep-worker", 1)
-    semgrep_stage, remaining = remaining.split("FROM sdk-yaml AS php-interfile-worker", 1)
+    semgrep_stage, remaining = remaining.split(
+        "FROM sdk-yaml AS php-interfile-worker", 1
+    )
     php_stage = remaining.split("FROM sdk AS codeql-python-worker", 1)[0]
     assert "USER 1000:1000" in sdk_stage
     assert 'ENTRYPOINT ["/opt/factory/bin/audit-adapter"]' in sdk_stage
