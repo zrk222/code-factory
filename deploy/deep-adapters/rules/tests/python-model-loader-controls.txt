@@ -1,0 +1,17 @@
+import joblib
+import torch
+
+
+def load_classifier(model_path):
+    # ruleid: python.unsafe-deserialization-unscoped
+    return joblib.load(model_path)
+
+
+def load_checkpoint(checkpoint_path):
+    # ruleid: python.unsafe-deserialization-unscoped
+    return torch.load(checkpoint_path, map_location="cpu")
+
+
+def load_weights(checkpoint_path):
+    # ok: python.unsafe-deserialization-unscoped
+    return torch.load(checkpoint_path, map_location="cpu", weights_only=True)

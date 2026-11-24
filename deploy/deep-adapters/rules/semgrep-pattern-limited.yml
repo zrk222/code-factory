@@ -81,19 +81,33 @@ rules:
     message: Deserialization of data whose origin the rule cannot see (IPC, peers, files, RPC); confirm the sender is trusted.
     severity: INFO
     languages: [python]
-    patterns:
-      - pattern-either:
-          - pattern: pickle.loads(...)
-          - pattern: pickle.load(...)
-          - pattern: yaml.unsafe_load(...)
-      # Files the program opens itself (caches, parser tables) are not attacker input.
-      - pattern-not: pickle.load(open(...))
-      - pattern-not-inside: |
-          with open(...) as $FILE:
-            ...
-      - pattern-not-inside: |
-          $FILE = open(...)
-          ...
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: pickle.loads(...)
+              - pattern: pickle.load(...)
+              - pattern: yaml.unsafe_load(...)
+          # Files the program opens itself (caches, parser tables) are not attacker input.
+          - pattern-not: pickle.load(open(...))
+          - pattern-not-inside: |
+              with open(...) as $FILE:
+                ...
+          - pattern-not-inside: |
+              $FILE = open(...)
+              ...
+      # Model and array loaders that unpickle whatever file they are given; the
+      # file is the usual attack vector (shared models, uploaded artifacts).
+      - patterns:
+          - pattern-either:
+              - pattern: joblib.load(...)
+              - pattern: dill.load(...)
+              - pattern: dill.loads(...)
+              - pattern: cloudpickle.load(...)
+              - pattern: cloudpickle.loads(...)
+              - pattern: pandas.read_pickle(...)
+              - pattern: numpy.load(..., allow_pickle=True, ...)
+              - pattern: torch.load(...)
+          - pattern-not: torch.load(..., weights_only=True, ...)
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:

@@ -160,7 +160,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.ssl-context-verification-disabled': 1,
   'opt.factory.rules.python.tarfile-extractall-without-filter': 5,
   'opt.factory.rules.python.unsafe-deserialization': 2,
-  'opt.factory.rules.python.unsafe-deserialization-unscoped': 3,
+  'opt.factory.rules.python.unsafe-deserialization-unscoped': 5,
   'opt.factory.rules.ruby.archive-path-traversal': 2,
   'opt.factory.rules.ruby.disabled-tls-verification': 2,
   'opt.factory.rules.ruby.parameter-shell-command': 1,
@@ -211,9 +211,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 232 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 234 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 232;
+const REVIEWED_FINDINGS = 234;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -259,6 +259,7 @@ export const extensionControlFiles = Object.freeze([
   ['py', 'python-archive-output-controls.txt'], ['py', 'python-parameter-sink-controls.txt'],
   ['py', 'python-path-join-controls.txt'], ['py', 'python-tls-trust-controls.txt'],
   ['py', 'python-path-request-controls.txt'], ['py', 'python-shell-wrapper-controls.txt'],
+  ['py', 'python-model-loader-controls.txt'],
   ['go', 'go-archive-output-controls.txt'], ['go', 'go-parameter-sink-controls.txt'],
   ['go', 'go-path-join-controls.txt'], ['go', 'go-tls-trust-controls.txt'],
   ['java', 'java-archive-output-controls.txt'],
