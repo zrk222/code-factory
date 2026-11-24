@@ -111,9 +111,12 @@ request shapes. Blade templates and inter-file PHP analysis require separate
 coverage.
 
 Compiled-language CI uses `node scripts/verify_codeql_structural.mjs IMAGE
-RECEIPT SDK_TARGET` against the built image ID with network isolation. It binds
-the profile, fixture and native per-file source accounting. The fixture is
-separate from signed six-family acceptance, cold/warm and recall measurements.
+RECEIPT SDK_TARGET` to run the fixture twice against one built image ID, using a
+fresh network-isolated container each time. The check binds the profile and fixture bytes, compares
+native findings, diagnostics, and source coverage, and retains both reports and
+timings. These runs measure fixture repeatability on a local image. Signed
+six-family acceptance, analyzer-cache comparisons, and recall require their
+own measurements.
 
 Library-level recall ([evidence](../../docs/evidence/codeql-recall-20261121.json)):
 stock CodeQL 2.27.1 security-extended suites, unmodified, ran on 86 fixed

@@ -3,6 +3,46 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { downloadFeed, evaluate, matchesVersion, parseManifest, targets, trackerUrl } from './verify_worker_cves.mjs';
+import { assertStructuralParity, verifyStructuralBundle } from './verify_codeql_structural.mjs';
+
+test('compiled fixture parity ignores known timing fields and detects native evidence drift', () => {
+  const expected = [{ path: 'Example.java', sha256: 'source-hash' }];
+  const bundle = {
+    candidate_sha256: 'candidate',
+    artifacts: {
+      'native.json': {
+        version: '2.1.0',
+        properties: { factory_native_raw_sha256: 'first-digest' },
+        runs: [{
+          invocations: [{ executionSuccessful: true, toolExecutionNotifications: [{
+            descriptor: { id: 'cli/file-coverage-baseline' }, timeUtc: 'first',
+            properties: { attributes: { durationMilliseconds: 20 } },
+          }] }],
+          results: [{ ruleId: 'fixture-control', locations: [{ physicalLocation: { region: { startLine: 2 } } }] }],
+        }],
+      },
+      'coverage.json': {
+        source_accounting: { state: 'COMPLETE', checks: { 'Example.java': { state: 'EXTRACTED', sha256: 'source-hash' } } },
+        codeql_source_execution: { rows: [{ path: 'Example.java', errors: 0 }] },
+      },
+      'challenges.json': { observations: [] },
+    },
+  };
+  const first = verifyStructuralBundle(bundle, 'candidate', expected);
+  const repeat = structuredClone(first);
+  repeat.sarif.properties.factory_native_raw_sha256 = 'repeat-digest';
+  const notification = repeat.sarif.runs[0].invocations[0].toolExecutionNotifications[0];
+  notification.timeUtc = 'second';
+  notification.properties.attributes.durationMilliseconds = 12;
+  assertStructuralParity(first, repeat);
+  repeat.sarif.runs[0].results[0].locations[0].physicalLocation.region.startLine = 3;
+  assert.throws(() => assertStructuralParity(first, repeat), /Native report or source coverage changed/);
+  repeat.sarif.runs[0].results[0].locations[0].physicalLocation.region.startLine = 2;
+  repeat.coverage.codeql_source_execution.rows[0].errors = 1;
+  assert.throws(() => assertStructuralParity(first, repeat), /Native report or source coverage changed/);
+  bundle.artifacts['coverage.json'].source_accounting.checks['Example.java'].sha256 = 'other-bytes';
+  assert.throws(() => verifyStructuralBundle(bundle, 'candidate', expected), /exact native file coverage/);
+});
 
 test('worker workflow path filters cover every Docker build input without framework scope', () => {
   const workflow = readFileSync('.github/workflows/worker-verification.yml', 'utf8').replace(/\r\n/g, '\n');
