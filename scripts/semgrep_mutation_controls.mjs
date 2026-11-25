@@ -1,4 +1,19 @@
 import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
+
+export function* mutationReports(archive, ruleIds) {
+  const lines = archive.trimEnd().split('\n');
+  if (lines.length !== ruleIds.length) throw new Error('Incomplete native mutation batch');
+  for (const [index, line] of lines.entries()) {
+    const entry = JSON.parse(line);
+    if (!Array.isArray(entry) || entry.length !== 2 || entry[0] !== ruleIds[index] || typeof entry[1] !== 'string') {
+      throw new Error('Native mutation batch rule identity differs');
+    }
+    const [ruleId, encoded] = entry;
+    const raw = gunzipSync(Buffer.from(encoded, 'base64'), { maxOutputLength: 16 * 1024 * 1024 });
+    yield { ruleId, raw };
+  }
+}
 
 export function findingKeys(report) {
   const run = validatedRun(report);

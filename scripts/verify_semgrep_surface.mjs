@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, copyFileSync, readFileSync, writeFileSync, mkdirSync, chmodSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname } from 'node:path';
-import { verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyNativeControlFindings,
+import { mutationReports, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyNativeControlFindings,
   javascriptControlManifest, verifyJavascriptControlMatrix, tsxQualificationSuffix,
   appendExtensionControls } from './semgrep_mutation_controls.mjs';
 
@@ -279,8 +279,8 @@ if (image === '--fixtures-only') {
 }
 
 const temp = mkdtempSync(join(tmpdir(), 'cf-semgrep-surface-'));
-function docker(args) {
-  const run = spawnSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
+function docker(args, timeout = 120000) {
+  const run = spawnSync('docker', args, { encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new Error(`Docker control failed: ${run.error?.message ?? run.stderr}`);
   return run.stdout;
 }
@@ -464,21 +464,36 @@ with tempfile.TemporaryDirectory(prefix='factory-native-') as scratch:
   receipt.dataflow_trace_state = receipt.native_dataflow_findings > 0 ? 'OBSERVED' : 'NOT_MEASURED';
   if (receipt.native_rule_ids.length !== expectedRules.length) throw new Error('Native profile omitted rules');
   receipt.detector_mutations = [];
-  for (const ruleId of receipt.native_rule_ids) {
-    const mutationArgv = [...argv.filter(value => value !== '{source}'),
-      '--exclude-rule', ruleId, '/src'];
-    const raw = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
-      '--entrypoint', profile.commands[0].argv[0], id, ...mutationArgv]);
-    const control = verifyRuleMutation(sarif, JSON.parse(raw), ruleId);
+  const mutationStarted = performance.now();
+  const mutationArgs = argv.filter(value => value !== '{source}');
+  const batch = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
+    '--entrypoint', '/usr/local/bin/python', id, '-I', '-c', `
+import base64, gzip, json, os, resource, subprocess, sys, tempfile
+engine, common, rules = json.loads(sys.argv[1])
+limit = 16 * 1024 * 1024
+resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
+for rule in rules:
+    with tempfile.TemporaryDirectory(prefix='mutation-') as home, tempfile.TemporaryFile() as raw:
+        env = {**os.environ, 'HOME': home, 'SEMGREP_SETTINGS_FILE': home + '/settings.yml'}
+        argv = [engine, *common, '--exclude-rule', rule, '/src']
+        subprocess.run(argv, env=env, stdout=raw, check=True, timeout=120)
+        raw.seek(0)
+        encoded = base64.b64encode(gzip.compress(raw.read(), mtime=0)).decode('ascii')
+        print(json.dumps([rule, encoded]), flush=True)
+`, JSON.stringify([profile.commands[0].argv[0], mutationArgs, receipt.native_rule_ids])], 12 * 60 * 1000);
+  for (const { ruleId, raw } of mutationReports(batch, receipt.native_rule_ids)) {
+    const mutationArgv = [...mutationArgs, '--exclude-rule', ruleId, '/src'];
+    const control = verifyRuleMutation(sarif, JSON.parse(raw.toString('utf8')), ruleId);
     const path = `${output}.mutation-${receipt.detector_mutations.length}.sarif`;
     writeFileSync(path, raw);
     receipt.detector_mutations.push({ ...control, report: path,
-      native_sarif_sha256: hash(Buffer.from(raw)),
+      native_sarif_sha256: hash(raw),
       argv_sha256: hash(Buffer.from(JSON.stringify(mutationArgv))) });
   }
   if (receipt.detector_mutations.length !== receipt.native_rule_ids.length) {
     throw new Error('Enabled rule mutation controls incomplete');
   }
+  receipt.mutation_duration_ms = Math.round(performance.now() - mutationStarted);
   receipt.state = 'PASS';
 } catch (error) {
   receipt.error = error.message;

@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findingKeys, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyFindingCountMatrix,
+import { findingKeys, mutationReports, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyFindingCountMatrix,
   verifyNativeControlFindings,
   fixedReviewedFindingCounts, javascriptControlManifest, verifyJavascriptControlMatrix,
   tsxQualificationSuffix, appendExtensionControls, typescriptExtensionEndpoints } from './semgrep_mutation_controls.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
 const finding = (ruleId, line = 1) => ({ ruleId, locations: [{ physicalLocation: {
   artifactLocation: { uri: '/cases/control.py' }, region: { startLine: line },
@@ -19,6 +20,21 @@ test('disabled detector removes target and preserves unrelated findings', () => 
     state: 'PASS', disabled_rule_id: 'target', removed_findings: 1, retained_findings: 1,
     target_finding_keys: ['target|/cases/control.py|1'],
   });
+});
+
+test('mutationReports restores exact report bytes and rejects missing, reordered or invalid evidence', () => {
+  const first = Buffer.from(JSON.stringify(report([finding('other', 2)])) + '\r\n');
+  const second = Buffer.from(JSON.stringify(report([finding('target')])) + '\n');
+  const line = (rule, raw) => JSON.stringify([rule, gzipSync(raw).toString('base64')]);
+  const rows = [line('target', first), line('other', second)];
+  const rules = ['target', 'other'];
+  const unpack = archive => [...mutationReports(archive + '\n', rules)];
+  const reports = unpack(rows.join('\n'));
+  assert.deepEqual(reports, [{ ruleId: 'target', raw: first }, { ruleId: 'other', raw: second }]);
+  for (const { ruleId, raw } of reports) assert.equal(verifyRuleMutation(baseline, JSON.parse(raw), ruleId).state, 'PASS');
+  assert.throws(() => unpack(rows[0]), /Incomplete native mutation batch/);
+  assert.throws(() => unpack([...rows].reverse().join('\n')), /batch rule identity differs/);
+  assert.throws(() => unpack([rows[0], JSON.stringify(['other', 'bad'])].join('\n')));
 });
 
 for (const [name, mutated] of [
