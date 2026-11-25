@@ -172,6 +172,30 @@ of a run; a parse warning that quotes source text is no longer counted as an
 engine timeout; and a control pair that differs only in timeouts is rescanned
 once, with the first attempt kept.
 
+## Sep–Oct held-out set, scored once (25 Nov)
+
+The [Sep–Oct manifest](evidence/heldout-recall-manifest-20261124-sepoct.json)
+(124 advisories, sha256 `d8a5f3bc…2a73`) was frozen from metadata in
+`5168ec4`, before the rule changes above. It shares no advisory or fix
+commit with any development set. Each ruleset scored it once, with the
+same harness, profile and engine
+([identities](evidence/heldout-recall-results-20261125-sepoct-identities.txt)).
+
+| Ruleset | Strict hunk recall | Wilson 95% | Path | XSS | Command | Alerts in changed files |
+|---|---|---|---|---|---|---|
+| [main `816bbef3`](evidence/heldout-recall-results-20261125-sepoct-baseline-816bbef3.json) | 13/110 (11.8%) | 7.0–19.2% | 2/33 | 6/32 | 3/13 | 44 |
+| [candidate `07ebe50`](evidence/heldout-recall-results-20261125-sepoct-candidate-07ebe50.json) | 14/110 (12.7%) | 7.7–20.2% | 3/33 | 6/32 | 3/13 | 91 |
+
+Fourteen cases are unknown (13 change no in-language source, one fix is
+unfetchable). The candidate gains one case (GHSA-8mcc-hrx5-hvxc, PyPI path)
+and loses none. Changed-file alerts double for that one gain.
+
+Most of the development gains did not carry over. On the exposed sets the
+same candidate went from 51 to 86 hits; on this held-out set it gains one.
+The rule changes since 24 Nov fit the exposed cases more than they
+generalize. They should not be cited as a recall improvement beyond 12.7%.
+This manifest is now spent: any later scoring of it is a development run.
+
 ## Recall harness (`scripts/recall_harness.mjs`)
 
 Held-out numbers are produced by one committed tool instead of scratch scripts.
