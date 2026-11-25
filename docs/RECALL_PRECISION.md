@@ -183,8 +183,8 @@ same harness, profile and engine
 
 | Ruleset | Strict hunk recall | Wilson 95% | Path | XSS | Command | Alerts in changed files |
 |---|---|---|---|---|---|---|
-| [main `816bbef3`](evidence/heldout-recall-results-20261125-sepoct-baseline-816bbef3.json) | 13/110 (11.8%) | 7.0–19.2% | 2/33 | 6/32 | 3/13 | 44 |
-| [candidate `07ebe50`](evidence/heldout-recall-results-20261125-sepoct-candidate-07ebe50.json) | 14/110 (12.7%) | 7.7–20.2% | 3/33 | 6/32 | 3/13 | 91 |
+| [main `816bbef3`](evidence/heldout-recall-results-20261125-sepoct-baseline-816bbef3.json) | 13/124 (10.5%); 13/110 known (11.8%) | 7.0–19.2% (known) | 2/33 | 6/32 | 3/13 | 44 |
+| [candidate `07ebe50`](evidence/heldout-recall-results-20261125-sepoct-candidate-07ebe50.json) | 14/124 (11.3%); 14/110 known (12.7%) | 7.7–20.2% (known) | 3/33 | 6/32 | 3/13 | 91 |
 
 Fourteen cases are unknown (13 change no in-language source, one fix is
 unfetchable). The candidate gains one case (GHSA-8mcc-hrx5-hvxc, PyPI path)
@@ -193,8 +193,19 @@ and loses none. Changed-file alerts double for that one gain.
 Most of the development gains did not carry over. On the exposed sets the
 same candidate went from 51 to 86 hits; on this held-out set it gains one.
 The rule changes since 24 Nov fit the exposed cases more than they
-generalize. They should not be cited as a recall improvement beyond 12.7%.
+generalize. They should not be cited as a recall improvement beyond 11.3% of the
+registered 124 (12.7% of the 110 with known outcomes).
 This manifest is now spent: any later scoring of it is a development run.
+
+## Q2 2026 held-out set, frozen 25 Nov (sealed)
+
+[282 advisories](evidence/heldout-recall-manifest-20261125-q2.json) published
+2026-04-01..2026-06-30, frozen from GitHub advisory-database metadata only
+(candidate metadata sha256 `6b45382a…c7e7`), before any further rule change,
+excluding every advisory and fix commit in `docs/evidence` and in the exposed
+development manifests (556 IDs, 1,288 fix commits). Composition: npm 69,
+PyPI 68, Go 61, Packagist 49, Maven 33, RubyGems 2. It is to be scored once,
+by the agreed candidate, with the registered 282-case denominator.
 
 ## Recall harness (`scripts/recall_harness.mjs`)
 
