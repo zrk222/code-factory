@@ -10,9 +10,40 @@ on:
 permissions: {}
 
 jobs:
+  prepare:
+    if: github.repository == 'zrk222/code-factory'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions: {}
+    outputs:
+      artifact_name: ${{ steps.build.outputs.artifact_name }}
+      runtime_sha256: ${{ steps.build.outputs.runtime_sha256 }}
+    steps:
+      - name: Build the pinned offline reviewer runtime
+        id: build
+        run: |
+          git init --quiet llama
+          git -C llama remote add origin https://github.com/ggml-org/llama.cpp.git
+          git -C llama fetch --depth 1 origin b1b770d90d94cad9e9ea5b993bdbc383a522fb28
+          git -C llama checkout --detach FETCH_HEAD
+          test "$(git -C llama rev-parse HEAD)" = b1b770d90d94cad9e9ea5b993bdbc383a522fb28
+          cmake -S llama -B llama/build -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build llama/build --config Release --target llama-server --parallel 4
+          runtime="$PWD/llama/build/bin/llama-server"
+          env -i PATH=/usr/bin:/bin "$runtime" --version
+          digest=$(sha256sum "$runtime")
+          printf 'runtime_sha256=%s\n' "${digest%% *}" >> "$GITHUB_OUTPUT"
+          printf 'artifact_name=keyless-review-runtime-%s\n' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ steps.build.outputs.artifact_name }}
+          path: llama/build/bin/llama-server
+          if-no-files-found: error
+
   analyze:
     if: github.repository == 'zrk222/code-factory'
-    runs-on: ubuntu-latest
+    needs: prepare
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     strategy:
       fail-fast: false
@@ -20,6 +51,7 @@ jobs:
         family: [configuration, dependencies, fuzz, runtime, secrets, static]
     env:
       REVIEW_FAMILY: ${{ matrix.family }}
+      REVIEW_RUNTIME_SHA256: ${{ needs.prepare.outputs.runtime_sha256 }}
     permissions:
       contents: read
     steps:
@@ -31,6 +63,26 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.11'
+      - name: Bind runtime to the current workflow attempt
+        env:
+          RUNTIME_ARTIFACT: ${{ needs.prepare.outputs.artifact_name }}
+        run: |
+          if [ "$RUNTIME_ARTIFACT" != "keyless-review-runtime-$GITHUB_RUN_ATTEMPT" ]; then
+            echo 'Use a full workflow attempt to bind the reviewer runtime.' >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ needs.prepare.outputs.artifact_name }}
+          path: reviewer-runtime
+      - name: Verify the reviewer runtime and model
+        run: |
+          runtime="$PWD/reviewer-runtime/llama-server"
+          printf '%s  %s\n' "$REVIEW_RUNTIME_SHA256" "$runtime" | sha256sum -c -
+          chmod 0755 "$runtime"
+          (cd reviewer-runtime && env -i PATH=/usr/bin:/bin "$runtime" --version)
+          curl --fail --silent --show-error --location --max-time 600 -o review.gguf 'https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/13fb94bfda8c8cf22497dc57b78f391a9acb426a/qwen2.5-coder-7b-instruct-q4_k_m.gguf'
+          printf '%s  %s\n' '509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c' review.gguf | sha256sum -c -
       - &stage_packet
         name: Stage the exact synthetic read set and audit evidence
         env:
@@ -96,22 +148,11 @@ jobs:
               "sources": sources,
           }, ensure_ascii=False))
           PY
-      - name: Prepare the pinned offline reviewer
-        run: |
-          git init --quiet llama
-          git -C llama remote add origin https://github.com/ggml-org/llama.cpp.git
-          git -C llama fetch --depth 1 origin b1b770d90d94cad9e9ea5b993bdbc383a522fb28
-          git -C llama checkout --detach FETCH_HEAD
-          test "$(git -C llama rev-parse HEAD)" = b1b770d90d94cad9e9ea5b993bdbc383a522fb28
-          cmake -S llama -B llama/build -DGGML_NATIVE=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build llama/build --config Release --target llama-server --parallel 4
-          curl --fail --silent --show-error --location --max-time 600 -o review.gguf 'https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/13fb94bfda8c8cf22497dc57b78f391a9acb426a/qwen2.5-coder-7b-instruct-q4_k_m.gguf'
-          printf '%s  %s\n' '509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c' review.gguf | sha256sum -c -
       - &review_operation
         name: Run the read-only specialty inference
         run: |
           if [ -n "${REVIEW_FAMILY:-}" ]; then
-            env -i PATH=/usr/bin:/bin llama/build/bin/llama-server -m review.gguf --host 127.0.0.1 --port 18080 -c 24576 -np 1 -t 4 > model.log 2>&1 &
+            env -i PATH=/usr/bin:/bin "$PWD/reviewer-runtime/llama-server" -m review.gguf --host 127.0.0.1 --port 18080 -c 24576 -np 1 -t 4 > model.log 2>&1 &
             model_pid=$!
             trap 'kill "$model_pid" 2>/dev/null || true; wait "$model_pid" 2>/dev/null || true' EXIT
           fi
@@ -408,7 +449,8 @@ jobs:
               if part["response_sha256"] != sha256_bytes(raw):
                   raise ValueError("hosted review family response fingerprint differs")
               part.pop("identity")
-              return {**part, "assigned_paths": sorted(payload["sources"]), "result": checked_response(raw, payload)}
+              return {**part, "runtime_sha256": identity["runtime_sha256"],
+                      "assigned_paths": sorted(payload["sources"]), "result": checked_response(raw, payload)}
 
 
           def main():
@@ -416,6 +458,7 @@ jobs:
               packet = strict_json(Path("review-model-input.json").read_bytes())
               inputs = family_inputs(plan, packet)
               identity = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                          "runtime_sha256": require_digest(os.environ.get("REVIEW_RUNTIME_SHA256"), "runtime_sha256"),
                           "binding_sha256": digest(packet["binding"])}
               family = os.environ.get("REVIEW_FAMILY")
               if family:
@@ -475,9 +518,11 @@ jobs:
           if-no-files-found: error
 
   assemble:
-    needs: analyze
-    runs-on: ubuntu-latest
+    needs: [prepare, analyze]
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      REVIEW_RUNTIME_SHA256: ${{ needs.prepare.outputs.runtime_sha256 }}
     permissions:
       contents: read
     steps:

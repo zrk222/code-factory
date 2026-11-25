@@ -30,6 +30,7 @@ from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
         "truncated",
         "missing",
         "wrong_attempt",
+        "wrong_runtime",
         "modified_response",
         "unbound_obligation",
         "missing_receipt",
@@ -56,10 +57,29 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
     exec(compile(source, str(workflow_path), "exec"), review.__dict__)
     plan_path = repo / "scripts/deep-audit-keyless-plan.json"
     plan = json.loads(plan_path.read_bytes())
-    families = set(flow["jobs"]["analyze"]["strategy"]["matrix"]["family"])
+    jobs = flow["jobs"]
+    families = set(jobs["analyze"]["strategy"]["matrix"]["family"])
     assert families == {lane["family"] for lane in plan["lanes"]}
-    assert flow["jobs"]["sign"]["needs"] == "assemble"
-    assert "id-token" not in flow["jobs"]["assemble"]["permissions"]
+    assert jobs["prepare"]["permissions"] == {}
+    assert jobs["prepare"]["if"] == jobs["analyze"]["if"]
+    assert jobs["prepare"]["runs-on"] == jobs["analyze"]["runs-on"] == "ubuntu-24.04"
+    assert jobs["analyze"]["needs"] == "prepare"
+    assert jobs["assemble"]["needs"] == ["prepare", "analyze"]
+    assert jobs["sign"]["needs"] == "assemble"
+    assert "id-token" not in jobs["assemble"]["permissions"]
+    build, upload = jobs["prepare"]["steps"]
+    assert "review_packet" not in build["run"] and "cmake --build" in build["run"]
+    assert "keyless-review-runtime-%s" in build["run"]
+    assert upload["with"]["path"] == "llama/build/bin/llama-server"
+    download = next(
+        item
+        for item in jobs["analyze"]["steps"]
+        if item.get("uses", "").startswith("actions/download-artifact@")
+    )
+    assert download["with"] == {
+        "name": "${{ needs.prepare.outputs.artifact_name }}",
+        "path": "reviewer-runtime",
+    }
     paths = {path for row in plan["obligations"] for path in row["paths"]}
     for row in plan["obligations"]:
         for challenge in row["challenges"]:
@@ -118,6 +138,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
     )
     monkeypatch.setenv("GITHUB_RUN_ID", "fixture-only")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("REVIEW_RUNTIME_SHA256", "4" * 64)
     summary_path = tmp_path / "step-summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
     expected_coverage = set()
@@ -232,13 +253,16 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         output.mkdir()
         (tmp_path / "review-family.json").replace(output / "review-family.json")
     monkeypatch.delenv("REVIEW_FAMILY")
-    if mode in {"missing", "wrong_attempt", "modified_response"}:
+    if mode in {"missing", "wrong_attempt", "wrong_runtime", "modified_response"}:
         if mode == "wrong_attempt":
             monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
-        if mode == "modified_response":
+        if mode in {"wrong_runtime", "modified_response"}:
             path = outputs / "keyless-review-family-1-dependencies/review-family.json"
             part = json.loads(path.read_bytes())
-            part["raw_response"] += " "
+            if mode == "wrong_runtime":
+                part["identity"]["runtime_sha256"] = "5" * 64
+            else:
+                part["raw_response"] += " "
             path.write_text(json.dumps(part), encoding="utf-8")
         with pytest.raises(ValueError):
             review.main()
@@ -249,6 +273,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
     coverage = json.loads((tmp_path / "review-coverage.json").read_bytes())
     assert expected_coverage == paths
     assert len({row["family"] for row in coverage}) == 6
+    assert {row["runtime_sha256"] for row in coverage} == {"4" * 64}
     assert result["prompt_sha256"] == digest([row["prompt_sha256"] for row in coverage])
     assert result["response_sha256"] == digest(
         [sha256_bytes(row["raw_response"].encode()) for row in coverage]
