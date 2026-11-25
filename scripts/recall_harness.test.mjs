@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate,
+import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest } from './recall_harness.mjs';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
 
@@ -166,6 +166,20 @@ test('gate rejects dropped, added and duplicate case IDs and scores reordered ca
   assert.match(compare(result([a, a])).failures[0], /Duplicate advisory ID/);
   assert.match(gate({ dev: [{ before: result([a, a]), after: before }], controls: [] }).failures[0], /Duplicate advisory ID/);
   assert.match(compare({ ...before, scope: 'scannable' }).failures[0], /scoring scope differs/);
+});
+
+test('gainRetention requires the archived cohort, hit and exact source packets', () => {
+  const cohort = '1'.repeat(64), ghsa = 'GHSA-xxxx-yyyy-zzzz';
+  const evidence = { ghsa, revisions: { old: 'a', fixed: 'b' }, source_packets: { old: [{ path: 'sample.py', sha256: 'c' }], fixed: [] } };
+  const block = { manifest_cases_sha256: cohort, cases: [{ ghsa, before: 'miss', after: 'hit' }], after_evidence: { cases: [evidence] } };
+  const reference = { schema: 'factory.recall-evaluation.v1', gained: [ghsa], dev: [block] };
+  const pairs = (row, digest = cohort) => [{ after: { manifest_cases_sha256: digest, cases: [row] } }];
+  const hit = { ...evidence, status: 'scored', hunk_hit: true };
+  assert.deepEqual(gainRetention(reference, pairs(hit)), { required: 1, retained: 1, lost: [] });
+  assert.deepEqual(gainRetention(reference, pairs({ ...hit, hunk_hit: false })).lost, [ghsa]);
+  assert.deepEqual(gainRetention(reference, pairs({ ...hit, source_packets: { old: [], fixed: [] } })).lost, [ghsa]);
+  assert.deepEqual(gainRetention(reference, pairs(hit, '2'.repeat(64))).lost, [ghsa]);
+  assert.throws(() => gainRetention({ ...reference, gained: [ghsa, ghsa] }, pairs(hit)), /checkpoint membership differs/);
 });
 
 test('coverage gaps never count as misses and regressions fail on either revision', () => {
@@ -344,7 +358,7 @@ async function feederFixture(run) {
 
     const scanner = join(root, 'scanner.mjs');
     writeFileSync(scanner, [
-      "import { readFileSync, writeFileSync } from 'node:fs';",
+      "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';",
       "import { basename, dirname } from 'node:path';",
       "const rules = process.argv[process.argv.indexOf('--config') + 1];",
       "const report = process.argv[process.argv.indexOf('--sarif-output') + 1];",
@@ -353,6 +367,7 @@ async function feederFixture(run) {
       "const old = basename(process.cwd()) === 'old';",
       "const control = basename(process.cwd()) === 'control';",
       "const ruleText = readFileSync(rules, 'utf8');",
+      "if (old && ruleText.includes('# rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
       "const incomplete = !old && ruleText.includes('# incomplete');",
       "const devTimeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
       "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !process.argv.includes('--timeout=15')));",
@@ -400,6 +415,12 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
     '--opengrep', process.execPath, '--jobs', '1', '--out', output], { encoding: 'utf8' });
   assert.equal(engine.status, 2, engine.stderr);
   const evaluation = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(evaluation.engine, {
+    executable: basename(process.execPath), executable_sha256: sha256(readFileSync(process.execPath)), version: process.version,
+  });
+  assert.equal(evaluation.profile_sha256, sha256(readFileSync(profile)));
+  assert.equal(evaluation.baseline_sha256, sha256(readFileSync(baseline)));
+  assert.equal(evaluation.candidate_sha256, sha256(readFileSync(candidate)));
   const dev = evaluation.dev[0];
   const observed = dev.after_evidence.cases[0];
   assert.equal(evaluation.decision, 'REJECT');
@@ -420,8 +441,31 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   assert.match(gate({ dev: [{ before, after: drifted }], controls: [] }).failures[0], /source byte fingerprints differ/);
 }));
 
+test('evaluation refuses a missing or mismatched engine and ruleset drift without writing a new receipt', () =>
+  feederFixture(({ root, workdir, manifest, baseline, candidate, profile }) => {
+    const output = join(root, 'unqualified.json');
+    const evaluate = opengrep => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
+      '--baseline', baseline, '--candidate', candidate, '--profile', profile, '--workdir', workdir,
+      '--opengrep', opengrep, '--jobs', '1', '--out', output], { encoding: 'utf8' });
+    const missing = evaluate(join(root, 'unavailable-engine'));
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /engine executable could not be resolved/);
+    const pinned = JSON.parse(readFileSync(profile, 'utf8'));
+    pinned.version_argv = ['scanner', '--version'];
+    writeFileSync(profile, JSON.stringify({ ...pinned, tool_version: 'unavailable-version' }));
+    const mismatch = evaluate(process.execPath);
+    assert.notEqual(mismatch.status, 0);
+    assert.match(mismatch.stderr, /engine version differs from profile/);
+    writeFileSync(profile, JSON.stringify({ ...pinned, tool_version: process.version }));
+    writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# rules-drift\n');
+    const drift = evaluate(process.execPath);
+    assert.notEqual(drift.status, 0);
+    assert.match(drift.stderr, /Evaluation ruleset bytes changed during scoring/);
+    assert.equal(existsSync(output), false);
+  }));
+
 test('an empty successful scanner result needs old-side coverage to count as a miss', () => feederFixture(async fixture => {
-  const { manifest, baseline, candidate, opts } = fixture;
+  const { root, workdir, manifest, profile, baseline, candidate, opts } = fixture;
   const before = await scoreManifest(manifest, baseline, opts);
   writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# missing-coverage\n');
   const after = await scoreManifest(manifest, candidate, opts);
@@ -433,6 +477,22 @@ test('an empty successful scanner result needs old-side coverage to count as a m
   assert.deepEqual(verdict.new_coverage_gaps, [feederRow.ghsa]);
   assert.deepEqual(verdict.lost_baseline_hits, [feederRow.ghsa]);
   assert.equal(verdict.decision, 'REJECT');
+
+  const checkpoint = join(root, 'checkpoint.json');
+  writeFileSync(checkpoint, JSON.stringify({ schema: 'factory.recall-evaluation.v1', gained: [feederRow.ghsa], dev: [{
+    manifest_cases_sha256: before.manifest_cases_sha256, after_evidence: { cases: before.cases },
+    cases: [{ ghsa: feederRow.ghsa, before: 'miss', after: 'hit' }],
+  }] }));
+  const output = join(root, 'checkpoint-evaluation.json');
+  const evaluation = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
+    '--baseline', candidate, '--candidate', candidate, '--profile', profile, '--workdir', workdir,
+    '--opengrep', process.execPath, '--jobs', '1', '--out', output, '--retain-gains-from', checkpoint], { encoding: 'utf8' });
+  assert.equal(evaluation.status, 2, evaluation.stderr);
+  const replay = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(replay.lost_baseline_hits, []);
+  assert.deepEqual(replay.gain_retention, { checkpoint_sha256: sha256(readFileSync(checkpoint)),
+    required: 1, retained: 0, lost: [feederRow.ghsa] });
+  assert.match(replay.failures[0], /lost 1 checkpoint hit/);
 }));
 
 test('evaluation retries both control arms once with a bounded timeout and records both attempts', () =>

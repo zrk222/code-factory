@@ -22,8 +22,8 @@
 // a precision proxy.
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { accessSync, closeSync, constants, createReadStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, delimiter, dirname, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
 
@@ -808,27 +808,128 @@ function pairedCaseEvidence({ before, after }) {
   });
 }
 
+function executablePath(command) {
+  const directories = /[\\/]/.test(command) ? [''] : (process.env.PATH ?? '/usr/bin:/bin').split(delimiter);
+  const suffixes = process.platform === 'win32' && !extname(command) ? ['.exe', '.com', ''] : [''];
+  for (const directory of directories) {
+    for (const suffix of suffixes) {
+      try {
+        const path = realpathSync(resolve(directory, command + suffix));
+        accessSync(path, constants.X_OK);
+        if (statSync(path).isFile()) return path;
+      } catch (error) {
+        if (!['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code)) throw error;
+      }
+    }
+  }
+  throw new Error('Recall engine executable could not be resolved');
+}
+
+async function fileFingerprint(path) {
+  const digest = createHash('sha256');
+  for await (const bytes of createReadStream(path)) digest.update(bytes);
+  return digest.digest('hex');
+}
+
+async function bindEvaluationEngine(profile, command) {
+  const path = executablePath(command);
+  const executable_sha256 = await fileFingerprint(path);
+  const args = profile.version_argv?.slice(1) ?? ['--version'];
+  const probe = await runProcess(path, args, { timeout: 30000 });
+  const version = probe.stdout.trim();
+  if (probe.status !== 0 || !/^[^\r\n]{1,128}$/.test(version)) throw new Error('Recall engine version probe failed');
+  if (profile.tool_version && version !== profile.tool_version) throw new Error('Recall engine version differs from profile');
+  return { path, receipt: { executable: basename(path), executable_sha256, version } };
+}
+
+function evaluationRules(opts) {
+  return { baseline_sha256: sha256(readFileSync(opts.baseline)), candidate_sha256: sha256(readFileSync(opts.candidate)) };
+}
+
+function verifyEvaluationRules(opts, expected) {
+  const actual = evaluationRules(opts);
+  if (actual.baseline_sha256 !== expected.baseline_sha256 || actual.candidate_sha256 !== expected.candidate_sha256) {
+    throw new Error('Evaluation ruleset bytes changed during scoring');
+  }
+}
+
+function recordedGainsIn(block, required) {
+  const cohort = block.manifest_cases_sha256;
+  if (!/^[a-f0-9]{64}$/.test(cohort)) throw new Error('Invalid recall gain checkpoint manifest');
+  const evidence = indexCases(block.after_evidence.cases);
+  return block.cases.filter(row => required.has(row.ghsa) && row.before === 'miss' && row.after === 'hit')
+    .map(row => {
+      const source = evidence.get(row.ghsa);
+      if (!source?.revisions || !source.source_packets) throw new Error('Recall gain checkpoint is missing case input evidence');
+      return [row.ghsa, { cohort, input: caseInputFingerprint(source) }];
+    });
+}
+
+function recordedGains(reference) {
+  if (reference?.schema !== 'factory.recall-evaluation.v1' || !Array.isArray(reference.gained)
+      || !reference.gained.length || !Array.isArray(reference.dev)) throw new Error('Invalid recall gain checkpoint');
+  const required = new Set(reference.gained);
+  const entries = reference.dev.flatMap(block => recordedGainsIn(block, required));
+  const records = new Map(entries);
+  if (records.size !== entries.length || records.size !== reference.gained.length) {
+    throw new Error('Recall gain checkpoint membership differs');
+  }
+  return records;
+}
+
+export function gainRetention(reference, pairs) {
+  const required = recordedGains(reference);
+  const candidate = new Map(pairs.map(({ after }) => [after.manifest_cases_sha256, indexCases(after.cases)]));
+  if (candidate.size !== pairs.length) throw new Error('Duplicate manifest in recall gain replay');
+  const lost = [];
+  for (const [id, { cohort, input }] of required) {
+    const row = candidate.get(cohort)?.get(id);
+    if (!row || measuredOutcome(row) !== 'hit' || caseInputFingerprint(row) !== input) lost.push(id);
+  }
+  return { required: required.size, retained: required.size - lost.length, lost: lost.sort() };
+}
+
+function applyGainRetention(verdict, bytes, pairs) {
+  const retention = gainRetention(JSON.parse(utf8(bytes)), pairs);
+  verdict.gain_retention = { checkpoint_sha256: sha256(bytes), ...retention };
+  if (retention.lost.length) verdict.failures.push(`lost ${retention.lost.length} checkpoint hit(s): ${retention.lost.join(', ')}`);
+}
+
 async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
+  const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
+  const engine = await bindEvaluationEngine(JSON.parse(utf8(opts.profileBytes)),
+    opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  opts.opengrep = engine.path;
+  const rules = evaluationRules(opts);
   const manifests = [].concat(opts.manifest);
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
   const candidateOpts = { ...opts, 'extra-arg': [].concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []) };
   const dev = [];
   for (const manifest of manifests) {
-    dev.push({ manifest, before: await scoreManifest(manifest, opts.baseline, opts),
-      after: await scoreManifest(manifest, opts.candidate, candidateOpts) });
+    const before = await scoreManifest(manifest, opts.baseline, opts);
+    const after = await scoreManifest(manifest, opts.candidate, candidateOpts);
+    if (before.ruleset_sha256 !== rules.baseline_sha256 || after.ruleset_sha256 !== rules.candidate_sha256) {
+      throw new Error('Evaluation ruleset bytes changed during scoring');
+    }
+    dev.push({ manifest, before, after });
   }
-  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate] }) : [];
+  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }) : [];
+  if (await fileFingerprint(engine.path) !== engine.receipt.executable_sha256) {
+    throw new Error('Recall engine executable bytes changed during evaluation');
+  }
+  verifyEvaluationRules(opts, rules);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0) });
+  if (checkpoint) applyGainRetention(verdict, checkpoint, dev);
   if (opts.labels && existsSync(opts.labels)) {
     verdict.labels = checkLabels(JSON.parse(readFileSync(opts.labels, 'utf8')), controlDeltas);
     if (verdict.labels.fp_returned.length) verdict.failures.push(`labeled false positives emitted again: ${verdict.labels.fp_returned.length}`);
     if (verdict.labels.tp_dropped.length) verdict.failures.push(`labeled true positives no longer emitted: ${verdict.labels.tp_dropped.length}`);
-    verdict.decision = verdict.failures.length ? 'REJECT' : 'ACCEPT';
   }
-  const out = { schema: 'factory.recall-evaluation.v1', baseline_sha256: sha256(readFileSync(opts.baseline)),
-    candidate_sha256: sha256(readFileSync(opts.candidate)), extra_args: [].concat(opts['extra-arg'] ?? []),
+  verdict.decision = verdict.failures.length ? 'REJECT' : 'ACCEPT';
+  const out = { schema: 'factory.recall-evaluation.v1', ...rules, engine: engine.receipt,
+    profile_sha256: sha256(opts.profileBytes), extra_args: [].concat(opts['extra-arg'] ?? []),
     candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []), ...verdict,
     dev: dev.map(pair => ({ manifest: pair.manifest, manifest_cases_sha256: pair.after.manifest_cases_sha256,
       before: pair.before.summary, after: pair.after.summary,
@@ -849,11 +950,15 @@ function controlRetryArgs(profile, baselineArgs, candidateArgs) {
 }
 
 async function controlObservation(context, directory, report) {
+  let notes;
   try {
+    if (context.rulesSha256) verifyRulesBytes(context);
     const findings = await scan(context, directory, report);
-    return { findings, notes: findings.notes };
+    notes = findings.notes;
+    if (context.rulesSha256) verifyRulesBytes(context);
+    return { findings, notes };
   } catch (error) {
-    return { findings: [], notes: { ...error.diagnostics, other: 1, detail: String(error.message).slice(-300) } };
+    return { findings: [], notes: { ...(notes ?? error.diagnostics), other: 1, detail: String(error.message).slice(-300) } };
   }
 }
 
@@ -867,8 +972,10 @@ async function controlPair({ base, candidate, directory, reports }, suffix, retr
 async function controlDeltas_(opts) {
   const [before, after] = [].concat(opts.rules);
   const base = { profile: JSON.parse(utf8(opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'))),
-    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []), rules: resolve(before) };
-  const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])], rules: resolve(after) };
+    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []),
+    rules: resolve(before), rulesSha256: opts.ruleFingerprints?.baseline_sha256 };
+  const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
+    rules: resolve(after), rulesSha256: opts.ruleFingerprints?.candidate_sha256 };
   const key = f => `${f.rule}|${f.path}|${f.line}`;
   const deltas = [];
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
