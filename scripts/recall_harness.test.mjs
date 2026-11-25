@@ -168,6 +168,15 @@ test('gate rejects dropped, added and duplicate case IDs and scores reordered ca
   assert.match(compare(result([a, a])).failures[0], /Duplicate advisory ID/);
   assert.match(gate({ dev: [{ before: result([a, a]), after: before }], controls: [] }).failures[0], /Duplicate advisory ID/);
   assert.match(compare({ ...before, scope: 'scannable' }).failures[0], /scoring scope differs/);
+  const gain = { before: result([b]), after: result([{ ...b, hunk_hit: true }]) };
+  const separate = { before: result([a]), after: result([a]) };
+  const independent = gate({ dev: [gain, separate], controls: [] });
+  assert.equal(independent.decision, 'ACCEPT');
+  assert.deepEqual(independent.gained, ['B']);
+  const duplicated = gate({ dev: [gain, gain], controls: [] });
+  assert.equal(duplicated.decision, 'REJECT');
+  assert.match(duplicated.failures[0], /Duplicate advisory ID across paired recall cohorts: B/);
+  assert.deepEqual(duplicated.gained, ['B']);
 });
 
 test('gainRetention requires the archived cohort, hit and exact source packets', () => {

@@ -917,7 +917,12 @@ async function probeCoverage(dev, opts) {
 }
 
 function measureCaseChange(old, row, pair, changes) {
-  const { gained, newErrors, newCoverageGaps, failures } = changes;
+  const { gained, newErrors, newCoverageGaps, failures, seenAdvisories } = changes;
+  if (seenAdvisories.has(row.ghsa)) {
+    failures.push('Duplicate advisory ID across paired recall cohorts: ' + row.ghsa);
+    return;
+  }
+  seenAdvisories.add(row.ghsa);
   if (caseInputFingerprint(old) !== caseInputFingerprint(row)) {
     failures.push('Baseline and candidate source byte fingerprints differ for ' + row.ghsa);
     return;
@@ -955,7 +960,8 @@ function measureDevPair({ before, after }, changes) {
 
 export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1, lossPolicy = null }) {
   const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [], lostFpOnly = [], rawLost = [];
-  for (const pair of dev) measureDevPair(pair, { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost });
+  const changes = { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost, seenAdvisories: new Set() };
+  for (const pair of dev) measureDevPair(pair, changes);
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
   const residualAfter = dev.reduce((n, pair) => n + pair.after.summary.fix_side_residual_alerts, 0);
   const controlIncrease = controls.reduce((n, delta) => n + (delta.after ?? 0) - (delta.before ?? 0), 0);
