@@ -552,7 +552,17 @@ async function feederFixture(run, row = feederRow) {
     writeFileSync(scanner, [
       "import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';",
       "import { basename, dirname } from 'node:path';",
-      "if (process.argv.includes('--dump-ast')) { if (process.env.FIXTURE_PARSER_LIMIT === 'true') { console.error('node type: ERROR'); process.exit(3); } process.exit(0); }",
+      "if (process.argv.includes('--dump-ast')) {",
+      "  const mode = process.env.FIXTURE_PARSER_LIMIT;",
+      "  if (mode === 'partial') { console.error('node type: ERROR'); process.exit(3); }",
+      "  if (mode === 'fatal' || mode === 'wrong-file') {",
+      "    const target = mode === 'fatal' ? process.argv.at(-1) : 'unrelated.py';",
+      "    console.error('[00.13][ERROR]: Error: exception Parsing_error.Syntax_error (' + target + ':1:0)');",
+      "    process.exit(2);",
+      "  }",
+      "  if (mode === 'io') { console.error('cannot open source for parsing'); process.exit(2); }",
+      "  process.exit(0);",
+      "}",
       "const rules = process.argv[process.argv.indexOf('--config') + 1];",
       "const report = process.argv[process.argv.indexOf('--sarif-output') + 1];",
       "const coverageArgs = process.argv.indexOf('--json-output');",
@@ -1018,11 +1028,13 @@ test('a fixed parser probe classifies only reproduced engine limits', () => feed
   const { root, workdir, manifest, profile, baseline, candidate } = fixture;
   writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# candidate-parse\n');
   const output = join(root, 'probe-evaluation.json');
-  for (const reproduced of [false, true]) {
+  for (const [mode, state] of [['parsed', 'parsed'], ['partial', 'parse_limited'],
+    ['fatal', 'syntax_error'], ['io', 'unresolved'], ['wrong-file', 'unresolved']]) {
+    const reproduced = state === 'parse_limited';
     const run = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--baseline', baseline,
       '--candidate', candidate, '--manifest', manifest, '--profile', profile, '--workdir', workdir,
       '--opengrep', process.execPath, '--out', output, '--probe-coverage', 'true'],
-    { encoding: 'utf8', timeout: 20000, env: { ...process.env, FIXTURE_PARSER_LIMIT: String(reproduced) } });
+    { encoding: 'utf8', timeout: 20000, env: { ...process.env, FIXTURE_PARSER_LIMIT: mode } });
     assert.ok(existsSync(output), run.stderr);
     const verdict = JSON.parse(readFileSync(output, 'utf8'));
     assert.equal(verdict.decision, reproduced ? 'ACCEPT' : 'REJECT');
@@ -1031,7 +1043,7 @@ test('a fixed parser probe classifies only reproduced engine limits', () => feed
     assert.deepEqual(evidence.parser_probe.old.confirmed_limits, reproduced ? ['sample.py'] : []);
     assert.equal(evidence.file_coverage.old[0].state, 'partial');
     const observation = evidence.parser_probe.old.observations[0];
-    assert.equal(observation.state, reproduced ? 'parse_limited' : 'parsed');
+    assert.equal(observation.state, state, mode);
     assert.equal(observation.sha256, evidence.source_packets.old[0].sha256);
   }
 }));

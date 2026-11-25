@@ -960,6 +960,17 @@ function hasNewCoverageGaps(before, after) {
   });
 }
 
+function parserProbeState(run, target) {
+  if (run.timedOut) return 'unresolved';
+  if (run.status === 0) return 'parsed';
+  if (run.status === 3 && /node type: ERROR|(?:syntax|parse) error|PartialParsing/i.test(run.stderr)) return 'parse_limited';
+  // A fatal syntax diagnostic can mean broken source, so it cannot clear a coverage regression.
+  const fatalSyntax = `Error: exception Parsing_error.Syntax_error (${target}:`;
+  if (run.status === 2 && run.stderr.split('\n').some(line =>
+    line.replace(/^\[[\d.]+\]\[ERROR\]: /, '').startsWith(fatalSyntax))) return 'syntax_error';
+  return 'unresolved';
+}
+
 async function probeCoverage(dev, opts) {
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
   const profile = JSON.parse(utf8(opts.profileBytes));
@@ -983,12 +994,12 @@ async function probeCoverage(dev, opts) {
             const language = PARSER_LANGUAGE[extname(path).slice(1).toLowerCase()];
             const packet = packetsByPath.get(path);
             if (!language || !packet) continue;
-            const run = await runProcess(opts.opengrep, [...prefix, '--lang', language, join(scanSource, path)],
+            const target = join(scanSource, path);
+            const run = await runProcess(opts.opengrep, [...prefix, '--lang', language, target],
               { cwd: scanSource, timeout: 60000, discardStdout: true });
-            const partial = run.status === 3 && /node type: ERROR|(?:syntax|parse) error|PartialParsing/i.test(run.stderr);
             observations.push({ path, language, sha256: packet.sha256,
               exit_code: run.status, timed_out: run.timedOut, diagnostic_sha256: sha256(run.stderr),
-              state: run.timedOut ? 'unresolved' : partial ? 'parse_limited' : run.status === 0 ? 'parsed' : 'unresolved' });
+              state: parserProbeState(run, target) });
           }
         });
         verifyPreparedBytes(source, packets);
