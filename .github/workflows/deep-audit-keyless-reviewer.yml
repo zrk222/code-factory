@@ -96,15 +96,27 @@ jobs:
           from hashlib import sha256
           from io import BytesIO
           import json
+          from lzma import FORMAT_XZ, LZMADecompressor
           import os
           from pathlib import Path
           from factoryline.deep_audit_io import digest, relative_path, strict_json
 
-          value = b64decode(os.environ["REVIEW_PACKET"], validate=True)
-          with GzipFile(fileobj=BytesIO(value)) as stream:
-              raw = stream.read(4_194_305)
-          if len(raw) > 4_194_304:
-              raise ValueError("review packet exceeds the decoded size limit")
+          def decode_review_packet(encoded):
+              limit = 4_194_304
+              value = b64decode(encoded, validate=True)
+              if value.startswith(b"\xfd7zXZ\x00"):
+                  stream = LZMADecompressor(format=FORMAT_XZ, memlimit=32 * 1024 * 1024)
+                  raw = stream.decompress(value, max_length=limit + 1)
+                  if len(raw) <= limit and (not stream.eof or stream.unused_data):
+                      raise ValueError("review packet must contain one complete XZ stream")
+              else:
+                  with GzipFile(fileobj=BytesIO(value)) as stream:
+                      raw = stream.read(limit + 1)
+              if len(raw) > limit:
+                  raise ValueError("review packet exceeds the decoded size limit")
+              return raw
+
+          raw = decode_review_packet(os.environ["REVIEW_PACKET"])
           packet = strict_json(raw)
           if set(packet) - {"challenge_receipts"} != {"inventory", "evidence", "files"}:
               raise ValueError("unexpected review packet fields")
@@ -211,10 +223,11 @@ jobs:
               lanes = summary["lanes"]
               if lanes.keys() != observations.keys():
                   raise ValueError("challenge summary lane set differs from analyzer evidence")
-              expected = {(row["engine"], row["id"], control["kind"]): (
-                  control["expected_exit_code"], control["fixture_sha256"], control["expected_report_sha256"],
-                  control["kind"] == "mutation",
-              ) for row in plan["obligations"] for control in row["challenges"]}
+              expected = {(row["engine"], row["id"], control["kind"]): {
+                  "exit_code": control["expected_exit_code"], "fixture_sha256": control["fixture_sha256"],
+                  "report_sha256": control["expected_report_sha256"],
+                  "detector_configuration_changed": control["kind"] == "mutation",
+              } for row in plan["obligations"] for control in row["challenges"]}
               actual = {}
               for lane_id, lane in lanes.items():
                   observed = observations[lane_id]
@@ -224,11 +237,15 @@ jobs:
                       key = (observed["engine"], row["obligation_id"], row["role"])
                       if key in actual:
                           raise ValueError("duplicate recorded challenge observation")
-                      actual[key] = (row["exit_code"], row["fixture_sha256"], row["report_sha256"],
-                                     row["detector_configuration_changed"])
-              if actual != expected:
+                      actual[key] = {name: row[name] for name in (
+                          "exit_code", "fixture_sha256", "report_sha256", "detector_configuration_changed", "observation_sha256",
+                      )}
+                      require_digest(actual[key]["observation_sha256"], "observation_sha256")
+              if actual.keys() != expected.keys() or any(
+                  any(actual[key][name] != value for name, value in values.items()) for key, values in expected.items()
+              ):
                   raise ValueError("recorded challenge outcomes differ from registered controls")
-              return {lane_id: lane["observations"] for lane_id, lane in lanes.items()}
+              return actual
 
 
           def family_inputs(plan, packet):
@@ -281,6 +298,9 @@ jobs:
                               "requirements": item["requirements"], "paths": item["paths"],
                               "controls": [{"role": row["kind"], "fixture_path": row["fixture_path"],
                                             "supporting_paths": sorted(row["fixture_manifest"])}
+                                           | ({"observed_challenge": challenge_observations[
+                                               (item["engine"], item["id"], row["kind"])]}
+                                              if challenge_observations else {})
                                            for row in item["challenges"]],
                           } for item in obligations],
                           "observations": [{
@@ -291,8 +311,7 @@ jobs:
                               "findings": [{key: finding[key] for key in ("path", "rule_id", "line", "suppressed")}
                                            for finding in row["findings"]],
                               "metrics": row["metrics"],
-                          } | ({"challenge_observations": challenge_observations[row["lane_id"]]}
-                               if challenge_observations else {}) for row in observed],
+                          } for row in observed],
                           "sources": {path: sources[path] for path in sorted(paths)},
                       }
                   )
@@ -347,11 +366,13 @@ jobs:
 
           def family_messages(payload):
               instructions = INSTRUCTIONS
-              if any("challenge_observations" in lane for lane in payload["observations"]):
+              if "observed_challenge" in payload["obligations"][0]["controls"][0]:
                   instructions += (
-                      " The challenge_observations record executed positive, negative and mutation outcomes. "
-                      "Use their exit codes, report hashes and detector configuration changes when deciding "
-                      "whether challenge evidence is present. Ordinary analyzer findings are listed separately."
+                      " Each observed_challenge records the executed outcome for that exact control path and role. "
+                      "The mutation reruns the positive fixture bytes with a changed detector configuration. "
+                      "Compare their report hashes and exit codes. A mutation can change the report even when its exit "
+                      "code stays the same. Ordinary analyzer findings are listed separately. Identify a missing "
+                      "observation by obligation and control role, or name the requirement that the observations cannot assess."
                   )
               return [
                   {"role": "system", "content": instructions},

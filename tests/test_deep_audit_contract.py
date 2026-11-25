@@ -19,6 +19,45 @@ from factoryline.enterprise_receipts import (
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+def test_keyless_review_decodes_lossless_bounded_input():
+    import ast
+    from base64 import b64encode
+    import gzip
+    import lzma
+
+    import yaml
+
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/deep-audit-keyless-reviewer.yml"
+    )
+    flow = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    script = next(
+        step["run"]
+        for step in flow["jobs"]["analyze"]["steps"]
+        if "def decode_review_packet" in step.get("run", "")
+    )
+    source = script.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    tree = ast.parse(source)
+    tree.body = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef))
+    ]
+    scope = {}
+    exec(compile(tree, str(workflow), "exec"), scope)
+    decode = scope["decode_review_packet"]
+    raw = b'{"evidence":"example"}'
+    xz = lzma.compress(raw, preset=6)
+    assert decode(b64encode(xz)) == decode(b64encode(gzip.compress(raw))) == raw
+    for invalid in (xz[:-5], xz + xz):
+        with pytest.raises(ValueError, match="one complete XZ stream"):
+            decode(b64encode(invalid))
+    for compress in (gzip.compress, lzma.compress):
+        with pytest.raises(ValueError, match="exceeds the decoded size limit"):
+            decode(b64encode(compress(b"a" * 4_194_305)))
+
+
 @pytest.mark.parametrize(
     "mode",
     [
@@ -166,6 +205,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                             "exit_code": item["expected_exit_code"],
                             "fixture_sha256": item["fixture_sha256"],
                             "report_sha256": item["expected_report_sha256"],
+                            "observation_sha256": "8" * 64,
                             "detector_configuration_changed": item["kind"]
                             == "mutation",
                         }
@@ -258,19 +298,34 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             assert inventory["artifact_roles"] == ["sbom_json"]
             assert inventory["findings"] == []
         if mode == "challenge_receipts":
-            for lane in payload["observations"]:
-                lane_id = lane_ids[lane["engine"]]
-                assert (
-                    lane["challenge_observations"]
-                    == receipts["lanes"][lane_id]["observations"]
+            for obligation in payload["obligations"]:
+                registered = next(
+                    row for row in plan["obligations"] if row["id"] == obligation["id"]
                 )
+                lane_id = lane_ids[registered["engine"]]
+                observed = {
+                    row["role"]: {
+                        key: value
+                        for key, value in row.items()
+                        if key not in {"obligation_id", "role"}
+                    }
+                    for row in receipts["lanes"][lane_id]["observations"]
+                    if row["obligation_id"] == obligation["id"]
+                }
+                controls = {row["kind"]: row for row in registered["challenges"]}
+                for control in obligation["controls"]:
+                    role = control["role"]
+                    assert control["observed_challenge"] == observed[role]
+                    assert control["fixture_path"] == controls[role]["fixture_path"]
             assert (
-                "executed positive, negative and mutation outcomes"
+                "A mutation can change the report even when its exit code stays the same."
                 in body["messages"][0]["content"]
             )
         else:
             assert all(
-                "challenge_observations" not in lane for lane in payload["observations"]
+                "observed_challenge" not in control
+                for obligation in payload["obligations"]
+                for control in obligation["controls"]
             )
             assert body["messages"][0]["content"] == review.INSTRUCTIONS
         expected_coverage.update(assigned)

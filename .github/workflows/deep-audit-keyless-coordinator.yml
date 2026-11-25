@@ -11,7 +11,7 @@ on:
         options: [authorize, review]
         default: authorize
       review_packet:
-        description: Base64 gzip containing the exact synthetic candidate and audit evidence
+        description: Base64 gzip or XZ containing the exact synthetic candidate and audit evidence
         type: string
         required: false
 
