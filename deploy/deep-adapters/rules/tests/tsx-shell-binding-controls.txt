@@ -1,0 +1,6 @@
+const exec = require("child_process").exec;
+
+export function processLoad(proc: string) {
+  // ruleid: javascript.parameter-shell-command
+  exec("ps -axo pid,pcpu,comm | grep " + proc, { maxBuffer: 1024 * 1024 }, () => {});
+}

@@ -3372,6 +3372,12 @@ rules:
               - pattern-inside: |
                   $CPX = require("$CPMOD")
                   ...
+              - pattern-inside: |
+                  $CPX = require("$CPMOD").$CPM
+                  ...
+              - pattern-inside: |
+                  const {...} = require("$CPMOD")
+                  ...
           - metavariable-regex:
               metavariable: $CPMOD
               regex: ^(?:(?:node:)?child_process|shelljs(?:\.exec)?|execa|cross-spawn)$
@@ -3407,6 +3413,12 @@ rules:
                   ...
               - pattern-inside: |
                   $CPX = require("$CPMOD")
+                  ...
+              - pattern-inside: |
+                  $CPX = require("$CPMOD").$CPM
+                  ...
+              - pattern-inside: |
+                  const {...} = require("$CPMOD")
                   ...
           - metavariable-regex:
               metavariable: $CPMOD
