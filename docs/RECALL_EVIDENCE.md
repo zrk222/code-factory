@@ -50,6 +50,22 @@ Legacy scores report `UNATTESTED`. Signed scores keep review independence
 
 ## Advisory-linked results
 
+Package saved OpenGrep outputs before review. Run the collector against a local
+plan containing paths relative to the plan directory.
+
+```sh
+python scripts/verify_precision_gain.py prepare-linked-captures capture-plan.json
+```
+
+Use schema `factory.advisory-capture-plan.v1` with `record`, `opengrep`, and
+`ruleset` paths, plus `registered_scopes` and `rows` as described below. A
+complete pattern row supplies `source_root`, `native_report`, and `sarif` paths.
+Declare CodeQL scopes that still await capture and use `unknown` for any row
+without a complete observation. The collector reads local files, verifies the
+candidate pins and source snapshot, and writes a content-addressed observations
+file beside the plan. Its SHA-256 is the execution statement subject. Reviewers
+use that same hash for their labels. Preparation leaves the capture unattested.
+
 Run the advisory scorer with the legacy record and a separate signed capture.
 The strict summary stays keyed to the existing fix hunks.
 

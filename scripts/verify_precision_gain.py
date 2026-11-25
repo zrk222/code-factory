@@ -4,6 +4,7 @@ Hash-bound observations are checked for consistency. Optional signed statements
 authenticate the execution and label authors under a pinned trust root.
 ``advisory-recall RECORD`` verifies the strict advisory record and can score a
 separate, signed advisory-link review.
+``prepare-linked-captures PLAN`` packages saved local pattern-lane captures.
 """
 
 from __future__ import annotations
@@ -1255,6 +1256,19 @@ def _pattern_report_findings(root, reference, scanned):
     )
 
 
+def _source_snapshot(root, directory):
+    source = _recall_contained(root, directory)
+    if not source.is_dir():
+        raise ValueError("linked source snapshot directory is missing")
+    return {
+        item.relative_to(source).as_posix(): digest(
+            _recall_read(_recall_contained(source, item.relative_to(source).as_posix()))
+        )
+        for item in source.rglob("*")
+        if item.is_file() or item.is_symlink()
+    }
+
+
 def _linked_capture(root, row, case, candidate):
     coverage_ref = row["coverage"]
     if not _hash(coverage_ref.get("sha256")):
@@ -1292,22 +1306,11 @@ def _linked_capture(root, row, case, candidate):
         or coverage.get("errors") != []
     ):
         raise ValueError("linked capture has incomplete registered scan coverage")
-    source = _recall_contained(root, row["source_root"])
-    if not source.is_dir():
-        raise ValueError("linked source snapshot directory is missing")
-    actual = {
-        item.relative_to(source).as_posix()
-        for item in source.rglob("*")
-        if item.is_file() or item.is_symlink()
-    }
-    if actual != set(inventory):
+    source_hashes = _source_snapshot(root, row["source_root"])
+    if source_hashes.keys() != set(inventory):
         raise ValueError(
             "linked capture file inventory differs from the source snapshot"
         )
-    source_hashes = {
-        path: digest(_recall_read(_recall_contained(source, path)))
-        for path in inventory
-    }
     if digest(canonical_bytes(source_hashes)) != row["source_tree_sha256"]:
         raise ValueError("linked source snapshot byte fingerprints differ")
     changed = {
@@ -1643,6 +1646,113 @@ def recall_main(argv: list[str]) -> int:
     return 0
 
 
+def _capture_artifact(root, prefix, payload):
+    name = f"{prefix}-{digest(canonical_bytes(payload))}.json"
+    path = _recall_contained(root, name)
+    if path.exists():
+        existing, _ = _benchmark_evidence(path)
+        if existing != payload:
+            raise ValueError("capture artifact conflicts with existing evidence")
+    else:
+        _atomic_json(path, payload)
+    return {"path": name, "sha256": _recall_file_hash(path)}
+
+
+def prepare_captures_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="verify_precision_gain.py prepare-linked-captures"
+    )
+    parser.add_argument("plan", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        root = args.plan.absolute().parent
+        plan, _ = _benchmark_evidence(_recall_contained(root, args.plan.name))
+        if plan.get("schema") != "factory.advisory-capture-plan.v1":
+            raise ValueError("unexpected advisory capture plan schema")
+        record, record_sha = _benchmark_evidence(
+            _recall_contained(root, plan["record"])
+        )
+        verify_recall(record)
+        pattern = record["candidate"]["pattern_lane"]
+        tool, rules = (
+            _recall_file_hash(_recall_contained(root, plan[key]))
+            for key in ("opengrep", "ruleset")
+        )
+        if (tool, rules) != (
+            pattern["opengrep_binary_sha256"],
+            pattern["ruleset_sha256"],
+        ):
+            raise ValueError("capture tools do not match the registered candidate")
+        observations = {
+            "schema": LINKS_SCHEMA,
+            "record_sha256": record_sha,
+            "candidate_sha256": digest(canonical_bytes(record["candidate"])),
+            "registered_scopes": plan["registered_scopes"],
+            "rows": [],
+        }
+        for entry in plan["rows"]:
+            row = {
+                key: entry[key]
+                for key in ("ghsa", "lane", "scope", "source_revision", "state")
+            }
+            if row["state"] == "complete":
+                if row["lane"] != "pattern":
+                    raise ValueError(
+                        "capture preparation requires an original pattern report"
+                    )
+                raw_path, sarif_path, source = (
+                    entry[key] for key in ("native_report", "sarif", "source_root")
+                )
+                raw, raw_sha = _benchmark_evidence(_recall_contained(root, raw_path))
+                if raw.get("version") != pattern["opengrep_version"]:
+                    raise ValueError(
+                        "original pattern report version differs from the candidate"
+                    )
+                files = _source_snapshot(root, source)
+                tree = digest(canonical_bytes(files))
+                sarif_sha = _recall_file_hash(_recall_contained(root, sarif_path))
+                coverage = _capture_artifact(
+                    root,
+                    "coverage",
+                    {
+                        "schema": "factory.advisory-engine-coverage.v1",
+                        "engine_sha256": tool,
+                        "configuration_sha256": rules,
+                        "source_revision": row["source_revision"],
+                        "source_tree_sha256": tree,
+                        "sarif_sha256": sarif_sha,
+                        "expected_paths": sorted(files),
+                        "scanned_paths": raw["paths"]["scanned"],
+                        "skipped": raw["paths"]["skipped"],
+                        "errors": raw["errors"],
+                        "native_report": {"path": raw_path, "sha256": raw_sha},
+                    },
+                )
+                row.update(
+                    source_root=source,
+                    source_tree_sha256=tree,
+                    coverage=coverage,
+                    capture={"path": sarif_path, "sha256": sarif_sha},
+                )
+            observations["rows"].append(row)
+        _, _, completed = _observations(record, record_sha, observations, root)
+        output = _capture_artifact(root, "linked-observations", observations)
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        print(json.dumps({"state": "REJECTED", "error": str(exc)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "state": "PREPARED",
+                "observations": output,
+                "complete_captures": len(completed),
+                "provenance": "UNATTESTED",
+            }
+        )
+    )
+    return 0
+
+
 def main() -> int:
     """Verify sealed precision inputs and write a receipt for the operator."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1704,6 +1814,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(
-        recall_main(sys.argv[2:]) if sys.argv[1:2] == ["advisory-recall"] else main()
-    )
+    commands = {
+        "advisory-recall": recall_main,
+        "prepare-linked-captures": prepare_captures_main,
+    }
+    command = commands.get(sys.argv[1]) if len(sys.argv) > 1 else None
+    raise SystemExit(command(sys.argv[2:]) if command else main())

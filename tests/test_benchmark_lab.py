@@ -2204,3 +2204,132 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
             "native_span_drift": "original pattern report and SARIF findings differ",
             "native_digest_drift": "evidence digest mismatch",
         }[condition] in output["error"]
+
+
+@pytest.mark.parametrize(
+    ("condition", "error"),
+    [
+        ("valid", None),
+        ("wrong_tool", "do not match the registered candidate"),
+        ("wrong_version", "version differs from the candidate"),
+        ("coverage_gap", "incomplete registered scan coverage"),
+        ("other_finding", "report and SARIF findings differ"),
+        ("source_drift", "differs from registered pre-fix bytes"),
+        ("duplicate", "duplicate linked observation"),
+    ],
+)
+def test_prepare_linked_capture_batch(tmp_path, capsys, condition, error):
+    record, _, old_file, engine, rules = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    revision = case["fixes"][0]["parent"]
+    record_path, record_sha = _benchmark_file(tmp_path, "registered-record", record)
+    source_file = tmp_path / "source" / "src" / "App.py"
+    source_file.parent.mkdir(parents=True)
+    source_file.write_bytes(
+        b"changed" if condition == "source_drift" else old_file.read_bytes()
+    )
+    if condition == "wrong_tool":
+        engine.write_bytes(b"different engine artifact")
+    native, _ = _benchmark_file(
+        tmp_path,
+        "native",
+        {
+            "version": "mismatch" if condition == "wrong_version" else "1.15.0",
+            "paths": {
+                "scanned": [] if condition == "coverage_gap" else ["src/App.py"],
+                "skipped": [],
+            },
+            "errors": [],
+            "results": [
+                {
+                    "path": "src/App.py",
+                    "check_id": "python.other"
+                    if condition == "other_finding"
+                    else "python.synthetic",
+                    "start": {"line": 1, "col": 1},
+                    "end": {"line": 1, "col": 7},
+                }
+            ],
+        },
+    )
+    sarif, _ = _benchmark_file(
+        tmp_path,
+        "sarif",
+        {
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "invocations": [{"executionSuccessful": True}],
+                    "results": [
+                        {
+                            "ruleId": "python.synthetic",
+                            "locations": [
+                                {
+                                    "physicalLocation": {
+                                        "artifactLocation": {"uri": "src/App.py"},
+                                        "region": {
+                                            "startLine": 1,
+                                            "startColumn": 1,
+                                            "endLine": 1,
+                                            "endColumn": 7,
+                                        },
+                                    }
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    pattern = {"lane": "pattern", "scope": "changed_files"}
+    codeql = {"lane": "codeql", "scope": "repository"}
+    key = {"ghsa": case["ghsa"], "source_revision": revision}
+    complete = {
+        **pattern,
+        **key,
+        "state": "complete",
+        "source_root": "source",
+        "native_report": native.name,
+        "sarif": sarif.name,
+    }
+    rows = [complete, {**codeql, **key, "state": "unknown"}]
+    if condition == "duplicate":
+        rows.append(complete)
+    plan, _ = _benchmark_file(
+        tmp_path,
+        "capture-plan",
+        {
+            "schema": "factory.advisory-capture-plan.v1",
+            "record": record_path.name,
+            "opengrep": engine.name,
+            "ruleset": rules.name,
+            "registered_scopes": [pattern, codeql],
+            "rows": rows,
+        },
+    )
+    status = _gain["prepare_captures_main"]([str(plan)])
+    result = json.loads(capsys.readouterr().out)
+    if error is not None:
+        assert status == 1
+        assert result["state"] == "REJECTED" and error in result["error"]
+        assert not list(tmp_path.glob("linked-observations-*.json"))
+        return
+
+    assert status == 0
+    assert result["state"] == "PREPARED"
+    assert result["provenance"] == "UNATTESTED"
+    assert result["complete_captures"] == 1
+    reference = result["observations"]
+    observations, _ = _gain["_benchmark_evidence"](
+        tmp_path / reference["path"], reference["sha256"]
+    )
+    _, groups, findings = _gain["_observations"](
+        record, record_sha, observations, tmp_path
+    )
+    assert groups == {("pattern", "changed_files"), ("codeql", "repository")}
+    assert list(next(iter(findings.values()))) == [
+        ("src/App.py", 1, 1, 1, 7, "python.synthetic")
+    ]
+    assert _gain["prepare_captures_main"]([str(plan)]) == 0
+    assert json.loads(capsys.readouterr().out) == result
