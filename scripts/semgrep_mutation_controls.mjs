@@ -184,7 +184,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.archive-path-traversal': 3,
   'opt.factory.rules.javascript.dom-innerhtml-from-variable': 1,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
-  'opt.factory.rules.javascript.parameter-shell-command': 5,
+  'opt.factory.rules.javascript.parameter-shell-command': 6,
   'opt.factory.rules.javascript.parameter-sql-text': 2,
   'opt.factory.rules.javascript.request-command-injection': 4,
   'opt.factory.rules.javascript.request-html-injection': 12,
@@ -207,7 +207,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.parameter-sql-text': 2,
   'opt.factory.rules.python.request-command-injection': 2,
   'opt.factory.rules.python.request-html-injection': 1,
-  'opt.factory.rules.python.request-path-traversal': 28,
+  'opt.factory.rules.python.request-path-traversal': 29,
   'opt.factory.rules.python.request-sql-injection': 1,
   'opt.factory.rules.python.tarfile-extractall-without-filter': 5,
   'opt.factory.rules.python.unsafe-deserialization': 2,
@@ -266,9 +266,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 63 rules (under the 64-rule deep-audit bound) and 250 annotated findings.
+// Reviewed totals: 63 rules (under the 64-rule deep-audit bound) and 252 annotated findings.
 const REVIEWED_RULES = 63;
-const REVIEWED_FINDINGS = 250;
+const REVIEWED_FINDINGS = 252;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -324,6 +324,7 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'tsx-sql-text-controls.txt'], ['ts', 'tsx-shell-text-controls.txt'],
   ['ts', 'tsx-fs-identity-controls.txt'], ['ts', 'tsx-sql-tagged-controls.txt'],
   ['ts', 'tsx-path-template-controls.txt'], ['ts', 'tsx-shell-wrapper-controls.txt'],
+  ['ts', 'tsx-shell-binding-controls.txt'], ['ts', 'tsx-shell-helper-controls.txt'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],

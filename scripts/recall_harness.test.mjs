@@ -7,7 +7,7 @@ import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
-  familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest } from './recall_harness.mjs';
+  familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact } from './recall_harness.mjs';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
@@ -513,7 +513,9 @@ async function feederFixture(run, row = feederRow) {
       "if (control && ruleText.includes('# reviewed-control')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn: 1 } } }] });",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
       "if (devTimeout || controlTimeout) issues.push({ descriptor: { id: 'Timeout' }, level: 'warning' });",
-      "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'skipped.py' && path !== 'unreported.py'), skipped: files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [] }, errors: [...(files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : []), ...(disputedParse ? [{ type: 'Syntax error', path: 'sample.py' }] : [])] }));",
+      "const defaultIgnored = files.filter(path => path === 'ignored.py' || (path === 'candidate-only.py' && ruleText.includes('# candidate-default-ignore')));",
+      "const skipped = [...defaultIgnored.map(path => ({ path, reason: 'semgrepignore_patterns_match' })), ...(files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [])];",
+      "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'unreported.py' && !skipped.some(item => item.path === path)), skipped }, errors: [...(files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : []), ...(disputedParse ? [{ type: 'Syntax error', path: 'sample.py' }] : [])] }));",
       "writeFileSync(report, JSON.stringify({ runs: [{ results, invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: issues }] }] }));",
       "process.exitCode = incomplete ? 2 : 0;",
     ].join('\n'));
@@ -958,6 +960,39 @@ test('declared control directories are excluded and unrelated missing paths rema
   ]);
 }));
 
+test('paired controls record only shared scanner ignores and keep candidate skips visible', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline, candidate } = fixture;
+  const control = join(root, 'control'), output = join(root, 'control-scope.json');
+  mkdirSync(control);
+  for (const file of ['sample.py', 'ignored.py', 'candidate-only.py', 'helper_spec.rb', 'arithmetic_test.go']) {
+    writeFileSync(join(control, file), '# owned control fixture\n');
+  }
+  writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# candidate-default-ignore\n');
+  const run = rules => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls', '--rules', baseline,
+    '--rules', rules, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
+    '--dir', control, '--out', output], { encoding: 'utf8', timeout: 20000 });
+  const stable = run(baseline);
+  assert.equal(stable.status, 0, stable.stderr);
+  const { deltas: [original] } = JSON.parse(readFileSync(output, 'utf8'));
+  const exclusions = [
+    { path: 'arithmetic_test.go', reason: 'test_path' },
+    { path: 'helper_spec.rb', reason: 'test_path' },
+    { path: 'ignored.py', reason: 'shared_semgrepignore_patterns_match' },
+  ];
+  for (const side of Object.values(original.scan_sides)) {
+    assert.deepEqual(side.control_coverage, { complete: true, expected: 2, reported: 2, gaps: [], excluded: exclusions });
+  }
+  assert.match(original.control_scope_sha256, /^[0-9a-f]{64}$/);
+  assert.equal(run(candidate).status, 2);
+  const { deltas: [rejected] } = JSON.parse(readFileSync(output, 'utf8'));
+  assert.equal(rejected.control_scope_sha256, original.control_scope_sha256);
+  assert.deepEqual(rejected.scan_sides.before.control_coverage.gaps, []);
+  assert.deepEqual(rejected.scan_sides.after.control_coverage.gaps, [
+    { path: 'candidate-only.py', reason: 'semgrepignore_patterns_match' },
+  ]);
+  assert.deepEqual(rejected.scan_sides.after.control_coverage.excluded, exclusions);
+}));
+
 
 test('local Git source bytes survive preparation, scanning, and the reported packet inventory', () =>
   feederFixture(async ({ root, workdir, manifest, baseline, profile }) => {
@@ -1096,3 +1131,30 @@ test('checkpoint records are bound to their full input fingerprint', async () =>
     assert.equal(readCheckpoint(root, inputs), null);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('incomplete cases and rows with missing artifacts are rescanned, never resumed', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, baseline, candidate, opts } = fixture;
+  const checkpointDir = join(root, 'checkpoints');
+  const resumable = { ...opts, 'checkpoint-dir': checkpointDir };
+  // The candidate fixture is incomplete (parse error), so it is never checkpointed.
+  const incomplete = await scoreManifest(manifest, candidate, resumable);
+  assert.equal(incomplete.cases[0].status, 'incomplete');
+  assert.equal(existsSync(checkpointDir) ? readdirSync(checkpointDir).length : 0, 0);
+  const again = await scoreManifest(manifest, candidate, resumable);
+  assert.deepEqual(again.resumed_cases, []);
+  // A completed case resumes only while the SARIF it cites is intact.
+  const fresh = await scoreManifest(manifest, baseline, resumable);
+  assert.equal(readdirSync(checkpointDir).length, 1);
+  assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0]), true);
+  const sarif = join(workdir, fresh.cases[0].captures.old.sarif.path);
+  writeFileSync(sarif, '{}');
+  assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0]), false);
+  const rescanned = await scoreManifest(manifest, baseline, resumable);
+  assert.deepEqual(rescanned.resumed_cases, []);
+  assert.deepEqual(rescanned.summary, fresh.summary);
+  const { checkpointable, scorerSha256 } = await import('./recall_harness.mjs');
+  assert.equal(checkpointable({ status: 'unfetchable', outcome: 'unknown' }), false);
+  assert.equal(checkpointable({ status: 'incomplete', outcome: 'coverage_incomplete' }), false);
+  assert.equal(checkpointable({ status: 'scored', outcome: 'miss' }), true);
+  assert.match(scorerSha256(), /^[a-f0-9]{64}$/);
+}));

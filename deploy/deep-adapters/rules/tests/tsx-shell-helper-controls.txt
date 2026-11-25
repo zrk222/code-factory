@@ -1,0 +1,6 @@
+import { exec } from "./suite-helpers";
+
+export default (name: string) => {
+  // ok: javascript.parameter-shell-command
+  exec(`${name}: imports default`, async () => {});
+};
