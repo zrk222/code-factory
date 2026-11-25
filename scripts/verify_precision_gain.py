@@ -1950,6 +1950,7 @@ INSTRUCTIONS = (
     "For each item, decide whether the marked line (>) is a real instance of the claimed "
     "weakness: attacker- or user-influenced data can reach it in a realistic deployment of "
     "this library or application, with no effective validation in the shown or implied code. "
+    "If a span is present, it gives the start column, end-line offset, and end column. "
     "Answer TP, FP or UNCLEAR, with one sentence of reasoning. Judge each item on its own; do "
     "not look up advisories, fixes or other labels."
 )
@@ -1998,6 +1999,8 @@ def rule_cwes(rules_path: Path) -> dict[str, list[str]]:
 
 def item_id(alert: dict) -> str:
     raw = f"{alert['case']}|{alert['path']}|{alert['line']}|{alert['rule']}"
+    if alert.get("span") is not None:
+        raw += "|" + json.dumps(alert["span"], sort_keys=True, separators=(",", ":"))
     return digest(raw.encode())[:12]
 
 
@@ -2074,6 +2077,7 @@ def build_packet(args) -> None:
                 "repository_case": alert["case"],
                 "file": alert["path"],
                 "line": alert["line"],
+                **({"span": alert["span"]} if alert.get("span") is not None else {}),
                 "claimed_weakness": weakness(cwes.get(alert["rule"], [])),
                 "context": context(Path(alert["root"]), alert["path"], alert["line"]),
             }
@@ -2384,7 +2388,7 @@ def tier_for(tp: int, fp: int) -> str:
 def _alert_identity(row: dict) -> tuple:
     """Exact alert identity: source snapshot, location, rule and rule semantics."""
     span = row.get("span")
-    location = json.dumps(span, sort_keys=True) if span else str(row["line"])
+    location = (row["line"], json.dumps(span, sort_keys=True) if span is not None else None)
     return (
         row.get("case") or row.get("repository_case"),
         row["file"],

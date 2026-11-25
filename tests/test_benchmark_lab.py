@@ -2501,6 +2501,44 @@ def test_blind_packet_samples_each_rule_without_order_bias(tmp_path):
         _gain["read_json"](malformed)
 
 
+def test_blind_packet_and_ledger_distinguish_exact_alert_spans(tmp_path):
+    alerts = _alerts(tmp_path)
+    first, second, *_ = _gain["read_json"](alerts)
+    rows = [
+        {**first, "span": [1, 0, 3]},
+        {**first, "span": [4, 0, 6]},
+        {**second, "span": [1, 0, 3]},
+    ]
+    alerts.write_text(json.dumps([*rows, rows[0]]), encoding="utf-8")
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES, encoding="utf-8")
+    packet_path, key_path = tmp_path / "packet.json", tmp_path / "key.json"
+    _gain["build_packet"](
+        argparse.Namespace(
+            alerts=alerts,
+            rules=rules,
+            cohort="owned",
+            seed=7,
+            per_rule=30,
+            out=packet_path,
+            key=key_path,
+        )
+    )
+    packet = _gain["read_json"](packet_path)
+    key = _gain["read_json"](key_path)["key"]
+    assert len(packet["items"]) == 3
+    assert {(row["line"], tuple(row["span"])) for row in packet["items"]} == {
+        (3, (1, 0, 3)),
+        (3, (4, 0, 6)),
+        (7, (1, 0, 3)),
+    }
+    joined = [{**item, **key[item["item"]]} for item in packet["items"]]
+    assert len({_gain["_alert_identity"](item) for item in joined}) == 3
+    assert all(
+        "rule" not in item and "on_fix_hunk" not in item for item in packet["items"]
+    )
+
+
 def test_packet_is_blinded_deduplicated_and_sealed(tmp_path):
     rules = tmp_path / "rules.yml"
     rules.write_text(REVIEW_RULES)

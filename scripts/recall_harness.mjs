@@ -26,9 +26,10 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
-import { hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
+import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
 export const FAMILIES = Object.freeze({
   'CWE-78': 'cmd', 'CWE-88': 'cmd', 'CWE-77': 'cmd', 'CWE-89': 'sql',
@@ -262,8 +263,10 @@ export function scoreCase({ families, hunks, oldFindings, newFindings, rules }) 
     .some(([path, line]) => hunks[path]?.old.includes(line)));
   const residual = newFindings.filter(relevant).filter(f => Object.values(hunks)
     .some(entry => entry.new_path === f.path && entry.new.includes(f.line)));
+  const hunkSpans = hunkHits.map(f => f.span ?? null);
   return { hunk_hit: hunkHits.length > 0, trace_hit: traceHits.length > 0, file_hit: oldHits.length > 0,
-    hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]), matched_hunk_families: matchedFamilies,
+    hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]),
+    ...(hunkSpans.some(Boolean) ? { hunk_spans: hunkSpans } : {}), matched_hunk_families: matchedFamilies,
     alerts_in_changed_files: changedFindings.length, family_alerts_in_changed_files: oldHits.length,
     fix_side_residual: residual.map(f => [f.rule, f.path, f.line]) };
 }
@@ -567,6 +570,20 @@ async function buildPreparedCase(dir, row, scope) {
   return prepareChanges(repo, dir, parent, fix, scopeExtensions(row.ecosystem, scope));
 }
 
+export async function publishPreparedCase(staging, directory, { rename = renameSync, platform = process.platform } = {}) {
+  const record = join(directory, 'case.json');
+  for (const wait of [25, 75, 150, null]) {
+    try {
+      rename(staging, directory);
+      return;
+    } catch (error) {
+      if (existsSync(record)) return;
+      if (wait === null || platform !== 'win32' || !['EACCES', 'EBUSY', 'EPERM'].includes(error.code)) throw error;
+    }
+    await delay(wait);
+  }
+}
+
 async function prepareCase(workdir, row, scope = 'ecosystem') {
   const key = caseDigest([row]);
   const cache = join(workdir, scope === 'scannable' ? 'cases-v4-scannable' : 'cases-v4'), directory = join(cache, key);
@@ -581,26 +598,31 @@ async function prepareCase(workdir, row, scope = 'ecosystem') {
     if (data.status === 'unfetchable') return data;
     rmSync(join(staging, 'repo'), { recursive: true, force: true });
     writeFileSync(join(staging, 'case.json'), JSON.stringify({ ...data, case_sha256: key }));
-    try { renameSync(staging, directory); }
-    catch (error) { if (!existsSync(record)) throw error; }
+    await publishPreparedCase(staging, directory);
     return read();
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }
 }
 
+class RecallInputDrift extends Error {}
+
 function verifyRulesBytes(context) {
   if (sha256(readFileSync(context.rules)) !== context.rulesSha256) {
-    throw new Error('Scan ruleset byte fingerprint differs');
+    throw new RecallInputDrift('Scan ruleset byte fingerprint differs');
   }
 }
 
-function captureReference(context, source, report, diagnostics) {
+function reportReferences(context, report, diagnostics) {
   const local = path => relative(context.workdir, path).split(sep).join('/');
   const coverage = coverageReportPath(context.profile, report, true);
-  return { source_root: local(source), sarif: { path: local(report), sha256: diagnostics.report_sha256 },
+  return { sarif: diagnostics.report_sha256 ? { path: local(report), sha256: diagnostics.report_sha256 } : null,
     native_report: coverage && diagnostics.coverage_report_sha256
       ? { path: local(coverage), sha256: diagnostics.coverage_report_sha256 } : null };
+}
+
+function captureReference(context, source, report, diagnostics) {
+  return { source_root: relative(context.workdir, source).split(sep).join('/'), ...reportReferences(context, report, diagnostics) };
 }
 
 async function observeSide(context, source, report, expected) {
@@ -619,6 +641,7 @@ async function observeSide(context, source, report, expected) {
     const capture = captureReference(context, source, report, diagnostics);
     return { findings, diagnostics, coverage: findings.coverage, capture, submitted, verified: true };
   } catch (error) {
+    if (error instanceof RecallInputDrift) throw error;
     return { findings: [], submitted, diagnostics: { ...(diagnostics ?? error.diagnostics),
       other: 1, detail: String(error.message).slice(-300) } };
   }
@@ -650,9 +673,16 @@ async function pool(items, jobs, worker) {
   if (!Number.isSafeInteger(jobs) || jobs < 1) throw new Error('Recall jobs must be a positive integer');
   const out = new Array(items.length);
   let next = 0;
+  let failure;
   await Promise.all(Array.from({ length: Math.min(jobs, items.length) }, async () => {
-    while (next < items.length) { const index = next++; out[index] = await worker(items[index]); }
+    try {
+      while (!failure && next < items.length) {
+        const index = next++;
+        out[index] = await worker(items[index]);
+      }
+    } catch (error) { failure ??= { error }; }
   }));
+  if (failure) throw failure.error;
   return out;
 }
 
@@ -710,7 +740,8 @@ export function readCheckpoint(root, inputs) {
   if (!existsSync(path)) return null;
   try {
     const saved = JSON.parse(readFileSync(path, 'utf8'));
-    return JSON.stringify(saved.inputs) === JSON.stringify(inputs) ? saved.result : null;
+    return JSON.stringify(saved.inputs) === JSON.stringify(inputs)
+      && saved.result_sha256 === sha256(JSON.stringify(saved.result)) ? saved.result : null;
   } catch { return null; }
 }
 
@@ -719,7 +750,7 @@ export function writeCheckpoint(root, inputs, result) {
   mkdirSync(root, { recursive: true });
   const path = join(root, `${checkpointKey(inputs)}.json`);
   const staging = `${path}.${process.pid}.tmp`;
-  writeFileSync(staging, JSON.stringify({ inputs, result }));
+  writeFileSync(staging, JSON.stringify({ inputs, result, result_sha256: sha256(JSON.stringify(result)) }));
   renameSync(staging, path);
 }
 
@@ -755,46 +786,78 @@ export function checkpointArtifactsIntact(workdir, row) {
   } catch { return false; }
 }
 
+function readScoringManifest(path) {
+  const bytes = readFileSync(path);
+  const manifest = JSON.parse(utf8(bytes));
+  return { path, cases: manifest.cases, casesSha256: validateRecallManifest(manifest), sha256: sha256(bytes) };
+}
+
 export async function scoreManifest(manifestPath, rulesPath, opts = {}, context = null) {
-  const manifestBytes = readFileSync(manifestPath);
-  const manifest = JSON.parse(utf8(manifestBytes));
-  const manifestDigest = validateRecallManifest(manifest);
-  context ??= scoringContext(opts, rulesPath);
+  return scorePreparedManifest(readScoringManifest(manifestPath), opts, context ?? scoringContext(opts, rulesPath));
+}
+
+async function scorePreparedManifest(manifest, opts, context) {
+  const checkpoints = opts['checkpoint-dir'] ? resolve(opts['checkpoint-dir']) : null;
+  const engine = context.engine ?? (checkpoints ? await bindRecallEngine(context.profile, context.bin) : null);
+  if (engine) context.bin = engine.path;
+  const verifyPins = async operation => {
+    if (engine) await verifyBoundEngine(engine, operation);
+    verifyRulesBytes(context);
+  };
+  await verifyPins('case scoring');
   mkdirSync(context.workdir, { recursive: true });
   context.scanRoot = mkdtempSync(join(context.workdir, 'scan-'));
   const one = async (row, scanContext = context) => {
     try { return { ...row, ...(await scoreOne(scanContext, row)) }; }
-    catch (error) { return { ...row, status: 'error', detail: String(error.message).slice(-300) }; }
+    catch (error) {
+      if (error instanceof RecallInputDrift) throw error;
+      return { ...row, status: 'error', detail: String(error.message).slice(-300) };
+    }
   };
-  const checkpoints = opts['checkpoint-dir'] ? resolve(opts['checkpoint-dir']) : null;
-  const engineSha = checkpoints
-    ? context.engineSha ?? await fileFingerprint(executablePath(context.bin)) : null;
   const resumed = [];
-  const checkpointed = async row => {
+  const checkpointed = async (row, staged) => {
     const inputs = { schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
-      manifest_cases_sha256: manifestDigest, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
-      profile_sha256: context.profileSha256, engine_sha256: engineSha, engine_args: context.extra, scope: context.scope };
+      manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
+      profile_sha256: context.profileSha256, engine_sha256: engine.receipt.executable_sha256,
+      engine_args: context.extra, scope: context.scope };
     const saved = readCheckpoint(checkpoints, inputs);
     if (saved && checkpointable(saved) && checkpointArtifactsIntact(context.workdir, saved)) {
       resumed.push(row.ghsa);
       return saved;
     }
     const result = await one(row);
-    if (checkpointable(result)) writeCheckpoint(checkpoints, inputs, result);
+    if (checkpointable(result)) staged.push({ inputs, result });
     return result;
   };
-  const rows = await pool(manifest.cases, Number(opts.jobs ?? 6), checkpointed);
+  const jobs = Number(opts.jobs ?? 6);
+  const rows = [];
+  if (checkpoints) {
+    // Publish only after the group still matches the inputs used in its keys.
+    const groupSize = Math.max(16, jobs);
+    for (let start = 0; start < manifest.cases.length; start += groupSize) {
+      const staged = [];
+      const group = manifest.cases.slice(start, start + groupSize);
+      rows.push(...await pool(group, jobs, row => checkpointed(row, staged)));
+      await verifyPins('case checkpoint');
+      for (const { inputs, result } of staged) writeCheckpoint(checkpoints, inputs, result);
+    }
+  } else {
+    rows.push(...await pool(manifest.cases, jobs, row => one(row)));
+  }
   // Engine timeouts depend on machine load; repeat those cases one at a time
   // so a timeout is only recorded when it happens on an otherwise idle engine.
+  let retried = false;
   for (let index = 0; index < rows.length; index++) {
     if (rows[index].outcome !== 'timeout') continue;
+    retried = true;
     const initial = rows[index];
     const serial = { ...context, scanRoot: join(context.scanRoot, 'serial') };
     rows[index] = { ...(await one(manifest.cases[index], serial)), retried_serially: true,
       initial_scan_sides: initial.scan_sides, initial_captures: initial.captures };
   }
-  return { schema: 'factory.recall-result.v1', manifest: manifestPath, manifest_cases_sha256: manifestDigest,
-    manifest_sha256: sha256(manifestBytes), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
+  if (!checkpoints || retried) await verifyPins('case scoring');
+  return { schema: 'factory.recall-result.v1', manifest: manifest.path, manifest_cases_sha256: manifest.casesSha256,
+    manifest_sha256: manifest.sha256, ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
     scope: context.scope, engine_args: context.extra,
     scan_directory: basename(context.scanRoot),
     ...(checkpoints ? { resumed_cases: resumed.sort() } : {}),
@@ -805,8 +868,7 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}, context 
 async function score(opts) {
   const context = scoringContext(opts, opts.rules);
   const engine = await bindRecallEngine(context.profile, context.bin);
-  context.bin = engine.path;
-  context.engineSha = engine.receipt.executable_sha256;
+  context.engine = engine;
   const out = await scoreManifest(opts.manifest, opts.rules, opts, context);
   await verifyBoundEngine(engine, 'scoring');
   writeFileSync(opts.out, `${JSON.stringify({ ...out, engine: engine.receipt }, null, 1)}\n`);
@@ -843,7 +905,7 @@ function adjudicatedFpMiss(policy, before, old, after, row) {
   if (!sameAdjudicationScope(before, evidence) || !sameAdjudicationScope(after, evidence)) return false;
   const input = caseInputFingerprint(known.source);
   return caseInputFingerprint(old) === input && caseInputFingerprint(row) === input
-    && hunkIdentity(old.hunk_findings ?? []) === known.identity;
+    && hunkAdjudicationIdentity(old, known.spanBound) === known.identity;
 }
 
 function recordLostHit(changes, pair, old, row) {
@@ -911,8 +973,15 @@ async function probeCoverage(dev, opts) {
   return { method: 'opengrep_dump_ast_v1', profile_sha256: sha256(opts.profileBytes), options: prefix.slice(1) };
 }
 
+const duplicateAdvisory = ghsa => 'Duplicate advisory ID across paired recall cohorts: ' + ghsa;
+
 function measureCaseChange(old, row, pair, changes) {
-  const { gained, newErrors, newCoverageGaps, failures } = changes;
+  const { gained, newErrors, newCoverageGaps, failures, seenAdvisories } = changes;
+  if (seenAdvisories.has(row.ghsa)) {
+    failures.push(duplicateAdvisory(row.ghsa));
+    return;
+  }
+  seenAdvisories.add(row.ghsa);
   if (caseInputFingerprint(old) !== caseInputFingerprint(row)) {
     failures.push('Baseline and candidate source byte fingerprints differ for ' + row.ghsa);
     return;
@@ -950,7 +1019,8 @@ function measureDevPair({ before, after }, changes) {
 
 export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1, lossPolicy = null }) {
   const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [], lostFpOnly = [], rawLost = [];
-  for (const pair of dev) measureDevPair(pair, { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost });
+  const changes = { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost, seenAdvisories: new Set() };
+  for (const pair of dev) measureDevPair(pair, changes);
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
   const residualAfter = dev.reduce((n, pair) => n + pair.after.summary.fix_side_residual_alerts, 0);
   const controlIncrease = controls.reduce((n, delta) => n + (delta.after ?? 0) - (delta.before ?? 0), 0);
@@ -991,6 +1061,7 @@ function pairedCaseEvidence({ before, after }) {
     const previous = baseline.get(row.ghsa);
     return { ghsa: row.ghsa, fix: row.fix, before: previous?.outcome ?? previous?.status ?? null,
       after: row.outcome ?? row.status, hunk_findings: row.hunk_findings ?? [],
+      ...(row.hunk_spans ? { hunk_spans: row.hunk_spans } : {}),
       matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
       retried_serially: Boolean(row.retried_serially) };
   });
@@ -1032,7 +1103,7 @@ async function bindRecallEngine(profile, command) {
 
 async function verifyBoundEngine(engine, operation) {
   if (await fileFingerprint(engine.path) !== engine.receipt.executable_sha256) {
-    throw new Error(`Recall engine executable bytes changed during ${operation}`);
+    throw new RecallInputDrift(`Recall engine executable bytes changed during ${operation}`);
   }
 }
 
@@ -1043,7 +1114,7 @@ function evaluationRules(opts) {
 function verifyEvaluationRules(opts, expected) {
   const actual = evaluationRules(opts);
   if (actual.baseline_sha256 !== expected.baseline_sha256 || actual.candidate_sha256 !== expected.candidate_sha256) {
-    throw new Error('Evaluation ruleset bytes changed during scoring');
+    throw new RecallInputDrift('Evaluation ruleset bytes changed during scoring');
   }
 }
 
@@ -1056,7 +1127,7 @@ function recordedGainsIn(block, required, engineArgs) {
       const source = evidence.get(row.ghsa);
       if (!source?.revisions || !source.source_packets) throw new Error('Recall gain checkpoint is missing case input evidence');
       return [row.ghsa, { cohort, input: caseInputFingerprint(source),
-        prior: { ...source, hunk_findings: row.hunk_findings },
+        prior: { ...source, hunk_findings: row.hunk_findings, hunk_spans: row.hunk_spans },
         scope: { manifest_cases_sha256: cohort, manifest_sha256: block.after_evidence.manifest_sha256,
           profile_sha256: block.after_evidence.profile_sha256, ruleset_sha256: block.after_evidence.ruleset_sha256,
           engine_args: engineArgs } }];
@@ -1140,6 +1211,24 @@ function reviewPopulation(context, deltas) {
   })) }]);
 }
 
+function readEvaluationManifests(paths) {
+  const seen = new Set();
+  return [].concat(paths).map(path => {
+    const manifest = readScoringManifest(path);
+    for (const { ghsa } of manifest.cases) {
+      if (seen.has(ghsa)) throw new Error(duplicateAdvisory(ghsa));
+      seen.add(ghsa);
+    }
+    return manifest;
+  });
+}
+
+function verifyEvaluationManifests(manifests) {
+  for (const { path, sha256: expected } of manifests) {
+    if (sha256(readFileSync(path)) !== expected) throw new Error('Evaluation manifest bytes changed during scoring');
+  }
+}
+
 async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
@@ -1150,30 +1239,33 @@ async function evaluate(input) {
   if (reviewOption !== undefined && reviewOption !== 'true') {
     throw new Error('--require-reviewed-controls accepts true');
   }
+  const manifests = readEvaluationManifests(opts.manifest);
   const engine = await bindRecallEngine(JSON.parse(utf8(opts.profileBytes)),
     opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
   const lossPolicy = opts['adjudicated-losses']
     ? loadAdjudicatedLosses(opts['adjudicated-losses'], engine.receipt.executable_sha256) : null;
   opts.opengrep = engine.path;
   const rules = evaluationRules(opts);
-  const manifests = [].concat(opts.manifest);
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
   const candidateOpts = { ...opts, 'extra-arg': [].concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []) };
   if (opts['probe-coverage'] !== undefined && !['true', 'false'].includes(opts['probe-coverage'])) {
     throw new Error('--probe-coverage requires true or false');
   }
+  const scoreArm = (manifest, path, settings, expectedRules) => {
+    const context = scoringContext(settings, path);
+    if (context.rulesSha256 !== expectedRules) throw new RecallInputDrift('Evaluation ruleset bytes changed during scoring');
+    return scorePreparedManifest(manifest, settings, { ...context, engine });
+  };
   const dev = [];
   for (const manifest of manifests) {
-    const before = await scoreManifest(manifest, opts.baseline, opts);
-    const after = await scoreManifest(manifest, opts.candidate, candidateOpts);
-    if (before.ruleset_sha256 !== rules.baseline_sha256 || after.ruleset_sha256 !== rules.candidate_sha256) {
-      throw new Error('Evaluation ruleset bytes changed during scoring');
-    }
-    dev.push({ manifest, before, after });
+    const before = await scoreArm(manifest, opts.baseline, opts, rules.baseline_sha256);
+    const after = await scoreArm(manifest, opts.candidate, candidateOpts, rules.candidate_sha256);
+    dev.push({ manifest: manifest.path, before, after });
   }
-  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }) : [];
+  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }, engine) : [];
   const parserProbe = opts['probe-coverage'] === 'true' ? await probeCoverage(dev, opts) : null;
   await verifyBoundEngine(engine, 'evaluation');
+  verifyEvaluationManifests(manifests);
   verifyEvaluationRules(opts, rules);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0), lossPolicy });
   if (checkpoint) applyGainRetention(verdict, checkpoint, dev, lossPolicy);
@@ -1201,6 +1293,21 @@ async function evaluate(input) {
 }
 
 const CONTROL_TIMEOUT_RETRY_SECONDS = 15;
+const OPENGREP_DEFAULT_TARGET_BYTES = 1_000_000;
+const CONTROL_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
+const CONTROL_HASH_BATCH_SIZE = 16;
+
+function controlTargetBytes(directory, source, base, candidate) {
+  if (base.profile.engine !== 'semgrep') return null;
+  const argv = [...base.profile.commands[0].argv, ...base.extra, ...candidate.extra];
+  if (argv.some(arg => /^--max-target-bytes(?:=|$)/.test(arg))) return null;
+  // Match the existing source-evidence envelope for bounded local files.
+  const largest = source.eligible.reduce((limit, path) => {
+    const bytes = statSync(join(directory, path)).size;
+    return bytes <= CONTROL_SOURCE_MAX_BYTES && bytes > limit ? bytes : limit;
+  }, OPENGREP_DEFAULT_TARGET_BYTES);
+  return largest > OPENGREP_DEFAULT_TARGET_BYTES ? largest : null;
+}
 
 function controlRetryArgs(profile, baselineArgs, candidateArgs) {
   const hasTimeoutOverride = [...profile.commands[0].argv, ...baselineArgs, ...candidateArgs]
@@ -1245,6 +1352,12 @@ function controlLink(root, location, eligible) {
 
 async function controlSource(root, excludedDirs) {
   const files = [];
+  const pending = [];
+  const hashBatch = async () => {
+    files.push(...await Promise.all(pending.splice(0).map(async ({ path, location }) => ({
+      path, sha256: await fileFingerprint(location),
+    }))));
+  };
   const exclusionReason = path => {
     if (path.split('/').slice(0, -1).some(part => excludedDirs.includes(part))) return 'declared_control_exclusion';
     if (isTestPath(path) || path.endsWith('_spec.rb')) return 'test_path';
@@ -1257,7 +1370,8 @@ async function controlSource(root, excludedDirs) {
       if (entry.isDirectory()) {
         await visit(location, path + '/');
       } else if (entry.isFile()) {
-        files.push({ path, sha256: await fileFingerprint(location) });
+        pending.push({ path, location });
+        if (pending.length === CONTROL_HASH_BATCH_SIZE) await hashBatch();
       } else if (entry.isSymbolicLink()) {
         files.push({ path, ...controlLink(root, location, controlSourceExtension(path) && !exclusionReason(path)) });
       } else {
@@ -1266,6 +1380,7 @@ async function controlSource(root, excludedDirs) {
     }
   };
   await visit(root, '');
+  if (pending.length) await hashBatch();
   const supported = files.filter(file => file.sha256 && controlSourceExtension(file.path));
   const excluded = new Map(supported.map(({ path }) => [path, exclusionReason(path)])
     .filter(([, reason]) => reason));
@@ -1304,9 +1419,11 @@ async function controlObservation(context, directory, report, source) {
     if (eligibleFindings.length !== findings.length) notes.excluded_test_findings = findings.length - eligibleFindings.length;
     findings = eligibleFindings;
   } catch (error) {
+    if (error instanceof RecallInputDrift) throw error;
     findings = [];
     notes = { ...(notes ?? error.diagnostics), other: 1, detail: String(error.message).slice(-300) };
   }
+  notes.reports = reportReferences(context, report, notes);
   try {
     if ((await controlSource(directory, source.excludedDirs)).evidence.sha256 !== source.evidence.sha256) {
       throw new Error('Control source byte fingerprints differ');
@@ -1343,10 +1460,10 @@ function recordControlCoverage(side, scope) {
   }
 }
 
-async function controlPair({ base, candidate, directory, reports, source }, suffix, retryArgs = []) {
-  const old = await controlObservation({ ...base, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`, source);
+async function controlPair({ base, candidate, directory, reports, source, workdir }, suffix, retryArgs = []) {
+  const old = await controlObservation({ ...base, workdir, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`, source);
   const now = old.sourceInvalid ? { findings: [], notes: null }
-    : await controlObservation({ ...candidate, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`, source);
+    : await controlObservation({ ...candidate, workdir, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`, source);
   const scope = pairedControlScope(source, [old, now]);
   for (const side of [old, now]) recordControlCoverage(side, scope);
   const scan_sides = { before: old.notes, after: now.notes };
@@ -1376,15 +1493,47 @@ function controlExcludedDirectories(opts) {
   return excludedDirs;
 }
 
-async function controlDeltas_(opts) {
+async function retainedReportMatches(root, reference, expected, required) {
+  if (!expected) return !required && !reference;
+  if (reference?.sha256 !== expected || typeof reference.path !== 'string' || isAbsolute(reference.path)) return false;
+  const path = resolve(root, reference.path);
+  if (!insideControl(root, path)) return false;
+  const canonical = realpathSync(path);
+  return insideControl(root, canonical) && statSync(canonical).isFile() && await fileFingerprint(canonical) === expected;
+}
+
+async function controlReportsIntact(root, notes, required) {
+  if (!notes) return !required;
+  if (required && !notes.control_coverage?.complete) return false;
+  const matches = await Promise.all([
+    retainedReportMatches(root, notes.reports?.sarif, notes.report_sha256, required),
+    retainedReportMatches(root, notes.reports?.native_report, notes.coverage_report_sha256, required),
+  ]);
+  return matches.every(Boolean);
+}
+
+async function controlCheckpointIntact(root, delta) {
+  if (delta.error) return false;
+  try {
+    const matches = await Promise.all(['before', 'after'].flatMap(side => [
+      controlReportsIntact(root, delta.scan_sides?.[side], true),
+      controlReportsIntact(root, delta.initial_scan_sides?.[side], false),
+    ]));
+    return matches.every(Boolean);
+  } catch { return false; }
+}
+
+async function controlDeltas_(opts, engine) {
   const [before, after] = [].concat(opts.rules);
   const excludedDirs = controlExcludedDirectories(opts);
   const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/**`, '--exclude', `**/${path}/**`]);
-  const base = { profile: JSON.parse(utf8(opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'))),
-    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? [], exclusionArgs),
-    rules: resolve(before), rulesSha256: opts.ruleFingerprints?.baseline_sha256 };
+  const rules = opts.ruleFingerprints;
+  const base = { profile: JSON.parse(utf8(opts.profileBytes)),
+    bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], exclusionArgs),
+    rules: resolve(before), rulesSha256: rules.baseline_sha256 };
   const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
-    rules: resolve(after), rulesSha256: opts.ruleFingerprints?.candidate_sha256 };
+    rules: resolve(after), rulesSha256: rules.candidate_sha256 };
+  const checkpointProfile = sha256(Buffer.from(JSON.stringify(base.profile)));
   const deltas = [];
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
   let scanRoot;
@@ -1395,23 +1544,31 @@ async function controlDeltas_(opts) {
       mkdirSync(workdir, { recursive: true });
       const reportsRoot = realpathSync(workdir);
       if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
-      scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
       const source = await controlSource(directory, excludedDirs);
-      const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v2',
+      const maxTargetBytes = controlTargetBytes(directory, source, base, candidate);
+      const targetArgs = maxTargetBytes ? [`--max-target-bytes=${maxTargetBytes}`] : [];
+      const effectiveBase = { ...base, extra: [...base.extra, ...targetArgs] };
+      const effectiveCandidate = { ...candidate, extra: [...candidate.extra, ...targetArgs] };
+      const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v3',
         scorer_sha256: scorerSha256(), dir,
-        source_tree: source.evidence, excluded: excludedDirs, baseline_sha256: base.rulesSha256 ?? sha256(readFileSync(base.rules)),
-        candidate_sha256: candidate.rulesSha256 ?? sha256(readFileSync(candidate.rules)),
-        profile_sha256: sha256(Buffer.from(JSON.stringify(base.profile))),
-        engine_sha256: await fileFingerprint(executablePath(base.bin)), extra: base.extra,
-        candidate_extra: candidate.extra } : null;
+        source_tree: source.evidence, excluded: excludedDirs, ...rules,
+        profile_sha256: checkpointProfile,
+        engine_sha256: engine.receipt.executable_sha256, extra: effectiveBase.extra,
+        candidate_extra: effectiveCandidate.extra } : null;
       const savedDelta = checkpointInputs && readCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs);
-      if (savedDelta) { deltas.push({ ...savedDelta, resumed_from_checkpoint: true }); continue; }
-      const context = { base, candidate, directory, source, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
+      if (savedDelta && await controlCheckpointIntact(reportsRoot, savedDelta)) {
+        deltas.push({ ...savedDelta, resumed_from_checkpoint: true });
+        continue;
+      }
+      scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
+      const context = { base: effectiveBase, candidate: effectiveCandidate, directory, source,
+        workdir: reportsRoot, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
       let attempt = await controlPair(context, '');
-      let recovery = {};
+      const sizing = maxTargetBytes ? { max_target_bytes: maxTargetBytes } : {};
+      let recovery = sizing;
       if (attempt.issues.includes('timeout') && !attempt.issues.includes('error')) {
         const extra = controlRetryArgs(base.profile, base.extra, candidate.extra);
-        recovery = { initial_scan_sides: attempt.scan_sides, retry_extra_args: extra };
+        recovery = { ...sizing, initial_scan_sides: attempt.scan_sides, retry_extra_args: extra };
         attempt = await controlPair(context, '-retry', extra);
       }
       const { old, now, scan_sides, issues, control_scope_sha256 } = attempt;
@@ -1425,9 +1582,16 @@ async function controlDeltas_(opts) {
       const delta = { dir, before: old.length, after: now.length, source_tree: source.evidence, scan_sides, control_scope_sha256, ...recovery,
         added: added.map(snip), removed: removed.map(snip),
         emitted: now.map(snip) };
-      if (checkpointInputs) writeCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs, delta);
+      if (checkpointInputs) {
+        await verifyBoundEngine(engine, 'control checkpoint');
+        verifyEvaluationRules({ baseline: base.rules, candidate: candidate.rules }, rules);
+        writeCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs, delta);
+      }
       deltas.push(delta);
-    } catch (error) { deltas.push({ dir, error: String(error.message).slice(-300) }); }
+    } catch (error) {
+      if (error instanceof RecallInputDrift) throw error;
+      deltas.push({ dir, error: String(error.message).slice(-300) });
+    }
   }
   return deltas;
 }
@@ -1589,9 +1753,16 @@ async function observe(opts) {
 
 async function controls(opts) {
   const [before, after] = [].concat(opts.rules);
-  const deltas = await controlDeltas_(opts);
-  writeFileSync(opts.out, `${JSON.stringify({ schema: 'factory.recall-controls.v1', before_sha256: sha256(readFileSync(before)),
-    after_sha256: sha256(readFileSync(after)), control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
+  const profileBytes = readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
+  const settings = { ...opts, baseline: before, candidate: after, profileBytes };
+  const rules = evaluationRules(settings);
+  const engine = await bindRecallEngine(JSON.parse(utf8(profileBytes)), opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  const deltas = await controlDeltas_({ ...settings, ruleFingerprints: rules }, engine);
+  await verifyBoundEngine(engine, 'control scoring');
+  verifyEvaluationRules(settings, rules);
+  writeFileSync(opts.out, `${JSON.stringify({ schema: 'factory.recall-controls.v1', before_sha256: rules.baseline_sha256,
+    after_sha256: rules.candidate_sha256, profile_sha256: sha256(profileBytes), engine: engine.receipt,
+    control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
   for (const delta of deltas) console.log(delta.dir, delta.before, '->', delta.after, delta.error ?? '');
   if (deltas.some(delta => delta.error)) process.exitCode = 2;
 }

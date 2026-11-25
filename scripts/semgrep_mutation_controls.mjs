@@ -236,7 +236,6 @@ export const typescriptExtensionEndpoints = Object.freeze([
   ['parameter-shell-command', 358], ['parameter-shell-command', 360],
   ['request-path-traversal', 379], ['request-path-traversal', 381],
   ['parameter-path-join-without-containment', 403],
-  ['parameter-shell-command', 417],
 ]);
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
@@ -246,7 +245,7 @@ export function javascriptControlManifest() {
     rule: `opt.factory.rules.javascript.request-${family === 'path' ? 'path-traversal' : family + '-injection'}`,
     source_line, line,
   }));
-  return ['js', 'ts', 'tsx'].flatMap(extension => {
+  const combined = ['js', 'ts', 'tsx'].flatMap(extension => {
     const path = `semgrep-pattern-limited.${extension}`;
     const additional = extension === 'tsx' ? [
       { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 159, line: 162 },
@@ -256,6 +255,11 @@ export function javascriptControlManifest() {
     })) : [];
     return [...family, ...additional].map(item => ({ ...item, path }));
   });
+  const rule = 'opt.factory.rules.javascript.parameter-shell-command';
+  return [...combined,
+    { rule, path: 'typescript-shell-wrapper.ts', line: 7 },
+    { rule, path: 'typescript-shell-binding.ts', line: 5 },
+  ];
 }
 
 export function verifyJavascriptControlMatrix(manifest) {
@@ -323,8 +327,11 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'javascript-tls-trust-controls.txt'], ['ts', 'tsx-path-request-controls.txt'],
   ['ts', 'tsx-sql-text-controls.txt'], ['ts', 'tsx-shell-text-controls.txt'],
   ['ts', 'tsx-fs-identity-controls.txt'], ['ts', 'tsx-sql-tagged-controls.txt'],
-  ['ts', 'tsx-path-template-controls.txt'], ['ts', 'tsx-shell-wrapper-controls.txt'],
-  ['ts', 'tsx-shell-binding-controls.txt'], ['ts', 'tsx-shell-helper-controls.txt'],
+  ['ts', 'tsx-path-template-controls.txt'],
+  // Independent programs must not share module-level imports.
+  ['ts', 'tsx-shell-wrapper-controls.txt', 'typescript-shell-wrapper.ts'],
+  ['ts', 'tsx-shell-binding-controls.txt', 'typescript-shell-binding.ts'],
+  ['ts', 'tsx-shell-helper-controls.txt', 'typescript-shell-helper.ts'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
@@ -353,9 +360,14 @@ function splitHeader(extension, content) {
 }
 
 export function appendExtensionControls(temp, controlsDir, read, write) {
-  for (const [extension, name] of extensionControlFiles) {
+  for (const [extension, name, standalone] of extensionControlFiles) {
+    const content = read(`${controlsDir}/${name}`);
+    if (standalone) {
+      write(`${temp}/${standalone}`, content);
+      continue;
+    }
     const path = `${temp}/semgrep-pattern-limited.${extension}`;
-    const [header, body] = splitHeader(extension, read(`${controlsDir}/${name}`));
+    const [header, body] = splitHeader(extension, content);
     let current = read(path);
     if (header.length) {
       if (extension === 'go') current = current.replace(/^(package [^\n]*\n)/, `$1${header.join('\n')}\n`);
