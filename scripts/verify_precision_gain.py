@@ -2104,8 +2104,13 @@ def review_judge_verdicts(document, packet_sha, disagreements, judge_packet_sha=
         and document.get("judge_packet_sha256") != judge_packet_sha
     ):
         raise SystemExit("judge verdicts belong to a different judge assignment")
+    return _assigned_judge_verdicts(document["verdicts"], disagreements)
+
+
+def _assigned_judge_verdicts(rows, disagreements):
+    """Bind every verdict to one distinct assigned position."""
     verdicts = {}
-    for row in document["verdicts"]:
+    for row in rows:
         position = row.get("position")
         if (
             type(position) is not int
@@ -2278,6 +2283,27 @@ def _alert_identity(row: dict) -> tuple:
     )
 
 
+def _rule_confidence_summary(counts, stale, origins):
+    """Calculate confidence and provenance for one rule's deduplicated alerts."""
+    tp, fp, unclear = counts["TP"], counts["FP"], counts["UNCLEAR"]
+    decided = tp + fp
+    total = decided + unclear
+    return {
+        "tp": tp,
+        "fp": fp,
+        "unclear": unclear,
+        "decided": decided,
+        "decision_coverage": round(decided / total, 4) if total else None,
+        "precision": round(tp / decided, 4) if decided else None,
+        "wilson95": review_wilson(tp, decided),
+        "all_alert_precision_wilson95": review_wilson(tp, total),
+        "beta_mean": beta_mean(tp, fp),
+        "evidence_tier": tier_for(tp, fp),
+        "stale_rows_excluded": stale,
+        "sample_origins": sorted(origins),
+    }
+
+
 def compute_ledger(paths, revisions: dict[str, str] | None = None) -> dict:
     """Per-rule confidence; independent of input order and of duplicate observations."""
     verdicts: dict[tuple, str] = {}
@@ -2313,25 +2339,14 @@ def compute_ledger(paths, revisions: dict[str, str] | None = None) -> dict:
     for identity, verdict in verdicts.items():
         per_rule[identity[4]][verdict] += 1
         rule_origins[identity[4]] |= origins[identity]
-    rules = {}
-    for rule in sorted(set(per_rule) | set(stale)):
-        counts = per_rule.get(rule, Counter())
-        tp, fp, unclear = counts["TP"], counts["FP"], counts["UNCLEAR"]
-        decided, total = tp + fp, tp + fp + counts["UNCLEAR"]
-        rules[rule] = {
-            "tp": tp,
-            "fp": fp,
-            "unclear": unclear,
-            "decided": decided,
-            "decision_coverage": round(decided / total, 4) if total else None,
-            "precision": round(tp / decided, 4) if decided else None,
-            "wilson95": review_wilson(tp, decided),
-            "all_alert_precision_wilson95": review_wilson(tp, total),
-            "beta_mean": beta_mean(tp, fp),
-            "evidence_tier": tier_for(tp, fp),
-            "stale_rows_excluded": stale.get(rule, 0),
-            "sample_origins": sorted(rule_origins.get(rule, ())),
-        }
+    rules = {
+        rule: _rule_confidence_summary(
+            per_rule.get(rule, Counter()),
+            stale.get(rule, 0),
+            rule_origins.get(rule, ()),
+        )
+        for rule in sorted(set(per_rule) | set(stale))
+    }
     return {
         "schema": "factory.rule-confidence.v2",
         "policy": {
@@ -2360,6 +2375,20 @@ def ledger(args) -> None:
     )
 
 
+def _saved_ledger_problems(saved, evidence, rules_sha256):
+    """Describe any mismatch between persisted and recomputed confidence."""
+    problems = []
+    if saved.get("rules_sha256") != rules_sha256:
+        problems.append("saved ledger is bound to a different ruleset")
+    if sorted((s["file"], s["sha256"]) for s in saved.get("sources", [])) != sorted(
+        (s["file"], s["sha256"]) for s in evidence["sources"]
+    ):
+        problems.append("saved ledger cites stale or different adjudication receipts")
+    if saved.get("rules") != evidence["rules"]:
+        problems.append("saved ledger values differ from the recomputed evidence")
+    return problems
+
+
 def check(args) -> int:
     """Recompute confidence from hash-verified adjudications for the exact candidate rules."""
     import yaml
@@ -2369,17 +2398,11 @@ def check(args) -> int:
     evidence = compute_ledger(args.adjudicated, revisions)
     problems = []
     if args.ledger:
-        saved = read_json(Path(args.ledger))
-        if saved.get("rules_sha256") != digest(rules_bytes):
-            problems.append("saved ledger is bound to a different ruleset")
-        if sorted((s["file"], s["sha256"]) for s in saved.get("sources", [])) != sorted(
-            (s["file"], s["sha256"]) for s in evidence["sources"]
-        ):
-            problems.append(
-                "saved ledger cites stale or different adjudication receipts"
+        problems.extend(
+            _saved_ledger_problems(
+                read_json(Path(args.ledger)), evidence, digest(rules_bytes)
             )
-        if saved.get("rules") != evidence["rules"]:
-            problems.append("saved ledger values differ from the recomputed evidence")
+        )
     confidence = evidence["rules"]
     for rule in yaml.safe_load(rules_bytes.decode("utf-8"))["rules"]:
         claimed = rule.get("metadata", {}).get("confidence")
@@ -2449,6 +2472,7 @@ def _part_counts(packet: dict, start: int, stop: int, labels: list) -> dict:
 
 
 def seal_part(args) -> None:
+    """Save part labels and publish their hash-bound completion marker last."""
     packet = read_json(Path(args.packet))
     start, stop = args.range
     document = read_json(Path(args.labels))
@@ -2477,6 +2501,18 @@ def seal_part(args) -> None:
     print(json.dumps({"sealed": name, "counts": counts}))
 
 
+def _sealed_part_body(root: Path, reference: dict) -> dict:
+    """Read bounded label bytes from within the designated part directory."""
+    path = (root / relative_path(reference.get("path"))).resolve()
+    if path.parent != root.resolve():
+        raise ValueError("part labels outside the part directory")
+    with path.open("rb") as stream:
+        payload = stream.read(MAX_EVIDENCE_BYTES + 1)
+    if len(payload) > MAX_EVIDENCE_BYTES or digest(payload) != reference.get("sha256"):
+        raise ValueError("part labels digest mismatch")
+    return strict_json(payload)
+
+
 def validate_part(root: Path, receipt: dict, packet: dict, pins: dict) -> list:
     """Fail closed; return the part's labels only when every check holds."""
     if receipt.get("schema") != PART_SCHEMA or receipt.get("state") != "COMPLETE":
@@ -2484,14 +2520,7 @@ def validate_part(root: Path, receipt: dict, packet: dict, pins: dict) -> list:
     for field in PART_PIN_FIELDS:
         if receipt.get("pins", {}).get(field) != pins[field]:
             raise ValueError(f"pin drift: {field}")
-    reference = receipt.get("labels", {})
-    path = root / relative_path(reference.get("path"))
-    if path.parent.resolve() != root.resolve():
-        raise ValueError("part labels outside the part directory")
-    payload = path.read_bytes()
-    if len(payload) > MAX_EVIDENCE_BYTES or digest(payload) != reference.get("sha256"):
-        raise ValueError("part labels digest mismatch")
-    body = strict_json(payload)
+    body = _sealed_part_body(root, receipt.get("labels", {}))
     start, stop = receipt.get("range", [None, None])
     if body.get("range") != [start, stop] or not all(
         type(value) is int for value in (start, stop)
@@ -2526,6 +2555,7 @@ def reconcile_parts(root: Path, packet: dict, pins: dict):
 
 
 def merge_parts(args) -> int:
+    """Reconcile sealed parts and write labels once every position is covered."""
     packet = read_json(Path(args.packet))
     pins = part_pins(args.packet, args.context, args.reviewer, args.effort)
     root = Path(args.dir)
@@ -2550,8 +2580,9 @@ def merge_parts(args) -> int:
                 {
                     "range": list(span),
                     "receipt_sha256": digest(
-                        (root / f"part-{span[0]:05d}-{span[1]:05d}.receipt.json")
-                        .read_bytes()
+                        (
+                            root / f"part-{span[0]:05d}-{span[1]:05d}.receipt.json"
+                        ).read_bytes()
                     ),
                 }
                 for span in sorted(valid)
