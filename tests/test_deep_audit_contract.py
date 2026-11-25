@@ -131,7 +131,8 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         for item in jobs["analyze"]["steps"]
         if item.get("name") == "Verify the reviewer runtime and model"
     )
-    assert "--max-time 180" in verify_artifacts and "--retry 2" in verify_artifacts
+    assert "--max-time 180" in verify_artifacts and "--continue-at -" in verify_artifacts
+    assert '"$attempt" -eq 4' in verify_artifacts
     assert verify_artifacts.count("sha256sum -c -") == 2
     paths = {path for row in plan["obligations"] for path in row["paths"]}
     for row in plan["obligations"]:
@@ -318,7 +319,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                     assert control["observed_challenge"] == observed[role]
                     assert control["fixture_path"] == controls[role]["fixture_path"]
             assert (
-                "A mutation can change the report even when its exit code stays the same."
+                "verified execution record covers all registered positive, negative and mutation controls."
                 in body["messages"][0]["content"]
             )
         else:
