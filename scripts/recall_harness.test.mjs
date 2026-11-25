@@ -228,6 +228,7 @@ test('observation loop queues control alerts once and gates on labels', async ()
   const { queueLabels, checkLabels, labelKey } = await import('./recall_harness.mjs');
   const alert = { rule: 'ruby.request-path-traversal', path: 'lib/installer.rb', line: 537, snippet: 'File.join bindir, name' };
   const deltas = [{ dir: '/ctl/rubygems', added: [alert], emitted: [alert] }];
+  assert.throws(() => queueLabels(null, deltas, 'invalid'), /population fingerprint/);
   const queued = queueLabels(null, deltas);
   assert.equal(queued.labels.length, 1);
   assert.equal(queueLabels(queued, deltas).labels.length, 1);

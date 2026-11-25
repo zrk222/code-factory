@@ -1190,6 +1190,11 @@ function legacyAlternatives(entries) {
 }
 
 export function queueLabels(existing, deltas, population) {
+  for (const binding of [population, existing?.control_population_sha256]) {
+    if (binding != null && (typeof binding !== 'string' || !/^[a-f0-9]{64}$/.test(binding))) {
+      throw new Error('Invalid control population fingerprint');
+    }
+  }
   const changed = population && existing && existing.control_population_sha256 !== population;
   const archived = { ...existing?.archived_labels };
   if (changed && existing.labels?.length) {
