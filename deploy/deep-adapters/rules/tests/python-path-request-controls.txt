@@ -230,3 +230,20 @@ def download_by_id(request):
         raise ValueError("invalid id")
     # ok: python.request-path-traversal
     return os.path.join(REPORT_DIR, report_id)
+
+
+def download_by_hash_logged(request):
+    digest = request.GET["hash"]
+    if not is_md5(digest):
+        logger.warning("unexpected hash format")
+    # ruleid: python.request-path-traversal
+    return os.path.join(REPORT_DIR, digest)
+
+
+def download_by_id_guarded(request):
+    report_id = request.GET["id"]
+    if report_id.isdigit():
+        # ok: python.request-path-traversal
+        return os.path.join(REPORT_DIR, report_id)
+    # ruleid: python.request-path-traversal
+    return os.path.join(REPORT_DIR, report_id)

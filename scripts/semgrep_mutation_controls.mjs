@@ -155,7 +155,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.parameter-sql-text': 2,
   'opt.factory.rules.python.request-command-injection': 2,
   'opt.factory.rules.python.request-html-injection': 1,
-  'opt.factory.rules.python.request-path-traversal': 26,
+  'opt.factory.rules.python.request-path-traversal': 28,
   'opt.factory.rules.python.request-sql-injection': 1,
   'opt.factory.rules.python.tarfile-extractall-without-filter': 5,
   'opt.factory.rules.python.unsafe-deserialization': 2,
@@ -211,9 +211,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 244 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 246 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 244;
+const REVIEWED_FINDINGS = 246;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
