@@ -2887,3 +2887,65 @@ def test_judge_rejects_unbound_or_ambiguous_verdicts(replacement, message):
     document = {"packet_sha256": "packet", "verdicts": [], **replacement}
     with pytest.raises(SystemExit, match=message):
         _gain["review_judge_verdicts"](document, "packet", {0: "item"})
+
+
+def _part_fixture(tmp_path):
+    packet = tmp_path / "packet.json"
+    packet.write_text(json.dumps({"items": [{"item": f"i{n}"} for n in range(6)]}))
+    parts = tmp_path / "parts"
+    common = [
+        "--packet", str(packet), "--reviewer", "opus", "--effort", "high",
+        "--dir", str(parts),
+    ]
+
+    def seal(start, stop, verdict="FP"):
+        labels = tmp_path / f"labels-{start}.json"
+        rows = [
+            {"item": f"i{n}", "verdict": verdict, "reason": "shown"}
+            for n in range(start, stop)
+        ]
+        labels.write_text(json.dumps({"labels": rows}))
+        _gain["review_main"](
+            ["seal-part", *common, "--labels", str(labels), "--range", str(start), str(stop)]
+        )
+
+    return parts, common, seal
+
+
+def test_review_parts_resume_only_missing_and_merge_in_order(tmp_path, capsys):
+    parts, common, seal = _part_fixture(tmp_path)
+    seal(0, 3, "TP")
+    # A crash after the labels but before the receipt leaves nothing sealed.
+    (parts / "part-00003-00006.labels.json").write_text("{}")
+    capsys.readouterr()
+    assert _gain["review_main"](["merge-parts", *common, "--out", str(tmp_path / "m.json")]) == 2
+    assert json.loads(capsys.readouterr().out)["missing"] == [[3, 6]]
+    seal(3, 6)
+    out = tmp_path / "m.json"
+    assert _gain["review_main"](["merge-parts", *common, "--out", str(out)]) == 0
+    merged = json.loads(out.read_text())
+    assert [row["item"] for row in merged["labels"]] == [f"i{n}" for n in range(6)]
+    assert [row["verdict"] for row in merged["labels"]] == ["TP"] * 3 + ["FP"] * 3
+
+
+def test_review_parts_reject_tampering_drift_and_gaps(tmp_path, capsys):
+    parts, common, seal = _part_fixture(tmp_path)
+    seal(0, 3)
+    seal(3, 6)
+    sealed = parts / "part-00003-00006.labels.json"
+    body = json.loads(sealed.read_text())
+    body["labels"][0]["verdict"] = "TP"
+    sealed.write_text(json.dumps(body))
+    capsys.readouterr()
+    assert _gain["review_main"](["merge-parts", *common]) == 2
+    status = json.loads(capsys.readouterr().out)
+    assert status["missing"] == [[3, 6]]
+    assert "digest" in status["rejected"]["part-00003-00006.receipt.json"]
+    drifted = [*common]
+    drifted[drifted.index("high")] = "medium"
+    assert _gain["review_main"](["merge-parts", *drifted]) == 2
+    assert json.loads(capsys.readouterr().out)["missing"] == [[0, 6]]
+    with pytest.raises(ValueError, match="packet order"):
+        _gain["_part_counts"]({"items": [{"item": "a"}, {"item": "b"}]}, 0, 2, [
+            {"item": "a", "verdict": "FP", "reason": "x"},
+        ])

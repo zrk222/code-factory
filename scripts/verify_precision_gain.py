@@ -2398,6 +2398,171 @@ def check(args) -> int:
     return 1 if problems else 0
 
 
+# --- Resumable labeling: sealed part receipts -------------------------------
+# A long labeling pass is split into disjoint, half-open position ranges of one
+# packet. Each finished part is sealed: its labels are written first, then a
+# receipt that binds them to the packet, the context supplement, the reviewer
+# instructions, the reviewer and the effort. A crash before the receipt leaves
+# nothing to trust, so the part is labeled again. Merging recomputes counts
+# from the sealed labels and refuses gaps, overlaps and drifted pins.
+PART_SCHEMA = "factory.review-part.v1"
+PART_PIN_FIELDS = (
+    "packet_sha256",
+    "context_sha256",
+    "instructions_sha256",
+    "reviewer",
+    "effort",
+)
+
+
+def part_pins(packet_path, context_path, reviewer, effort) -> dict:
+    """Current pins; a part sealed under any other value is stale."""
+    if not reviewer.strip() or not effort.strip():
+        raise SystemExit("reviewer and effort are required pins")
+    return {
+        "packet_sha256": digest(Path(packet_path).read_bytes()),
+        "context_sha256": (
+            digest(Path(context_path).read_bytes()) if context_path else None
+        ),
+        "instructions_sha256": digest(INSTRUCTIONS.encode()),
+        "reviewer": reviewer,
+        "effort": effort,
+    }
+
+
+def _part_counts(packet: dict, start: int, stop: int, labels: list) -> dict:
+    """Every position in [start, stop) answered once, in packet order."""
+    items = packet["items"]
+    if not (0 <= start < stop <= len(items)):
+        raise ValueError(f"range [{start}, {stop}) is outside the packet")
+    expected = [item["item"] for item in items[start:stop]]
+    if [row.get("item") for row in labels] != expected:
+        raise ValueError("part labels do not cover the range in packet order")
+    counts = dict.fromkeys(VERDICTS, 0)
+    for row in labels:
+        if row.get("verdict") not in VERDICTS:
+            raise ValueError(f"invalid verdict for {row.get('item')}")
+        if not isinstance(row.get("reason"), str) or not row["reason"].strip():
+            raise ValueError(f"missing reason for {row['item']}")
+        counts[row["verdict"]] += 1
+    return {**counts, "positions": stop - start}
+
+
+def seal_part(args) -> None:
+    packet = read_json(Path(args.packet))
+    start, stop = args.range
+    document = read_json(Path(args.labels))
+    labels = [
+        {"item": row["item"], "verdict": row["verdict"], "reason": row["reason"]}
+        for row in document["labels"]
+    ]
+    pins = part_pins(args.packet, args.context, args.reviewer, args.effort)
+    counts = _part_counts(packet, start, stop, labels)
+    root = Path(args.dir)
+    name = f"part-{start:05d}-{stop:05d}"
+    observations = root / f"{name}.labels.json"
+    _atomic_json(observations, {"range": [start, stop], "labels": labels})
+    receipt = {
+        "schema": PART_SCHEMA,
+        "range": [start, stop],
+        "state": "COMPLETE",
+        "pins": pins,
+        "counts": counts,
+        "labels": {
+            "path": observations.name,
+            "sha256": digest(observations.read_bytes()),
+        },
+    }
+    _atomic_json(root / f"{name}.receipt.json", receipt)  # Marker last.
+    print(json.dumps({"sealed": name, "counts": counts}))
+
+
+def validate_part(root: Path, receipt: dict, packet: dict, pins: dict) -> list:
+    """Fail closed; return the part's labels only when every check holds."""
+    if receipt.get("schema") != PART_SCHEMA or receipt.get("state") != "COMPLETE":
+        raise ValueError("not a complete part receipt")
+    for field in PART_PIN_FIELDS:
+        if receipt.get("pins", {}).get(field) != pins[field]:
+            raise ValueError(f"pin drift: {field}")
+    reference = receipt.get("labels", {})
+    path = root / relative_path(reference.get("path"))
+    if path.parent.resolve() != root.resolve():
+        raise ValueError("part labels outside the part directory")
+    payload = path.read_bytes()
+    if len(payload) > MAX_EVIDENCE_BYTES or digest(payload) != reference.get("sha256"):
+        raise ValueError("part labels digest mismatch")
+    body = strict_json(payload)
+    start, stop = receipt.get("range", [None, None])
+    if body.get("range") != [start, stop] or not all(
+        type(value) is int for value in (start, stop)
+    ):
+        raise ValueError("part range mismatch")
+    if _part_counts(packet, start, stop, body["labels"]) != receipt.get("counts"):
+        raise ValueError("counts disagree with sealed labels")
+    return body["labels"]
+
+
+def reconcile_parts(root: Path, packet: dict, pins: dict):
+    """Valid sealed parts by range, the rejected receipts, and uncovered ranges."""
+    valid, rejected = {}, {}
+    for path in sorted(root.glob("part-*.receipt.json")):
+        try:
+            receipt = strict_json(path.read_bytes())
+            labels = validate_part(root, receipt, packet, pins)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            rejected[path.name] = str(exc)
+            continue
+        valid[tuple(receipt["range"])] = labels
+    missing, cursor = [], 0
+    for start, stop in sorted(valid):
+        if start < cursor:
+            raise SystemExit(f"sealed parts overlap at position {start}")
+        if start > cursor:
+            missing.append([cursor, start])
+        cursor = stop
+    if cursor < len(packet["items"]):
+        missing.append([cursor, len(packet["items"])])
+    return valid, rejected, missing
+
+
+def merge_parts(args) -> int:
+    packet = read_json(Path(args.packet))
+    pins = part_pins(args.packet, args.context, args.reviewer, args.effort)
+    root = Path(args.dir)
+    valid, rejected, missing = reconcile_parts(root, packet, pins)
+    status = {
+        "sealed": [list(span) for span in sorted(valid)],
+        "rejected": rejected,
+        "missing": missing,
+    }
+    if missing or args.out is None:
+        print(json.dumps(status, indent=1))
+        return 2 if missing else 0
+    labels = [row for span in sorted(valid) for row in valid[span]]
+    write_json(
+        Path(args.out),
+        {
+            "reviewer": args.reviewer,
+            "effort": args.effort,
+            "conditions": args.conditions,
+            "packet_sha256": pins["packet_sha256"],
+            "parts": [
+                {
+                    "range": list(span),
+                    "receipt_sha256": digest(
+                        (root / f"part-{span[0]:05d}-{span[1]:05d}.receipt.json")
+                        .read_bytes()
+                    ),
+                }
+                for span in sorted(valid)
+            ],
+            "labels": labels,
+        },
+    )
+    print(json.dumps({**status, "out": args.out, "labels": len(labels)}))
+    return 0
+
+
 def review_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Blinded precision packets, adjudication and confidence ledger",
@@ -2436,8 +2601,24 @@ def review_main(argv: list[str]) -> int:
     checked.add_argument("--adjudicated", nargs="+", required=True)
     checked.add_argument("--rules", required=True)
     checked.add_argument("--ledger")
+    for name in ("seal-part", "merge-parts"):
+        part = commands.add_parser(name)
+        part.add_argument("--packet", required=True)
+        part.add_argument("--context")
+        part.add_argument("--reviewer", required=True)
+        part.add_argument("--effort", required=True)
+        part.add_argument("--dir", required=True)
+        if name == "seal-part":
+            part.add_argument("--labels", required=True)
+            part.add_argument("--range", type=int, nargs=2, required=True)
+        else:
+            part.add_argument("--conditions", default="")
+            part.add_argument("--out")
     args = parser.parse_args(argv)
+    if args.command == "merge-parts":
+        return merge_parts(args)
     handlers = {
+        "seal-part": seal_part,
         "packet": build_packet,
         "judge": build_judge,
         "adjudicate": adjudicate,
