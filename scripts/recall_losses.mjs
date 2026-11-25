@@ -59,7 +59,7 @@ function boundCohort(score, adjudication, cohort) {
   if (score.schema !== 'factory.recall-evaluation.v1' || adjudication.schema !== 'factory.adjudicated-precision.v1') {
     throw new Error('Unsupported adjudicated loss source schema');
   }
-  const rulePrefix = /\(ruleset ([a-f0-9]{8,64})\)$/.exec(adjudication.candidate)?.[1];
+  const rulePrefix = String(adjudication.candidate).match(/\(ruleset ([a-f0-9]{8,64})\)$/)?.[1];
   if (!rulePrefix || !isPin(score.candidate_sha256) || !score.candidate_sha256.startsWith(rulePrefix)) {
     throw new Error('Adjudication candidate differs from the saved ruleset');
   }
