@@ -493,6 +493,7 @@ jobs:
           cp scripts/release_train_e2e.py /tmp/release_train_e2e.py
           cd /tmp
           /tmp/factory-wheel/bin/factory --help
+          /tmp/factory-wheel/bin/factory-recall-evidence prepare-linked-captures --help
           ! /tmp/factory-wheel/bin/factory verify missing-feature --root /tmp --strict-release --json
           /tmp/factory-wheel/bin/python -c "import factoryline; print(factoryline.__version__)"
           /tmp/factory-wheel/bin/python /tmp/release_train_e2e.py

@@ -149,18 +149,56 @@ def add_parser(sub: Any) -> None:
     )
 
 
-def _jev_evaluation_assets():
-    """Find the existing evaluator in a source checkout or installed wheel."""
+def _evaluation_script(name: str) -> Path | None:
+    """Find a bundled evaluator in the checkout or the installed distribution."""
     import sysconfig
+    from importlib.metadata import PackageNotFoundError, distribution
 
     package = Path(__file__).resolve().parent
-    candidates = (
-        package.parent / "scripts/evaluate_jev.mjs",
-        Path(sysconfig.get_path("data"))
-        / "share/code-factory/evaluation/evaluate_jev.mjs",
-    )
-    runner = next((path for path in candidates if path.is_file()), None)
-    rubric = package / "data/judge_framework.json"
+    resource = ("share", "code-factory", "evaluation", name)
+    checkout = package.parent / "scripts" / name
+    if checkout.is_file():
+        return checkout
+
+    prefix = Path(sysconfig.get_path("data")).resolve()
+    installed = prefix.joinpath(*resource)
+    if package.is_relative_to(prefix) and installed.is_file():
+        return installed
+
+    try:
+        wheel = distribution("factoryline-code-factory")
+    except PackageNotFoundError:
+        return None
+    if Path(wheel.locate_file("factoryline")).resolve() != package:
+        return None
+    for file in wheel.files or ():
+        if file.parts[-len(resource) :] == resource:
+            path = Path(wheel.locate_file(file))
+            if path.is_file():
+                return path
+    return None
+
+
+def recall_evidence_main() -> int:
+    """Run the bundled recall evidence verifier with its existing CLI."""
+    import runpy
+    import sys
+
+    verifier = _evaluation_script("verify_precision_gain.py")
+    if verifier is None:
+        print(
+            "Packaged recall evidence verifier is missing; reinstall CF.",
+            file=sys.stderr,
+        )
+        return 2
+    runpy.run_path(str(verifier), run_name="__main__")
+    return 0
+
+
+def _jev_evaluation_assets():
+    """Find the existing evaluator in a source checkout or installed wheel."""
+    runner = _evaluation_script("evaluate_jev.mjs")
+    rubric = Path(__file__).resolve().parent / "data/judge_framework.json"
     if runner is None or not rubric.is_file():
         raise ValueError("Packaged JEV evaluator assets are missing; reinstall CF.")
     return runner, rubric

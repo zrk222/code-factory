@@ -50,6 +50,9 @@ Legacy scores report `UNATTESTED`. Signed scores keep review independence
 
 ## Advisory-linked results
 
+The Code Factory wheel provides `factory-recall-evidence`, with the same
+arguments as `python scripts/verify_precision_gain.py` in a checkout.
+
 Package saved OpenGrep outputs before review. Run the collector against a local
 plan containing paths relative to the plan directory.
 

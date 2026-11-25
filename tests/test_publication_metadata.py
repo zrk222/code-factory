@@ -200,6 +200,22 @@ def test_python_wheel_data_is_explicit_and_does_not_depend_on_package_discovery(
     )
 
 
+def test_recall_evidence_main_uses_the_canonical_verifier(monkeypatch, capsys):
+    import sys
+
+    import pytest
+
+    from factoryline.cli_audit import recall_evidence_main
+
+    monkeypatch.setattr(
+        sys, "argv", ["factory-recall-evidence", "prepare-linked-captures", "--help"]
+    )
+    with pytest.raises(SystemExit) as result:
+        recall_evidence_main()
+    assert result.value.code == 0
+    assert "plan" in capsys.readouterr().out
+
+
 def test_release_integrity_rejects_unlisted_studio_asset(tmp_path: Path) -> None:
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     project = project.replace(', "studio_audit.js"', "")
