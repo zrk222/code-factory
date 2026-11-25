@@ -1038,10 +1038,10 @@ def _recall_file_hash(path):
     return _sha_file(path)
 
 
-def _recall_read(path):
+def _recall_read(path, *, max_bytes=MAX_EVIDENCE_BYTES):
     with path.open("rb") as stream:
-        raw = stream.read(MAX_EVIDENCE_BYTES + 1)
-    if len(raw) > MAX_EVIDENCE_BYTES:
+        raw = stream.read(max_bytes + 1)
+    if len(raw) > max_bytes:
         raise ValueError("recall input exceeds evidence byte limit")
     return raw
 
@@ -1051,14 +1051,15 @@ STATEMENT_SCHEMA = "factory.benchmark-evidence-statement.v1"
 PAYLOAD_TYPE = "application/vnd.factory.benchmark-evidence-statement.v1+json"
 LINKS_SCHEMA = "factory.advisory-link-observations.v1"
 LABELS_SCHEMA = "factory.advisory-link-labels.v1"
+MAX_SCORE_RECEIPT_BYTES = 32_000_000
 
 
-def _benchmark_evidence(path, expected_sha256=None):
-    raw = _recall_read(path)
+def _benchmark_evidence(path, expected_sha256=None, *, max_bytes=MAX_EVIDENCE_BYTES):
+    raw = _recall_read(path, max_bytes=max_bytes)
     checksum = digest(raw)
     if expected_sha256 is not None and checksum != expected_sha256:
         raise ValueError("benchmark evidence digest mismatch")
-    return strict_json(raw), checksum
+    return strict_json(raw, max_bytes=max_bytes), checksum
 
 
 def _authenticate_provenance(path, trust_path, trust_sha256, *, execution, reviews):
@@ -1345,6 +1346,11 @@ def _observations(record, record_sha256, observations, root):
         raise ValueError(
             "linked observations must bind the exact recall record and candidate"
         )
+    if "score_result" in observations:
+        score = observations["score_result"]
+        if not isinstance(score, dict) or not _hash(score.get("sha256")):
+            raise ValueError("linked score evidence requires a SHA-256")
+        _capture_input(root, score)
     scopes = observations["registered_scopes"]
     if not isinstance(scopes, list) or not scopes:
         raise ValueError("register the advisory lane and scope matrix")
@@ -1658,15 +1664,128 @@ def _capture_artifact(root, prefix, payload):
     return {"path": name, "sha256": _recall_file_hash(path)}
 
 
-def _capture_input(root, reference, *, read_json=False):
+def _capture_input(root, reference, *, json_limit=None):
     name = reference["path"] if isinstance(reference, dict) else reference
     path = _recall_contained(root, name)
     report, checksum = (
-        _benchmark_evidence(path) if read_json else (None, _recall_file_hash(path))
+        _benchmark_evidence(path, max_bytes=json_limit)
+        if json_limit is not None
+        else (None, _recall_file_hash(path))
     )
     if isinstance(reference, dict) and reference.get("sha256") != checksum:
         raise ValueError("saved capture differs from the recorded scanner fingerprint")
     return name, checksum, report
+
+
+def _score_capture_index(root, reference, pattern):
+    name, checksum, report = _capture_input(
+        root, reference, json_limit=MAX_SCORE_RECEIPT_BYTES
+    )
+    schema = report["schema"]
+    if schema == "factory.recall-result.v1":
+        sections = [report]
+    elif schema == "factory.recall-evaluation.v1":
+        if report["engine"]["executable_sha256"] != pattern["opengrep_binary_sha256"]:
+            raise ValueError(
+                "saved evaluation engine differs from the registered candidate"
+            )
+        sections = [batch["after_evidence"] for batch in report["dev"]]
+    else:
+        raise ValueError("unsupported saved score schema")
+    rows = {}
+    for section in sections:
+        if section["ruleset_sha256"] != pattern["ruleset_sha256"]:
+            raise ValueError(
+                "saved score ruleset differs from the registered candidate"
+            )
+        for case in section["cases"]:
+            revisions = case.get("revisions")
+            if revisions is None:
+                continue
+            key = case["ghsa"], revisions["old"]
+            if key in rows:
+                raise ValueError("duplicate saved score case and revision")
+            rows[key] = case
+    return {"path": name, "sha256": checksum}, rows
+
+
+def _verified_score_capture(case):
+    notes = case["scan_sides"]["old"]
+    capture = case["captures"]["old"]
+    if not isinstance(notes, dict) or not isinstance(capture, dict):
+        raise ValueError("saved score has no successful old-side capture")
+    if notes.get("failed_exit") is not False or notes.get("exit_code") not in (0, 1):
+        raise ValueError("saved score has no successful old-side capture")
+    if any(
+        notes.get(key) != 0 for key in ("timeouts", "blocking_parse_errors", "other")
+    ):
+        raise ValueError("saved score contains old-side execution errors")
+    for key, field in (
+        ("sarif", "report_sha256"),
+        ("native_report", "coverage_report_sha256"),
+    ):
+        if not isinstance(capture.get(key), dict) or capture[key].get(
+            "sha256"
+        ) != notes.get(field):
+            raise ValueError(
+                "saved score capture references disagree with scanner receipts"
+            )
+    return capture
+
+
+def _saved_pattern_capture(entry, score_index):
+    if score_index is None:
+        return entry, None
+    manual_fields = {"source_root", "sarif", "native_report"}
+    if entry["scope"] != "changed_files" or manual_fields.intersection(entry):
+        raise ValueError(
+            "score-derived capture requires an unambiguous changed-file scope"
+        )
+    case = score_index.get((entry["ghsa"], entry["source_revision"]))
+    if case is None:
+        raise ValueError("saved score has no capture at the registered revision")
+    old_packets = case["source_packets"]["old"]
+    packets = {item["path"]: item["sha256"] for item in old_packets}
+    if len(old_packets) != len(packets):
+        raise ValueError("duplicate paths in saved score source packets")
+    return _verified_score_capture(case), packets
+
+
+def _prepare_pattern_row(root, row, capture, packets, pattern):
+    raw_path, raw_sha, raw = _capture_input(
+        root, capture["native_report"], json_limit=MAX_EVIDENCE_BYTES
+    )
+    sarif_path, sarif_sha, _ = _capture_input(root, capture["sarif"])
+    if raw.get("version") != pattern["opengrep_version"]:
+        raise ValueError("original pattern report version differs from the candidate")
+    source = capture["source_root"]
+    files = _source_snapshot(root, source)
+    if packets is not None and packets != files:
+        raise ValueError("source snapshot differs from saved score packet fingerprints")
+    tree = digest(canonical_bytes(files))
+    coverage = _capture_artifact(
+        root,
+        "coverage",
+        {
+            "schema": "factory.advisory-engine-coverage.v1",
+            "engine_sha256": pattern["opengrep_binary_sha256"],
+            "configuration_sha256": pattern["ruleset_sha256"],
+            "source_revision": row["source_revision"],
+            "source_tree_sha256": tree,
+            "sarif_sha256": sarif_sha,
+            "expected_paths": sorted(files),
+            "scanned_paths": raw["paths"]["scanned"],
+            "skipped": raw["paths"]["skipped"],
+            "errors": raw["errors"],
+            "native_report": {"path": raw_path, "sha256": raw_sha},
+        },
+    )
+    row.update(
+        source_root=source,
+        source_tree_sha256=tree,
+        coverage=coverage,
+        capture={"path": sarif_path, "sha256": sarif_sha},
+    )
 
 
 def prepare_captures_main(argv: list[str]) -> int:
@@ -1701,6 +1820,11 @@ def prepare_captures_main(argv: list[str]) -> int:
             "registered_scopes": plan["registered_scopes"],
             "rows": [],
         }
+        score_index = None
+        if "score_result" in plan:
+            observations["score_result"], score_index = _score_capture_index(
+                root, plan["score_result"], pattern
+            )
         for entry in plan["rows"]:
             row = {
                 key: entry[key]
@@ -1711,40 +1835,8 @@ def prepare_captures_main(argv: list[str]) -> int:
                     raise ValueError(
                         "capture preparation requires an original pattern report"
                     )
-                raw_path, raw_sha, raw = _capture_input(
-                    root, entry["native_report"], read_json=True
-                )
-                sarif_path, sarif_sha, _ = _capture_input(root, entry["sarif"])
-                if raw.get("version") != pattern["opengrep_version"]:
-                    raise ValueError(
-                        "original pattern report version differs from the candidate"
-                    )
-                source = entry["source_root"]
-                files = _source_snapshot(root, source)
-                tree = digest(canonical_bytes(files))
-                coverage = _capture_artifact(
-                    root,
-                    "coverage",
-                    {
-                        "schema": "factory.advisory-engine-coverage.v1",
-                        "engine_sha256": tool,
-                        "configuration_sha256": rules,
-                        "source_revision": row["source_revision"],
-                        "source_tree_sha256": tree,
-                        "sarif_sha256": sarif_sha,
-                        "expected_paths": sorted(files),
-                        "scanned_paths": raw["paths"]["scanned"],
-                        "skipped": raw["paths"]["skipped"],
-                        "errors": raw["errors"],
-                        "native_report": {"path": raw_path, "sha256": raw_sha},
-                    },
-                )
-                row.update(
-                    source_root=source,
-                    source_tree_sha256=tree,
-                    coverage=coverage,
-                    capture={"path": sarif_path, "sha256": sarif_sha},
-                )
+                capture, packets = _saved_pattern_capture(entry, score_index)
+                _prepare_pattern_row(root, row, capture, packets, pattern)
             observations["rows"].append(row)
         _, _, completed = _observations(record, record_sha, observations, root)
         output = _capture_artifact(root, "linked-observations", observations)

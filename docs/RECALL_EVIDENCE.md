@@ -64,6 +64,13 @@ For the native report and SARIF, pass the scanner's `{path, sha256}` reference
 when available so preparation verifies the fingerprints recorded during scanning.
 For harness captures with work-directory-relative paths, place the plan in that
 work directory or make each path relative to the plan.
+To collect a saved `score` or `evaluate` result, place it in the same work
+directory and set `score_result` to its `{path, sha256}` reference in the plan.
+For complete pattern rows, supply the advisory ID, source revision, and
+`changed_files` scope. The collector takes the candidate's saved old-side path
+and report references, verifies the scan diagnostics and source packets, and
+binds the exact score receipt in the prepared observations.
+Saved score receipts have a 32 MB byte budget.
 Declare CodeQL scopes that still await capture and use `unknown` for any row
 without a complete observation. The collector reads local files, verifies the
 candidate pins and source snapshot, and writes a content-addressed observations
