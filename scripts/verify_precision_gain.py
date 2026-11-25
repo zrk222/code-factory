@@ -1658,6 +1658,17 @@ def _capture_artifact(root, prefix, payload):
     return {"path": name, "sha256": _recall_file_hash(path)}
 
 
+def _capture_input(root, reference, *, read_json=False):
+    name = reference["path"] if isinstance(reference, dict) else reference
+    path = _recall_contained(root, name)
+    report, checksum = (
+        _benchmark_evidence(path) if read_json else (None, _recall_file_hash(path))
+    )
+    if isinstance(reference, dict) and reference.get("sha256") != checksum:
+        raise ValueError("saved capture differs from the recorded scanner fingerprint")
+    return name, checksum, report
+
+
 def prepare_captures_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="verify_precision_gain.py prepare-linked-captures"
@@ -1700,17 +1711,17 @@ def prepare_captures_main(argv: list[str]) -> int:
                     raise ValueError(
                         "capture preparation requires an original pattern report"
                     )
-                raw_path, sarif_path, source = (
-                    entry[key] for key in ("native_report", "sarif", "source_root")
+                raw_path, raw_sha, raw = _capture_input(
+                    root, entry["native_report"], read_json=True
                 )
-                raw, raw_sha = _benchmark_evidence(_recall_contained(root, raw_path))
+                sarif_path, sarif_sha, _ = _capture_input(root, entry["sarif"])
                 if raw.get("version") != pattern["opengrep_version"]:
                     raise ValueError(
                         "original pattern report version differs from the candidate"
                     )
+                source = entry["source_root"]
                 files = _source_snapshot(root, source)
                 tree = digest(canonical_bytes(files))
-                sarif_sha = _recall_file_hash(_recall_contained(root, sarif_path))
                 coverage = _capture_artifact(
                     root,
                     "coverage",

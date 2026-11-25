@@ -2030,6 +2030,7 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
         {"lane": "pattern", "scope": "repository"},
     ]
     keys, rows = [], []
+    raw_path = None
     use_pattern = condition == "dual_lane" or condition.startswith("native_")
     for scope in scopes if use_pattern else scopes[:1]:
         lane = scope["lane"]
@@ -2069,8 +2070,6 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
                     ],
                 },
             )
-            if condition == "native_digest_drift":
-                raw_path.write_bytes(raw_path.read_bytes() + b" ")
             native["native_report"] = {"path": raw_path.name, "sha256": raw_sha}
         coverage_path, coverage_sha = _benchmark_file(
             tmp_path,
@@ -2149,8 +2148,9 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
         "advisory-link-labels",
         subjects,
     )
-    if condition == "digest_drift":
-        capture.write_bytes(capture.read_bytes() + b" ")
+    tampered = {"digest_drift": capture, "native_digest_drift": raw_path}.get(condition)
+    if tampered is not None:
+        tampered.write_bytes(tampered.read_bytes() + b" ")
     if condition == "source_drift":
         (source / "src/library.py").write_bytes(b"# changed owned evidence")
     status = _gain["recall_main"](
@@ -2212,6 +2212,7 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
         ("valid", None),
         ("wrong_tool", "do not match the registered candidate"),
         ("wrong_version", "version differs from the candidate"),
+        ("scanner_fingerprint", "differs from the recorded scanner fingerprint"),
         ("coverage_gap", "incomplete registered scan coverage"),
         ("other_finding", "report and SARIF findings differ"),
         ("source_drift", "differs from registered pre-fix bytes"),
@@ -2230,7 +2231,7 @@ def test_prepare_linked_capture_batch(tmp_path, capsys, condition, error):
     )
     if condition == "wrong_tool":
         engine.write_bytes(b"different engine artifact")
-    native, _ = _benchmark_file(
+    native, native_sha = _benchmark_file(
         tmp_path,
         "native",
         {
@@ -2252,7 +2253,7 @@ def test_prepare_linked_capture_batch(tmp_path, capsys, condition, error):
             ],
         },
     )
-    sarif, _ = _benchmark_file(
+    sarif, sarif_sha = _benchmark_file(
         tmp_path,
         "sarif",
         {
@@ -2290,8 +2291,11 @@ def test_prepare_linked_capture_batch(tmp_path, capsys, condition, error):
         **key,
         "state": "complete",
         "source_root": "source",
-        "native_report": native.name,
-        "sarif": sarif.name,
+        "native_report": {"path": native.name, "sha256": native_sha},
+        "sarif": {
+            "path": sarif.name,
+            "sha256": "0" * 64 if condition == "scanner_fingerprint" else sarif_sha,
+        },
     }
     rows = [complete, {**codeql, **key, "state": "unknown"}]
     if condition == "duplicate":

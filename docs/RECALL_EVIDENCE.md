@@ -60,6 +60,10 @@ python scripts/verify_precision_gain.py prepare-linked-captures capture-plan.jso
 Use schema `factory.advisory-capture-plan.v1` with `record`, `opengrep`, and
 `ruleset` paths, plus `registered_scopes` and `rows` as described below. A
 complete pattern row supplies `source_root`, `native_report`, and `sarif` paths.
+For the native report and SARIF, pass the scanner's `{path, sha256}` reference
+when available so preparation verifies the fingerprints recorded during scanning.
+For harness captures with work-directory-relative paths, place the plan in that
+work directory or make each path relative to the plan.
 Declare CodeQL scopes that still await capture and use `unknown` for any row
 without a complete observation. The collector reads local files, verifies the
 candidate pins and source snapshot, and writes a content-addressed observations
