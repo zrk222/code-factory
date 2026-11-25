@@ -431,6 +431,7 @@ async function feederFixture(run) {
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
       "const results = old && !missingCoverage ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
       "if (control && ruleText.includes('# control-missing-path')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'missing.py' }, region: { startLine: 1 } } }] });",
+      "if (control && ruleText.includes('# reviewed-control')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn: 1 } } }] });",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
       "if (devTimeout || controlTimeout) issues.push({ descriptor: { id: 'Timeout' }, level: 'warning' });",
       "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'skipped.py' && path !== 'unreported.py'), skipped: files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [] }, errors: files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : [] }));",
@@ -482,7 +483,8 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   const dev = evaluation.dev[0];
   const observed = dev.after_evidence.cases[0];
   assert.equal(evaluation.decision, 'REJECT');
-  assert.deepEqual(evaluation.precision_evidence, { state: 'not_run', emitted: 0, adjudicated: 0, unreviewed: 0 });
+  assert.deepEqual(evaluation.precision_evidence, { state: 'not_run', emitted: 0, adjudicated: 0, unreviewed: 0,
+    population_bound: false, review_independence: 'unestablished' });
   assert.deepEqual(evaluation.new_errors, [feederRow.ghsa]);
   assert.deepEqual(evaluation.new_coverage_gaps, []);
   assert.deepEqual(dev.cases[0].matched_hunk_families, ['xss']);
@@ -634,6 +636,25 @@ test('paired controls bind source bytes and stop when input changes or leaves th
   assert.equal(stable.status, 0);
   const sourceTree = { sha256: caseDigest([{ path: 'sample.py', sha256: sha256(original) }]), entries: 1 };
   assert.deepEqual(stable.result.source_tree, sourceTree);
+  assert.deepEqual(stable.result.scan_sides.after.control_coverage, {
+    complete: true, expected: 1, reported: 1, gaps: [],
+  });
+
+  for (const path of ['skipped.py', 'partial.py', 'unreported.py']) {
+    writeFileSync(join(control, path), '# owned coverage test');
+  }
+  const incomplete = controls();
+  assert.equal(incomplete.status, 2);
+  for (const side of ['before', 'after']) {
+    assert.deepEqual(incomplete.result.scan_sides[side].control_coverage, {
+      complete: false, expected: 4, reported: 1, gaps: [
+        { path: 'partial.py', reason: 'parse' },
+        { path: 'skipped.py', reason: 'exceeded_size_limit' },
+        { path: 'unreported.py', reason: 'absent_from_engine_paths' },
+      ],
+    });
+  }
+  for (const path of ['skipped.py', 'partial.py', 'unreported.py']) rmSync(join(control, path));
 
   writeFileSync(baseline, stableRules + '# control-source-drift\n');
   const drift = controls();
@@ -666,6 +687,50 @@ test('paired controls bind source bytes and stop when input changes or leaves th
   const escaped = controls();
   assert.equal(escaped.status, 2);
   assert.match(escaped.result.error, /link leaves the source tree/);
+}));
+
+test('reviewed control gate requires a complete, source-bound population', () => feederFixture(fixture => {
+  const { root, workdir, profile, manifest, baseline, candidate } = fixture;
+  const control = join(root, 'control'), output = join(root, 'reviewed.json'), labels = join(root, 'labels.json');
+  mkdirSync(control);
+  writeFileSync(join(control, 'sample.py'), '# owned review control');
+  const stableRules = readFileSync(baseline, 'utf8') + '# reviewed-control\n';
+  for (const rule of [baseline, candidate]) writeFileSync(rule, stableRules);
+  const invoke = (command, ...args) => spawnSync(process.execPath,
+    ['scripts/recall_harness.mjs', command, ...args], { encoding: 'utf8', timeout: 20000 });
+  const evaluate = (...args) => {
+    const run = invoke('evaluate', '--manifest', manifest, '--baseline', baseline, '--candidate', candidate,
+      '--profile', profile, '--opengrep', process.execPath, '--workdir', workdir, '--jobs', '1',
+      '--dir', control, '--out', output, '--require-reviewed-controls', 'true', ...args);
+    assert.equal(run.stderr, '');
+    return [run.status, JSON.parse(readFileSync(output, 'utf8'))];
+  };
+  const [initial, pending] = evaluate();
+  assert.equal(initial, 2);
+  assert.equal(pending.precision_evidence.state, 'unreviewed', JSON.stringify(pending.controls[0]));
+  assert.equal(pending.controls[0].added.length, 0);
+  assert.equal(pending.controls[0].emitted.length, 1);
+  assert.equal(pending.controls[0].emitted[0].snippet, undefined);
+  assert.equal(invoke('observe', '--controls', output, '--labels', labels).status, 0);
+  const sheet = JSON.parse(readFileSync(labels, 'utf8'));
+  assert.equal(sheet.control_population_sha256, pending.control_population_sha256);
+  assert.equal(sheet.labels.length, 1);
+  sheet.labels[0].verdict = 'TP';
+  writeFileSync(labels, JSON.stringify(sheet));
+  const [qualified, accepted] = evaluate('--labels', labels);
+  assert.equal(qualified, 0);
+  assert.equal(accepted.precision_evidence.adjudicated, 1);
+  assert.equal(accepted.precision_evidence.review_independence, 'unestablished');
+
+  writeFileSync(join(control, 'sample.py'), '# revised owned review control');
+  const [stale, rejected] = evaluate('--labels', labels);
+  assert.equal(stale, 2);
+  assert.equal(rejected.precision_evidence.population_bound, false);
+  assert.equal(invoke('observe', '--controls', output, '--labels', labels).status, 0);
+  const refreshed = JSON.parse(readFileSync(labels, 'utf8'));
+  assert.equal(refreshed.labels.length, 1);
+  assert.equal(refreshed.labels[0].verdict, null);
+  assert.equal(refreshed.archived_labels[sheet.control_population_sha256][0].verdict, 'TP');
 }));
 
 test('a successful serial retry keeps the original timed-out report fingerprint', () => feederFixture(async fixture => {

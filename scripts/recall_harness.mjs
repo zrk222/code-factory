@@ -9,8 +9,8 @@
 //   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... --out deltas.json
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
 //            [--max-control-increase N] [--extra-arg ARG]... [--candidate-extra-arg ARG]... --out verdict.json
-//            [--labels labels.json]
-//   observe  --controls deltas.json --labels labels.json   (queue new control alerts for TP/FP labels)
+//            [--labels labels.json] [--require-reviewed-controls true]
+//   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
 //   compare  before.json after.json
 //
 // Scoring runs the production profile argv (deploy/deep-adapters/profiles),
@@ -919,16 +919,30 @@ function precisionState(controls, review) {
   return review.unreviewed_emitted || review.ambiguous_labels.length ? 'partially_reviewed' : 'reviewed';
 }
 
-function precisionEvidence(verdict, labels, controls) {
+function precisionEvidence(verdict, labels, controls, population, requireReviewed) {
   const review = checkLabels(labels, controls);
+  const state = precisionState(controls, review);
+  const populationBound = labels?.control_population_sha256 === population;
+  if (requireReviewed && (state !== 'reviewed' || !populationBound)) {
+    verdict.failures.push('complete source-bound control review required (' + state + ')');
+  }
   if (labels) {
     verdict.labels = review;
     if (review.fp_returned.length) verdict.failures.push(`labeled false positives emitted again: ${review.fp_returned.length}`);
     if (review.tp_dropped.length) verdict.failures.push(`labeled true positives no longer emitted: ${review.tp_dropped.length}`);
     if (review.ambiguous_labels.length) verdict.failures.push(`ambiguous control label matches: ${review.ambiguous_labels.length}`);
   }
-  return { state: precisionState(controls, review), emitted: review.emitted,
-    adjudicated: review.judged, unreviewed: review.unreviewed_emitted };
+  return { state, emitted: review.emitted, adjudicated: review.judged,
+    unreviewed: review.unreviewed_emitted, population_bound: populationBound,
+    review_independence: 'unestablished' };
+}
+
+function reviewPopulation(context, deltas) {
+  return caseDigest([{ ...context, controls: deltas.map(delta => ({
+    dir: delta.dir, source_tree: delta.source_tree ?? null, coverage: [
+      delta.scan_sides?.before?.control_coverage ?? null, delta.scan_sides?.after?.control_coverage ?? null,
+    ], emitted: (delta.emitted ?? []).map(alert => labelKey(repoName(delta.dir), alert)).sort(),
+  })) }]);
 }
 
 async function evaluate(input) {
@@ -936,6 +950,10 @@ async function evaluate(input) {
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
   const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
   const labels = suppliedLabels(opts);
+  const reviewOption = opts['require-reviewed-controls'];
+  if (reviewOption !== undefined && reviewOption !== 'true') {
+    throw new Error('--require-reviewed-controls accepts true');
+  }
   const engine = await bindEvaluationEngine(JSON.parse(utf8(opts.profileBytes)),
     opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
   opts.opengrep = engine.path;
@@ -959,16 +977,22 @@ async function evaluate(input) {
   verifyEvaluationRules(opts, rules);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0) });
   if (checkpoint) applyGainRetention(verdict, checkpoint, dev);
-  verdict.precision_evidence = precisionEvidence(verdict, labels, controlDeltas);
+  const settings = { ...rules, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
+    extra_args: [].concat(opts['extra-arg'] ?? []), candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []) };
+  const population = reviewPopulation(settings, controlDeltas);
+  const requireReviewed = reviewOption === 'true';
+  verdict.precision_evidence = precisionEvidence(verdict, labels, controlDeltas, population, requireReviewed);
   verdict.decision = verdict.failures.length ? 'REJECT' : 'ACCEPT';
-  const out = { schema: 'factory.recall-evaluation.v1', ...rules, engine: engine.receipt,
-    profile_sha256: sha256(opts.profileBytes), extra_args: [].concat(opts['extra-arg'] ?? []),
-    candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []), ...verdict,
+  const out = { schema: 'factory.recall-evaluation.v1', ...settings, ...verdict,
+    decision_scope: requireReviewed ? 'reviewed_development_controls' : 'development',
+    control_population_sha256: population,
     dev: dev.map(pair => ({ manifest: pair.manifest, manifest_cases_sha256: pair.after.manifest_cases_sha256,
       before: pair.before.summary, after: pair.after.summary,
       before_evidence: evaluationEvidence(pair.before), after_evidence: evaluationEvidence(pair.after),
       cases: pairedCaseEvidence(pair) })),
-    controls: controlDeltas.map(({ emitted, ...delta }) => delta) };
+    controls: controlDeltas.map(({ emitted, ...delta }) => emitted ? {
+      ...delta, emitted: emitted.map(({ snippet, ...finding }) => ({ ...finding, snippet_sha256: sha256(snippet ?? '') })),
+    } : delta) };
   writeFileSync(opts.out, `${JSON.stringify(out, null, 1)}\n`);
   console.log(out.decision, out.failures, `gained ${out.gained.length}`, `controls +${out.control_increase}`);
   if (out.decision === 'REJECT') process.exitCode = 2;
@@ -1010,16 +1034,35 @@ async function controlSource(root) {
     }
   };
   await visit(root, '');
-  return { paths: new Set(files.map(file => file.path)),
+  return { paths: new Set(files.map(file => file.path)), hashes: new Map(files.map(file => [file.path, file.sha256])),
+    eligible: files.filter(file => file.sha256 && SCANNABLE_EXTENSIONS.includes(extname(file.path).slice(1).toLowerCase()))
+      .map(file => file.path).sort(),
     evidence: { sha256: caseDigest(files.sort(byPath)), entries: files.length } };
+}
+
+function controlScanCoverage(eligible, engine) {
+  const gaps = [];
+  for (const path of eligible) {
+    const reason = !engine ? 'missing_engine_coverage' : engine.problems.get(path)
+      ?? (engine.skipped.has(path) ? engine.skipped.get(path) ?? 'engine_reported_skip' : null)
+      ?? (engine.scanned.has(path) ? null : 'absent_from_engine_paths');
+    if (reason) gaps.push({ path, reason });
+  }
+  return { complete: eligible.length > 0 && !gaps.length,
+    expected: eligible.length, reported: eligible.length - gaps.length, gaps };
 }
 
 async function controlObservation(context, directory, report, source) {
   let notes, findings = [];
   try {
     if (context.rulesSha256) verifyRulesBytes(context);
-    findings = await scan({ ...context, packetPaths: source.paths }, directory, report);
+    findings = await scan({ ...context, packetPaths: source.paths }, directory, report, true);
     notes = findings.notes;
+    notes.control_coverage = controlScanCoverage(source.eligible, findings.coverage);
+    if (!notes.control_coverage.complete && !scanIssue(notes)) {
+      notes.other = 1;
+      notes.detail = 'Control scan must cover every eligible source file';
+    }
     if (context.rulesSha256) verifyRulesBytes(context);
     if (findings.some(finding => !source.paths.has(finding.path))) {
       throw new Error('Control finding path is absent from the source tree');
@@ -1094,7 +1137,8 @@ async function controlDeltas_(opts) {
         continue;
       }
       const { added, removed } = controlFindingDeltas(old, now);
-      const snip = f => withSnippet(directory, f);
+      const lines = controlSnippets(directory, [...old, ...now], source.hashes);
+      const snip = f => withSnippet(lines, f);
       deltas.push({ dir, before: old.length, after: now.length, source_tree: source.evidence, scan_sides, ...recovery,
         added: added.map(snip), removed: removed.map(snip),
         emitted: now.map(snip) });
@@ -1104,14 +1148,27 @@ async function controlDeltas_(opts) {
 }
 
 // Observation loop: control alerts become a label queue; labels gate later changes.
-function withSnippet(root, finding) {
-  let text = '';
-  try { text = readFileSync(join(root, finding.path), 'utf8').split('\n')[finding.line - 1] ?? ''; } catch { /* moved */ }
-  const { rule, path, line, span } = finding;
-  return { rule, path, line, ...(span ? { span } : {}), snippet: text.trim().slice(0, 200) };
+function controlSnippets(root, findings, hashes) {
+  const snippets = new Map();
+  for (const { path, line } of findings) {
+    if (!snippets.has(path)) snippets.set(path, new Map());
+    snippets.get(path).set(line, '');
+  }
+  for (const [path, lines] of snippets) {
+    const bytes = readFileSync(join(root, path));
+    if (sha256(bytes) !== hashes.get(path)) throw new Error('Control finding source bytes differ');
+    const source = bytes.toString('utf8').split('\n');
+    for (const line of lines.keys()) lines.set(line, (source[line - 1] ?? '').trim().slice(0, 200));
+  }
+  return snippets;
 }
 
-const legacyLabelKey = (repo, alert) => `${alert.rule}|${repo}|${alert.path}|${sha256(alert.snippet ?? '').slice(0, 16)}`;
+function withSnippet(snippets, finding) {
+  const { rule, path, line, span } = finding;
+  return { rule, path, line, ...(span ? { span } : {}), snippet: snippets.get(path).get(line) };
+}
+
+const legacyLabelKey = (repo, alert) => `${alert.rule}|${repo}|${alert.path}|${(alert.snippet_sha256 ?? sha256(alert.snippet ?? '')).slice(0, 16)}`;
 export function labelKey(repo, alert) {
   const legacy = legacyLabelKey(repo, alert);
   return alert.span ? `${legacy}|${alert.line}:${alert.span.join(':')}` : legacy;
@@ -1132,18 +1189,25 @@ function legacyAlternatives(entries) {
   return keyCounts(new Map(entries.map(item => [item.key, item.legacy])).values());
 }
 
-export function queueLabels(existing, deltas) {
-  const labels = new Map((existing?.labels ?? []).map(label => [label.key, label]));
+export function queueLabels(existing, deltas, population) {
+  const changed = population && existing && existing.control_population_sha256 !== population;
+  const archived = { ...existing?.archived_labels };
+  if (changed && existing.labels?.length) {
+    archived[existing.control_population_sha256 ?? 'unbound'] = existing.labels;
+  }
+  const labels = new Map((changed ? [] : existing?.labels ?? []).map(label => [label.key, label]));
   for (const delta of deltas) {
     const repo = repoName(delta.dir);
     const legacyCount = delta.emitted ? legacyAlternatives(alertKeys(repo, [...delta.emitted, ...(delta.removed ?? [])])) : new Map();
-    for (const alert of delta.added ?? []) {
+    for (const alert of delta.emitted ?? delta.added ?? []) {
       const key = labelKey(repo, alert), legacy = legacyLabelKey(repo, alert);
       if (labels.has(legacy) && legacyCount.get(legacy) === 1) continue;
       if (!labels.has(key)) labels.set(key, { key, repo, ...alert, verdict: null, note: '' });
     }
   }
-  return { schema: 'factory.recall-labels.v1', labels: [...labels.values()].sort((a, b) => a.key.localeCompare(b.key)) };
+  return { schema: 'factory.recall-labels.v1', ...(population ? { control_population_sha256: population } : {}),
+    ...(Object.keys(archived).length ? { archived_labels: archived } : {}),
+    labels: [...labels.values()].sort((a, b) => a.key.localeCompare(b.key)) };
 }
 
 function controlLabelEvidence(deltas) {
@@ -1201,12 +1265,12 @@ function readOptionalLabels(path) {
   }
 }
 
-function updateLabels(path, deltas) {
+function updateLabels(path, deltas, population) {
   const destination = resolve(path);
   const lock = destination + '.lock';
   const descriptor = openSync(lock, 'wx', 0o600);
   try {
-    const queued = queueLabels(readOptionalLabels(destination), deltas);
+    const queued = queueLabels(readOptionalLabels(destination), deltas, population);
     const staging = mkdtempSync(join(dirname(destination), '.recall-labels-'));
     try {
       const staged = join(staging, 'labels.json');
@@ -1224,7 +1288,7 @@ function updateLabels(path, deltas) {
 
 async function observe(opts) {
   const deltas = JSON.parse(readFileSync(opts.controls, 'utf8'));
-  const queued = updateLabels(opts.labels, deltas.deltas ?? deltas.controls ?? []);
+  const queued = updateLabels(opts.labels, deltas.deltas ?? deltas.controls ?? [], deltas.control_population_sha256);
   console.log(`${queued.labels.length} labels, ${queued.labels.filter(label => !label.verdict).length} pending`);
 }
 
