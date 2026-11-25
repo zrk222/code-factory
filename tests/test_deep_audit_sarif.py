@@ -279,6 +279,74 @@ def test_local_semgrep_per_rule_admission_integrates_raw_paths_and_source_accoun
     assert evidence == original
 
 
+def test_semgrep_per_rule_admission_matches_distinct_spans_on_one_line():
+    import base64
+    from factoryline.deep_audit_attestation import verify_semgrep_rule_execution
+    from factoryline.deep_audit_sarif import _semgrep_finding_span
+
+    evidence, lane, sources, baseline, context = _local_semgrep_admission_fixture()
+    observation = evidence["observations"][0]
+    native = observation["native_report"]
+    line = 7
+    path = native["paths"]["scanned"][0]
+    for start, end in [(3, 21), (9, 15)]:
+        native["results"].append(
+            {
+                "check_id": observation["rule_id"],
+                "path": path,
+                "start": {"line": line, "col": start},
+                "end": {"line": line, "col": end},
+            }
+        )
+        baseline["runs"][0]["results"].append(
+            {
+                "ruleId": observation["rule_id"],
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": path},
+                            "region": {
+                                "startLine": line,
+                                "startColumn": start,
+                                "endLine": line,
+                                "endColumn": end,
+                            },
+                        }
+                    }
+                ],
+            }
+        )
+    raw = canonical_bytes(native)
+    observation.update(
+        native_report_sha256=digest(native),
+        raw_report_sha256=sha256_bytes(raw),
+        raw_report_base64=base64.b64encode(raw).decode(),
+    )
+    checked = verify_semgrep_rule_execution(
+        evidence, lane, sources, baseline, execution_context=context
+    )
+    assert checked["state"] == "VERIFIED"
+    assert checked["findings"] == 2
+    results = baseline["runs"][0]["results"]
+    region = results[1]["locations"][0]["physicalLocation"]["region"]
+    region["endColumn"] += 1
+    with pytest.raises(
+        RuntimeAuditError, match="per-rule findings contradict baseline"
+    ):
+        verify_semgrep_rule_execution(
+            evidence, lane, sources, baseline, execution_context=context
+        )
+    results[1] = deepcopy(results[0])
+    with pytest.raises(RuntimeAuditError, match="duplicate baseline findings"):
+        verify_semgrep_rule_execution(
+            evidence, lane, sources, baseline, execution_context=context
+        )
+    assert _semgrep_finding_span(7, None, None, None) == (7,)
+    assert _semgrep_finding_span(7, 9, 8, 2) == (7, 9, 8, 2)
+    with pytest.raises(RuntimeAuditError):
+        _semgrep_finding_span(7, 9, 7, 2)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

@@ -4402,6 +4402,26 @@ def _trivy_sarif_failures(report, sources, source_root=None):
     return failures
 
 
+def _semgrep_finding_span(start_line, start_column, end_line, end_column):
+    values = _deep_audit_io.require_int
+    line = values(start_line, "finding line", minimum=1, maximum=10**9)
+    last_line = (
+        line
+        if end_line is None
+        else values(end_line, "finding end line", minimum=line, maximum=10**9)
+    )
+    if start_column is None and end_column is None and last_line == line:
+        return (line,)
+    first_column = values(start_column, "finding column", minimum=1, maximum=10**9)
+    last_column = values(
+        end_column,
+        "finding end column",
+        minimum=first_column if last_line == line else 1,
+        maximum=10**9,
+    )
+    return (line, first_column, last_line, last_column)
+
+
 def _semgrep_json_findings(native, rule_id, sources):
     results = native.get("results")
     if not isinstance(results, list) or len(results) > 20_000:
@@ -4415,13 +4435,15 @@ def _semgrep_json_findings(native, rule_id, sources):
                 "E_SEMGREP_EXECUTION", "unselected detector finding"
             )
         path = _deep_audit_io._native_source_path(result.get("path"), sources)
-        line = _deep_audit_io.require_int(
-            result.get("start", {}).get("line"),
-            "finding line",
-            minimum=1,
-            maximum=10**9,
+        start, end = result.get("start", {}), result.get("end", {})
+        if not isinstance(start, dict) or not isinstance(end, dict):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "invalid native finding position"
+            )
+        span = _semgrep_finding_span(
+            start.get("line"), start.get("col"), end.get("line"), end.get("col")
         )
-        findings.append((rule_id, path, line))
+        findings.append((rule_id, path, *span))
     if len(set(findings)) != len(findings):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "duplicate native findings"
@@ -4446,7 +4468,14 @@ def _semgrep_sarif_findings(report, rule_ids, sources):
             path = _deep_audit_io._native_source_path(
                 place["artifactLocation"]["uri"], sources
             )
-            findings.append((matches[0], path, place["region"]["startLine"]))
+            region = place["region"]
+            span = _semgrep_finding_span(
+                region.get("startLine"),
+                region.get("startColumn"),
+                region.get("endLine"),
+                region.get("endColumn"),
+            )
+            findings.append((matches[0], path, *span))
     if len(set(findings)) != len(findings):
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_EXECUTION", "duplicate baseline findings"

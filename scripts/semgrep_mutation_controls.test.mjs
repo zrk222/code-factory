@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { findingKeys, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyFindingCountMatrix,
+  verifyNativeControlFindings,
   fixedReviewedFindingCounts, javascriptControlManifest, verifyJavascriptControlMatrix,
   tsxQualificationSuffix, appendExtensionControls, typescriptExtensionEndpoints } from './semgrep_mutation_controls.mjs';
 import { readFileSync } from 'node:fs';
@@ -44,6 +45,35 @@ test('malformed native finding identity is rejected', () => {
   const ambiguous = finding('target');
   ambiguous.locations[0].physicalLocation.artifactLocation.uri = '/cases/control|other.py';
   assert.throws(() => findingKeys(report([ambiguous])));
+});
+
+function atSpan(rule, start, end) {
+  const result = finding(rule, 5);
+  const location = result.locations[0].physicalLocation;
+  location.artifactLocation.uri = '/src/control.py';
+  Object.assign(location.region, { startColumn: start, endColumn: end });
+  return result;
+}
+
+test('verifyNativeControlFindings requires precisely the registered overlaps', () => {
+  const outer = atSpan('target', 10, 30), inner = atSpan('target', 15, 22);
+  const manifest = [{ rule: 'target', path: 'control.py', line: 5, spans: [[10, 30], [15, 22]] }];
+  assert.deepEqual(verifyNativeControlFindings(report([outer, inner]), manifest), {
+    logical_keys: ['target|control.py|5'], raw_findings: 2,
+  });
+  for (const invalid of [[inner], [outer, inner, atSpan('target', 16, 23)],
+    [outer, atSpan('target', 15, 23)], [outer, outer]]) {
+    assert.throws(() => verifyNativeControlFindings(report(invalid), manifest), /native finding|Native finding spans/);
+  }
+  assert.throws(() => verifyNativeControlFindings(report([outer, inner]), [{ ...manifest[0], spans: undefined }]));
+});
+
+test('rule mutation preserves every unrelated span on the same line', () => {
+  const outer = atSpan('other', 10, 30), inner = atSpan('other', 15, 22);
+  const before = report([finding('target'), outer, inner]);
+  assert.equal(verifyRuleMutation(before, report([inner, outer]), 'target').retained_findings, 2);
+  assert.throws(() => verifyRuleMutation(before, report([outer, atSpan('other', 15, 23)]), 'target'));
+  assert.throws(() => findingKeys(report([outer, outer])), /Duplicate native findings/);
 });
 
 const flowManifest = [{ rule: 'target', path: 'control.go', source_line: 2, line: 5 }];

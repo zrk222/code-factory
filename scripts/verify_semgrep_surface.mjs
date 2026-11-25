@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, copyFileSync, readFileSync, writeFileSync, mkdirSync, chmodSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname } from 'node:path';
-import { verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix,
+import { verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyNativeControlFindings,
   javascriptControlManifest, verifyJavascriptControlMatrix, tsxQualificationSuffix,
   appendExtensionControls } from './semgrep_mutation_controls.mjs';
 
@@ -358,35 +358,26 @@ try {
   mkdirSync(dirname(resolve(root, output)), { recursive: true });
   writeFileSync(`${output}.sarif`, native);
   const findings = (sarif.runs ?? []).flatMap(run => run.results ?? []);
-  if (findings.length !== fixtureManifest.length) throw new Error(`Native profile expected ${fixtureManifest.length} control findings, observed ${findings.length}`);
+  const disabled = verifyNativeControlFindings(sarif, fixtureManifest);
+  const disabledKeys = disabled.logical_keys;
   const active = results => results.filter(result => !(result.suppressions ?? []).some(suppression => suppression.status !== 'rejected'));
-  const keys = results => results.map(result => {
-    const locations = result.locations ?? [];
-    if (locations.length !== 1) throw new Error('Control finding requires exactly one primary location');
-    const location = locations[0].physicalLocation;
-    const uri = location?.artifactLocation?.uri ?? '';
-    return `${result.ruleId}|${uri.split('/').at(-1)}|${location?.region?.startLine}`;
-  }).sort();
   // Semgrep retains inSource metadata even with --disable-nosem. The worker
   // consumes all results from this profile; only the enabled scan excludes it.
-  const disabledKeys = keys(findings);
-  if (new Set(disabledKeys).size !== fixtureManifest.length || annotated.some(key => !disabledKeys.includes(key))) {
-    throw new Error('Disabled suppression omitted or duplicated an exact control finding');
+  if (annotated.some(key => !disabledKeys.includes(key))) {
+    throw new Error('Disabled suppression omitted an annotated control finding');
   }
   if (!argv.includes('--disable-nosem')) throw new Error('Production profile must disable inline suppression');
   const enabled = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
     '--entrypoint', profile.commands[0].argv[0], id,
     ...argv.filter(value => value !== '--disable-nosem').map(value => value === '{source}' ? '/src' : value)]);
   writeFileSync(`${output}.suppression-enabled.sarif`, enabled);
-  const enabledFindings = (JSON.parse(enabled).runs ?? []).flatMap(run => run.results ?? []);
-  const enabledKeys = keys(active(enabledFindings));
-  const expectedKeys = disabledKeys.filter(key => !annotated.includes(key));
-  if (JSON.stringify(enabledKeys) !== JSON.stringify(expectedKeys)) {
-    throw new Error('Enabled suppression did not remove exactly the five annotated findings');
-  }
   const manifestKey = item => `${item.rule}|${item.path}|${item.line}`;
-  const expectedFindingKeys = fixtureManifest.map(manifestKey).sort();
-  if (JSON.stringify(disabledKeys) !== JSON.stringify(expectedFindingKeys)) throw new Error('Native findings differ from exact fixture manifest');
+  const enabledReport = JSON.parse(enabled);
+  for (const run of enabledReport.runs ?? []) {
+    if (Array.isArray(run.results)) run.results = active(run.results);
+  }
+  const enabledControls = verifyNativeControlFindings(enabledReport,
+    fixtureManifest.filter(item => !annotated.includes(manifestKey(item))));
   const polyglotExpected = fixtureManifest.filter(item => Object.keys(polyglotControls).includes(item.path.split('.').at(-1))).map(manifestKey).sort();
   const polyglotObserved = disabledKeys.filter(key => Object.keys(polyglotControls).some(extension => key.includes(`|semgrep-pattern-limited.${extension}|`)));
   if (JSON.stringify(polyglotObserved) !== JSON.stringify(polyglotExpected)) throw new Error('Polyglot exact native findings differ');
@@ -463,9 +454,10 @@ with tempfile.TemporaryDirectory(prefix='factory-native-') as scratch:
   receipt.native_rule_execution = nativeExecution.verified;
   writeFileSync(`${output}.rule-execution.json`, execution);
   receipt.native_findings = findings.length;
+  receipt.native_logical_controls = disabledKeys.length;
   receipt.inline_suppression_control = 'PASS';
-  receipt.suppression_control = { annotated_findings: annotated.sort(), disabled_report_findings: disabledKeys.length,
-    enabled_unsuppressed_findings: enabledKeys.length, enabled_sarif_sha256: hash(Buffer.from(enabled)) };
+  receipt.suppression_control = { annotated_findings: annotated.sort(), disabled_report_findings: disabled.raw_findings,
+    enabled_unsuppressed_findings: enabledControls.raw_findings, enabled_sarif_sha256: hash(Buffer.from(enabled)) };
   receipt.native_rule_ids = [...new Set(findings.map(result => result.ruleId))].sort();
   receipt.native_sarif_sha256 = hash(Buffer.from(native));
   receipt.native_dataflow_findings = findings.filter(result => result.codeFlows?.length).length;
