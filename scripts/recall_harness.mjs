@@ -25,7 +25,7 @@ import { spawn } from 'node:child_process';
 import { accessSync, closeSync, constants, createReadStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { changedFiles, coverageGaps, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
+import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
 
 export const FAMILIES = Object.freeze({
   'CWE-78': 'cmd', 'CWE-88': 'cmd', 'CWE-77': 'cmd', 'CWE-89': 'sql',
@@ -222,13 +222,13 @@ export function profileArgv(profile, { bin, rules, report, source, extra = [] })
   return argv;
 }
 
-export function sarifFindings(sarif) {
+export function sarifFindings(sarif, packetPaths) {
   const out = [];
+  const clean = loc => sarifPath(loc.artifactLocation.uri, packetPaths);
   for (const run of sarif.runs ?? []) {
     for (const result of run.results ?? []) {
       const location = result.locations?.[0]?.physicalLocation;
       if (!location) continue;
-      const clean = loc => decodeURIComponent(loc.artifactLocation.uri.replace(/^file:\/\//, '')).replace(/^\.\//, '');
       const trace = (result.codeFlows ?? []).flatMap(flow => flow.threadFlows ?? [])
         .flatMap(thread => thread.locations ?? []).map(step => step.location?.physicalLocation)
         .filter(step => step?.artifactLocation && step.region).map(step => [clean(step), step.region.startLine]);
@@ -463,7 +463,7 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
   try {
     const sarif = JSON.parse(utf8(reportBytes));
     if (!Array.isArray(sarif?.runs) || !sarif.runs.length) throw new Error('Scan produced no SARIF run');
-    const findings = sarifFindings(sarif);
+    const findings = sarifFindings(sarif, context.packetPaths);
     findings.notes = { ...diagnostics, ...scanNotes(sarif) };
     findings.coverage = coverage;
     findings.notes.timeouts = Math.max(execution.timeouts, findings.notes.timeouts);
@@ -592,7 +592,8 @@ async function observeSide(context, source, report, expected) {
     verifyPreparedBytes(source, expected);
     verifyRulesBytes(context);
     submitted = true;
-    const findings = await scan(context, source, report, true);
+    const packetPaths = new Set(expected.map(row => row.path));
+    const findings = await scan({ ...context, packetPaths }, source, report, true);
     diagnostics = findings.notes;
     verifyRulesBytes(context);
     verifyPreparedBytes(source, expected);

@@ -11,15 +11,35 @@ export function changedFiles(raw) {
   return changes;
 }
 
-const relativePath = path => typeof path === 'string' ? path.replace(/^\.\//, '') : null;
+export function scannerPath(path, windows = process.platform === 'win32') {
+  if (typeof path !== 'string') return null;
+  return (windows ? path.replaceAll('\\', '/') : path).replace(/^\.\//, '');
+}
+
+export function sarifPath(uri, packetPaths) {
+  const explicitFileUri = uri.startsWith('file://');
+  const value = uri.replace(/^file:\/\//, '');
+  const literal = scannerPath(value);
+  let decoded;
+  try {
+    decoded = scannerPath(decodeURIComponent(value));
+  } catch (error) {
+    if (explicitFileUri || (packetPaths && !packetPaths.has(literal))) throw error;
+    return literal;
+  }
+  // OpenGrep sometimes emits a pathname literally rather than encoding it as a URI.
+  if (explicitFileUri || !packetPaths?.has(literal)) return decoded;
+  if (decoded !== literal && packetPaths.has(decoded)) throw new Error('Ambiguous SARIF source pathname');
+  return literal;
+}
 
 export function engineCoverage(report) {
   if (!Array.isArray(report?.paths?.scanned)) throw new Error('Missing engine scan paths');
-  const scanned = new Set(report.paths.scanned.map(relativePath).filter(Boolean));
-  const skipped = new Map((report.paths.skipped ?? []).map(entry => [relativePath(entry.path), entry.reason]));
+  const scanned = new Set(report.paths.scanned.map(path => scannerPath(path)).filter(Boolean));
+  const skipped = new Map((report.paths.skipped ?? []).map(entry => [scannerPath(entry.path), entry.reason]));
   const problems = new Map();
   for (const error of report.errors ?? []) {
-    const path = relativePath(error.path ?? error.spans?.[0]?.file);
+    const path = scannerPath(error.path ?? error.spans?.[0]?.file);
     if (path) problems.set(path, /pars|syntax/i.test(String(error.type)) ? 'parse' : 'engine_error');
   }
   return { scanned, skipped, problems };

@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest } from './recall_harness.mjs';
-import { changedFiles, coverageGaps, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
+import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
 --- a/app/files.py
@@ -278,6 +278,26 @@ test('changedFiles and engineCoverage distinguish source loss from analysis fail
   assert.deepEqual(summarizeCoverage([{ file_coverage }, {}]), {
     'partial:parse': 2, 'absent:added_in_fix': 1, 'excluded:no_scored_hunk': 1,
   });
+});
+
+test('scanner paths preserve native Windows punctuation and resolve SARIF aliases through the source packets', () => {
+  const path = 'nested folder/naïve% name.py';
+  assert.equal(scannerPath(String.raw`.\nested folder\naïve% name.py`, true), path);
+  assert.equal(scannerPath(String.raw`path\with\literal-slash.py`, false), String.raw`path\with\literal-slash.py`);
+  assert.equal(sarifPath(path, new Set([path])), path);
+  assert.equal(sarifPath('nested%20folder/na%C3%AFve%25%20name.py', new Set([path])), path);
+  assert.throws(() => sarifPath('file://nested/% raw.py', new Set()), URIError);
+  assert.equal(sarifPath('nested/file%20name.py', new Set(['nested/file%20name.py'])), 'nested/file%20name.py');
+  assert.throws(() => sarifPath('nested/file%20name.py', new Set(['nested/file name.py', 'nested/file%20name.py'])),
+    /Ambiguous SARIF source pathname/);
+  const raw = path.replaceAll('/', process.platform === 'win32' ? '\\' : '/');
+  assert.equal(sarifFindings({ runs: [{ results: [{ ruleId: 'fixture.review', locations: [loc(raw, 1)] }] }] },
+    new Set([path]))[0].path, path);
+  const coverage = engineCoverage({ paths: { scanned: [raw], skipped: [{ path: raw, reason: 'fixture' }] },
+    errors: [{ path: raw, type: 'PartialParsing' }] });
+  assert.ok(coverage.scanned.has(path));
+  assert.equal(coverage.skipped.get(path), 'fixture');
+  assert.equal(coverage.problems.get(path), 'parse');
 });
 
 test('observe preserves labels and rejects concurrent updates and corrupt input', () => {
