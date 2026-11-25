@@ -1046,7 +1046,8 @@ def test_zap_trace_capture_streams_fixed_tmpfs_path_with_signed_interpreter(
     assert (tmp_path / result["artifact"]).read_bytes() == b'{"sample":1}\n'
 
 
-def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path):
+@pytest.mark.parametrize("shard", range(8))
+def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path, shard):
     import yaml
     from factoryline.deep_audit_io import (
         _semgrep_disable_rule,
@@ -1058,7 +1059,7 @@ def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path):
         "deploy/deep-adapters/rules/semgrep-pattern-limited.yml"
     ).read_bytes()
     original = yaml.safe_load(baseline)
-    for rule in original["rules"]:
+    for rule in original["rules"][shard::8]:
         target = rule["id"]
         effective = _semgrep_disable_rule(baseline, target)
         expected = deepcopy(original)
@@ -1078,8 +1079,9 @@ def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path):
             _semgrep_mutation_file(
                 tmp_path, baseline, lane, {"detector_rule_id": target}
             )
-    with pytest.raises(RuntimeAuditError, match="E_SEMGREP_MUTATION"):
-        _semgrep_disable_rule(baseline, "unknown-detector")
+    if shard == 0:
+        with pytest.raises(RuntimeAuditError, match="E_SEMGREP_MUTATION"):
+            _semgrep_disable_rule(baseline, "unknown-detector")
 
 
 @pytest.mark.parametrize(
