@@ -212,7 +212,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.request-sql-injection': 1,
   'opt.factory.rules.python.tarfile-extractall-without-filter': 5,
   'opt.factory.rules.python.unsafe-deserialization': 2,
-  'opt.factory.rules.python.unsafe-deserialization-unscoped': 5,
+  'opt.factory.rules.python.unsafe-deserialization-unscoped': 6,
   'opt.factory.rules.ruby.archive-path-traversal': 2,
   'opt.factory.rules.ruby.disabled-tls-verification': 2,
   'opt.factory.rules.ruby.parameter-shell-command': 1,
@@ -267,9 +267,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 250 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 251 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 250;
+const REVIEWED_FINDINGS = 251;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

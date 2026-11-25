@@ -15,3 +15,13 @@ def load_checkpoint(checkpoint_path):
 def load_weights(checkpoint_path):
     # ok: python.unsafe-deserialization-unscoped
     return torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+
+
+async def receive_request(receiver):
+    # ruleid: python.unsafe-deserialization-unscoped
+    return await receiver.recv_pyobj()
+
+
+async def receive_json(receiver):
+    # ok: python.unsafe-deserialization-unscoped
+    return await receiver.recv_json()
