@@ -209,7 +209,7 @@ class UsersController < ApplicationController
 end
 `,
 };
-function fixtureExpectations(extension, content) {
+function fixtureExpectations(path, content) {
   const expected = [], sources = new Map();
   const lines = content.split(/\r?\n/);
   for (let index = 0; index < lines.length; index++) {
@@ -218,7 +218,7 @@ function fixtureExpectations(extension, content) {
     const annotation = lines[index].match(/(?:\/\/|#) ruleid: ([\w., -]+)/);
     if (!annotation) continue;
     for (const rule of annotation[1].split(',').map(value => value.trim())) {
-      expected.push({ rule: `opt.factory.rules.${rule}`, path: `semgrep-pattern-limited.${extension}`,
+      expected.push({ rule: `opt.factory.rules.${rule}`, path,
         line: index + 2, ...(sources.has(rule) ? { source_line: sources.get(rule) } : {}) });
     }
   }
@@ -244,7 +244,7 @@ function buildFixtures(temp) {
   appendExtensionControls(temp, 'deploy/deep-adapters/rules/tests', path => readFileSync(path, 'utf8'),
     (path, content) => writeFileSync(path, content));
   fixtureManifest = readdirSync(temp).filter(name => !name.endsWith('.yml')).flatMap(name =>
-    fixtureExpectations(name.split('.').at(-1), readFileSync(join(temp, name), 'utf8')));
+    fixtureExpectations(name, readFileSync(join(temp, name), 'utf8')));
   javascriptExpected = javascriptControlManifest();
   fixtureManifest = fixtureManifest.map(item => {
     if (!/\.(?:js|ts|tsx)$/.test(item.path)) return item;
@@ -288,6 +288,8 @@ try {
   for (const path of [rulesPath, 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json',
     'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js',
     'deploy/deep-adapters/rules/tests/tsx-controls.txt', 'deploy/deep-adapters/rules/tests/php-controls.php',
+    'deploy/deep-adapters/rules/tests/tsx-shell-wrapper-controls.txt', 'deploy/deep-adapters/rules/tests/tsx-shell-binding-controls.txt',
+    'deploy/deep-adapters/rules/tests/tsx-shell-helper-controls.txt',
     'deploy/deep-adapters/rules/tests/java-flow-controls.txt',
     'deploy/deep-adapters/rules/tests/swift-trust-controls.txt',
     'scripts/verify_semgrep_surface.mjs', 'scripts/semgrep_mutation_controls.mjs',
@@ -385,9 +387,11 @@ try {
   const sourceHashes = Object.fromEntries(readdirSync(temp).filter(name => !name.endsWith('.yml'))
     .map(name => [name, hash(readFileSync(join(temp, name)))]));
   receipt.source_sink_controls = verifySourceSinkFlows(sarif, fixtureManifest, sourceHashes);
-  receipt.tsx_qualification = { state: 'PASS', baseline_javascript_findings_per_extension: 7,
-    expected_tsx_findings: 9, source_sha256: sourceHashes['semgrep-pattern-limited.tsx'],
-    expected: javascriptExpected.filter(item => item.path.endsWith('.tsx')) };
+  const tsxExpected = javascriptExpected.filter(item => item.path.endsWith('.tsx'));
+  receipt.tsx_qualification = { state: 'PASS',
+    baseline_javascript_findings_per_extension: javascriptExpected.filter(item => item.path.endsWith('.js')).length,
+    expected_tsx_findings: tsxExpected.length, source_sha256: sourceHashes['semgrep-pattern-limited.tsx'],
+    expected: tsxExpected };
   // Use the existing production normalizer against retained native bytes and actual
   // fixture hashes. Python rechecks source/report bytes before and after ingestion.
   const roundtrip = spawnSync('python', ['-c', `

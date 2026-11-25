@@ -148,7 +148,9 @@ test('fixed TSX qualification rejects omitted, substituted and wrong-language co
   const manifest = javascriptControlManifest();
   assert.doesNotThrow(() => verifyJavascriptControlMatrix(manifest));
   assert.equal(manifest.filter(item => item.path.endsWith('.js')).length, 10);
-  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 30);
+  assert.equal(manifest.filter(item => item.path === 'semgrep-pattern-limited.ts').length, 29);
+  assert.deepEqual(manifest.filter(item => item.path.startsWith('typescript-shell-')).map(({ path, line }) =>
+    [path, line]), [['typescript-shell-wrapper.ts', 7], ['typescript-shell-binding.ts', 5]]);
   assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 12);
   assert.deepEqual(manifest.filter(item => item.path.endsWith('.tsx')).slice(-2).map(item =>
     [item.source_line, item.line]), [[159, 162], [163, 165]]);
@@ -193,6 +195,11 @@ test('rule-family controls append as one parseable source per language at fixed 
   const ts = files.get('/t/semgrep-pattern-limited.ts').split(/\r?\n/);
   for (const [rule, line] of typescriptExtensionEndpoints) {
     assert.ok(ts[line - 2].includes(`ruleid: javascript.${rule}`), `${rule} at ${line}`);
+  }
+  for (const name of ['wrapper', 'binding', 'helper']) {
+    const separate = readFileSync(`${root}/tsx-shell-${name}-controls.txt`, 'utf8');
+    assert.equal(files.get(`/t/typescript-shell-${name}.ts`), separate);
+    assert.equal(ts.join('\n').includes(separate), false);
   }
 });
 
