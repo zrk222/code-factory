@@ -6,3 +6,10 @@ export const dumpDatabase = (database: string) => {
   // ruleid: javascript.parameter-shell-command
   return run(`pg_dump ${database}`);
 };
+
+export const listPlugins = (dir: string) => {
+  return fs.readdirSync(dir).filter((file) => {
+    // ok: javascript.parameter-path-join-without-containment
+    return fs.statSync(path.join(dir, file)).isFile();
+  });
+};

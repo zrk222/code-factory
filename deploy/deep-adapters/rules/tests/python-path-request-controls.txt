@@ -247,3 +247,19 @@ def download_by_id_guarded(request):
         return os.path.join(REPORT_DIR, report_id)
     # ruleid: python.request-path-traversal
     return os.path.join(REPORT_DIR, report_id)
+
+
+def delete_upload(request):
+    digest = request.GET["hash"]
+    if not re.match(r"^[0-9a-f]{32}$", digest):
+        return "invalid hash"
+    # ok: python.request-path-traversal
+    shutil.rmtree(os.path.join(UPLOAD_DIR, digest))
+
+
+def delete_named_upload(request):
+    name = request.GET["name"]
+    if not re.match(r"^[\w.-]+$", name):
+        return "invalid name"
+    # ruleid: python.request-path-traversal
+    shutil.rmtree(os.path.join(UPLOAD_DIR, name))
