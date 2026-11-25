@@ -2495,6 +2495,7 @@ def test_judge_and_adjudication_flow(tmp_path):
         argparse.Namespace(
             packet=tmp_path / "p.json",
             labels=[first, second],
+            context=None,
             out=tmp_path / "j-in.json",
         )
     )
@@ -2504,6 +2505,9 @@ def test_judge_and_adjudication_flow(tmp_path):
         json.dumps(
             {
                 "packet_sha256": _gain["digest"]((tmp_path / "p.json").read_bytes()),
+                "judge_packet_sha256": _gain["digest"](
+                    (tmp_path / "j-in.json").read_bytes()
+                ),
                 "verdicts": [
                     {"position": 1, "item": disagreements[0]["item"], "verdict": "FP"},
                     {"position": 2, "item": disagreements[1]["item"], "verdict": "TP"},
@@ -2526,6 +2530,8 @@ def test_judge_and_adjudication_flow(tmp_path):
             "b",
             "--judge",
             str(tmp_path / "j.json"),
+            "--judge-packet",
+            str(tmp_path / "j-in.json"),
             "--judge-name",
             "j",
             "--out",
@@ -2533,6 +2539,10 @@ def test_judge_and_adjudication_flow(tmp_path):
         ]
     )
     adjudicated = json.loads((tmp_path / "adj.json").read_text())
+    assert adjudicated["inputs"]["judge_assignment"]["sha256"] == _gain["digest"](
+        (tmp_path / "j-in.json").read_bytes()
+    )
+    assert adjudicated["final_counts"] == {"TP": 2, "FP": 1}
     assert [row["final"] for row in adjudicated["rows"]] == ["TP", "FP", "TP"]
     _gain["review_main"](
         [
@@ -2611,44 +2621,243 @@ def test_adjudication_refuses_unjudged_disagreement_and_foreign_key(tmp_path):
         _gain["review_main"](args)
 
 
-def test_check_rejects_unsupported_high_confidence_and_retired_evidence(tmp_path):
+def _adjudicated(tmp_path, rules, rows, name="adj.json"):
+    revisions = _gain["rule_revisions"](rules)
+    document = {
+        "independence": "test",
+        "rows": [
+            {
+                "case": "GHSA-aaaa-bbbb-cccc",
+                "file": "app.js",
+                "line": line,
+                "source_sha256": "s" * 64,
+                "rule": rule,
+                "rule_revision": revisions[rule],
+                "final": verdict,
+            }
+            for line, rule, verdict in rows
+        ],
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(document))
+    return path
+
+
+def test_tier_thresholds_use_full_precision_bounds():
+    # Rounded to four places these lower bounds read 0.8000 and 0.3000.
+    assert _gain["wilson_exact"](87, 99)[0] < 0.80
+    assert _gain["tier_for"](87, 12) == "review"
+    assert _gain["wilson_exact"](56, 150)[0] < 0.30
+    assert _gain["tier_for"](56, 94) == "retire"
+
+
+def test_ledger_is_order_independent_and_rejects_conflicts(tmp_path):
     rules = tmp_path / "rules.yml"
     rules.write_text(REVIEW_RULES)
-    led = tmp_path / "led.json"
-    led.write_text(
-        json.dumps(
-            {
-                "rules": {
-                    "javascript.parameter-shell-command": {
-                        "evidence_tier": "retire",
-                        "tp": 1,
-                        "decided": 25,
-                    },
-                    "python.unsafe-deserialization-unscoped": {
-                        "evidence_tier": "review"
-                    },
-                }
-            }
+    shell = "javascript.parameter-shell-command"
+    first = _adjudicated(
+        tmp_path, rules, [(3, shell, "TP"), (7, shell, "FP")], "a.json"
+    )
+    second = _adjudicated(
+        tmp_path, rules, [(7, shell, "FP"), (9, shell, "UNCLEAR")], "b.json"
+    )
+    revisions = _gain["rule_revisions"](rules)
+    forward = _gain["compute_ledger"]([first, second], revisions)
+    backward = _gain["compute_ledger"]([second, first], revisions)
+    assert forward == backward
+    entry = forward["rules"][shell]
+    assert (entry["tp"], entry["fp"], entry["unclear"], entry["decided"]) == (
+        1,
+        1,
+        1,
+        2,
+    )
+    assert entry["decision_coverage"] == round(2 / 3, 4)
+    assert len(entry["sample_origins"]) == 2
+    conflict = _adjudicated(tmp_path, rules, [(7, shell, "TP")], "c.json")
+    with pytest.raises(SystemExit, match="conflicting verdicts"):
+        _gain["compute_ledger"]([first, conflict], revisions)
+
+
+def test_revised_rule_does_not_inherit_older_confidence(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    shell = "javascript.parameter-shell-command"
+    evidence = _adjudicated(tmp_path, rules, [(n, shell, "TP") for n in range(30)])
+    revised = tmp_path / "revised.yml"
+    revised.write_text(
+        REVIEW_RULES.replace(
+            "  - id: javascript.parameter-shell-command\n",
+            "  - id: javascript.parameter-shell-command\n    languages: [javascript]\n",
         )
     )
+    entry = _gain["compute_ledger"]([evidence], _gain["rule_revisions"](revised))[
+        "rules"
+    ][shell]
+    assert (entry["decided"], entry["stale_rows_excluded"], entry["evidence_tier"]) == (
+        0,
+        30,
+        "unqualified",
+    )
+    legacy = json.loads(evidence.read_text())
+    for row in legacy["rows"]:
+        del row["rule_revision"]
+    evidence.write_text(json.dumps(legacy))
+    unbound = _gain["compute_ledger"]([evidence], _gain["rule_revisions"](rules))
+    assert unbound["rules"][shell]["stale_rows_excluded"] == 30
+
+
+def test_check_recomputes_tiers_and_rejects_stale_or_inflated_ledgers(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    shell = "javascript.parameter-shell-command"
+    pickle = "python.unsafe-deserialization-unscoped"
+    weak = _adjudicated(
+        tmp_path, rules, [(n, shell, "FP") for n in range(25)] + [(99, shell, "TP")]
+    )
+    args = ["check", "--adjudicated", str(weak), "--rules", str(rules)]
+    # Retired shell evidence and HIGH confidence without evidence both fail.
+    assert _gain["review_main"](args) == 1
+    strong = _adjudicated(
+        tmp_path,
+        rules,
+        [(n, pickle, "TP") for n in range(60)]
+        + [(n, shell, "TP") for n in range(200, 260)],
+        "strong.json",
+    )
     assert (
-        _gain["review_main"](["check", "--ledger", str(led), "--rules", str(rules)])
+        _gain["review_main"](
+            ["check", "--adjudicated", str(strong), "--rules", str(rules)]
+        )
+        == 0
+    )
+    led = tmp_path / "led.json"
+    _gain["review_main"](
+        [
+            "ledger",
+            "--adjudicated",
+            str(strong),
+            "--rules",
+            str(rules),
+            "--out",
+            str(led),
+        ]
+    )
+    assert (
+        _gain["review_main"](
+            [
+                *["check", "--adjudicated", str(strong)],
+                "--rules",
+                str(rules),
+                "--ledger",
+                str(led),
+            ]
+        )
+        == 0
+    )
+    inflated = json.loads(led.read_text())
+    inflated["rules"][pickle]["evidence_tier"] = "default"
+    inflated["rules"][pickle]["tp"] = 61
+    led.write_text(json.dumps(inflated))
+    assert (
+        _gain["review_main"](
+            [
+                "check",
+                "--adjudicated",
+                str(strong),
+                "--rules",
+                str(rules),
+                "--ledger",
+                str(led),
+            ]
+        )
         == 1
     )
-    led.write_text(
+    _gain["review_main"](
+        ["ledger", "--adjudicated", str(weak), "--rules", str(rules), "--out", str(led)]
+    )
+    assert (
+        _gain["review_main"](
+            [
+                "check",
+                "--adjudicated",
+                str(strong),
+                "--rules",
+                str(rules),
+                "--ledger",
+                str(led),
+            ]
+        )
+        == 1
+    )
+
+
+def test_judge_from_a_different_label_pair_fails(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    _gain["review_main"](
+        [
+            "packet",
+            "--alerts",
+            str(_alerts(tmp_path)),
+            "--rules",
+            str(rules),
+            "--cohort",
+            "t",
+            "--seed",
+            "7",
+            "--out",
+            str(tmp_path / "p.json"),
+            "--key",
+            str(tmp_path / "k.json"),
+        ]
+    )
+    packet = json.loads((tmp_path / "p.json").read_text())
+    first = _labels(packet, ["TP", "FP", "TP"], "a", tmp_path)
+    second = _labels(packet, ["TP", "UNCLEAR", "FP"], "b", tmp_path)
+    _gain["build_judge"](
+        argparse.Namespace(
+            packet=tmp_path / "p.json",
+            labels=[first, second],
+            context=None,
+            out=tmp_path / "j-in.json",
+        )
+    )
+    other = _labels(packet, ["TP", "UNCLEAR", "UNCLEAR"], "c", tmp_path)
+    disagreements = json.loads((tmp_path / "j-in.json").read_text())["disagreements"]
+    (tmp_path / "j.json").write_text(
         json.dumps(
             {
-                "rules": {
-                    "python.unsafe-deserialization-unscoped": {
-                        "evidence_tier": "default"
-                    }
-                }
+                "packet_sha256": _gain["digest"]((tmp_path / "p.json").read_bytes()),
+                "judge_packet_sha256": _gain["digest"](
+                    (tmp_path / "j-in.json").read_bytes()
+                ),
+                "verdicts": [
+                    {"position": d["position"], "item": d["item"], "verdict": "FP"}
+                    for d in disagreements
+                ],
             }
         )
     )
-    assert (
-        _gain["review_main"](["check", "--ledger", str(led), "--rules", str(rules)])
-        == 0
+    base = [
+        "adjudicate",
+        "--packet",
+        str(tmp_path / "p.json"),
+        "--key",
+        str(tmp_path / "k.json"),
+        "--judge",
+        str(tmp_path / "j.json"),
+        "--judge-packet",
+        str(tmp_path / "j-in.json"),
+        "--out",
+        str(tmp_path / "adj.json"),
+    ]
+    with pytest.raises(SystemExit, match="different label pair"):
+        _gain["review_main"](
+            [*base, "--labels", str(first), str(other), "--reviewer", "a", "c"]
+        )
+    _gain["review_main"](
+        [*base, "--labels", str(first), str(second), "--reviewer", "a", "b"]
     )
 
 
