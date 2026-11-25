@@ -584,6 +584,26 @@ rules:
               metavariable: $CALL
               regex: ^(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
           - focus-metavariable: $PATH
+      # The same calls through a receiver bound to an fs module, under any name.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  import $FS from "$MOD"
+                  ...
+              - pattern-inside: |
+                  import * as $FS from "$MOD"
+                  ...
+              - pattern-inside: |
+                  $FS = require("$MOD")
+                  ...
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: ^(?:node:)?fs(?:/promises)?$|^(?:fs-extra|graceful-fs)$
+          - pattern: $FS.$CALL($PATH, ...)
+          - metavariable-regex:
+              metavariable: $CALL
+              regex: ^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
+          - focus-metavariable: $PATH
       # Joining request text under a base directory is the traversal itself.
       - patterns:
           - pattern-either:

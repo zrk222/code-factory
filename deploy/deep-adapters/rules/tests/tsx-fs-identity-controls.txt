@@ -1,0 +1,16 @@
+import * as storage from "node:fs/promises";
+const files = require("fs");
+
+export const readReport = (req: any) => {
+  const name = req.query.name;
+  // ruleid: javascript.request-path-traversal
+  files.readFileSync(name);
+  // ruleid: javascript.request-path-traversal
+  return storage.readFile(name);
+};
+
+export const readCached = (req: any, cache: any) => {
+  const name = req.query.name;
+  // ok: javascript.request-path-traversal
+  return cache.readFile(name);
+};
