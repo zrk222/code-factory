@@ -37,6 +37,12 @@ from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
         "malformed_receipt",
         "incomplete_observation",
         "lane_gap",
+        "challenge_receipts",
+        "wrong_challenge_digest",
+        "wrong_challenge_run",
+        "wrong_challenge_lane",
+        "missing_challenge",
+        "duplicate_challenge",
     ],
 )
 def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mode):
@@ -57,6 +63,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
     exec(compile(source, str(workflow_path), "exec"), review.__dict__)
     plan_path = repo / "scripts/deep-audit-keyless-plan.json"
     plan = json.loads(plan_path.read_bytes())
+    lane_ids = {row["engine"]: row["id"] for row in plan["lanes"]}
     jobs = flow["jobs"]
     families = set(jobs["analyze"]["strategy"]["matrix"]["family"])
     assert families == {lane["family"] for lane in plan["lanes"]}
@@ -80,6 +87,13 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         "name": "${{ needs.prepare.outputs.artifact_name }}",
         "path": "reviewer-runtime",
     }
+    verify_artifacts = next(
+        item["run"]
+        for item in jobs["analyze"]["steps"]
+        if item.get("name") == "Verify the reviewer runtime and model"
+    )
+    assert "--max-time 180" in verify_artifacts and "--retry 2" in verify_artifacts
+    assert verify_artifacts.count("sha256sum -c -") == 2
     paths = {path for row in plan["obligations"] for path in row["paths"]}
     for row in plan["obligations"]:
         for challenge in row["challenges"]:
@@ -99,7 +113,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                 "metrics": None,
                 "report_sha256": "1" * 64,
                 "coverage_sha256": "2" * 64,
-                "challenge_sha256": "3" * 64,
+                "challenge_sha256": sha256_bytes(lane["id"].encode()),
                 "obligations": [
                     item["id"]
                     for item in plan["obligations"]
@@ -129,6 +143,64 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         with pytest.raises(ValueError, match="incomplete analyzer lane"):
             review.family_inputs(plan, packet)
         return
+    expected_errors = {
+        "wrong_challenge_digest": "differs from the registered receipt",
+        "wrong_challenge_run": "different analyzer evidence",
+        "wrong_challenge_lane": "lane digest differs",
+        "missing_challenge": "outcomes differ from registered controls",
+        "duplicate_challenge": "duplicate recorded challenge",
+    }
+    if mode == "challenge_receipts" or mode in expected_errors:
+        packet["binding"].update(run_id="archived-synthetic", evidence_sha256="6" * 64)
+        receipts = {
+            "schema": "factory.keyless-challenge-summary.v1",
+            "run_id": "archived-synthetic",
+            "evidence_sha256": "6" * 64,
+            "lanes": {
+                lane["lane_id"]: {
+                    "challenge_sha256": lane["challenge_sha256"],
+                    "observations": [
+                        {
+                            "obligation_id": row["id"],
+                            "role": item["kind"],
+                            "exit_code": item["expected_exit_code"],
+                            "fixture_sha256": item["fixture_sha256"],
+                            "report_sha256": item["expected_report_sha256"],
+                            "detector_configuration_changed": item["kind"]
+                            == "mutation",
+                        }
+                        for row in plan["obligations"]
+                        for item in row["challenges"]
+                        if row["engine"] == lane["engine"]
+                    ],
+                }
+                for lane in packet["observations"]
+            },
+        }
+        packet["challenge_receipts"] = receipts
+        initial_receipt_sha256 = digest(receipts)
+        first_rows = receipts["lanes"]["codeql"]["observations"]
+        if mode == "wrong_challenge_digest":
+            first_rows[0]["exit_code"] += 1
+        elif mode == "wrong_challenge_run":
+            receipts["run_id"] = "unrelated-run"
+        elif mode == "wrong_challenge_lane":
+            receipts["lanes"]["codeql"]["challenge_sha256"] = receipts["lanes"]["osv"][
+                "challenge_sha256"
+            ]
+        elif mode == "missing_challenge":
+            first_rows.pop()
+        elif mode == "duplicate_challenge":
+            first_rows.append(first_rows[0])
+        review.CHALLENGE_SUMMARY_SHA256 = (
+            initial_receipt_sha256
+            if mode == "wrong_challenge_digest"
+            else digest(receipts)
+        )
+        if mode in expected_errors:
+            with pytest.raises(ValueError, match=expected_errors[mode]):
+                review.family_inputs(plan, packet)
+            return
     monkeypatch.chdir(tmp_path)
     staged_plan = tmp_path / "scripts" / plan_path.name
     staged_plan.parent.mkdir()
@@ -175,7 +247,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             == {
                 "report_sha256": "1" * 64,
                 "coverage_sha256": "2" * 64,
-                "challenge_sha256": "3" * 64,
+                "challenge_sha256": sha256_bytes(lane_ids[lane["engine"]].encode()),
             }
             for lane in payload["observations"]
         )
@@ -185,6 +257,22 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             )
             assert inventory["artifact_roles"] == ["sbom_json"]
             assert inventory["findings"] == []
+        if mode == "challenge_receipts":
+            for lane in payload["observations"]:
+                lane_id = lane_ids[lane["engine"]]
+                assert (
+                    lane["challenge_observations"]
+                    == receipts["lanes"][lane_id]["observations"]
+                )
+            assert (
+                "executed positive, negative and mutation outcomes"
+                in body["messages"][0]["content"]
+            )
+        else:
+            assert all(
+                "challenge_observations" not in lane for lane in payload["observations"]
+            )
+            assert body["messages"][0]["content"] == review.INSTRUCTIONS
         expected_coverage.update(assigned)
         result = {
             "decision": "ACCEPT",
