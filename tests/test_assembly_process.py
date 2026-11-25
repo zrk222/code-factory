@@ -743,11 +743,19 @@ def test_ci_runs_native_python_matrix_on_all_supported_host_families() -> None:
     import yaml
 
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "os: [ubuntu-latest, windows-latest, macos-latest]" in workflow
-    assert 'python: ["3.10", "3.11", "3.12"]' in workflow
     jobs = yaml.safe_load(workflow)["jobs"]
     runner = "${{ matrix.os == 'macos-latest' && 'macos-15-intel' || matrix.os }}"
     assert jobs["test"]["runs-on"] == "${{ matrix.os }}"
+    assert jobs["test"]["strategy"]["matrix"] == {
+        "os": ["ubuntu-latest", "macos-latest"],
+        "python": ["3.10", "3.11", "3.12"],
+    }
+    assert jobs["test"]["timeout-minutes"].split(" || ") == [
+        "${{ matrix.os == 'ubuntu-latest' && matrix.python == '3.11' && 40",
+        "matrix.os == 'macos-latest' && matrix.python == '3.10' && 35",
+        "matrix.os == 'macos-latest' && 25",
+        "20 }}",
+    ]
     assert jobs["native-process-parity"]["runs-on"] == runner
     assert "native-process-parity:" in workflow
     assert "os: [ubuntu-latest, macos-latest]" in workflow
@@ -762,29 +770,38 @@ def test_candidate_quality_gate_keeps_attribution_floor_and_python_cap() -> None
     assert "<= 464" in workflow
 
 
-def test_ci_windows_shards_keep_both_profiles_and_existing_bounds() -> None:
+def test_ci_windows_shards_keep_all_profiles_and_existing_bounds() -> None:
+    import re
+
     import yaml
 
     jobs = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())["jobs"]
-    for version in ("3.11", "3.12"):
-        assert {"os": "windows-latest", "python": version} in jobs["test"]["strategy"][
-            "matrix"
-        ]["exclude"]
+    versions = ["3.10", "3.11", "3.12"]
     shards = jobs["windows-shards"]
+    assert shards["runs-on"] == "windows-latest"
     assert shards["strategy"]["matrix"] == {
-        "python": ["3.11", "3.12"],
+        "python": versions,
         "shard": [1, 2, 3, 4],
     }
     assert shards["timeout-minutes"] == 20
-    command = next(
-        step["run"] for step in shards["steps"] if step.get("name") == "Test shard"
-    )
+    steps = {step.get("name"): step for step in shards["steps"]}
+    shard = steps["Test shard"]
+    command = shard["run"]
     assert "--factory-ci-shard=${{ matrix.shard }}/4" in command
     assert "--deselect" not in command and "--ignore" not in command
+    preflight = steps["Preflight public Node intake"]
+    assert preflight["if"] == "matrix.python == '3.10' && matrix.shard == 1"
+    assert preflight["timeout-minutes"] == 2
+    selectors = [term for term in preflight["run"].split() if "::" in term]
+    assert len(set(selectors)) == len(selectors) == 3
+    options = shard["env"]["PYTEST_ADDOPTS"]
+    assert options.startswith("${{ matrix.python == '3.10' &&")
+    assert options.endswith("|| '' }}")
+    assert re.findall(r"--deselect=([^\s']+)", options) == selectors
     gate = jobs["windows-test"]
     assert gate["name"] == "test (windows-latest, ${{ matrix.python }})"
     assert gate["needs"] == "windows-shards" and gate["if"] == "${{ always() }}"
-    assert gate["strategy"]["matrix"]["python"] == ["3.11", "3.12"]
+    assert gate["strategy"]["matrix"]["python"] == versions
     assert gate["steps"][0]["run"] == 'test "$SHARD_RESULT" = success'
 
 
