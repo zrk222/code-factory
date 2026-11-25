@@ -4371,7 +4371,9 @@ rules:
                     ...
                   } ... }
           - metavariable-regex: {metavariable: $FS, regex: '^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$'}
-          - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)$'}
+          # No bare copy/move/remove here: those words are everywhere, so the prefilter would
+          # admit (and force-parse) nearly every JS/TS file for this join-anchored branch.
+          - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync)$'}
           - pattern-not-inside: |
               function $F(...) {
                 ...
