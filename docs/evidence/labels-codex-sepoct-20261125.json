@@ -1,0 +1,291 @@
+{
+  "reviewer": "codex-sol-6.2",
+  "packet_sha256": "3ec98a4db2bce1b2408e385142764fe2ebddd2f4e3e94527c52bbcb220b5369e",
+  "labels": [
+    {
+      "item": "c121311f70c5",
+      "verdict": "UNCLEAR",
+      "reason": "The live HTML assignment is visible, but the message source is missing."
+    },
+    {
+      "item": "ba9487e0c7b9",
+      "verdict": "UNCLEAR",
+      "reason": "Text fields are escaped, but the excerpt omits validation of the remaining attribute values."
+    },
+    {
+      "item": "5dbd6d89d1ff",
+      "verdict": "UNCLEAR",
+      "reason": "Dynamic script content reaches the document head, but the metadata trust boundary is absent."
+    },
+    {
+      "item": "606e7d959d8b",
+      "verdict": "UNCLEAR",
+      "reason": "Shell construction uses serialization that does not ensure shell safety, but argument origins are absent."
+    },
+    {
+      "item": "96eb5f20f582",
+      "verdict": "UNCLEAR",
+      "reason": "A request path contributes to a write destination, but earlier containment checks are absent from the excerpt."
+    },
+    {
+      "item": "bad875d6293c",
+      "verdict": "TP",
+      "reason": "An exported function passes a caller-supplied revision directly into a shell command."
+    },
+    {
+      "item": "16f122fc004f",
+      "verdict": "UNCLEAR",
+      "reason": "The write is visible, but construction and validation of its destination are missing."
+    },
+    {
+      "item": "6a4afde2db72",
+      "verdict": "UNCLEAR",
+      "reason": "Markup is parsed in a detached element, but later filtering and insertion are not shown."
+    },
+    {
+      "item": "bfbe08cd450c",
+      "verdict": "UNCLEAR",
+      "reason": "The template path is resolved without local containment, but the page value's origin is absent."
+    },
+    {
+      "item": "a8083221a149",
+      "verdict": "FP",
+      "reason": "The shown deletion names come from a directory listing of immediate siblings."
+    },
+    {
+      "item": "b70592f060f2",
+      "verdict": "UNCLEAR",
+      "reason": "Input is parsed into a separate document, and subsequent sanitization or insertion is not shown."
+    },
+    {
+      "item": "3d4caed45da7",
+      "verdict": "UNCLEAR",
+      "reason": "The resolver permits paths outside the base, but the access policy and use of the result are absent."
+    },
+    {
+      "item": "b5b7017de8d9",
+      "verdict": "TP",
+      "reason": "The client deserializes bytes received from a socket before checking the reply identifier."
+    },
+    {
+      "item": "d23200c1663b",
+      "verdict": "TP",
+      "reason": "Additional socket replies are deserialized before their identifiers are checked."
+    },
+    {
+      "item": "d24890aadae6",
+      "verdict": "UNCLEAR",
+      "reason": "The join has no local containment check, but earlier path validation and subsequent use are missing."
+    },
+    {
+      "item": "34e43b5171fc",
+      "verdict": "UNCLEAR",
+      "reason": "Shell construction uses serialization that does not ensure shell safety, but argument origins are absent."
+    },
+    {
+      "item": "36b0839042d5",
+      "verdict": "UNCLEAR",
+      "reason": "Attributes interpolate values whose validation and provenance are absent."
+    },
+    {
+      "item": "887b0e0a41e5",
+      "verdict": "UNCLEAR",
+      "reason": "Attributes interpolate values whose validation and provenance are absent."
+    },
+    {
+      "item": "9113fe0d8df3",
+      "verdict": "FP",
+      "reason": "The shown flow keeps the parsing element detached and returns only plain text."
+    },
+    {
+      "item": "b6d3b6e5c9a2",
+      "verdict": "UNCLEAR",
+      "reason": "The model is deserialized from disk, but the model file's trust boundary is absent."
+    },
+    {
+      "item": "0489648efa3b",
+      "verdict": "FP",
+      "reason": "The shown call has the shape of a test runner invocation with an assertion callback."
+    },
+    {
+      "item": "f59c025c9a5c",
+      "verdict": "TP",
+      "reason": "An exported conversion helper directly parses raw caller input as HTML and returns the resulting nodes."
+    },
+    {
+      "item": "be83de90c058",
+      "verdict": "UNCLEAR",
+      "reason": "HTML escaping protects attribute structure, but the URL's allowed schemes and provenance are absent."
+    },
+    {
+      "item": "0ef50d78feab",
+      "verdict": "UNCLEAR",
+      "reason": "The shell command interpolates a path directly, but its caller and validation are missing."
+    },
+    {
+      "item": "a67fb15d60d8",
+      "verdict": "UNCLEAR",
+      "reason": "Deletion uses a stored filename, but how it is derived or constrained is absent."
+    },
+    {
+      "item": "3b3a6256b622",
+      "verdict": "UNCLEAR",
+      "reason": "The destination embeds a download title, but its derivation and validation are missing."
+    },
+    {
+      "item": "83d9650c4706",
+      "verdict": "FP",
+      "reason": "The shown call has the shape of a test runner invocation with an assertion callback."
+    },
+    {
+      "item": "df6369aedf18",
+      "verdict": "UNCLEAR",
+      "reason": "The join has no local containment check, but earlier path validation and subsequent use are missing."
+    },
+    {
+      "item": "53f70c545e41",
+      "verdict": "UNCLEAR",
+      "reason": "The live HTML assignment is visible, but the restored text's source is missing."
+    },
+    {
+      "item": "0ef50d78feab",
+      "verdict": "UNCLEAR",
+      "reason": "The shell command interpolates a path directly, but its caller and validation are missing."
+    },
+    {
+      "item": "80067240e0bb",
+      "verdict": "UNCLEAR",
+      "reason": "Attributes interpolate values whose validation and provenance are absent."
+    },
+    {
+      "item": "2f653553788e",
+      "verdict": "UNCLEAR",
+      "reason": "Revision parameters reach the shell unquoted, but caller validation and provenance are absent."
+    },
+    {
+      "item": "5b55151505df",
+      "verdict": "UNCLEAR",
+      "reason": "Metadata contributes raw HTML, but its origin and any earlier filtering are not shown."
+    },
+    {
+      "item": "410ac142fca5",
+      "verdict": "UNCLEAR",
+      "reason": "Whitespace replacement does not ensure containment, but title origin and earlier checks are missing."
+    },
+    {
+      "item": "71414e42998c",
+      "verdict": "UNCLEAR",
+      "reason": "Deletion uses a stored filename, but how it is derived or constrained is absent."
+    },
+    {
+      "item": "2f653553788e",
+      "verdict": "UNCLEAR",
+      "reason": "Revision parameters reach the shell unquoted, but caller validation and provenance are absent."
+    },
+    {
+      "item": "b79c24025d07",
+      "verdict": "UNCLEAR",
+      "reason": "The helper formats raw link attributes, but the excerpt does not show whether callers pre-escape them."
+    },
+    {
+      "item": "ebe514b06a5b",
+      "verdict": "UNCLEAR",
+      "reason": "The renderer emits raw metadata markup, but the origin and validation of the metadata are missing."
+    },
+    {
+      "item": "9c33d4962663",
+      "verdict": "FP",
+      "reason": "The shown call has the shape of a test runner invocation with an assertion callback."
+    },
+    {
+      "item": "6824d23c0f14",
+      "verdict": "UNCLEAR",
+      "reason": "The model load uses unsafe deserialization, but the excerpt omits who controls the artifact."
+    },
+    {
+      "item": "eae5173fdb9d",
+      "verdict": "UNCLEAR",
+      "reason": "Directory creation uses a constructed path whose inputs and containment checks are missing."
+    },
+    {
+      "item": "b7998e2a0f21",
+      "verdict": "TP",
+      "reason": "An exported helper parses caller HTML without filtering and returns the selected subtree."
+    },
+    {
+      "item": "db5ffcbacff7",
+      "verdict": "UNCLEAR",
+      "reason": "A SQL formatter combines prebuilt clauses, but their escaping and execution context are missing."
+    },
+    {
+      "item": "b7d92a742966",
+      "verdict": "UNCLEAR",
+      "reason": "The shell interpolates ref parameters, but the excerpt omits their provenance and caller validation."
+    },
+    {
+      "item": "71e1eabe9095",
+      "verdict": "TP",
+      "reason": "The receive operation deserializes peer data before the application checks its type."
+    },
+    {
+      "item": "32e582949803",
+      "verdict": "UNCLEAR",
+      "reason": "Input is parsed into a separate document, and subsequent sanitization or insertion is not shown."
+    },
+    {
+      "item": "3c8a552ec0cc",
+      "verdict": "FP",
+      "reason": "The excerpt identifies a local callback-based test helper at the flagged call."
+    },
+    {
+      "item": "ca76ef479d52",
+      "verdict": "UNCLEAR",
+      "reason": "The renderer interpolates attribute and HTML values whose preparation is not shown."
+    },
+    {
+      "item": "dced12e18955",
+      "verdict": "TP",
+      "reason": "The server deserializes request bytes from a socket before checking the requested method."
+    },
+    {
+      "item": "cb21576d4da1",
+      "verdict": "UNCLEAR",
+      "reason": "Options enter the shell command, but their trust boundary and earlier validation are missing."
+    },
+    {
+      "item": "d7f1f65ed846",
+      "verdict": "UNCLEAR",
+      "reason": "The helper formats raw link attributes, but the excerpt does not show whether callers pre-escape them."
+    },
+    {
+      "item": "e766fee9fe20",
+      "verdict": "UNCLEAR",
+      "reason": "The renderer interpolates attribute and HTML values whose preparation is not shown."
+    },
+    {
+      "item": "78b25ba978fd",
+      "verdict": "UNCLEAR",
+      "reason": "The stream destination embeds a download title whose derivation and validation are missing."
+    },
+    {
+      "item": "01cd6f628776",
+      "verdict": "TP",
+      "reason": "The listener deserializes socket data before dispatching the reply for processing."
+    },
+    {
+      "item": "b7d92a742966",
+      "verdict": "UNCLEAR",
+      "reason": "The shell interpolates ref parameters, but the excerpt omits their provenance and caller validation."
+    },
+    {
+      "item": "b4b879dd7bf6",
+      "verdict": "UNCLEAR",
+      "reason": "The cache value is interpolated into markup, but its source and constraints are absent."
+    },
+    {
+      "item": "91f6214a79b3",
+      "verdict": "UNCLEAR",
+      "reason": "The helper interpolates values into an XML configuration file, but input provenance and any HTML execution path are missing."
+    }
+  ]
+}
