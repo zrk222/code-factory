@@ -25,7 +25,7 @@ import { spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { changedFiles, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
+import { changedFiles, coverageGaps, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
 
 export const FAMILIES = Object.freeze({
   'CWE-78': 'cmd', 'CWE-88': 'cmd', 'CWE-77': 'cmd', 'CWE-89': 'sql',
@@ -243,15 +243,18 @@ export function sarifFindings(sarif) {
 export function scoreCase({ families, hunks, oldFindings, newFindings, rules }) {
   const wanted = new Set(families);
   const relevant = finding => (rules[finding.rule] ?? []).some(family => wanted.has(family));
-  const oldHits = oldFindings.filter(relevant);
+  const changedFindings = oldFindings.filter(f => Object.hasOwn(hunks, f.path));
+  const oldHits = changedFindings.filter(relevant);
   const hunkHits = oldHits.filter(f => hunks[f.path]?.old.includes(f.line));
+  const matchedFamilies = [...new Set(hunkHits.flatMap(f => rules[f.rule].filter(family => wanted.has(family))))].sort();
   // Secondary, pre-registered: the alert's source or any dataflow step is on a changed line.
   const traceHits = oldHits.filter(f => [[f.path, f.line], ...(f.trace ?? [])]
     .some(([path, line]) => hunks[path]?.old.includes(line)));
   const residual = newFindings.filter(relevant).filter(f => Object.values(hunks)
     .some(entry => entry.new_path === f.path && entry.new.includes(f.line)));
   return { hunk_hit: hunkHits.length > 0, trace_hit: traceHits.length > 0, file_hit: oldHits.length > 0,
-    hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]), alerts_in_changed_files: oldHits.length,
+    hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]), matched_hunk_families: matchedFamilies,
+    alerts_in_changed_files: changedFindings.length, family_alerts_in_changed_files: oldHits.length,
     fix_side_residual: residual.map(f => [f.rule, f.path, f.line]) };
 }
 
@@ -267,6 +270,7 @@ export function outcomeOf(row) {
   const issues = Object.values(sides).map(scanIssue);
   if (issues.includes('timeout')) return 'timeout';
   if (issues.includes('error')) return 'error';
+  if (!row.hunk_hit && coverageGaps(row.file_coverage?.old).length) return 'coverage_incomplete';
   if (row.status !== 'scored') return 'unknown';
   return row.hunk_hit ? 'hit' : 'miss';
 }
@@ -274,37 +278,43 @@ export function outcomeOf(row) {
 export function summarize(rows) {
   const outcomes = rows.map(outcomeOf);
   const scored = rows.filter((_, index) => ['hit', 'miss'].includes(outcomes[index]));
-  const tally = key => {
+  const tally = (key, hit) => {
     const out = {};
     for (const row of scored) {
       for (const value of [].concat(row[key])) {
         const entry = out[value] ??= { hits: 0, scored: 0 };
-        entry.scored++; entry.hits += row.hunk_hit ? 1 : 0;
+        entry.scored++; entry.hits += hit(row, value) ? 1 : 0;
       }
     }
     return out;
   };
   const hits = scored.filter(row => row.hunk_hit).length;
   const fileHits = scored.filter(row => row.file_hit).length;
+  const alerts = rows.reduce((n, row) => n + (row.alerts_in_changed_files ?? 0), 0);
+  const scoredAlerts = scored.reduce((n, row) => n + (row.alerts_in_changed_files ?? 0), 0);
   return {
     cases: rows.length, scored: scored.length, file_coverage: summarizeCoverage(rows),
     status: rows.reduce((acc, row) => ({ ...acc, [row.status]: (acc[row.status] ?? 0) + 1 }), {}),
     hunk_hits: hits, hunk_recall_wilson95: wilson(hits, scored.length),
+    hunk_hits_over_registered_cases: { hits, cases: rows.length, wilson95: wilson(hits, rows.length) },
     trace_hits: scored.filter(row => row.trace_hit).length,
     trace_recall_wilson95: wilson(scored.filter(row => row.trace_hit).length, scored.length),
     file_hits: fileHits, file_recall_wilson95: wilson(fileHits, scored.length),
     distinct_fixes_hit: new Set(scored.filter(row => row.hunk_hit).map(row => row.fix)).size,
     outcomes: outcomes.reduce((acc, outcome) => { acc[outcome]++; return acc; },
-      { hit: 0, miss: 0, timeout: 0, unknown: 0, error: 0 }),
+      { hit: 0, miss: 0, timeout: 0, unknown: 0, error: 0, coverage_incomplete: 0 }),
     diagnostics: rows.flatMap((row, index) => ['hit', 'miss'].includes(outcomes[index]) ? [] : [{
       ghsa: row.ghsa, status: row.status, outcome: outcomes[index],
       scan_sides: row.scan_sides ?? { old: row.scan_notes }, detail: row.detail,
+      old_coverage_gaps: coverageGaps(row.file_coverage?.old),
     }]),
     // Review budget: every alert in a changed file is something a reviewer reads.
-    review_budget: { alerts_in_changed_files: scored.reduce((n, row) => n + row.alerts_in_changed_files, 0),
-      per_scored_case: scored.length ? Math.round(10 * scored.reduce((n, row) => n + row.alerts_in_changed_files, 0) / scored.length) / 10 : 0 },
+    review_budget: { alerts_in_changed_files: alerts,
+      family_alerts_in_changed_files: rows.reduce((n, row) => n + (row.family_alerts_in_changed_files ?? 0), 0),
+      per_scored_case: scored.length ? Math.round(10 * scoredAlerts / scored.length) / 10 : 0 },
     fix_side_residual_alerts: scored.reduce((n, row) => n + row.fix_side_residual.length, 0),
-    by_family: tally('families'), by_ecosystem: tally('ecosystem'),
+    by_family: tally('families', (row, family) => row.matched_hunk_families?.includes(family)),
+    by_ecosystem: tally('ecosystem', row => row.hunk_hit),
   };
 }
 
@@ -332,16 +342,66 @@ const byPath = (a, b) => a.path < b.path ? -1 : a.path === b.path ? 0 : 1;
 const utf8 = raw => new TextDecoder('utf-8', { fatal: true }).decode(raw);
 const packet = (path, raw) => ({ path, bytes: raw.length, sha256: sha256(raw) });
 
-async function materialize(repo, revision, paths, target) {
-  const packets = [];
-  for (const path of paths) {
-    const shown = await gitBytes(repo, 'show', revision + ':' + path);
-    if (shown.status !== 0) throw new Error('Prepared source could not be read: ' + path);
-    mkdirSync(dirname(join(target, path)), { recursive: true });
-    writeFileSync(join(target, path), shown.stdout);
-    packets.push(packet(path, shown.stdout));
+async function nextBlobChunk(reader, path) {
+  const chunk = await reader.next();
+  if (chunk.done) throw new Error('Truncated prepared source: ' + path);
+  return chunk.value;
+}
+
+async function readBatchBlob(stream, path) {
+  let end = stream.pending.indexOf(10);
+  while (end < 0 && stream.pending.length <= 128) {
+    stream.pending = Buffer.concat([stream.pending, await nextBlobChunk(stream.reader, path)]);
+    end = stream.pending.indexOf(10);
   }
-  return packets.sort(byPath);
+  const header = end >= 0 && end <= 128 && stream.pending.toString('ascii', 0, end).match(/^blob (0|[1-9]\d*)$/);
+  if (!header) throw new Error('Prepared source could not be read: ' + path);
+  stream.pending = stream.pending.subarray(end + 1);
+  const raw = Buffer.allocUnsafe(Number(header[1]));
+  for (let offset = 0; offset < raw.length;) {
+    if (!stream.pending.length) stream.pending = await nextBlobChunk(stream.reader, path);
+    const bytes = Math.min(raw.length - offset, stream.pending.length);
+    stream.pending.copy(raw, offset, 0, bytes);
+    stream.pending = stream.pending.subarray(bytes);
+    offset += bytes;
+  }
+  if (!stream.pending.length) stream.pending = await nextBlobChunk(stream.reader, path);
+  if (stream.pending[0] !== 10) throw new Error('Invalid prepared source framing: ' + path);
+  stream.pending = stream.pending.subarray(1);
+  return raw;
+}
+
+async function materialize(repo, revision, paths, target) {
+  if (!paths.length) return [];
+  // NUL-delimited requests preserve arbitrary Git paths. Read one blob at a time.
+  const child = spawn('git', ['-C', repo, 'cat-file', '--batch=%(objecttype) %(objectsize)', '-z'],
+    { stdio: ['pipe', 'pipe', 'ignore'] });
+  const status = new Promise(done => {
+    child.once('error', () => done(-1));
+    child.once('close', done);
+  });
+  const timer = setTimeout(() => child.kill('SIGKILL'), 900000);
+  child.stdin.on('error', () => {}); // Child failure is checked via the stream and exit code.
+  child.stdin.end(paths.map(path => revision + ':' + path + '\0').join(''));
+  const stream = { reader: child.stdout[Symbol.asyncIterator](), pending: Buffer.alloc(0) };
+  const packets = [];
+  try {
+    for (const path of paths) {
+      const raw = await readBatchBlob(stream, path);
+      const location = join(target, path);
+      mkdirSync(dirname(location), { recursive: true });
+      writeFileSync(location, raw);
+      packets.push(packet(path, raw));
+    }
+    if (stream.pending.length || !(await stream.reader.next()).done || await status !== 0) {
+      throw new Error('Unexpected Git response while preparing source blobs');
+    }
+    return packets.sort(byPath);
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await status;
+  }
 }
 
 function verifyPreparedBytes(root, expected) {
@@ -387,10 +447,11 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
   if (coveragePath) rmSync(coveragePath, { force: true });
   const extra = coveragePath ? [...context.extra, '--json-output', coveragePath, '--verbose'] : context.extra;
   const argv = profileArgv(context.profile, { bin: context.bin, rules: context.rules, report, source: '.', extra });
+  const started = performance.now();
   const run = await runProcess(argv[0], argv.slice(1), { cwd: source,
     env: { HOME: process.env.HOME ?? '/tmp', PYTHONIOENCODING: 'utf-8', LANG: 'C.UTF-8' } });
   const execution = { failed_exit: ![0, 1].includes(run.status), exit_code: run.status,
-    timeouts: Number(Boolean(run.timedOut)) };
+    timeouts: Number(Boolean(run.timedOut)), duration_ms: Math.round(performance.now() - started) };
   const coverage = coveragePath && readCoverage(coveragePath, execution);
   if (!existsSync(report)) {
     throw Object.assign(new Error('Scan produced no SARIF report'), {
@@ -414,22 +475,24 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
 
 // Engine timeouts and parse failures, so a miss caused by the engine is not
 // counted as a detector miss.
+function notificationKind(note) {
+  const descriptor = note.descriptor?.id ?? '';
+  // Parse messages can quote arbitrary source text after the diagnostic header.
+  const message = (note.message?.text ?? '').split(/\n|`/)[0];
+  if (/syntax|pars/i.test(descriptor)) return 'parse';
+  if (/timeout|timed out/i.test(`${descriptor} ${message}`)) return 'timeout';
+  return /syntax|pars/i.test(message) ? 'parse' : 'other';
+}
+
 export function scanNotes(sarif) {
   const notes = { timeouts: 0, parse_errors: 0, blocking_parse_errors: 0, other: 0 };
   for (const run of sarif.runs ?? []) {
     for (const invocation of run.invocations ?? []) {
       if (invocation.executionSuccessful === false) notes.other++;
       for (const note of invocation.toolExecutionNotifications ?? []) {
-        // A parse message quotes the target source, which can contain any word
-        // (a file with setConnectionTimeout once read as an engine timeout), so
-        // the descriptor decides first and only the message's own first line
-        // before any quoted excerpt is consulted after it.
-        const descriptor = note.descriptor?.id ?? '';
-        const own = (note.message?.text ?? '').split(/\n|`/)[0];
-        const parse = /syntax|pars/i.test(descriptor)
-          || (!/timeout|timed out/i.test(descriptor) && /syntax|pars/i.test(own) && !/timeout|timed out/i.test(own));
-        if (!parse && /timeout|timed out/i.test(`${descriptor} ${own}`)) notes.timeouts++;
-        else if (parse) {
+        const kind = notificationKind(note);
+        if (kind === 'timeout') notes.timeouts++;
+        else if (kind === 'parse') {
           notes.parse_errors++;
           if (note.level !== 'warning' && note.level !== 'note') notes.blocking_parse_errors++;
         }
@@ -558,10 +621,11 @@ async function scoreOne(context, row) {
     changed_files_sha256: prepared.changed_files_sha256, file_coverage: coverage,
     scan_notes: old.diagnostics, scan_sides: { old: old.diagnostics, fixed: fixed.diagnostics }, ...result };
   const outcome = outcomeOf(rowResult);
-  return { ...rowResult, status: ['error', 'timeout'].includes(outcome) ? 'incomplete' : status, outcome };
+  return { ...rowResult, status: ['error', 'timeout', 'coverage_incomplete'].includes(outcome) ? 'incomplete' : status, outcome };
 }
 
 async function pool(items, jobs, worker) {
+  if (!Number.isSafeInteger(jobs) || jobs < 1) throw new Error('Recall jobs must be a positive integer');
   const out = new Array(items.length);
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(jobs, items.length) }, async () => {
@@ -655,7 +719,14 @@ function caseInputFingerprint(row) {
     row.changed_files_sha256 ?? null]);
 }
 
-function measureCaseChange(old, row, { lost, gained, newErrors, failures }) {
+function hasNewCoverageGaps(old, row) {
+  return Object.entries(old.file_coverage ?? {}).some(([side, files]) => {
+    const previous = new Set(coverageGaps(files));
+    return coverageGaps(row.file_coverage?.[side]).some(path => !previous.has(path));
+  });
+}
+
+function measureCaseChange(old, row, { lost, gained, newErrors, newCoverageGaps, failures }) {
   if (caseInputFingerprint(old) !== caseInputFingerprint(row)) {
     failures.push('Baseline and candidate source byte fingerprints differ for ' + row.ghsa);
     return;
@@ -665,29 +736,41 @@ function measureCaseChange(old, row, { lost, gained, newErrors, failures }) {
   if (previous === 'miss' && current === 'hit') gained.push(row.ghsa);
   const failure = ['error', 'timeout'];
   if (failure.includes(current) && !failure.includes(previous)) newErrors.push(row.ghsa);
+  if (hasNewCoverageGaps(old, row)) newCoverageGaps.push(row.ghsa);
 }
 
+const indexCases = rows => new Map(rows.map(row => [row.ghsa, row]));
+
 function measureDevPair({ before, after }, changes) {
-  if (before.manifest_sha256 !== after.manifest_sha256 || before.profile_sha256 !== after.profile_sha256) {
-    changes.failures.push('Baseline and candidate manifest or profile byte fingerprints differ');
+  if (before.manifest_sha256 !== after.manifest_sha256 || before.profile_sha256 !== after.profile_sha256
+      || before.scope !== after.scope) {
+    changes.failures.push('Baseline and candidate manifest, profile or scoring scope differs');
     return;
   }
-  const baseline = new Map(before.cases.map(row => [row.ghsa, row]));
-  for (const row of after.cases) {
-    const old = baseline.get(row.ghsa);
-    if (!old) changes.failures.push('Baseline case missing for ' + row.ghsa);
+  const baseline = indexCases(before.cases), candidate = indexCases(after.cases);
+  if (baseline.size !== before.cases.length || candidate.size !== after.cases.length) {
+    changes.failures.push('Duplicate advisory ID in paired recall cases');
+    return;
+  }
+  for (const [ghsa, old] of baseline) {
+    const row = candidate.get(ghsa);
+    if (!row) changes.failures.push('Candidate case missing for ' + ghsa);
     else measureCaseChange(old, row, changes);
+  }
+  for (const ghsa of candidate.keys()) {
+    if (!baseline.has(ghsa)) changes.failures.push('Baseline case missing for ' + ghsa);
   }
 }
 
 export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1 }) {
-  const lost = [], gained = [], newErrors = [], failures = [];
-  for (const pair of dev) measureDevPair(pair, { lost, gained, newErrors, failures });
+  const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [];
+  for (const pair of dev) measureDevPair(pair, { lost, gained, newErrors, newCoverageGaps, failures });
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
   const residualAfter = dev.reduce((n, pair) => n + pair.after.summary.fix_side_residual_alerts, 0);
   const controlIncrease = controls.reduce((n, delta) => n + (delta.after ?? 0) - (delta.before ?? 0), 0);
   if (newErrors.length) failures.push(`new engine errors/timeouts: ${newErrors.join(', ')}`);
   if (lost.length) failures.push(`lost ${lost.length} dev hit(s): ${lost.join(', ')}`);
+  if (newCoverageGaps.length) failures.push(`new engine coverage gaps: ${newCoverageGaps.join(', ')}`);
   // Residuals are judged per strict hit: a rule that finds more fixes also sees
   // more fixed code it cannot prove safe. The rate may not rise by more than
   // residualTolerance (default 10%).
@@ -698,8 +781,9 @@ export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance 
     failures.push(`fix-side residuals per hit ${rateBefore.toFixed(2)} -> ${rateAfter.toFixed(2)} (${residualBefore} -> ${residualAfter})`);
   }
   if (controlIncrease > maxControlIncrease) failures.push(`control alerts +${controlIncrease} > ${maxControlIncrease}`);
-  if (controls.some(delta => delta.error)) failures.push('a control scan failed');
+  if (controls.some(delta => delta.error || delta.incomplete_on_both)) failures.push('a control scan failed');
   return { decision: failures.length ? 'REJECT' : 'ACCEPT', failures, gained, lost_baseline_hits: lost, new_errors: newErrors,
+    new_coverage_gaps: newCoverageGaps,
     residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
     control_increase: controlIncrease };
 }
@@ -711,6 +795,17 @@ function evaluationEvidence(result) {
       scan_sides, initial_scan_sides, retried_serially, outcome, status }) =>
       ({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256,
         file_coverage, scan_sides, initial_scan_sides, retried_serially, outcome, status })) };
+}
+
+function pairedCaseEvidence({ before, after }) {
+  const baseline = indexCases(before.cases);
+  return after.cases.map(row => {
+    const previous = baseline.get(row.ghsa);
+    return { ghsa: row.ghsa, fix: row.fix, before: previous?.outcome ?? previous?.status ?? null,
+      after: row.outcome ?? row.status, hunk_findings: row.hunk_findings ?? [],
+      matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
+      retried_serially: Boolean(row.retried_serially) };
+  });
 }
 
 async function evaluate(input) {
@@ -738,21 +833,42 @@ async function evaluate(input) {
     dev: dev.map(pair => ({ manifest: pair.manifest, manifest_cases_sha256: pair.after.manifest_cases_sha256,
       before: pair.before.summary, after: pair.after.summary,
       before_evidence: evaluationEvidence(pair.before), after_evidence: evaluationEvidence(pair.after),
-      cases: pair.after.cases.map((row, index) => ({ ghsa: row.ghsa, fix: row.fix,
-        before: pair.before.cases[index].outcome ?? pair.before.cases[index].status, after: row.outcome ?? row.status,
-        hunk_findings: row.hunk_findings ?? [], fix_side_residual: row.fix_side_residual ?? [],
-        retried_serially: Boolean(row.retried_serially) })) })),
-    controls: controlDeltas.map(({ dir, before, after, added, removed, error, scan_sides, incomplete_on_both }) =>
-      ({ dir, before, after, added, removed, error, scan_sides, incomplete_on_both })) };
+      cases: pairedCaseEvidence(pair) })),
+    controls: controlDeltas.map(({ emitted, ...delta }) => delta) };
   writeFileSync(opts.out, `${JSON.stringify(out, null, 1)}\n`);
   console.log(out.decision, out.failures, `gained ${out.gained.length}`, `controls +${out.control_increase}`);
   if (out.decision === 'REJECT') process.exitCode = 2;
 }
 
+const CONTROL_TIMEOUT_RETRY_SECONDS = 15;
+
+function controlRetryArgs(profile, baselineArgs, candidateArgs) {
+  const hasTimeoutOverride = [...profile.commands[0].argv, ...baselineArgs, ...candidateArgs]
+    .some(arg => /^--(?:timeout(?:=|$)|dynamic-timeout|allow-rule-timeout-control)/.test(arg));
+  return profile.engine === 'semgrep' && !hasTimeoutOverride ? [`--timeout=${CONTROL_TIMEOUT_RETRY_SECONDS}`] : [];
+}
+
+async function controlObservation(context, directory, report) {
+  try {
+    const findings = await scan(context, directory, report);
+    return { findings, notes: findings.notes };
+  } catch (error) {
+    return { findings: [], notes: { ...error.diagnostics, other: 1, detail: String(error.message).slice(-300) } };
+  }
+}
+
+async function controlPair({ base, candidate, directory, reports }, suffix, retryArgs = []) {
+  const old = await controlObservation({ ...base, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`);
+  const now = await controlObservation({ ...candidate, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`);
+  const scan_sides = { before: old.notes, after: now.notes };
+  return { old: old.findings, now: now.findings, scan_sides, issues: Object.values(scan_sides).map(scanIssue) };
+}
+
 async function controlDeltas_(opts) {
   const [before, after] = [].concat(opts.rules);
   const base = { profile: JSON.parse(utf8(opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'))),
-    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []) };
+    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []), rules: resolve(before) };
+  const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])], rules: resolve(after) };
   const key = f => `${f.rule}|${f.path}|${f.line}`;
   const deltas = [];
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
@@ -760,38 +876,23 @@ async function controlDeltas_(opts) {
   const scanRoot = mkdtempSync(join(workdir, 'controls-'));
   for (const dir of [].concat(opts.dir)) {
     try {
-      const reports = join(scanRoot, sha256(resolve(dir)).slice(0, 16));
-      const pair = async suffix => {
-        const old = await scan({ ...base, rules: resolve(before) }, resolve(dir), `${reports}/before${suffix}.sarif`);
-        const now = await scan({ ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])], rules: resolve(after) },
-          resolve(dir), `${reports}/after${suffix}.sarif`);
-        const scan_sides = { before: old.notes, after: now.notes };
-        // An engine limit the baseline hits too (same issue class, no more
-        // timeouts for the candidate) is not a candidate regression; record it
-        // with the delta instead of failing the control.
-        const issues = Object.values(scan_sides).map(scanIssue);
-        const sameIncomplete = Boolean(issues[0]) && issues[0] === issues[1]
-          && (scan_sides.after.timeouts ?? 0) <= (scan_sides.before.timeouts ?? 0);
-        return { old, now, scan_sides, issues, sameIncomplete, failed: issues.some(Boolean) && !sameIncomplete };
-      };
-      let attempt = await pair('');
-      let initial_scan_sides;
-      // Per-file engine timeouts move with machine load, as on the dev side:
-      // a pair that differs only in timeouts is scanned once more, both sides
-      // again, and the first attempt is kept in the record.
-      if (attempt.failed && attempt.issues.every(issue => !issue || issue === 'timeout')) {
-        initial_scan_sides = attempt.scan_sides;
-        attempt = await pair('-retry');
+      const directory = resolve(dir);
+      const context = { base, candidate, directory, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
+      let attempt = await controlPair(context, '');
+      let recovery = {};
+      if (attempt.issues.includes('timeout') && !attempt.issues.includes('error')) {
+        const extra = controlRetryArgs(base.profile, base.extra, candidate.extra);
+        recovery = { initial_scan_sides: attempt.scan_sides, retry_extra_args: extra };
+        attempt = await controlPair(context, '-retry', extra);
       }
-      const { old, now, scan_sides, issues, sameIncomplete } = attempt;
-      if (attempt.failed) {
-        deltas.push({ dir, error: 'Control scan incomplete', scan_sides, ...(initial_scan_sides ? { initial_scan_sides } : {}) });
+      const { old, now, scan_sides, issues } = attempt;
+      if (issues.some(Boolean)) {
+        deltas.push({ dir, error: 'Control scan incomplete', scan_sides, ...recovery });
         continue;
       }
       const oldKeys = new Set(old.map(key)), newKeys = new Set(now.map(key));
-      const snip = f => withSnippet(resolve(dir), f);
-      deltas.push({ dir, before: old.length, after: now.length, scan_sides, ...(initial_scan_sides ? { initial_scan_sides } : {}),
-        ...(sameIncomplete ? { incomplete_on_both: issues[0] } : {}),
+      const snip = f => withSnippet(directory, f);
+      deltas.push({ dir, before: old.length, after: now.length, scan_sides, ...recovery,
         added: now.filter(f => !oldKeys.has(key(f))).map(snip), removed: old.filter(f => !newKeys.has(key(f))).map(snip),
         emitted: now.map(snip) });
     } catch (error) { deltas.push({ dir, error: String(error.message).slice(-300) }); }

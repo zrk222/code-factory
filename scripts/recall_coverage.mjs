@@ -33,8 +33,8 @@ function packetCoverage(source, scan, findings, path) {
   const matched = findings.has(path);
   if (issue) return { ...source, state: 'partial', reason: issue };
   if (engine?.skipped.has(path)) return { ...source, state: 'skipped', reason: engine.skipped.get(path) ?? 'engine_reported_skip' };
-  if (engine?.scanned.has(path) || matched) return { ...source, state: 'reported_scanned',
-    reason: matched ? 'sarif_finding' : 'engine_scan_paths' };
+  if (engine?.scanned.has(path)) return { ...source, state: 'reported_scanned', reason: 'engine_scan_paths' };
+  if (matched) return { ...source, state: 'reported_scanned', reason: 'sarif_finding' };
   if (engine) return { ...source, state: 'unreported', reason: 'absent_from_engine_paths' };
   return { ...source, state: 'submitted', reason: 'no_engine_coverage_report' };
 }
@@ -58,6 +58,11 @@ export function fileCoverage(changes, { packets, scans, extensions, isTestPath }
   return Object.fromEntries(['old', 'fixed'].map(side => [side, revisionCoverage(changes, {
     side, packets: packets[side], scan: scans[side], extensions, isTestPath,
   })]));
+}
+
+export function coverageGaps(files = []) {
+  return files.filter(file => !['absent', 'excluded'].includes(file.state)
+    && (file.state !== 'reported_scanned' || file.reason === 'sarif_finding')).map(file => file.path);
 }
 
 export function summarizeCoverage(rows) {
