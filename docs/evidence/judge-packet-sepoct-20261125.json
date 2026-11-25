@@ -1,0 +1,822 @@
+{
+ "schema": "factory.judge-packet.v1",
+ "packet_sha256": "3ec98a4db2bce1b2408e385142764fe2ebddd2f4e3e94527c52bbcb220b5369e",
+ "disagreements": [
+  {
+   "position": 0,
+   "item": "c121311f70c5",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/composition/useCopyCode.ts",
+   "line": 48,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   43                })\n   44                .finally(() => {\n   45                  if (copyButton.dataset.isIcon) {\n   46                    copyButton.dataset.tips = msg;\n   47                  } else {\n   48>                   copyButton.innerHTML = msg;\n   49                  }\n   50  \n   51                  clearTimer = window.setTimeout(() => {\n   52                    if (copyButton.dataset.isIcon) {\n   53                      copyButton.dataset.tips = text;",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "msg is the localized successTips/failTips text from editor language config, not user or markdown content."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The live HTML assignment is visible, but the message source is missing."
+   }
+  },
+  {
+   "position": 1,
+   "item": "ba9487e0c7b9",
+   "repository_case": "GHSA-gcr2-9v8m-gq45",
+   "file": "packages/@dicebear/initials/src/index.ts",
+   "line": 38,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   33      options.chars ?? 2,\n   34    );\n   35  \n   36    // prettier-ignore\n   37    const svg = [\n   38>     `<text x=\"50%\" y=\"50%\" font-family=\"${escapeXml(fontFamily)}\" font-size=\"${fontSize}\" font-weight=\"${fontWeight}\" fill=\"${escapeXml(textColor)}\" text-anchor=\"middle\" dy=\"${(fontSize * .356).toFixed(3)}\">${escapeXml(initials)}</text>`,\n   39    ].join('');\n   40  \n   41    return {\n   42      attributes: {\n   43        viewBox: '0 0 100 100',",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "fontSize and fontWeight options are interpolated into the SVG attribute without escaping or numeric coercion, so caller-supplied option strings can break out of the attribute."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Text fields are escaped, but the excerpt omits validation of the remaining attribute values."
+   }
+  },
+  {
+   "position": 2,
+   "item": "5dbd6d89d1ff",
+   "repository_case": "GHSA-pq96-jpmf-w254",
+   "file": "ui/src/plugins/meta/Meta.js",
+   "line": 132,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  127            tag.setAttribute(att, metaType[name][att])\n  128          }\n  129        }\n  130        tag.dataset.qmeta = name\n  131        if (type === 'script') {\n  132>         tag.innerHTML = metaType[name].innerHTML || ''\n  133        }\n  134        document.head.append(tag)\n  135      }\n  136    })\n  137    Object.keys(add.htmlAttr)",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "Script innerHTML is the developer-supplied raw script body of the meta config by design, not untrusted data."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Dynamic script content reaches the document head, but the metadata trust boundary is absent."
+   }
+  },
+  {
+   "position": 3,
+   "item": "606e7d959d8b",
+   "repository_case": "GHSA-6wfj-92cw-88vg",
+   "file": "js/gitDiffReal/generateDiff/index.js",
+   "line": 30,
+   "claimed_weakness": "command injection",
+   "context": "   25    // Single quotes is needed here to avoid .. event not found\n   26    var gitHashCmd1 = 'printf ' + JSON.stringify(str1) + ' | git ' + gitDir + ' hash-object -w --stdin'\n   27    var gitHashCmd2 = 'printf ' + JSON.stringify(str2) + ' | git ' + gitDir + ' hash-object -w --stdin'\n   28  \n   29    var gitHashObj1 = exec(gitHashCmd1, {silent: true})\n   30>   var gitHashObj2 = exec(gitHashCmd2, {silent: true})\n   31  \n   32    /* istanbul ignore else */\n   33    if (gitHashObj1.code === 0 && gitHashObj2.code === 0) {\n   34  \n   35      var sha1 = gitHashObj1.stdout.replace(CR, '')",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "str2 is wrapped only in JSON.stringify double quotes before going to a shell, so $() or backticks in diffed input are executed."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Shell construction uses serialization that does not ensure shell safety, but argument origins are absent."
+   }
+  },
+  {
+   "position": 4,
+   "item": "96eb5f20f582",
+   "repository_case": "GHSA-99rq-75j6-5j9f",
+   "file": "kernel/server/serve.go",
+   "line": 949,
+   "claimed_weakness": "path traversal",
+   "context": "  944  \t// \u52a0\u5bc6\u7b14\u8bb0\u672c\u7684\u8d44\u6e90\u662f\u5bc6\u6587\uff0cimaging.Open \u65e0\u6cd5\u89e3\u6790\uff0c\u8df3\u8fc7\u7f29\u7565\u56fe\u751f\u6210\uff08\u7531 serveEncryptedAsset \u89e3\u5bc6\u8f93\u51fa\u539f\u56fe\uff09\n  945  \tif model.IsEncryptedAssetPath(assetAbsPath) {\n  946  \t\treturn false\n  947  \t}\n  948  \tif style := context.Query(\"style\"); style == \"thumb\" && model.NeedGenerateAssetsThumbnail(assetAbsPath) { // \u8bf7\u6c42\u7f29\u7565\u56fe\n  949> \t\tthumbnailPath := filepath.Join(util.TempDir, \"thumbnails\", \"assets\", requestPath)\n  950  \t\tif !gulu.File.IsExist(thumbnailPath) {\n  951  \t\t\t// \u5982\u679c\u7f29\u7565\u56fe\u4e0d\u5b58\u5728\uff0c\u5219\u751f\u6210\u7f29\u7565\u56fe\n  952  \t\t\terr := model.GenerateAssetsThumbnail(assetAbsPath, thumbnailPath)\n  953  \t\t\tif err != nil {\n  954  \t\t\t\tlogging.LogErrorf(\"generate thumbnail failed: %s\", err)",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "The /assets handler rejects any requestPath containing '..' and confines the asset path before serveThumbnail, so the join cannot escape the thumbnail dir."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "A request path contributes to a write destination, but earlier containment checks are absent from the excerpt."
+   }
+  },
+  {
+   "position": 5,
+   "item": "bad875d6293c",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 162,
+   "claimed_weakness": "command injection",
+   "context": "  157  }\n  158  \n  159  export function listParentCommits(input: { sha: string }): string[] | null {\n  160    const limit = 200;\n  161    try {\n  162>     execSync(`git fetch --depth=${limit} origin ${input.sha}`);\n  163    } catch (error) {\n  164      if (error instanceof Error && error.message.includes(\"not our ref\")) {\n  165        return [];\n  166      }\n  167    }",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "The sha passed to listParentCommits is a CI-provided commit hash rather than attacker-chosen text, so the interpolation is not a realistic injection point."
+   },
+   "reviewer_2": {
+    "verdict": "TP",
+    "reason": "An exported function passes a caller-supplied revision directly into a shell command."
+   }
+  },
+  {
+   "position": 6,
+   "item": "16f122fc004f",
+   "repository_case": "GHSA-2cmg-v53w-8xfp",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/confluenceToMarkdown.ts",
+   "line": 165,
+   "claimed_weakness": "path traversal",
+   "context": "  160                'This document looks to exist inside the GitHub repo. Will end the action.',\n  161              );\n  162            }\n  163          }\n  164  \n  165>         await fs.writeFile(repoFileDir, YAML.stringify(mkdocsFile));\n  166  \n  167          // This grabs the confluence html and converts it to markdown and adds attachments\n  168          const html = getConfluenceDoc.results[0].body.export_view.value;\n  169          const markdownToPublish = NodeHtmlMarkdown.translate(html);\n  170          let newString: string = markdownToPublish;",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "repoFileDir is built from the user-supplied repoUrl filepath with no normalization or containment check before writeFile in the backend workspace."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The write is visible, but construction and validation of its destination are missing."
+   }
+  },
+  {
+   "position": 7,
+   "item": "6a4afde2db72",
+   "repository_case": "GHSA-65hg-cf3f-5m39",
+   "file": "ts/Core/Renderer/HTML/AST.ts",
+   "line": 614,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  609              //    https://issues.chromium.org/issues/40222135\n  610          }\n  611  \n  612          if (!doc) {\n  613              const body = createElement('div');\n  614>             body.innerHTML = markup;\n  615              doc = { body };\n  616          }\n  617  \n  618          const appendChildNodes = (\n  619              node: ChildNode,",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "In the fallback path the markup is assigned to innerHTML of a live-document div before the allowlist filter runs, so event-handler payloads in chart text execute."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Markup is parsed in a detached element, but later filtering and insertion are not shown."
+   }
+  },
+  {
+   "position": 8,
+   "item": "bfbe08cd450c",
+   "repository_case": "GHSA-3wgp-x9p5-c7cc",
+   "file": "packages/base-driver/lib/express/static.ts",
+   "line": 64,
+   "claimed_weakness": "path traversal",
+   "context": "   59    const template = await getTemplate(page);\n   60    res.send(template(params));\n   61  }\n   62  \n   63  async function getTemplate(templateName: string): Promise<(params: TemplateParams) => string> {\n   64>   const content = await fs.readFile(path.resolve(STATIC_DIR, 'test', templateName));\n   65    return compileLodashTemplate(content.toString());\n   66  }\n   67  \n   68  function resolveStaticDir(): string {\n   69    const fromDir = __dirname;",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "templateName is always a hard-coded template file name from internal callers."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The template path is resolved without local containment, but the page value's origin is absent."
+   }
+  },
+  {
+   "position": 10,
+   "item": "b70592f060f2",
+   "repository_case": "GHSA-c6gr-qvv4-5v3f",
+   "file": "src/purify.ts",
+   "line": 1625,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1620  \n 1621      /* Use createHTMLDocument in case DOMParser is not available */\n 1622      if (!doc || !doc.documentElement) {\n 1623        doc = implementation.createDocument(NAMESPACE, 'template', null);\n 1624        try {\n 1625>         doc.documentElement.innerHTML = IS_EMPTY_INPUT\n 1626            ? emptyHTML\n 1627            : dirtyPayload;\n 1628        } catch (_) {\n 1629          // Syntax error if dirtyPayload is invalid xml\n 1630        }",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "DOMPurify parses the dirty payload into an inert document created via createDocument for sanitization; this is not an execution sink."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Input is parsed into a separate document, and subsequent sanitization or insertion is not shown."
+   }
+  },
+  {
+   "position": 11,
+   "item": "3d4caed45da7",
+   "repository_case": "GHSA-8wqc-v2q8-vff2",
+   "file": "packages/commons-server/src/libs/server/server.ts",
+   "line": 2321,
+   "claimed_weakness": "path traversal",
+   "context": " 2316      const resolvePath = (path: string) => {\n 2317        const isPathAbsolute = isAbsolute(path);\n 2318  \n 2319        return isPathAbsolute\n 2320          ? resolve(path)\n 2321>         : resolve(this.options.environmentDirectory, path);\n 2322      };\n 2323      // Convert backslashes to forward slashes (Windows compatibility)\n 2324      const rawFilePath = filePath.replace(/\\\\(?!\\.)/g, '/');\n 2325  \n 2326      // Check if there is any templating helper in the file path",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "Request-templated file paths are resolved here and only checked with startsWith against the base dir without a trailing separator, letting traversal reach sibling directories sharing the prefix."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The resolver permits paths outside the base, but the access policy and use of the result are absent."
+   }
+  },
+  {
+   "position": 12,
+   "item": "b5b7017de8d9",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 239,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  234          logger.debug(f'call method: {method}, request_id: {request_id}')\n  235          data = pickle.dumps(dict(request_id=request_id, method=method, args=args, kwargs=kwargs))\n  236          self.sync_socket.send(data)\n  237  \n  238          reply = self.sync_socket.recv()\n  239>         reply = pickle.loads(reply)\n  240          while reply['request_id'] != request_id:\n  241              self._set_reply(reply)\n  242              reply = self.sync_socket.recv()\n  243              reply = pickle.loads(reply)\n  244  ",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "The RPC client unpickles replies from its own server on localhost; those replies are pickled by the trusted engine process, not by an attacker."
+   },
+   "reviewer_2": {
+    "verdict": "TP",
+    "reason": "The client deserializes bytes received from a socket before checking the reply identifier."
+   }
+  },
+  {
+   "position": 13,
+   "item": "d23200c1663b",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 243,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  238          reply = self.sync_socket.recv()\n  239          reply = pickle.loads(reply)\n  240          while reply['request_id'] != request_id:\n  241              self._set_reply(reply)\n  242              reply = self.sync_socket.recv()\n  243>             reply = pickle.loads(reply)\n  244  \n  245          logger.debug(f'recv reply request_id: {request_id}')\n  246          if reply['success']:\n  247              return reply['result']\n  248          else:",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "The RPC client unpickles replies from its own server on localhost; those replies are pickled by the trusted engine process, not by an attacker."
+   },
+   "reviewer_2": {
+    "verdict": "TP",
+    "reason": "Additional socket replies are deserialized before their identifiers are checked."
+   }
+  },
+  {
+   "position": 14,
+   "item": "d24890aadae6",
+   "repository_case": "GHSA-8mcc-hrx5-hvxc",
+   "file": "git/objects/submodule/base.py",
+   "line": 370,
+   "claimed_weakness": "path traversal",
+   "context": "  365          if cls._need_gitfile_submodules(repo.git):\n  366              kwargs[\"separate_git_dir\"] = module_abspath\n  367              module_abspath_dir = osp.dirname(module_abspath)\n  368              if not osp.isdir(module_abspath_dir):\n  369                  os.makedirs(module_abspath_dir)\n  370>             module_checkout_path = osp.join(repo.working_tree_dir, path)  # type: ignore[arg-type]\n  371  \n  372          if url.startswith(\"../\"):\n  373              remote_name = cast(\"RemoteReference\", repo.active_branch.tracking_branch()).remote_name\n  374              repo_remote_url = repo.remote(remote_name).url\n  375              url = os.path.join(repo_remote_url, url)",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "During update the submodule path from an attacker-controlled .gitmodules is joined to the working tree without validation (only the name is validated), allowing checkout outside the repo."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The join has no local containment check, but earlier path validation and subsequent use are missing."
+   }
+  },
+  {
+   "position": 15,
+   "item": "34e43b5171fc",
+   "repository_case": "GHSA-6wfj-92cw-88vg",
+   "file": "js/gitDiffReal/generateDiff/index.js",
+   "line": 29,
+   "claimed_weakness": "command injection",
+   "context": "   24  \n   25    // Single quotes is needed here to avoid .. event not found\n   26    var gitHashCmd1 = 'printf ' + JSON.stringify(str1) + ' | git ' + gitDir + ' hash-object -w --stdin'\n   27    var gitHashCmd2 = 'printf ' + JSON.stringify(str2) + ' | git ' + gitDir + ' hash-object -w --stdin'\n   28  \n   29>   var gitHashObj1 = exec(gitHashCmd1, {silent: true})\n   30    var gitHashObj2 = exec(gitHashCmd2, {silent: true})\n   31  \n   32    /* istanbul ignore else */\n   33    if (gitHashObj1.code === 0 && gitHashObj2.code === 0) {\n   34  ",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "str1 is wrapped only in JSON.stringify double quotes before going to a shell, so $() or backticks in diffed input are executed."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Shell construction uses serialization that does not ensure shell safety, but argument origins are absent."
+   }
+  },
+  {
+   "position": 16,
+   "item": "36b0839042d5",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 141,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  136  \n  137        checked = i - idx > 0 ? '' : 'checked';\n  138  \n  139        labels += `\n  140          <li>\n  141>           <input\n  142              type=\"radio\"\n  143              id=\"label-${prefix}-codetab-label-1-${_opts.editorId}-${idx}-${i - idx}\"\n  144              name=\"${prefix}-codetab-label-${_opts.editorId}-${idx}\"\n  145              class=\"${className}\"\n  146              ${checked}",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "The input tag only interpolates the prefix constant, editorId, numeric indices and a constant checked flag."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Attributes interpolate values whose validation and provenance are absent."
+   }
+  },
+  {
+   "position": 17,
+   "item": "887b0e0a41e5",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 168,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  163              role=\"presentation\">\n  164            ${defaultRender!(tokens, i, options, env, slf)}\n  165          </div>`;\n  166  \n  167        langs += `\n  168>         <input\n  169            type=\"radio\"\n  170            name=\"${prefix}-codetab-lang-${_opts.editorId}-${idx}\"\n  171            class=\"${className}\"\n  172            ${checked}\n  173            role=\"presentation\">",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "The input tag only interpolates the prefix constant, editorId, numeric indices and a constant checked flag."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Attributes interpolate values whose validation and provenance are absent."
+   }
+  },
+  {
+   "position": 18,
+   "item": "9113fe0d8df3",
+   "repository_case": "GHSA-xhq9-whgq-49j5",
+   "file": "packages/dashboard/src/lib/components/shared/table-cell/order-table-cell-components.tsx",
+   "line": 54,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   49  \n   50      // Strip HTML tags and decode HTML entities\n   51      const textContent = useMemo(() => {\n   52          if (!value) return '';\n   53          const div = document.createElement('div');\n   54>         div.innerHTML = value;\n   55          return div.textContent ?? '';\n   56      }, [value]);\n   57  \n   58      const shortLength = 100;\n   59      const maxLength = 500;",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "Stored rich-text descriptions are assigned to innerHTML of a live-document div, so img onerror payloads execute in the admin dashboard before textContent is read."
+   },
+   "reviewer_2": {
+    "verdict": "FP",
+    "reason": "The shown flow keeps the parsing element detached and returns only plain text."
+   }
+  },
+  {
+   "position": 19,
+   "item": "b6d3b6e5c9a2",
+   "repository_case": "GHSA-rhp5-r9x4-f5g2",
+   "file": "nltk/parse/transitionparser.py",
+   "line": 560,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  555          :return: list (DependencyGraph) with the 'head' and 'rel' information\n  556          \"\"\"\n  557          result = []\n  558          # First load the model\n  559          with open(modelFile, \"rb\") as f:\n  560>             model = pickle_load(f)\n  561          operation = Transition(self._algorithm)\n  562  \n  563          for depgraph in depgraphs:\n  564              conf = Configuration(depgraph)\n  565              while len(conf.buffer) > 0:",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "A caller-supplied model file is unpickled with an unrestricted (warning-only) unpickler, so a malicious model file runs code."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The model is deserialized from disk, but the model file's trust boundary is absent."
+   }
+  },
+  {
+   "position": 22,
+   "item": "be83de90c058",
+   "repository_case": "GHSA-3753-m2x2-q623",
+   "file": "packages/renderers/doc/src/render/html.ts",
+   "line": 270,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  265    return img;\n  266  }\n  267  \n  268  function renderAttachmentNode(node: Extract<InlineNode, { type: 'attachment' }>): string {\n  269    const label = escapeHtml(node.asset.name || 'embedded-file');\n  270>   const inner = `<a class=\"msdoc-attachment\" href=\"${escapeHtml(node.asset.dataUrl)}\" download=\"${label}\">\ud83d\udcce ${label}</a>`;\n  271    if (node.href) {\n  272      return `<a class=\"msdoc-link\" href=\"${escapeHtml(node.href)}\" target=\"_blank\" rel=\"noreferrer noopener\">${inner}</a>`;\n  273    }\n  274    return inner;\n  275  }",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "Both the data URL and label are HTML-escaped and the value is a generated data: URL for an embedded asset."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "HTML escaping protects attribute structure, but the URL's allowed schemes and provenance are absent."
+   }
+  },
+  {
+   "position": 23,
+   "item": "0ef50d78feab",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 154,
+   "claimed_weakness": "command injection",
+   "context": "  149    return null;\n  150  }\n  151  \n  152  function listShas(path: string, maxCount?: number): string[] {\n  153    const maxCountArg = maxCount ? `--max-count=${maxCount}` : \"\";\n  154>   const raw = execSync(`git log --format=\"%H\" ${maxCountArg} ${path}`.trim());\n  155    const shas = raw.toString().trim().split(\"\\n\");\n  156    return shas;\n  157  }\n  158  \n  159  export function listParentCommits(input: { sha: string }): string[] | null {",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "listShas interpolates argos/<branch> refs derived from CI branch names (attacker-controllable via PR branch names) unquoted into execSync."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The shell command interpolates a path directly, but its caller and validation are missing."
+   }
+  },
+  {
+   "position": 24,
+   "item": "a67fb15d60d8",
+   "repository_case": "GHSA-p223-2wr2-j562",
+   "file": "packages/payload/src/uploads/deleteAssociatedFiles.ts",
+   "line": 53,
+   "claimed_weakness": "path traversal",
+   "context": "   48  \n   49        for (const size of sizes) {\n   50          const sizeToDelete = `${staticPath}/${size.filename}`\n   51          try {\n   52            if (await fileExists(sizeToDelete)) {\n   53>             await fs.unlink(sizeToDelete)\n   54            }\n   55          } catch (ignore) {\n   56            throw new ErrorDeletingFile(req.t)\n   57          }\n   58        }",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "Stored size filenames are concatenated to staticDir and unlinked with no basename or containment check."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Deletion uses a stored filename, but how it is derived or constrained is absent."
+   }
+  },
+  {
+   "position": 25,
+   "item": "3b3a6256b622",
+   "repository_case": "GHSA-75qf-886x-5xf2",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/helpers.ts",
+   "line": 163,
+   "claimed_weakness": "path traversal",
+   "context": "  158          },\n  159        });\n  160        if (!res.ok) {\n  161          throw await ResponseError.fromResponse(res);\n  162        } else if (res.body !== null) {\n  163>         fs.openSync(`${workspace}/${mkdocsDir}docs/img/${downloadTitle}`, 'w');\n  164          const writeStream = fs.createWriteStream(\n  165            `${workspace}/${mkdocsDir}docs/img/${downloadTitle}`,\n  166          );\n  167          // TODO(freben): This cast is sketchy, but for some reason the node types don't quite line up here\n  168          // https://stackoverflow.com/questions/44672942/stream-response-to-file-using-fetch-api-and-fs-createwritestream/73879265#73879265",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "The path combines the user-supplied repoUrl directory and the Confluence attachment title without sanitization before opening the file for writing."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The destination embeds a download title, but its derivation and validation are missing."
+   }
+  },
+  {
+   "position": 27,
+   "item": "df6369aedf18",
+   "repository_case": "GHSA-59cr-6r3x-644w",
+   "file": "git/objects/submodule/base.py",
+   "line": 380,
+   "claimed_weakness": "path traversal",
+   "context": "  375              allow_unsafe_options = True\n  376              kwargs[\"separate_git_dir\"] = module_abspath\n  377              module_abspath_dir = osp.dirname(module_abspath)\n  378              if not osp.isdir(module_abspath_dir):\n  379                  os.makedirs(module_abspath_dir)\n  380>             module_checkout_path = osp.join(repo.working_tree_dir, path)  # type: ignore[arg-type]\n  381  \n  382          if url.startswith(\"../\"):\n  383              remote_name = cast(\"RemoteReference\", repo.active_branch.tracking_branch()).remote_name\n  384              repo_remote_url = repo.remote(remote_name).url\n  385              url = os.path.join(repo_remote_url, url)",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "During update the submodule path from an attacker-controlled .gitmodules is joined to the working tree without validation (only the name is validated), allowing checkout outside the repo."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The join has no local containment check, but earlier path validation and subsequent use are missing."
+   }
+  },
+  {
+   "position": 28,
+   "item": "53f70c545e41",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/composition/useCopyCode.ts",
+   "line": 55,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   50  \n   51                  clearTimer = window.setTimeout(() => {\n   52                    if (copyButton.dataset.isIcon) {\n   53                      copyButton.dataset.tips = text;\n   54                    } else {\n   55>                     copyButton.innerHTML = text!;\n   56                    }\n   57                  }, 1500);\n   58                });\n   59            };\n   60  ",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "text is the localized copy-button label from editor language config, not user or markdown content."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The live HTML assignment is visible, but the restored text's source is missing."
+   }
+  },
+  {
+   "position": 29,
+   "item": "0ef50d78feab",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 154,
+   "claimed_weakness": "command injection",
+   "context": "  149    return null;\n  150  }\n  151  \n  152  function listShas(path: string, maxCount?: number): string[] {\n  153    const maxCountArg = maxCount ? `--max-count=${maxCount}` : \"\";\n  154>   const raw = execSync(`git log --format=\"%H\" ${maxCountArg} ${path}`.trim());\n  155    const shas = raw.toString().trim().split(\"\\n\");\n  156    return shas;\n  157  }\n  158  \n  159  export function listParentCommits(input: { sha: string }): string[] | null {",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "listShas interpolates argos/<branch> refs derived from CI branch names (attacker-controllable via PR branch names) unquoted into execSync."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The shell command interpolates a path directly, but its caller and validation are missing."
+   }
+  },
+  {
+   "position": 30,
+   "item": "80067240e0bb",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 158,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  153            </label>\n  154          </li>`;\n  155  \n  156        pres += `\n  157          <div role=\"tabpanel\">\n  158>           <input\n  159              type=\"radio\"\n  160              name=\"${prefix}-codetab-pre-${_opts.editorId}-${idx}\"\n  161              class=\"${className}\"\n  162              ${checked}\n  163              role=\"presentation\">",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "The input tag only interpolates the prefix constant, editorId, numeric indices and a constant checked flag."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Attributes interpolate values whose validation and provenance are absent."
+   }
+  },
+  {
+   "position": 31,
+   "item": "2f653553788e",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 67,
+   "claimed_weakness": "command injection",
+   "context": "   62  /**\n   63   * Run git merge-base command.\n   64   */\n   65  function gitMergeBase(input: { base: string; head: string }) {\n   66    try {\n   67>     return execSync(`git merge-base ${input.head} ${input.base}`)\n   68        .toString()\n   69        .trim();\n   70    } catch (error) {\n   71      // When a merge base is not found, it returns a status of 1 with no error.\n   72      // In this case it's not a fatal error, just no merge-base found.",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "Base/head branch names from the CI environment (attacker-controllable via PR branch names) are interpolated unquoted into an execSync shell command."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Revision parameters reach the shell unquoted, but caller validation and provenance are absent."
+   }
+  },
+  {
+   "position": 32,
+   "item": "5b55151505df",
+   "repository_case": "GHSA-pq96-jpmf-w254",
+   "file": "ui/src/plugins/meta/Meta.js",
+   "line": 224,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  219  \n  220    ctx.bodyTags +=\n  221      Object.keys(data.noscript)\n  222        .map(\n  223          name =>\n  224>           `<noscript data-qmeta=\"${name}\">${data.noscript[name]}</noscript>`\n  225        )\n  226        .join('') +\n  227      `<script${nonce} id=\"qmeta-init\">window.__Q_META__=${delete data.noscript && JSON.stringify(data)}</script>`\n  228  }\n  229  ",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "noscript content is developer-provided raw HTML by design of the meta API, and the name is a config key."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Metadata contributes raw HTML, but its origin and any earlier filtering are not shown."
+   }
+  },
+  {
+   "position": 33,
+   "item": "410ac142fca5",
+   "repository_case": "GHSA-2cmg-v53w-8xfp",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/confluenceToMarkdown.ts",
+   "line": 180,
+   "claimed_weakness": "path traversal",
+   "context": "  175              : new RegExp(`(\\\\!\\\\[.*?\\\\]\\\\()(.*?${product[0]}.*?)(\\\\))`, 'gi');\n  176            newString = newString.replace(regex, `$1./img/${product[1]}$3`);\n  177          });\n  178  \n  179          ctx.logger.info(`Adding new file to repo.`);\n  180>         await fs.outputFile(\n  181            `${dirPath}/${filePathToMkdocs}docs/${titleWithSpaces.replace(\n  182              /\\s+/g,\n  183              '-',\n  184            )}.md`,\n  185            newString,",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "The output path combines the user-supplied repoUrl directory and the page title with no containment check before outputFile."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Whitespace replacement does not ensure containment, but title origin and earlier checks are missing."
+   }
+  },
+  {
+   "position": 34,
+   "item": "71414e42998c",
+   "repository_case": "GHSA-p223-2wr2-j562",
+   "file": "packages/payload/src/uploads/deleteAssociatedFiles.ts",
+   "line": 37,
+   "claimed_weakness": "path traversal",
+   "context": "   32  \n   33      const fileToDelete = `${staticPath}/${doc.filename as string}`\n   34  \n   35      try {\n   36        if (await fileExists(fileToDelete)) {\n   37>         await fs.unlink(fileToDelete)\n   38        }\n   39      } catch (ignore) {\n   40        throw new ErrorDeletingFile(req.t)\n   41      }\n   42  ",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "The stored document filename is concatenated to staticDir and unlinked with no basename or containment check."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Deletion uses a stored filename, but how it is derived or constrained is absent."
+   }
+  },
+  {
+   "position": 35,
+   "item": "2f653553788e",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 67,
+   "claimed_weakness": "command injection",
+   "context": "   62  /**\n   63   * Run git merge-base command.\n   64   */\n   65  function gitMergeBase(input: { base: string; head: string }) {\n   66    try {\n   67>     return execSync(`git merge-base ${input.head} ${input.base}`)\n   68        .toString()\n   69        .trim();\n   70    } catch (error) {\n   71      // When a merge base is not found, it returns a status of 1 with no error.\n   72      // In this case it's not a fatal error, just no merge-base found.",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "Base/head branch names from the CI environment (attacker-controllable via PR branch names) are interpolated unquoted into an execSync shell command."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Revision parameters reach the shell unquoted, but caller validation and provenance are absent."
+   }
+  },
+  {
+   "position": 36,
+   "item": "b79c24025d07",
+   "repository_case": "GHSA-27mw-82g8-phjj",
+   "file": "packages/kit/src/runtime/server/page/render.js",
+   "line": 686,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  681  \t/**\n  682  \t * @param {string} href\n  683  \t * @param {string[]} attributes\n  684  \t */\n  685  \tadd_stylesheet(href, attributes) {\n  686> \t\tthis.#stylesheet_links.push(`<link href=\"${href}\" ${attributes.join(' ')}>`);\n  687  \t}\n  688  \n  689  \t/**\n  690  \t * @param {string} href\n  691  \t * @param {string[]} attributes",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "href is a build-manifest asset path prefixed with configured or depth-derived relative base, not attacker-controlled."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The helper formats raw link attributes, but the excerpt does not show whether callers pre-escape them."
+   }
+  },
+  {
+   "position": 37,
+   "item": "ebe514b06a5b",
+   "repository_case": "GHSA-pq96-jpmf-w254",
+   "file": "ui/src/plugins/meta/Meta.js",
+   "line": 169,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  164      for (const att in metaType) {\n  165        const attrs = Object.keys(metaType[att])\n  166          .filter(item => item !== 'innerHTML')\n  167          .map(getAttr(metaType[att]))\n  168  \n  169>       output += `<${type} ${attrs.join(' ')} data-qmeta=\"${att}\">`\n  170        if (type === 'script') {\n  171          output += (metaType[att].innerHTML || '') + '</script>'\n  172        }\n  173      }\n  174    })",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "During SSR, meta/link attribute values (often dynamic page data) are interpolated into quoted attributes with no HTML escaping."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The renderer emits raw metadata markup, but the origin and validation of the metadata are missing."
+   }
+  },
+  {
+   "position": 39,
+   "item": "6824d23c0f14",
+   "repository_case": "GHSA-gqvg-gmmx-x4hm",
+   "file": "mlflow/statsmodels/__init__.py",
+   "line": 310,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  305  \n  306  \n  307  def _load_model(path):\n  308      import statsmodels.iolib.api as smio\n  309  \n  310>     return smio.load_pickle(path)\n  311  \n  312  \n  313  def _load_pyfunc(path):\n  314      \"\"\"\n  315      Load PyFunc implementation. Called by ``pyfunc.load_model``.",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "statsmodels load_pickle unpickles a model artifact that may come from a shared tracking server or registry, so a crafted model runs code."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The model load uses unsafe deserialization, but the excerpt omits who controls the artifact."
+   }
+  },
+  {
+   "position": 40,
+   "item": "eae5173fdb9d",
+   "repository_case": "GHSA-2cmg-v53w-8xfp",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/confluenceToMarkdown.ts",
+   "line": 128,
+   "claimed_weakness": "path traversal",
+   "context": "  123            `/rest/api/content/${getConfluenceDoc.results[0].id}/child/attachment`,\n  124            confluenceConfig,\n  125          );\n  126  \n  127          if (getDocAttachments.results.length) {\n  128>           fs.mkdirSync(`${dirPath}/${filePathToMkdocs}docs/img`, {\n  129              recursive: true,\n  130            });\n  131            productArray = await getAndWriteAttachments(\n  132              getDocAttachments,\n  133              dirPath,",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "The mkdir path uses the user-supplied repoUrl directory with no containment check, allowing directories outside the workspace."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Directory creation uses a constructed path whose inputs and containment checks are missing."
+   }
+  },
+  {
+   "position": 42,
+   "item": "db5ffcbacff7",
+   "repository_case": "GHSA-9q4r-4842-93vw",
+   "file": "internal-packages/tsql/src/query/printer.ts",
+   "line": 481,
+   "claimed_weakness": "SQL injection",
+   "context": "  476      const space = this.pretty ? `\\n${this.indent(1)}` : \" \";\n  477      const comma = this.pretty ? `,\\n${this.indent(1)}` : \", \";\n  478  \n  479      // Build SQL clauses\n  480      const clauses: (string | null)[] = [\n  481>       `SELECT${space}${node.distinct ? \"DISTINCT \" : \"\"}${columns.join(comma)}`,\n  482        joinedTables.length > 0 ? `FROM${space}${joinedTables.join(space)}` : null,\n  483        arrayJoin || null,\n  484        prewhere ? `PREWHERE${space}${prewhere}` : null,\n  485        whereStr ? `WHERE${space}${whereStr}` : null,\n  486        groupBy && groupBy.length > 0 ? `GROUP BY${space}${groupBy.join(comma)}` : null,",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "This line only joins column fragments already produced via escaped identifiers and parameterized constants."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "A SQL formatter combines prebuilt clauses, but their escaping and execution context are missing."
+   }
+  },
+  {
+   "position": 43,
+   "item": "b7d92a742966",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 89,
+   "claimed_weakness": "command injection",
+   "context": "   84  /**\n   85   * Run git fetch with a specific ref and depth.\n   86   */\n   87  function gitFetch(input: { ref: string; depth: number; target: string }) {\n   88    execSync(\n   89>     `git fetch --force --update-head-ok --depth ${input.depth} origin ${input.ref}:${input.target}`,\n   90    );\n   91  }\n   92  \n   93  /**\n   94   * Check if an error is an exec error that includes stderr.",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "The ref is a CI branch name (attacker-controllable via PR branch names) interpolated unquoted into an execSync shell command."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The shell interpolates ref parameters, but the excerpt omits their provenance and caller validation."
+   }
+  },
+  {
+   "position": 45,
+   "item": "32e582949803",
+   "repository_case": "GHSA-6688-9rhm-gjv2",
+   "file": "src/purify.ts",
+   "line": 1625,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1620  \n 1621      /* Use createHTMLDocument in case DOMParser is not available */\n 1622      if (!doc || !doc.documentElement) {\n 1623        doc = implementation.createDocument(NAMESPACE, 'template', null);\n 1624        try {\n 1625>         doc.documentElement.innerHTML = IS_EMPTY_INPUT\n 1626            ? emptyHTML\n 1627            : dirtyPayload;\n 1628        } catch (_) {\n 1629          // Syntax error if dirtyPayload is invalid xml\n 1630        }",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "DOMPurify parses the dirty payload into an inert document created via createDocument for sanitization; this is not an execution sink."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Input is parsed into a separate document, and subsequent sanitization or insertion is not shown."
+   }
+  },
+  {
+   "position": 47,
+   "item": "ca76ef479d52",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 98,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   93          <${tagContainer} ${slf.renderAttrs(tmpToken as Token)}>\n   94            <${tagHeader} class=\"${prefix}-code-head\">\n   95              <div class=\"${prefix}-code-flag\"><span></span><span></span><span></span></div>\n   96              <div class=\"${prefix}-code-action\">\n   97                <span class=\"${prefix}-code-lang\">${md.utils.escapeHtml(tokens[idx].info.trim())}</span>\n   98>               <span class=\"${prefix}-copy-button\" data-tips=\"${codeCodeText}\"${isIcon ? ' data-is-icon=true' : ''}>${copyBtnHtml}</span>\n   99                ${_opts.extraTools instanceof Function ? _opts.extraTools({ lang: tokens[idx].info.trim() }) : _opts.extraTools || ''}\n  100                ${tagContainer === 'details' ? collapseTips : ''}\n  101              </div>\n  102            </${tagHeader}>\n  103            ${codeRendered}",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "data-tips and copyBtnHtml come from editor language config and custom icon config supplied by the developer, not markdown content."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The renderer interpolates attribute and HTML values whose preparation is not shown."
+   }
+  },
+  {
+   "position": 49,
+   "item": "cb21576d4da1",
+   "repository_case": "GHSA-6wfj-92cw-88vg",
+   "file": "js/gitDiffReal/generateDiff/index.js",
+   "line": 64,
+   "claimed_weakness": "command injection",
+   "context": "   59            flags += ' ' + options.flags\n   60          }\n   61  \n   62          var newCommand = 'git ' + gitDir + ' diff ' + sha1 + ' ' + sha2 + flags\n   63  \n   64>         diffObj = exec(newCommand, {silent: true})\n   65  \n   66          if (diffObj.code === 129 && diffObj.stderr.indexOf('usage') > -1) {\n   67            logger.warn('Ignoring invalid git diff options: ' + options.flags)\n   68            logger.info('For valid git diff options refer to ' + config.gitDiffOptionsUrl)\n   69            if (options.flags === DEFAULTS.flags) {",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "The SHAs are regex-validated hex and the flags/gitDir are developer-supplied API options, not untrusted input."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "Options enter the shell command, but their trust boundary and earlier validation are missing."
+   }
+  },
+  {
+   "position": 50,
+   "item": "d7f1f65ed846",
+   "repository_case": "GHSA-27mw-82g8-phjj",
+   "file": "packages/kit/src/runtime/server/page/render.js",
+   "line": 694,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  689  \t/**\n  690  \t * @param {string} href\n  691  \t * @param {string[]} attributes\n  692  \t */\n  693  \tadd_link_tag(href, attributes) {\n  694> \t\tthis.#link_tags.push(`<link href=\"${href}\" ${attributes.join(' ')}>`);\n  695  \t}\n  696  \n  697  \t/** @param {string} tag */\n  698  \tadd_http_equiv(tag) {\n  699  \t\tthis.#http_equiv.push(tag);",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "href is a build-manifest asset path prefixed with configured or depth-derived relative base, not attacker-controlled."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The helper formats raw link attributes, but the excerpt does not show whether callers pre-escape them."
+   }
+  },
+  {
+   "position": 51,
+   "item": "e766fee9fe20",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 185,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  180            <div class=\"${prefix}-code-flag\">\n  181              <ul class=\"${prefix}-codetab-label\" role=\"tablist\">${labels}</ul>\n  182            </div>\n  183            <div class=\"${prefix}-code-action\">\n  184              <span class=\"${prefix}-codetab-lang\">${langs}</span>\n  185>             <span class=\"${prefix}-copy-button\" data-tips=\"${codeCodeText}\"${isIcon ? ' data-is-icon=true' : ''}>${copyBtnHtml}</span>\n  186              ${_opts.extraTools instanceof Function ? _opts.extraTools({ lang: tokens[idx].info.trim() }) : _opts.extraTools || ''}\n  187              ${tagContainer === 'details' ? collapseTips : ''}\n  188            </div>\n  189          </${tagHeader}>\n  190          ${pres}",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "data-tips and copyBtnHtml come from editor language config and custom icon config supplied by the developer, not markdown content."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The renderer interpolates attribute and HTML values whose preparation is not shown."
+   }
+  },
+  {
+   "position": 52,
+   "item": "78b25ba978fd",
+   "repository_case": "GHSA-75qf-886x-5xf2",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/helpers.ts",
+   "line": 164,
+   "claimed_weakness": "path traversal",
+   "context": "  159        });\n  160        if (!res.ok) {\n  161          throw await ResponseError.fromResponse(res);\n  162        } else if (res.body !== null) {\n  163          fs.openSync(`${workspace}/${mkdocsDir}docs/img/${downloadTitle}`, 'w');\n  164>         const writeStream = fs.createWriteStream(\n  165            `${workspace}/${mkdocsDir}docs/img/${downloadTitle}`,\n  166          );\n  167          // TODO(freben): This cast is sketchy, but for some reason the node types don't quite line up here\n  168          // https://stackoverflow.com/questions/44672942/stream-response-to-file-using-fetch-api-and-fs-createwritestream/73879265#73879265\n  169          Readable.fromWeb(res.body as any).pipe(writeStream);",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "The path combines the user-supplied repoUrl directory and the Confluence attachment title without sanitization before the write stream is created."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The stream destination embeds a download title whose derivation and validation are missing."
+   }
+  },
+  {
+   "position": 53,
+   "item": "01cd6f628776",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 282,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  277          self._listen_task = asyncio.current_task()\n  278          self.running = True\n  279          try:\n  280              while self.running:\n  281                  reply = await self.async_socket.recv()\n  282>                 reply = pickle.loads(reply)\n  283                  self._set_reply(reply)\n  284          except zmq.ZMQError:\n  285              logger.exception('AsyncRPCClient listen error')\n  286          finally:\n  287              self.running = False",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "The async RPC client unpickles replies from its own localhost server, which are pickled by the trusted engine process."
+   },
+   "reviewer_2": {
+    "verdict": "TP",
+    "reason": "The listener deserializes socket data before dispatching the reply for processing."
+   }
+  },
+  {
+   "position": 54,
+   "item": "b7d92a742966",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 89,
+   "claimed_weakness": "command injection",
+   "context": "   84  /**\n   85   * Run git fetch with a specific ref and depth.\n   86   */\n   87  function gitFetch(input: { ref: string; depth: number; target: string }) {\n   88    execSync(\n   89>     `git fetch --force --update-head-ok --depth ${input.depth} origin ${input.ref}:${input.target}`,\n   90    );\n   91  }\n   92  \n   93  /**\n   94   * Check if an error is an exec error that includes stderr.",
+   "reviewer_1": {
+    "verdict": "TP",
+    "reason": "The ref is a CI branch name (attacker-controllable via PR branch names) interpolated unquoted into an execSync shell command."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The shell interpolates ref parameters, but the excerpt omits their provenance and caller validation."
+   }
+  },
+  {
+   "position": 55,
+   "item": "b4b879dd7bf6",
+   "repository_case": "GHSA-27mw-82g8-phjj",
+   "file": "packages/kit/src/runtime/server/page/render.js",
+   "line": 589,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  584  \t\t\thead.add_http_equiv(csp_headers);\n  585  \t\t}\n  586  \n  587  \t\tif (state.prerendering?.cache) {\n  588  \t\t\thead.add_http_equiv(\n  589> \t\t\t\t`<meta http-equiv=\"cache-control\" content=\"${state.prerendering.cache}\">`\n  590  \t\t\t);\n  591  \t\t}\n  592  \t} else {\n  593  \t\tconst csp_header = csp.csp_provider.get_header();\n  594  \t\tif (csp_header) {",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "prerendering.cache is a build-time value set by the application's own code during prerendering."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The cache value is interpolated into markup, but its source and constraints are absent."
+   }
+  },
+  {
+   "position": 56,
+   "item": "91f6214a79b3",
+   "repository_case": "GHSA-r223-96jv-q533",
+   "file": "generators/spring-boot/generator.ts",
+   "line": 357,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  352          source.addLogbackLogEntry = ({ file, name, level }) =>\n  353            this.editFile(\n  354              this.destinationPath(file),\n  355              createNeedleCallback({\n  356                needle: 'logback-add-log',\n  357>               contentToAdd: `<logger name=\"${name}\" level=\"${level}\"/>`,\n  358              }),\n  359            );\n  360          source.addMainLog = opts => source.addLogbackLogEntry!({ file: 'src/main/resources/logback-spring.xml', ...opts });\n  361          source.addTestLog = opts => source.addLogbackLogEntry!({ file: 'src/test/resources/logback.xml', ...opts });\n  362        },",
+   "reviewer_1": {
+    "verdict": "FP",
+    "reason": "This is build-time code-generator output to a logback XML file with generator- or blueprint-supplied values, not an HTML context with untrusted input."
+   },
+   "reviewer_2": {
+    "verdict": "UNCLEAR",
+    "reason": "The helper interpolates values into an XML configuration file, but input provenance and any HTML execution path are missing."
+   }
+  }
+ ]
+}
