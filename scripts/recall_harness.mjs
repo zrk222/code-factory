@@ -595,12 +595,16 @@ function verifyRulesBytes(context) {
   }
 }
 
-function captureReference(context, source, report, diagnostics) {
+function reportReferences(context, report, diagnostics) {
   const local = path => relative(context.workdir, path).split(sep).join('/');
   const coverage = coverageReportPath(context.profile, report, true);
-  return { source_root: local(source), sarif: { path: local(report), sha256: diagnostics.report_sha256 },
+  return { sarif: diagnostics.report_sha256 ? { path: local(report), sha256: diagnostics.report_sha256 } : null,
     native_report: coverage && diagnostics.coverage_report_sha256
       ? { path: local(coverage), sha256: diagnostics.coverage_report_sha256 } : null };
+}
+
+function captureReference(context, source, report, diagnostics) {
+  return { source_root: relative(context.workdir, source).split(sep).join('/'), ...reportReferences(context, report, diagnostics) };
 }
 
 async function observeSide(context, source, report, expected) {
@@ -710,7 +714,8 @@ export function readCheckpoint(root, inputs) {
   if (!existsSync(path)) return null;
   try {
     const saved = JSON.parse(readFileSync(path, 'utf8'));
-    return JSON.stringify(saved.inputs) === JSON.stringify(inputs) ? saved.result : null;
+    return JSON.stringify(saved.inputs) === JSON.stringify(inputs)
+      && saved.result_sha256 === sha256(JSON.stringify(saved.result)) ? saved.result : null;
   } catch { return null; }
 }
 
@@ -719,7 +724,7 @@ export function writeCheckpoint(root, inputs, result) {
   mkdirSync(root, { recursive: true });
   const path = join(root, `${checkpointKey(inputs)}.json`);
   const staging = `${path}.${process.pid}.tmp`;
-  writeFileSync(staging, JSON.stringify({ inputs, result }));
+  writeFileSync(staging, JSON.stringify({ inputs, result, result_sha256: sha256(JSON.stringify(result)) }));
   renameSync(staging, path);
 }
 
@@ -1307,6 +1312,7 @@ async function controlObservation(context, directory, report, source) {
     findings = [];
     notes = { ...(notes ?? error.diagnostics), other: 1, detail: String(error.message).slice(-300) };
   }
+  notes.reports = reportReferences(context, report, notes);
   try {
     if ((await controlSource(directory, source.excludedDirs)).evidence.sha256 !== source.evidence.sha256) {
       throw new Error('Control source byte fingerprints differ');
@@ -1343,10 +1349,10 @@ function recordControlCoverage(side, scope) {
   }
 }
 
-async function controlPair({ base, candidate, directory, reports, source }, suffix, retryArgs = []) {
-  const old = await controlObservation({ ...base, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`, source);
+async function controlPair({ base, candidate, directory, reports, source, workdir }, suffix, retryArgs = []) {
+  const old = await controlObservation({ ...base, workdir, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`, source);
   const now = old.sourceInvalid ? { findings: [], notes: null }
-    : await controlObservation({ ...candidate, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`, source);
+    : await controlObservation({ ...candidate, workdir, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`, source);
   const scope = pairedControlScope(source, [old, now]);
   for (const side of [old, now]) recordControlCoverage(side, scope);
   const scan_sides = { before: old.notes, after: now.notes };
@@ -1376,6 +1382,36 @@ function controlExcludedDirectories(opts) {
   return excludedDirs;
 }
 
+async function retainedReportMatches(root, reference, expected, required) {
+  if (!expected) return !required && !reference;
+  if (reference?.sha256 !== expected || typeof reference.path !== 'string' || isAbsolute(reference.path)) return false;
+  const path = resolve(root, reference.path);
+  if (!insideControl(root, path)) return false;
+  const canonical = realpathSync(path);
+  return insideControl(root, canonical) && statSync(canonical).isFile() && await fileFingerprint(canonical) === expected;
+}
+
+async function controlReportsIntact(root, notes, required) {
+  if (!notes) return !required;
+  if (required && !notes.control_coverage?.complete) return false;
+  const matches = await Promise.all([
+    retainedReportMatches(root, notes.reports?.sarif, notes.report_sha256, required),
+    retainedReportMatches(root, notes.reports?.native_report, notes.coverage_report_sha256, required),
+  ]);
+  return matches.every(Boolean);
+}
+
+async function controlCheckpointIntact(root, delta) {
+  if (delta.error) return false;
+  try {
+    const matches = await Promise.all(['before', 'after'].flatMap(side => [
+      controlReportsIntact(root, delta.scan_sides?.[side], true),
+      controlReportsIntact(root, delta.initial_scan_sides?.[side], false),
+    ]));
+    return matches.every(Boolean);
+  } catch { return false; }
+}
+
 async function controlDeltas_(opts) {
   const [before, after] = [].concat(opts.rules);
   const excludedDirs = controlExcludedDirectories(opts);
@@ -1395,9 +1431,8 @@ async function controlDeltas_(opts) {
       mkdirSync(workdir, { recursive: true });
       const reportsRoot = realpathSync(workdir);
       if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
-      scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
       const source = await controlSource(directory, excludedDirs);
-      const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v2',
+      const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v3',
         scorer_sha256: scorerSha256(), dir,
         source_tree: source.evidence, excluded: excludedDirs, baseline_sha256: base.rulesSha256 ?? sha256(readFileSync(base.rules)),
         candidate_sha256: candidate.rulesSha256 ?? sha256(readFileSync(candidate.rules)),
@@ -1405,8 +1440,12 @@ async function controlDeltas_(opts) {
         engine_sha256: await fileFingerprint(executablePath(base.bin)), extra: base.extra,
         candidate_extra: candidate.extra } : null;
       const savedDelta = checkpointInputs && readCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs);
-      if (savedDelta) { deltas.push({ ...savedDelta, resumed_from_checkpoint: true }); continue; }
-      const context = { base, candidate, directory, source, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
+      if (savedDelta && await controlCheckpointIntact(reportsRoot, savedDelta)) {
+        deltas.push({ ...savedDelta, resumed_from_checkpoint: true });
+        continue;
+      }
+      scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
+      const context = { base, candidate, directory, source, workdir: reportsRoot, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
       let attempt = await controlPair(context, '');
       let recovery = {};
       if (attempt.issues.includes('timeout') && !attempt.issues.includes('error')) {

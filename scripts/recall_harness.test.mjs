@@ -993,6 +993,37 @@ test('paired controls record only shared scanner ignores and keep candidate skip
   assert.deepEqual(rejected.scan_sides.after.control_coverage.excluded, exclusions);
 }));
 
+test('control checkpoints resume only while the final and retry reports still match', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline, candidate } = fixture;
+  const control = join(root, 'control'), output = join(root, 'controls.json');
+  const checkpoint = join(root, 'control-checkpoints');
+  mkdirSync(control);
+  writeFileSync(join(control, 'sample.py'), 'VALUE = 1\n');
+  writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# control-timeout\n');
+  const run = () => {
+    const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls',
+      '--rules', baseline, '--rules', candidate, '--profile', profile, '--workdir', workdir,
+      '--opengrep', process.execPath, '--dir', control, '--out', output, '--checkpoint-dir', checkpoint],
+    { encoding: 'utf8', timeout: 30000 });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(readFileSync(output, 'utf8')).deltas[0];
+  };
+  const fresh = run();
+  assert.equal(fresh.initial_scan_sides.after.timeouts, 1);
+  assert.equal(run().resumed_from_checkpoint, true);
+  const reports = readdirSync(workdir, { recursive: true });
+  const coverage = reports.find(path => path.endsWith('after-retry.sarif.coverage.json'));
+  assert.ok(coverage);
+  writeFileSync(join(workdir, coverage), '{}');
+  const rescanned = run();
+  assert.equal(rescanned.resumed_from_checkpoint, undefined);
+  assert.equal(rescanned.control_scope_sha256, fresh.control_scope_sha256);
+  const firstReport = rescanned.initial_scan_sides.after.reports.sarif.path;
+  rmSync(join(workdir, firstReport));
+  assert.equal(run().resumed_from_checkpoint, undefined);
+  assert.equal(run().resumed_from_checkpoint, true);
+}));
+
 
 test('local Git source bytes survive preparation, scanning, and the reported packet inventory', () =>
   feederFixture(async ({ root, workdir, manifest, baseline, profile }) => {
@@ -1126,8 +1157,13 @@ test('checkpoint records are bound to their full input fingerprint', async () =>
     writeCheckpoint(root, inputs, { outcome: 'hit' });
     assert.deepEqual(readCheckpoint(root, inputs), { outcome: 'hit' });
     assert.equal(readCheckpoint(root, { ...inputs, ruleset_sha256: 'c' }), null);
+    const recordPath = join(root, `${checkpointKey(inputs)}.json`);
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    record.result.outcome = 'miss';
+    writeFileSync(recordPath, JSON.stringify(record));
+    assert.equal(readCheckpoint(root, inputs), null);
     // A record whose stored inputs do not match its name is ignored.
-    writeFileSync(join(root, `${checkpointKey(inputs)}.json`), JSON.stringify({ inputs: { other: 1 }, result: { outcome: 'hit' } }));
+    writeFileSync(recordPath, JSON.stringify({ ...record, inputs: { other: 1 } }));
     assert.equal(readCheckpoint(root, inputs), null);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
