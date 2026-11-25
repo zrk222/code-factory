@@ -157,6 +157,11 @@ test('outcomes separate hits, misses, engine timeouts, unknowns and errors', asy
     { descriptor: { id: 'Syntax error' }, message: { text: 'Syntax error at line a.py:3' }, level: 'warning' }] }] }] });
   assert.deepEqual(notes, { timeouts: 1, parse_errors: 1, blocking_parse_errors: 0, other: 0 });
   assert.equal(outcomeOf({ status: 'scored', hunk_hit: true, scan_notes: { ...notes, timeouts: 0 } }), 'hit');
+  // A parse warning quotes the target source; a word in that excerpt is not an engine timeout.
+  const quoted = scanNotes({ runs: [{ invocations: [{ toolExecutionNotifications: [
+    { descriptor: { id: 'Syntax error' }, level: 'warning',
+      message: { text: 'Syntax error at line A.java:1:\n `class A { int connectionTimeout; }` was unexpected' } }] }] }] });
+  assert.deepEqual(quoted, { timeouts: 0, parse_errors: 1, blocking_parse_errors: 0, other: 0 });
 });
 
 test('observation loop queues control alerts once and gates on labels', async () => {

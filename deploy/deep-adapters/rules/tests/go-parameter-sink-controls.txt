@@ -38,5 +38,7 @@ func (p *EventsPersister) Events(filter *EventsFilter) {
 	finder = finder.Order(filter.SortOn)
 	// ok: go.parameter-sql-text
 	finder = finder.Order("created_at desc")
+	// ok: go.parameter-sql-text
+	finder = finder.Order(SanitizeOrderInput(filter.SortOn, []string{"created_at", "name"}))
 	_ = finder
 }

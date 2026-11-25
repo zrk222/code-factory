@@ -141,6 +141,31 @@ Python repositories. These are alert counts. A paired run with blinded
 adjudication is needed to measure precision and the incremental effect of
 cross-function reach.
 
+## Paired development receipts (24 Nov, evening)
+
+Baseline is the main ruleset `816bbef3`. Development sets only; the Sep–Oct
+held-out set was not scored. Strict hunk recall, same definition as above.
+
+| Candidate | Fresh /85 | Overflow /56 | 113 set /107 | 161 set /148 | Lost | Residuals per hit | Control alerts | Decision |
+|---|---|---|---|---|---|---|---|---|
+| baseline `816bbef3` | 10 | 4 | 18 | 19 | — | 0.75 | — | — |
+| [`b986ab2`](evidence/recall-evaluation-b986ab2-dev.json) | 30 | 9 (/55) | 18 | 21 | 0 | 0.78 | +22 | ACCEPT |
+| [`21299b0`](evidence/recall-evaluation-21299b0-dev.json) | 30 | 9 | 18 | 30 | 0 | 0.77 | +22 | REJECT (one control) |
+
+`21299b0` adds Ruby and Java SQL-text rules, Go ordering/grouping sinks, and
+merges two rule pairs to stay at 64 rules. It passes every development
+gate. It fails one control gate. On pdf.js, both rulesets time out on the
+emscripten `*_nowasm_fallback.js` files. The candidate times out once more
+after a rescan, and it does so deterministically. The cause is the generic
+`run(`/`shell(` wrapper sink of `javascript.parameter-shell-command`. With
+those two names removed, that rule runs on one such file in 0.9 s instead
+of 7.6 s. The fix and its own receipt are the next step.
+
+Harness fixes found by these runs: the scan profile is pinned for both sides
+of a run; a parse warning that quotes source text is no longer counted as an
+engine timeout; and a control pair that differs only in timeouts is rescanned
+once, with the first attempt kept.
+
 ## Recall harness (`scripts/recall_harness.mjs`)
 
 Held-out numbers are produced by one committed tool instead of scratch scripts.
