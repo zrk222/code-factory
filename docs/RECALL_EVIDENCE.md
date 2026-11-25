@@ -126,7 +126,10 @@ Both authenticated reviewers must identify the same finding to credit a link.
 The result counts links outside the hunk and outside changed files separately.
 An unresolved review, a missing capture, and a reviewed no-link verdict remain
 separate outcomes. A no-link verdict requires all registered revisions for that
-case and scope. The result retains all registered advisories in each declared
-lane and scope, counts each linked advisory once in the combined result, and
+case and scope. Each lane and scope reports the registered advisory families
+and ecosystems. An advisory can appear in multiple families, while cases with
+no mapped family appear under `unclassified`. The result retains all registered
+advisories in each declared lane and scope, counts each linked advisory once in
+the combined result, and
 reports overlap between lanes. Legacy records report `NOT_MEASURED` for
 advisory-linked recall.

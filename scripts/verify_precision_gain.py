@@ -1436,6 +1436,24 @@ def _result_row(counter, total):
     }
 
 
+def _linked_populations(record, known):
+    ecosystems, families = {}, {}
+    taxonomy = (record.get("detection_rule") or {}).get("class_families") or {}
+    for ghsa, case in known.items():
+        ecosystems.setdefault(case["ecosystem"], []).append(ghsa)
+        names = {taxonomy.get(cwe) for cwe in case.get("cwes") or []} - {None}
+        for name in names or {"unclassified"}:
+            families.setdefault(name, []).append(ghsa)
+    return ecosystems, families
+
+
+def _linked_breakdown(population, counts):
+    return {
+        name: _result_row(sum((counts[ghsa] for ghsa in cases), Counter()), len(cases))
+        for name, cases in sorted(population.items())
+    }
+
+
 def _linked_advisory_metrics(
     record,
     record_sha256,
@@ -1466,11 +1484,11 @@ def _linked_advisory_metrics(
         record, record_sha256, observations, observations_path.parent
     )
     first, second = _link_reviews(reviews, obs_sha, complete)
-    population = Counter(case["ecosystem"] for case in known.values())
+    ecosystems, families = _linked_populations(record, known)
     results = []
     lane_links = {"pattern": set(), "codeql": set()}
     for lane, scope in sorted(groups):
-        counts = {ecosystem: Counter() for ecosystem in population}
+        counts = {ghsa: Counter() for ghsa in known}
         for ghsa, case in known.items():
             parents = {item["parent"] for item in case["fixes"]}
             keys = [
@@ -1480,7 +1498,7 @@ def _linked_advisory_metrics(
             ]
             if not keys:
                 continue
-            counter = counts[case["ecosystem"]]
+            counter = counts[ghsa]
             counter["executed"] += 1
             matched = [
                 (key[3], first[key][1])
@@ -1512,10 +1530,8 @@ def _linked_advisory_metrics(
                 "lane": lane,
                 "scope": scope,
                 "total": _result_row(sum(counts.values(), Counter()), len(known)),
-                "by_ecosystem": {
-                    name: _result_row(counts[name], population[name])
-                    for name in sorted(population)
-                },
+                "by_ecosystem": _linked_breakdown(ecosystems, counts),
+                "by_family": _linked_breakdown(families, counts),
             }
         )
     return {

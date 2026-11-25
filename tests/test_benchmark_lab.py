@@ -1966,8 +1966,13 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
     record, *_ = _synthetic_recall(tmp_path)
     absent = copy.deepcopy(record["cases"][0])
     absent.update(ghsa="GHSA-2345-6789-cfgg", ecosystem="PHP")
+    absent.pop("cwes")
     record["cases"].append(absent)
     original = record["cases"][0]
+    record["detection_rule"]["class_families"].update(
+        {"CWE-297": "tls", "CWE-79": "xss"}
+    )
+    original["cwes"].extend(["CWE-297", "CWE-79"])
     if condition == "second_parent":
         original["fixes"].append({"fix": "d" * 40, "parent": "c" * 40})
         original["prefix_files"].append(
@@ -2174,6 +2179,12 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
         assert linked["combined"]["linked_by_both_lanes"] == (condition == "dual_lane")
         assert linked["publication_eligible"] is False
         assert results["by_ecosystem"]["PHP"]["unexecuted"] == 1
+        assert results["by_family"] == {
+            "tls": results["by_ecosystem"]["python"],
+            "unclassified": results["by_ecosystem"]["PHP"],
+            "xss": results["by_ecosystem"]["python"],
+        }
+        assert pattern["by_family"]["tls"]["executed"] == (condition == "dual_lane")
         total = results["total"]
         assert total["registered"] == 2
         assert total["executed"] == 1
