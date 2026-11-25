@@ -10,6 +10,7 @@
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
 //            [--max-control-increase N] [--extra-arg ARG]... [--candidate-extra-arg ARG]... --out verdict.json
 //            [--probe-coverage true] [--control-exclude DIRECTORY]...
+//            [--adjudicated-losses plan.json]
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
 //   compare  before.json after.json
@@ -27,6 +28,7 @@ import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSy
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
+import { hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
 export const FAMILIES = Object.freeze({
   'CWE-78': 'cmd', 'CWE-88': 'cmd', 'CWE-77': 'cmd', 'CWE-89': 'sql',
@@ -717,7 +719,7 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
   }
   return { schema: 'factory.recall-result.v1', manifest: manifestPath, manifest_cases_sha256: manifestDigest,
     manifest_sha256: sha256(manifestBytes), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
-    scope: context.scope,
+    scope: context.scope, engine_args: context.extra,
     scan_directory: basename(context.scanRoot),
     argv: profileArgv(context.profile, { bin: context.bin, rules: '{rules}', report: '{report}', source: '{source}', extra: context.extra }),
     summary: summarize(rows), cases: rows };
@@ -737,6 +739,36 @@ function measuredOutcome(row) {
 function caseInputFingerprint(row) {
   return caseDigest([row.revisions ?? null, row.diff_sha256 ?? null, row.source_packets ?? null,
     row.changed_files_sha256 ?? null]);
+}
+
+function sameAdjudicationScope(result, evidence) {
+  return ['manifest_sha256', 'manifest_cases_sha256', 'profile_sha256']
+    .every(name => result[name] === evidence[name]);
+}
+
+function completeCandidateMiss(row) {
+  return row.status === 'scored' && measuredOutcome(row) === 'miss'
+    && Array.isArray(row.file_coverage?.old) && Array.isArray(row.file_coverage?.fixed)
+    && !coverageGaps(row.file_coverage.fixed).length;
+}
+
+function adjudicatedFpMiss(policy, before, old, after, row) {
+  const known = policy?.cases.get(old.ghsa);
+  if (!known || !completeCandidateMiss(row)) return false;
+  const evidence = policy.receipt;
+  if (before.ruleset_sha256 !== evidence.ruleset_sha256) return false;
+  if (JSON.stringify(before.engine_args ?? []) !== JSON.stringify(evidence.engine_args)) return false;
+  if (!sameAdjudicationScope(before, evidence) || !sameAdjudicationScope(after, evidence)) return false;
+  const input = caseInputFingerprint(known.source);
+  return caseInputFingerprint(old) === input && caseInputFingerprint(row) === input
+    && hunkIdentity(old.hunk_findings ?? []) === known.identity;
+}
+
+function recordLostHit(changes, pair, old, row) {
+  const target = adjudicatedFpMiss(changes.lossPolicy, pair.before, old, pair.after, row)
+    ? changes.lostFpOnly : changes.lost;
+  target.push(row.ghsa);
+  changes.rawLost.push(row.ghsa);
 }
 
 function hasNewCoverageGaps(old, row) {
@@ -797,13 +829,14 @@ async function probeCoverage(dev, opts) {
   return { method: 'opengrep_dump_ast_v1', profile_sha256: sha256(opts.profileBytes), options: prefix.slice(1) };
 }
 
-function measureCaseChange(old, row, { lost, gained, newErrors, newCoverageGaps, failures }) {
+function measureCaseChange(old, row, pair, changes) {
+  const { gained, newErrors, newCoverageGaps, failures } = changes;
   if (caseInputFingerprint(old) !== caseInputFingerprint(row)) {
     failures.push('Baseline and candidate source byte fingerprints differ for ' + row.ghsa);
     return;
   }
   const previous = measuredOutcome(old), current = measuredOutcome(row);
-  if (previous === 'hit' && current !== 'hit') lost.push(row.ghsa);
+  if (previous === 'hit' && current !== 'hit') recordLostHit(changes, pair, old, row);
   if (previous === 'miss' && current === 'hit') gained.push(row.ghsa);
   const failure = ['error', 'timeout'];
   if (failure.includes(current) && !failure.includes(previous)) newErrors.push(row.ghsa);
@@ -826,16 +859,16 @@ function measureDevPair({ before, after }, changes) {
   for (const [ghsa, old] of baseline) {
     const row = candidate.get(ghsa);
     if (!row) changes.failures.push('Candidate case missing for ' + ghsa);
-    else measureCaseChange(old, row, changes);
+    else measureCaseChange(old, row, { before, after }, changes);
   }
   for (const ghsa of candidate.keys()) {
     if (!baseline.has(ghsa)) changes.failures.push('Baseline case missing for ' + ghsa);
   }
 }
 
-export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1 }) {
-  const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [];
-  for (const pair of dev) measureDevPair(pair, { lost, gained, newErrors, newCoverageGaps, failures });
+export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1, lossPolicy = null }) {
+  const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [], lostFpOnly = [], rawLost = [];
+  for (const pair of dev) measureDevPair(pair, { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost });
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
   const residualAfter = dev.reduce((n, pair) => n + pair.after.summary.fix_side_residual_alerts, 0);
   const controlIncrease = controls.reduce((n, delta) => n + (delta.after ?? 0) - (delta.before ?? 0), 0);
@@ -854,6 +887,8 @@ export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance 
   if (controlIncrease > maxControlIncrease) failures.push(`control alerts +${controlIncrease} > ${maxControlIncrease}`);
   if (controls.some(delta => delta.error || delta.incomplete_on_both)) failures.push('a control scan failed');
   return { decision: failures.length ? 'REJECT' : 'ACCEPT', failures, gained, lost_baseline_hits: lost, new_errors: newErrors,
+    ...(lossPolicy ? { lost_fp_only: lostFpOnly, raw_lost_baseline_hits: rawLost,
+      adjudicated_loss_basis: lossPolicy.receipt } : {}),
     new_coverage_gaps: newCoverageGaps,
     residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
     control_increase: controlIncrease };
@@ -924,7 +959,7 @@ function verifyEvaluationRules(opts, expected) {
   }
 }
 
-function recordedGainsIn(block, required) {
+function recordedGainsIn(block, required, engineArgs) {
   const cohort = block.manifest_cases_sha256;
   if (!/^[a-f0-9]{64}$/.test(cohort)) throw new Error('Invalid recall gain checkpoint manifest');
   const evidence = indexCases(block.after_evidence.cases);
@@ -932,7 +967,11 @@ function recordedGainsIn(block, required) {
     .map(row => {
       const source = evidence.get(row.ghsa);
       if (!source?.revisions || !source.source_packets) throw new Error('Recall gain checkpoint is missing case input evidence');
-      return [row.ghsa, { cohort, input: caseInputFingerprint(source) }];
+      return [row.ghsa, { cohort, input: caseInputFingerprint(source),
+        prior: { ...source, hunk_findings: row.hunk_findings },
+        scope: { manifest_cases_sha256: cohort, manifest_sha256: block.after_evidence.manifest_sha256,
+          profile_sha256: block.after_evidence.profile_sha256, ruleset_sha256: block.after_evidence.ruleset_sha256,
+          engine_args: engineArgs } }];
     });
 }
 
@@ -940,7 +979,8 @@ function recordedGains(reference) {
   if (reference?.schema !== 'factory.recall-evaluation.v1' || !Array.isArray(reference.gained)
       || !reference.gained.length || !Array.isArray(reference.dev)) throw new Error('Invalid recall gain checkpoint');
   const required = new Set(reference.gained);
-  const entries = reference.dev.flatMap(block => recordedGainsIn(block, required));
+  const engineArgs = [].concat(reference.extra_args ?? [], reference.candidate_extra_args ?? []);
+  const entries = reference.dev.flatMap(block => recordedGainsIn(block, required, engineArgs));
   const records = new Map(entries);
   if (records.size !== entries.length || records.size !== reference.gained.length) {
     throw new Error('Recall gain checkpoint membership differs');
@@ -948,20 +988,24 @@ function recordedGains(reference) {
   return records;
 }
 
-export function gainRetention(reference, pairs) {
+export function gainRetention(reference, pairs, lossPolicy = null) {
   const required = recordedGains(reference);
-  const candidate = new Map(pairs.map(({ after }) => [after.manifest_cases_sha256, indexCases(after.cases)]));
+  const candidate = new Map(pairs.map(({ after }) => [after.manifest_cases_sha256, { after, cases: indexCases(after.cases) }]));
   if (candidate.size !== pairs.length) throw new Error('Duplicate manifest in recall gain replay');
-  const lost = [];
-  for (const [id, { cohort, input }] of required) {
-    const row = candidate.get(cohort)?.get(id);
-    if (!row || measuredOutcome(row) !== 'hit' || caseInputFingerprint(row) !== input) lost.push(id);
+  const lost = [], fpOnly = [];
+  for (const [id, { cohort, input, prior, scope }] of required) {
+    const entry = candidate.get(cohort), row = entry?.cases.get(id);
+    if (row && measuredOutcome(row) === 'hit' && caseInputFingerprint(row) === input) continue;
+    if (row && adjudicatedFpMiss(lossPolicy, scope, prior, entry.after, row)) fpOnly.push(id);
+    else lost.push(id);
   }
-  return { required: required.size, retained: required.size - lost.length, lost: lost.sort() };
+  return { required: required.size, retained: required.size - lost.length - fpOnly.length, lost: lost.sort(),
+    ...(lossPolicy ? { lost_fp_only: fpOnly.sort() } : {}) };
 }
 
-function applyGainRetention(verdict, bytes, pairs) {
-  const retention = gainRetention(JSON.parse(utf8(bytes)), pairs);
+function applyGainRetention(verdict, bytes, pairs, lossPolicy) {
+  const compatible = lossPolicy?.receipt.score_sha256 === sha256(bytes) ? lossPolicy : null;
+  const retention = gainRetention(JSON.parse(utf8(bytes)), pairs, compatible);
   verdict.gain_retention = { checkpoint_sha256: sha256(bytes), ...retention };
   if (retention.lost.length) verdict.failures.push(`lost ${retention.lost.length} checkpoint hit(s): ${retention.lost.join(', ')}`);
 }
@@ -1020,6 +1064,8 @@ async function evaluate(input) {
   }
   const engine = await bindEvaluationEngine(JSON.parse(utf8(opts.profileBytes)),
     opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  const lossPolicy = opts['adjudicated-losses']
+    ? loadAdjudicatedLosses(opts['adjudicated-losses'], engine.receipt.executable_sha256) : null;
   opts.opengrep = engine.path;
   const rules = evaluationRules(opts);
   const manifests = [].concat(opts.manifest);
@@ -1043,8 +1089,8 @@ async function evaluate(input) {
     throw new Error('Recall engine executable bytes changed during evaluation');
   }
   verifyEvaluationRules(opts, rules);
-  const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0) });
-  if (checkpoint) applyGainRetention(verdict, checkpoint, dev);
+  const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0), lossPolicy });
+  if (checkpoint) applyGainRetention(verdict, checkpoint, dev, lossPolicy);
   const settings = { ...rules, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
     extra_args: [].concat(opts['extra-arg'] ?? []), candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []),
     ...(excludedDirs.length ? { control_excluded_directories: excludedDirs } : {}) };
