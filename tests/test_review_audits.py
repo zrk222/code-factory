@@ -17055,21 +17055,207 @@ def test_entry_reach_tier_changes_only_needs_context_command_findings(tmp_path):
         "@app.route('/a')\ndef view():\n    archive(request.args['n'])\n",
     }
     source_bytes = {path: text.encode() for path, text in files.items()}
-    bindings = {path: "0" * 64 for path in files}
     finding = {"code": "SECURITY_OS_COMMAND", "path": "tools.py", "line": 4}
     decided = ("NEEDS_CONTEXT", None, None)
-    tier, scope, details = entry_reach_tier(finding, source_bytes, bindings, decided)
+    tier, scope, details = entry_reach_tier(finding, source_bytes, decided)
     assert (tier, scope) == ("SUPPORTED_DEFECT", "source_bound_entry_reach")
     assert details["entry_reach"]["parameter"] == "name"
     assert details["entry_reach"]["chain"][0] == "request.args in web:view"
     supported = ("SUPPORTED_DEFECT", "other", {})
-    assert entry_reach_tier(finding, source_bytes, bindings, supported) == supported
+    assert entry_reach_tier(finding, source_bytes, supported) == supported
     other = {**finding, "code": "SECURITY_WEAK_HASH"}
-    assert entry_reach_tier(other, source_bytes, bindings, decided) == decided
-    assert (
-        entry_reach_tier({**finding, "line": 1}, source_bytes, bindings, decided)
-        == decided
+    assert entry_reach_tier(other, source_bytes, decided) == decided
+    assert entry_reach_tier({**finding, "line": 1}, source_bytes, decided) == decided
+
+
+@pytest.mark.parametrize(
+    "body,call,expected",
+    [
+        ("observe(label)", "observe(label)", True),
+        ("observe('fixed')", "observe('fixed')", False),
+        ("observe(label); observe('fixed')", "observe('fixed')", False),
+        ("observe('fixed'); observe(label)", "observe(label)", True),
+        ("observe(alias)\n    alias = label", "observe(alias)", False),
+        ("observe(label)\n    label = 'fixed'", "observe(label)", True),
+        (
+            "for _ in labels:\n        observe(label)\n        label = 'fixed'",
+            "observe(label)",
+            False,
+        ),
+        (
+            "alias = label\n    alias = 'fixed'\n    observe(alias)",
+            "observe(alias)",
+            False,
+        ),
+        (
+            "def reset():\n        nonlocal label\n        label = 'fixed'\n    reset()\n    observe(label)",
+            "observe(label)",
+            False,
+        ),
+        ("alias = label\n    observe(alias)", "observe(alias)", True),
+        ("alias: str = label\n    observe(alias)", "observe(alias)", True),
+        ("first = alias = label\n    observe(alias)", "observe(alias)", True),
+        (
+            "alias = label\n    label = 'fixed'\n    observe(alias)",
+            "observe(alias)",
+            True,
+        ),
+        ("observe('{}'.format(label))", "observe('{}'.format(label))", True),
+        (
+            "observe('{value}'.format(value='fixed', unused=label))",
+            "observe('{value}'.format(value='fixed', unused=label))",
+            False,
+        ),
+        (
+            "observe('{1}'.format(label, 'fixed'))",
+            "observe('{1}'.format(label, 'fixed'))",
+            False,
+        ),
+        (
+            "observe('%s:%s' % ('fixed', label))",
+            "observe('%s:%s' % ('fixed', label))",
+            True,
+        ),
+        ("observe('%%s' % (label,))", "observe('%%s' % (label,))", False),
+        (
+            "alias = label\n    label = 'fixed'\n    observe(label)",
+            "observe(label)",
+            False,
+        ),
+        (
+            "if condition:\n        alias = label\n    observe(alias)",
+            "observe(alias)",
+            False,
+        ),
+        ("[observe(label) for label in ('fixed',)]", "observe(label)", False),
+        (
+            "observe([label, 'fixed'], shell=True)",
+            "observe([label, 'fixed'], shell=True)",
+            True,
+        ),
+        (
+            "observe(['fixed', label], shell=True)",
+            "observe(['fixed', label], shell=True)",
+            False,
+        ),
+        (
+            "alias = (label, 'fixed')\n    observe(alias, shell=True)",
+            "observe(alias, shell=True)",
+            True,
+        ),
+        (
+            "observe([*label, 'fixed'], shell=True)",
+            "observe([*label, 'fixed'], shell=True)",
+            False,
+        ),
+        ("observe('fixed'); observe(label)", None, False),
+    ],
+)
+def test_entry_reach_tier_binds_the_reported_call_and_operand(body, call, expected):
+    source = "def collect(label):\n    " + body + "\n"
+    files = {
+        "labels.py": source.encode(),
+        "entry.py": (
+            "from flask import request\nfrom labels import collect\n"
+            "@app.route('/labels')\ndef view():\n    collect(request.args['label'])\n"
+        ).encode(),
+    }
+    line = next(
+        number
+        for number, text in enumerate(source.splitlines(), 1)
+        if "observe(" in text
     )
+    finding = {"code": "SECURITY_PATH_TRAVERSAL", "path": "labels.py", "line": line}
+    if call and "shell=True" in call:
+        finding.update(code="SECURITY_SHELL_COMMAND", call="subprocess.run")
+    if call is not None:
+        column = source.splitlines()[line - 1].index(call)
+        finding.update(column=column, end_line=line, end_column=column + len(call))
+    decided = ("NEEDS_CONTEXT", None, None)
+    outcome = entry_reach_tier(finding, files, decided)
+    if expected:
+        assert outcome[0] == "SUPPORTED_DEFECT"
+        assert outcome[2]["entry_reach"]["parameter"] == "label"
+    else:
+        assert outcome == decided
+
+
+def test_entry_reach_index_is_lazy_and_scoped_to_each_tier_report(monkeypatch):
+    from factoryline import primitive_observation_binding as primitive
+
+    files = {
+        "labels.py": b"def collect(label):\n    observe(label)\n    report(label)\n",
+        "entry.py": (
+            b"from flask import request\nfrom labels import collect\n"
+            b"@app.route('/labels')\ndef view():\n    collect(request.args['label'])\n"
+        ),
+    }
+    real_index = primitive._source_index
+    built = []
+
+    def index(source_bytes):
+        built.append(source_bytes)
+        return real_index(source_bytes)
+
+    monkeypatch.setattr(primitive, "_source_index", index)
+    findings = [
+        {"code": "SECURITY_PATH_TRAVERSAL", "path": "labels.py", "line": line}
+        for line in (2, 3)
+    ]
+
+    def generate(source_bytes, rows):
+        sources = [
+            {"path": path, "sha256": hashlib.sha256(payload).hexdigest()}
+            for path, payload in source_bytes.items()
+        ]
+        result = primitive.build_finding_tier_report(
+            rows, [], sources, source_bytes, coverage_state=True, partition_state=True
+        )
+        return [row["tier"] for row in result["ledger"]]
+
+    assert generate(files, []) == []
+    assert built == []
+    assert generate(files, findings) == ["SUPPORTED_DEFECT", "SUPPORTED_DEFECT"]
+    assert built == [files]
+    changed = {
+        **files,
+        "entry.py": files["entry.py"].replace(b"request.args['label']", b"'fixed'"),
+    }
+    assert generate(changed, findings) == ["NEEDS_CONTEXT", "NEEDS_CONTEXT"]
+    assert built == [files, changed]
+
+
+def test_entry_reach_reuses_call_graph_only_for_the_same_index(monkeypatch):
+    from factoryline import captured_operand_audit
+
+    sources = {
+        "label.py": "def normalize(value):\n    return value.strip()\n",
+        "view.py": "from flask import request\nfrom label import normalize\n"
+        "@app.route('/label')\ndef view():\n    normalize(request.args['value'])\n",
+    }
+    finding = {"rule": "label", "path": "label.py", "line": 2, "source": "value"}
+    seen = []
+    original = captured_operand_audit._call_graph
+
+    def count(index):
+        seen.append(index)
+        return original(index)
+
+    monkeypatch.setattr(captured_operand_audit, "_call_graph", count)
+    index = Index(sources)
+    before = reach(index, [finding])
+    assert before[0]["reach"] == "entry_reached"
+    assert reach(index, [finding]) == before
+    assert seen == [index]
+
+    changed = Index(
+        {
+            **sources,
+            "view.py": sources["view.py"].replace("request.args['value']", "'fixed'"),
+        }
+    )
+    assert reach(changed, [finding])[0]["reach"] != "entry_reached"
+    assert seen == [index, changed]
 
 
 def test_registered_handlers_and_registries_are_entries(tmp_path):

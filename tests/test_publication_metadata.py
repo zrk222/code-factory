@@ -169,7 +169,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
     }
     assert (
         project["description"]
-        == "Local evidence for AI-built code: 12-language native security rules, SARIF review, signed claims and human-owned release decisions."
+        == "Local evidence for AI-built code with configured native security workers, SARIF review, signed claims and human-owned release decisions."
     )
     assert {
         "mvp",

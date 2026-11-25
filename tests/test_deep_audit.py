@@ -1,6 +1,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -1045,7 +1046,8 @@ def test_zap_trace_capture_streams_fixed_tmpfs_path_with_signed_interpreter(
     assert (tmp_path / result["artifact"]).read_bytes() == b'{"sample":1}\n'
 
 
-def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path):
+@pytest.mark.parametrize("shard", range(8))
+def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path, shard):
     import yaml
     from factoryline.deep_audit_io import (
         _semgrep_disable_rule,
@@ -1057,7 +1059,7 @@ def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path):
         "deploy/deep-adapters/rules/semgrep-pattern-limited.yml"
     ).read_bytes()
     original = yaml.safe_load(baseline)
-    for rule in original["rules"]:
+    for rule in original["rules"][shard::8]:
         target = rule["id"]
         effective = _semgrep_disable_rule(baseline, target)
         expected = deepcopy(original)
@@ -1077,8 +1079,9 @@ def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path):
             _semgrep_mutation_file(
                 tmp_path, baseline, lane, {"detector_rule_id": target}
             )
-    with pytest.raises(RuntimeAuditError, match="E_SEMGREP_MUTATION"):
-        _semgrep_disable_rule(baseline, "unknown-detector")
+    if shard == 0:
+        with pytest.raises(RuntimeAuditError, match="E_SEMGREP_MUTATION"):
+            _semgrep_disable_rule(baseline, "unknown-detector")
 
 
 @pytest.mark.parametrize(
@@ -2799,7 +2802,7 @@ def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_p
         tmp_path / "worker-sdk",
     )
     sdk_stage, semgrep_stage = dockerfile.split("FROM sdk AS semgrep-worker", 1)
-    semgrep_stage = semgrep_stage.split("FROM sdk AS codeql-python-worker", 1)[0]
+    semgrep_stage = semgrep_stage.split("FROM sdk AS codeql-bundle", 1)[0]
     assert "USER 1000:1000" in sdk_stage
     assert 'ENTRYPOINT ["/opt/factory/bin/audit-adapter"]' in sdk_stage
     assert "USER 1000:1000" in semgrep_stage
@@ -2808,6 +2811,40 @@ def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_p
         in semgrep_stage
     )
     _assert_missing_worker_module_fails(tmp_path)
+
+
+def test_codeql_worker_builds_compile_only_the_python_suite():
+    dockerfile = Path("deploy/deep-adapters/Dockerfile").read_text(encoding="utf-8")
+    stages = {
+        target: (parent, instructions)
+        for parent, target, instructions in re.findall(
+            r"^FROM (\S+) AS (\S+)\n(.*?)(?=^FROM |\Z)", dockerfile, re.M | re.S
+        )
+    }
+    parent, bundle = stages["codeql-bundle"]
+    assert parent == "sdk"
+    assert "ADD --checksum=sha256:" in bundle
+    assert (
+        'ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
+        in bundle
+    )
+    assert "query compile" not in bundle
+    for language in ("python", "javascript", "actions", "ruby"):
+        parent, instructions = stages[f"codeql-{language}-worker"]
+        assert parent == "codeql-bundle"
+        assert (
+            f"profiles/codeql-{language}-full.json /opt/factory/adapter-profile.json"
+            in instructions
+        )
+        assert "USER 1000:1000" in instructions
+        if language == "python":
+            assert "query compile --precompile" in instructions
+            assert "python-security-extended.qls" in instructions
+        else:
+            assert "query compile" not in instructions
+            assert "resolve queries" in instructions
+            assert f"{language}-security-extended.qls" in instructions
+            assert 'with_suffix(".qlx").is_file()' in instructions
 
 
 def _osv_package_accounting_fixture(
