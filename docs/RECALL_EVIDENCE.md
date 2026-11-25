@@ -80,8 +80,12 @@ python scripts/verify_precision_gain.py advisory-recall recall.json `
   `configuration_sha256` to the same row and candidate. It reports
   `expected_paths`, `scanned_paths`, `skipped`, and `errors`. For complete
   observations, the expected and scanned path lists equal the local
-  snapshot and both diagnostic lists are empty. The execution collector
-  supplies this coverage record from its scanner run. Its
+  snapshot and both diagnostic lists are empty. For the pattern lane,
+  `native_report` references the original engine JSON by `path` and `sha256`.
+  Emit JSON and SARIF from the same invocation with scanned and skipped paths
+  enabled. The verifier checks the original path inventory and diagnostics
+  against the snapshot and the exact rule IDs, spans, and multiplicities against
+  SARIF. The execution collector supplies these files from its scanner run. Its
   `advisory-execution` statement covers the exact capture document bytes.
 - Each reviewer uses schema `factory.advisory-link-labels.v1` with
   `reviewer_id`, `observations_sha256`, and `labels` for every complete row.

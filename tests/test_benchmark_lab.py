@@ -1951,6 +1951,11 @@ def test_single_arm_cli_authenticates_execution_and_review_signatures(tmp_path, 
         "source_drift",
         "tool_drift",
         "scan_gap",
+        "native_missing",
+        "native_gap",
+        "native_diagnostic",
+        "native_span_drift",
+        "native_digest_drift",
         "dual_lane",
         "second_parent",
     ],
@@ -2025,7 +2030,8 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
         {"lane": "pattern", "scope": "repository"},
     ]
     keys, rows = [], []
-    for scope in scopes if condition == "dual_lane" else scopes[:1]:
+    use_pattern = condition == "dual_lane" or condition.startswith("native_")
+    for scope in scopes if use_pattern else scopes[:1]:
         lane = scope["lane"]
         key = {**scope, "ghsa": original["ghsa"], "source_revision": revision}
         profile = record["candidate"][lane + "_lane"]
@@ -2035,6 +2041,37 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
             else ("opengrep_binary_sha256", "ruleset_sha256")
         )
         report_sha = None if condition == "missing_digest" else capture_sha
+        native = {}
+        if lane == "pattern" and condition != "native_missing":
+            raw_path, raw_sha = _benchmark_file(
+                tmp_path,
+                "original-pattern-report",
+                {
+                    "paths": {
+                        "scanned": ["src/App.py"]
+                        if condition == "native_gap"
+                        else sorted(source_files),
+                        "skipped": [],
+                    },
+                    "errors": ["partial analysis"]
+                    if condition == "native_diagnostic"
+                    else [],
+                    "results": [
+                        {
+                            "path": "src/library.py",
+                            "check_id": result["ruleId"],
+                            "start": {
+                                "line": 42,
+                                "col": 5 if condition == "native_span_drift" else 4,
+                            },
+                            "end": {"line": 42, "col": 8},
+                        }
+                    ],
+                },
+            )
+            if condition == "native_digest_drift":
+                raw_path.write_bytes(raw_path.read_bytes() + b" ")
+            native["native_report"] = {"path": raw_path.name, "sha256": raw_sha}
         coverage_path, coverage_sha = _benchmark_file(
             tmp_path,
             lane + "-coverage",
@@ -2053,6 +2090,7 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
                 else sorted(source_files),
                 "skipped": [],
                 "errors": [],
+                **native,
             },
         )
         keys.append(key)
@@ -2160,4 +2198,9 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
             "source_drift": "source snapshot byte fingerprints differ",
             "tool_drift": "unbound to the source, tool",
             "scan_gap": "incomplete registered scan coverage",
+            "native_missing": "requires the original engine report",
+            "native_gap": "original pattern report has incomplete or different coverage",
+            "native_diagnostic": "original pattern report has incomplete or different coverage",
+            "native_span_drift": "original pattern report and SARIF findings differ",
+            "native_digest_drift": "evidence digest mismatch",
         }[condition] in output["error"]

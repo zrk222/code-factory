@@ -1225,7 +1225,37 @@ def _scope_pair(row):
     return lane, scope
 
 
-def _observed_source(root, row, case, candidate):
+def _pattern_report_findings(root, reference, scanned):
+    if not isinstance(reference, dict) or not _hash(reference.get("sha256")):
+        raise ValueError("linked pattern coverage requires the original engine report")
+    report, _ = _benchmark_evidence(
+        _recall_contained(root, reference["path"]), reference["sha256"]
+    )
+    paths = report["paths"]
+    if (
+        not isinstance(paths["scanned"], list)
+        or sorted(relative_path(path) for path in paths["scanned"]) != sorted(scanned)
+        or paths.get("skipped") != []
+        or report.get("errors") != []
+        or not isinstance(report.get("results"), list)
+    ):
+        raise ValueError("original pattern report has incomplete or different coverage")
+    return Counter(
+        _finding_key(
+            {
+                "path": item["path"],
+                "rule": item["check_id"],
+                "line": item["start"]["line"],
+                "column": item["start"]["col"],
+                "end_line": item["end"]["line"],
+                "end_column": item["end"]["col"],
+            }
+        )
+        for item in report["results"]
+    )
+
+
+def _linked_capture(root, row, case, candidate):
     coverage_ref = row["coverage"]
     if not _hash(coverage_ref.get("sha256")):
         raise ValueError("linked capture requires a coverage SHA-256")
@@ -1291,7 +1321,14 @@ def _observed_source(root, row, case, candidate):
         raise ValueError("linked source snapshot differs from registered pre-fix bytes")
     if scope == "changed_files" and source_hashes.keys() != changed.keys():
         raise ValueError("linked snapshot falls outside its changed-file scan scope")
-    return source_hashes
+    findings = _emitted_findings(root, row["capture"])
+    if any(finding[0] not in source_hashes for finding in findings):
+        raise ValueError("linked finding is absent from the verified source scope")
+    if lane == "pattern" and findings != _pattern_report_findings(
+        root, coverage.get("native_report"), scanned
+    ):
+        raise ValueError("original pattern report and SARIF findings differ")
+    return findings
 
 
 def _observations(record, record_sha256, observations, root):
@@ -1330,11 +1367,7 @@ def _observations(record, record_sha256, observations, root):
             if row.get("capture") is not None:
                 raise ValueError("unknown observation cannot assert a complete capture")
             continue
-        source_paths = _observed_source(root, row, known[ghsa], record["candidate"])
-        findings = _emitted_findings(root, row["capture"])
-        if any(finding[0] not in source_paths for finding in findings):
-            raise ValueError("linked finding is absent from the verified source scope")
-        completed[key] = findings
+        completed[key] = _linked_capture(root, row, known[ghsa], record["candidate"])
     return known, groups, completed
 
 
