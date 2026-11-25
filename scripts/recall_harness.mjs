@@ -9,8 +9,9 @@
 //   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... --out deltas.json
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
 //            [--max-control-increase N] [--extra-arg ARG]... [--candidate-extra-arg ARG]... --out verdict.json
-//            [--labels labels.json]
-//   observe  --controls deltas.json --labels labels.json   (queue new control alerts for TP/FP labels)
+//            [--probe-coverage true] [--control-exclude DIRECTORY]...
+//            [--labels labels.json] [--require-reviewed-controls true]
+//   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
 //   compare  before.json after.json
 //
 // Scoring runs the production profile argv (deploy/deep-adapters/profiles),
@@ -22,7 +23,7 @@
 // a precision proxy.
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { accessSync, closeSync, constants, createReadStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
@@ -326,13 +327,14 @@ export function summarize(rows) {
 }
 
 // Async child processes so --jobs really runs cases side by side.
-function runProcess(command, args, { cwd, env, timeout = 1800000, bytes = false } = {}) {
+function runProcess(command, args, { cwd, env, timeout = 1800000, bytes = false, discardStdout = false } = {}) {
   return new Promise(done => {
-    const child = spawn(command, args, { cwd, env: { ...process.env, ...env } });
+    const child = spawn(command, args, { cwd, env: { ...process.env, ...env },
+      ...(discardStdout ? { stdio: ['ignore', 'ignore', 'pipe'] } : {}) });
     const out = [], err = [];
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeout);
-    child.stdout.on('data', chunk => out.push(chunk));
+    child.stdout?.on('data', chunk => out.push(chunk));
     child.stderr.on('data', chunk => err.push(chunk));
     child.on('error', error => { clearTimeout(timer); done({ status: -1, stdout: '', stderr: String(error) }); });
     child.on('close', status => { clearTimeout(timer);
@@ -591,6 +593,14 @@ function verifyRulesBytes(context) {
   }
 }
 
+function captureReference(context, source, report, diagnostics) {
+  const local = path => relative(context.workdir, path).split(sep).join('/');
+  const coverage = coverageReportPath(context.profile, report, true);
+  return { source_root: local(source), sarif: { path: local(report), sha256: diagnostics.report_sha256 },
+    native_report: coverage && diagnostics.coverage_report_sha256
+      ? { path: local(coverage), sha256: diagnostics.coverage_report_sha256 } : null };
+}
+
 async function observeSide(context, source, report, expected) {
   if (!source) return { findings: [], diagnostics: null, submitted: false };
   let diagnostics;
@@ -604,7 +614,8 @@ async function observeSide(context, source, report, expected) {
     diagnostics = findings.notes;
     verifyRulesBytes(context);
     verifyPreparedBytes(source, expected);
-    return { findings, diagnostics, coverage: findings.coverage, submitted, verified: true };
+    const capture = captureReference(context, source, report, diagnostics);
+    return { findings, diagnostics, coverage: findings.coverage, capture, submitted, verified: true };
   } catch (error) {
     return { findings: [], submitted, diagnostics: { ...(diagnostics ?? error.diagnostics),
       other: 1, detail: String(error.message).slice(-300) } };
@@ -627,7 +638,8 @@ async function scoreOne(context, row) {
   const rowResult = { status, families, changed_files: Object.keys(prepared.hunks).sort(),
     revisions: prepared.revisions, source_packets: prepared.source_packets, diff_sha256: prepared.diff_sha256,
     changed_files_sha256: prepared.changed_files_sha256, file_coverage: coverage,
-    scan_notes: old.diagnostics, scan_sides: { old: old.diagnostics, fixed: fixed.diagnostics }, ...result };
+    scan_notes: old.diagnostics, scan_sides: { old: old.diagnostics, fixed: fixed.diagnostics },
+    captures: { old: old.capture ?? null, fixed: fixed.capture ?? null }, ...result };
   const outcome = outcomeOf(rowResult);
   return { ...rowResult, status: ['error', 'timeout', 'coverage_incomplete'].includes(outcome) ? 'incomplete' : status, outcome };
 }
@@ -701,7 +713,7 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
     const initial = rows[index];
     const serial = { ...context, scanRoot: join(context.scanRoot, 'serial') };
     rows[index] = { ...(await one(manifest.cases[index], serial)), retried_serially: true,
-      initial_scan_sides: initial.scan_sides };
+      initial_scan_sides: initial.scan_sides, initial_captures: initial.captures };
   }
   return { schema: 'factory.recall-result.v1', manifest: manifestPath, manifest_cases_sha256: manifestDigest,
     manifest_sha256: sha256(manifestBytes), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
@@ -730,8 +742,59 @@ function caseInputFingerprint(row) {
 function hasNewCoverageGaps(old, row) {
   return Object.entries(old.file_coverage ?? {}).some(([side, files]) => {
     const previous = new Set(coverageGaps(files));
-    return coverageGaps(row.file_coverage?.[side]).some(path => !previous.has(path));
+    const confirmedLimits = new Set(row.parser_probe?.[side]?.confirmed_limits);
+    return coverageGaps(row.file_coverage?.[side]).some(path => !previous.has(path) && !confirmedLimits.has(path));
   });
+}
+
+const PARSER_LANGUAGE = { c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
+  go: 'go', java: 'java', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  php: 'php', py: 'python', pyi: 'python', rb: 'ruby', rs: 'rust', swift: 'swift',
+  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript' };
+
+function newParsePaths(before, after, side) {
+  const known = new Set(coverageGaps(before.file_coverage?.[side]));
+  return (after.file_coverage?.[side] ?? []).filter(file => file.state === 'partial' && file.reason === 'parse' && !known.has(file.path))
+    .map(file => file.path);
+}
+
+async function probeCoverage(dev, opts) {
+  const workdir = resolve(opts.workdir ?? '.factory/recall-work');
+  const profile = JSON.parse(utf8(opts.profileBytes));
+  if (profile.engine !== 'semgrep') throw new Error('Fixed parser probe requires an OpenGrep profile');
+  const prefix = [profile.commands[0].argv[1], '--dump-ast', '--json', '--disable-version-check'];
+  for (const { before, after } of dev) {
+    const baseline = indexCases(before.cases);
+    await pool(after.cases, Number(opts.jobs ?? 6), async row => {
+      const old = baseline.get(row.ghsa);
+      if (!old || caseInputFingerprint(old) !== caseInputFingerprint(row)) return;
+      for (const side of ['old', 'fixed']) {
+        const paths = newParsePaths(old, row, side);
+        if (!paths.length || !row.captures?.[side]) continue;
+        const source = resolve(workdir, row.captures[side].source_root);
+        const packets = row.source_packets[side];
+        const packetsByPath = new Map(packets.map(packet => [packet.path, packet]));
+        verifyPreparedBytes(source, packets);
+        const observations = [];
+        for (const path of paths) {
+          const language = PARSER_LANGUAGE[extname(path).slice(1).toLowerCase()];
+          const packet = packetsByPath.get(path);
+          if (!language || !packet) continue;
+          const run = await runProcess(opts.opengrep, [...prefix, '--lang', language, join(source, path)],
+            { cwd: source, timeout: 60000, discardStdout: true });
+          const partial = run.status === 3 && /node type: ERROR|(?:syntax|parse) error|PartialParsing/i.test(run.stderr);
+          observations.push({ path, language, sha256: packet.sha256,
+            exit_code: run.status, timed_out: run.timedOut, diagnostic_sha256: sha256(run.stderr),
+            state: run.timedOut ? 'unresolved' : partial ? 'parse_limited' : run.status === 0 ? 'parsed' : 'unresolved' });
+        }
+        verifyPreparedBytes(source, packets);
+        row.parser_probe ??= {};
+        row.parser_probe[side] = { disputed_paths: paths, observations,
+          confirmed_limits: observations.filter(item => item.state === 'parse_limited').map(item => item.path) };
+      }
+    });
+  }
+  return { method: 'opengrep_dump_ast_v1', profile_sha256: sha256(opts.profileBytes), options: prefix.slice(1) };
 }
 
 function measureCaseChange(old, row, { lost, gained, newErrors, newCoverageGaps, failures }) {
@@ -800,9 +863,9 @@ function evaluationEvidence(result) {
   return { manifest_sha256: result.manifest_sha256, cases_sha256: result.manifest_cases_sha256,
     profile_sha256: result.profile_sha256, ruleset_sha256: result.ruleset_sha256, scan_directory: result.scan_directory,
     cases: result.cases.map(({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256, file_coverage,
-      scan_sides, initial_scan_sides, retried_serially, outcome, status }) =>
+      scan_sides, initial_scan_sides, captures, initial_captures, parser_probe, retried_serially, outcome, status }) =>
       ({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256,
-        file_coverage, scan_sides, initial_scan_sides, retried_serially, outcome, status })) };
+        file_coverage, scan_sides, initial_scan_sides, captures, initial_captures, parser_probe, retried_serially, outcome, status })) };
 }
 
 function pairedCaseEvidence({ before, after }) {
@@ -919,23 +982,42 @@ function precisionState(controls, review) {
   return review.unreviewed_emitted || review.ambiguous_labels.length ? 'partially_reviewed' : 'reviewed';
 }
 
-function precisionEvidence(verdict, labels, controls) {
+function precisionEvidence(verdict, labels, controls, population, requireReviewed) {
   const review = checkLabels(labels, controls);
+  const state = precisionState(controls, review);
+  const populationBound = labels?.control_population_sha256 === population;
+  if (requireReviewed && (state !== 'reviewed' || !populationBound)) {
+    verdict.failures.push('complete source-bound control review required (' + state + ')');
+  }
   if (labels) {
     verdict.labels = review;
     if (review.fp_returned.length) verdict.failures.push(`labeled false positives emitted again: ${review.fp_returned.length}`);
     if (review.tp_dropped.length) verdict.failures.push(`labeled true positives no longer emitted: ${review.tp_dropped.length}`);
     if (review.ambiguous_labels.length) verdict.failures.push(`ambiguous control label matches: ${review.ambiguous_labels.length}`);
   }
-  return { state: precisionState(controls, review), emitted: review.emitted,
-    adjudicated: review.judged, unreviewed: review.unreviewed_emitted };
+  return { state, emitted: review.emitted, adjudicated: review.judged,
+    unreviewed: review.unreviewed_emitted, population_bound: populationBound,
+    review_independence: 'unestablished' };
+}
+
+function reviewPopulation(context, deltas) {
+  return caseDigest([{ ...context, controls: deltas.map(delta => ({
+    dir: delta.dir, source_tree: delta.source_tree ?? null, coverage: [
+      delta.scan_sides?.before?.control_coverage ?? null, delta.scan_sides?.after?.control_coverage ?? null,
+    ], emitted: (delta.emitted ?? []).map(alert => labelKey(repoName(delta.dir), alert)).sort(),
+  })) }]);
 }
 
 async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
   const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
+  const excludedDirs = controlExcludedDirectories(opts);
   const labels = suppliedLabels(opts);
+  const reviewOption = opts['require-reviewed-controls'];
+  if (reviewOption !== undefined && reviewOption !== 'true') {
+    throw new Error('--require-reviewed-controls accepts true');
+  }
   const engine = await bindEvaluationEngine(JSON.parse(utf8(opts.profileBytes)),
     opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
   opts.opengrep = engine.path;
@@ -943,6 +1025,9 @@ async function evaluate(input) {
   const manifests = [].concat(opts.manifest);
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
   const candidateOpts = { ...opts, 'extra-arg': [].concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []) };
+  if (opts['probe-coverage'] !== undefined && !['true', 'false'].includes(opts['probe-coverage'])) {
+    throw new Error('--probe-coverage requires true or false');
+  }
   const dev = [];
   for (const manifest of manifests) {
     const before = await scoreManifest(manifest, opts.baseline, opts);
@@ -953,22 +1038,31 @@ async function evaluate(input) {
     dev.push({ manifest, before, after });
   }
   const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }) : [];
+  const parserProbe = opts['probe-coverage'] === 'true' ? await probeCoverage(dev, opts) : null;
   if (await fileFingerprint(engine.path) !== engine.receipt.executable_sha256) {
     throw new Error('Recall engine executable bytes changed during evaluation');
   }
   verifyEvaluationRules(opts, rules);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0) });
   if (checkpoint) applyGainRetention(verdict, checkpoint, dev);
-  verdict.precision_evidence = precisionEvidence(verdict, labels, controlDeltas);
+  const settings = { ...rules, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
+    extra_args: [].concat(opts['extra-arg'] ?? []), candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []),
+    ...(excludedDirs.length ? { control_excluded_directories: excludedDirs } : {}) };
+  const population = reviewPopulation(settings, controlDeltas);
+  const requireReviewed = reviewOption === 'true';
+  verdict.precision_evidence = precisionEvidence(verdict, labels, controlDeltas, population, requireReviewed);
   verdict.decision = verdict.failures.length ? 'REJECT' : 'ACCEPT';
-  const out = { schema: 'factory.recall-evaluation.v1', ...rules, engine: engine.receipt,
-    profile_sha256: sha256(opts.profileBytes), extra_args: [].concat(opts['extra-arg'] ?? []),
-    candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []), ...verdict,
+  const out = { schema: 'factory.recall-evaluation.v1', ...settings, ...verdict,
+    parser_probe: parserProbe,
+    decision_scope: requireReviewed ? 'reviewed_development_controls' : 'development',
+    control_population_sha256: population,
     dev: dev.map(pair => ({ manifest: pair.manifest, manifest_cases_sha256: pair.after.manifest_cases_sha256,
       before: pair.before.summary, after: pair.after.summary,
       before_evidence: evaluationEvidence(pair.before), after_evidence: evaluationEvidence(pair.after),
       cases: pairedCaseEvidence(pair) })),
-    controls: controlDeltas.map(({ emitted, ...delta }) => delta) };
+    controls: controlDeltas.map(({ emitted, ...delta }) => emitted ? {
+      ...delta, emitted: emitted.map(({ snippet, ...finding }) => ({ ...finding, snippet_sha256: sha256(snippet ?? '') })),
+    } : delta) };
   writeFileSync(opts.out, `${JSON.stringify(out, null, 1)}\n`);
   console.log(out.decision, out.failures, `gained ${out.gained.length}`, `controls +${out.control_increase}`);
   if (out.decision === 'REJECT') process.exitCode = 2;
@@ -987,8 +1081,39 @@ function insideControl(root, path) {
   return !isAbsolute(local) && local !== '..' && !local.startsWith(`..${sep}`);
 }
 
-async function controlSource(root) {
+function controlSourceExtension(path) {
+  return SCANNABLE_EXTENSIONS.includes(extname(path).slice(1).toLowerCase());
+}
+
+function controlLinkTarget(root, target) {
+  const parts = relative(root, target).split(sep);
+  if (!insideControl(root, target) || parts.includes('.git')) {
+    throw new Error('Control source link leaves the source tree');
+  }
+  return parts.join('/');
+}
+
+function controlLink(root, location, eligible) {
+  const link = readlinkSync(location);
+  const target = isAbsolute(link) ? link : `${dirname(location)}${sep}${link}`;
+  controlLinkTarget(root, resolve(target));
+  try {
+    return { link_target: controlLinkTarget(root, realpathSync.native(location)) };
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    if (eligible) throw new Error('Dangling control link occupies an eligible source path');
+    // Only record a missing final component with a resolvable in-tree parent.
+    const parent = realpathSync.native(dirname(target));
+    controlLinkTarget(root, parent);
+    const missing = join(parent, basename(target));
+    if (lstatSync(missing, { throwIfNoEntry: false })) throw error;
+    return { link_target: controlLinkTarget(root, missing), link_state: 'dangling' };
+  }
+}
+
+async function controlSource(root, excludedDirs) {
   const files = [];
+  const outsideScope = path => path.split('/').slice(0, -1).some(part => excludedDirs.includes(part));
   const visit = async (directory, prefix) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (entry.name === '.git') continue;
@@ -998,38 +1123,57 @@ async function controlSource(root) {
       } else if (entry.isFile()) {
         files.push({ path, sha256: await fileFingerprint(location) });
       } else if (entry.isSymbolicLink()) {
-        const target = realpathSync(location);
-        const targetParts = relative(root, target).split(sep);
-        if (!insideControl(root, target) || targetParts.includes('.git')) {
-          throw new Error('Control source link leaves the source tree');
-        }
-        files.push({ path, link_target: targetParts.join('/') });
+        files.push({ path, ...controlLink(root, location, controlSourceExtension(path) && !outsideScope(path)) });
       } else {
         throw new Error('Unsupported entry in control source tree');
       }
     }
   };
   await visit(root, '');
-  return { paths: new Set(files.map(file => file.path)),
+  const supported = files.filter(file => file.sha256 && controlSourceExtension(file.path));
+  const excluded = new Set(supported.filter(({ path }) => outsideScope(path)).map(file => file.path).sort());
+  return { paths: new Set(files.map(file => file.path)), hashes: new Map(files.map(file => [file.path, file.sha256])),
+    eligible: supported.map(file => file.path).filter(path => !excluded.has(path)).sort(), excluded, excludedDirs,
     evidence: { sha256: caseDigest(files.sort(byPath)), entries: files.length } };
+}
+
+function controlScanCoverage(eligible, engine) {
+  const gaps = [];
+  for (const path of eligible) {
+    const reason = !engine ? 'missing_engine_coverage' : engine.problems.get(path)
+      ?? (engine.skipped.has(path) ? engine.skipped.get(path) ?? 'engine_reported_skip' : null)
+      ?? (engine.scanned.has(path) ? null : 'absent_from_engine_paths');
+    if (reason) gaps.push({ path, reason });
+  }
+  return { complete: eligible.length > 0 && !gaps.length,
+    expected: eligible.length, reported: eligible.length - gaps.length, gaps };
 }
 
 async function controlObservation(context, directory, report, source) {
   let notes, findings = [];
   try {
     if (context.rulesSha256) verifyRulesBytes(context);
-    findings = await scan({ ...context, packetPaths: source.paths }, directory, report);
+    findings = await scan({ ...context, packetPaths: source.paths }, directory, report, true);
     notes = findings.notes;
+    notes.control_coverage = controlScanCoverage(source.eligible, findings.coverage);
+    if (source.excluded.size) notes.control_coverage.excluded = [...source.excluded].map(path => ({ path, reason: 'declared_control_exclusion' }));
+    if (!notes.control_coverage.complete && !scanIssue(notes)) {
+      notes.other = 1;
+      notes.detail = 'Control scan must cover every eligible source file';
+    }
     if (context.rulesSha256) verifyRulesBytes(context);
     if (findings.some(finding => !source.paths.has(finding.path))) {
       throw new Error('Control finding path is absent from the source tree');
+    }
+    if (findings.some(finding => source.excluded.has(finding.path))) {
+      throw new Error('Scanner emitted findings outside the declared control scope');
     }
   } catch (error) {
     findings = [];
     notes = { ...(notes ?? error.diagnostics), other: 1, detail: String(error.message).slice(-300) };
   }
   try {
-    if ((await controlSource(directory)).evidence.sha256 !== source.evidence.sha256) {
+    if ((await controlSource(directory, source.excludedDirs)).evidence.sha256 !== source.evidence.sha256) {
       throw new Error('Control source byte fingerprints differ');
     }
   } catch (error) {
@@ -1061,10 +1205,20 @@ export function controlFindingDeltas(before, after) {
   return { added: onlyIn(now, old), removed: onlyIn(old, now) };
 }
 
+function controlExcludedDirectories(opts) {
+  const excludedDirs = [...new Set([].concat(opts['control-exclude'] ?? []))].sort();
+  if (excludedDirs.some(path => typeof path !== 'string' || !/^[\w-][\w.-]*$/.test(path))) {
+    throw new Error('--control-exclude requires a single directory name');
+  }
+  return excludedDirs;
+}
+
 async function controlDeltas_(opts) {
   const [before, after] = [].concat(opts.rules);
+  const excludedDirs = controlExcludedDirectories(opts);
+  const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/**`, '--exclude', `**/${path}/**`]);
   const base = { profile: JSON.parse(utf8(opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'))),
-    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []),
+    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? [], exclusionArgs),
     rules: resolve(before), rulesSha256: opts.ruleFingerprints?.baseline_sha256 };
   const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
     rules: resolve(after), rulesSha256: opts.ruleFingerprints?.candidate_sha256 };
@@ -1079,7 +1233,7 @@ async function controlDeltas_(opts) {
       const reportsRoot = realpathSync(workdir);
       if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
       scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
-      const source = await controlSource(directory);
+      const source = await controlSource(directory, excludedDirs);
       const context = { base, candidate, directory, source, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
       let attempt = await controlPair(context, '');
       let recovery = {};
@@ -1094,7 +1248,8 @@ async function controlDeltas_(opts) {
         continue;
       }
       const { added, removed } = controlFindingDeltas(old, now);
-      const snip = f => withSnippet(directory, f);
+      const lines = controlSnippets(directory, [...old, ...now], source.hashes);
+      const snip = f => withSnippet(lines, f);
       deltas.push({ dir, before: old.length, after: now.length, source_tree: source.evidence, scan_sides, ...recovery,
         added: added.map(snip), removed: removed.map(snip),
         emitted: now.map(snip) });
@@ -1104,14 +1259,27 @@ async function controlDeltas_(opts) {
 }
 
 // Observation loop: control alerts become a label queue; labels gate later changes.
-function withSnippet(root, finding) {
-  let text = '';
-  try { text = readFileSync(join(root, finding.path), 'utf8').split('\n')[finding.line - 1] ?? ''; } catch { /* moved */ }
-  const { rule, path, line, span } = finding;
-  return { rule, path, line, ...(span ? { span } : {}), snippet: text.trim().slice(0, 200) };
+function controlSnippets(root, findings, hashes) {
+  const snippets = new Map();
+  for (const { path, line } of findings) {
+    if (!snippets.has(path)) snippets.set(path, new Map());
+    snippets.get(path).set(line, '');
+  }
+  for (const [path, lines] of snippets) {
+    const bytes = readFileSync(join(root, path));
+    if (sha256(bytes) !== hashes.get(path)) throw new Error('Control finding source bytes differ');
+    const source = bytes.toString('utf8').split('\n');
+    for (const line of lines.keys()) lines.set(line, (source[line - 1] ?? '').trim().slice(0, 200));
+  }
+  return snippets;
 }
 
-const legacyLabelKey = (repo, alert) => `${alert.rule}|${repo}|${alert.path}|${sha256(alert.snippet ?? '').slice(0, 16)}`;
+function withSnippet(snippets, finding) {
+  const { rule, path, line, span } = finding;
+  return { rule, path, line, ...(span ? { span } : {}), snippet: snippets.get(path).get(line) };
+}
+
+const legacyLabelKey = (repo, alert) => `${alert.rule}|${repo}|${alert.path}|${(alert.snippet_sha256 ?? sha256(alert.snippet ?? '')).slice(0, 16)}`;
 export function labelKey(repo, alert) {
   const legacy = legacyLabelKey(repo, alert);
   return alert.span ? `${legacy}|${alert.line}:${alert.span.join(':')}` : legacy;
@@ -1132,18 +1300,35 @@ function legacyAlternatives(entries) {
   return keyCounts(new Map(entries.map(item => [item.key, item.legacy])).values());
 }
 
-export function queueLabels(existing, deltas) {
-  const labels = new Map((existing?.labels ?? []).map(label => [label.key, label]));
-  for (const delta of deltas) {
-    const repo = repoName(delta.dir);
-    const legacyCount = delta.emitted ? legacyAlternatives(alertKeys(repo, [...delta.emitted, ...(delta.removed ?? [])])) : new Map();
-    for (const alert of delta.added ?? []) {
-      const key = labelKey(repo, alert), legacy = legacyLabelKey(repo, alert);
-      if (labels.has(legacy) && legacyCount.get(legacy) === 1) continue;
-      if (!labels.has(key)) labels.set(key, { key, repo, ...alert, verdict: null, note: '' });
-    }
+function queueControlDelta(labels, delta) {
+  const repo = repoName(delta.dir);
+  const legacyCount = delta.emitted ? legacyAlternatives(alertKeys(repo, [...delta.emitted, ...(delta.removed ?? [])])) : new Map();
+  for (const alert of delta.emitted ?? delta.added ?? []) {
+    const key = labelKey(repo, alert), legacy = legacyLabelKey(repo, alert);
+    if (labels.has(legacy) && legacyCount.get(legacy) === 1) continue;
+    if (!labels.has(key)) labels.set(key, { key, repo, ...alert, verdict: null, note: '' });
   }
-  return { schema: 'factory.recall-labels.v1', labels: [...labels.values()].sort((a, b) => a.key.localeCompare(b.key)) };
+}
+
+function validateControlPopulation(binding) {
+  if (binding != null && (typeof binding !== 'string' || !/^[a-f0-9]{64}$/.test(binding))) {
+    throw new Error('Invalid control population fingerprint');
+  }
+}
+
+export function queueLabels(existing, deltas, population) {
+  validateControlPopulation(population);
+  validateControlPopulation(existing?.control_population_sha256);
+  const changed = population && existing && existing.control_population_sha256 !== population;
+  const archived = { ...existing?.archived_labels };
+  if (changed && existing.labels?.length) {
+    archived[existing.control_population_sha256 ?? 'unbound'] = existing.labels;
+  }
+  const labels = new Map((changed ? [] : existing?.labels ?? []).map(label => [label.key, label]));
+  for (const delta of deltas) queueControlDelta(labels, delta);
+  return { schema: 'factory.recall-labels.v1', ...(population ? { control_population_sha256: population } : {}),
+    ...(Object.keys(archived).length ? { archived_labels: archived } : {}),
+    labels: [...labels.values()].sort((a, b) => a.key.localeCompare(b.key)) };
 }
 
 function controlLabelEvidence(deltas) {
@@ -1201,12 +1386,12 @@ function readOptionalLabels(path) {
   }
 }
 
-function updateLabels(path, deltas) {
+function updateLabels(path, deltas, population) {
   const destination = resolve(path);
   const lock = destination + '.lock';
   const descriptor = openSync(lock, 'wx', 0o600);
   try {
-    const queued = queueLabels(readOptionalLabels(destination), deltas);
+    const queued = queueLabels(readOptionalLabels(destination), deltas, population);
     const staging = mkdtempSync(join(dirname(destination), '.recall-labels-'));
     try {
       const staged = join(staging, 'labels.json');
@@ -1224,7 +1409,7 @@ function updateLabels(path, deltas) {
 
 async function observe(opts) {
   const deltas = JSON.parse(readFileSync(opts.controls, 'utf8'));
-  const queued = updateLabels(opts.labels, deltas.deltas ?? deltas.controls ?? []);
+  const queued = updateLabels(opts.labels, deltas.deltas ?? deltas.controls ?? [], deltas.control_population_sha256);
   console.log(`${queued.labels.length} labels, ${queued.labels.filter(label => !label.verdict).length} pending`);
 }
 
@@ -1232,7 +1417,7 @@ async function controls(opts) {
   const [before, after] = [].concat(opts.rules);
   const deltas = await controlDeltas_(opts);
   writeFileSync(opts.out, `${JSON.stringify({ schema: 'factory.recall-controls.v1', before_sha256: sha256(readFileSync(before)),
-    after_sha256: sha256(readFileSync(after)), deltas }, null, 1)}\n`);
+    after_sha256: sha256(readFileSync(after)), control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
   for (const delta of deltas) console.log(delta.dir, delta.before, '->', delta.after, delta.error ?? '');
   if (deltas.some(delta => delta.error)) process.exitCode = 2;
 }

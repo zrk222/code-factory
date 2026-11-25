@@ -229,6 +229,7 @@ test('observation loop queues control alerts once and gates on labels', async ()
   const { queueLabels, checkLabels, labelKey } = await import('./recall_harness.mjs');
   const alert = { rule: 'ruby.request-path-traversal', path: 'lib/installer.rb', line: 537, snippet: 'File.join bindir, name' };
   const deltas = [{ dir: '/ctl/rubygems', added: [alert], emitted: [alert] }];
+  assert.throws(() => queueLabels(null, deltas, 'invalid'), /population fingerprint/);
   const queued = queueLabels(null, deltas);
   assert.equal(queued.labels.length, 1);
   assert.equal(queueLabels(queued, deltas).labels.length, 1);
@@ -417,6 +418,7 @@ async function feederFixture(run) {
     writeFileSync(scanner, [
       "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';",
       "import { basename, dirname } from 'node:path';",
+      "if (process.argv.includes('--dump-ast')) { if (process.env.FIXTURE_PARSER_LIMIT === 'true') { console.error('node type: ERROR'); process.exit(3); } process.exit(0); }",
       "const rules = process.argv[process.argv.indexOf('--config') + 1];",
       "const report = process.argv[process.argv.indexOf('--sarif-output') + 1];",
       "const coverageArgs = process.argv.indexOf('--json-output');",
@@ -430,11 +432,13 @@ async function feederFixture(run) {
       "const devTimeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
       "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !process.argv.includes('--timeout=15')));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
+      "const disputedParse = old && ruleText.includes('# candidate-parse');",
       "const results = old && !missingCoverage ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
       "if (control && ruleText.includes('# control-missing-path')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'missing.py' }, region: { startLine: 1 } } }] });",
+      "if (control && ruleText.includes('# reviewed-control')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn: 1 } } }] });",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
       "if (devTimeout || controlTimeout) issues.push({ descriptor: { id: 'Timeout' }, level: 'warning' });",
-      "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'skipped.py' && path !== 'unreported.py'), skipped: files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [] }, errors: files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : [] }));",
+      "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'skipped.py' && path !== 'unreported.py'), skipped: files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [] }, errors: [...(files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : []), ...(disputedParse ? [{ type: 'Syntax error', path: 'sample.py' }] : [])] }));",
       "writeFileSync(report, JSON.stringify({ runs: [{ results, invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: issues }] }] }));",
       "process.exitCode = incomplete ? 2 : 0;",
     ].join('\n'));
@@ -483,7 +487,8 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   const dev = evaluation.dev[0];
   const observed = dev.after_evidence.cases[0];
   assert.equal(evaluation.decision, 'REJECT');
-  assert.deepEqual(evaluation.precision_evidence, { state: 'not_run', emitted: 0, adjudicated: 0, unreviewed: 0 });
+  assert.deepEqual(evaluation.precision_evidence, { state: 'not_run', emitted: 0, adjudicated: 0, unreviewed: 0,
+    population_bound: false, review_independence: 'unestablished' });
   assert.deepEqual(evaluation.new_errors, [feederRow.ghsa]);
   assert.deepEqual(evaluation.new_coverage_gaps, []);
   assert.deepEqual(dev.cases[0].matched_hunk_families, ['xss']);
@@ -635,6 +640,25 @@ test('paired controls bind source bytes and stop when input changes or leaves th
   assert.equal(stable.status, 0);
   const sourceTree = { sha256: caseDigest([{ path: 'sample.py', sha256: sha256(original) }]), entries: 1 };
   assert.deepEqual(stable.result.source_tree, sourceTree);
+  assert.deepEqual(stable.result.scan_sides.after.control_coverage, {
+    complete: true, expected: 1, reported: 1, gaps: [],
+  });
+
+  for (const path of ['skipped.py', 'partial.py', 'unreported.py']) {
+    writeFileSync(join(control, path), '# owned coverage test');
+  }
+  const incomplete = controls();
+  assert.equal(incomplete.status, 2);
+  for (const side of ['before', 'after']) {
+    assert.deepEqual(incomplete.result.scan_sides[side].control_coverage, {
+      complete: false, expected: 4, reported: 1, gaps: [
+        { path: 'partial.py', reason: 'parse' },
+        { path: 'skipped.py', reason: 'exceeded_size_limit' },
+        { path: 'unreported.py', reason: 'absent_from_engine_paths' },
+      ],
+    });
+  }
+  for (const path of ['skipped.py', 'partial.py', 'unreported.py']) rmSync(join(control, path));
 
   writeFileSync(baseline, stableRules + '# control-source-drift\n');
   const drift = controls();
@@ -661,12 +685,77 @@ test('paired controls bind source bytes and stop when input changes or leaves th
     { path: 'sample.py', sha256: sha256(readFileSync(join(control, 'sample.py'))) },
   ]), entries: 2 });
 
+  symlinkSync(join(control, 'not-built'), join(control, 'generated'), linkType);
+  const dangling = controls();
+  assert.equal(dangling.status, 0, dangling.result.error);
+  assert.deepEqual(dangling.result.source_tree, { sha256: caseDigest([
+    { path: 'generated', link_target: 'not-built', link_state: 'dangling' },
+    { path: 'inside', link_target: 'target' },
+    { path: 'sample.py', sha256: sha256(readFileSync(join(control, 'sample.py'))) },
+  ]), entries: 3 });
+
+  const missingSource = join(control, 'missing.py');
+  symlinkSync(join(control, 'not-built'), missingSource, linkType);
+  const eligible = controls();
+  assert.equal(eligible.status, 2);
+  assert.match(eligible.result.error, /dangling control link occupies an eligible source path/i);
+  rmSync(missingSource);
+
   const outside = join(root, 'outside');
   mkdirSync(outside);
   symlinkSync(outside, join(control, 'outside'), linkType);
   const escaped = controls();
   assert.equal(escaped.status, 2);
   assert.match(escaped.result.error, /link leaves the source tree/);
+  rmSync(join(control, 'outside'));
+  symlinkSync(join(outside, 'missing'), join(control, 'broken-external'), linkType);
+  const escapedDangling = controls();
+  assert.equal(escapedDangling.status, 2);
+  assert.match(escapedDangling.result.error, /link leaves the source tree/);
+}));
+
+test('reviewed control gate requires a complete, source-bound population', () => feederFixture(fixture => {
+  const { root, workdir, profile, manifest, baseline, candidate } = fixture;
+  const control = join(root, 'control'), output = join(root, 'reviewed.json'), labels = join(root, 'labels.json');
+  mkdirSync(control);
+  writeFileSync(join(control, 'sample.py'), '# owned review control');
+  const stableRules = readFileSync(baseline, 'utf8') + '# reviewed-control\n';
+  for (const rule of [baseline, candidate]) writeFileSync(rule, stableRules);
+  const invoke = (command, ...args) => spawnSync(process.execPath,
+    ['scripts/recall_harness.mjs', command, ...args], { encoding: 'utf8', timeout: 20000 });
+  const evaluate = (...args) => {
+    const run = invoke('evaluate', '--manifest', manifest, '--baseline', baseline, '--candidate', candidate,
+      '--profile', profile, '--opengrep', process.execPath, '--workdir', workdir, '--jobs', '1',
+      '--dir', control, '--out', output, '--require-reviewed-controls', 'true', ...args);
+    assert.equal(run.stderr, '');
+    return [run.status, JSON.parse(readFileSync(output, 'utf8'))];
+  };
+  const [initial, pending] = evaluate();
+  assert.equal(initial, 2);
+  assert.equal(pending.precision_evidence.state, 'unreviewed', JSON.stringify(pending.controls[0]));
+  assert.equal(pending.controls[0].added.length, 0);
+  assert.equal(pending.controls[0].emitted.length, 1);
+  assert.equal(pending.controls[0].emitted[0].snippet, undefined);
+  assert.equal(invoke('observe', '--controls', output, '--labels', labels).status, 0);
+  const sheet = JSON.parse(readFileSync(labels, 'utf8'));
+  assert.equal(sheet.control_population_sha256, pending.control_population_sha256);
+  assert.equal(sheet.labels.length, 1);
+  sheet.labels[0].verdict = 'TP';
+  writeFileSync(labels, JSON.stringify(sheet));
+  const [qualified, accepted] = evaluate('--labels', labels);
+  assert.equal(qualified, 0);
+  assert.equal(accepted.precision_evidence.adjudicated, 1);
+  assert.equal(accepted.precision_evidence.review_independence, 'unestablished');
+
+  writeFileSync(join(control, 'sample.py'), '# revised owned review control');
+  const [stale, rejected] = evaluate('--labels', labels);
+  assert.equal(stale, 2);
+  assert.equal(rejected.precision_evidence.population_bound, false);
+  assert.equal(invoke('observe', '--controls', output, '--labels', labels).status, 0);
+  const refreshed = JSON.parse(readFileSync(labels, 'utf8'));
+  assert.equal(refreshed.labels.length, 1);
+  assert.equal(refreshed.labels[0].verdict, null);
+  assert.equal(refreshed.archived_labels[sheet.control_population_sha256][0].verdict, 'TP');
 }));
 
 test('a successful serial retry keeps the original timed-out report fingerprint', () => feederFixture(async fixture => {
@@ -681,6 +770,65 @@ test('a successful serial retry keeps the original timed-out report fingerprint'
   assert.equal(row.scan_sides.old.timeouts, 0);
   assert.equal(row.initial_scan_sides.old.report_sha256, sha256(readFileSync(join(root, feederRow.ghsa, 'old.sarif'))));
   assert.equal(row.scan_sides.old.report_sha256, sha256(readFileSync(join(root, 'serial', feederRow.ghsa, 'old.sarif'))));
+  assert.notEqual(row.initial_captures.old.sarif.path, row.captures.old.sarif.path);
+  assert.equal(row.initial_captures.old.source_root, row.captures.old.source_root);
+  for (const capture of [row.initial_captures.old, row.captures.old, row.captures.fixed]) {
+    assert.equal(existsSync(join(workdir, capture.source_root)), true);
+    for (const report of [capture.sarif, capture.native_report]) {
+      assert.doesNotMatch(report.path, /\\/);
+      assert.equal(sha256(readFileSync(join(workdir, report.path))), report.sha256);
+    }
+  }
+}));
+
+test('a fixed parser probe classifies only reproduced engine limits', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline, candidate } = fixture;
+  writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# candidate-parse\n');
+  const output = join(root, 'probe-evaluation.json');
+  for (const reproduced of [false, true]) {
+    const run = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--baseline', baseline,
+      '--candidate', candidate, '--manifest', manifest, '--profile', profile, '--workdir', workdir,
+      '--opengrep', process.execPath, '--out', output, '--probe-coverage', 'true'],
+    { encoding: 'utf8', timeout: 20000, env: { ...process.env, FIXTURE_PARSER_LIMIT: String(reproduced) } });
+    assert.ok(existsSync(output), run.stderr);
+    const verdict = JSON.parse(readFileSync(output, 'utf8'));
+    assert.equal(verdict.decision, reproduced ? 'ACCEPT' : 'REJECT');
+    assert.deepEqual(verdict.new_coverage_gaps, reproduced ? [] : [feederRow.ghsa]);
+    const evidence = verdict.dev[0].after_evidence.cases[0];
+    assert.deepEqual(evidence.parser_probe.old.confirmed_limits, reproduced ? ['sample.py'] : []);
+    assert.equal(evidence.file_coverage.old[0].state, 'partial');
+    const observation = evidence.parser_probe.old.observations[0];
+    assert.equal(observation.state, reproduced ? 'parse_limited' : 'parsed');
+    assert.equal(observation.sha256, evidence.source_packets.old[0].sha256);
+  }
+}));
+
+test('declared control directories are excluded and unrelated missing paths remain coverage gaps', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline } = fixture;
+  const control = join(root, 'control'), output = join(root, 'controls.json');
+  const run = () => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls', '--rules', baseline,
+    '--rules', baseline, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
+    '--dir', control, '--out', output, '--control-exclude', 'test', '--control-exclude', 'build'],
+  { encoding: 'utf8', timeout: 20000 });
+  for (const dir of ['build', 'test']) {
+    mkdirSync(join(control, dir), { recursive: true });
+    writeFileSync(join(control, dir, 'sample.py'), '# owned excluded control');
+  }
+  writeFileSync(join(control, 'sample.py'), '# owned in-scope control');
+  const success = run();
+  assert.equal(success.status, 0, success.stderr);
+  const receipt = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(receipt.control_excluded_directories, ['build', 'test']);
+  for (const side of Object.values(receipt.deltas[0].scan_sides)) {
+    assert.equal(side.control_coverage.expected, 1);
+    assert.deepEqual(side.control_coverage.excluded.map(item => item.path), ['build/sample.py', 'test/sample.py']);
+  }
+  writeFileSync(join(control, 'unreported.py'), '# missing coverage outside exclusions');
+  assert.equal(run().status, 2);
+  const failed = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(failed.deltas[0].scan_sides.after.control_coverage.gaps, [
+    { path: 'unreported.py', reason: 'absent_from_engine_paths' },
+  ]);
 }));
 
 
