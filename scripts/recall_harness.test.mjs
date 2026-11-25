@@ -767,6 +767,15 @@ test('a successful serial retry keeps the original timed-out report fingerprint'
   assert.equal(row.scan_sides.old.timeouts, 0);
   assert.equal(row.initial_scan_sides.old.report_sha256, sha256(readFileSync(join(root, feederRow.ghsa, 'old.sarif'))));
   assert.equal(row.scan_sides.old.report_sha256, sha256(readFileSync(join(root, 'serial', feederRow.ghsa, 'old.sarif'))));
+  assert.notEqual(row.initial_captures.old.sarif.path, row.captures.old.sarif.path);
+  assert.equal(row.initial_captures.old.source_root, row.captures.old.source_root);
+  for (const capture of [row.initial_captures.old, row.captures.old, row.captures.fixed]) {
+    assert.equal(existsSync(join(workdir, capture.source_root)), true);
+    for (const report of [capture.sarif, capture.native_report]) {
+      assert.doesNotMatch(report.path, /\\/);
+      assert.equal(sha256(readFileSync(join(workdir, report.path))), report.sha256);
+    }
+  }
 }));
 
 

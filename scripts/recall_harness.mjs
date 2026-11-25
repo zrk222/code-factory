@@ -591,6 +591,14 @@ function verifyRulesBytes(context) {
   }
 }
 
+function captureReference(context, source, report, diagnostics) {
+  const local = path => relative(context.workdir, path).split(sep).join('/');
+  const coverage = coverageReportPath(context.profile, report, true);
+  return { source_root: local(source), sarif: { path: local(report), sha256: diagnostics.report_sha256 },
+    native_report: coverage && diagnostics.coverage_report_sha256
+      ? { path: local(coverage), sha256: diagnostics.coverage_report_sha256 } : null };
+}
+
 async function observeSide(context, source, report, expected) {
   if (!source) return { findings: [], diagnostics: null, submitted: false };
   let diagnostics;
@@ -604,7 +612,8 @@ async function observeSide(context, source, report, expected) {
     diagnostics = findings.notes;
     verifyRulesBytes(context);
     verifyPreparedBytes(source, expected);
-    return { findings, diagnostics, coverage: findings.coverage, submitted, verified: true };
+    const capture = captureReference(context, source, report, diagnostics);
+    return { findings, diagnostics, coverage: findings.coverage, capture, submitted, verified: true };
   } catch (error) {
     return { findings: [], submitted, diagnostics: { ...(diagnostics ?? error.diagnostics),
       other: 1, detail: String(error.message).slice(-300) } };
@@ -627,7 +636,8 @@ async function scoreOne(context, row) {
   const rowResult = { status, families, changed_files: Object.keys(prepared.hunks).sort(),
     revisions: prepared.revisions, source_packets: prepared.source_packets, diff_sha256: prepared.diff_sha256,
     changed_files_sha256: prepared.changed_files_sha256, file_coverage: coverage,
-    scan_notes: old.diagnostics, scan_sides: { old: old.diagnostics, fixed: fixed.diagnostics }, ...result };
+    scan_notes: old.diagnostics, scan_sides: { old: old.diagnostics, fixed: fixed.diagnostics },
+    captures: { old: old.capture ?? null, fixed: fixed.capture ?? null }, ...result };
   const outcome = outcomeOf(rowResult);
   return { ...rowResult, status: ['error', 'timeout', 'coverage_incomplete'].includes(outcome) ? 'incomplete' : status, outcome };
 }
@@ -701,7 +711,7 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
     const initial = rows[index];
     const serial = { ...context, scanRoot: join(context.scanRoot, 'serial') };
     rows[index] = { ...(await one(manifest.cases[index], serial)), retried_serially: true,
-      initial_scan_sides: initial.scan_sides };
+      initial_scan_sides: initial.scan_sides, initial_captures: initial.captures };
   }
   return { schema: 'factory.recall-result.v1', manifest: manifestPath, manifest_cases_sha256: manifestDigest,
     manifest_sha256: sha256(manifestBytes), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
@@ -800,9 +810,9 @@ function evaluationEvidence(result) {
   return { manifest_sha256: result.manifest_sha256, cases_sha256: result.manifest_cases_sha256,
     profile_sha256: result.profile_sha256, ruleset_sha256: result.ruleset_sha256, scan_directory: result.scan_directory,
     cases: result.cases.map(({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256, file_coverage,
-      scan_sides, initial_scan_sides, retried_serially, outcome, status }) =>
+      scan_sides, initial_scan_sides, captures, initial_captures, retried_serially, outcome, status }) =>
       ({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256,
-        file_coverage, scan_sides, initial_scan_sides, retried_serially, outcome, status })) };
+        file_coverage, scan_sides, initial_scan_sides, captures, initial_captures, retried_serially, outcome, status })) };
 }
 
 function pairedCaseEvidence({ before, after }) {
