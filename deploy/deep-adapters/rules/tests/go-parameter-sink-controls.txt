@@ -42,3 +42,14 @@ func (p *EventsPersister) Events(filter *EventsFilter) {
 	finder = finder.Order(SanitizeOrderInput(filter.SortOn, []string{"created_at", "name"}))
 	_ = finder
 }
+
+func FindInStore(store *sql.DB, name string) (*sql.Rows, error) {
+	q := fmt.Sprintf("SELECT * FROM users WHERE name = '%s'", name)
+	// ruleid: go.parameter-sql-text
+	return store.Query(q)
+}
+
+func FindInStoreBound(store *sql.DB, name string) (*sql.Rows, error) {
+	// ok: go.parameter-sql-text
+	return store.Query("SELECT * FROM users WHERE name = $1", name)
+}

@@ -3650,6 +3650,33 @@ rules:
                     - pattern: $V
                     - pattern: $V.String()
           - focus-metavariable: $Q
+      # The same calls on a parameter declared as a database handle, under any name.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: func $F(..., $DB *$TYPE, ...) { ... }
+              - pattern-inside: func $F(..., $DB *$TYPE, ...) $R { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) $R { ... }
+          - metavariable-regex: {metavariable: $TYPE, regex: '^(sql\.(DB|Tx|Conn)|sqlx\.(DB|Tx)|gorm\.DB|pgxpool\.Pool|pgx\.Conn)$'}
+          - pattern-either:
+              - pattern: $DB.Query($Q, ...)
+              - pattern: $DB.QueryContext($C, $Q, ...)
+              - pattern: $DB.QueryRow($Q, ...)
+              - pattern: $DB.QueryRowContext($C, $Q, ...)
+              - pattern: $DB.Exec($Q, ...)
+              - pattern: $DB.ExecContext($C, $Q, ...)
+              - pattern: $DB.Raw($Q, ...)
+              - pattern: $DB.Select($DST, $Q, ...)
+              - pattern: $DB.Get($DST, $Q, ...)
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: fmt.Sprintf(...)
+                    - pattern: $A + $B
+                    - pattern: $V
+                    - pattern: $V.String()
+          - focus-metavariable: $Q
       # Query-builder ordering and grouping take a column expression, not a bound value.
       - patterns:
           - pattern-either:
