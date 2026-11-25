@@ -556,7 +556,8 @@ async function feederFixture(run, row = feederRow) {
       "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
       "const incomplete = !old && ruleText.includes('# incomplete');",
       "const devTimeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
-      "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !process.argv.includes('--timeout=15')));",
+      "const recoveredControl = process.argv.includes('--timeout=15') && process.argv.includes('--jobs=1');",
+      "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !recoveredControl));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
       "const disputedParse = old && ruleText.includes('# candidate-parse');",
       "const results = old && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
@@ -714,7 +715,7 @@ test('an empty successful scanner result needs old-side coverage to count as a m
   assert.match(replay.failures[0], /lost 1 checkpoint hit/);
 }));
 
-test('evaluation retries both control arms once with a bounded timeout and records both attempts', () =>
+test('evaluation retries both control arms once with a bounded timeout and one scanner worker', () =>
   feederFixture(({ root, workdir, manifest, profile, baseline, candidate }) => {
     const control = join(root, 'control');
     mkdirSync(control);
@@ -735,13 +736,16 @@ test('evaluation retries both control arms once with a bounded timeout and recor
     const [delta] = recovered.result.controls;
     assert.equal(delta.initial_scan_sides.after.timeouts, 1);
     assert.equal(delta.initial_scan_sides.before.timeouts, 0);
-    assert.deepEqual(delta.retry_extra_args, ['--timeout=15']);
+    assert.deepEqual(delta.retry_extra_args, ['--timeout=15', '--jobs=1']);
     assert.equal(delta.scan_sides.before.timeouts, 0);
     assert.equal(delta.scan_sides.after.timeouts, 0);
     assert.ok(delta.scan_sides.after.duration_ms >= 0);
     const explicit = evaluate('--extra-arg', '--timeout=5');
     assert.equal(explicit.status, 2);
-    assert.deepEqual(explicit.result.controls[0].retry_extra_args, []);
+    assert.deepEqual(explicit.result.controls[0].retry_extra_args, ['--jobs=1']);
+    const explicitWorkers = evaluate('--extra-arg', '--jobs=3');
+    assert.equal(explicitWorkers.status, 2);
+    assert.deepEqual(explicitWorkers.result.controls[0].retry_extra_args, ['--timeout=15']);
     writeFileSync(baseline, rules + '# persistent-timeout\n');
     writeFileSync(candidate, rules + '# persistent-timeout\n');
     const persistent = evaluate();

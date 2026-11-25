@@ -1310,9 +1310,15 @@ function controlTargetBytes(directory, source, base, candidate) {
 }
 
 function controlRetryArgs(profile, baselineArgs, candidateArgs) {
-  const hasTimeoutOverride = [...profile.commands[0].argv, ...baselineArgs, ...candidateArgs]
-    .some(arg => /^--(?:timeout(?:=|$)|dynamic-timeout|allow-rule-timeout-control)/.test(arg));
-  return profile.engine === 'semgrep' && !hasTimeoutOverride ? [`--timeout=${CONTROL_TIMEOUT_RETRY_SECONDS}`] : [];
+  if (profile.engine !== 'semgrep') return [];
+  const argv = [...profile.commands[0].argv, ...baselineArgs, ...candidateArgs];
+  const retry = [];
+  if (!argv.some(arg => /^--(?:timeout(?:=|$)|dynamic-timeout|allow-rule-timeout-control)/.test(arg))) {
+    retry.push(`--timeout=${CONTROL_TIMEOUT_RETRY_SECONDS}`);
+  }
+  // Retry under a single worker to keep the existing per-rule budget usable under load.
+  if (!argv.some(arg => /^(?:--jobs(?:=|$)|-j(?:=|\d|$))/.test(arg))) retry.push('--jobs=1');
+  return retry;
 }
 
 function insideControl(root, path) {
