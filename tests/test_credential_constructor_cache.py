@@ -3886,6 +3886,60 @@ def test_verifier_native_failed_batch_does_not_publish(
     assert binding._regenerate_native_findings(path.name, raw, source_model=model) == []
 
 
+@pytest.mark.parametrize("reject", [False, True])
+def test_finding_tier_report_batches_native_rows_and_discards_late_mutation(
+    verifier_native_source, monkeypatch, reject
+):
+    from contextlib import contextmanager
+
+    from factoryline import primitive_observation_binding as binding
+
+    _, raw, _ = verifier_native_source
+    files = {"a.py": raw, "b.py": raw}
+    fingerprint = hashlib.sha256(raw).hexdigest()
+    sources = [{"path": path, "sha256": fingerprint} for path in files]
+    findings = [
+        {"path": path, "line": 6, "code": "SECURITY_TLS_VERIFY_DISABLED"}
+        for path in ("a.py", "b.py", "a.py")
+    ]
+    batches, native_by_finding = [], []
+    analysis_batch = audit._security_snapshot_analysis_batch
+    credential_evidence = binding._finding_credential_evidence
+
+    @contextmanager
+    def observed_batch(context):
+        model = context["source"]
+        batches.append(model)
+        with analysis_batch(context):
+            yield
+            if reject:
+                model.snapshots[model.root / "a.py"].body.append(ast.Pass())
+
+    def observed_evidence(finding, native_rows, *args, **kwargs):
+        native_by_finding.append([row["code"] for row in native_rows])
+        return credential_evidence(finding, native_rows, *args, **kwargs)
+
+    monkeypatch.setattr(audit, "_security_snapshot_analysis_batch", observed_batch)
+    monkeypatch.setattr(binding, "_finding_credential_evidence", observed_evidence)
+    report = binding.build_finding_tier_report(
+        findings, [], sources, files, coverage_state=True, partition_state=True
+    )
+    assert len(batches) == 1
+    assert [row["raw_finding"] for row in report["ledger"]] == findings
+    if reject:
+        assert native_by_finding == [[], [], []]
+        assert report["validation"]["native_source_model"] == "UNAVAILABLE"
+        assert report["defect_gate"]["reason"] == "native_source_model_unavailable"
+    else:
+        assert all(
+            "SECURITY_TLS_VERIFY_DISABLED" in codes for codes in native_by_finding
+        )
+        assert (
+            report["validation"]["native_source_model"]
+            == "NO_REGENERATION_FAILURE_RECORDED"
+        )
+
+
 def test_verifier_native_scan_cache_modes_preserve_report(verifier_native_source):
     from factoryline.pytest_collection_audit import advisory_collection_context
 
