@@ -273,9 +273,13 @@ export function scoreCase({ families, hunks, oldFindings, newFindings, rules }) 
     fix_side_residual: residual.map(f => [f.rule, f.path, f.line]) };
 }
 
+function hasScanError(notes) {
+  return notes?.blocking_parse_errors > 0 || notes?.other > 0 || notes?.failed_exit === true;
+}
+
 function scanIssue(notes) {
   if (notes?.timeouts > 0) return 'timeout';
-  if (notes?.blocking_parse_errors > 0 || notes?.other > 0 || notes?.failed_exit) return 'error';
+  if (hasScanError(notes)) return 'error';
   return null;
 }
 
@@ -1520,7 +1524,6 @@ function recordControlCoverage(side, scope) {
   if (scope.excluded.length) coverage.excluded = scope.excluded;
   side.notes.control_coverage = coverage;
   if (!coverage.complete && !scanIssue(side.notes)) {
-    side.notes.other = 1;
     side.notes.detail = 'Control scan must cover every eligible source file';
   }
 }
@@ -1532,7 +1535,7 @@ async function controlPair({ base, candidate, directory, reports, source, workdi
   const scope = pairedControlScope(source, [old, now]);
   for (const side of [old, now]) recordControlCoverage(side, scope);
   const scan_sides = { before: old.notes, after: now.notes };
-  const issues = [old, now].map(side => side.sourceInvalid ? 'error' : scanIssue(side.notes));
+  const issues = [old, now].map(side => side.sourceInvalid || hasScanError(side.notes) ? 'error' : scanIssue(side.notes));
   return { old: old.findings, now: now.findings, scan_sides, issues, control_scope_sha256: scope.sha256 };
 }
 
@@ -1637,7 +1640,7 @@ async function controlDeltas_(opts, engine) {
         attempt = await controlPair(context, '-retry', extra);
       }
       const { old, now, scan_sides, issues, control_scope_sha256 } = attempt;
-      if (issues.some(Boolean)) {
+      if (issues.some(Boolean) || Object.values(scan_sides).some(side => !side?.control_coverage?.complete)) {
         deltas.push({ dir, error: 'Control scan incomplete', source_tree: source.evidence, scan_sides,
           control_scope_sha256, coverage_gap_delta: controlGapDelta(scan_sides), ...recovery });
         continue;
