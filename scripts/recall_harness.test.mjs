@@ -1119,6 +1119,24 @@ test('paired controls record only shared scanner ignores and keep candidate skip
     { path: 'candidate-only.py', reason: 'semgrepignore_patterns_match' },
   ]);
   assert.deepEqual(rejected.scan_sides.after.control_coverage.excluded, exclusions);
+  assert.deepEqual(rejected.coverage_gap_delta, { state: 'COMPARED', shared: [], baseline_only: [],
+    candidate_only: [{ path: 'candidate-only.py', reason: 'semgrepignore_patterns_match' }] });
+
+  writeFileSync(join(control, 'partial.py'), '# owned parser control\n');
+  assert.equal(run(baseline).status, 2);
+  const { deltas: [shared] } = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(shared.coverage_gap_delta, { state: 'COMPARED',
+    shared: [{ path: 'partial.py', reason: 'parse' }], baseline_only: [], candidate_only: [] });
+
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# persistent-timeout\n');
+  assert.equal(run(baseline).status, 2);
+  const { deltas: [timeout] } = JSON.parse(readFileSync(output, 'utf8'));
+  assert.equal(timeout.scan_sides.before.timeouts, 1);
+  assert.equal(timeout.scan_sides.after.timeouts, 1);
+  for (const side of Object.values(timeout.scan_sides)) {
+    assert.deepEqual(side.control_coverage.excluded, exclusions);
+    assert.deepEqual(side.control_coverage.gaps, [{ path: 'partial.py', reason: 'parse' }]);
+  }
 }));
 
 test('controls scan bounded larger files on both arms and preserve explicit size limits', () => feederFixture(fixture => {

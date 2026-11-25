@@ -1443,7 +1443,8 @@ async function controlObservation(context, directory, report, source) {
 
 function pairedControlScope(source, sides) {
   const exclusions = new Map(source.excluded);
-  if (sides.every(side => side.coverage && !side.sourceInvalid && !scanIssue(side.notes))) {
+  if (sides.every(({ coverage, sourceInvalid, notes }) => coverage && !sourceInvalid
+      && controlPathEvidence(notes) && !notes.blocking_parse_errors && !notes.other)) {
     const reported = new Set(sides.flatMap(side => side.findings.map(finding => finding.path)));
     for (const path of source.eligible) {
       const agreed = sides.every(({ coverage }) => coverage.skipped.get(path) === 'semgrepignore_patterns_match'
@@ -1454,6 +1455,25 @@ function pairedControlScope(source, sides) {
   const eligible = source.eligible.filter(path => !exclusions.has(path));
   const excluded = [...exclusions].map(([path, reason]) => ({ path, reason })).sort(byPath);
   return { eligible, excluded, sha256: caseDigest([{ source_sha256: source.evidence.sha256, eligible, excluded }]) };
+}
+
+function controlPathEvidence(notes) {
+  return notes?.failed_exit === false && !notes.source_error && notes.coverage_report_sha256
+    && notes.reports?.native_report?.sha256 === notes.coverage_report_sha256;
+}
+
+export function controlGapDelta(scanSides) {
+  const { before, after } = scanSides;
+  if (![before, after].every(side => controlPathEvidence(side) && Array.isArray(side.control_coverage?.gaps))) {
+    return { state: 'UNCOMPARABLE' };
+  }
+  const old = before.control_coverage.gaps;
+  const now = after.control_coverage.gaps;
+  const key = ({ path, reason }) => JSON.stringify([path, reason]);
+  const oldKeys = new Set(old.map(key));
+  const nowKeys = new Set(now.map(key));
+  return { state: 'COMPARED', shared: old.filter(gap => nowKeys.has(key(gap))),
+    baseline_only: old.filter(gap => !nowKeys.has(key(gap))), candidate_only: now.filter(gap => !oldKeys.has(key(gap))) };
 }
 
 function recordControlCoverage(side, scope) {
@@ -1580,7 +1600,8 @@ async function controlDeltas_(opts, engine) {
       }
       const { old, now, scan_sides, issues, control_scope_sha256 } = attempt;
       if (issues.some(Boolean)) {
-        deltas.push({ dir, error: 'Control scan incomplete', source_tree: source.evidence, scan_sides, control_scope_sha256, ...recovery });
+        deltas.push({ dir, error: 'Control scan incomplete', source_tree: source.evidence, scan_sides,
+          control_scope_sha256, coverage_gap_delta: controlGapDelta(scan_sides), ...recovery });
         continue;
       }
       const { added, removed } = controlFindingDeltas(old, now);
