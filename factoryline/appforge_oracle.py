@@ -7,6 +7,8 @@ that define that evaluation.  It is local and cannot contact Apple.
 
 from __future__ import annotations
 
+from .revenue_evidence import receipt_paths
+
 from .contract import write_atomic_json
 
 import hashlib
@@ -274,15 +276,15 @@ def _projected_authority(workspace: Path, path: Path) -> dict[str, Any]:
     }
 
 
-def appforge_oracle_projection(root: Path) -> dict[str, Any]:
+def appforge_oracle_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read hash-valid AppForge authority receipts without changing release state."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
     ranked: list[tuple[int, Path]] = []
-    candidates = list(
-        (workspace / ".factory" / "appforge").rglob("*oracle-authority*.json")
-    )
+    candidates = list(receipt_paths(workspace, "*oracle-authority*.json", inventory))
     truncated = len(candidates) > 1_000
     for path in candidates[:1_000]:
         try:

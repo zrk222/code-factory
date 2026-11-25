@@ -1,6 +1,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -2801,7 +2802,7 @@ def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_p
         tmp_path / "worker-sdk",
     )
     sdk_stage, semgrep_stage = dockerfile.split("FROM sdk AS semgrep-worker", 1)
-    semgrep_stage = semgrep_stage.split("FROM sdk AS codeql-python-worker", 1)[0]
+    semgrep_stage = semgrep_stage.split("FROM sdk AS codeql-bundle", 1)[0]
     assert "USER 1000:1000" in sdk_stage
     assert 'ENTRYPOINT ["/opt/factory/bin/audit-adapter"]' in sdk_stage
     assert "USER 1000:1000" in semgrep_stage
@@ -2810,6 +2811,40 @@ def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_p
         in semgrep_stage
     )
     _assert_missing_worker_module_fails(tmp_path)
+
+
+def test_codeql_worker_builds_compile_only_the_python_suite():
+    dockerfile = Path("deploy/deep-adapters/Dockerfile").read_text(encoding="utf-8")
+    stages = {
+        target: (parent, instructions)
+        for parent, target, instructions in re.findall(
+            r"^FROM (\S+) AS (\S+)\n(.*?)(?=^FROM |\Z)", dockerfile, re.M | re.S
+        )
+    }
+    parent, bundle = stages["codeql-bundle"]
+    assert parent == "sdk"
+    assert "ADD --checksum=sha256:" in bundle
+    assert (
+        'ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
+        in bundle
+    )
+    assert "query compile" not in bundle
+    for language in ("python", "javascript", "actions", "ruby"):
+        parent, instructions = stages[f"codeql-{language}-worker"]
+        assert parent == "codeql-bundle"
+        assert (
+            f"profiles/codeql-{language}-full.json /opt/factory/adapter-profile.json"
+            in instructions
+        )
+        assert "USER 1000:1000" in instructions
+        if language == "python":
+            assert "query compile --precompile" in instructions
+            assert "python-security-extended.qls" in instructions
+        else:
+            assert "query compile" not in instructions
+            assert "resolve queries" in instructions
+            assert f"{language}-security-extended.qls" in instructions
+            assert 'with_suffix(".qlx").is_file()' in instructions
 
 
 def _osv_package_accounting_fixture(
