@@ -1,0 +1,121 @@
+{
+ "schema": "factory.rule-confidence.v1",
+ "policy": {
+  "default_tier_wilson_lower": 0.8,
+  "review_tier_wilson_lower": 0.3,
+  "minimum_decided_alerts": 20
+ },
+ "sources": [
+  {
+   "file": "docs/evidence/precision-adjudicated-sepoct-20261125.json",
+   "sha256": "872d3d6e3ec8b8f031dbc12bfeec09f6e8e1b018f223bb0d22682be0f6e21d52",
+   "independence": "AI reviewers and AI judge only; independence from AI review is unestablished"
+  }
+ ],
+ "rules": {
+  "go.parameter-path-join-without-containment": {
+   "tp": 0,
+   "fp": 1,
+   "unclear": 0,
+   "decided": 1,
+   "precision": 0.0,
+   "wilson95": [
+    0.0,
+    0.7935
+   ],
+   "beta_mean": 0.3333,
+   "evidence_tier": "unqualified"
+  },
+  "javascript.dom-innerhtml-from-variable": {
+   "tp": 4,
+   "fp": 5,
+   "unclear": 0,
+   "decided": 9,
+   "precision": 0.4444,
+   "wilson95": [
+    0.1888,
+    0.7334
+   ],
+   "beta_mean": 0.4545,
+   "evidence_tier": "unqualified"
+  },
+  "javascript.html-template-unescaped-interpolation": {
+   "tp": 2,
+   "fp": 11,
+   "unclear": 0,
+   "decided": 13,
+   "precision": 0.1538,
+   "wilson95": [
+    0.0433,
+    0.4224
+   ],
+   "beta_mean": 0.2,
+   "evidence_tier": "unqualified"
+  },
+  "javascript.parameter-path-join-without-containment": {
+   "tp": 8,
+   "fp": 2,
+   "unclear": 0,
+   "decided": 10,
+   "precision": 0.8,
+   "wilson95": [
+    0.4902,
+    0.9433
+   ],
+   "beta_mean": 0.75,
+   "evidence_tier": "unqualified"
+  },
+  "javascript.parameter-shell-command": {
+   "tp": 5,
+   "fp": 6,
+   "unclear": 0,
+   "decided": 11,
+   "precision": 0.4545,
+   "wilson95": [
+    0.2127,
+    0.7199
+   ],
+   "beta_mean": 0.4615,
+   "evidence_tier": "unqualified"
+  },
+  "javascript.parameter-sql-text": {
+   "tp": 0,
+   "fp": 1,
+   "unclear": 0,
+   "decided": 1,
+   "precision": 0.0,
+   "wilson95": [
+    0.0,
+    0.7935
+   ],
+   "beta_mean": 0.3333,
+   "evidence_tier": "unqualified"
+  },
+  "python.parameter-path-join-without-containment": {
+   "tp": 2,
+   "fp": 0,
+   "unclear": 0,
+   "decided": 2,
+   "precision": 1.0,
+   "wilson95": [
+    0.3424,
+    1.0
+   ],
+   "beta_mean": 0.75,
+   "evidence_tier": "unqualified"
+  },
+  "python.unsafe-deserialization-unscoped": {
+   "tp": 4,
+   "fp": 3,
+   "unclear": 0,
+   "decided": 7,
+   "precision": 0.5714,
+   "wilson95": [
+    0.2505,
+    0.8418
+   ],
+   "beta_mean": 0.5556,
+   "evidence_tier": "unqualified"
+  }
+ }
+}
