@@ -11,15 +11,35 @@ export function changedFiles(raw) {
   return changes;
 }
 
-const relativePath = path => typeof path === 'string' ? path.replace(/^\.\//, '') : null;
+export function scannerPath(path, windows = process.platform === 'win32') {
+  if (typeof path !== 'string') return null;
+  return (windows ? path.replaceAll('\\', '/') : path).replace(/^\.\//, '');
+}
+
+export function sarifPath(uri, packetPaths) {
+  const explicitFileUri = uri.startsWith('file://');
+  const value = uri.replace(/^file:\/\//, '');
+  const literal = scannerPath(value);
+  let decoded;
+  try {
+    decoded = scannerPath(decodeURIComponent(value));
+  } catch (error) {
+    if (explicitFileUri || (packetPaths && !packetPaths.has(literal))) throw error;
+    return literal;
+  }
+  // OpenGrep sometimes emits a pathname literally rather than encoding it as a URI.
+  if (explicitFileUri || !packetPaths?.has(literal)) return decoded;
+  if (decoded !== literal && packetPaths.has(decoded)) throw new Error('Ambiguous SARIF source pathname');
+  return literal;
+}
 
 export function engineCoverage(report) {
   if (!Array.isArray(report?.paths?.scanned)) throw new Error('Missing engine scan paths');
-  const scanned = new Set(report.paths.scanned.map(relativePath).filter(Boolean));
-  const skipped = new Map((report.paths.skipped ?? []).map(entry => [relativePath(entry.path), entry.reason]));
+  const scanned = new Set(report.paths.scanned.map(path => scannerPath(path)).filter(Boolean));
+  const skipped = new Map((report.paths.skipped ?? []).map(entry => [scannerPath(entry.path), entry.reason]));
   const problems = new Map();
   for (const error of report.errors ?? []) {
-    const path = relativePath(error.path ?? error.spans?.[0]?.file);
+    const path = scannerPath(error.path ?? error.spans?.[0]?.file);
     if (path) problems.set(path, /pars|syntax/i.test(String(error.type)) ? 'parse' : 'engine_error');
   }
   return { scanned, skipped, problems };
@@ -33,8 +53,8 @@ function packetCoverage(source, scan, findings, path) {
   const matched = findings.has(path);
   if (issue) return { ...source, state: 'partial', reason: issue };
   if (engine?.skipped.has(path)) return { ...source, state: 'skipped', reason: engine.skipped.get(path) ?? 'engine_reported_skip' };
-  if (engine?.scanned.has(path) || matched) return { ...source, state: 'reported_scanned',
-    reason: matched ? 'sarif_finding' : 'engine_scan_paths' };
+  if (engine?.scanned.has(path)) return { ...source, state: 'reported_scanned', reason: 'engine_scan_paths' };
+  if (matched) return { ...source, state: 'reported_scanned', reason: 'sarif_finding' };
   if (engine) return { ...source, state: 'unreported', reason: 'absent_from_engine_paths' };
   return { ...source, state: 'submitted', reason: 'no_engine_coverage_report' };
 }
@@ -58,6 +78,11 @@ export function fileCoverage(changes, { packets, scans, extensions, isTestPath }
   return Object.fromEntries(['old', 'fixed'].map(side => [side, revisionCoverage(changes, {
     side, packets: packets[side], scan: scans[side], extensions, isTestPath,
   })]));
+}
+
+export function coverageGaps(files = []) {
+  return files.filter(file => !['absent', 'excluded'].includes(file.state)
+    && (file.state !== 'reported_scanned' || file.reason === 'sarif_finding')).map(file => file.path);
 }
 
 export function summarizeCoverage(rows) {

@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, copyFileSync, readFileSync, writeFileSync, mkdirSync, chmodSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname } from 'node:path';
-import { verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix,
+import { mutationReports, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyNativeControlFindings,
   javascriptControlManifest, verifyJavascriptControlMatrix, tsxQualificationSuffix,
   appendExtensionControls } from './semgrep_mutation_controls.mjs';
 
@@ -279,8 +279,8 @@ if (image === '--fixtures-only') {
 }
 
 const temp = mkdtempSync(join(tmpdir(), 'cf-semgrep-surface-'));
-function docker(args) {
-  const run = spawnSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
+function docker(args, timeout = 120000) {
+  const run = spawnSync('docker', args, { encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new Error(`Docker control failed: ${run.error?.message ?? run.stderr}`);
   return run.stdout;
 }
@@ -358,35 +358,26 @@ try {
   mkdirSync(dirname(resolve(root, output)), { recursive: true });
   writeFileSync(`${output}.sarif`, native);
   const findings = (sarif.runs ?? []).flatMap(run => run.results ?? []);
-  if (findings.length !== fixtureManifest.length) throw new Error(`Native profile expected ${fixtureManifest.length} control findings, observed ${findings.length}`);
+  const disabled = verifyNativeControlFindings(sarif, fixtureManifest);
+  const disabledKeys = disabled.logical_keys;
   const active = results => results.filter(result => !(result.suppressions ?? []).some(suppression => suppression.status !== 'rejected'));
-  const keys = results => results.map(result => {
-    const locations = result.locations ?? [];
-    if (locations.length !== 1) throw new Error('Control finding requires exactly one primary location');
-    const location = locations[0].physicalLocation;
-    const uri = location?.artifactLocation?.uri ?? '';
-    return `${result.ruleId}|${uri.split('/').at(-1)}|${location?.region?.startLine}`;
-  }).sort();
   // Semgrep retains inSource metadata even with --disable-nosem. The worker
   // consumes all results from this profile; only the enabled scan excludes it.
-  const disabledKeys = keys(findings);
-  if (new Set(disabledKeys).size !== fixtureManifest.length || annotated.some(key => !disabledKeys.includes(key))) {
-    throw new Error('Disabled suppression omitted or duplicated an exact control finding');
+  if (annotated.some(key => !disabledKeys.includes(key))) {
+    throw new Error('Disabled suppression omitted an annotated control finding');
   }
   if (!argv.includes('--disable-nosem')) throw new Error('Production profile must disable inline suppression');
   const enabled = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
     '--entrypoint', profile.commands[0].argv[0], id,
     ...argv.filter(value => value !== '--disable-nosem').map(value => value === '{source}' ? '/src' : value)]);
   writeFileSync(`${output}.suppression-enabled.sarif`, enabled);
-  const enabledFindings = (JSON.parse(enabled).runs ?? []).flatMap(run => run.results ?? []);
-  const enabledKeys = keys(active(enabledFindings));
-  const expectedKeys = disabledKeys.filter(key => !annotated.includes(key));
-  if (JSON.stringify(enabledKeys) !== JSON.stringify(expectedKeys)) {
-    throw new Error('Enabled suppression did not remove exactly the five annotated findings');
-  }
   const manifestKey = item => `${item.rule}|${item.path}|${item.line}`;
-  const expectedFindingKeys = fixtureManifest.map(manifestKey).sort();
-  if (JSON.stringify(disabledKeys) !== JSON.stringify(expectedFindingKeys)) throw new Error('Native findings differ from exact fixture manifest');
+  const enabledReport = JSON.parse(enabled);
+  for (const run of enabledReport.runs ?? []) {
+    if (Array.isArray(run.results)) run.results = active(run.results);
+  }
+  const enabledControls = verifyNativeControlFindings(enabledReport,
+    fixtureManifest.filter(item => !annotated.includes(manifestKey(item))));
   const polyglotExpected = fixtureManifest.filter(item => Object.keys(polyglotControls).includes(item.path.split('.').at(-1))).map(manifestKey).sort();
   const polyglotObserved = disabledKeys.filter(key => Object.keys(polyglotControls).some(extension => key.includes(`|semgrep-pattern-limited.${extension}|`)));
   if (JSON.stringify(polyglotObserved) !== JSON.stringify(polyglotExpected)) throw new Error('Polyglot exact native findings differ');
@@ -463,30 +454,46 @@ with tempfile.TemporaryDirectory(prefix='factory-native-') as scratch:
   receipt.native_rule_execution = nativeExecution.verified;
   writeFileSync(`${output}.rule-execution.json`, execution);
   receipt.native_findings = findings.length;
+  receipt.native_logical_controls = disabledKeys.length;
   receipt.inline_suppression_control = 'PASS';
-  receipt.suppression_control = { annotated_findings: annotated.sort(), disabled_report_findings: disabledKeys.length,
-    enabled_unsuppressed_findings: enabledKeys.length, enabled_sarif_sha256: hash(Buffer.from(enabled)) };
+  receipt.suppression_control = { annotated_findings: annotated.sort(), disabled_report_findings: disabled.raw_findings,
+    enabled_unsuppressed_findings: enabledControls.raw_findings, enabled_sarif_sha256: hash(Buffer.from(enabled)) };
   receipt.native_rule_ids = [...new Set(findings.map(result => result.ruleId))].sort();
   receipt.native_sarif_sha256 = hash(Buffer.from(native));
   receipt.native_dataflow_findings = findings.filter(result => result.codeFlows?.length).length;
   receipt.dataflow_trace_state = receipt.native_dataflow_findings > 0 ? 'OBSERVED' : 'NOT_MEASURED';
   if (receipt.native_rule_ids.length !== expectedRules.length) throw new Error('Native profile omitted rules');
   receipt.detector_mutations = [];
-  for (const ruleId of receipt.native_rule_ids) {
-    const mutationArgv = [...argv.filter(value => value !== '{source}'),
-      '--exclude-rule', ruleId, '/src'];
-    const raw = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
-      '--entrypoint', profile.commands[0].argv[0], id, ...mutationArgv]);
-    const control = verifyRuleMutation(sarif, JSON.parse(raw), ruleId);
+  const mutationStarted = performance.now();
+  const mutationArgs = argv.filter(value => value !== '{source}');
+  const batch = docker([...base, '--mount', `type=bind,source=${temp},target=/src,readonly`,
+    '--entrypoint', '/usr/local/bin/python', id, '-I', '-c', `
+import base64, gzip, json, os, resource, subprocess, sys, tempfile
+engine, common, rules = json.loads(sys.argv[1])
+limit = 16 * 1024 * 1024
+resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
+for rule in rules:
+    with tempfile.TemporaryDirectory(prefix='mutation-') as home, tempfile.TemporaryFile() as raw:
+        env = {**os.environ, 'HOME': home, 'SEMGREP_SETTINGS_FILE': home + '/settings.yml'}
+        argv = [engine, *common, '--exclude-rule', rule, '/src']
+        subprocess.run(argv, env=env, stdout=raw, check=True, timeout=120)
+        raw.seek(0)
+        encoded = base64.b64encode(gzip.compress(raw.read(), mtime=0)).decode('ascii')
+        print(json.dumps([rule, encoded]), flush=True)
+`, JSON.stringify([profile.commands[0].argv[0], mutationArgs, receipt.native_rule_ids])], 12 * 60 * 1000);
+  for (const { ruleId, raw } of mutationReports(batch, receipt.native_rule_ids)) {
+    const mutationArgv = [...mutationArgs, '--exclude-rule', ruleId, '/src'];
+    const control = verifyRuleMutation(sarif, JSON.parse(raw.toString('utf8')), ruleId);
     const path = `${output}.mutation-${receipt.detector_mutations.length}.sarif`;
     writeFileSync(path, raw);
     receipt.detector_mutations.push({ ...control, report: path,
-      native_sarif_sha256: hash(Buffer.from(raw)),
+      native_sarif_sha256: hash(raw),
       argv_sha256: hash(Buffer.from(JSON.stringify(mutationArgv))) });
   }
   if (receipt.detector_mutations.length !== receipt.native_rule_ids.length) {
     throw new Error('Enabled rule mutation controls incomplete');
   }
+  receipt.mutation_duration_ms = Math.round(performance.now() - mutationStarted);
   receipt.state = 'PASS';
 } catch (error) {
   receipt.error = error.message;

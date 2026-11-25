@@ -1,4 +1,19 @@
 import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
+
+export function* mutationReports(archive, ruleIds) {
+  const lines = archive.trimEnd().split('\n');
+  if (lines.length !== ruleIds.length) throw new Error('Incomplete native mutation batch');
+  for (const [index, line] of lines.entries()) {
+    const entry = JSON.parse(line);
+    if (!Array.isArray(entry) || entry.length !== 2 || entry[0] !== ruleIds[index] || typeof entry[1] !== 'string') {
+      throw new Error('Native mutation batch rule identity differs');
+    }
+    const [ruleId, encoded] = entry;
+    const raw = gunzipSync(Buffer.from(encoded, 'base64'), { maxOutputLength: 16 * 1024 * 1024 });
+    yield { ruleId, raw };
+  }
+}
 
 export function findingKeys(report) {
   const run = validatedRun(report);
@@ -25,14 +40,28 @@ function validateInvocation(invocations) {
   }
 }
 
-function findingKey(result) {
+function findingIdentity(result) {
   const location = result.locations?.[0]?.physicalLocation;
   const uri = location?.artifactLocation?.uri;
-  const line = location?.region?.startLine;
+  const region = location?.region;
+  const line = region?.startLine;
   if (typeof result.ruleId !== 'string' || !result.ruleId || result.ruleId.includes('|') ||
       result.locations?.length !== 1 || typeof uri !== 'string' || !uri || uri.includes('|') ||
       !Number.isInteger(line) || line < 1) throw new Error('Invalid native finding identity');
-  return `${result.ruleId}|${uri}|${line}`;
+  return { rule: result.ruleId, uri, line, span: findingSpan(region) };
+}
+
+function findingSpan({ startLine, startColumn, endLine = startLine, endColumn }) {
+  if (startColumn === undefined && endColumn === undefined && endLine === startLine) return null;
+  const coordinates = [startColumn, endLine, endColumn];
+  if (!coordinates.every(value => Number.isInteger(value) && value > 0) || endLine < startLine ||
+      (endLine === startLine && endColumn < startColumn)) throw new Error('Invalid native finding span');
+  return coordinates;
+}
+
+function findingKey(result) {
+  const { rule, uri, line, span } = findingIdentity(result);
+  return [rule, uri, line, ...(span ?? [])].join('|');
 }
 
 function requireUniqueFindings(keys) {
@@ -53,6 +82,30 @@ export function verifyRuleMutation(baseline, mutated, ruleId) {
   }
   return { state: 'PASS', disabled_rule_id: ruleId, removed_findings: target.length,
     retained_findings: after.length, target_finding_keys: target };
+}
+
+const controlKey = ({ rule, path, line }) => `${rule}|${path}|${line}`;
+
+export function verifyNativeControlFindings(report, manifest) {
+  const run = validatedRun(report);
+  const expected = new Map(manifest.map(item => [controlKey(item), { item, observed: [] }]));
+  if (expected.size !== manifest.length) throw new Error('Duplicate reviewed control location');
+  for (const result of run.results) {
+    const { rule, uri, line, span } = findingIdentity(result);
+    const key = controlKey({ rule, path: sourcePath(uri), line });
+    if (!expected.has(key)) throw new Error(`Unexpected native finding at ${key}`);
+    expected.get(key).observed.push(span?.join(':') ?? '');
+  }
+  for (const [key, { item, observed }] of expected) {
+    const reviewed = item.spans?.map(([start, end]) => [start, item.line, end].join(':')).sort();
+    if (!observed.length || new Set(observed).size !== observed.length) {
+      throw new Error(`Missing or duplicate native finding at ${key}`);
+    }
+    if (reviewed ? JSON.stringify(observed.sort()) !== JSON.stringify(reviewed) : observed.length !== 1) {
+      throw new Error(`Native finding spans differ at ${key}`);
+    }
+  }
+  return { logical_keys: [...expected.keys()].sort(), raw_findings: run.results.length };
 }
 
 // Verify native trace endpoints against reviewed synthetic fixture expectations.
@@ -175,8 +228,9 @@ export const fixedReviewedFindingCounts = Object.freeze({
 // fixture (see extensionControlFiles); search-mode rules carry no source line.
 export const typescriptExtensionEndpoints = Object.freeze([
   ['archive-path-traversal', 165], ['archive-path-traversal', 185], ['archive-path-traversal', 194],
-  ['parameter-shell-command', 207], ['parameter-shell-command', 217],
-  ['parameter-sql-text', 233], ['parameter-path-join-without-containment', 247],
+  // The direct sink and interpolation are separate native spans on these lines.
+  ['parameter-shell-command', 207, [[19, 78], [28, 41]]], ['parameter-shell-command', 217],
+  ['parameter-sql-text', 233, [[21, 65], [56, 63]]], ['parameter-path-join-without-containment', 247],
   ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
   ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
   ['request-path-traversal', 305], ['request-path-traversal', 312], ['request-path-traversal', 314],
@@ -197,15 +251,15 @@ export function javascriptControlManifest() {
     const additional = extension === 'tsx' ? [
       { rule: 'opt.factory.rules.javascript.request-command-injection', source_line: 159, line: 162 },
       { rule: 'opt.factory.rules.javascript.request-path-traversal', source_line: 163, line: 165 },
-    ] : extension === 'ts' ? typescriptExtensionEndpoints.map(([rule, line]) => ({
-      rule: `opt.factory.rules.javascript.${rule}`, line,
+    ] : extension === 'ts' ? typescriptExtensionEndpoints.map(([rule, line, spans]) => ({
+      rule: `opt.factory.rules.javascript.${rule}`, line, ...(spans ? { spans } : {}),
     })) : [];
     return [...family, ...additional].map(item => ({ ...item, path }));
   });
 }
 
 export function verifyJavascriptControlMatrix(manifest) {
-  const identity = item => `${item.rule}|${item.path}|${item.source_line}|${item.line}`;
+  const identity = item => `${item.rule}|${item.path}|${item.source_line}|${item.line}|${JSON.stringify(item.spans ?? [])}`;
   const observed = manifest.filter(item => /\.(?:js|ts|tsx)$/.test(item.path ?? '')).map(identity).sort();
   if (JSON.stringify(observed) !== JSON.stringify(javascriptControlManifest().map(identity).sort())) {
     throw new Error('JavaScript/TypeScript/TSX fixed source/finding matrix differs');

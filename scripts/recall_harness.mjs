@@ -22,10 +22,10 @@
 // a precision proxy.
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { accessSync, closeSync, constants, createReadStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { changedFiles, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
+import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
 
 export const FAMILIES = Object.freeze({
   'CWE-78': 'cmd', 'CWE-88': 'cmd', 'CWE-77': 'cmd', 'CWE-89': 'sql',
@@ -48,8 +48,12 @@ export const scopeExtensions = (ecosystem, scope = 'ecosystem') =>
 
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec|specs|testdata|fixtures?)(\/|$)|_test\.|\.test\.|\.spec\.|Tests?\.(java|cs)$/;
 
-export const isTestPath = path => TEST_PATH.test(path);
-export const familiesFor = cwes => [...new Set(cwes.map(cwe => FAMILIES[cwe]).filter(Boolean))].sort();
+export function isTestPath(path) {
+  return TEST_PATH.test(path);
+}
+export function familiesFor(cwes) {
+  return [...new Set(cwes.map(cwe => FAMILIES[cwe]).filter(Boolean))].sort();
+}
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export const caseDigest = cases => sha256(JSON.stringify(cases.map(sortKeys)));
 
@@ -218,18 +222,25 @@ export function profileArgv(profile, { bin, rules, report, source, extra = [] })
   return argv;
 }
 
-export function sarifFindings(sarif) {
+function regionSpan({ startLine, startColumn, endLine, endColumn }) {
+  const lineOffset = (endLine ?? startLine) - startLine;
+  if (startColumn === undefined && lineOffset === 0 && endColumn === undefined) return null;
+  return [startColumn ?? null, lineOffset, endColumn ?? null];
+}
+
+export function sarifFindings(sarif, packetPaths) {
   const out = [];
+  const clean = loc => sarifPath(loc.artifactLocation.uri, packetPaths);
   for (const run of sarif.runs ?? []) {
     for (const result of run.results ?? []) {
       const location = result.locations?.[0]?.physicalLocation;
       if (!location) continue;
-      const clean = loc => decodeURIComponent(loc.artifactLocation.uri.replace(/^file:\/\//, '')).replace(/^\.\//, '');
       const trace = (result.codeFlows ?? []).flatMap(flow => flow.threadFlows ?? [])
         .flatMap(thread => thread.locations ?? []).map(step => step.location?.physicalLocation)
         .filter(step => step?.artifactLocation && step.region).map(step => [clean(step), step.region.startLine]);
+      const span = regionSpan(location.region);
       out.push({ rule: result.ruleId.split('.').slice(-2).join('.'), path: clean(location),
-        line: location.region.startLine, trace });
+        line: location.region.startLine, ...(span ? { span } : {}), trace });
     }
   }
   return out;
@@ -239,15 +250,18 @@ export function sarifFindings(sarif) {
 export function scoreCase({ families, hunks, oldFindings, newFindings, rules }) {
   const wanted = new Set(families);
   const relevant = finding => (rules[finding.rule] ?? []).some(family => wanted.has(family));
-  const oldHits = oldFindings.filter(relevant);
+  const changedFindings = oldFindings.filter(f => Object.hasOwn(hunks, f.path));
+  const oldHits = changedFindings.filter(relevant);
   const hunkHits = oldHits.filter(f => hunks[f.path]?.old.includes(f.line));
+  const matchedFamilies = [...new Set(hunkHits.flatMap(f => rules[f.rule].filter(family => wanted.has(family))))].sort();
   // Secondary, pre-registered: the alert's source or any dataflow step is on a changed line.
   const traceHits = oldHits.filter(f => [[f.path, f.line], ...(f.trace ?? [])]
     .some(([path, line]) => hunks[path]?.old.includes(line)));
   const residual = newFindings.filter(relevant).filter(f => Object.values(hunks)
     .some(entry => entry.new_path === f.path && entry.new.includes(f.line)));
   return { hunk_hit: hunkHits.length > 0, trace_hit: traceHits.length > 0, file_hit: oldHits.length > 0,
-    hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]), alerts_in_changed_files: oldHits.length,
+    hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]), matched_hunk_families: matchedFamilies,
+    alerts_in_changed_files: changedFindings.length, family_alerts_in_changed_files: oldHits.length,
     fix_side_residual: residual.map(f => [f.rule, f.path, f.line]) };
 }
 
@@ -263,6 +277,7 @@ export function outcomeOf(row) {
   const issues = Object.values(sides).map(scanIssue);
   if (issues.includes('timeout')) return 'timeout';
   if (issues.includes('error')) return 'error';
+  if (!row.hunk_hit && coverageGaps(row.file_coverage?.old).length) return 'coverage_incomplete';
   if (row.status !== 'scored') return 'unknown';
   return row.hunk_hit ? 'hit' : 'miss';
 }
@@ -270,37 +285,43 @@ export function outcomeOf(row) {
 export function summarize(rows) {
   const outcomes = rows.map(outcomeOf);
   const scored = rows.filter((_, index) => ['hit', 'miss'].includes(outcomes[index]));
-  const tally = key => {
+  const tally = (key, hit) => {
     const out = {};
     for (const row of scored) {
       for (const value of [].concat(row[key])) {
         const entry = out[value] ??= { hits: 0, scored: 0 };
-        entry.scored++; entry.hits += row.hunk_hit ? 1 : 0;
+        entry.scored++; entry.hits += hit(row, value) ? 1 : 0;
       }
     }
     return out;
   };
   const hits = scored.filter(row => row.hunk_hit).length;
   const fileHits = scored.filter(row => row.file_hit).length;
+  const alerts = rows.reduce((n, row) => n + (row.alerts_in_changed_files ?? 0), 0);
+  const scoredAlerts = scored.reduce((n, row) => n + (row.alerts_in_changed_files ?? 0), 0);
   return {
     cases: rows.length, scored: scored.length, file_coverage: summarizeCoverage(rows),
     status: rows.reduce((acc, row) => ({ ...acc, [row.status]: (acc[row.status] ?? 0) + 1 }), {}),
     hunk_hits: hits, hunk_recall_wilson95: wilson(hits, scored.length),
+    hunk_hits_over_registered_cases: { hits, cases: rows.length, wilson95: wilson(hits, rows.length) },
     trace_hits: scored.filter(row => row.trace_hit).length,
     trace_recall_wilson95: wilson(scored.filter(row => row.trace_hit).length, scored.length),
     file_hits: fileHits, file_recall_wilson95: wilson(fileHits, scored.length),
     distinct_fixes_hit: new Set(scored.filter(row => row.hunk_hit).map(row => row.fix)).size,
     outcomes: outcomes.reduce((acc, outcome) => { acc[outcome]++; return acc; },
-      { hit: 0, miss: 0, timeout: 0, unknown: 0, error: 0 }),
+      { hit: 0, miss: 0, timeout: 0, unknown: 0, error: 0, coverage_incomplete: 0 }),
     diagnostics: rows.flatMap((row, index) => ['hit', 'miss'].includes(outcomes[index]) ? [] : [{
       ghsa: row.ghsa, status: row.status, outcome: outcomes[index],
       scan_sides: row.scan_sides ?? { old: row.scan_notes }, detail: row.detail,
+      old_coverage_gaps: coverageGaps(row.file_coverage?.old),
     }]),
     // Review budget: every alert in a changed file is something a reviewer reads.
-    review_budget: { alerts_in_changed_files: scored.reduce((n, row) => n + row.alerts_in_changed_files, 0),
-      per_scored_case: scored.length ? Math.round(10 * scored.reduce((n, row) => n + row.alerts_in_changed_files, 0) / scored.length) / 10 : 0 },
+    review_budget: { alerts_in_changed_files: alerts,
+      family_alerts_in_changed_files: rows.reduce((n, row) => n + (row.family_alerts_in_changed_files ?? 0), 0),
+      per_scored_case: scored.length ? Math.round(10 * scoredAlerts / scored.length) / 10 : 0 },
     fix_side_residual_alerts: scored.reduce((n, row) => n + row.fix_side_residual.length, 0),
-    by_family: tally('families'), by_ecosystem: tally('ecosystem'),
+    by_family: tally('families', (row, family) => row.matched_hunk_families?.includes(family)),
+    by_ecosystem: tally('ecosystem', row => row.hunk_hit),
   };
 }
 
@@ -328,16 +349,66 @@ const byPath = (a, b) => a.path < b.path ? -1 : a.path === b.path ? 0 : 1;
 const utf8 = raw => new TextDecoder('utf-8', { fatal: true }).decode(raw);
 const packet = (path, raw) => ({ path, bytes: raw.length, sha256: sha256(raw) });
 
-async function materialize(repo, revision, paths, target) {
-  const packets = [];
-  for (const path of paths) {
-    const shown = await gitBytes(repo, 'show', revision + ':' + path);
-    if (shown.status !== 0) throw new Error('Prepared source could not be read: ' + path);
-    mkdirSync(dirname(join(target, path)), { recursive: true });
-    writeFileSync(join(target, path), shown.stdout);
-    packets.push(packet(path, shown.stdout));
+async function nextBlobChunk(reader, path) {
+  const chunk = await reader.next();
+  if (chunk.done) throw new Error('Truncated prepared source: ' + path);
+  return chunk.value;
+}
+
+async function readBatchBlob(stream, path) {
+  let end = stream.pending.indexOf(10);
+  while (end < 0 && stream.pending.length <= 128) {
+    stream.pending = Buffer.concat([stream.pending, await nextBlobChunk(stream.reader, path)]);
+    end = stream.pending.indexOf(10);
   }
-  return packets.sort(byPath);
+  const header = end >= 0 && end <= 128 && stream.pending.toString('ascii', 0, end).match(/^blob (0|[1-9]\d*)$/);
+  if (!header) throw new Error('Prepared source could not be read: ' + path);
+  stream.pending = stream.pending.subarray(end + 1);
+  const raw = Buffer.allocUnsafe(Number(header[1]));
+  for (let offset = 0; offset < raw.length;) {
+    if (!stream.pending.length) stream.pending = await nextBlobChunk(stream.reader, path);
+    const bytes = Math.min(raw.length - offset, stream.pending.length);
+    stream.pending.copy(raw, offset, 0, bytes);
+    stream.pending = stream.pending.subarray(bytes);
+    offset += bytes;
+  }
+  if (!stream.pending.length) stream.pending = await nextBlobChunk(stream.reader, path);
+  if (stream.pending[0] !== 10) throw new Error('Invalid prepared source framing: ' + path);
+  stream.pending = stream.pending.subarray(1);
+  return raw;
+}
+
+async function materialize(repo, revision, paths, target) {
+  if (!paths.length) return [];
+  // NUL-delimited requests preserve arbitrary Git paths. Read one blob at a time.
+  const child = spawn('git', ['-C', repo, 'cat-file', '--batch=%(objecttype) %(objectsize)', '-z'],
+    { stdio: ['pipe', 'pipe', 'ignore'] });
+  const status = new Promise(done => {
+    child.once('error', () => done(-1));
+    child.once('close', done);
+  });
+  const timer = setTimeout(() => child.kill('SIGKILL'), 900000);
+  child.stdin.on('error', () => {}); // Child failure is checked via the stream and exit code.
+  child.stdin.end(paths.map(path => revision + ':' + path + '\0').join(''));
+  const stream = { reader: child.stdout[Symbol.asyncIterator](), pending: Buffer.alloc(0) };
+  const packets = [];
+  try {
+    for (const path of paths) {
+      const raw = await readBatchBlob(stream, path);
+      const location = join(target, path);
+      mkdirSync(dirname(location), { recursive: true });
+      writeFileSync(location, raw);
+      packets.push(packet(path, raw));
+    }
+    if (stream.pending.length || !(await stream.reader.next()).done || await status !== 0) {
+      throw new Error('Unexpected Git response while preparing source blobs');
+    }
+    return packets.sort(byPath);
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await status;
+  }
 }
 
 function verifyPreparedBytes(root, expected) {
@@ -383,10 +454,11 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
   if (coveragePath) rmSync(coveragePath, { force: true });
   const extra = coveragePath ? [...context.extra, '--json-output', coveragePath, '--verbose'] : context.extra;
   const argv = profileArgv(context.profile, { bin: context.bin, rules: context.rules, report, source: '.', extra });
+  const started = performance.now();
   const run = await runProcess(argv[0], argv.slice(1), { cwd: source,
     env: { HOME: process.env.HOME ?? '/tmp', PYTHONIOENCODING: 'utf-8', LANG: 'C.UTF-8' } });
   const execution = { failed_exit: ![0, 1].includes(run.status), exit_code: run.status,
-    timeouts: Number(Boolean(run.timedOut)) };
+    timeouts: Number(Boolean(run.timedOut)), duration_ms: Math.round(performance.now() - started) };
   const coverage = coveragePath && readCoverage(coveragePath, execution);
   if (!existsSync(report)) {
     throw Object.assign(new Error('Scan produced no SARIF report'), {
@@ -398,7 +470,7 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
   try {
     const sarif = JSON.parse(utf8(reportBytes));
     if (!Array.isArray(sarif?.runs) || !sarif.runs.length) throw new Error('Scan produced no SARIF run');
-    const findings = sarifFindings(sarif);
+    const findings = sarifFindings(sarif, context.packetPaths);
     findings.notes = { ...diagnostics, ...scanNotes(sarif) };
     findings.coverage = coverage;
     findings.notes.timeouts = Math.max(execution.timeouts, findings.notes.timeouts);
@@ -410,22 +482,24 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
 
 // Engine timeouts and parse failures, so a miss caused by the engine is not
 // counted as a detector miss.
+function notificationKind(note) {
+  const descriptor = note.descriptor?.id ?? '';
+  // Parse messages can quote arbitrary source text after the diagnostic header.
+  const message = (note.message?.text ?? '').split(/\n|`/)[0];
+  if (/syntax|pars/i.test(descriptor)) return 'parse';
+  if (/timeout|timed out/i.test(`${descriptor} ${message}`)) return 'timeout';
+  return /syntax|pars/i.test(message) ? 'parse' : 'other';
+}
+
 export function scanNotes(sarif) {
   const notes = { timeouts: 0, parse_errors: 0, blocking_parse_errors: 0, other: 0 };
   for (const run of sarif.runs ?? []) {
     for (const invocation of run.invocations ?? []) {
       if (invocation.executionSuccessful === false) notes.other++;
       for (const note of invocation.toolExecutionNotifications ?? []) {
-        // A parse message quotes the target source, which can contain any word
-        // (a file with setConnectionTimeout once read as an engine timeout), so
-        // the descriptor decides first and only the message's own first line
-        // before any quoted excerpt is consulted after it.
-        const descriptor = note.descriptor?.id ?? '';
-        const own = (note.message?.text ?? '').split(/\n|`/)[0];
-        const parse = /syntax|pars/i.test(descriptor)
-          || (!/timeout|timed out/i.test(descriptor) && /syntax|pars/i.test(own) && !/timeout|timed out/i.test(own));
-        if (!parse && /timeout|timed out/i.test(`${descriptor} ${own}`)) notes.timeouts++;
-        else if (parse) {
+        const kind = notificationKind(note);
+        if (kind === 'timeout') notes.timeouts++;
+        else if (kind === 'parse') {
           notes.parse_errors++;
           if (note.level !== 'warning' && note.level !== 'note') notes.blocking_parse_errors++;
         }
@@ -525,7 +599,8 @@ async function observeSide(context, source, report, expected) {
     verifyPreparedBytes(source, expected);
     verifyRulesBytes(context);
     submitted = true;
-    const findings = await scan(context, source, report, true);
+    const packetPaths = new Set(expected.map(row => row.path));
+    const findings = await scan({ ...context, packetPaths }, source, report, true);
     diagnostics = findings.notes;
     verifyRulesBytes(context);
     verifyPreparedBytes(source, expected);
@@ -554,10 +629,11 @@ async function scoreOne(context, row) {
     changed_files_sha256: prepared.changed_files_sha256, file_coverage: coverage,
     scan_notes: old.diagnostics, scan_sides: { old: old.diagnostics, fixed: fixed.diagnostics }, ...result };
   const outcome = outcomeOf(rowResult);
-  return { ...rowResult, status: ['error', 'timeout'].includes(outcome) ? 'incomplete' : status, outcome };
+  return { ...rowResult, status: ['error', 'timeout', 'coverage_incomplete'].includes(outcome) ? 'incomplete' : status, outcome };
 }
 
 async function pool(items, jobs, worker) {
+  if (!Number.isSafeInteger(jobs) || jobs < 1) throw new Error('Recall jobs must be a positive integer');
   const out = new Array(items.length);
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(jobs, items.length) }, async () => {
@@ -651,7 +727,14 @@ function caseInputFingerprint(row) {
     row.changed_files_sha256 ?? null]);
 }
 
-function measureCaseChange(old, row, { lost, gained, newErrors, failures }) {
+function hasNewCoverageGaps(old, row) {
+  return Object.entries(old.file_coverage ?? {}).some(([side, files]) => {
+    const previous = new Set(coverageGaps(files));
+    return coverageGaps(row.file_coverage?.[side]).some(path => !previous.has(path));
+  });
+}
+
+function measureCaseChange(old, row, { lost, gained, newErrors, newCoverageGaps, failures }) {
   if (caseInputFingerprint(old) !== caseInputFingerprint(row)) {
     failures.push('Baseline and candidate source byte fingerprints differ for ' + row.ghsa);
     return;
@@ -661,29 +744,41 @@ function measureCaseChange(old, row, { lost, gained, newErrors, failures }) {
   if (previous === 'miss' && current === 'hit') gained.push(row.ghsa);
   const failure = ['error', 'timeout'];
   if (failure.includes(current) && !failure.includes(previous)) newErrors.push(row.ghsa);
+  if (hasNewCoverageGaps(old, row)) newCoverageGaps.push(row.ghsa);
 }
 
+const indexCases = rows => new Map(rows.map(row => [row.ghsa, row]));
+
 function measureDevPair({ before, after }, changes) {
-  if (before.manifest_sha256 !== after.manifest_sha256 || before.profile_sha256 !== after.profile_sha256) {
-    changes.failures.push('Baseline and candidate manifest or profile byte fingerprints differ');
+  if (before.manifest_sha256 !== after.manifest_sha256 || before.profile_sha256 !== after.profile_sha256
+      || before.scope !== after.scope) {
+    changes.failures.push('Baseline and candidate manifest, profile or scoring scope differs');
     return;
   }
-  const baseline = new Map(before.cases.map(row => [row.ghsa, row]));
-  for (const row of after.cases) {
-    const old = baseline.get(row.ghsa);
-    if (!old) changes.failures.push('Baseline case missing for ' + row.ghsa);
+  const baseline = indexCases(before.cases), candidate = indexCases(after.cases);
+  if (baseline.size !== before.cases.length || candidate.size !== after.cases.length) {
+    changes.failures.push('Duplicate advisory ID in paired recall cases');
+    return;
+  }
+  for (const [ghsa, old] of baseline) {
+    const row = candidate.get(ghsa);
+    if (!row) changes.failures.push('Candidate case missing for ' + ghsa);
     else measureCaseChange(old, row, changes);
+  }
+  for (const ghsa of candidate.keys()) {
+    if (!baseline.has(ghsa)) changes.failures.push('Baseline case missing for ' + ghsa);
   }
 }
 
 export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1 }) {
-  const lost = [], gained = [], newErrors = [], failures = [];
-  for (const pair of dev) measureDevPair(pair, { lost, gained, newErrors, failures });
+  const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [];
+  for (const pair of dev) measureDevPair(pair, { lost, gained, newErrors, newCoverageGaps, failures });
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
   const residualAfter = dev.reduce((n, pair) => n + pair.after.summary.fix_side_residual_alerts, 0);
   const controlIncrease = controls.reduce((n, delta) => n + (delta.after ?? 0) - (delta.before ?? 0), 0);
   if (newErrors.length) failures.push(`new engine errors/timeouts: ${newErrors.join(', ')}`);
   if (lost.length) failures.push(`lost ${lost.length} dev hit(s): ${lost.join(', ')}`);
+  if (newCoverageGaps.length) failures.push(`new engine coverage gaps: ${newCoverageGaps.join(', ')}`);
   // Residuals are judged per strict hit: a rule that finds more fixes also sees
   // more fixed code it cannot prove safe. The rate may not rise by more than
   // residualTolerance (default 10%).
@@ -694,8 +789,9 @@ export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance 
     failures.push(`fix-side residuals per hit ${rateBefore.toFixed(2)} -> ${rateAfter.toFixed(2)} (${residualBefore} -> ${residualAfter})`);
   }
   if (controlIncrease > maxControlIncrease) failures.push(`control alerts +${controlIncrease} > ${maxControlIncrease}`);
-  if (controls.some(delta => delta.error)) failures.push('a control scan failed');
+  if (controls.some(delta => delta.error || delta.incomplete_on_both)) failures.push('a control scan failed');
   return { decision: failures.length ? 'REJECT' : 'ACCEPT', failures, gained, lost_baseline_hits: lost, new_errors: newErrors,
+    new_coverage_gaps: newCoverageGaps,
     residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
     control_increase: controlIncrease };
 }
@@ -709,86 +805,298 @@ function evaluationEvidence(result) {
         file_coverage, scan_sides, initial_scan_sides, retried_serially, outcome, status })) };
 }
 
+function pairedCaseEvidence({ before, after }) {
+  const baseline = indexCases(before.cases);
+  return after.cases.map(row => {
+    const previous = baseline.get(row.ghsa);
+    return { ghsa: row.ghsa, fix: row.fix, before: previous?.outcome ?? previous?.status ?? null,
+      after: row.outcome ?? row.status, hunk_findings: row.hunk_findings ?? [],
+      matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
+      retried_serially: Boolean(row.retried_serially) };
+  });
+}
+
+function executablePath(command) {
+  const directories = /[\\/]/.test(command) ? [''] : (process.env.PATH ?? '/usr/bin:/bin').split(delimiter);
+  const suffixes = process.platform === 'win32' && !extname(command) ? ['.exe', '.com', ''] : [''];
+  for (const directory of directories) {
+    for (const suffix of suffixes) {
+      try {
+        const path = realpathSync(resolve(directory, command + suffix));
+        accessSync(path, constants.X_OK);
+        if (statSync(path).isFile()) return path;
+      } catch (error) {
+        if (!['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code)) throw error;
+      }
+    }
+  }
+  throw new Error('Recall engine executable could not be resolved');
+}
+
+async function fileFingerprint(path) {
+  const digest = createHash('sha256');
+  for await (const bytes of createReadStream(path)) digest.update(bytes);
+  return digest.digest('hex');
+}
+
+async function bindEvaluationEngine(profile, command) {
+  const path = executablePath(command);
+  const executable_sha256 = await fileFingerprint(path);
+  const args = profile.version_argv?.slice(1) ?? ['--version'];
+  const probe = await runProcess(path, args, { timeout: 30000 });
+  const version = probe.stdout.trim();
+  if (probe.status !== 0 || !/^[^\r\n]{1,128}$/.test(version)) throw new Error('Recall engine version probe failed');
+  if (profile.tool_version && version !== profile.tool_version) throw new Error('Recall engine version differs from profile');
+  return { path, receipt: { executable: basename(path), executable_sha256, version } };
+}
+
+function evaluationRules(opts) {
+  return { baseline_sha256: sha256(readFileSync(opts.baseline)), candidate_sha256: sha256(readFileSync(opts.candidate)) };
+}
+
+function verifyEvaluationRules(opts, expected) {
+  const actual = evaluationRules(opts);
+  if (actual.baseline_sha256 !== expected.baseline_sha256 || actual.candidate_sha256 !== expected.candidate_sha256) {
+    throw new Error('Evaluation ruleset bytes changed during scoring');
+  }
+}
+
+function recordedGainsIn(block, required) {
+  const cohort = block.manifest_cases_sha256;
+  if (!/^[a-f0-9]{64}$/.test(cohort)) throw new Error('Invalid recall gain checkpoint manifest');
+  const evidence = indexCases(block.after_evidence.cases);
+  return block.cases.filter(row => required.has(row.ghsa) && row.before === 'miss' && row.after === 'hit')
+    .map(row => {
+      const source = evidence.get(row.ghsa);
+      if (!source?.revisions || !source.source_packets) throw new Error('Recall gain checkpoint is missing case input evidence');
+      return [row.ghsa, { cohort, input: caseInputFingerprint(source) }];
+    });
+}
+
+function recordedGains(reference) {
+  if (reference?.schema !== 'factory.recall-evaluation.v1' || !Array.isArray(reference.gained)
+      || !reference.gained.length || !Array.isArray(reference.dev)) throw new Error('Invalid recall gain checkpoint');
+  const required = new Set(reference.gained);
+  const entries = reference.dev.flatMap(block => recordedGainsIn(block, required));
+  const records = new Map(entries);
+  if (records.size !== entries.length || records.size !== reference.gained.length) {
+    throw new Error('Recall gain checkpoint membership differs');
+  }
+  return records;
+}
+
+export function gainRetention(reference, pairs) {
+  const required = recordedGains(reference);
+  const candidate = new Map(pairs.map(({ after }) => [after.manifest_cases_sha256, indexCases(after.cases)]));
+  if (candidate.size !== pairs.length) throw new Error('Duplicate manifest in recall gain replay');
+  const lost = [];
+  for (const [id, { cohort, input }] of required) {
+    const row = candidate.get(cohort)?.get(id);
+    if (!row || measuredOutcome(row) !== 'hit' || caseInputFingerprint(row) !== input) lost.push(id);
+  }
+  return { required: required.size, retained: required.size - lost.length, lost: lost.sort() };
+}
+
+function applyGainRetention(verdict, bytes, pairs) {
+  const retention = gainRetention(JSON.parse(utf8(bytes)), pairs);
+  verdict.gain_retention = { checkpoint_sha256: sha256(bytes), ...retention };
+  if (retention.lost.length) verdict.failures.push(`lost ${retention.lost.length} checkpoint hit(s): ${retention.lost.join(', ')}`);
+}
+
+function suppliedLabels(opts) {
+  if (!opts.labels) return null;
+  if (!opts.dir) throw new Error('Control directories are required when reviewing labels');
+  const labels = JSON.parse(utf8(readFileSync(opts.labels)));
+  if (!Array.isArray(labels?.labels)) throw new Error('Invalid control label sheet');
+  return labels;
+}
+
+function precisionState(controls, review) {
+  if (!controls.length) return 'not_run';
+  if (controls.some(delta => delta.error || delta.incomplete_on_both)) return 'incomplete';
+  if (!review.emitted) return 'no_alerts';
+  if (!review.judged) return 'unreviewed';
+  return review.unreviewed_emitted || review.ambiguous_labels.length ? 'partially_reviewed' : 'reviewed';
+}
+
+function precisionEvidence(verdict, labels, controls) {
+  const review = checkLabels(labels, controls);
+  if (labels) {
+    verdict.labels = review;
+    if (review.fp_returned.length) verdict.failures.push(`labeled false positives emitted again: ${review.fp_returned.length}`);
+    if (review.tp_dropped.length) verdict.failures.push(`labeled true positives no longer emitted: ${review.tp_dropped.length}`);
+    if (review.ambiguous_labels.length) verdict.failures.push(`ambiguous control label matches: ${review.ambiguous_labels.length}`);
+  }
+  return { state: precisionState(controls, review), emitted: review.emitted,
+    adjudicated: review.judged, unreviewed: review.unreviewed_emitted };
+}
+
 async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
+  const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
+  const labels = suppliedLabels(opts);
+  const engine = await bindEvaluationEngine(JSON.parse(utf8(opts.profileBytes)),
+    opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  opts.opengrep = engine.path;
+  const rules = evaluationRules(opts);
   const manifests = [].concat(opts.manifest);
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
   const candidateOpts = { ...opts, 'extra-arg': [].concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []) };
   const dev = [];
   for (const manifest of manifests) {
-    dev.push({ manifest, before: await scoreManifest(manifest, opts.baseline, opts),
-      after: await scoreManifest(manifest, opts.candidate, candidateOpts) });
+    const before = await scoreManifest(manifest, opts.baseline, opts);
+    const after = await scoreManifest(manifest, opts.candidate, candidateOpts);
+    if (before.ruleset_sha256 !== rules.baseline_sha256 || after.ruleset_sha256 !== rules.candidate_sha256) {
+      throw new Error('Evaluation ruleset bytes changed during scoring');
+    }
+    dev.push({ manifest, before, after });
   }
-  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate] }) : [];
+  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }) : [];
+  if (await fileFingerprint(engine.path) !== engine.receipt.executable_sha256) {
+    throw new Error('Recall engine executable bytes changed during evaluation');
+  }
+  verifyEvaluationRules(opts, rules);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0) });
-  if (opts.labels && existsSync(opts.labels)) {
-    verdict.labels = checkLabels(JSON.parse(readFileSync(opts.labels, 'utf8')), controlDeltas);
-    if (verdict.labels.fp_returned.length) verdict.failures.push(`labeled false positives emitted again: ${verdict.labels.fp_returned.length}`);
-    if (verdict.labels.tp_dropped.length) verdict.failures.push(`labeled true positives no longer emitted: ${verdict.labels.tp_dropped.length}`);
-    verdict.decision = verdict.failures.length ? 'REJECT' : 'ACCEPT';
-  }
-  const out = { schema: 'factory.recall-evaluation.v1', baseline_sha256: sha256(readFileSync(opts.baseline)),
-    candidate_sha256: sha256(readFileSync(opts.candidate)), extra_args: [].concat(opts['extra-arg'] ?? []),
+  if (checkpoint) applyGainRetention(verdict, checkpoint, dev);
+  verdict.precision_evidence = precisionEvidence(verdict, labels, controlDeltas);
+  verdict.decision = verdict.failures.length ? 'REJECT' : 'ACCEPT';
+  const out = { schema: 'factory.recall-evaluation.v1', ...rules, engine: engine.receipt,
+    profile_sha256: sha256(opts.profileBytes), extra_args: [].concat(opts['extra-arg'] ?? []),
     candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []), ...verdict,
     dev: dev.map(pair => ({ manifest: pair.manifest, manifest_cases_sha256: pair.after.manifest_cases_sha256,
       before: pair.before.summary, after: pair.after.summary,
       before_evidence: evaluationEvidence(pair.before), after_evidence: evaluationEvidence(pair.after),
-      cases: pair.after.cases.map((row, index) => ({ ghsa: row.ghsa, fix: row.fix,
-        before: pair.before.cases[index].outcome ?? pair.before.cases[index].status, after: row.outcome ?? row.status,
-        hunk_findings: row.hunk_findings ?? [], fix_side_residual: row.fix_side_residual ?? [],
-        retried_serially: Boolean(row.retried_serially) })) })),
-    controls: controlDeltas.map(({ dir, before, after, added, removed, error, scan_sides, incomplete_on_both }) =>
-      ({ dir, before, after, added, removed, error, scan_sides, incomplete_on_both })) };
+      cases: pairedCaseEvidence(pair) })),
+    controls: controlDeltas.map(({ emitted, ...delta }) => delta) };
   writeFileSync(opts.out, `${JSON.stringify(out, null, 1)}\n`);
   console.log(out.decision, out.failures, `gained ${out.gained.length}`, `controls +${out.control_increase}`);
   if (out.decision === 'REJECT') process.exitCode = 2;
 }
 
+const CONTROL_TIMEOUT_RETRY_SECONDS = 15;
+
+function controlRetryArgs(profile, baselineArgs, candidateArgs) {
+  const hasTimeoutOverride = [...profile.commands[0].argv, ...baselineArgs, ...candidateArgs]
+    .some(arg => /^--(?:timeout(?:=|$)|dynamic-timeout|allow-rule-timeout-control)/.test(arg));
+  return profile.engine === 'semgrep' && !hasTimeoutOverride ? [`--timeout=${CONTROL_TIMEOUT_RETRY_SECONDS}`] : [];
+}
+
+function insideControl(root, path) {
+  const local = relative(root, path);
+  return !isAbsolute(local) && local !== '..' && !local.startsWith(`..${sep}`);
+}
+
+async function controlSource(root) {
+  const files = [];
+  const visit = async (directory, prefix) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === '.git') continue;
+      const location = join(directory, entry.name), path = prefix + entry.name;
+      if (entry.isDirectory()) {
+        await visit(location, path + '/');
+      } else if (entry.isFile()) {
+        files.push({ path, sha256: await fileFingerprint(location) });
+      } else if (entry.isSymbolicLink()) {
+        const target = realpathSync(location);
+        const targetParts = relative(root, target).split(sep);
+        if (!insideControl(root, target) || targetParts.includes('.git')) {
+          throw new Error('Control source link leaves the source tree');
+        }
+        files.push({ path, link_target: targetParts.join('/') });
+      } else {
+        throw new Error('Unsupported entry in control source tree');
+      }
+    }
+  };
+  await visit(root, '');
+  return { paths: new Set(files.map(file => file.path)),
+    evidence: { sha256: caseDigest(files.sort(byPath)), entries: files.length } };
+}
+
+async function controlObservation(context, directory, report, source) {
+  let notes, findings = [];
+  try {
+    if (context.rulesSha256) verifyRulesBytes(context);
+    findings = await scan({ ...context, packetPaths: source.paths }, directory, report);
+    notes = findings.notes;
+    if (context.rulesSha256) verifyRulesBytes(context);
+    if (findings.some(finding => !source.paths.has(finding.path))) {
+      throw new Error('Control finding path is absent from the source tree');
+    }
+  } catch (error) {
+    findings = [];
+    notes = { ...(notes ?? error.diagnostics), other: 1, detail: String(error.message).slice(-300) };
+  }
+  try {
+    if ((await controlSource(directory)).evidence.sha256 !== source.evidence.sha256) {
+      throw new Error('Control source byte fingerprints differ');
+    }
+  } catch (error) {
+    return { findings: [], notes: { ...notes, other: 1, source_error: String(error.message).slice(-300) }, sourceInvalid: true };
+  }
+  return { findings, notes };
+}
+
+async function controlPair({ base, candidate, directory, reports, source }, suffix, retryArgs = []) {
+  const old = await controlObservation({ ...base, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`, source);
+  const now = old.sourceInvalid ? { findings: [], notes: null }
+    : await controlObservation({ ...candidate, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`, source);
+  const scan_sides = { before: old.notes, after: now.notes };
+  const issues = [old, now].map(side => side.sourceInvalid ? 'error' : scanIssue(side.notes));
+  return { old: old.findings, now: now.findings, scan_sides, issues };
+}
+
+function controlFindingIndex(findings) {
+  const bySpan = new Map(findings.map(finding => [
+    JSON.stringify([finding.rule, finding.path, finding.line, finding.span ?? null]), finding,
+  ]));
+  if (bySpan.size !== findings.length) throw new Error('Duplicate scanner span in precision controls');
+  return bySpan;
+}
+
+export function controlFindingDeltas(before, after) {
+  const old = controlFindingIndex(before), now = controlFindingIndex(after);
+  const onlyIn = (left, right) => [...left.entries()].filter(([key]) => !right.has(key)).map(([, finding]) => finding);
+  return { added: onlyIn(now, old), removed: onlyIn(old, now) };
+}
+
 async function controlDeltas_(opts) {
   const [before, after] = [].concat(opts.rules);
   const base = { profile: JSON.parse(utf8(opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'))),
-    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []) };
-  const key = f => `${f.rule}|${f.path}|${f.line}`;
+    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []),
+    rules: resolve(before), rulesSha256: opts.ruleFingerprints?.baseline_sha256 };
+  const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
+    rules: resolve(after), rulesSha256: opts.ruleFingerprints?.candidate_sha256 };
   const deltas = [];
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
-  mkdirSync(workdir, { recursive: true });
-  const scanRoot = mkdtempSync(join(workdir, 'controls-'));
+  let scanRoot;
   for (const dir of [].concat(opts.dir)) {
     try {
-      const reports = join(scanRoot, sha256(resolve(dir)).slice(0, 16));
-      const pair = async suffix => {
-        const old = await scan({ ...base, rules: resolve(before) }, resolve(dir), `${reports}/before${suffix}.sarif`);
-        const now = await scan({ ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])], rules: resolve(after) },
-          resolve(dir), `${reports}/after${suffix}.sarif`);
-        const scan_sides = { before: old.notes, after: now.notes };
-        // An engine limit the baseline hits too (same issue class, no more
-        // timeouts for the candidate) is not a candidate regression; record it
-        // with the delta instead of failing the control.
-        const issues = Object.values(scan_sides).map(scanIssue);
-        const sameIncomplete = Boolean(issues[0]) && issues[0] === issues[1]
-          && (scan_sides.after.timeouts ?? 0) <= (scan_sides.before.timeouts ?? 0);
-        return { old, now, scan_sides, issues, sameIncomplete, failed: issues.some(Boolean) && !sameIncomplete };
-      };
-      let attempt = await pair('');
-      let initial_scan_sides;
-      // Per-file engine timeouts move with machine load, as on the dev side:
-      // a pair that differs only in timeouts is scanned once more, both sides
-      // again, and the first attempt is kept in the record.
-      if (attempt.failed && attempt.issues.every(issue => !issue || issue === 'timeout')) {
-        initial_scan_sides = attempt.scan_sides;
-        attempt = await pair('-retry');
+      const directory = realpathSync(resolve(dir));
+      if (insideControl(directory, workdir)) throw new Error('Control scan reports must be outside the source tree');
+      mkdirSync(workdir, { recursive: true });
+      const reportsRoot = realpathSync(workdir);
+      if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
+      scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
+      const source = await controlSource(directory);
+      const context = { base, candidate, directory, source, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
+      let attempt = await controlPair(context, '');
+      let recovery = {};
+      if (attempt.issues.includes('timeout') && !attempt.issues.includes('error')) {
+        const extra = controlRetryArgs(base.profile, base.extra, candidate.extra);
+        recovery = { initial_scan_sides: attempt.scan_sides, retry_extra_args: extra };
+        attempt = await controlPair(context, '-retry', extra);
       }
-      const { old, now, scan_sides, issues, sameIncomplete } = attempt;
-      if (attempt.failed) {
-        deltas.push({ dir, error: 'Control scan incomplete', scan_sides, ...(initial_scan_sides ? { initial_scan_sides } : {}) });
+      const { old, now, scan_sides, issues } = attempt;
+      if (issues.some(Boolean)) {
+        deltas.push({ dir, error: 'Control scan incomplete', source_tree: source.evidence, scan_sides, ...recovery });
         continue;
       }
-      const oldKeys = new Set(old.map(key)), newKeys = new Set(now.map(key));
-      const snip = f => withSnippet(resolve(dir), f);
-      deltas.push({ dir, before: old.length, after: now.length, scan_sides, ...(initial_scan_sides ? { initial_scan_sides } : {}),
-        ...(sameIncomplete ? { incomplete_on_both: issues[0] } : {}),
-        added: now.filter(f => !oldKeys.has(key(f))).map(snip), removed: old.filter(f => !newKeys.has(key(f))).map(snip),
+      const { added, removed } = controlFindingDeltas(old, now);
+      const snip = f => withSnippet(directory, f);
+      deltas.push({ dir, before: old.length, after: now.length, source_tree: source.evidence, scan_sides, ...recovery,
+        added: added.map(snip), removed: removed.map(snip),
         emitted: now.map(snip) });
     } catch (error) { deltas.push({ dir, error: String(error.message).slice(-300) }); }
   }
@@ -799,40 +1107,124 @@ async function controlDeltas_(opts) {
 function withSnippet(root, finding) {
   let text = '';
   try { text = readFileSync(join(root, finding.path), 'utf8').split('\n')[finding.line - 1] ?? ''; } catch { /* moved */ }
-  return { rule: finding.rule, path: finding.path, line: finding.line, snippet: text.trim().slice(0, 200) };
+  const { rule, path, line, span } = finding;
+  return { rule, path, line, ...(span ? { span } : {}), snippet: text.trim().slice(0, 200) };
 }
 
-export const labelKey = (repo, alert) => `${alert.rule}|${repo}|${alert.path}|${sha256(alert.snippet ?? '').slice(0, 16)}`;
+const legacyLabelKey = (repo, alert) => `${alert.rule}|${repo}|${alert.path}|${sha256(alert.snippet ?? '').slice(0, 16)}`;
+export function labelKey(repo, alert) {
+  const legacy = legacyLabelKey(repo, alert);
+  return alert.span ? `${legacy}|${alert.line}:${alert.span.join(':')}` : legacy;
+}
 const repoName = dir => basename(resolve(dir.replaceAll('\\', '/')));
+
+function keyCounts(values) {
+  const counts = new Map();
+  for (const key of values) counts.set(key, (counts.get(key) ?? 0) + 1);
+  return counts;
+}
+
+function alertKeys(repo, alerts) {
+  return (alerts ?? []).map(alert => ({ key: labelKey(repo, alert), legacy: legacyLabelKey(repo, alert) }));
+}
+
+function legacyAlternatives(entries) {
+  return keyCounts(new Map(entries.map(item => [item.key, item.legacy])).values());
+}
 
 export function queueLabels(existing, deltas) {
   const labels = new Map((existing?.labels ?? []).map(label => [label.key, label]));
   for (const delta of deltas) {
+    const repo = repoName(delta.dir);
+    const legacyCount = delta.emitted ? legacyAlternatives(alertKeys(repo, [...delta.emitted, ...(delta.removed ?? [])])) : new Map();
     for (const alert of delta.added ?? []) {
-      const key = labelKey(repoName(delta.dir), alert);
-      if (!labels.has(key)) labels.set(key, { key, repo: repoName(delta.dir), ...alert, verdict: null, note: '' });
+      const key = labelKey(repo, alert), legacy = legacyLabelKey(repo, alert);
+      if (labels.has(legacy) && legacyCount.get(legacy) === 1) continue;
+      if (!labels.has(key)) labels.set(key, { key, repo, ...alert, verdict: null, note: '' });
     }
   }
   return { schema: 'factory.recall-labels.v1', labels: [...labels.values()].sort((a, b) => a.key.localeCompare(b.key)) };
 }
 
+function controlLabelEvidence(deltas) {
+  const completed = deltas.filter(delta => !delta.error && !delta.incomplete_on_both);
+  const repos = new Set(completed.map(delta => repoName(delta.dir)));
+  const emitted = completed.flatMap(delta => alertKeys(repoName(delta.dir), delta.emitted));
+  const removed = completed.flatMap(delta => alertKeys(repoName(delta.dir), delta.removed));
+  return { repos, emitted, exact: keyCounts(emitted.map(item => item.key)),
+    legacy: keyCounts(emitted.map(item => item.legacy)), alternatives: legacyAlternatives([...emitted, ...removed]) };
+}
+
+function reviewedCount(label, evidence) {
+  if (label.span) return evidence.exact.get(label.key) ?? 0;
+  const count = evidence.legacy.get(label.key) ?? 0;
+  return count ? Math.max(count, evidence.alternatives.get(label.key)) : 0;
+}
+
+function reviewedControlMatches(rows, evidence) {
+  const matches = new Map(), ambiguous = [], fpReturned = [], tpDropped = [];
+  for (const label of rows) {
+    if (!evidence.repos.has(label.repo ?? label.key.split('|')[1])) continue;
+    const count = reviewedCount(label, evidence);
+    if (count > 1) {
+      ambiguous.push(label.key);
+      continue;
+    }
+    if (count === 1) matches.set(label.key, label.verdict);
+    if (count === 1 && label.verdict === 'FP') fpReturned.push(label.key);
+    if (count === 0 && label.verdict === 'TP') tpDropped.push(label.key);
+  }
+  return { matches, ambiguous, fpReturned, tpDropped };
+}
+
 export function checkLabels(labels, deltas) {
-  const emitted = new Set(deltas.flatMap(delta => (delta.emitted ?? []).map(alert => labelKey(repoName(delta.dir), alert))));
-  const judged = (labels?.labels ?? []).filter(label => label.verdict === 'TP' || label.verdict === 'FP');
-  const fpReturned = judged.filter(label => label.verdict === 'FP' && emitted.has(label.key)).map(label => label.key);
-  const tpDropped = judged.filter(label => label.verdict === 'TP' && !emitted.has(label.key)).map(label => label.key);
-  const tp = judged.filter(label => label.verdict === 'TP').length;
-  return { judged: judged.length, labeled_precision: judged.length ? { tp, fp: judged.length - tp, wilson95: wilson(tp, judged.length) } : null,
-    fp_returned: fpReturned, tp_dropped: tpDropped, pending: (labels?.labels ?? []).filter(label => !label.verdict).length,
-    // UNCLEAR is an explicit label, kept out of the precision denominator.
-    unclear: (labels?.labels ?? []).filter(label => label.verdict === 'UNCLEAR').length };
+  const sheet = labels?.labels ?? [];
+  const reviewed = sheet.filter(label => label.verdict === 'TP' || label.verdict === 'FP');
+  const evidence = controlLabelEvidence(deltas);
+  const { matches, ambiguous, fpReturned, tpDropped } = reviewedControlMatches(reviewed, evidence);
+  const decisions = evidence.emitted.map(item => matches.get(item.key) ?? matches.get(item.legacy));
+  const tp = decisions.filter(verdict => verdict === 'TP').length;
+  const fp = decisions.filter(verdict => verdict === 'FP').length;
+  const judged = tp + fp;
+  return { judged, emitted: decisions.length, unreviewed_emitted: decisions.length - judged,
+    labeled_precision: judged ? { tp, fp, wilson95: wilson(tp, judged) } : null,
+    fp_returned: fpReturned, tp_dropped: tpDropped, ambiguous_labels: ambiguous,
+    pending: sheet.filter(label => !label.verdict).length, unclear: sheet.filter(label => label.verdict === 'UNCLEAR').length };
+}
+
+function readOptionalLabels(path) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return null;
+  }
+}
+
+function updateLabels(path, deltas) {
+  const destination = resolve(path);
+  const lock = destination + '.lock';
+  const descriptor = openSync(lock, 'wx', 0o600);
+  try {
+    const queued = queueLabels(readOptionalLabels(destination), deltas);
+    const staging = mkdtempSync(join(dirname(destination), '.recall-labels-'));
+    try {
+      const staged = join(staging, 'labels.json');
+      writeFileSync(staged, `${JSON.stringify(queued, null, 1)}\n`, { mode: 0o600 });
+      renameSync(staged, destination);
+    } finally {
+      rmSync(staging, { recursive: true, force: true });
+    }
+    return queued;
+  } finally {
+    closeSync(descriptor);
+    rmSync(lock, { force: true });
+  }
 }
 
 async function observe(opts) {
   const deltas = JSON.parse(readFileSync(opts.controls, 'utf8'));
-  const existing = existsSync(opts.labels) ? JSON.parse(readFileSync(opts.labels, 'utf8')) : null;
-  const queued = queueLabels(existing, deltas.deltas ?? deltas.controls ?? []);
-  writeFileSync(opts.labels, `${JSON.stringify(queued, null, 1)}\n`);
+  const queued = updateLabels(opts.labels, deltas.deltas ?? deltas.controls ?? []);
   console.log(`${queued.labels.length} labels, ${queued.labels.filter(label => !label.verdict).length} pending`);
 }
 
