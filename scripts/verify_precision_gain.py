@@ -1698,16 +1698,20 @@ def _score_capture_index(root, reference, pattern):
         root, reference, json_limit=MAX_SCORE_RECEIPT_BYTES
     )
     schema = report["schema"]
-    if schema == "factory.recall-result.v1":
-        sections = [report]
-    elif schema == "factory.recall-evaluation.v1":
-        if report["engine"]["executable_sha256"] != pattern["opengrep_binary_sha256"]:
-            raise ValueError(
-                "saved evaluation engine differs from the registered candidate"
-            )
-        sections = [batch["after_evidence"] for batch in report["dev"]]
-    else:
+    standalone = schema == "factory.recall-result.v1"
+    if not standalone and schema != "factory.recall-evaluation.v1":
         raise ValueError("unsupported saved score schema")
+    kind = "score" if standalone else "evaluation"
+    engine = report.get("engine")
+    if not isinstance(engine, dict) or not engine.get("executable_sha256"):
+        raise ValueError(
+            f"saved {kind} has no scanner fingerprint; regenerate the receipt"
+        )
+    if engine["executable_sha256"] != pattern["opengrep_binary_sha256"]:
+        raise ValueError(f"saved {kind} engine differs from the registered candidate")
+    sections = (
+        [report] if standalone else [batch["after_evidence"] for batch in report["dev"]]
+    )
     rows = {}
     for section in sections:
         if section["ruleset_sha256"] != pattern["ruleset_sha256"]:

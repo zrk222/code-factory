@@ -70,6 +70,8 @@ For complete pattern rows, supply the advisory ID, source revision, and
 `changed_files` scope. The collector takes the candidate's saved old-side path
 and report references, verifies the scan diagnostics and source packets, and
 binds the exact score receipt in the prepared observations.
+The scan must record the SHA-256 of its OpenGrep executable. Regenerate saved
+receipts that lack this fingerprint.
 Saved score receipts have a 32 MB byte budget.
 Declare CodeQL scopes that still await capture and use `unknown` for any row
 without a complete observation. The collector reads local files, verifies the

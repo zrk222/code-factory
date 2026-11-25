@@ -2253,18 +2253,20 @@ def _saved_score_fixture(tmp_path, complete, case, pattern, condition):
         if condition == "score_duplicate"
         else [score_case],
     }
+    engine = {
+        "executable_sha256": "0" * 64
+        if condition in {"score_engine", "score_engine_plain"}
+        else pattern["opengrep_binary_sha256"]
+    }
     if condition in {"score_eval", "score_engine"}:
         score = {
             "schema": "factory.recall-evaluation.v1",
             "dev": [{"after_evidence": section}],
-            "engine": {
-                "executable_sha256": "0" * 64
-                if condition == "score_engine"
-                else pattern["opengrep_binary_sha256"]
-            },
         }
     else:
         score = {"schema": "factory.recall-result.v1", **section}
+    if condition != "score_engine_missing":
+        score["engine"] = engine
     if condition == "score_large":
         score["padding"] = " " * 10_100_000
     path, checksum = _benchmark_file(tmp_path, "saved-score", score)
@@ -2288,6 +2290,8 @@ def _saved_score_fixture(tmp_path, complete, case, pattern, condition):
         ("score_revision", "no capture at the registered revision"),
         ("score_rules", "saved score ruleset differs"),
         ("score_engine", "saved evaluation engine differs"),
+        ("score_engine_plain", "saved score engine differs"),
+        ("score_engine_missing", "saved score has no scanner fingerprint"),
         ("score_timeout", "old-side execution errors"),
         ("score_ref", "references disagree with scanner receipts"),
         ("score_packet", "differs from saved score packet fingerprints"),
