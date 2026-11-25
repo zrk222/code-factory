@@ -760,11 +760,17 @@ export function checkpointArtifactsIntact(workdir, row) {
   } catch { return false; }
 }
 
+function readScoringManifest(path) {
+  const bytes = readFileSync(path);
+  const manifest = JSON.parse(utf8(bytes));
+  return { path, cases: manifest.cases, casesSha256: validateRecallManifest(manifest), sha256: sha256(bytes) };
+}
+
 export async function scoreManifest(manifestPath, rulesPath, opts = {}, context = null) {
-  const manifestBytes = readFileSync(manifestPath);
-  const manifest = JSON.parse(utf8(manifestBytes));
-  const manifestDigest = validateRecallManifest(manifest);
-  context ??= scoringContext(opts, rulesPath);
+  return scorePreparedManifest(readScoringManifest(manifestPath), opts, context ?? scoringContext(opts, rulesPath));
+}
+
+async function scorePreparedManifest(manifest, opts, context) {
   mkdirSync(context.workdir, { recursive: true });
   context.scanRoot = mkdtempSync(join(context.workdir, 'scan-'));
   const one = async (row, scanContext = context) => {
@@ -777,7 +783,7 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}, context 
   const resumed = [];
   const checkpointed = async row => {
     const inputs = { schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
-      manifest_cases_sha256: manifestDigest, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
+      manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
       profile_sha256: context.profileSha256, engine_sha256: engineSha, engine_args: context.extra, scope: context.scope };
     const saved = readCheckpoint(checkpoints, inputs);
     if (saved && checkpointable(saved) && checkpointArtifactsIntact(context.workdir, saved)) {
@@ -798,8 +804,8 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}, context 
     rows[index] = { ...(await one(manifest.cases[index], serial)), retried_serially: true,
       initial_scan_sides: initial.scan_sides, initial_captures: initial.captures };
   }
-  return { schema: 'factory.recall-result.v1', manifest: manifestPath, manifest_cases_sha256: manifestDigest,
-    manifest_sha256: sha256(manifestBytes), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
+  return { schema: 'factory.recall-result.v1', manifest: manifest.path, manifest_cases_sha256: manifest.casesSha256,
+    manifest_sha256: manifest.sha256, ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
     scope: context.scope, engine_args: context.extra,
     scan_directory: basename(context.scanRoot),
     ...(checkpoints ? { resumed_cases: resumed.sort() } : {}),
@@ -916,10 +922,12 @@ async function probeCoverage(dev, opts) {
   return { method: 'opengrep_dump_ast_v1', profile_sha256: sha256(opts.profileBytes), options: prefix.slice(1) };
 }
 
+const duplicateAdvisory = ghsa => 'Duplicate advisory ID across paired recall cohorts: ' + ghsa;
+
 function measureCaseChange(old, row, pair, changes) {
   const { gained, newErrors, newCoverageGaps, failures, seenAdvisories } = changes;
   if (seenAdvisories.has(row.ghsa)) {
-    failures.push('Duplicate advisory ID across paired recall cohorts: ' + row.ghsa);
+    failures.push(duplicateAdvisory(row.ghsa));
     return;
   }
   seenAdvisories.add(row.ghsa);
@@ -1151,6 +1159,24 @@ function reviewPopulation(context, deltas) {
   })) }]);
 }
 
+function readEvaluationManifests(paths) {
+  const seen = new Set();
+  return [].concat(paths).map(path => {
+    const manifest = readScoringManifest(path);
+    for (const { ghsa } of manifest.cases) {
+      if (seen.has(ghsa)) throw new Error(duplicateAdvisory(ghsa));
+      seen.add(ghsa);
+    }
+    return manifest;
+  });
+}
+
+function verifyEvaluationManifests(manifests) {
+  for (const { path, sha256: expected } of manifests) {
+    if (sha256(readFileSync(path)) !== expected) throw new Error('Evaluation manifest bytes changed during scoring');
+  }
+}
+
 async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
@@ -1161,30 +1187,33 @@ async function evaluate(input) {
   if (reviewOption !== undefined && reviewOption !== 'true') {
     throw new Error('--require-reviewed-controls accepts true');
   }
+  const manifests = readEvaluationManifests(opts.manifest);
   const engine = await bindRecallEngine(JSON.parse(utf8(opts.profileBytes)),
     opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
   const lossPolicy = opts['adjudicated-losses']
     ? loadAdjudicatedLosses(opts['adjudicated-losses'], engine.receipt.executable_sha256) : null;
   opts.opengrep = engine.path;
   const rules = evaluationRules(opts);
-  const manifests = [].concat(opts.manifest);
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
   const candidateOpts = { ...opts, 'extra-arg': [].concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []) };
   if (opts['probe-coverage'] !== undefined && !['true', 'false'].includes(opts['probe-coverage'])) {
     throw new Error('--probe-coverage requires true or false');
   }
+  const scoreArm = (manifest, path, settings) => scorePreparedManifest(manifest, settings,
+    { ...scoringContext(settings, path), engineSha: engine.receipt.executable_sha256 });
   const dev = [];
   for (const manifest of manifests) {
-    const before = await scoreManifest(manifest, opts.baseline, opts);
-    const after = await scoreManifest(manifest, opts.candidate, candidateOpts);
+    const before = await scoreArm(manifest, opts.baseline, opts);
+    const after = await scoreArm(manifest, opts.candidate, candidateOpts);
     if (before.ruleset_sha256 !== rules.baseline_sha256 || after.ruleset_sha256 !== rules.candidate_sha256) {
       throw new Error('Evaluation ruleset bytes changed during scoring');
     }
-    dev.push({ manifest, before, after });
+    dev.push({ manifest: manifest.path, before, after });
   }
   const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }) : [];
   const parserProbe = opts['probe-coverage'] === 'true' ? await probeCoverage(dev, opts) : null;
   await verifyBoundEngine(engine, 'evaluation');
+  verifyEvaluationManifests(manifests);
   verifyEvaluationRules(opts, rules);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0), lossPolicy });
   if (checkpoint) applyGainRetention(verdict, checkpoint, dev, lossPolicy);

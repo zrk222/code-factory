@@ -511,6 +511,7 @@ async function feederFixture(run, row = feederRow) {
       "const control = basename(process.cwd()) === 'control';",
       "const ruleText = readFileSync(rules, 'utf8');",
       "if (old && ruleText.includes('# rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
+      "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
       "const incomplete = !old && ruleText.includes('# incomplete');",
       "const devTimeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
@@ -702,6 +703,34 @@ test('evaluation retries both control arms once with a bounded timeout and recor
     assert.equal(persistent.result.controls[0].scan_sides.before.timeouts, 1);
     assert.equal(persistent.result.controls[0].scan_sides.after.timeouts, 1);
   }));
+
+test('evaluation rejects overlapping manifests before resolving the scanner', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline, candidate } = fixture;
+  const overlap = join(root, 'another-cohort.json');
+  const output = join(root, 'overlap-evaluation.json');
+  writeFileSync(overlap, readFileSync(manifest));
+  const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate',
+    '--manifest', manifest, '--manifest', overlap, '--baseline', baseline, '--candidate', candidate,
+    '--profile', profile, '--workdir', workdir, '--opengrep', join(root, 'missing-scanner'), '--out', output],
+  { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Duplicate advisory ID across paired recall cohorts/);
+  assert.equal(existsSync(output), false);
+  assert.equal(readdirSync(workdir).some(path => path.startsWith('scan-')), false);
+}));
+
+test('evaluation refuses a manifest changed during the paired scan', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline, candidate } = fixture;
+  const output = join(root, 'drifted-evaluation.json');
+  writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# manifest-drift\n');
+  const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate',
+    '--manifest', manifest, '--baseline', baseline, '--candidate', candidate,
+    '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath, '--out', output],
+  { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Evaluation manifest bytes changed during scoring/);
+  assert.equal(existsSync(output), false);
+}));
 
 test('changed prepared source, diff and inventory bytes cannot yield a measured case', () => feederFixture(async fixture => {
   const { source, manifest, baseline, diffPath, inventoryPath, opts, old, diff } = fixture;
