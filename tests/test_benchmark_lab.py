@@ -1797,3 +1797,302 @@ def test_advisory_recall_replay_pattern_requires_identical_detections(
     altered.write_bytes(ruleset.read_bytes() + b"\n# altered\n")
     with pytest.raises(ValueError, match="ruleset bytes differ"):
         _gain["replay_pattern"](subset, cache, str(binary), altered)
+
+
+def _benchmark_file(tmp_path, name, value):
+    path = tmp_path / f"{name}.json"
+    path.write_bytes(_gain["canonical_bytes"](value))
+    return path, _gain["digest"](path.read_bytes())
+
+
+def _signed_benchmark_fixture(
+    tmp_path,
+    execution_purpose,
+    execution_hash,
+    review_purpose,
+    review_rows,
+    *,
+    duplicate_key=False,
+    wrong_role=False,
+):
+    from factoryline.enterprise_receipts import generate_key_material, sign_payload
+
+    entries, materials, signatures = [], [], []
+    subjects = [("collector", execution_purpose, execution_hash, "benchmark-execution")]
+    subjects.extend(
+        (identity, review_purpose, subject, "benchmark-review")
+        for identity, subject in review_rows
+    )
+    for index, (identity, purpose, subject, role) in enumerate(subjects):
+        keyid = f"signer-{index}"
+        if index == 2 and duplicate_key:
+            material = materials[-1]
+            root_key = {**entries[1], "keyid": keyid, "identity": identity}
+        else:
+            material = generate_key_material(
+                out_dir=tmp_path / keyid,
+                keyid=keyid,
+                identity=identity,
+                issuer="https://example.invalid/benchmark",
+            )
+            local_trust = json.loads(Path(material["trust_root"]).read_bytes())
+            (root_key,) = local_trust["keys"]
+        materials.append(material)
+        root_key["roles"] = [
+            "benchmark-execution" if index == 1 and wrong_role else role
+        ]
+        entries.append(root_key)
+        signatures.append(
+            sign_payload(
+                {
+                    "schema": _gain["STATEMENT_SCHEMA"],
+                    "purpose": purpose,
+                    "subject_sha256": subject,
+                },
+                payload_type=_gain["PAYLOAD_TYPE"],
+                private_key_path=Path(material["private_key"]),
+                keyid=keyid,
+                identity=identity,
+                issuer="https://example.invalid/benchmark",
+            )
+        )
+    local_trust["keys"] = entries
+    trust, pin = _benchmark_file(tmp_path, "benchmark-trust", local_trust)
+    bundle, _ = _benchmark_file(
+        tmp_path,
+        "benchmark-attestations",
+        {
+            "schema": _gain["PROVENANCE_SCHEMA"],
+            "execution": signatures[0],
+            "reviewers": signatures[1:],
+        },
+    )
+    return [
+        "--provenance",
+        str(bundle),
+        "--trust-root",
+        str(trust),
+        "--trust-root-sha256",
+        pin,
+    ]
+
+
+@pytest.mark.parametrize(
+    "proof", ["valid", "wrong_role", "same_key", "bad_pin", "wrong_subject"]
+)
+def test_single_arm_cli_authenticates_execution_and_review_signatures(tmp_path, proof):
+    contract, selection, reviewers = _single_arm_precision_panel()
+    selection_path, selection_hash = _benchmark_file(tmp_path, "selection", selection)
+    refs, subjects = [], []
+    for review in reviewers:
+        path, sha = _benchmark_file(tmp_path, review["reviewer_id"], review)
+        refs.append({"path": path.name, "sha256": sha})
+        subjects.append((review["reviewer_id"], sha))
+    contract.update(
+        selection={"path": selection_path.name, "sha256": selection_hash},
+        reviewers=refs,
+    )
+    contract_path, _ = _benchmark_file(tmp_path, "contract", contract)
+    options = _signed_benchmark_fixture(
+        tmp_path,
+        "precision-execution",
+        "0" * 64 if proof == "wrong_subject" else selection_hash,
+        "precision-labels",
+        subjects,
+        duplicate_key=proof == "same_key",
+        wrong_role=proof == "wrong_role",
+    )
+    if proof == "bad_pin":
+        options[-1] = "0" * 64
+    output = tmp_path / "signed-precision.json"
+    runner = subprocess.run(
+        [
+            sys.executable,
+            str(_ROOT / "scripts/verify_precision_gain.py"),
+            str(contract_path),
+            "--out",
+            str(output),
+            *options,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    measured = json.loads(output.read_bytes())
+    if proof == "valid":
+        assert runner.returncode == 0, runner.stderr
+        assert measured["provenance"]["state"] == "AUTHENTICATED_STATEMENTS"
+        assert measured["provenance"]["review_independence"] == "UNESTABLISHED"
+        assert measured["disagreements"] == ["b"]
+        assert measured["publication_eligible"] is False
+    else:
+        assert runner.returncode == 2
+        assert measured["state"] == "INVALID"
+        assert {
+            "wrong_role": "not authorized for benchmark-review",
+            "same_key": "distinct signer identities and keys",
+            "bad_pin": "evidence digest mismatch",
+            "wrong_subject": "different subject or purpose",
+        }[proof] in measured["reason"]
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "linked",
+        "disagree",
+        "wrong_span",
+        "ambiguous",
+        "digest_drift",
+        "missing_digest",
+        "wrong_scope",
+        "failed_run",
+        "malformed_result",
+    ],
+)
+def test_advisory_linked_recall_requires_trusted_exact_finding(
+    tmp_path, capsys, condition
+):
+    record, *_ = _synthetic_recall(tmp_path)
+    absent = copy.deepcopy(record["cases"][0])
+    absent.update(ghsa="GHSA-2345-6789-cfgg", ecosystem="PHP")
+    record["cases"].append(absent)
+    record["summary"] = _gain["summarize_recall"](record)
+    record_path, record_sha = _benchmark_file(tmp_path, "strict-recall", record)
+    original = record["cases"][0]
+    result = {
+        "ruleId": "fixture.arithmetic",
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": "src/library.py"},
+                    "region": {
+                        "startLine": 42,
+                        "startColumn": 4,
+                        "endLine": 42,
+                        "endColumn": 8,
+                    },
+                }
+            }
+        ],
+    }
+    capture, capture_sha = _benchmark_file(
+        tmp_path,
+        "owned-capture",
+        {
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "invocations": [{"executionSuccessful": condition != "failed_run"}],
+                    "results": {
+                        "ambiguous": [result, result],
+                        "malformed_result": ["invalid"],
+                    }.get(condition, [result]),
+                }
+            ],
+        },
+    )
+    key = {
+        "ghsa": original["ghsa"],
+        "lane": "codeql",
+        "scope": "changed_files" if condition == "wrong_scope" else "repository",
+    }
+    observations, obs_sha = _benchmark_file(
+        tmp_path,
+        "linked-observations",
+        {
+            "schema": _gain["LINKS_SCHEMA"],
+            "record_sha256": record_sha,
+            "candidate_sha256": _gain["digest"](
+                _gain["canonical_bytes"](record["candidate"])
+            ),
+            "rows": [
+                {
+                    **key,
+                    "state": "complete",
+                    "source_revision": original["fixes"][0]["parent"],
+                    "source_tree_sha256": _digest("test-source-tree"),
+                    "capture": {
+                        "path": capture.name,
+                        "sha256": None
+                        if condition == "missing_digest"
+                        else capture_sha,
+                    },
+                }
+            ],
+        },
+    )
+    finding = {
+        "path": "src/library.py",
+        "line": 42,
+        "column": 5 if condition == "wrong_span" else 4,
+        "end_line": 42,
+        "end_column": 8,
+        "rule": result["ruleId"],
+    }
+    review_paths, subjects = [], []
+    for reviewer in ("one", "two"):
+        label = {**key, "verdict": "linked", "finding": finding}
+        if reviewer == "two" and condition == "disagree":
+            label = {**key, "verdict": "unclear"}
+        path, subject = _benchmark_file(
+            tmp_path,
+            reviewer,
+            {
+                "schema": _gain["LABELS_SCHEMA"],
+                "observations_sha256": obs_sha,
+                "reviewer_id": reviewer,
+                "labels": [label],
+            },
+        )
+        review_paths.extend(["--link-review", str(path)])
+        subjects.append((reviewer, subject))
+    options = _signed_benchmark_fixture(
+        tmp_path,
+        "advisory-execution",
+        obs_sha,
+        "advisory-link-labels",
+        subjects,
+    )
+    if condition == "digest_drift":
+        capture.write_bytes(capture.read_bytes() + b" ")
+    status = _gain["recall_main"](
+        [
+            str(record_path),
+            "--linked-observations",
+            str(observations),
+            *review_paths,
+            *options,
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+    if condition in {"linked", "disagree"}:
+        assert status == 0
+        assert output["measurement"] == "STRICT_OLD_SIDE_HUNK"
+        assert output["summary"]["total"]["combined_detected"] == 0
+        linked = output["advisory_linked_recall"]
+        (results,) = linked["scope_results"]
+        assert linked["publication_eligible"] is False
+        assert results["by_ecosystem"]["PHP"]["unexecuted"] == 1
+        total = results["total"]
+        assert total["registered"] == 2
+        assert total["executed"] == 1
+        assert (
+            total["linked"]
+            == total["linked_outside_hunk"]
+            == (total["linked_outside_changed_files"])
+            == (condition == "linked")
+        )
+        assert total["review_unresolved"] == (condition == "disagree")
+    else:
+        assert status == 1
+        assert output["state"] == "REJECTED"
+        assert {
+            "wrong_span": "absent or ambiguous",
+            "ambiguous": "absent or ambiguous",
+            "missing_digest": "requires a SHA-256",
+            "digest_drift": "evidence digest mismatch",
+            "wrong_scope": "outside its changed-file scan scope",
+            "failed_run": "no successful execution evidence",
+            "malformed_result": "invalid SARIF result",
+        }[condition] in output["error"]

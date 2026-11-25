@@ -1,13 +1,15 @@
 """Check paired precision gain or score a sealed single-arm raw sample.
 
-Inputs are hash-bound observations, not aggregate scores. This checks their
-internal consistency; source execution and label provenance require review.
-``advisory-recall RECORD`` verifies the factory advisory recall record instead.
+Hash-bound observations are checked for consistency. Optional signed statements
+authenticate the execution and label authors under a pinned trust root.
+``advisory-recall RECORD`` verifies the strict advisory record and can score a
+separate, signed advisory-link review.
 """
 
 from __future__ import annotations
 
 import argparse
+from base64 import urlsafe_b64decode
 from collections import Counter
 import hashlib
 import json
@@ -17,11 +19,16 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from factoryline.benchmark_lab import _wilson
 from factoryline.deep_audit_io import LIMIT as MAX_EVIDENCE_BYTES
-from factoryline.deep_audit_io import strict_json
+from factoryline.deep_audit_io import relative_path, strict_json
+from factoryline.enterprise_receipts import (
+    EnterpriseReceiptError,
+    verify_signed_document_value,
+)
 from factoryline.run_metrics import _atomic_json
 from factoryline.runtime_audit_common import canonical_bytes
 
@@ -515,12 +522,21 @@ def _single_arm_summary(result, output):
                 f"{population}: {row['TP']} TP, {row['FP']} FP, {row['UNCLEAR']} unclear, "
                 f"precision {score} over {row['decided']} decided alerts"
             )
+    if provenance := result.get("provenance"):
+        lines.append(
+            f"Provenance {provenance['state']}. "
+            f"Review independence {provenance['review_independence']}."
+        )
     lines.append(f"Evidence: {output}")
     return "\n".join(lines)
 
 
 def _check_output_path(args, contract):
     output = args.out.resolve()
+    if any(
+        output == path.resolve() for path in (args.provenance, args.trust_root) if path
+    ):
+        raise ValueError("--out must not replace a provenance or trust input")
     references = [contract.get(key) for key in ("baseline", "candidate", "selection")]
     reviews = contract.get("reviewers")
     if isinstance(reviews, list):
@@ -1029,6 +1045,422 @@ def _recall_read(path):
     return raw
 
 
+PROVENANCE_SCHEMA = "factory.benchmark-provenance.v1"
+STATEMENT_SCHEMA = "factory.benchmark-evidence-statement.v1"
+PAYLOAD_TYPE = "application/vnd.factory.benchmark-evidence-statement.v1+json"
+LINKS_SCHEMA = "factory.advisory-link-observations.v1"
+LABELS_SCHEMA = "factory.advisory-link-labels.v1"
+
+
+def _benchmark_evidence(path, expected_sha256=None):
+    raw = _recall_read(path)
+    checksum = digest(raw)
+    if expected_sha256 is not None and checksum != expected_sha256:
+        raise ValueError("benchmark evidence digest mismatch")
+    return strict_json(raw), checksum
+
+
+def _authenticate_provenance(path, trust_path, trust_sha256, *, execution, reviews):
+    """Authenticate typed statements from distinct trusted benchmark signers."""
+    if path is None:
+        if trust_path is not None or trust_sha256 is not None:
+            raise ValueError("trust options require --provenance")
+        return {"state": "UNATTESTED", "review_independence": "UNESTABLISHED"}
+    if trust_path is None or not _hash(trust_sha256):
+        raise ValueError("provenance requires a trust root and a pinned SHA-256")
+    bundle, bundle_sha = _benchmark_evidence(path)
+    trust, verified_pin = _benchmark_evidence(trust_path, trust_sha256)
+    if (
+        bundle.get("schema") != PROVENANCE_SCHEMA
+        or not isinstance(bundle.get("reviewers"), list)
+        or len(bundle["reviewers"]) != 2
+        or len(reviews) != 2
+    ):
+        raise ValueError(
+            "expected a signed execution statement and two review statements"
+        )
+    keys = {key["keyid"]: key["public_key"] for key in trust["keys"]}
+    if len(keys) != len(trust["keys"]):
+        raise ValueError("benchmark trust root repeats a key ID")
+    statements = [
+        (bundle["execution"], *execution, "benchmark-execution", None),
+        *(
+            (envelope, purpose, subject, "benchmark-review", reviewer)
+            for envelope, (purpose, subject, reviewer) in zip(
+                bundle["reviewers"], reviews, strict=True
+            )
+        ),
+    ]
+    signers, key_bytes, identities = [], set(), set()
+    for envelope, purpose, subject, role, reviewer in statements:
+        try:
+            result = verify_signed_document_value(
+                envelope,
+                payload_type=PAYLOAD_TYPE,
+                schema=STATEMENT_SCHEMA,
+                trust_root=trust,
+                required_key_role=role,
+            )
+        except EnterpriseReceiptError as exc:
+            raise ValueError(f"benchmark provenance signature rejected: {exc}") from exc
+        if result["payload"] != {
+            "schema": STATEMENT_SCHEMA,
+            "purpose": purpose,
+            "subject_sha256": subject,
+        }:
+            raise ValueError(
+                "signed benchmark statement has a different subject or purpose"
+            )
+        signer = result["signature"]
+        identity = signer["identity"]
+        if reviewer is not None and identity != reviewer:
+            raise ValueError("review document identity differs from its signer")
+        public = keys[signer["keyid"]]
+        raw_key = urlsafe_b64decode(public + "=" * (-len(public) % 4))
+        if identity.casefold() in identities or raw_key in key_bytes:
+            raise ValueError(
+                "benchmark evidence requires distinct signer identities and keys"
+            )
+        identities.add(identity.casefold())
+        key_bytes.add(raw_key)
+        signers.append({key: signer[key] for key in ("identity", "issuer", "keyid")})
+    return {
+        "state": "AUTHENTICATED_STATEMENTS",
+        "trust_root_sha256": verified_pin,
+        "provenance_bundle_sha256": bundle_sha,
+        "execution_subject_sha256": execution[1],
+        "review_subject_sha256": [review[1] for review in reviews],
+        "execution_signer": signers[0],
+        "review_signers": signers[1:],
+        "review_independence": "UNESTABLISHED",
+    }
+
+
+def _finding_key(finding):
+    path = relative_path(finding["path"])
+    line, rule = finding["line"], finding["rule"]
+    column, end_line, end_column = (
+        finding.get(key) for key in ("column", "end_line", "end_column")
+    )
+    if (
+        type(line) is not int
+        or line < 1
+        or not isinstance(rule, str)
+        or not rule
+        or any(
+            value is not None and (type(value) is not int or value < 1)
+            for value in (column, end_line, end_column)
+        )
+        or (end_line is not None and end_line < line)
+    ):
+        raise ValueError("invalid linked finding identity")
+    return path, line, column, end_line, end_column, rule
+
+
+def _emitted_findings(root, capture):
+    if not _hash(capture.get("sha256")):
+        raise ValueError("linked SARIF capture requires a SHA-256")
+    report, _ = _benchmark_evidence(
+        _recall_contained(root, capture["path"]), capture["sha256"]
+    )
+    runs = report.get("runs")
+    if report.get("version") != "2.1.0" or not isinstance(runs, list) or not runs:
+        raise ValueError("linked recall requires a SARIF 2.1.0 capture with runs")
+    findings = Counter()
+    for run in runs:
+        if not isinstance(run, dict):
+            raise ValueError("invalid SARIF run")
+        invocations = run.get("invocations")
+        if (
+            not isinstance(invocations, list)
+            or not invocations
+            or not all(
+                isinstance(call, dict) and call.get("executionSuccessful") is True
+                for call in invocations
+            )
+        ):
+            raise ValueError(
+                "linked recall capture has no successful execution evidence"
+            )
+        results = run.get("results", [])
+        if not isinstance(results, list):
+            raise ValueError("invalid SARIF result list")
+        for result in results:
+            if not isinstance(result, dict) or not isinstance(
+                result.get("locations", []), list
+            ):
+                raise ValueError("invalid SARIF result")
+            for location in result.get("locations", []):
+                if not isinstance(location, dict):
+                    raise ValueError("invalid SARIF location")
+                physical = location.get("physicalLocation", {})
+                if not isinstance(physical, dict):
+                    raise ValueError("invalid SARIF physical location")
+                artifact = physical.get("artifactLocation", {})
+                region = physical.get("region", {})
+                if not isinstance(artifact, dict) or not isinstance(region, dict):
+                    raise ValueError("invalid SARIF finding location")
+                if "uri" in artifact and "startLine" in region:
+                    key = _finding_key(
+                        {
+                            "path": unquote(artifact["uri"], errors="strict"),
+                            "line": region["startLine"],
+                            "column": region.get("startColumn"),
+                            "end_line": region.get("endLine"),
+                            "end_column": region.get("endColumn"),
+                            "rule": result["ruleId"],
+                        }
+                    )
+                    findings[key] += 1
+    return findings
+
+
+def _observations(record, record_sha256, observations, root):
+    if (
+        observations.get("schema") != LINKS_SCHEMA
+        or observations.get("record_sha256") != record_sha256
+        or observations.get("candidate_sha256")
+        != digest(canonical_bytes(record["candidate"]))
+        or not isinstance(observations.get("rows"), list)
+        or not observations["rows"]
+    ):
+        raise ValueError(
+            "linked observations must bind the exact recall record and candidate"
+        )
+    known = {case["ghsa"]: case for case in record["cases"]}
+    groups, completed = set(), {}
+    seen = set()
+    for row in observations["rows"]:
+        ghsa, lane, scope = row["ghsa"], row["lane"], row["scope"]
+        key = ghsa, lane, scope
+        if (
+            key in seen
+            or ghsa not in known
+            or lane not in {"pattern", "codeql"}
+            or scope not in {"changed_files", "repository"}
+            or row["source_revision"] != known[ghsa]["fixes"][0]["parent"]
+            or row.get("state") not in {"complete", "unknown"}
+        ):
+            raise ValueError("invalid or duplicate linked observation")
+        seen.add(key)
+        groups.add((lane, scope))
+        if row["state"] == "unknown":
+            if row.get("capture") is not None:
+                raise ValueError(
+                    "unknown linked observation cannot assert a complete capture"
+                )
+            continue
+        if not _hash(row.get("source_tree_sha256")):
+            raise ValueError("linked capture requires a source tree hash")
+        findings = _emitted_findings(root, row["capture"])
+        if scope == "changed_files":
+            changed = {
+                item["path"]
+                for item in known[ghsa]["prefix_files"]
+                if item["parent"] == row["source_revision"]
+            }
+            if any(finding[0] not in changed for finding in findings):
+                raise ValueError(
+                    "linked finding falls outside its changed-file scan scope"
+                )
+        completed[key] = findings
+    return known, groups, completed
+
+
+def _link_reviews(reviews, observations_sha256, completed):
+    decisions = []
+    for review in reviews:
+        if (
+            review.get("schema") != LABELS_SCHEMA
+            or review.get("observations_sha256") != observations_sha256
+            or not isinstance(review.get("reviewer_id"), str)
+            or not isinstance(review.get("labels"), list)
+        ):
+            raise ValueError(
+                "linked reviewer envelope has an invalid observation binding"
+            )
+        labels = {}
+        for label in review["labels"]:
+            key = label["ghsa"], label["lane"], label["scope"]
+            verdict = label["verdict"]
+            if (
+                key in labels
+                or key not in completed
+                or verdict not in {"linked", "no_link", "unclear"}
+            ):
+                raise ValueError("invalid or duplicate linked reviewer verdict")
+            finding = label.get("finding")
+            if verdict == "linked":
+                finding = _finding_key(finding)
+                if completed[key][finding] != 1:
+                    raise ValueError(
+                        "linked reviewer finding is absent or ambiguous in signed SARIF"
+                    )
+            elif finding is not None:
+                raise ValueError("non-link verdict cannot cite a linked finding")
+            labels[key] = verdict, finding
+        if labels.keys() != completed.keys():
+            raise ValueError("linked reviewer omitted complete observations")
+        decisions.append(labels)
+    return decisions
+
+
+def _result_row(counter, total):
+    return {
+        "registered": total,
+        **{
+            key: counter[key]
+            for key in (
+                "executed",
+                "linked",
+                "no_link",
+                "review_unresolved",
+                "linked_outside_hunk",
+                "linked_outside_changed_files",
+            )
+        },
+        "unexecuted": total - counter["executed"],
+    }
+
+
+def _linked_advisory_metrics(
+    record,
+    record_sha256,
+    observations_path,
+    labels_paths,
+    provenance_path,
+    trust_path,
+    trust_sha256,
+):
+    if provenance_path is None or len(labels_paths) != 2:
+        raise ValueError(
+            "advisory-linked recall requires provenance and two review files"
+        )
+    observations, obs_sha = _benchmark_evidence(observations_path)
+    review_items = [_benchmark_evidence(path) for path in labels_paths]
+    reviews = [review for review, _ in review_items]
+    provenance = _authenticate_provenance(
+        provenance_path,
+        trust_path,
+        trust_sha256,
+        execution=("advisory-execution", obs_sha),
+        reviews=[
+            ("advisory-link-labels", review_sha, review["reviewer_id"])
+            for review, review_sha in review_items
+        ],
+    )
+    known, groups, complete = _observations(
+        record, record_sha256, observations, observations_path.parent
+    )
+    first, second = _link_reviews(reviews, obs_sha, complete)
+    population = Counter(case["ecosystem"] for case in known.values())
+    results = []
+    for lane, scope in sorted(groups):
+        counts = {ecosystem: Counter() for ecosystem in population}
+        for ghsa, row_lane, row_scope in complete:
+            if (row_lane, row_scope) != (lane, scope):
+                continue
+            case, key = known[ghsa], (ghsa, lane, scope)
+            counter = counts[case["ecosystem"]]
+            counter["executed"] += 1
+            verdict, finding = (
+                first[key] if first[key] == second[key] else ("unclear", None)
+            )
+            counter["review_unresolved" if verdict == "unclear" else verdict] += 1
+            if verdict != "linked":
+                continue
+            path, line, *_ = finding
+            revision = case["fixes"][0]["parent"]
+            files = [
+                item
+                for item in case["prefix_files"]
+                if item["parent"] == revision and item["path"] == path
+            ]
+            if not _in_hunk(case, revision, path, line):
+                counter["linked_outside_hunk"] += 1
+            if not files:
+                counter["linked_outside_changed_files"] += 1
+        results.append(
+            {
+                "lane": lane,
+                "scope": scope,
+                "total": _result_row(sum(counts.values(), Counter()), len(known)),
+                "by_ecosystem": {
+                    ecosystem: _result_row(counts[ecosystem], population[ecosystem])
+                    for ecosystem in sorted(population)
+                },
+            }
+        )
+    return {
+        "state": "ADJUDICATED_SIGNED_OBSERVATIONS" if complete else "NOT_MEASURED",
+        "provenance": provenance,
+        "scope_results": results,
+        "record_sha256": record_sha256,
+        "observations_sha256": obs_sha,
+        "publication_eligible": False,
+        "claim_boundary": "Supplemental associations on supplied observations. Blind and whole-product recall remain unestablished.",
+    }
+
+
+def _add_provenance_options(parser):
+    parser.add_argument("--provenance", type=Path, help="Role-bound signed statements")
+    parser.add_argument("--trust-root", type=Path)
+    parser.add_argument(
+        "--trust-root-sha256", help="Independently approved trust-root hash"
+    )
+
+
+def _precision_provenance(args, contract):
+    if args.provenance is None:
+        return _authenticate_provenance(
+            None,
+            args.trust_root,
+            args.trust_root_sha256,
+            execution=None,
+            reviews=[],
+        )
+    if contract.get("schema") != SINGLE_ARM_SCHEMA:
+        raise ValueError("precision provenance requires a sealed single-arm contract")
+    reviews = [
+        (
+            "precision-labels",
+            item["sha256"],
+            _read_bound(args.contract.parent, item, strict=True)["reviewer_id"],
+        )
+        for item in contract["reviewers"]
+    ]
+    return _authenticate_provenance(
+        args.provenance,
+        args.trust_root,
+        args.trust_root_sha256,
+        execution=("precision-execution", contract["selection"]["sha256"]),
+        reviews=reviews,
+    )
+
+
+def _advisory_links(args, record, record_sha256):
+    if args.linked_observations is None:
+        if (
+            args.link_review
+            or args.provenance
+            or args.trust_root
+            or args.trust_root_sha256
+        ):
+            raise ValueError(
+                "linked reviews and provenance require --linked-observations"
+            )
+        return {"state": "NOT_MEASURED"}
+    return _linked_advisory_metrics(
+        record,
+        record_sha256,
+        args.linked_observations,
+        args.link_review,
+        args.provenance,
+        args.trust_root,
+        args.trust_root_sha256,
+    )
+
+
 def recall_main(argv: list[str]) -> int:
     """Verify the factory advisory recall record (``advisory-recall`` mode)."""
     parser = argparse.ArgumentParser(prog="verify_precision_gain.py advisory-recall")
@@ -1045,10 +1477,15 @@ def recall_main(argv: list[str]) -> int:
         type=Path,
         default=Path("deploy/deep-adapters/rules/semgrep-pattern-limited.yml"),
     )
+    parser.add_argument("--linked-observations", type=Path)
+    parser.add_argument("--link-review", type=Path, action="append", default=[])
+    _add_provenance_options(parser)
     args = parser.parse_args(argv)
     try:
-        record = strict_json(_recall_read(args.record))
+        record_bytes = _recall_read(args.record)
+        record = strict_json(record_bytes)
         summary = verify_recall(record)
+        linked = _advisory_links(args, record, digest(record_bytes))
         if args.fetch_into:
             if not args.prefix_cache:
                 raise ValueError("--fetch-into requires --prefix-cache")
@@ -1073,7 +1510,9 @@ def recall_main(argv: list[str]) -> int:
                 "state": "VERIFIED",
                 "prefix_files_checked": files,
                 "pattern_replayed": bool(args.opengrep),
+                "measurement": "STRICT_OLD_SIDE_HUNK",
                 "summary": summary,
+                "advisory_linked_recall": linked,
             },
             indent=1,
         )
@@ -1094,6 +1533,7 @@ def main() -> int:
     parser.add_argument(
         "--summary", action="store_true", help="Print an operator summary"
     )
+    _add_provenance_options(parser)
     args = parser.parse_args()
     if args.out.resolve() == args.contract.resolve():
         parser.error("--out must not replace the contract")
@@ -1115,6 +1555,7 @@ def main() -> int:
         )
         result["contract_sha256"] = digest(payload)
         result["evidence"] = evidence
+        result["provenance"] = _precision_provenance(args, contract)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         if not contract_parsed and args.out.exists():
             parser.error(
