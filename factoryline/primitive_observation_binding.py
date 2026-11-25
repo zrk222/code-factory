@@ -9,11 +9,12 @@ from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
 from contextvars import ContextVar
 from contextlib import nullcontext
+from functools import cache, partial
 
 from . import canonical_json_compat_bytes
 
 from .audit_action_refs import _primitive_source_capture
-from .captured_operand_audit import entry_reach_tier
+from .captured_operand_audit import _source_index, entry_reach_tier
 
 _ROLE_REBUILD_CONTEXT = ContextVar("factory-role-rebuild-context", default=None)
 _RULE_SPAN_KEYS = ("code", "path", "line", "column", "end_line", "end_column")
@@ -618,6 +619,7 @@ def build_finding_tier_report(
             regenerated.setdefault(row["path"], []).append(row)
     signing_cache = {}
     pickle_origin_cache = {}
+    get_source_index = cache(partial(_source_index, source_bytes))
     primitive_rows = [row for row in primitive_observations if isinstance(row, dict)]
     ledger = [
         _finding_tier_ledger_row(
@@ -629,21 +631,18 @@ def build_finding_tier_report(
             primitive_rows,
             coverage_state,
             partition_state,
+            get_source_index,
         )
         for index, raw in enumerate(raw_findings)
     ]
 
-    tiers = {
-        name: sum(row["tier"] == name for row in ledger)
-        for name in _FINDING_TIER_POLICY["tiers"]
-    }
+    counts = Counter(row["tier"] for row in ledger)
+    tiers = {name: counts[name] for name in _FINDING_TIER_POLICY["tiers"]}
     total = len(ledger)
     abstentions = tiers["NEEDS_CONTEXT"]
-    if total:
-        abstention_fraction = abstentions / total
-        retention_fraction = len(ledger) / total
-    else:
-        abstention_fraction = retention_fraction = None
+    abstention_fraction, retention_fraction = (
+        (abstentions / total, 1.0) if total else (None, None)
+    )
     source_model_failed = regenerated.get(("independent_source_model",), False) is None
     native_model_state, gate_coverage = (
         ("UNAVAILABLE", False)
@@ -5053,6 +5052,7 @@ def _finding_tier_ledger_row(
     primitive_rows,
     coverage_state,
     partition_state,
+    get_source_index,
 ):
     """Regenerate one source-bound tier without discarding its raw diagnostic."""
     regenerated, signing_cache, pickle_origin_cache = caches
@@ -5090,7 +5090,7 @@ def _finding_tier_ledger_row(
         credential_context=role_context,
     )
     tier, evidence, evidence_details = entry_reach_tier(
-        finding, source_bytes, bindings, decided
+        finding, source_bytes, decided, get_source_index=get_source_index
     )
     identity = _tier_sha256(
         {

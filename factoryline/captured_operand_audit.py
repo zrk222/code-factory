@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-import json
+from functools import cached_property
 from pathlib import Path
 import re
+from string import Formatter
 
 
 _COOKIE_NAME_PROVIDERS = frozenset(
@@ -348,7 +349,7 @@ def _captured_literal_argument_origin(argument, call, parents, module):
     return value if _CapturedTextDefinitions.literal(value) else argument
 
 
-def _captured_argument_definition(argument, call, parents, module):
+def _captured_argument_definition(argument, call, parents, module, *, aliases=False):
     """Find the assignment that reaches this argument on the captured branch."""
     from .credential_role_constructor_provider import (
         _binding_precedes_sibling,
@@ -385,16 +386,28 @@ def _captured_argument_definition(argument, call, parents, module):
             writes = [node for node in writes if node not in handler_nodes]
         if len(writes) == 1:
             assignment = parents.get(id(writes[0]))
-            if (
-                isinstance(assignment, ast.Assign)
-                and assignment.targets == writes
-                and _binding_precedes_sibling(assignment, current, owner)
-            ):
+            if _captured_assignment_targets(
+                assignment, writes[0], aliases=aliases
+            ) and _binding_precedes_sibling(assignment, current, owner):
                 return assignment.value
         if owner is scope:
             break
         current = owner
     return None
+
+
+def _captured_assignment_targets(assignment, target, *, aliases):
+    if isinstance(assignment, ast.AnnAssign):
+        return aliases and assignment.target is target and assignment.value is not None
+    if not isinstance(assignment, ast.Assign):
+        return False
+    if assignment.targets == [target]:
+        return True
+    if not aliases or not all(
+        isinstance(node, ast.Name) for node in assignment.targets
+    ):
+        return False
+    return len({node.id for node in assignment.targets}) == len(assignment.targets)
 
 
 def _argument_binding_is_parameter_or_external(name, scope):
@@ -3113,7 +3126,7 @@ class Index:
 
     def __init__(self, sources: dict[str, str]):
         self.functions: dict[str, Function] = {}
-        self.by_path_line: list[tuple[str, int, int, str]] = []
+        self._function_spans: dict[str, list[tuple[int, int, str]]] = {}
         self.imports: dict[str, dict[str, str]] = {}
         self.calls: list[tuple[str, ast.Call, str]] = []  # caller key, call, module
         self.method_names: dict[str, list[str]] = {}
@@ -3131,6 +3144,10 @@ class Index:
             self.trees[relative] = tree
             self._index_module(relative, tree)
         self._mark_registered_entries()
+
+    @cached_property
+    def _callers(self) -> dict[str, list[tuple[Function, ast.Call]]]:
+        return _call_graph(self)
 
     def _mark_registered_entries(self) -> None:
         """Handlers passed to a route, tool or command registration are entries."""
@@ -3209,7 +3226,7 @@ class Index:
             key, module, relative, node, params, class_name, entry, public
         )
         end = getattr(node, "end_lineno", node.lineno)
-        self.by_path_line.append((relative, node.lineno, end, key))
+        self._function_spans.setdefault(relative, []).append((node.lineno, end, key))
         if class_name is not None:
             self.method_names.setdefault(node.name, []).append(key)
         self.cli_args[key] = _parsed_cli_names(node)
@@ -3222,8 +3239,8 @@ class Index:
     def enclosing(self, relative: str, line: int) -> Function | None:
         """The innermost indexed function whose span contains ``line``."""
         best = None
-        for path, start, end, key in self.by_path_line:
-            if path == relative and start <= line <= end:
+        for start, end, key in self._function_spans.get(relative, []):
+            if start <= line <= end:
                 if best is None or start >= self.functions[best].node.lineno:
                     best = key
         return self.functions.get(best) if best else None
@@ -3473,10 +3490,12 @@ class _Propagation:
 
 def reach(root: Path | Index, findings: list[dict]) -> list[dict]:
     """Annotate ``findings`` ({rule, path, line, source}) with reach state and chain."""
+    if not findings:
+        return []
     index = root if isinstance(root, Index) else Index.from_root(root)
     summary: dict[str, dict[str, list[str]]] = {}
     seeds = _seed(index, findings, summary)
-    propagation = _Propagation(index, _call_graph(index), summary)
+    propagation = _Propagation(index, index._callers, summary)
     propagation.run()
     annotated = []
     for finding, seed in zip(findings, seeds):
@@ -3494,72 +3513,204 @@ REACH_CODES = {
     "SECURITY_SQL_INJECTION",
     "SECURITY_PATH_TRAVERSAL",
 }
-_INDEX_CACHE: dict[str, Index] = {}
 
 
-def _local_assignments(func: Function) -> dict[str, list[ast.AST]]:
-    assigned: dict[str, list[ast.AST]] = {}
-    for node in ast.walk(func.node):
-        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)) and node.value:
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                if isinstance(target, ast.Name):
-                    assigned.setdefault(target.id, []).append(node.value)
-    return assigned
+def _matches_reach_span(node: ast.Call, finding: dict) -> bool:
+    if node.lineno != finding["line"]:
+        return False
+    return all(
+        finding.get(key, value) == value
+        for key, value in (
+            ("column", node.col_offset),
+            ("end_line", node.end_lineno),
+            ("end_column", node.end_col_offset),
+        )
+    )
 
 
-def _unsanitized_names(expr: ast.AST) -> list[str]:
-    """Names in ``expr`` outside any sanitizer call."""
-    if isinstance(expr, ast.Call) and _SANITIZERS.search(_dotted(expr.func)):
+def _reach_format_values(template, args, keywords):
+    named = {kw.arg: kw.value for kw in keywords}
+    if (
+        None in named
+        or len(named) != len(keywords)
+        or any(isinstance(arg, ast.Starred) for arg in args)
+    ):
         return []
-    if isinstance(expr, ast.Name):
-        return [expr.id]
-    return [
-        n for child in ast.iter_child_nodes(expr) for n in _unsanitized_names(child)
-    ]
 
-
-def _sink_parameters(func: Function, line: int) -> list[str]:
-    """Parameters that reach the first argument of the call at ``line``."""
-    calls = [
-        node
-        for node in ast.walk(func.node)
-        if isinstance(node, ast.Call) and node.lineno == line and node.args
-    ]
-    if not calls:
+    values = []
+    automatic, explicit = 0, False
+    try:
+        for _, field, spec, conversion in Formatter().parse(template):
+            if field is None:
+                continue
+            if spec or conversion not in (None, "s", "r", "a"):
+                return []
+            if field == "":
+                if explicit:
+                    return []
+                values.append(args[automatic])
+                automatic += 1
+            elif field.isascii() and field.isdecimal():
+                if automatic:
+                    return []
+                explicit = True
+                values.append(args[int(field)])
+            else:
+                values.append(named[field])
+    except (ValueError, IndexError, KeyError):
         return []
-    assigned = _local_assignments(func)
-    found, seen, pending = [], set(), [calls[0].args[0]]
+    return values
+
+
+def _reach_percent_values(template, operand):
+    fields = re.findall(r"%%|%[sra]|%", template)
+    if any(field not in ("%%", "%s", "%r", "%a") for field in fields):
+        return []
+    count = sum(field != "%%" for field in fields)
+    values = operand.elts if isinstance(operand, ast.Tuple) else [operand]
+    if count != len(values) or any(isinstance(value, ast.Starred) for value in values):
+        return []
+    return values
+
+
+def _reach_operand_names(expr: ast.AST):
+    match expr:
+        case ast.Name(ctx=ast.Load()):
+            yield expr
+        case ast.Call(
+            func=ast.Attribute(
+                value=ast.Constant(value=str() as template), attr="format"
+            ),
+            args=args,
+            keywords=keywords,
+        ):
+            for value in _reach_format_values(template, args, keywords):
+                yield from _reach_operand_names(value)
+        case ast.BinOp(
+            op=ast.Mod(), left=ast.Constant(value=str() as template), right=operand
+        ):
+            for value in _reach_percent_values(template, operand):
+                yield from _reach_operand_names(value)
+        case ast.BinOp(op=ast.Add() | ast.Mod() | ast.Div(), left=left, right=right):
+            yield from _reach_operand_names(left)
+            yield from _reach_operand_names(right)
+        case ast.JoinedStr(values=values):
+            for value in values:
+                yield from _reach_operand_names(value)
+        case (
+            ast.FormattedValue(value=value)
+            | ast.Attribute(value=value)
+            | ast.Subscript(value=value)
+        ):
+            yield from _reach_operand_names(value)
+
+
+def _reach_call_and_parents(func, finding):
+    nested = (
+        *_FUNCTION_OR_CLASS,
+        ast.Lambda,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+    pending = list(func.node.body)
+    parents = {id(statement): func.node for statement in pending}
+    matches, closure_writes = [], set()
     while pending:
-        expr = pending.pop()
-        if isinstance(expr, ast.Call) and _SANITIZERS.search(_dotted(expr.func)):
+        node = pending.pop()
+        if isinstance(node, nested):
+            if isinstance(node, _FUNCTION_OR_CLASS):
+                closure_writes.update(
+                    name
+                    for child in ast.walk(node)
+                    if isinstance(child, ast.Nonlocal)
+                    for name in child.names
+                )
             continue
-        names = _unsanitized_names(expr)
-        for name in (n for n in names if n not in seen):
-            seen.add(name)
-            found.extend([name] if name in func.params else [])
-            pending.extend(assigned.get(name, []))
-    return found
+        if isinstance(node, ast.Call) and _matches_reach_span(node, finding):
+            matches.append(node)
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+            pending.append(child)
+    call = matches[0] if len(matches) == 1 else None
+    return call, parents, closure_writes
 
 
-def _source_index(source_bytes: dict, bindings: dict) -> Index:
-    import hashlib
+def _parameter_reaches_read(name, scope, parents, closure_writes):
+    from .credential_role_constructor_provider import (
+        binding_dominates,
+        binding_occurrences,
+    )
 
-    key = hashlib.sha256(
-        json.dumps(sorted(bindings.items()), separators=(",", ":")).encode()
-    ).hexdigest()
-    if key not in _INDEX_CACHE:
-        texts = {
+    # A nested function can reassign the parameter via its closure.
+    if name.id in closure_writes:
+        return False
+    writes = binding_occurrences(scope.body, name.id)
+    if not writes:
+        return True
+    statement = name
+    while parents[id(statement)] is not scope:
+        statement = parents[id(statement)]
+    # A write in the same top-level statement could reach a later loop iteration.
+    return all(binding_dominates(statement, write, parents, scope) for write in writes)
+
+
+def _reach_shell_sequence_command(operand, call, finding):
+    if not isinstance(operand, (ast.List, ast.Tuple)):
+        return operand
+    if finding["code"] != "SECURITY_SHELL_COMMAND" or not operand.elts:
+        return None
+
+    from .finite_capture import shell_execution_calls
+    from .review_integrity import shell_execution_enabled
+
+    if finding.get(
+        "call"
+    ) not in shell_execution_calls() or not shell_execution_enabled(call):
+        return None
+    # The first element supplies the shell command on POSIX. Later elements
+    # require platform-specific proof before they can support a promotion.
+    return operand.elts[0]
+
+
+def _sink_parameters(func: Function, finding: dict) -> list[str]:
+    """Prove parameter reach to the operand of one source-bound call."""
+    call, parents, closure_writes = _reach_call_and_parents(func, finding)
+    if call is None or not call.args:
+        return []
+    found, seen, pending = {}, set(), [call.args[0]]
+    while pending:
+        operand = _reach_shell_sequence_command(pending.pop(), call, finding)
+        for name in _reach_operand_names(operand):
+            if id(name) in seen:
+                continue
+            seen.add(id(name))
+            if _argument_binding_is_parameter_or_external(name.id, func.node):
+                if name.id in func.params and _parameter_reaches_read(
+                    name, func.node, parents, closure_writes
+                ):
+                    found[name.id] = None
+                continue
+            value = _captured_argument_definition(
+                name, name, parents, None, aliases=True
+            )
+            if value is not None:
+                pending.append(value)
+    return list(found)
+
+
+def _source_index(source_bytes: dict) -> Index:
+    return Index(
+        {
             path: data.decode("utf-8", errors="replace")
             for path, data in source_bytes.items()
             if isinstance(path, str) and isinstance(data, (bytes, bytearray))
         }
-        _INDEX_CACHE.clear()
-        _INDEX_CACHE[key] = Index(texts)
-    return _INDEX_CACHE[key]
+    )
 
 
-def entry_reach_tier(finding, source_bytes, bindings, decided):
+def entry_reach_tier(finding, source_bytes, decided, *, get_source_index=None):
     """Promote a command, SQL or path finding whose sink parameter an entry reaches.
 
     Only a ``NEEDS_CONTEXT`` decision changes; the reach chain becomes the
@@ -3576,13 +3727,15 @@ def entry_reach_tier(finding, source_bytes, bindings, decided):
         or not isinstance(line, int)
     ):
         return decided
-    index = _source_index(source_bytes, bindings if isinstance(bindings, dict) else {})
+    index = (
+        _source_index(source_bytes) if get_source_index is None else get_source_index()
+    )
     func = index.enclosing(path, line)
     if func is None:
         return decided
     rows = [
         {"rule": finding["code"], "path": path, "line": line, "source": param}
-        for param in _sink_parameters(func, line)
+        for param in _sink_parameters(func, finding)
     ]
     for row in reach(index, rows):
         if row["reach"] == "entry_reached":
