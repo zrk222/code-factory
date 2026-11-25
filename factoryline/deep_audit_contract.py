@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from . import deep_audit_io as _deep_audit_io
 import base64
+import functools
 import json
 import math
 import re
@@ -2454,11 +2455,18 @@ def verify_codeql_query_selection(inventory, *, baseline=None, disabled_rule_id=
         )
 
 
+def _yaml_safe_load(config):
+    """Parse YAML with the libyaml safe loader when present (same data, ~10x faster)."""
+    import yaml
+
+    return yaml.load(config, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+
+
 def _semgrep_rule_ids(config):
     import yaml
 
     try:
-        rules = yaml.safe_load(config)["rules"]
+        rules = _yaml_safe_load(config)["rules"]
     except (yaml.YAMLError, KeyError, TypeError) as exc:
         raise _deep_audit_io.RuntimeAuditError(
             "E_SEMGREP_RULESET", "invalid Semgrep rules"
@@ -2495,11 +2503,12 @@ def _semgrep_mutation_file(case, baseline, lane, obligation):
     return path
 
 
-def _semgrep_disable_rule(config, rule_id):
+@functools.lru_cache(maxsize=128)
+def _semgrep_disable_rule_cached(config, rule_id):
     import yaml
 
     try:
-        document = yaml.safe_load(config)
+        document = _yaml_safe_load(config)
         rules = document["rules"]
     except (yaml.YAMLError, KeyError, TypeError) as exc:
         raise _deep_audit_io.RuntimeAuditError(
@@ -2518,6 +2527,13 @@ def _semgrep_disable_rule(config, rule_id):
             "E_SEMGREP_MUTATION", "mutation removed extra rules"
         )
     return mutated
+
+
+def _semgrep_disable_rule(config, rule_id):
+    """Return the pinned ruleset with exactly ``rule_id`` removed (memoized per input)."""
+    if isinstance(config, (bytearray, memoryview)):
+        config = bytes(config)
+    return _semgrep_disable_rule_cached(config, rule_id)
 
 
 def _semgrep_mutation_valid(baseline, effective, rule_id):

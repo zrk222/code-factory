@@ -1,0 +1,291 @@
+{
+ "reviewer": "claude-agent",
+ "packet_sha256": "3ec98a4db2bce1b2408e385142764fe2ebddd2f4e3e94527c52bbcb220b5369e",
+ "labels": [
+  {
+   "item": "c121311f70c5",
+   "verdict": "FP",
+   "reason": "msg is the localized successTips/failTips text from editor language config, not user or markdown content."
+  },
+  {
+   "item": "ba9487e0c7b9",
+   "verdict": "TP",
+   "reason": "fontSize and fontWeight options are interpolated into the SVG attribute without escaping or numeric coercion, so caller-supplied option strings can break out of the attribute."
+  },
+  {
+   "item": "5dbd6d89d1ff",
+   "verdict": "FP",
+   "reason": "Script innerHTML is the developer-supplied raw script body of the meta config by design, not untrusted data."
+  },
+  {
+   "item": "606e7d959d8b",
+   "verdict": "TP",
+   "reason": "str2 is wrapped only in JSON.stringify double quotes before going to a shell, so $() or backticks in diffed input are executed."
+  },
+  {
+   "item": "96eb5f20f582",
+   "verdict": "FP",
+   "reason": "The /assets handler rejects any requestPath containing '..' and confines the asset path before serveThumbnail, so the join cannot escape the thumbnail dir."
+  },
+  {
+   "item": "bad875d6293c",
+   "verdict": "FP",
+   "reason": "The sha passed to listParentCommits is a CI-provided commit hash rather than attacker-chosen text, so the interpolation is not a realistic injection point."
+  },
+  {
+   "item": "16f122fc004f",
+   "verdict": "TP",
+   "reason": "repoFileDir is built from the user-supplied repoUrl filepath with no normalization or containment check before writeFile in the backend workspace."
+  },
+  {
+   "item": "6a4afde2db72",
+   "verdict": "TP",
+   "reason": "In the fallback path the markup is assigned to innerHTML of a live-document div before the allowlist filter runs, so event-handler payloads in chart text execute."
+  },
+  {
+   "item": "bfbe08cd450c",
+   "verdict": "FP",
+   "reason": "templateName is always a hard-coded template file name from internal callers."
+  },
+  {
+   "item": "a8083221a149",
+   "verdict": "FP",
+   "reason": "Names come from listing an existing node_modules directory under a hash-derived path, so they cannot contain traversal segments."
+  },
+  {
+   "item": "b70592f060f2",
+   "verdict": "FP",
+   "reason": "DOMPurify parses the dirty payload into an inert document created via createDocument for sanitization; this is not an execution sink."
+  },
+  {
+   "item": "3d4caed45da7",
+   "verdict": "TP",
+   "reason": "Request-templated file paths are resolved here and only checked with startsWith against the base dir without a trailing separator, letting traversal reach sibling directories sharing the prefix."
+  },
+  {
+   "item": "b5b7017de8d9",
+   "verdict": "FP",
+   "reason": "The RPC client unpickles replies from its own server on localhost; those replies are pickled by the trusted engine process, not by an attacker."
+  },
+  {
+   "item": "d23200c1663b",
+   "verdict": "FP",
+   "reason": "The RPC client unpickles replies from its own server on localhost; those replies are pickled by the trusted engine process, not by an attacker."
+  },
+  {
+   "item": "d24890aadae6",
+   "verdict": "TP",
+   "reason": "During update the submodule path from an attacker-controlled .gitmodules is joined to the working tree without validation (only the name is validated), allowing checkout outside the repo."
+  },
+  {
+   "item": "34e43b5171fc",
+   "verdict": "TP",
+   "reason": "str1 is wrapped only in JSON.stringify double quotes before going to a shell, so $() or backticks in diffed input are executed."
+  },
+  {
+   "item": "36b0839042d5",
+   "verdict": "FP",
+   "reason": "The input tag only interpolates the prefix constant, editorId, numeric indices and a constant checked flag."
+  },
+  {
+   "item": "887b0e0a41e5",
+   "verdict": "FP",
+   "reason": "The input tag only interpolates the prefix constant, editorId, numeric indices and a constant checked flag."
+  },
+  {
+   "item": "9113fe0d8df3",
+   "verdict": "TP",
+   "reason": "Stored rich-text descriptions are assigned to innerHTML of a live-document div, so img onerror payloads execute in the admin dashboard before textContent is read."
+  },
+  {
+   "item": "b6d3b6e5c9a2",
+   "verdict": "TP",
+   "reason": "A caller-supplied model file is unpickled with an unrestricted (warning-only) unpickler, so a malicious model file runs code."
+  },
+  {
+   "item": "0489648efa3b",
+   "verdict": "FP",
+   "reason": "exec here is a local test-suite helper that runs a named test callback, not a shell command, in test-only code."
+  },
+  {
+   "item": "f59c025c9a5c",
+   "verdict": "TP",
+   "reason": "Arbitrary HTML (e.g. pasted or deserialized content) is assigned to innerHTML of an element owned by the live document, so inline event handlers execute."
+  },
+  {
+   "item": "be83de90c058",
+   "verdict": "FP",
+   "reason": "Both the data URL and label are HTML-escaped and the value is a generated data: URL for an embedded asset."
+  },
+  {
+   "item": "0ef50d78feab",
+   "verdict": "TP",
+   "reason": "listShas interpolates argos/<branch> refs derived from CI branch names (attacker-controllable via PR branch names) unquoted into execSync."
+  },
+  {
+   "item": "a67fb15d60d8",
+   "verdict": "TP",
+   "reason": "Stored size filenames are concatenated to staticDir and unlinked with no basename or containment check."
+  },
+  {
+   "item": "3b3a6256b622",
+   "verdict": "TP",
+   "reason": "The path combines the user-supplied repoUrl directory and the Confluence attachment title without sanitization before opening the file for writing."
+  },
+  {
+   "item": "83d9650c4706",
+   "verdict": "FP",
+   "reason": "exec here is a local test-suite helper that runs a named test callback, not a shell command, in test-only code."
+  },
+  {
+   "item": "df6369aedf18",
+   "verdict": "TP",
+   "reason": "During update the submodule path from an attacker-controlled .gitmodules is joined to the working tree without validation (only the name is validated), allowing checkout outside the repo."
+  },
+  {
+   "item": "53f70c545e41",
+   "verdict": "FP",
+   "reason": "text is the localized copy-button label from editor language config, not user or markdown content."
+  },
+  {
+   "item": "0ef50d78feab",
+   "verdict": "TP",
+   "reason": "listShas interpolates argos/<branch> refs derived from CI branch names (attacker-controllable via PR branch names) unquoted into execSync."
+  },
+  {
+   "item": "80067240e0bb",
+   "verdict": "FP",
+   "reason": "The input tag only interpolates the prefix constant, editorId, numeric indices and a constant checked flag."
+  },
+  {
+   "item": "2f653553788e",
+   "verdict": "TP",
+   "reason": "Base/head branch names from the CI environment (attacker-controllable via PR branch names) are interpolated unquoted into an execSync shell command."
+  },
+  {
+   "item": "5b55151505df",
+   "verdict": "FP",
+   "reason": "noscript content is developer-provided raw HTML by design of the meta API, and the name is a config key."
+  },
+  {
+   "item": "410ac142fca5",
+   "verdict": "TP",
+   "reason": "The output path combines the user-supplied repoUrl directory and the page title with no containment check before outputFile."
+  },
+  {
+   "item": "71414e42998c",
+   "verdict": "TP",
+   "reason": "The stored document filename is concatenated to staticDir and unlinked with no basename or containment check."
+  },
+  {
+   "item": "2f653553788e",
+   "verdict": "TP",
+   "reason": "Base/head branch names from the CI environment (attacker-controllable via PR branch names) are interpolated unquoted into an execSync shell command."
+  },
+  {
+   "item": "b79c24025d07",
+   "verdict": "FP",
+   "reason": "href is a build-manifest asset path prefixed with configured or depth-derived relative base, not attacker-controlled."
+  },
+  {
+   "item": "ebe514b06a5b",
+   "verdict": "TP",
+   "reason": "During SSR, meta/link attribute values (often dynamic page data) are interpolated into quoted attributes with no HTML escaping."
+  },
+  {
+   "item": "9c33d4962663",
+   "verdict": "FP",
+   "reason": "exec here is a local test-suite helper that runs a named test callback, not a shell command, in test-only code."
+  },
+  {
+   "item": "6824d23c0f14",
+   "verdict": "TP",
+   "reason": "statsmodels load_pickle unpickles a model artifact that may come from a shared tracking server or registry, so a crafted model runs code."
+  },
+  {
+   "item": "eae5173fdb9d",
+   "verdict": "TP",
+   "reason": "The mkdir path uses the user-supplied repoUrl directory with no containment check, allowing directories outside the workspace."
+  },
+  {
+   "item": "b7998e2a0f21",
+   "verdict": "TP",
+   "reason": "An HTML string is assigned to innerHTML of an element owned by the live document, so event-handler payloads in imported HTML execute."
+  },
+  {
+   "item": "db5ffcbacff7",
+   "verdict": "FP",
+   "reason": "This line only joins column fragments already produced via escaped identifiers and parameterized constants."
+  },
+  {
+   "item": "b7d92a742966",
+   "verdict": "TP",
+   "reason": "The ref is a CI branch name (attacker-controllable via PR branch names) interpolated unquoted into an execSync shell command."
+  },
+  {
+   "item": "71e1eabe9095",
+   "verdict": "TP",
+   "reason": "recv_pyobj unpickles messages from a network ZMQ peer whose address comes from a connection request, with no authentication."
+  },
+  {
+   "item": "32e582949803",
+   "verdict": "FP",
+   "reason": "DOMPurify parses the dirty payload into an inert document created via createDocument for sanitization; this is not an execution sink."
+  },
+  {
+   "item": "3c8a552ec0cc",
+   "verdict": "FP",
+   "reason": "exec here is a local test-suite helper that runs a named test callback, not a shell command, in test-only code."
+  },
+  {
+   "item": "ca76ef479d52",
+   "verdict": "FP",
+   "reason": "data-tips and copyBtnHtml come from editor language config and custom icon config supplied by the developer, not markdown content."
+  },
+  {
+   "item": "dced12e18955",
+   "verdict": "TP",
+   "reason": "The RPC server binds a ROUTER socket on tcp://* and pickle.loads requests from any connecting client."
+  },
+  {
+   "item": "cb21576d4da1",
+   "verdict": "FP",
+   "reason": "The SHAs are regex-validated hex and the flags/gitDir are developer-supplied API options, not untrusted input."
+  },
+  {
+   "item": "d7f1f65ed846",
+   "verdict": "FP",
+   "reason": "href is a build-manifest asset path prefixed with configured or depth-derived relative base, not attacker-controlled."
+  },
+  {
+   "item": "e766fee9fe20",
+   "verdict": "FP",
+   "reason": "data-tips and copyBtnHtml come from editor language config and custom icon config supplied by the developer, not markdown content."
+  },
+  {
+   "item": "78b25ba978fd",
+   "verdict": "TP",
+   "reason": "The path combines the user-supplied repoUrl directory and the Confluence attachment title without sanitization before the write stream is created."
+  },
+  {
+   "item": "01cd6f628776",
+   "verdict": "FP",
+   "reason": "The async RPC client unpickles replies from its own localhost server, which are pickled by the trusted engine process."
+  },
+  {
+   "item": "b7d92a742966",
+   "verdict": "TP",
+   "reason": "The ref is a CI branch name (attacker-controllable via PR branch names) interpolated unquoted into an execSync shell command."
+  },
+  {
+   "item": "b4b879dd7bf6",
+   "verdict": "FP",
+   "reason": "prerendering.cache is a build-time value set by the application's own code during prerendering."
+  },
+  {
+   "item": "91f6214a79b3",
+   "verdict": "FP",
+   "reason": "This is build-time code-generator output to a logback XML file with generator- or blueprint-supplied values, not an HTML context with untrusted input."
+  }
+ ]
+}

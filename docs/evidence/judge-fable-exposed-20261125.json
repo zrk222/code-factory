@@ -1,0 +1,1202 @@
+{
+ "judge": "fable-5.2",
+ "packet_sha256": "c39c12809dce51ae6401388f4a0f39022a10323399d5266d72bc99882893d0e3",
+ "judge_packet_sha256": "e2e55701dcdf9d0e3d03df6a7a63b7bb252e39d516328058f08a85402692b3e3",
+ "note": "Two Fable 5.2 agents judged list indices 0-99 and 100-198 of the same assignment, reading only that file.",
+ "verdicts": [
+  {
+   "position": 0,
+   "item": "93b7d579d7d3",
+   "verdict": "FP",
+   "reason": "req.url is joined, normalized, and rejected with 403 unless the result still starts with ADMIN_PATH; '..' escapes are blocked, leaving only a same-prefix sibling-directory edge that the shown layout does not make reachable."
+  },
+  {
+   "position": 1,
+   "item": "c33bc4ad5519",
+   "verdict": "TP",
+   "reason": "io_utils.pickle_load unpickles label_quantiles.pkl straight from the model directory; Rasa models are loadable from user-supplied or remote archives and nothing verifies the file first."
+  },
+  {
+   "position": 2,
+   "item": "88fd34913bee",
+   "verdict": "FP",
+   "reason": "Table name goes through __filter_str and values are bound (:key); the only interpolated part is data.keys(), column names fixed by the calling code rather than by request data."
+  },
+  {
+   "position": 4,
+   "item": "dade0b16212a",
+   "verdict": "FP",
+   "reason": "This is DOMPurify's own KEEP_CONTENT step: innerHTML of a rejected node is re-inserted into the inert working document, where the node iterator sanitizes the inserted children afterwards."
+  },
+  {
+   "position": 8,
+   "item": "a448c076f655",
+   "verdict": "FP",
+   "reason": "relative_path in get_cache_path is supplied by cornac's own dataset loaders or derived from library-defined dataset URLs; no external input reaches the join."
+  },
+  {
+   "position": 9,
+   "item": "7ed060d0a376",
+   "verdict": "FP",
+   "reason": "$admin is the integer flag of getNbOfUsers($limitTo,$option,$admin=-1), guarded by $admin >= 0 and passed as a literal by internal callers, not from the request."
+  },
+  {
+   "position": 11,
+   "item": "c5bcc7fa3e90",
+   "verdict": "FP",
+   "reason": "extractStreamed is a protected helper whose docblock states entry paths were validated in the caller's pre-pass before the fopen($target) write; no unvalidated path is shown reaching it."
+  },
+  {
+   "position": 12,
+   "item": "bcdfce1636b4",
+   "verdict": "FP",
+   "reason": "Command templates come from the Glances config file and stat values pass through _sanitize_mustache_dict before chevron.render; execution is via secure_popen, not a shell."
+  },
+  {
+   "position": 13,
+   "item": "1f81425d5709",
+   "verdict": "FP",
+   "reason": "createSchemaCommand is built from this.dbOpts (server database config) and targetSchema wrapped by quotePgIdentifier; no request-controlled value is shown reaching run()."
+  },
+  {
+   "position": 14,
+   "item": "2233d9aee4e7",
+   "verdict": "TP",
+   "reason": "checkServerTrusted is an empty method in a public 'default implementation' trust manager shipped in the client library, so any connection configured with it accepts every certificate chain."
+  },
+  {
+   "position": 15,
+   "item": "62d37e41d772",
+   "verdict": "TP",
+   "reason": "delete(name) only rejects the TMP_EXT suffix, then path.join(this._root, name) is passed to fs.rimraf; unlike add(), no requireValidItemOptions/basename check constrains the client-supplied name."
+  },
+  {
+   "position": 16,
+   "item": "db24c15d31ae",
+   "verdict": "TP",
+   "reason": "$ldap_mobile, an attribute read from the LDAP directory (often user-editable), is concatenated into value=\"...\" with no dol_escape_htmltag, unlike other fields on the page."
+  },
+  {
+   "position": 18,
+   "item": "642d60665d0a",
+   "verdict": "FP",
+   "reason": "SSLIgnoreAdapter is an explicitly documented opt-out adapter ('should only be used when absolutely necessary') that is mounted only when the operator disables ssl_verify; CERT_NONE here is the intended configured behaviour."
+  },
+  {
+   "position": 21,
+   "item": "c5cb05d1bad3",
+   "verdict": "TP",
+   "reason": "print $ldap_skype emits a directory-sourced attribute into the page body with no HTML escaping."
+  },
+  {
+   "position": 27,
+   "item": "bdf18f123fd2",
+   "verdict": "FP",
+   "reason": "e.innerHTML = e.innerHTML + '&nbsp;' re-assigns the element's existing markup plus a constant; no new untrusted data is introduced."
+  },
+  {
+   "position": 30,
+   "item": "6c4f1e4e314c",
+   "verdict": "FP",
+   "reason": "$object->getLibStatut(4) returns a translated status label with a picto derived from the integer status, not user-supplied text."
+  },
+  {
+   "position": 31,
+   "item": "da9aac0c387e",
+   "verdict": "FP",
+   "reason": "exportPath is os.tmpdir() plus a fixed prefix and the first 8 characters of the id of a session already loaded from the store (the session object is exported), so the name is a generated id fragment."
+  },
+  {
+   "position": 33,
+   "item": "eac94ac58eaf",
+   "verdict": "TP",
+   "reason": "isDir joins a template-supplied path to p.repoDir and stats it with no isSubdirectory check, while the sibling readFile does enforce containment; repository-controlled templates can probe paths outside the repo."
+  },
+  {
+   "position": 34,
+   "item": "19ea1b6dfe6c",
+   "verdict": "TP",
+   "reason": "add_limit_offset! interpolates options[:offset] raw into the SQL (\" OFFSET #{offset}\") with no integer coercion, and applications routinely pass request params as :offset."
+  },
+  {
+   "position": 39,
+   "item": "a2920c048c69",
+   "verdict": "FP",
+   "reason": "The String.format at this line only substitutes tempTableName and tempBoundsTableName, server-generated temp table identifiers; attribute filtering is done via the temp table join."
+  },
+  {
+   "position": 40,
+   "item": "9fc13258ef80",
+   "verdict": "FP",
+   "reason": "Config-defined command templates are rendered with values run through _sanitize_mustache_dict and executed by secure_popen rather than a shell."
+  },
+  {
+   "position": 42,
+   "item": "4514575d535c",
+   "verdict": "FP",
+   "reason": "The plain-CSV query formats in only the two server-generated temp table names; no request value is interpolated."
+  },
+  {
+   "position": 43,
+   "item": "486ee2f5d72b",
+   "verdict": "TP",
+   "reason": "print $ldap_login writes a directory-sourced value into the HTML body unescaped, whereas the adjacent GETPOST('login') branch uses dol_escape_htmltag."
+  },
+  {
+   "position": 44,
+   "item": "a30ddec1f798",
+   "verdict": "FP",
+   "reason": "The interpolated value is $thirdparty_seller->country_code, a country dictionary code loaded from the database for the seller record, not request input."
+  },
+  {
+   "position": 45,
+   "item": "6a03f8d66888",
+   "verdict": "TP",
+   "reason": "Column names are inserted as [${col}] and item.updateKey as a bare identifier in the UPDATE text; only values are bound, so workflow/expression-derived column names or keys can alter the statement (escapeTableName is applied to the table only)."
+  },
+  {
+   "position": 48,
+   "item": "232d409b7bf6",
+   "verdict": "TP",
+   "reason": "delete_checkpoint builds checkpoints_path / f\"{checkpoint_id}.json\" and unlinks it with no validation of checkpoint_id, so '../' sequences delete .json files outside the checkpoints directory."
+  },
+  {
+   "position": 49,
+   "item": "b04d340ace7b",
+   "verdict": "TP",
+   "reason": "_unpack_pos_dict calls pickle.loads on gzip-decompressed bytes taken from a lemmatizer model file; a downloaded or third-party model can execute code on load."
+  },
+  {
+   "position": 50,
+   "item": "73e89affde90",
+   "verdict": "TP",
+   "reason": "execSync(`git show :2:\"${file}\"`) runs through a shell with the conflicted file name only wrapped in double quotes, so $(...) or a quote in the name injects commands."
+  },
+  {
+   "position": 52,
+   "item": "6d4cd69ca977",
+   "verdict": "FP",
+   "reason": "Only tempTableName and tempBoundsTableName (server-generated) are formatted into this inner query."
+  },
+  {
+   "position": 53,
+   "item": "102eea555df0",
+   "verdict": "TP",
+   "reason": "input_path comes from module params and is opened after only a '..' substring check, which does not stop absolute paths; arbitrary files can be read."
+  },
+  {
+   "position": 54,
+   "item": "0c8ec89799f0",
+   "verdict": "FP",
+   "reason": "readFile panics unless isSubdirectory(p.repoDir, path) holds before the join and os.ReadFile."
+  },
+  {
+   "position": 55,
+   "item": "0a918739437e",
+   "verdict": "FP",
+   "reason": "getDefinitionSQL is a schema-introspection helper whose tableName/schemaName come from the datasource's own table listing during buildSchema, not from request data."
+  },
+  {
+   "position": 56,
+   "item": "7450355000d4",
+   "verdict": "TP",
+   "reason": "rasa.utils.io.pickle_load reads <metadata>.meta.pkl from the model directory; a crafted model archive executes code when the policy loads."
+  },
+  {
+   "position": 57,
+   "item": "e2b3fe647c78",
+   "verdict": "FP",
+   "reason": "encode_io sends the stream on stdin; the only interpolated values are the developer-supplied ffmpeg options string, which the API documents as raw options, and a numeric volume filter."
+  },
+  {
+   "position": 60,
+   "item": "5a3137a68b56",
+   "verdict": "TP",
+   "reason": "receiver_socket.recv_pyobj() unpickles whatever arrives on the ZeroMQ socket from the remote process, with no authentication or validation shown."
+  },
+  {
+   "position": 62,
+   "item": "aff6aac06fbb",
+   "verdict": "FP",
+   "reason": "sfile is checked with is_safe_path(src, sfile, fil) and the handler returns 'Path Traversal Detected!' before any open()."
+  },
+  {
+   "position": 63,
+   "item": "0437657d9df4",
+   "verdict": "FP",
+   "reason": "This is the Vite dev-server middleware: the URL-derived path is resolved and only served if it is an existing file allowed by server.fs.allow, then handed to the static middleware; development tooling, not a deployed sink."
+  },
+  {
+   "position": 64,
+   "item": "149afefb9cf0",
+   "verdict": "FP",
+   "reason": "This is the implementation of jQuery's .html() setter, an API whose purpose is to assign caller-provided HTML; the caller decides what value to pass."
+  },
+  {
+   "position": 65,
+   "item": "1fd0be2babf7",
+   "verdict": "FP",
+   "reason": "w.Write emits model.MapToJson(responseData), a JSON-encoded body, not HTML markup built from the request."
+  },
+  {
+   "position": 68,
+   "item": "ecb2cc8b05fe",
+   "verdict": "TP",
+   "reason": "execAsync(`net user \"${username}\"`) puts the tool-supplied username into a shell string with only double quotes around it and no validation."
+  },
+  {
+   "position": 69,
+   "item": "c2453cccf0fc",
+   "verdict": "FP",
+   "reason": "statSync is called on the same generated tmpdir export path (fixed prefix plus 8 characters of an existing session id)."
+  },
+  {
+   "position": 70,
+   "item": "556749b6e595",
+   "verdict": "TP",
+   "reason": "execAsync(`id -Gn \"${username}\"`) interpolates the tool-supplied username into a shell command; $(...) or a quote breaks out."
+  },
+  {
+   "position": 71,
+   "item": "022fd6154c63",
+   "verdict": "FP",
+   "reason": "The marked path.join only runs when common.isTempFile(filename) accepts the name, so the joined value is restricted to generated temp-file names."
+  },
+  {
+   "position": 72,
+   "item": "c42ddf96255a",
+   "verdict": "FP",
+   "reason": "pathname reaching fs.readFile was normalized and rejected unless it starts with ADMIN_PATH (or was replaced by the fixed index.html fallback)."
+  },
+  {
+   "position": 73,
+   "item": "eed24f4c0d68",
+   "verdict": "TP",
+   "reason": "openSaveFile passes the file name announced by the remote trzsz peer to getUniqueFilePath, which does path.join(dir, fileName) with no basename or containment check before the FileWriter writes it."
+  },
+  {
+   "position": 74,
+   "item": "af6c0c4a0b4d",
+   "verdict": "FP",
+   "reason": "backup_name in this local backup CLI is a generated name or one chosen by the invoking user; there is no separate attacker supplying it."
+  },
+  {
+   "position": 76,
+   "item": "e2a40ca77905",
+   "verdict": "FP",
+   "reason": "LocalStorage.download reads self.root / backup_name where the name is chosen by the local CLI user from their own backups."
+  },
+  {
+   "position": 77,
+   "item": "6a4488df996a",
+   "verdict": "TP",
+   "reason": "The call suppresses InsecureRequestWarning for the requests.post to the version-check endpoint a few lines below, which is sent unconditionally with verify=False; certificate verification is disabled for that request."
+  },
+  {
+   "position": 80,
+   "item": "6cd02ccd622e",
+   "verdict": "FP",
+   "reason": "$order passes through fixOrder(), $amount is formatted with %d, and the content type slug comes from the site's content type configuration."
+  },
+  {
+   "position": 81,
+   "item": "8ef00804269e",
+   "verdict": "TP",
+   "reason": "joblib.load is applied to every *.pkl found under the model directory, so a malicious model archive runs code when loaded."
+  },
+  {
+   "position": 83,
+   "item": "d8330f4de16d",
+   "verdict": "FP",
+   "reason": "innerHTML receives editMode.lang.exitFullscreen/viewFullscreen, developer-configured language strings, not end-user data."
+  },
+  {
+   "position": 84,
+   "item": "b15787f20711",
+   "verdict": "FP",
+   "reason": "This path.join only builds strings for the session-complete status message; no file operation uses savedFilePaths."
+  },
+  {
+   "position": 87,
+   "item": "7023642dcc6d",
+   "verdict": "FP",
+   "reason": "shadow_id must match _SHADOW_ID_RE and format must be 'html' or 'pdf' before the path is built."
+  },
+  {
+   "position": 88,
+   "item": "b342cef08d5f",
+   "verdict": "FP",
+   "reason": "Dev-server-only middleware: the decoded path is only probed with existsSync and then the request is delegated to the asset server rooted at files.assets."
+  },
+  {
+   "position": 90,
+   "item": "f9c5a61233b0",
+   "verdict": "FP",
+   "reason": "The HQL entity name is bclass.getName() for a class with custom mapping enabled, a privileged schema-level setting; the object id is bound as :id."
+  },
+  {
+   "position": 91,
+   "item": "7d0360997521",
+   "verdict": "FP",
+   "reason": "The only request-derived part is $_SERVER['PHP_SELF']; $object->id and $group->id are integers, and Dolibarr's main include rejects requests whose PHP_SELF contains quote characters, so the attribute cannot be broken out of."
+  },
+  {
+   "position": 93,
+   "item": "d4e6bda69e41",
+   "verdict": "TP",
+   "reason": "module_checkout_path is osp.join(repo.working_tree_dir, path) with the submodule path taken from caller/.gitmodules data and passed to clone_from with no containment check."
+  },
+  {
+   "position": 94,
+   "item": "b8d948bca1e9",
+   "verdict": "TP",
+   "reason": "execSync runs `git -C \"${folderPath}\" branch -r --list \"origin/${branchName}\"` through a shell; both values are only double-quoted, so command substitution in tool input or a branch name executes."
+  },
+  {
+   "position": 95,
+   "item": "583dd5a48b6a",
+   "verdict": "TP",
+   "reason": "pri_key_value, derived from the WebDAV request path, is concatenated inside quotes into the SELECT with no escaping or bind parameter."
+  },
+  {
+   "position": 96,
+   "item": "c6f903d692be",
+   "verdict": "FP",
+   "reason": "safe_extract checks every member with is_within_directory (abspath prefix plus os.sep) and passes members=safe_paths(tar) before extractall."
+  },
+  {
+   "position": 100,
+   "item": "1c3164f47562",
+   "verdict": "FP",
+   "reason": "The opened file is UPLD_DIR/<md5_hash>/classdump.txt with a constant filename, after form validation of the hash."
+  },
+  {
+   "position": 103,
+   "item": "81ccfab966a9",
+   "verdict": "TP",
+   "reason": "In the numeric branch pri_key_value from the request path is appended unquoted to the SQL string and executed."
+  },
+  {
+   "position": 105,
+   "item": "0fc5d9233b55",
+   "verdict": "FP",
+   "reason": "md5 is used only after viewsource_form.is_valid(), and the final file path is checked by is_safe_path."
+  },
+  {
+   "position": 106,
+   "item": "0faf57fc0743",
+   "verdict": "FP",
+   "reason": "Same pattern as the INSERT helper: filtered table name, bound values, and column names taken from the calling code's data dict keys."
+  },
+  {
+   "position": 107,
+   "item": "2bfc49d84264",
+   "verdict": "TP",
+   "reason": "admin_role_actions interpolates the filter argument directly into an Arel.sql LIKE fragment (#{filter}) with no quoting or allowlist."
+  },
+  {
+   "position": 111,
+   "item": "93cced73bfc5",
+   "verdict": "FP",
+   "reason": "hugo import jekyll is a local CLI run by the site owner; relPath comes from walking the user's own Jekyll directory."
+  },
+  {
+   "position": 112,
+   "item": "6705770ae260",
+   "verdict": "FP",
+   "reason": "delete_backup's name is chosen by the local user of this personal backup CLI."
+  },
+  {
+   "position": 120,
+   "item": "e04ad5860494",
+   "verdict": "FP",
+   "reason": "Writes go to MAIN_DIR . $_POST['file'] behind the editor's authentication and 'editfile' permission, and the nested guard block that closes just before the switch is the request-parameter path check; note the guard's body lies above the excerpt."
+  },
+  {
+   "position": 123,
+   "item": "d737eca00a3c",
+   "verdict": "FP",
+   "reason": "The href contains only $_SERVER['PHP_SELF'] and the integer $object->id; Dolibarr's main include rejects PHP_SELF values containing quotes."
+  },
+  {
+   "position": 124,
+   "item": "8215f3e6b082",
+   "verdict": "TP",
+   "reason": "options[:limit] is interpolated raw (\" LIMIT #{limit}\") with no integer coercion, and callers commonly pass request parameters."
+  },
+  {
+   "position": 127,
+   "item": "f24998f8051e",
+   "verdict": "TP",
+   "reason": "stmt contains the user-supplied raw SQL query expression substituted into the subscriber query; a read-only transaction does not stop it reading arbitrary data."
+  },
+  {
+   "position": 130,
+   "item": "69e404ba940b",
+   "verdict": "FP",
+   "reason": "Remove(name) takes the extension name from the local user's own gh command line and normalizes it; there is no separate attacker."
+  },
+  {
+   "position": 131,
+   "item": "a225f6c64098",
+   "verdict": "FP",
+   "reason": "The query embeds $thirdparty_seller->country_code, a dictionary country code loaded from the database, not request input."
+  },
+  {
+   "position": 134,
+   "item": "32abb747b933",
+   "verdict": "FP",
+   "reason": "getAutoColumnsSQL is called with table names enumerated from the datasource itself during schema build."
+  },
+  {
+   "position": 137,
+   "item": "acb963a50cb4",
+   "verdict": "FP",
+   "reason": "docs/demo code that renders the visitor's own markdown output into a preview iframe; demo page, not library code."
+  },
+  {
+   "position": 138,
+   "item": "c689b177a7ec",
+   "verdict": "FP",
+   "reason": "Rendered values are sanitized by _sanitize_mustache_dict and the config-defined command is run by secure_popen with an explicit operator policy."
+  },
+  {
+   "position": 140,
+   "item": "87717a5767ad",
+   "verdict": "TP",
+   "reason": "queryExp, the caller-supplied raw SQL expression, is substituted into QuerySubscribersCount via strings.ReplaceAll and executed; the read-only transaction is not sanitization."
+  },
+  {
+   "position": 145,
+   "item": "60571fb2b782",
+   "verdict": "FP",
+   "reason": "The symlink target is produced by ensureLinkPath(dirPath, dirName, filePath, header.Linkname), which validates it before os.Symlink; this line just retries after removing the old link."
+  },
+  {
+   "position": 147,
+   "item": "94343f55c49a",
+   "verdict": "TP",
+   "reason": "getFullName() returns the stored donor first/last name and it is printed into a table cell with no dol_escape_htmltag."
+  },
+  {
+   "position": 148,
+   "item": "b4b2e998212d",
+   "verdict": "FP",
+   "reason": "column_list is supplied by the library's internal callers as fixed column names and the table name is filtered."
+  },
+  {
+   "position": 150,
+   "item": "0b801b682c00",
+   "verdict": "TP",
+   "reason": "execAsync(`sc query \"${serviceName}\"`) places the tool-supplied service name in a shell command with only double quotes."
+  },
+  {
+   "position": 152,
+   "item": "74bf8fdb5fd9",
+   "verdict": "FP",
+   "reason": "$path is wrapped in escapeshellarg and $action is an internal 'install'/'update' keyword passed by console commands."
+  },
+  {
+   "position": 153,
+   "item": "ddc8eb03418b",
+   "verdict": "TP",
+   "reason": "pri_key_value from the WebDAV path is concatenated unquoted into the SELECT in the numeric branch."
+  },
+  {
+   "position": 155,
+   "item": "8fceec4e7d0f",
+   "verdict": "TP",
+   "reason": "serviceName is interpolated completely unquoted into the `systemctl list-dependencies` shell command."
+  },
+  {
+   "position": 156,
+   "item": "de47249e9934",
+   "verdict": "FP",
+   "reason": "The cleaned join is only used if pathContainedIn(raw, loneRoot) holds, and the alternative path is likewise checked against root."
+  },
+  {
+   "position": 158,
+   "item": "2bd07fbe51fd",
+   "verdict": "FP",
+   "reason": "Same local CLI delete_backup as the script variant; the name is chosen by the invoking user."
+  },
+  {
+   "position": 160,
+   "item": "e3c534a8045c",
+   "verdict": "FP",
+   "reason": "element.innerHTML receives the output of the HTMLSanitizer (new this(html, options).sanitize()), not the raw input."
+  },
+  {
+   "position": 162,
+   "item": "6608ebf00b64",
+   "verdict": "TP",
+   "reason": "folderPath is embedded in an execSync shell string inside double quotes only, so command substitution in the supplied path executes."
+  },
+  {
+   "position": 163,
+   "item": "0d642c26ef90",
+   "verdict": "TP",
+   "reason": "$ldap_skype from the LDAP directory is concatenated into value=\"...\" without escaping; a quote in the attribute breaks out of it."
+  },
+  {
+   "position": 164,
+   "item": "a839db6a1fb7",
+   "verdict": "FP",
+   "reason": "Only $_SERVER['PHP_SELF'] and the integer $object->id are placed in the href; Dolibarr's main include rejects PHP_SELF values containing quotes."
+  },
+  {
+   "position": 165,
+   "item": "4e12d1e28cd0",
+   "verdict": "FP",
+   "reason": "pickle.loads decodes bytes that vLLM's own writer process serialized into its shared-memory ring buffer; this is internal IPC, not externally supplied data."
+  },
+  {
+   "position": 167,
+   "item": "5cd819568d61",
+   "verdict": "TP",
+   "reason": "execAsync(`net user \"${username}\"`) builds a shell command from the tool-supplied username with no validation."
+  },
+  {
+   "position": 169,
+   "item": "2b485d5c8749",
+   "verdict": "FP",
+   "reason": "The executed SQL embeds only the seller's dictionary country code loaded from the database."
+  },
+  {
+   "position": 171,
+   "item": "eb8249fd52a7",
+   "verdict": "TP",
+   "reason": "The ogr2ogr options, which include names derived from the uploaded files and original_name, are joined into one string and run with Popen(shell=True) without quoting."
+  },
+  {
+   "position": 172,
+   "item": "a53428172846",
+   "verdict": "FP",
+   "reason": "toCompleteStatement only prefixes a short-form statement with the select clause; it executes nothing and is not a sink."
+  },
+  {
+   "position": 176,
+   "item": "bb1fec19a0bc",
+   "verdict": "FP",
+   "reason": "$admin is the integer filter parameter (default -1) passed as a literal by internal callers."
+  },
+  {
+   "position": 178,
+   "item": "39ac6d4cdf77",
+   "verdict": "TP",
+   "reason": "_serve serves any path for which File.readable? is true, with the path taken from the HTTP request and no containment to a document root."
+  },
+  {
+   "position": 182,
+   "item": "8249b8c008c4",
+   "verdict": "FP",
+   "reason": "The executable filename comes from the gemspec of the gem being installed, which is already trusted code at install time."
+  },
+  {
+   "position": 183,
+   "item": "c7636a494434",
+   "verdict": "FP",
+   "reason": "getConstraintsSQL receives table names from the datasource's own schema listing."
+  },
+  {
+   "position": 184,
+   "item": "b4a14ede9f5e",
+   "verdict": "FP",
+   "reason": "The path is resolved and rejected with 400 unless is_path_inside(file_path, base_path) holds before FileResponse."
+  },
+  {
+   "position": 186,
+   "item": "eed649244f56",
+   "verdict": "FP",
+   "reason": "generate_bin_script joins bindir with an executable name taken from the gemspec of the gem being installed; gem installation is already a trusted-code operation and no request-level input reaches it."
+  },
+  {
+   "position": 189,
+   "item": "b2f160984fea",
+   "verdict": "TP",
+   "reason": "file_path from module params only passes a \"'..' in file_path\" substring check, so an absolute path reaches os.makedirs/open unconstrained."
+  },
+  {
+   "position": 191,
+   "item": "b66a7bfae918",
+   "verdict": "TP",
+   "reason": "pri_key_value (second segment of the WebDAV request path via _split_path) and table_name are concatenated into the SELECT with quotes but no escaping."
+  },
+  {
+   "position": 192,
+   "item": "7486e78a274f",
+   "verdict": "TP",
+   "reason": "itemUuid from the resources API is passed to path.join(this.resources[type].path, itemUuid) for readFile/stat with no validation or containment check."
+  },
+  {
+   "position": 193,
+   "item": "05cac59e44d0",
+   "verdict": "TP",
+   "reason": "execAsync(`docker inspect ${serviceName}`) interpolates the tool-supplied service name unquoted into a shell string."
+  },
+  {
+   "position": 195,
+   "item": "1f63fbb6d88d",
+   "verdict": "TP",
+   "reason": "$_SERVER['PHP_SELF'] (includes attacker-controlled PATH_INFO) is printed into the form action attribute with no dol_escape_htmltag or other encoding in the shown code."
+  },
+  {
+   "position": 197,
+   "item": "5fc4671e840b",
+   "verdict": "FP",
+   "reason": "The table name passes __filter_str and the column definition is a developer-supplied schema string from internal library callers, not request data."
+  },
+  {
+   "position": 198,
+   "item": "e7d08f19619e",
+   "verdict": "TP",
+   "reason": "\"DESCRIBE \" + table_name is executed with table_name taken from the request path by _split_path, with no quoting or validation."
+  },
+  {
+   "position": 199,
+   "item": "d68abd2aec4f",
+   "verdict": "FP",
+   "reason": "backup_name in LocalStorage.download is chosen by the local CLI operator for their own configured storage root; no untrusted party supplies it."
+  },
+  {
+   "position": 200,
+   "item": "46cae5629778",
+   "verdict": "FP",
+   "reason": "scope[:group] is a developer-defined finder scope option documented as a raw SQL fragment, not end-user data at this layer."
+  },
+  {
+   "position": 201,
+   "item": "9e7b2805ea60",
+   "verdict": "TP",
+   "reason": "table_name and pri_key_value from the WebDAV request path are concatenated straight into the SELECT executed by cursor.execute."
+  },
+  {
+   "position": 202,
+   "item": "de08d1cecf0d",
+   "verdict": "FP",
+   "reason": "The key split here is the blob key generated in the same module as [tenant, secure_token].join('/'), so the joined components are server-generated."
+  },
+  {
+   "position": 203,
+   "item": "117716a010ba",
+   "verdict": "FP",
+   "reason": "The handler writes model.MapToJson output (JSON-encoded) with a redirect URI already checked by IsValidRedirectURL; it is not an HTML sink."
+  },
+  {
+   "position": 210,
+   "item": "26cc3158dd01",
+   "verdict": "FP",
+   "reason": "The cleaned join of root and rawPath is immediately rejected by pathContainedIn(abs, root) when it escapes the repo root."
+  },
+  {
+   "position": 212,
+   "item": "b32dc56a0ab0",
+   "verdict": "FP",
+   "reason": "mkdir(root, name) is a generic helper; nothing in the shown code feeds it untrusted input."
+  },
+  {
+   "position": 215,
+   "item": "144262148eb9",
+   "verdict": "FP",
+   "reason": "The group find option is a developer-supplied SQL fragment by framework contract; no user data source is shown."
+  },
+  {
+   "position": 216,
+   "item": "6653c1e747e6",
+   "verdict": "FP",
+   "reason": "The default name is the PHP-basenamed client filename and targetPath/name are developer-supplied arguments to move(); no traversal-capable input is shown."
+  },
+  {
+   "position": 218,
+   "item": "e642ed043333",
+   "verdict": "FP",
+   "reason": "uid must first resolve to a successful Sketchfab API download, and the zip is written as uid.zip inside a fresh mkdtemp directory; not a realistic traversal."
+  },
+  {
+   "position": 222,
+   "item": "89cd761ae7fb",
+   "verdict": "TP",
+   "reason": "username is interpolated into `getent passwd \"${username}\" || grep \"^${username}:\"` run through exec; double quotes do not stop $() or quote breakout."
+  },
+  {
+   "position": 226,
+   "item": "376e75d469d1",
+   "verdict": "FP",
+   "reason": "convert() is a developer-run conversion script that torch.loads a checkpoint path given on the local command line; tooling-only."
+  },
+  {
+   "position": 227,
+   "item": "d2d206f03f33",
+   "verdict": "TP",
+   "reason": "pri_key_value from the request path is concatenated inside single quotes into the SELECT without escaping."
+  },
+  {
+   "position": 228,
+   "item": "8e4ef5855edc",
+   "verdict": "FP",
+   "reason": "limited_update_conditions only wraps already-quoted identifiers and a where_sql built by the framework's sanitized condition builder."
+  },
+  {
+   "position": 232,
+   "item": "3c6462f513ef",
+   "verdict": "FP",
+   "reason": "Filesystem::link receives developer-supplied paths (e.g. storage:link); no user input reaches the mklink exec in the shown code."
+  },
+  {
+   "position": 233,
+   "item": "279f9eaccb27",
+   "verdict": "FP",
+   "reason": "joblib.load(path) is the library's explicit load-my-saved-model API on a caller-chosen local artifact; no untrusted source is shown."
+  },
+  {
+   "position": 235,
+   "item": "2825179f8667",
+   "verdict": "TP",
+   "reason": "output_path from module params is only checked for the substring '..', so an absolute path is opened for writing unconstrained."
+  },
+  {
+   "position": 236,
+   "item": "9763cb2b3618",
+   "verdict": "TP",
+   "reason": "pickle_load deserializes .pkl files from a Rasa model archive, which Rasa loads from remote storage/model servers without integrity checks."
+  },
+  {
+   "position": 238,
+   "item": "c51e37967f75",
+   "verdict": "TP",
+   "reason": "$ldap_firstname from the external LDAP directory is printed into the page (and a value attribute) with no HTML escaping."
+  },
+  {
+   "position": 240,
+   "item": "9a9bb9f6a878",
+   "verdict": "FP",
+   "reason": "getFile is only reached through the minify handler in this file, which imports sanitizePathname to normalise the request path before resolving it under ROOT_DIR."
+  },
+  {
+   "position": 241,
+   "item": "5fa84313d3db",
+   "verdict": "FP",
+   "reason": "order is matched against fixed case branches and the interpolated locale/default_locale are the application's locale codes, not free-form request input."
+  },
+  {
+   "position": 242,
+   "item": "0a3255e053eb",
+   "verdict": "FP",
+   "reason": "merged_conditions comes from merge_conditions, which sanitizes each condition before it is appended after WHERE."
+  },
+  {
+   "position": 245,
+   "item": "1c26bd9fba66",
+   "verdict": "FP",
+   "reason": "The verification-disabling adapter is an explicit operator opt-in (ssl_verify=false), not a default behaviour."
+  },
+  {
+   "position": 256,
+   "item": "aa528d7a38d3",
+   "verdict": "TP",
+   "reason": "params['input_path'] from the workflow is passed straight to Image.open with no path restriction of any kind."
+  },
+  {
+   "position": 258,
+   "item": "4cbf06d9e7a0",
+   "verdict": "FP",
+   "reason": "pickle.loads reads metadata from vLLM's own shared-memory buffer written by its trusted sibling processes, not an external channel."
+  },
+  {
+   "position": 260,
+   "item": "d265aae4eb8b",
+   "verdict": "FP",
+   "reason": "sfile was validated by is_safe_path(src, sfile, fil) with an early error return before this read."
+  },
+  {
+   "position": 261,
+   "item": "eccbf75bfd55",
+   "verdict": "TP",
+   "reason": "execSync(`git show :1:\"${file}\"`) puts a conflicted file name from the repository inside double quotes in a shell string, which still allows $() and quote breakout."
+  },
+  {
+   "position": 262,
+   "item": "7aaf86b1dbd2",
+   "verdict": "TP",
+   "reason": "pickle_load of sparse_feature_sizes.pkl from the model directory deserializes files from a Rasa model archive that can come from remote/untrusted sources."
+  },
+  {
+   "position": 266,
+   "item": "b49eda323c2d",
+   "verdict": "FP",
+   "reason": "searchSpacesNames is a documented scripting API whose argument is by contract an HQL where clause, with values bound through parameterValues; no request data source is shown."
+  },
+  {
+   "position": 269,
+   "item": "5d00cdb5e7f4",
+   "verdict": "FP",
+   "reason": "The io.open(sfile) for the xml type runs only after is_safe_path(src, sfile, fil) has passed."
+  },
+  {
+   "position": 270,
+   "item": "f598dc0af297",
+   "verdict": "FP",
+   "reason": "backup_name in LocalStorage.upload is generated by the tool for the operator's own storage directory."
+  },
+  {
+   "position": 272,
+   "item": "4a2d92bd5712",
+   "verdict": "FP",
+   "reason": "toCompleteStatement only prefixes a constant select clause to a short-form statement; it introduces no injection beyond the caller's statement."
+  },
+  {
+   "position": 274,
+   "item": "d62dfc7207bf",
+   "verdict": "FP",
+   "reason": "Local preview server; the filename is only streamed after the is_file/prerendered checks on the build output."
+  },
+  {
+   "position": 275,
+   "item": "f4288c1d8486",
+   "verdict": "FP",
+   "reason": "The path is UPLD_DIR + md5_hash + constant 'classdump.txt', and the hash is validated as an MD5 in MobSF request handling."
+  },
+  {
+   "position": 277,
+   "item": "7cf6e0f7afac",
+   "verdict": "FP",
+   "reason": "pathname is normalised and rejected with 403 unless it startsWith(ADMIN_PATH) before the exists/stat/readFile calls."
+  },
+  {
+   "position": 278,
+   "item": "c7d9d27fb25e",
+   "verdict": "FP",
+   "reason": "The marked join is inside isSubdirectory itself, the containment check (filepath.Rel '..' test plus Lstat symlink test)."
+  },
+  {
+   "position": 281,
+   "item": "439a54db7fde",
+   "verdict": "FP",
+   "reason": "rid is passed through $this->db->escape and quoted, and entity is the caller/conf entity integer; no raw request data is shown reaching the query."
+  },
+  {
+   "position": 290,
+   "item": "ecc9a75f6da1",
+   "verdict": "FP",
+   "reason": "The hard-link target is validated by ensureLinkPath and resolved relative to the entry's directory before os.Link."
+  },
+  {
+   "position": 291,
+   "item": "3ef53dddba3e",
+   "verdict": "TP",
+   "reason": "Only the table goes through escapeTableName; the workflow-supplied deleteKey is embedded as [${deleteKey}] with no bracket escaping in the DELETE statement."
+  },
+  {
+   "position": 292,
+   "item": "f94bebea41c2",
+   "verdict": "FP",
+   "reason": "The cleaned join of the indexer root and rawPath is rejected by pathContainedIn(abs, root) when it escapes."
+  },
+  {
+   "position": 295,
+   "item": "d4b2bac77b45",
+   "verdict": "FP",
+   "reason": "JSON-encoded response with url.QueryEscape on code and state and a redirect URI validated earlier; not an HTML sink."
+  },
+  {
+   "position": 296,
+   "item": "8ca05ff6a0b8",
+   "verdict": "TP",
+   "reason": "$ldap_fax from the LDAP directory is printed into the HTML page and a value attribute without escaping."
+  },
+  {
+   "position": 298,
+   "item": "d30c062aff0b",
+   "verdict": "TP",
+   "reason": "fullpath comes from tree entries of the checked-out (possibly attacker-supplied) repository and `${dir}/${fullpath}` is removed/written with no containment check."
+  },
+  {
+   "position": 300,
+   "item": "fc6bba679950",
+   "verdict": "TP",
+   "reason": "tar.extractall(path=dest_dir) extracts a downloaded artifact archive with no member filter or path check."
+  },
+  {
+   "position": 303,
+   "item": "a918ae3a32cc",
+   "verdict": "FP",
+   "reason": "sfile is validated with is_safe_path(lib_dir, sfile, relative_path) and checksum with is_md5 before the open."
+  },
+  {
+   "position": 304,
+   "item": "02d652ac9ce8",
+   "verdict": "FP",
+   "reason": "Only locale[0..1] (two characters of the application locale code) is interpolated, which cannot carry an injection payload."
+  },
+  {
+   "position": 310,
+   "item": "8db09a46093e",
+   "verdict": "TP",
+   "reason": "joblib.load deserializes a .joblib file from Rasa model storage, populated from model archives that may be remote/untrusted."
+  },
+  {
+   "position": 311,
+   "item": "7416c9a569df",
+   "verdict": "TP",
+   "reason": "input_data from module params is opened as a file after only a '..' substring check, so absolute paths are readable."
+  },
+  {
+   "position": 313,
+   "item": "4df1a5e8d8f3",
+   "verdict": "FP",
+   "reason": "The unverified context is used only when the operator has disabled options.verify_ssl_cert or answers 'y' at the explicit prompt."
+  },
+  {
+   "position": 316,
+   "item": "e9c9561318e1",
+   "verdict": "FP",
+   "reason": "Development-server existence probe only; serving is gated by Vite's fs.allow list and this is dev-only tooling."
+  },
+  {
+   "position": 317,
+   "item": "e9a1f77f5ff4",
+   "verdict": "FP",
+   "reason": "The response is MapToJson output and redirectUri has passed IsValidRedirectURL; no HTML is emitted here."
+  },
+  {
+   "position": 318,
+   "item": "c01716d9f01c",
+   "verdict": "TP",
+   "reason": "The checkpoint name is formatted into f\"{name}.json\" under the checkpoints dir and opened with no sanitization or containment check."
+  },
+  {
+   "position": 319,
+   "item": "8966a49d8f94",
+   "verdict": "FP",
+   "reason": "Maintainer release tooling; base and since derive from local git refs and a strftime-formatted date."
+  },
+  {
+   "position": 320,
+   "item": "d6f5612c9e91",
+   "verdict": "FP",
+   "reason": "The symlink target is validated by ensureLinkPath and filePath by resolveRelToBase before os.Symlink."
+  },
+  {
+   "position": 323,
+   "item": "f57e35101539",
+   "verdict": "FP",
+   "reason": "cur.execute(query, params) runs prepared put statements with bound parameters; no user data is shown in the query text."
+  },
+  {
+   "position": 324,
+   "item": "c1d07f968fd9",
+   "verdict": "FP",
+   "reason": "locale passed to collation_for is the application's current locale code constrained to configured locales, not free-form input."
+  },
+  {
+   "position": 328,
+   "item": "9347f73170c9",
+   "verdict": "FP",
+   "reason": "Only a stat of a path under ROOT_DIR whose filename is sanitized (sanitizePathname) by the minify handler; no content is read here."
+  },
+  {
+   "position": 330,
+   "item": "52bc2075d437",
+   "verdict": "TP",
+   "reason": "pickle_load of data_example.pkl deserializes files from a Rasa model archive that may come from remote or API-supplied locations."
+  },
+  {
+   "position": 331,
+   "item": "8a150d166a03",
+   "verdict": "FP",
+   "reason": "country_code is the stored third party's dictionary-backed country code, not free request input."
+  },
+  {
+   "position": 333,
+   "item": "f3dfde91cbac",
+   "verdict": "FP",
+   "reason": "The io.open(sfile) for the 'm' type runs only after is_safe_path(src, sfile, fil) has passed."
+  },
+  {
+   "position": 337,
+   "item": "5b3c0a9f690d",
+   "verdict": "TP",
+   "reason": "$_SERVER[\"PHP_SELF\"] (attacker-influenced via PATH_INFO) is concatenated into the href attribute with no output encoding in the shown code."
+  },
+  {
+   "position": 339,
+   "item": "ac772ce57f0d",
+   "verdict": "TP",
+   "reason": "\"DESCRIBE \" + table_name is executed with table_name derived from the WebDAV request path, unvalidated."
+  },
+  {
+   "position": 342,
+   "item": "3d2167d7bfe1",
+   "verdict": "TP",
+   "reason": "pickle_load of data_example.pkl from model_path deserializes Rasa model archive contents that may be untrusted."
+  },
+  {
+   "position": 343,
+   "item": "1046e99b9bd9",
+   "verdict": "FP",
+   "reason": "filePath is built from resolveRelToBase(dirPath, dirName, filename), which errors out on entries escaping the target directory, before MkdirAll."
+  },
+  {
+   "position": 344,
+   "item": "cbfce1245720",
+   "verdict": "TP",
+   "reason": "pickle_load of label_data.pkl deserializes files from a Rasa model archive that may come from remote or API-supplied locations."
+  },
+  {
+   "position": 345,
+   "item": "5b698f40bf8a",
+   "verdict": "TP",
+   "reason": "$ldap_loginsmb from the LDAP directory is printed into the page and a value attribute without escaping, same pattern as the other LDAP fields."
+  },
+  {
+   "position": 347,
+   "item": "86a1b0b9f3b8",
+   "verdict": "FP",
+   "reason": "Intentional mode selection: with no CA pool configured, RequireAnyClientCert is paired with configured verifier modules; a design choice, not a verification bypass."
+  },
+  {
+   "position": 348,
+   "item": "a73e083fb76f",
+   "verdict": "TP",
+   "reason": "The prepared export statement embeds the caller-supplied arbitrary SQL condition from the subscriber query API and is executed here outside the read-only check."
+  },
+  {
+   "position": 349,
+   "item": "252b0810d01d",
+   "verdict": "FP",
+   "reason": "Fixed 'za' branch; the interpolated locale/default_locale are application locale codes and collation comes from the database catalog."
+  },
+  {
+   "position": 352,
+   "item": "b83ba0f98c4c",
+   "verdict": "TP",
+   "reason": "recv_pyobj unpickles whatever arrives on the ZMQ socket from the network peer, with no authentication shown."
+  },
+  {
+   "position": 353,
+   "item": "b86011c9b876",
+   "verdict": "FP",
+   "reason": "scoped_order is a developer-defined scope fragment, a documented raw-SQL option of the framework."
+  },
+  {
+   "position": 354,
+   "item": "93cdf14b2a5e",
+   "verdict": "TP",
+   "reason": "filePath from the MCP tool arguments is passed directly to fs.readFileSync with no path restriction."
+  },
+  {
+   "position": 355,
+   "item": "aa9cf19a2213",
+   "verdict": "FP",
+   "reason": "The export filename is a fixed prefix plus the first 8 characters of a generated session UUID inside os.tmpdir()."
+  },
+  {
+   "position": 356,
+   "item": "09be60896fe9",
+   "verdict": "FP",
+   "reason": "sizeSql/sizeArgs come from the squirrel query builder and are executed with bound arguments."
+  },
+  {
+   "position": 357,
+   "item": "5cbba033978a",
+   "verdict": "TP",
+   "reason": "execAsync(`systemctl show ${serviceName} --no-pager`) interpolates the tool-supplied service name unquoted into a shell command."
+  },
+  {
+   "position": 358,
+   "item": "4ee1238eb3b4",
+   "verdict": "TP",
+   "reason": "folderPath is placed inside double quotes in a shell pipeline (du/find), so $() or a quote in a folder name executes commands."
+  },
+  {
+   "position": 360,
+   "item": "4fdde3f3d15c",
+   "verdict": "TP",
+   "reason": "pickle_load of label_data.pkl from model_path deserializes Rasa model archive contents that may be untrusted."
+  },
+  {
+   "position": 361,
+   "item": "969fb53d7023",
+   "verdict": "TP",
+   "reason": "The name argument is interpolated unquoted into `ps -C ${name} ...` and run through exec."
+  },
+  {
+   "position": 362,
+   "item": "c861b73b62ed",
+   "verdict": "TP",
+   "reason": "\"DESCRIBE \" + table_name is executed with table_name derived from the WebDAV request path, unvalidated."
+  },
+  {
+   "position": 363,
+   "item": "282487f38237",
+   "verdict": "TP",
+   "reason": "request.url is passed to path.join(staticPath, request.url) after only an asset-extension test, so ../ segments in the raw URL escape the static root."
+  },
+  {
+   "position": 364,
+   "item": "b4a474f98b8b",
+   "verdict": "FP",
+   "reason": "Plugin names come from fs.readdirSync of configured plugin directories and are filtered by isWhistleModule, not from request input."
+  },
+  {
+   "position": 368,
+   "item": "a88b3af5bec0",
+   "verdict": "FP",
+   "reason": "recipe_name is a local CLI argument from the operator and only selects a .yaml file parsed with yaml.safe_load."
+  },
+  {
+   "position": 369,
+   "item": "23eb02f6428f",
+   "verdict": "TP",
+   "reason": "username is placed in a double-quoted shell string for `sudo -l -U`, allowing $() or quote injection."
+  },
+  {
+   "position": 370,
+   "item": "d4644e8555ac",
+   "verdict": "FP",
+   "reason": "Names in list come from readdirSync of the configured plugin directory, not from untrusted input."
+  },
+  {
+   "position": 373,
+   "item": "3c4120feb2cc",
+   "verdict": "TP",
+   "reason": "baseBranch and currentBranch are interpolated unquoted into the execSync git diff shell command."
+  },
+  {
+   "position": 374,
+   "item": "5f6f87541061",
+   "verdict": "FP",
+   "reason": "order is a caller-supplied SQL fragment by framework contract; no end-user source is shown at this layer."
+  },
+  {
+   "position": 378,
+   "item": "90c07a79604b",
+   "verdict": "FP",
+   "reason": "The resolved path is rejected by is_path_inside(file_path, base_path) before FileResponse."
+  },
+  {
+   "position": 381,
+   "item": "ba9c8420833d",
+   "verdict": "TP",
+   "reason": "$_SERVER['PHP_SELF'] is concatenated into the href attribute without escaping, while the neighbouring title uses dol_escape_htmltag."
+  },
+  {
+   "position": 386,
+   "item": "cfd6df94d224",
+   "verdict": "FP",
+   "reason": "sfile is checked by is_safe_path immediately after construction and before any filesystem use."
+  },
+  {
+   "position": 388,
+   "item": "3216f1f814d0",
+   "verdict": "TP",
+   "reason": "taskName from the tool options is placed in a double-quoted exec string for schtasks, allowing quote breakout."
+  },
+  {
+   "position": 393,
+   "item": "f18ebe26f65a",
+   "verdict": "TP",
+   "reason": "$_SERVER['PHP_SELF'] is printed into the form action attribute with no encoding in the shown code."
+  }
+ ]
+}

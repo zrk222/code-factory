@@ -1,0 +1,2765 @@
+{
+ "packet_sha256": "c39c12809dce51ae6401388f4a0f39022a10323399d5266d72bc99882893d0e3",
+ "key": {
+  "93b7d579d7d3": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "9212690afbf3b00b0dcb2354c83146ba43f98c841648cc249cf318ea1c357489",
+   "span": null
+  },
+  "c33bc4ad5519": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "a74424f1a10a97f1bc52291e634771be50c9ed90f8dd16cc228faeb1c0255e4e",
+   "span": null
+  },
+  "88fd34913bee": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "9e22e3520bc772305ca04713a080136b47fd0697b3e3711ef04b23e01c81b68c",
+   "span": null
+  },
+  "6c41b0e7289f": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "a9b09a410ec59a75eedefa39fc928082f99c5f9458a40ce97c7c30ee536797d6",
+   "span": null
+  },
+  "dade0b16212a": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "a35c355d0665cb608127853d8ff25bc264dcc832c688511b6d4f2bbcd49c482d",
+   "span": null
+  },
+  "43aaf59865a0": {
+   "rule": "go.archive-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "9992ac168fd956463b565a87c5be3621c83cf52f2d74de4c96fa3fd305296d2e",
+   "source_sha256": "8f04a426f7493dbcf1e862fd53f314f5c1e7d5b405bc44f872330a148efe7dc4",
+   "span": null
+  },
+  "9e8b7f6f1f0b": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "8840dd793605ff571650fe9a2a66f711e0459a56f6bdd9279302016456f79b66",
+   "span": null
+  },
+  "1981a5b9fd4f": {
+   "rule": "go.tls-peer-not-verified",
+   "on_fix_hunk": true,
+   "rule_revision": "ef0accea1f689004f3d10b9c133d6613f3cee699e115cc1aa46d93b95fe24758",
+   "source_sha256": "3ae39e42b5ec72b5e2f7608653d96dd022b0d7e163c5664809e2c8ed102a396f",
+   "span": null
+  },
+  "a448c076f655": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "08f4160937680eaaf598f771ce6c1ad2aaf75b3d1678c4860c469cf6348c4a79",
+   "span": null
+  },
+  "7ed060d0a376": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": null
+  },
+  "6aa5c9943457": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "c5bcc7fa3e90": {
+   "rule": "php.archive-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcf6fd7db2ea392efaefecf7b0208ad63e8fbaf37c66e96e0335e618012553ad",
+   "source_sha256": "8638a8cd76681bc23d7a4ceb31823d0cf6eb8cf5369668c345602b4202aaed31",
+   "span": null
+  },
+  "bcdfce1636b4": {
+   "rule": "python.parameter-shell-command",
+   "on_fix_hunk": false,
+   "rule_revision": "dbac6e99d9b332114604fb52f2f82a6838d132187f22b72e0f467ba31eaf4bf6",
+   "source_sha256": "86e9916f128ca30772c13cd00ba9d9751b3453cda9c7078c79238ccb166fe734",
+   "span": null
+  },
+  "1f81425d5709": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "b59dd4b8fc0f04e0a4c5ea6a0904a6e7ab87ba1141742e0e0fd27d595ff20660",
+   "span": null
+  },
+  "2233d9aee4e7": {
+   "rule": "java.disabled-hostname-verification",
+   "on_fix_hunk": true,
+   "rule_revision": "9ce562158cd30abb873fb2105c65d6b54c29d37fe76396ac7d037e7d2986bd0b",
+   "source_sha256": "41cc3de470320149e70e82d8d6f2fb13d989c105db8e4e5e077fc8799984ec37",
+   "span": null
+  },
+  "62d37e41d772": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "7cf569cc6d31231d53f0ad06d06427d2fb2a9b707db932f4f76575a7b24920ff",
+   "span": null
+  },
+  "db24c15d31ae": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "bad315d7b725": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": null
+  },
+  "642d60665d0a": {
+   "rule": "python.disabled-tls-verification",
+   "on_fix_hunk": false,
+   "rule_revision": "606a0825a9961c0c552ed90cc0b896eb4c98d37aee09295dab043da13b77f646",
+   "source_sha256": "66806709a3ee08d2c547ac3b2b8ca4313d64071b42f8a55b01351b897c4270de",
+   "span": null
+  },
+  "01bd769fb1ca": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "a71e4ce5713712e6605f5c6fc7ebbec9878d083bf78bdd294c16dae34051dec2",
+   "span": null
+  },
+  "acfc5f66d628": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "f47b9159a5490276b98a09204abf17422fbd90362f22886fb78c0985875410a2",
+   "span": null
+  },
+  "c5cb05d1bad3": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "d48d74ca9753": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "c301f1566f1b50f7413a0d30e720e554b6f68699fdefc02c49db54d5e9c03490",
+   "span": null
+  },
+  "28cbd6dd837d": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "a71e4ce5713712e6605f5c6fc7ebbec9878d083bf78bdd294c16dae34051dec2",
+   "span": null
+  },
+  "437771c8c29b": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": null
+  },
+  "24d8698a0082": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": null
+  },
+  "9e69b59dc57e": {
+   "rule": "go.tls-peer-not-verified",
+   "on_fix_hunk": true,
+   "rule_revision": "ef0accea1f689004f3d10b9c133d6613f3cee699e115cc1aa46d93b95fe24758",
+   "source_sha256": "4e8f17a7736eea49c72038b4b85ef78f18f9af2ad350fb7ea4640c16e912dcd4",
+   "span": null
+  },
+  "bdf18f123fd2": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "8c3ebcc3b8dafaa1d1de1d8362e3ec578ff618110eaef6565ed00972f5629bfc",
+   "span": null
+  },
+  "a8f15e0e22c6": {
+   "rule": "ruby.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "88256f5ff9672ecd29164d2bfdbf6172deb1ca9b285fb49b86776d059f65d3c8",
+   "source_sha256": "ade5d2a98de87b1cdef2bf2dc9e71fffae2360d358f0c27dd16c8549dcb478eb",
+   "span": null
+  },
+  "9f7418df5e73": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "9e22e3520bc772305ca04713a080136b47fd0697b3e3711ef04b23e01c81b68c",
+   "span": null
+  },
+  "6c4f1e4e314c": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "da9aac0c387e": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "e65d6123324f7bc7e8f3e8c4c6b44600b6e996d48aa0c7f972e1107709492d09",
+   "span": null
+  },
+  "e4d1c337bf6a": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": null
+  },
+  "eac94ac58eaf": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "b5531df6c92f3622511d74461897d51d7a93583975f33771c4fca0b682a7030a",
+   "span": null
+  },
+  "19ea1b6dfe6c": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "0a64db695694088df56097ef666fc02e183da983ae72dce6975e0d01f509882f",
+   "span": null
+  },
+  "b842219632fb": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "a9b09a410ec59a75eedefa39fc928082f99c5f9458a40ce97c7c30ee536797d6",
+   "span": null
+  },
+  "e5206e1fc195": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "db451173907ebe24864fbf7c99a9b1b2f755d7ad26e907cf00f3dc42817513e8",
+   "span": null
+  },
+  "ddf3443486f5": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "40f6404fcf3578ad0adeb24cb547ad2d0c6e2537d40950d9c541513e2293d2bf",
+   "span": null
+  },
+  "f1d1d63fa298": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "36092d2bab3e7740d0ef0a7856b658f6c13bc5e27b30a3bcbf32e153b6953e67",
+   "span": null
+  },
+  "a2920c048c69": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "e987cd89a030a4f2da8c99d11b6ab0e3ada8ea493bcf6920ce5ba2dea448351e",
+   "span": null
+  },
+  "9fc13258ef80": {
+   "rule": "python.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "dbac6e99d9b332114604fb52f2f82a6838d132187f22b72e0f467ba31eaf4bf6",
+   "source_sha256": "cf19cf0c8b632628456e0dcce0a124bc68ca3fa42e0bad8b2596be292070b8bb",
+   "span": null
+  },
+  "e90c5a03ab2b": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "b59dd4b8fc0f04e0a4c5ea6a0904a6e7ab87ba1141742e0e0fd27d595ff20660",
+   "span": null
+  },
+  "4514575d535c": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "e987cd89a030a4f2da8c99d11b6ab0e3ada8ea493bcf6920ce5ba2dea448351e",
+   "span": null
+  },
+  "486ee2f5d72b": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "a30ddec1f798": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": null
+  },
+  "6a03f8d66888": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "45ffef52b2734566550c0c3d6e3449fdbd2c29260574de478ae090dff59f5336",
+   "span": null
+  },
+  "26835d319fec": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "4b14332b542dc6d41d878e572854ae9af1f668d18648260020d85f1f6eb96154",
+   "span": null
+  },
+  "06ad60d62c22": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "36092d2bab3e7740d0ef0a7856b658f6c13bc5e27b30a3bcbf32e153b6953e67",
+   "span": null
+  },
+  "232d409b7bf6": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "091043dc10687ec83209d297ea31eca908965001fb687c711beb2e59ae35a311",
+   "span": null
+  },
+  "b04d340ace7b": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "9d6bb0f539f92d60306be1d9bcd1c675b1bee4dcbd7a68fc449e7aae4ecd5200",
+   "span": null
+  },
+  "73e89affde90": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "59d6f31eaae01d715dd6b01a6937ca93bd016351b1bd33ee6798adc15194a91d",
+   "span": null
+  },
+  "3403f7481e67": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "3d4ba36e48f352fc6bcbb073c7ccbe5f950e31f0fab4ab033cfe5d8f4b63559f",
+   "span": null
+  },
+  "6d4cd69ca977": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "e987cd89a030a4f2da8c99d11b6ab0e3ada8ea493bcf6920ce5ba2dea448351e",
+   "span": null
+  },
+  "102eea555df0": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "61ec53ffe348f2eb9817421b69a349e48b49f2147d4aa1d971e7da50f6977813",
+   "span": null
+  },
+  "0c8ec89799f0": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "b5531df6c92f3622511d74461897d51d7a93583975f33771c4fca0b682a7030a",
+   "span": null
+  },
+  "0a918739437e": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "b10d1bbfac2a5e12892de1ee312779893e7aeb5e5a27ee319e419447639764a2",
+   "span": null
+  },
+  "7450355000d4": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "0e70fd3e92cf66fbc798818eee174f3839d27617719ede716080388dbb391121",
+   "span": null
+  },
+  "e2b3fe647c78": {
+   "rule": "ruby.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "c129e261883da52b3f0d3ae66225714ba6c041e3317f8dc9fec0f1f2a4facbb4",
+   "source_sha256": "66367068ec70f58c61d3cc22133fa55f26f31f22040c9cd98882a61a40c03638",
+   "span": null
+  },
+  "033452469b13": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "5eb1d298c59f5437b6c326a6c8f0642c1178f4614e3de1ee53357beb4f815d97",
+   "span": null
+  },
+  "aa4a52d94bea": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "38e7d1440eab0dafe7f78e656262310ef9e94ec6017d400aeb9fc528c32ec513",
+   "span": null
+  },
+  "5a3137a68b56": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "0e7c1f6bfa54fedc9fb5d0b84d9e2c15955138ccb54b73159d663a4effe745b1",
+   "span": null
+  },
+  "a9324bcb4e6a": {
+   "rule": "java.disabled-hostname-verification",
+   "on_fix_hunk": true,
+   "rule_revision": "9ce562158cd30abb873fb2105c65d6b54c29d37fe76396ac7d037e7d2986bd0b",
+   "source_sha256": "d00f8f9f8f0ec74a91161aea756af735cf9f1983c96d2b53b1b9f9dd4f7f0d38",
+   "span": null
+  },
+  "aff6aac06fbb": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "2fbdac8b45846ae33b9ec05064c91b3a2f74ed4c8edaa77182d592769c314f58",
+   "span": null
+  },
+  "0437657d9df4": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "5e76e8eaedf3ac711b7238d0b80b17f0c6d0409c4cf820cf4d53b897d1f41e5b",
+   "span": null
+  },
+  "149afefb9cf0": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "b3994152a86ba608a4debc9862c0527118043cec050e8bfc2f5a64c946a228ee",
+   "span": null
+  },
+  "1fd0be2babf7": {
+   "rule": "go.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "acc9e1243a44c86d869218e65662b94484bed2587076516231fb25d4e88bd529",
+   "source_sha256": "f1e95cd494f3333cffe7c209893663e0a2f06fd4340a7bcbf3d73cdda97afcd9",
+   "span": null
+  },
+  "fd6aa3802032": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "abce25ef11a1": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "c9b61d8007fa51229f59c37605683a814cca3d9dd42a694ac6f2bc27a6732d4f",
+   "span": null
+  },
+  "ecb2cc8b05fe": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": null
+  },
+  "c2453cccf0fc": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "e65d6123324f7bc7e8f3e8c4c6b44600b6e996d48aa0c7f972e1107709492d09",
+   "span": null
+  },
+  "556749b6e595": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": null
+  },
+  "022fd6154c63": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "36092d2bab3e7740d0ef0a7856b658f6c13bc5e27b30a3bcbf32e153b6953e67",
+   "span": null
+  },
+  "c42ddf96255a": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "9212690afbf3b00b0dcb2354c83146ba43f98c841648cc249cf318ea1c357489",
+   "span": null
+  },
+  "eed24f4c0d68": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "9657bf3df70d05baa4f5fa9130973abd999aabfc6474ad3347d96cdd39fed0c7",
+   "span": null
+  },
+  "af6c0c4a0b4d": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "4d025ab89cca": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "464719df7ea2a685a84177732249e25e9f078b3150197c7e84c59d0004a6289e",
+   "span": null
+  },
+  "e2a40ca77905": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "6a4488df996a": {
+   "rule": "python.disabled-tls-verification",
+   "on_fix_hunk": false,
+   "rule_revision": "606a0825a9961c0c552ed90cc0b896eb4c98d37aee09295dab043da13b77f646",
+   "source_sha256": "252dd6061fd7145cdbcf6a2981ce4e34e19c0f9ecbc15de6524af1bc6d3aca82",
+   "span": null
+  },
+  "ef168f7e7df0": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "61f0a050ed02429b2161b64a888851852b999d79dc7f292e9b8e79d90cab73ff",
+   "span": null
+  },
+  "1e3900d5794d": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": null
+  },
+  "6cd02ccd622e": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "c9b61d8007fa51229f59c37605683a814cca3d9dd42a694ac6f2bc27a6732d4f",
+   "span": null
+  },
+  "8ef00804269e": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "26ac1c8247c80e278e8529a3ff3695a62633274fdde6d874a384498c2d236726",
+   "span": null
+  },
+  "3f5691d1b8da": {
+   "rule": "php.archive-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcf6fd7db2ea392efaefecf7b0208ad63e8fbaf37c66e96e0335e618012553ad",
+   "source_sha256": "806db2fee2431f73222f131203cbb20f50da0fcf549cdc7d193a21d3d7033210",
+   "span": null
+  },
+  "d8330f4de16d": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "c51be08be77967797cf962fecc563937f929b4a1a3f3f112ecff5fb6c7f01381",
+   "span": null
+  },
+  "b15787f20711": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "9657bf3df70d05baa4f5fa9130973abd999aabfc6474ad3347d96cdd39fed0c7",
+   "span": null
+  },
+  "329d3d7e9c0b": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "cb6228cbef26bf13811b61da72145cd22d0207fd40f0a2a6611b3d90c8e6712a",
+   "span": null
+  },
+  "870a37f5ebae": {
+   "rule": "ruby.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "c129e261883da52b3f0d3ae66225714ba6c041e3317f8dc9fec0f1f2a4facbb4",
+   "source_sha256": "66367068ec70f58c61d3cc22133fa55f26f31f22040c9cd98882a61a40c03638",
+   "span": null
+  },
+  "7023642dcc6d": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "8ee4829ccbaf731198ee2a5f8305dc7ef5b6ba6e6cd63d5ab6862d16279c2aef",
+   "span": null
+  },
+  "b342cef08d5f": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "5e76e8eaedf3ac711b7238d0b80b17f0c6d0409c4cf820cf4d53b897d1f41e5b",
+   "span": null
+  },
+  "b49022c41541": {
+   "rule": "php.request-command-injection",
+   "on_fix_hunk": true,
+   "rule_revision": "f49031655243ed92eb8f672ad2fcd1f39cec1f20f8b9b0a8ff849f37e7a3f964",
+   "source_sha256": "42286d6ef2f80ce10b714e6132b8a395278aed5b0a09c40ee8f72d33c9648331",
+   "span": null
+  },
+  "f9c5a61233b0": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "f47b9159a5490276b98a09204abf17422fbd90362f22886fb78c0985875410a2",
+   "span": null
+  },
+  "7d0360997521": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "9f4906649121": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "d4e6bda69e41": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "a4355d49e0b75c7c7e74d33ac70ff9550f940c977848c99da40eb41e034b189c",
+   "span": null
+  },
+  "b8d948bca1e9": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "c964b9a819c54460f4b9e2d9f18e818e5e1f9fa1965ab42078383b3208daef63",
+   "span": null
+  },
+  "583dd5a48b6a": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "c6f903d692be": {
+   "rule": "python.tarfile-extractall-without-filter",
+   "on_fix_hunk": true,
+   "rule_revision": "9f82834c495a6112072fb8558540a7ff60766ba1a72e53683c15acf377e424d6",
+   "source_sha256": "eea16c115e0146bfbe71031f9c589f9c3054e8f321ec0cd102db428ea290963f",
+   "span": null
+  },
+  "732dbd0d9263": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "c9f7f081a01e": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "3b824aa721d874aba1f671ecd6a4c469102f9654eadee876a8caf9321b5d5386",
+   "span": null
+  },
+  "512507ce07d7": {
+   "rule": "php.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "a865ef299d54d07a5d3011d12b362300247764dbb6e9323c057ed6bb9dd5aa0e",
+   "source_sha256": "c48f71d9e06ded5a5fb36d94d16c4075baea943c63a5bb4d3994056b78d362cf",
+   "span": null
+  },
+  "1c3164f47562": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "2fbdac8b45846ae33b9ec05064c91b3a2f74ed4c8edaa77182d592769c314f58",
+   "span": null
+  },
+  "e44763d068f2": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "db720c730f325d332a41ddecf319aafafc213b31b13441db7037d3891f6914d5",
+   "span": null
+  },
+  "a7a34a1de773": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "5b395c84835a1f333f4c2cc4f28c690b0cb34a45a2589befef81d0844aa96f66",
+   "span": null
+  },
+  "81ccfab966a9": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "a6b94644369c": {
+   "rule": "python.tarfile-extractall-without-filter",
+   "on_fix_hunk": true,
+   "rule_revision": "9f82834c495a6112072fb8558540a7ff60766ba1a72e53683c15acf377e424d6",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "0fc5d9233b55": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "7742c54b530ad0245b287ed458621b92c0efadbbdd75eb5773d272d86bbece25",
+   "span": null
+  },
+  "0faf57fc0743": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "9e22e3520bc772305ca04713a080136b47fd0697b3e3711ef04b23e01c81b68c",
+   "span": null
+  },
+  "2bfc49d84264": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "184e995db2027d839aaaf2569df70ae0741bef43dd2dd7a4fe905efb9b444e23",
+   "span": null
+  },
+  "27d28e8acb49": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "19199171566df903b8abf5e3a31dde2600ba4563fed47eb9cfbebfc8be2393db",
+   "span": null
+  },
+  "9f51af2ce412": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "5f48d460a8da": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "e65d6123324f7bc7e8f3e8c4c6b44600b6e996d48aa0c7f972e1107709492d09",
+   "span": null
+  },
+  "93cced73bfc5": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "4a29149460e6fc3c968a58bf0f8230fbae2fbbd4bbaeb6c23a90f8a2a2c27f73",
+   "span": null
+  },
+  "6705770ae260": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "97aa1f2f7b54": {
+   "rule": "php.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "a865ef299d54d07a5d3011d12b362300247764dbb6e9323c057ed6bb9dd5aa0e",
+   "source_sha256": "2d0ededf667d2dc8e7b3cc83fe27f61b667dde052f7675c217d25c98b5a4c9f6",
+   "span": null
+  },
+  "353bc03156b6": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "351476e18ad894bef20cb57a224ab6648ec8fadd2b17017cca7b7f30fd76862d",
+   "span": null
+  },
+  "b41b4600eb79": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "7f08828f093db4d4f682035be125fa84eedebb5d7e263613f050fcef9fa9b084",
+   "span": null
+  },
+  "dd34979d5d15": {
+   "rule": "php.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "a865ef299d54d07a5d3011d12b362300247764dbb6e9323c057ed6bb9dd5aa0e",
+   "source_sha256": "f3db20a70e80ea506b41b18b02272f4dadc0d0d471a2db65de5dc82e6f0b1491",
+   "span": null
+  },
+  "e285686dfe8a": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "a35c355d0665cb608127853d8ff25bc264dcc832c688511b6d4f2bbcd49c482d",
+   "span": null
+  },
+  "8b18a53bf1c5": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "5aca6b948400ac8be40e71fc1051639a843bd6c06872f7886db38ccd4199018d",
+   "span": null
+  },
+  "0fd5a890c107": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "a9b09a410ec59a75eedefa39fc928082f99c5f9458a40ce97c7c30ee536797d6",
+   "span": null
+  },
+  "e04ad5860494": {
+   "rule": "php.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "b499b3f41541092e2263ef7e3449313a5185f443c564fd31ee46b4d1df80b701",
+   "source_sha256": "42286d6ef2f80ce10b714e6132b8a395278aed5b0a09c40ee8f72d33c9648331",
+   "span": null
+  },
+  "e27932c4d7c7": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "db65fbf002c1": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "806a35937afeae7964a71baf95183a946643a5fe4dd46c1a5db453bd74f44fda",
+   "span": null
+  },
+  "d737eca00a3c": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "8215f3e6b082": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "0a64db695694088df56097ef666fc02e183da983ae72dce6975e0d01f509882f",
+   "span": null
+  },
+  "2cc5b762c0bf": {
+   "rule": "java.disabled-hostname-verification",
+   "on_fix_hunk": true,
+   "rule_revision": "9ce562158cd30abb873fb2105c65d6b54c29d37fe76396ac7d037e7d2986bd0b",
+   "source_sha256": "512ddccc5eb7124da83d7751da32870a7fdc882d19027da2147e98a0ca325e8f",
+   "span": null
+  },
+  "6407e37b09c2": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": null
+  },
+  "f24998f8051e": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "aafc47072131618d94304e15d1f15b469caede73b7273eb2843b0ba85723db5c",
+   "span": null
+  },
+  "670c4d883bc1": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "f47b9159a5490276b98a09204abf17422fbd90362f22886fb78c0985875410a2",
+   "span": null
+  },
+  "36947fb839b8": {
+   "rule": "php.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "b499b3f41541092e2263ef7e3449313a5185f443c564fd31ee46b4d1df80b701",
+   "source_sha256": "42286d6ef2f80ce10b714e6132b8a395278aed5b0a09c40ee8f72d33c9648331",
+   "span": null
+  },
+  "69e404ba940b": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "08d7a5999720cc90ed79d25689e8af3f7d9624341f3ed61eb2df0d8fe1e98437",
+   "span": null
+  },
+  "a225f6c64098": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": null
+  },
+  "77e21d0a2437": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "c0b81a5df584": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": true,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "00b9003f3b662a2f2ff4f6e427994e483f3d31270fe1f2fa99860489f1c6e00b",
+   "span": null
+  },
+  "32abb747b933": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "b10d1bbfac2a5e12892de1ee312779893e7aeb5e5a27ee319e419447639764a2",
+   "span": null
+  },
+  "a66a440ac34a": {
+   "rule": "go.archive-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "9992ac168fd956463b565a87c5be3621c83cf52f2d74de4c96fa3fd305296d2e",
+   "source_sha256": "fdfc977eb17f787023cc4a06cb0b13d30d8797ee359511d4a37e7c0ad8cd4126",
+   "span": null
+  },
+  "3685f6f6f36c": {
+   "rule": "go.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "acc9e1243a44c86d869218e65662b94484bed2587076516231fb25d4e88bd529",
+   "source_sha256": "f1e95cd494f3333cffe7c209893663e0a2f06fd4340a7bcbf3d73cdda97afcd9",
+   "span": null
+  },
+  "acb963a50cb4": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "fa04dc81ccc24e6a052bec2eac7c8083c4b308f83cdf3b25b103aab17b7bb5a7",
+   "span": null
+  },
+  "c689b177a7ec": {
+   "rule": "python.parameter-shell-command",
+   "on_fix_hunk": false,
+   "rule_revision": "dbac6e99d9b332114604fb52f2f82a6838d132187f22b72e0f467ba31eaf4bf6",
+   "source_sha256": "428d67acb8e9389dc3811e67b2ab87f813a2de59168afbbb0ca968c6318a4191",
+   "span": null
+  },
+  "5680b1fc4764": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "091043dc10687ec83209d297ea31eca908965001fb687c711beb2e59ae35a311",
+   "span": null
+  },
+  "87717a5767ad": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "aafc47072131618d94304e15d1f15b469caede73b7273eb2843b0ba85723db5c",
+   "span": null
+  },
+  "7dcc0e89e559": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": null
+  },
+  "7f50c5e24aa1": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "5aca6b948400ac8be40e71fc1051639a843bd6c06872f7886db38ccd4199018d",
+   "span": null
+  },
+  "70e937098026": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "7bb4af7b97c103a5598a727dd4896135fc0098150ec437ff47462aae541eba2f",
+   "span": null
+  },
+  "a1fc9d027963": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "36092d2bab3e7740d0ef0a7856b658f6c13bc5e27b30a3bcbf32e153b6953e67",
+   "span": null
+  },
+  "60571fb2b782": {
+   "rule": "go.archive-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "9992ac168fd956463b565a87c5be3621c83cf52f2d74de4c96fa3fd305296d2e",
+   "source_sha256": "8f04a426f7493dbcf1e862fd53f314f5c1e7d5b405bc44f872330a148efe7dc4",
+   "span": null
+  },
+  "3666c8f50cc2": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "94343f55c49a": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "9ff5ce0756f5d15c959e9da84b763d4c3fd4baf2784904a8dae606ca162afa9b",
+   "span": null
+  },
+  "b4b2e998212d": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "9e22e3520bc772305ca04713a080136b47fd0697b3e3711ef04b23e01c81b68c",
+   "span": null
+  },
+  "12036306c390": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "c7a53d45754116af4ca8f2975abe0e4e6216fe2a2ac8d5873e3ff44ed6244b38",
+   "span": null
+  },
+  "0b801b682c00": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": null
+  },
+  "c08c35690b4c": {
+   "rule": "java.disabled-hostname-verification",
+   "on_fix_hunk": true,
+   "rule_revision": "9ce562158cd30abb873fb2105c65d6b54c29d37fe76396ac7d037e7d2986bd0b",
+   "source_sha256": "512ddccc5eb7124da83d7751da32870a7fdc882d19027da2147e98a0ca325e8f",
+   "span": null
+  },
+  "74bf8fdb5fd9": {
+   "rule": "php.parameter-shell-command",
+   "on_fix_hunk": false,
+   "rule_revision": "a865ef299d54d07a5d3011d12b362300247764dbb6e9323c057ed6bb9dd5aa0e",
+   "source_sha256": "a81a95e8fc133b984782f9b53b83ef7cf9474e468a6f6e78d282ab23e2b9e435",
+   "span": null
+  },
+  "ddc8eb03418b": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "2d56c407a084": {
+   "rule": "java.disabled-hostname-verification",
+   "on_fix_hunk": true,
+   "rule_revision": "9ce562158cd30abb873fb2105c65d6b54c29d37fe76396ac7d037e7d2986bd0b",
+   "source_sha256": "4bf4d43d5bacdd903d7dd8dfb24daa29eb841b5bef646680c069744cb6c132ee",
+   "span": null
+  },
+  "8fceec4e7d0f": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": null
+  },
+  "de47249e9934": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "6ab2709e404c90e3177c0bedd13d03e6e0831ebfdae29f1d2e018c373885f1f4",
+   "span": null
+  },
+  "471a82229a34": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": null
+  },
+  "2bd07fbe51fd": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "cebc33b47ae9": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "aac8b91cdbcb7e867951eba9524752b96e64f919469979510049383549ad7d8e",
+   "span": null
+  },
+  "e3c534a8045c": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "5aca6b948400ac8be40e71fc1051639a843bd6c06872f7886db38ccd4199018d",
+   "span": null
+  },
+  "559b7fe82539": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "1af8904e3c336ba32460d6c442e657baa0930c571bc8c5b34b3bcae09b73f6a8",
+   "span": null
+  },
+  "6608ebf00b64": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "c964b9a819c54460f4b9e2d9f18e818e5e1f9fa1965ab42078383b3208daef63",
+   "span": null
+  },
+  "0d642c26ef90": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "a839db6a1fb7": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "4e12d1e28cd0": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "3cbf9918752290263c58638fcd2c6901f0edb61cd1db7b14cfc2a0a94c49bd23",
+   "span": null
+  },
+  "522cca30ace4": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "b69de163b80a022ee7a9d12f2e6de4993c39d4ca57f568b3f70a231ec92c20f3",
+   "span": null
+  },
+  "5cd819568d61": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": null
+  },
+  "a9848a6f431c": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "eea16c115e0146bfbe71031f9c589f9c3054e8f321ec0cd102db428ea290963f",
+   "span": null
+  },
+  "2b485d5c8749": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": null
+  },
+  "db2b1855b811": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "d3db9e86d16e7f155b025856d9b9ba4beb4464851775f68634a35ed609bd2225",
+   "span": null
+  },
+  "eb8249fd52a7": {
+   "rule": "python.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "dbac6e99d9b332114604fb52f2f82a6838d132187f22b72e0f467ba31eaf4bf6",
+   "source_sha256": "ecd045f1f2d9fe2c2a3069a032b4b6221e0436299bd2a227e93bc354158d4699",
+   "span": null
+  },
+  "a53428172846": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "74e757bbd94360cf5360e1e6c2b7e079730ff3760e0d4c2ff6a8b5c02dec2c33",
+   "span": null
+  },
+  "28cd690480b2": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "00cf5f325424b8ce1ab0391d853a5226888880da7b9823962a5ee0716db13574",
+   "span": null
+  },
+  "6bca09149793": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "351476e18ad894bef20cb57a224ab6648ec8fadd2b17017cca7b7f30fd76862d",
+   "span": null
+  },
+  "bc43618690fe": {
+   "rule": "ruby.disabled-tls-verification",
+   "on_fix_hunk": true,
+   "rule_revision": "6edc00c1e24a5a06243e25a52c0d0c5ccc3ed55216311f57cd0ba457dd343a3e",
+   "source_sha256": "411987b1bfa5be456a7f85d28002008291808518b00d70dec25aca3f551d1205",
+   "span": null
+  },
+  "bb1fec19a0bc": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": null
+  },
+  "7b7a766f631f": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "c7a53d45754116af4ca8f2975abe0e4e6216fe2a2ac8d5873e3ff44ed6244b38",
+   "span": null
+  },
+  "39ac6d4cdf77": {
+   "rule": "ruby.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "88256f5ff9672ecd29164d2bfdbf6172deb1ca9b285fb49b86776d059f65d3c8",
+   "source_sha256": "3fc0b3647549a2689cf157c88df9a4210e390570bb91578b973d04721dd9bb08",
+   "span": null
+  },
+  "cc7febd4d2a4": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": null
+  },
+  "66ea25ceb4dd": {
+   "rule": "python.tarfile-extractall-without-filter",
+   "on_fix_hunk": true,
+   "rule_revision": "9f82834c495a6112072fb8558540a7ff60766ba1a72e53683c15acf377e424d6",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "b204eb844e57": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "fdfbd6bece4004125a97db06ab156a7566de24fc59eacab14e070c3d0a262fa0",
+   "span": null
+  },
+  "8249b8c008c4": {
+   "rule": "ruby.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "88256f5ff9672ecd29164d2bfdbf6172deb1ca9b285fb49b86776d059f65d3c8",
+   "source_sha256": "b0545f1f7581404c52ddde267c8b099664aa003fd6c28e54d590625ddba8abbe",
+   "span": null
+  },
+  "c7636a494434": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "b10d1bbfac2a5e12892de1ee312779893e7aeb5e5a27ee319e419447639764a2",
+   "span": null
+  },
+  "b4a14ede9f5e": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "ff4869493d041a88845f562660cc545863ea9211fbc9d61d6266b0dafdfca9d3",
+   "span": null
+  },
+  "f96e049e809c": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "eed649244f56": {
+   "rule": "ruby.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "88256f5ff9672ecd29164d2bfdbf6172deb1ca9b285fb49b86776d059f65d3c8",
+   "source_sha256": "e03c305b6e6ca1c77009e4fb23a2d27e6505c193553a3d1b8438bded5026304d",
+   "span": null
+  },
+  "226b86d108a9": {
+   "rule": "go.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "dc4ccdca0abe404cc7bc38f79db88c73f4d1e82f24476b455b3fc144b79e34d2",
+   "source_sha256": "5b7f41f96942d12cfb75a81ef728a0f2289fbcfb152143c4a1b292d709388cfd",
+   "span": null
+  },
+  "8c9b47251e96": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "61f0a050ed02429b2161b64a888851852b999d79dc7f292e9b8e79d90cab73ff",
+   "span": null
+  },
+  "b2f160984fea": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "8eebdc8802bb5a70570f12c5fd4d9e3dd5c11a1088bc5304a8f7c9a8908ee075",
+   "span": null
+  },
+  "b2ceccb9f900": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "b59dd4b8fc0f04e0a4c5ea6a0904a6e7ab87ba1141742e0e0fd27d595ff20660",
+   "span": null
+  },
+  "b66a7bfae918": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "7486e78a274f": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "b0ec5b644abf2efc50492824bcb72e4842a5ded37f7582223d6254c45b8e01ef",
+   "span": null
+  },
+  "05cac59e44d0": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": null
+  },
+  "d8807b90c62d": {
+   "rule": "ruby.parameter-shell-command",
+   "on_fix_hunk": false,
+   "rule_revision": "c129e261883da52b3f0d3ae66225714ba6c041e3317f8dc9fec0f1f2a4facbb4",
+   "source_sha256": "7300b4e31f745ffd50d93fc7e0e183f6e7a23227773fe0dc4233d5502d2a0a3f",
+   "span": null
+  },
+  "1f63fbb6d88d": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "95ad0948cb3f": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "e65d6123324f7bc7e8f3e8c4c6b44600b6e996d48aa0c7f972e1107709492d09",
+   "span": null
+  },
+  "5fc4671e840b": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "9e22e3520bc772305ca04713a080136b47fd0697b3e3711ef04b23e01c81b68c",
+   "span": null
+  },
+  "e7d08f19619e": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "d68abd2aec4f": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "46cae5629778": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "bbf4be667799ad3c4fde22afa1bab4aedc00cf16eea5db5a1b3ed19ad85e7e32",
+   "span": null
+  },
+  "9e7b2805ea60": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "de08d1cecf0d": {
+   "rule": "ruby.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "88256f5ff9672ecd29164d2bfdbf6172deb1ca9b285fb49b86776d059f65d3c8",
+   "source_sha256": "36c0727de0c7733fc9f0df7830b559a5680f00ee07c8b71dd498bdff0b680b5d",
+   "span": null
+  },
+  "117716a010ba": {
+   "rule": "go.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "acc9e1243a44c86d869218e65662b94484bed2587076516231fb25d4e88bd529",
+   "source_sha256": "f1e95cd494f3333cffe7c209893663e0a2f06fd4340a7bcbf3d73cdda97afcd9",
+   "span": null
+  },
+  "dab119a705e8": {
+   "rule": "go.archive-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "9992ac168fd956463b565a87c5be3621c83cf52f2d74de4c96fa3fd305296d2e",
+   "source_sha256": "5b47f148dabfc1c1be13b95a4705f0156b60ccbae17dd8eb2911d7aa7bbb741a",
+   "span": null
+  },
+  "6cdc1f564f3f": {
+   "rule": "ruby.disabled-tls-verification",
+   "on_fix_hunk": true,
+   "rule_revision": "6edc00c1e24a5a06243e25a52c0d0c5ccc3ed55216311f57cd0ba457dd343a3e",
+   "source_sha256": "f20ec624d797e1f43af35b1f0a465c8213058083ffa48e8a840d2a13e594997c",
+   "span": null
+  },
+  "7d8b4b07da09": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "1be4b6145a1a": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "577ad1855321c4bedb5cba6452c71d341fe9380de5fc0dda7c9004e173c17b94",
+   "span": null
+  },
+  "f19ef48db750": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "40f6404fcf3578ad0adeb24cb547ad2d0c6e2537d40950d9c541513e2293d2bf",
+   "span": null
+  },
+  "cdab687c66eb": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "53eb22e63f4fd6a17c80545411a72ce7f83fa0faf50e7222f210ad8dffaa636b",
+   "span": null
+  },
+  "26cc3158dd01": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "6ab2709e404c90e3177c0bedd13d03e6e0831ebfdae29f1d2e018c373885f1f4",
+   "span": null
+  },
+  "cd7df1119cbb": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "bbf4be667799ad3c4fde22afa1bab4aedc00cf16eea5db5a1b3ed19ad85e7e32",
+   "span": null
+  },
+  "b32dc56a0ab0": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "a71e4ce5713712e6605f5c6fc7ebbec9878d083bf78bdd294c16dae34051dec2",
+   "span": null
+  },
+  "420a9c7e370f": {
+   "rule": "javascript.request-sql-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "145b82c77d965add4cb371958c92737f953dce44a76f730973be3306e4198e48",
+   "source_sha256": "0a2c6225c8b000836bbcdde7757db2fce6371933a243d44dc6f5ac4d179938da",
+   "span": null
+  },
+  "3191d0cf41b7": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "5eb1d298c59f5437b6c326a6c8f0642c1178f4614e3de1ee53357beb4f815d97",
+   "span": null
+  },
+  "144262148eb9": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "bbf4be667799ad3c4fde22afa1bab4aedc00cf16eea5db5a1b3ed19ad85e7e32",
+   "span": null
+  },
+  "6653c1e747e6": {
+   "rule": "php.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "b499b3f41541092e2263ef7e3449313a5185f443c564fd31ee46b4d1df80b701",
+   "source_sha256": "05b43d42e518daabba5c38191ed091f7007d9c5d9b1fc7f99fbae0c0df8c0df9",
+   "span": null
+  },
+  "ce0f8ce4483d": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "1af8904e3c336ba32460d6c442e657baa0930c571bc8c5b34b3bcae09b73f6a8",
+   "span": null
+  },
+  "e642ed043333": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "4d2a9b84e5545e5628cfe2917a00660be54a1cc36a4cd026e9be316ad958a695",
+   "span": null
+  },
+  "3fda44c5f3aa": {
+   "rule": "go.tls-peer-not-verified",
+   "on_fix_hunk": true,
+   "rule_revision": "ef0accea1f689004f3d10b9c133d6613f3cee699e115cc1aa46d93b95fe24758",
+   "source_sha256": "698c2f25f518242efb29451f79a64c7dc91c575a6782ffae70fcdd1280da04a5",
+   "span": null
+  },
+  "ba83bd4ed4e1": {
+   "rule": "go.disabled-tls-verification",
+   "on_fix_hunk": true,
+   "rule_revision": "fb847bf8f4fcf8857f47b17a51f3656a96aa8339f33623a5d9fb26e58b357b6e",
+   "source_sha256": "698c2f25f518242efb29451f79a64c7dc91c575a6782ffae70fcdd1280da04a5",
+   "span": null
+  },
+  "e79d62161ba1": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "9ff5ce0756f5d15c959e9da84b763d4c3fd4baf2784904a8dae606ca162afa9b",
+   "span": null
+  },
+  "89cd761ae7fb": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": null
+  },
+  "f8f6686248de": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": null
+  },
+  "ffdf994ccd8e": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "3b824aa721d874aba1f671ecd6a4c469102f9654eadee876a8caf9321b5d5386",
+   "span": null
+  },
+  "c275a1055677": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": null
+  },
+  "376e75d469d1": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "5d6ce1e6f423209e2a73f18443b9af22fcb6594a5c26635b27847cd7604cfe7f",
+   "span": null
+  },
+  "d2d206f03f33": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "8e4ef5855edc": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "53eb22e63f4fd6a17c80545411a72ce7f83fa0faf50e7222f210ad8dffaa636b",
+   "span": null
+  },
+  "efd0aa7202a4": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": null
+  },
+  "25541ee48a6d": {
+   "rule": "go.tls-client-cert-requested-not-verified",
+   "on_fix_hunk": true,
+   "rule_revision": "9983417d83526380f3d201c525419b77c3c8b7aa3e87fc478984c03fd43aa45a",
+   "source_sha256": "159f8708d5a6f1a75733ab038466fbde0c95aceea141ac91ecfd5db7b3318bea",
+   "span": null
+  },
+  "3a9c0aa3983b": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "0a64db695694088df56097ef666fc02e183da983ae72dce6975e0d01f509882f",
+   "span": null
+  },
+  "3c6462f513ef": {
+   "rule": "php.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "a865ef299d54d07a5d3011d12b362300247764dbb6e9323c057ed6bb9dd5aa0e",
+   "source_sha256": "2ff80d94dac2042447b8735697651eea46d4fac261802f30f830ef5bba51b6e6",
+   "span": null
+  },
+  "279f9eaccb27": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "29faf6487683272f76cf05c3294748afd03043341fa5edba51a3a7554e1d32e8",
+   "span": null
+  },
+  "5695cd8f1c7b": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+   "span": null
+  },
+  "2825179f8667": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "577ad1855321c4bedb5cba6452c71d341fe9380de5fc0dda7c9004e173c17b94",
+   "span": null
+  },
+  "9763cb2b3618": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "0e70fd3e92cf66fbc798818eee174f3839d27617719ede716080388dbb391121",
+   "span": null
+  },
+  "7ff39312f945": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "c51e37967f75": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "9fc2cab580af": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "a35c355d0665cb608127853d8ff25bc264dcc832c688511b6d4f2bbcd49c482d",
+   "span": null
+  },
+  "9a9bb9f6a878": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "b5b806efccace8bcef9b3dae73c88e635cc350166387fe0ed9af5f2840faa780",
+   "span": null
+  },
+  "5fa84313d3db": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "1edb84016d3ce844b18a7499a5ba7c4002edeb777c30f1ad1b78dc35e7031dfc",
+   "span": null
+  },
+  "0a3255e053eb": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "bbf4be667799ad3c4fde22afa1bab4aedc00cf16eea5db5a1b3ed19ad85e7e32",
+   "span": null
+  },
+  "d835da2764fd": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "fce245ab63d8": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "4ecf9513a98a398d7143450b1799b34ae912affca5e332c160e1bb6fb4d026d2",
+   "span": null
+  },
+  "1c26bd9fba66": {
+   "rule": "python.disabled-tls-verification",
+   "on_fix_hunk": false,
+   "rule_revision": "606a0825a9961c0c552ed90cc0b896eb4c98d37aee09295dab043da13b77f646",
+   "source_sha256": "66806709a3ee08d2c547ac3b2b8ca4313d64071b42f8a55b01351b897c4270de",
+   "span": null
+  },
+  "e5165d54c100": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "afe776177c96": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "6ea786a20138": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "3ef287d90e3a65a37daccf0afb7712dfe715f442ae6e2dce86e44b6995c8c301",
+   "span": null
+  },
+  "de5280e46a25": {
+   "rule": "php.archive-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcf6fd7db2ea392efaefecf7b0208ad63e8fbaf37c66e96e0335e618012553ad",
+   "source_sha256": "d06a053c26f7918a179ead518f70d79d60c2211bcbe751185b95cead8a8af22e",
+   "span": null
+  },
+  "e194ec794d29": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "3bc5970491b4": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": null
+  },
+  "7b3562a93a24": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "cb6228cbef26bf13811b61da72145cd22d0207fd40f0a2a6611b3d90c8e6712a",
+   "span": null
+  },
+  "9f6770ba9f29": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "1af8904e3c336ba32460d6c442e657baa0930c571bc8c5b34b3bcae09b73f6a8",
+   "span": null
+  },
+  "d706e93a0b7f": {
+   "rule": "ruby.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "88256f5ff9672ecd29164d2bfdbf6172deb1ca9b285fb49b86776d059f65d3c8",
+   "source_sha256": "b0545f1f7581404c52ddde267c8b099664aa003fd6c28e54d590625ddba8abbe",
+   "span": null
+  },
+  "2ae85cbcf3bc": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "fdfbd6bece4004125a97db06ab156a7566de24fc59eacab14e070c3d0a262fa0",
+   "span": null
+  },
+  "aa528d7a38d3": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "db35ea78827cdf851870303c51d1132dea54eb827710c5b708419e927d8cb984",
+   "span": null
+  },
+  "446a6ce1e165": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "4e6fe0717c0d794c92465f6cbc42f1d667fb0e53c9b0db28c0cd08ab1a16a6b9",
+   "span": null
+  },
+  "4cbf06d9e7a0": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "3cbf9918752290263c58638fcd2c6901f0edb61cd1db7b14cfc2a0a94c49bd23",
+   "span": null
+  },
+  "0eccfdf73233": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "d265aae4eb8b": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "2fbdac8b45846ae33b9ec05064c91b3a2f74ed4c8edaa77182d592769c314f58",
+   "span": null
+  },
+  "eccbf75bfd55": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "59d6f31eaae01d715dd6b01a6937ca93bd016351b1bd33ee6798adc15194a91d",
+   "span": null
+  },
+  "7aaf86b1dbd2": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "35fc0e0c58898cb69004b3c721584ba3f94446e612098d015f5a1870121eecd4",
+   "span": null
+  },
+  "b4b1242c91a1": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "da22c1d9d7660d389f8245bb9d5060c2ed7db2ff7ea2e163a0483b518783aeaf",
+   "span": null
+  },
+  "a5986f8a0d31": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "08d7a5999720cc90ed79d25689e8af3f7d9624341f3ed61eb2df0d8fe1e98437",
+   "span": null
+  },
+  "cf0955a86f25": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "db720c730f325d332a41ddecf319aafafc213b31b13441db7037d3891f6914d5",
+   "span": null
+  },
+  "b49eda323c2d": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "22c1ab1c2f63f1dd768b51f23a46497f0bcb5242a957e9df01420add80d05a8e",
+   "span": null
+  },
+  "07dcb12fa493": {
+   "rule": "php.parameter-shell-command",
+   "on_fix_hunk": false,
+   "rule_revision": "a865ef299d54d07a5d3011d12b362300247764dbb6e9323c057ed6bb9dd5aa0e",
+   "source_sha256": "2d16aea0aba914933c3df595e56bc4b38b4164e1b184dd62c5ac31e176c966c9",
+   "span": null
+  },
+  "542d6d07dec1": {
+   "rule": "php.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "b499b3f41541092e2263ef7e3449313a5185f443c564fd31ee46b4d1df80b701",
+   "source_sha256": "071c5a58c98db7a88ddd729c34e91a2d157e6761f4e3fd0f736d19e952c1cabb",
+   "span": null
+  },
+  "5d00cdb5e7f4": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "2fbdac8b45846ae33b9ec05064c91b3a2f74ed4c8edaa77182d592769c314f58",
+   "span": null
+  },
+  "f598dc0af297": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "549c2085c7bc": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "4a2d92bd5712": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "4f8068bb6e30191808609e3f2a890d8e46d6b0192ae0de371caef39524cda654",
+   "span": null
+  },
+  "5185029072a9": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "c301f1566f1b50f7413a0d30e720e554b6f68699fdefc02c49db54d5e9c03490",
+   "span": null
+  },
+  "d62dfc7207bf": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "bf33a7e06967eb4d19c4a42a361f33a83fba7373bdada857bcccce13e65f1daa",
+   "span": null
+  },
+  "f4288c1d8486": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "2fbdac8b45846ae33b9ec05064c91b3a2f74ed4c8edaa77182d592769c314f58",
+   "span": null
+  },
+  "682b9a8d0016": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "3ef287d90e3a65a37daccf0afb7712dfe715f442ae6e2dce86e44b6995c8c301",
+   "span": null
+  },
+  "7cf6e0f7afac": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "9212690afbf3b00b0dcb2354c83146ba43f98c841648cc249cf318ea1c357489",
+   "span": null
+  },
+  "c7d9d27fb25e": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "b5531df6c92f3622511d74461897d51d7a93583975f33771c4fca0b682a7030a",
+   "span": null
+  },
+  "d387602d2a7d": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "363f7bb3ebde4eca1d2e6c886c7ecb24fdea182f9de3cdd12b512b8cdb2296df",
+   "span": null
+  },
+  "ff0d88cbae96": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "6e7eccbd17547fd18469a8bcdee2a7585a02f77dffe4d75e157bb5c808d4fb2b",
+   "span": null
+  },
+  "439a54db7fde": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "33106efdc1fe84c76b6ca8aee0edeb47c7a7bb176ed9804500a45caea6a67dab",
+   "span": null
+  },
+  "da39a3546f12": {
+   "rule": "javascript.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "115d3dfa5671c0e3a2ed298fc2bf6ee379375b657b81c8aa6bb2214fbd67edf7",
+   "source_sha256": "4b921380a34e14e3da551e74520e3807a068fefd7adf2013df5caf5fc8b7a0f4",
+   "span": null
+  },
+  "c1b2e1abdf30": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "c9b61d8007fa51229f59c37605683a814cca3d9dd42a694ac6f2bc27a6732d4f",
+   "span": null
+  },
+  "f570a1961877": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "45ffef52b2734566550c0c3d6e3449fdbd2c29260574de478ae090dff59f5336",
+   "span": null
+  },
+  "271a65f04bd1": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "1c6c8eb28b5d730f76adca1d2d74204979dba3383cb115eaed4b85822c4676dc",
+   "span": null
+  },
+  "7c57ec2c39db": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "7aa20de4e0bc0b88e31b2244a61a2732a217a7b37747d3500c4ef7997ea6e269",
+   "span": null
+  },
+  "3ee9028380d3": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "0b8a2b30c114cab7125bef970c0f94f37e5e3c39ca38fceda39c90584669cbc5",
+   "span": null
+  },
+  "53403b88b3fd": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "36092d2bab3e7740d0ef0a7856b658f6c13bc5e27b30a3bcbf32e153b6953e67",
+   "span": null
+  },
+  "1cc298d84f75": {
+   "rule": "python.tarfile-extractall-without-filter",
+   "on_fix_hunk": true,
+   "rule_revision": "9f82834c495a6112072fb8558540a7ff60766ba1a72e53683c15acf377e424d6",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "ecc9a75f6da1": {
+   "rule": "go.archive-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "9992ac168fd956463b565a87c5be3621c83cf52f2d74de4c96fa3fd305296d2e",
+   "source_sha256": "8f04a426f7493dbcf1e862fd53f314f5c1e7d5b405bc44f872330a148efe7dc4",
+   "span": null
+  },
+  "3ef53dddba3e": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "45ffef52b2734566550c0c3d6e3449fdbd2c29260574de478ae090dff59f5336",
+   "span": null
+  },
+  "f94bebea41c2": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "a55f8f64998cb146a4988b8c6ae66b3bd86e20bc1b571091fc55afbd12868712",
+   "source_sha256": "6ab2709e404c90e3177c0bedd13d03e6e0831ebfdae29f1d2e018c373885f1f4",
+   "span": null
+  },
+  "62f36109dab0": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "3ea28943c14f5a196ad64667729d8cd71fef03bb0ef068508453278a7262ca9f",
+   "span": null
+  },
+  "01fcda6d3761": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "297ade6769f14219b7dba6a520e54cefaf256676b0ec55d5f8cf224642e41830",
+   "span": null
+  },
+  "d4b2bac77b45": {
+   "rule": "go.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "acc9e1243a44c86d869218e65662b94484bed2587076516231fb25d4e88bd529",
+   "source_sha256": "f1e95cd494f3333cffe7c209893663e0a2f06fd4340a7bcbf3d73cdda97afcd9",
+   "span": null
+  },
+  "8ca05ff6a0b8": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "858112ce9ccf": {
+   "rule": "javascript.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "115d3dfa5671c0e3a2ed298fc2bf6ee379375b657b81c8aa6bb2214fbd67edf7",
+   "source_sha256": "4b921380a34e14e3da551e74520e3807a068fefd7adf2013df5caf5fc8b7a0f4",
+   "span": null
+  },
+  "d30c062aff0b": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "dab452a74a0c95f81ba0dc69c32e78db37a70f46875843f08c15ccedf9b8bfb1",
+   "span": null
+  },
+  "369c5da0819e": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "fdfbd6bece4004125a97db06ab156a7566de24fc59eacab14e070c3d0a262fa0",
+   "span": null
+  },
+  "fc6bba679950": {
+   "rule": "python.tarfile-extractall-without-filter",
+   "on_fix_hunk": true,
+   "rule_revision": "9f82834c495a6112072fb8558540a7ff60766ba1a72e53683c15acf377e424d6",
+   "source_sha256": "f898bf194f8d2ef1b2c58ace16147cd52627e04eb292215c665df985143d73a0",
+   "span": null
+  },
+  "53e2794f1638": {
+   "rule": "ruby.parameter-shell-command",
+   "on_fix_hunk": false,
+   "rule_revision": "c129e261883da52b3f0d3ae66225714ba6c041e3317f8dc9fec0f1f2a4facbb4",
+   "source_sha256": "7300b4e31f745ffd50d93fc7e0e183f6e7a23227773fe0dc4233d5502d2a0a3f",
+   "span": null
+  },
+  "d27dfc18073b": {
+   "rule": "php.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "b499b3f41541092e2263ef7e3449313a5185f443c564fd31ee46b4d1df80b701",
+   "source_sha256": "42286d6ef2f80ce10b714e6132b8a395278aed5b0a09c40ee8f72d33c9648331",
+   "span": null
+  },
+  "a918ae3a32cc": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "08cc5f47d277a4335de76faaa7c06fdf17de6940bc8eab4c13803cbd89ad0972",
+   "span": null
+  },
+  "02d652ac9ce8": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "b418b2e7085753e5713b8a813636a8f11662a5bea324a2b5e52f16afbf479f0b",
+   "span": null
+  },
+  "61dd85ef5cad": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "00cf5f325424b8ce1ab0391d853a5226888880da7b9823962a5ee0716db13574",
+   "span": null
+  },
+  "494a84b151ea": {
+   "rule": "ruby.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "88256f5ff9672ecd29164d2bfdbf6172deb1ca9b285fb49b86776d059f65d3c8",
+   "source_sha256": "b0545f1f7581404c52ddde267c8b099664aa003fd6c28e54d590625ddba8abbe",
+   "span": null
+  },
+  "7bab11306aa3": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "ecd045f1f2d9fe2c2a3069a032b4b6221e0436299bd2a227e93bc354158d4699",
+   "span": null
+  },
+  "b35f5d78c5c7": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "db451173907ebe24864fbf7c99a9b1b2f755d7ad26e907cf00f3dc42817513e8",
+   "span": null
+  },
+  "c94a9ed27dc1": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "00cf5f325424b8ce1ab0391d853a5226888880da7b9823962a5ee0716db13574",
+   "span": null
+  },
+  "8db09a46093e": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "7efe710edb8a63e4898fc5583e1783232534a519edfa078777969edc44db627d",
+   "span": null
+  },
+  "7416c9a569df": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "577ad1855321c4bedb5cba6452c71d341fe9380de5fc0dda7c9004e173c17b94",
+   "span": null
+  },
+  "6d4c3e11a2b7": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "27e7326028095a438779998257e2c0b41dc23799b5f4dd018b9919e7490c1f56",
+   "span": null
+  },
+  "4df1a5e8d8f3": {
+   "rule": "python.disabled-tls-verification",
+   "on_fix_hunk": false,
+   "rule_revision": "606a0825a9961c0c552ed90cc0b896eb4c98d37aee09295dab043da13b77f646",
+   "source_sha256": "957bdf3977e66cf21f13bbe87ff62ce79baf338d96ec6dae9ece4dbe901a04a8",
+   "span": null
+  },
+  "6fa517730368": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "4b14332b542dc6d41d878e572854ae9af1f668d18648260020d85f1f6eb96154",
+   "span": null
+  },
+  "90a9e349d732": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "cb6228cbef26bf13811b61da72145cd22d0207fd40f0a2a6611b3d90c8e6712a",
+   "span": null
+  },
+  "e9c9561318e1": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "5e76e8eaedf3ac711b7238d0b80b17f0c6d0409c4cf820cf4d53b897d1f41e5b",
+   "span": null
+  },
+  "e9a1f77f5ff4": {
+   "rule": "go.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "acc9e1243a44c86d869218e65662b94484bed2587076516231fb25d4e88bd529",
+   "source_sha256": "f1e95cd494f3333cffe7c209893663e0a2f06fd4340a7bcbf3d73cdda97afcd9",
+   "span": null
+  },
+  "c01716d9f01c": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "19199171566df903b8abf5e3a31dde2600ba4563fed47eb9cfbebfc8be2393db",
+   "span": null
+  },
+  "8966a49d8f94": {
+   "rule": "ruby.parameter-shell-command",
+   "on_fix_hunk": false,
+   "rule_revision": "c129e261883da52b3f0d3ae66225714ba6c041e3317f8dc9fec0f1f2a4facbb4",
+   "source_sha256": "7300b4e31f745ffd50d93fc7e0e183f6e7a23227773fe0dc4233d5502d2a0a3f",
+   "span": null
+  },
+  "d6f5612c9e91": {
+   "rule": "go.archive-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "9992ac168fd956463b565a87c5be3621c83cf52f2d74de4c96fa3fd305296d2e",
+   "source_sha256": "8f04a426f7493dbcf1e862fd53f314f5c1e7d5b405bc44f872330a148efe7dc4",
+   "span": null
+  },
+  "cfb31559ecab": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "b3fad859ae7a1c03385cfa9731589757561693935f741a7cb4832c7e1f9224a8",
+   "span": null
+  },
+  "d4e01a8f3cd3": {
+   "rule": "python.tarfile-extractall-without-filter",
+   "on_fix_hunk": true,
+   "rule_revision": "9f82834c495a6112072fb8558540a7ff60766ba1a72e53683c15acf377e424d6",
+   "source_sha256": "df3d2daa296239857f36eeef30f2d42f59186ce1fb380694d3ac57c556a5c156",
+   "span": null
+  },
+  "f57e35101539": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "40f6404fcf3578ad0adeb24cb547ad2d0c6e2537d40950d9c541513e2293d2bf",
+   "span": null
+  },
+  "c1d07f968fd9": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "b418b2e7085753e5713b8a813636a8f11662a5bea324a2b5e52f16afbf479f0b",
+   "span": null
+  },
+  "4e850bfa7d1f": {
+   "rule": "go.tls-peer-not-verified",
+   "on_fix_hunk": true,
+   "rule_revision": "ef0accea1f689004f3d10b9c133d6613f3cee699e115cc1aa46d93b95fe24758",
+   "source_sha256": "8ff17befd38665c510401e38ff8d95f624f64bd8c0e68d98ebc031fa0070db59",
+   "span": null
+  },
+  "c31755757f3a": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "270cc719fa72089dc8012f1c36f30d5707591a034b18fa8c90621855e04742f4",
+   "span": null
+  },
+  "2d7aa9a10f43": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "a2f8a4bdf4a2694526046ec720931f98d3b9d0ce1f8f72c22b824511e90712b7",
+   "span": null
+  },
+  "9347f73170c9": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "b5b806efccace8bcef9b3dae73c88e635cc350166387fe0ed9af5f2840faa780",
+   "span": null
+  },
+  "d1104f466ef1": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "3d4ba36e48f352fc6bcbb073c7ccbe5f950e31f0fab4ab033cfe5d8f4b63559f",
+   "span": null
+  },
+  "52bc2075d437": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "0e70fd3e92cf66fbc798818eee174f3839d27617719ede716080388dbb391121",
+   "span": null
+  },
+  "8a150d166a03": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "1717d8944c7a1edb8ff394dbb23d45ddcadfd6ad0bcd2341521e793932dd93e1",
+   "span": null
+  },
+  "8014bba5d413": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "f3dfde91cbac": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "2fbdac8b45846ae33b9ec05064c91b3a2f74ed4c8edaa77182d592769c314f58",
+   "span": null
+  },
+  "63b07d55edae": {
+   "rule": "python.tarfile-extractall-without-filter",
+   "on_fix_hunk": true,
+   "rule_revision": "9f82834c495a6112072fb8558540a7ff60766ba1a72e53683c15acf377e424d6",
+   "source_sha256": "957bdf3977e66cf21f13bbe87ff62ce79baf338d96ec6dae9ece4dbe901a04a8",
+   "span": null
+  },
+  "51719922fce2": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "f129118ede69": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "61f0a050ed02429b2161b64a888851852b999d79dc7f292e9b8e79d90cab73ff",
+   "span": null
+  },
+  "5b3c0a9f690d": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "abbeaece0022": {
+   "rule": "java.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "c3d7a16d09b71aad3f1c3d78dd64a35368ff4f1f28d65ecfa01a58bd9dad6f1a",
+   "source_sha256": "e987cd89a030a4f2da8c99d11b6ab0e3ada8ea493bcf6920ce5ba2dea448351e",
+   "span": null
+  },
+  "ac772ce57f0d": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "e839afda0577": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "7148d5acb15926714da33c0a1130b0febbf10d02b00323feb353574c6d99d48a",
+   "span": null
+  },
+  "59dacdb6d339": {
+   "rule": "php.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "b499b3f41541092e2263ef7e3449313a5185f443c564fd31ee46b4d1df80b701",
+   "source_sha256": "42286d6ef2f80ce10b714e6132b8a395278aed5b0a09c40ee8f72d33c9648331",
+   "span": null
+  },
+  "3d2167d7bfe1": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "35fc0e0c58898cb69004b3c721584ba3f94446e612098d015f5a1870121eecd4",
+   "span": null
+  },
+  "1046e99b9bd9": {
+   "rule": "go.archive-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "9992ac168fd956463b565a87c5be3621c83cf52f2d74de4c96fa3fd305296d2e",
+   "source_sha256": "8f04a426f7493dbcf1e862fd53f314f5c1e7d5b405bc44f872330a148efe7dc4",
+   "span": null
+  },
+  "cbfce1245720": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "0e70fd3e92cf66fbc798818eee174f3839d27617719ede716080388dbb391121",
+   "span": null
+  },
+  "5b698f40bf8a": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "f5a75e55e983": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "a2f8a4bdf4a2694526046ec720931f98d3b9d0ce1f8f72c22b824511e90712b7",
+   "span": null
+  },
+  "86a1b0b9f3b8": {
+   "rule": "go.tls-client-cert-requested-not-verified",
+   "on_fix_hunk": false,
+   "rule_revision": "9983417d83526380f3d201c525419b77c3c8b7aa3e87fc478984c03fd43aa45a",
+   "source_sha256": "1057e908fcb158f561969d7dde72eff72e7930d77a98669d29ef5a974cae9e25",
+   "span": null
+  },
+  "a73e083fb76f": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "aafc47072131618d94304e15d1f15b469caede73b7273eb2843b0ba85723db5c",
+   "span": null
+  },
+  "252b0810d01d": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "1edb84016d3ce844b18a7499a5ba7c4002edeb777c30f1ad1b78dc35e7031dfc",
+   "span": null
+  },
+  "9b83b7247cfc": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "00cf5f325424b8ce1ab0391d853a5226888880da7b9823962a5ee0716db13574",
+   "span": null
+  },
+  "8a4c52fb4ade": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "1e13fa97155d08a3ecc9106c556ed3e4cf1178ca5d314933f82181e350206538",
+   "span": null
+  },
+  "b83ba0f98c4c": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "0e7c1f6bfa54fedc9fb5d0b84d9e2c15955138ccb54b73159d663a4effe745b1",
+   "span": null
+  },
+  "b86011c9b876": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "bbf4be667799ad3c4fde22afa1bab4aedc00cf16eea5db5a1b3ed19ad85e7e32",
+   "span": null
+  },
+  "93cdf14b2a5e": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "e65d6123324f7bc7e8f3e8c4c6b44600b6e996d48aa0c7f972e1107709492d09",
+   "span": null
+  },
+  "aa9cf19a2213": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "e65d6123324f7bc7e8f3e8c4c6b44600b6e996d48aa0c7f972e1107709492d09",
+   "span": null
+  },
+  "09be60896fe9": {
+   "rule": "go.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "99e663671d3a366cf7c0e3158d4909bb4b61ddd6273ddb164ef95a8c6b84e065",
+   "source_sha256": "61f0a050ed02429b2161b64a888851852b999d79dc7f292e9b8e79d90cab73ff",
+   "span": null
+  },
+  "5cbba033978a": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "5cc282028d525e1d6c145864ee7e025bed63a4cc4ea42d15d3cb123272fae7d1",
+   "span": null
+  },
+  "4ee1238eb3b4": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": false,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "97b438fd4d7e696299023a44d0398b01d7ec41fe6ab905732c16b0224a30ee0a",
+   "span": null
+  },
+  "7fd8f5e79292": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "c9b61d8007fa51229f59c37605683a814cca3d9dd42a694ac6f2bc27a6732d4f",
+   "span": null
+  },
+  "4fdde3f3d15c": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "rule_revision": "40854485adbdf56e6343dfcfc0479ccdf512566c6da328490e0b4ea8dbd3b592",
+   "source_sha256": "35fc0e0c58898cb69004b3c721584ba3f94446e612098d015f5a1870121eecd4",
+   "span": null
+  },
+  "969fb53d7023": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "ed5fb8cad4fc1dba1047d31a8db8e7a72d9dff7ced1fe882f346bfaf905b86e7",
+   "span": null
+  },
+  "c861b73b62ed": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": true,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "12baad7339c35db2d46a2159c856ec48c5f6cf18a25063abf98689f70ae9eaac",
+   "span": null
+  },
+  "282487f38237": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": true,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "26d6670b2c5fb5ebc2f12ef3e81e4d8dcf8b368ae6e6c3e6a3f64a2cd875c987",
+   "span": null
+  },
+  "b4a474f98b8b": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "1e13fa97155d08a3ecc9106c556ed3e4cf1178ca5d314933f82181e350206538",
+   "span": null
+  },
+  "b08d293cfde5": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "0b3feba66afa": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "65d4abc76799": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "a88b3af5bec0": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "221bd12363365f610699eb2e21191593a69d9ca82b0aac840f2cf7c08b4820c2",
+   "span": null
+  },
+  "23eb02f6428f": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "a36b4d59056afebb283bea8744237a5990e56f3f79452b102c831d4787cd48cb",
+   "span": null
+  },
+  "d4644e8555ac": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "1e13fa97155d08a3ecc9106c556ed3e4cf1178ca5d314933f82181e350206538",
+   "span": null
+  },
+  "9d46c36fa52f": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "7b1679c706d5": {
+   "rule": "javascript.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "115d3dfa5671c0e3a2ed298fc2bf6ee379375b657b81c8aa6bb2214fbd67edf7",
+   "source_sha256": "f381d9199eace049b8048d03362010765cf17374a72c2c6656e2757236c9b301",
+   "span": null
+  },
+  "3c4120feb2cc": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "c964b9a819c54460f4b9e2d9f18e818e5e1f9fa1965ab42078383b3208daef63",
+   "span": null
+  },
+  "5f6f87541061": {
+   "rule": "ruby.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "887a90aab99673087eae29a9eff0ed485614b25f1aa6d9f53edff6af0263661b",
+   "source_sha256": "bbf4be667799ad3c4fde22afa1bab4aedc00cf16eea5db5a1b3ed19ad85e7e32",
+   "span": null
+  },
+  "84f126df6904": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "fd7eb252663f1c365606b180aad645b9b65632070d1f07824e3fca22640bd068",
+   "span": null
+  },
+  "a3d48c96c1e6": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "ee0148e568fead7e86a3a46a02a9501cc4c23ac92ee90c5f72e7e3f67c6a09d9",
+   "span": null
+  },
+  "c49f6f6bbf6f": {
+   "rule": "javascript.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "fcdec1ec9c4426f408e103f4ad12e91e151f3909b7725114a0945db9c687a5e8",
+   "source_sha256": "1daaa313568f0db7f6e3240d51b7468c65444cb5eb3dd7717a1d37d704089ee5",
+   "span": null
+  },
+  "90c07a79604b": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "09e35d8a2d51b261ecbb5d20342d33eb26c2f85c87ea56660f19d17030b01440",
+   "source_sha256": "ff4869493d041a88845f562660cc545863ea9211fbc9d61d6266b0dafdfca9d3",
+   "span": null
+  },
+  "57853e748d83": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "0b8a2b30c114cab7125bef970c0f94f37e5e3c39ca38fceda39c90584669cbc5",
+   "span": null
+  },
+  "72c0a9dbab5a": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "2eeddfc8673e92c019d6ee57fbfcc49ecfe99ca87be297078472b7ff40bd3b9a",
+   "source_sha256": "f7e6fc3b758dc83839c93d11ca13da4d2d4adb59be41f928d9ec59be38d63972",
+   "span": null
+  },
+  "ba9c8420833d": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  },
+  "d90e67331541": {
+   "rule": "ruby.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "c129e261883da52b3f0d3ae66225714ba6c041e3317f8dc9fec0f1f2a4facbb4",
+   "source_sha256": "a8101cc05847ad36ec325bbe6ad8d96cc8dd661fa0dc217edd91edc4781ddb4f",
+   "span": null
+  },
+  "b777d3bdd936": {
+   "rule": "php.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "108cecfada907ecf17a1e95647f91960fd0b7b36393d4442723dfdc9f7b97bbd",
+   "source_sha256": "c9b61d8007fa51229f59c37605683a814cca3d9dd42a694ac6f2bc27a6732d4f",
+   "span": null
+  },
+  "be669b77ce22": {
+   "rule": "ruby.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "88256f5ff9672ecd29164d2bfdbf6172deb1ca9b285fb49b86776d059f65d3c8",
+   "source_sha256": "b0545f1f7581404c52ddde267c8b099664aa003fd6c28e54d590625ddba8abbe",
+   "span": null
+  },
+  "2dbaba973acd": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "rule_revision": "eec0f0e25f0e58928f35758fa9c3a6b73c34b44343dbbfb85f2caef604350f12",
+   "source_sha256": "8a032c5a6ae0b6e373090b403512e3352b42253eaa271916bf90dd0efe6ca093",
+   "span": null
+  },
+  "cfd6df94d224": {
+   "rule": "python.request-path-traversal",
+   "on_fix_hunk": false,
+   "rule_revision": "595589cd98e4683c85bdb813da0fd4e7cf6fd141cef27aa41b7a1b054e53d47f",
+   "source_sha256": "08cc5f47d277a4335de76faaa7c06fdf17de6940bc8eab4c13803cbd89ad0972",
+   "span": null
+  },
+  "64c9a4d523d1": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "9e22e3520bc772305ca04713a080136b47fd0697b3e3711ef04b23e01c81b68c",
+   "span": null
+  },
+  "3216f1f814d0": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "rule_revision": "49c7478c2cf01a16fdfbadc701bfb838ecb978e4d96f9632cef57962732a905c",
+   "source_sha256": "388b963fe73861cb83a2bbbd1882303feb2635fa3f507747be2fef7d97c32b02",
+   "span": null
+  },
+  "dad1b5eb5826": {
+   "rule": "python.parameter-sql-text",
+   "on_fix_hunk": false,
+   "rule_revision": "5abe8b5f0c185abe48908a1ccb2a0ee9847e4e1c4b547068198167efaa97387b",
+   "source_sha256": "d3db9e86d16e7f155b025856d9b9ba4beb4464851775f68634a35ed609bd2225",
+   "span": null
+  },
+  "2f6c11b86914": {
+   "rule": "javascript.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "115d3dfa5671c0e3a2ed298fc2bf6ee379375b657b81c8aa6bb2214fbd67edf7",
+   "source_sha256": "57dc34057c96830eba5318c8705dd8b77b42dc3fe4c6b7805a97222cabf756b2",
+   "span": null
+  },
+  "026e776aa710": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+   "span": null
+  },
+  "e5456bc92e34": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "rule_revision": "c8481cb91281527368f4165adbb82fa431154e208e907b384f5c09773dd2fb83",
+   "source_sha256": "8da810aa4f338aa75d1e78a8065c35cd8038cd6a048be9634f659c45ae72ab9d",
+   "span": null
+  },
+  "f18ebe26f65a": {
+   "rule": "php.request-html-injection",
+   "on_fix_hunk": false,
+   "rule_revision": "5d86c3d2c21440d04ec696462165b3886739491e372af7d1256e18ddf923f0ca",
+   "source_sha256": "d8ec24d8c80b85cef2e367729dbf201d5a98ba5313fbd98f8376152a9f99e082",
+   "span": null
+  }
+ },
+ "rules_sha256": "39647c891314aec03e7a0705639519c1cef8f1542c7cad92923940f03ea59d8a",
+ "note": "Sealed at packet build; rule_revision and source_sha256 were added from the packet ruleset (fe272509) and the scanned source files before unsealing."
+}

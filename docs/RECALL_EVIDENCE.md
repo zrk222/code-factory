@@ -123,3 +123,18 @@ case and scope. The result retains all registered advisories in each declared
 lane and scope, counts each linked advisory once in the combined result, and
 reports overlap between lanes. Legacy records report `NOT_MEASURED` for
 advisory-linked recall.
+
+
+## Blinded alert review
+
+Run `python scripts/verify_precision_gain.py review --help` for the `packet`,
+`judge`, `adjudicate`, `ledger`, and `check` commands. Keep the packet key
+private until both reviewers have submitted their labels. Each label file
+records its reviewer identity, the exact `packet_sha256`, and verdicts in
+packet order. The judge file records the same `packet_sha256` and a position,
+item, and verdict for each assigned disagreement. Use the original packet
+bytes when hashing and reviewing the packet.
+
+The confidence ledger reports rule-level results on the reviewed alert
+population. Distinct reviewer IDs record the participants. They do not
+establish independence of judgment.

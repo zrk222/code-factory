@@ -1,0 +1,294 @@
+{
+ "judge": "fable-5.2",
+ "judge_packet_sha256": "1aa13773d457983596ff9cf67955bd907a1911714a207180db829388db2f4ed5",
+ "verdicts": [
+  {
+   "position": 0,
+   "item": "c121311f70c5",
+   "verdict": "FP",
+   "reason": "msg is successTips/failTips from ult.value.copyCode (usedLanguageText language config, line 36), developer-supplied static text, not markdown or user content."
+  },
+  {
+   "position": 1,
+   "item": "ba9487e0c7b9",
+   "verdict": "TP",
+   "reason": "options.fontSize and options.fontWeight (lines 26-27) are interpolated into quoted SVG attributes with no escapeXml or numeric coercion, while the neighbouring option values are escaped; a string option value breaks out of the attribute."
+  },
+  {
+   "position": 2,
+   "item": "5dbd6d89d1ff",
+   "verdict": "FP",
+   "reason": "metaType[name].innerHTML is the script body the application developer declares in its meta config (script section); injecting it as script content is the API's purpose, not untrusted data reaching a sink."
+  },
+  {
+   "position": 3,
+   "item": "606e7d959d8b",
+   "verdict": "TP",
+   "reason": "str2, the text being diffed, is only JSON.stringify'd (double quotes) into 'printf ... | git hash-object' and run via shelljs exec, so $(...) or backticks in the input execute."
+  },
+  {
+   "position": 4,
+   "item": "96eb5f20f582",
+   "verdict": "FP",
+   "reason": "serveThumbnail's only caller (line 760) is the /assets handler, which rejects any requestPath containing '..' at line 701 before the join under TempDir/thumbnails/assets."
+  },
+  {
+   "position": 5,
+   "item": "bad875d6293c",
+   "verdict": "FP",
+   "reason": "input.sha is a commit hash (the function fetches a single commit and lists its parents); commit SHAs come from the CI provider/git as hex and, unlike branch names, are not attacker-chosen text."
+  },
+  {
+   "position": 6,
+   "item": "16f122fc004f",
+   "verdict": "TP",
+   "reason": "repoFileDir is `${ctx.workspacePath}/${parseGitUrl(repoUrl).filepath}` (line 93) from the user-supplied repoUrl action input with no resolveSafeChildPath or containment check before fs.writeFile."
+  },
+  {
+   "position": 7,
+   "item": "6a4afde2db72",
+   "verdict": "TP",
+   "reason": "When DOMParser fails, the unfiltered markup (chart text Highcharts treats as untrusted) is assigned to innerHTML of a div created in the live document before any allow-list filtering, so e.g. img onerror handlers fire."
+  },
+  {
+   "position": 8,
+   "item": "bfbe08cd450c",
+   "verdict": "FP",
+   "reason": "getTemplate is only called with hard-coded names ('guinea-pig.html', 'guinea-pig-scrollable.html', 'guinea-pig-app-banner.html', 'welcome.html'); no request data reaches templateName."
+  },
+  {
+   "position": 10,
+   "item": "b70592f060f2",
+   "verdict": "FP",
+   "reason": "dirtyPayload is parsed into a separate inert document from implementation.createDocument purely as the sanitizer's parsing step; nothing executes there and the tree is sanitized afterwards."
+  },
+  {
+   "position": 11,
+   "item": "3d4caed45da7",
+   "verdict": "TP",
+   "reason": "Request-templated file paths are resolved here and then only checked with resolvedPath.startsWith(environmentDirectory/staticBaseDir) (lines 2355, 2362) without a trailing separator, so '../' into a sibling directory sharing the prefix passes the check."
+  },
+  {
+   "position": 12,
+   "item": "b5b7017de8d9",
+   "verdict": "FP",
+   "reason": "AsyncRPCClient connects only to tcp://localhost:<port> of the engine server it was given (line 191) and unpickles replies that server produced with pickle.dumps; the attacker-reachable sink is the server's request loads, not this client reply path."
+  },
+  {
+   "position": 13,
+   "item": "d23200c1663b",
+   "verdict": "FP",
+   "reason": "AsyncRPCClient connects only to tcp://localhost:<port> of its own engine server (line 191) and unpickles replies that server produced with pickle.dumps; reply bytes are not attacker-supplied."
+  },
+  {
+   "position": 14,
+   "item": "d24890aadae6",
+   "verdict": "TP",
+   "reason": "_clone_repo validates only name (_validated_name in _module_abspath) while path is joined to working_tree_dir unchecked; in update() it is self.path taken from the (possibly hostile) repository's submodule entry, so a '..' path checks out outside the tree."
+  },
+  {
+   "position": 15,
+   "item": "34e43b5171fc",
+   "verdict": "TP",
+   "reason": "str1, the text being diffed, is only JSON.stringify'd (double quotes) into 'printf ... | git hash-object' and run via shelljs exec, so $(...) or backticks in the input execute."
+  },
+  {
+   "position": 16,
+   "item": "36b0839042d5",
+   "verdict": "FP",
+   "reason": "usedLanguageText/customIcon/editorId are developer-supplied editor configuration and prefix is a constant; no markdown content reaches this interpolation (tab labels and lang are escapeHtml'd elsewhere)."
+  },
+  {
+   "position": 17,
+   "item": "887b0e0a41e5",
+   "verdict": "FP",
+   "reason": "usedLanguageText/customIcon/editorId are developer-supplied editor configuration and prefix is a constant; no markdown content reaches this interpolation (tab labels and lang are escapeHtml'd elsewhere)."
+  },
+  {
+   "position": 18,
+   "item": "9113fe0d8df3",
+   "verdict": "TP",
+   "reason": "The stored rich-text description (cell.getValue()) is assigned to innerHTML of a div created by the live document; even detached, handlers such as <img onerror> run on assignment, so reading textContent afterwards does not make it safe."
+  },
+  {
+   "position": 19,
+   "item": "b6d3b6e5c9a2",
+   "verdict": "TP",
+   "reason": "parse() opens the caller-supplied modelFile and calls pickle_load without restricted=True, which is WarningUnpickler (picklesec.py): it only warns and then performs a full unrestricted pickle load."
+  },
+  {
+   "position": 22,
+   "item": "be83de90c058",
+   "verdict": "FP",
+   "reason": "node.asset.dataUrl is the data: URL the library's own parser builds from embedded attachment bytes (AttachmentAsset in types.ts), and both it and the label are escapeHtml'd, so the attribute cannot be broken out of."
+  },
+  {
+   "position": 23,
+   "item": "0ef50d78feab",
+   "verdict": "TP",
+   "reason": "getMergeBaseCommitSha passes input.head/input.base (branch refs, attacker-choosable via PR branch names, which may contain ; $() `) and the derived argos/<branch> refs unquoted into an execSync shell string with no validation."
+  },
+  {
+   "position": 24,
+   "item": "a67fb15d60d8",
+   "verdict": "TP",
+   "reason": "size.filename from the stored document is concatenated to staticDir and unlinked with no basename/containment check; the filename fields are only admin.readOnly/hidden in getBaseFields.ts, which does not stop API writes of '../' values."
+  },
+  {
+   "position": 25,
+   "item": "3b3a6256b622",
+   "verdict": "TP",
+   "reason": "downloadTitle is the Confluence attachment title with only spaces replaced (line 149) and mkdocsDir comes from the user repoUrl; both are concatenated into the path opened for writing with no basename/containment check."
+  },
+  {
+   "position": 27,
+   "item": "df6369aedf18",
+   "verdict": "TP",
+   "reason": "_clone_repo validates only name (_validated_name in _module_abspath) while path is joined to working_tree_dir unchecked; in update() it is self.path taken from the (possibly hostile) repository's submodule entry, so a '..' path checks out outside the tree."
+  },
+  {
+   "position": 28,
+   "item": "53f70c545e41",
+   "verdict": "FP",
+   "reason": "text is ult.value.copyCode.text from the injected usedLanguageText language config (line 36), developer-supplied static text, not markdown or user content."
+  },
+  {
+   "position": 29,
+   "item": "0ef50d78feab",
+   "verdict": "TP",
+   "reason": "getMergeBaseCommitSha passes input.head/input.base (branch refs, attacker-choosable via PR branch names, which may contain ; $() `) and the derived argos/<branch> refs unquoted into an execSync shell string with no validation."
+  },
+  {
+   "position": 30,
+   "item": "80067240e0bb",
+   "verdict": "FP",
+   "reason": "usedLanguageText/customIcon/editorId are developer-supplied editor configuration and prefix is a constant; no markdown content reaches this interpolation (tab labels and lang are escapeHtml'd elsewhere)."
+  },
+  {
+   "position": 31,
+   "item": "2f653553788e",
+   "verdict": "TP",
+   "reason": "getMergeBaseCommitSha passes input.head/input.base (branch refs, attacker-choosable via PR branch names, which may contain ; $() `) and the derived argos/<branch> refs unquoted into an execSync shell string with no validation."
+  },
+  {
+   "position": 32,
+   "item": "5b55151505df",
+   "verdict": "FP",
+   "reason": "data.noscript[name] is the raw noscript markup the application declares through the meta API and name is its config key; emitting it verbatim is the documented design."
+  },
+  {
+   "position": 33,
+   "item": "410ac142fca5",
+   "verdict": "TP",
+   "reason": "The output path concatenates workspacePath with filePathToMkdocs (from the user-supplied repoUrl, lines 88-91) and the Confluence title with no containment check, although helpers.ts in the same tree uses resolveSafeChildPath for the equivalent write."
+  },
+  {
+   "position": 34,
+   "item": "71414e42998c",
+   "verdict": "TP",
+   "reason": "doc.filename is concatenated to staticDir and unlinked with no basename/containment check; the filename field in getBaseFields.ts is only admin.readOnly/hidden with no access or validate rule, so an API client can store '../' values."
+  },
+  {
+   "position": 35,
+   "item": "2f653553788e",
+   "verdict": "TP",
+   "reason": "getMergeBaseCommitSha passes input.head/input.base (branch refs, attacker-choosable via PR branch names, which may contain ; $() `) and the derived argos/<branch> refs unquoted into an execSync shell string with no validation."
+  },
+  {
+   "position": 36,
+   "item": "b79c24025d07",
+   "verdict": "FP",
+   "reason": "The only caller passes prefixed(dep) (line 326): a build-manifest stylesheet path prefixed by configured paths or a depth-derived '../..' base, with fixed attribute strings; no request text is interpolated."
+  },
+  {
+   "position": 37,
+   "item": "ebe514b06a5b",
+   "verdict": "TP",
+   "reason": "getAttr (lines 149-153) emits att=\"val\" with no HTML escaping and getHead concatenates it into SSR head output; meta content/link href values are routinely filled from dynamic page data, so a quote breaks out of the attribute."
+  },
+  {
+   "position": 39,
+   "item": "6824d23c0f14",
+   "verdict": "TP",
+   "reason": "_load_model passes the model artifact path straight to statsmodels load_pickle (plain pickle) with no restriction; model artifacts are routinely pulled from shared tracking servers/registries, so a crafted artifact executes code."
+  },
+  {
+   "position": 40,
+   "item": "eae5173fdb9d",
+   "verdict": "TP",
+   "reason": "mkdirSync(recursive) is called on `${dirPath}/${filePathToMkdocs}docs/img` where filePathToMkdocs derives from the user-supplied repoUrl (lines 88-91) with no containment check."
+  },
+  {
+   "position": 42,
+   "item": "db5ffcbacff7",
+   "verdict": "FP",
+   "reason": "columns are the output of visitSelectColumnWithMetadata on a parsed AST, where identifiers go through printIdentifier/escapeClickHouseIdentifier and constants through context.addValue parameters; the line just joins those fragments."
+  },
+  {
+   "position": 43,
+   "item": "b7d92a742966",
+   "verdict": "TP",
+   "reason": "getMergeBaseCommitSha passes input.head/input.base (branch refs, attacker-choosable via PR branch names, which may contain ; $() `) and the derived argos/<branch> refs unquoted into an execSync shell string with no validation."
+  },
+  {
+   "position": 45,
+   "item": "32e582949803",
+   "verdict": "FP",
+   "reason": "dirtyPayload is parsed into a separate inert document from implementation.createDocument purely as the sanitizer's parsing step; nothing executes there and the tree is sanitized afterwards."
+  },
+  {
+   "position": 47,
+   "item": "ca76ef479d52",
+   "verdict": "FP",
+   "reason": "codeCodeText comes from usedLanguageTextRef.copyCode.text and copyBtnHtml from customIconRef.copy (lines 72-73), both developer configuration; the only markdown-derived value nearby (token info) is escapeHtml'd."
+  },
+  {
+   "position": 49,
+   "item": "cb21576d4da1",
+   "verdict": "FP",
+   "reason": "sha1/sha2 are checked against SHA_REGEX (lines 38-42) before use, and gitDir/options.flags are caller-configured git options rather than the diffed content."
+  },
+  {
+   "position": 50,
+   "item": "d7f1f65ed846",
+   "verdict": "FP",
+   "reason": "add_link_tag is only reached via add_preload with prefixed(file) for build-manifest fonts/modules and fixed attribute strings; base/assets are config or depth-derived relative segments, not request text."
+  },
+  {
+   "position": 51,
+   "item": "e766fee9fe20",
+   "verdict": "FP",
+   "reason": "codeCodeText comes from usedLanguageTextRef.copyCode.text and copyBtnHtml from customIconRef.copy (lines 72-73), both developer configuration, not markdown content."
+  },
+  {
+   "position": 52,
+   "item": "78b25ba978fd",
+   "verdict": "TP",
+   "reason": "downloadTitle is the Confluence attachment title with only spaces replaced (line 149) and mkdocsDir comes from the user repoUrl; both are concatenated into the createWriteStream path with no basename/containment check."
+  },
+  {
+   "position": 53,
+   "item": "01cd6f628776",
+   "verdict": "FP",
+   "reason": "The async listener reads from the socket connected to tcp://localhost:<port> of its own engine server (line 191); replies are pickled by that trusted process, not by an attacker."
+  },
+  {
+   "position": 54,
+   "item": "b7d92a742966",
+   "verdict": "TP",
+   "reason": "getMergeBaseCommitSha passes input.head/input.base (branch refs, attacker-choosable via PR branch names, which may contain ; $() `) and the derived argos/<branch> refs unquoted into an execSync shell string with no validation."
+  },
+  {
+   "position": 55,
+   "item": "b4b879dd7bf6",
+   "verdict": "FP",
+   "reason": "state.prerendering.cache exists only during build-time prerendering and holds the app's own cache-control value; it is not request-time attacker input."
+  },
+  {
+   "position": 56,
+   "item": "91f6214a79b3",
+   "verdict": "FP",
+   "reason": "This writes a <logger> entry into a generated logback XML file at project-generation time from generator/blueprint-supplied name and level; it is not an HTML sink and carries no untrusted runtime input."
+  }
+ ]
+}

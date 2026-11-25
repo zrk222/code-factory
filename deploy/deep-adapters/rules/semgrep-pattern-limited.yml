@@ -16,10 +16,10 @@ rules:
           - pattern: subprocess.$FUNC($VALUE, ..., shell=True, ...)
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
-      confidence: HIGH
+      confidence: MEDIUM
       cwe: ["CWE-78"]
   - id: python.request-sql-injection
     message: Request data reaches SQL text; bind values as query parameters instead of formatting SQL.
@@ -36,10 +36,10 @@ rules:
           - pattern: '$DB.execute($QUERY, ...)'
           - focus-metavariable: $QUERY
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
-      confidence: HIGH
+      confidence: MEDIUM
       cwe: ["CWE-89"]
   - id: python.unsafe-deserialization
     message: Unsafe deserialization can execute code; use a non-executable format and validate its schema.
@@ -72,7 +72,7 @@ rules:
           - pattern: pickle.load(...)
           - pattern: yaml.unsafe_load(...)
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -81,63 +81,99 @@ rules:
     message: Deserialization of data whose origin the rule cannot see (IPC, peers, files, RPC); confirm the sender is trusted.
     severity: INFO
     languages: [python]
-    patterns:
-      - pattern-either:
-          - pattern: pickle.loads(...)
-          - pattern: pickle.load(...)
-          - pattern: yaml.unsafe_load(...)
-      # Files the program opens itself (caches, parser tables) are not attacker input.
-      - pattern-not: pickle.load(open(...))
-      - pattern-not-inside: |
-          with open(...) as $FILE:
-            ...
-      - pattern-not-inside: |
-          $FILE = open(...)
-          ...
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: pickle.loads(...)
+              - pattern: pickle.load(...)
+              - pattern: yaml.unsafe_load(...)
+          # Files the program opens itself (caches, parser tables) are not attacker input.
+          - pattern-not: pickle.load(open(...))
+          - pattern-not-inside: |
+              with open(...) as $FILE:
+                ...
+          - pattern-not-inside: |
+              $FILE = open(...)
+              ...
+      # Model and array loaders that unpickle whatever file they are given; the
+      # file is the usual attack vector (shared models, uploaded artifacts).
+      - patterns:
+          - pattern-either:
+              - pattern: joblib.load(...)
+              - pattern: dill.load(...)
+              - pattern: dill.loads(...)
+              - pattern: cloudpickle.load(...)
+              - pattern: cloudpickle.loads(...)
+              - pattern: pandas.read_pickle(...)
+              - pattern: numpy.load(..., allow_pickle=True, ...)
+              - pattern: torch.load(...)
+              # pyzmq's recv_pyobj unpickles whatever the peer sent.
+              - pattern: $SOCK.recv_pyobj(...)
+              - pattern: pickle.Unpickler(...).load()
+              - patterns:
+                  - pattern-either:
+                      - pattern: $LOAD(...)
+                      - pattern: $MOD.$LOAD(...)
+                  - metavariable-regex: {metavariable: $LOAD, regex: '^(pickle_load|pickle_loads|load_pickle|loads_pickle|unpickle|unpickle_\w+)$'}
+          - pattern-not: torch.load(..., weights_only=True, ...)
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
       confidence: MEDIUM
       cwe: ["CWE-502"]
   - id: python.disabled-tls-verification
-    message: TLS certificate validation is disabled; enable verification and configure trusted certificates.
+    message: TLS certificate or hostname verification is disabled; enable verification and configure trusted certificates.
     severity: INFO
     languages: [python]
-    patterns:
-      # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
-      - pattern-not-inside:
-          patterns:
-            - pattern-inside: |
-                if $OPTIN:
-                  ...
-            - metavariable-regex:
-                metavariable: $OPTIN
-                regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
-      - pattern: requests.$METHOD(..., verify=False, ...)
-      # Report only connections that carry credentials or session material;
-      # unauthenticated probes of public endpoints are not a credential exposure.
-      - pattern-either:
-          - pattern: requests.$METHOD(..., auth=$CREDENTIAL, ...)
-          - pattern: requests.$METHOD(..., cert=$CREDENTIAL, ...)
-          - pattern: requests.$METHOD(..., cookies=$CREDENTIAL, ...)
-          - patterns:
-              - pattern-inside: |
-                  def $FUNCTION(...):
-                    $...BODY
-              - metavariable-pattern:
-                  metavariable: $...BODY
-                  language: generic
-                  patterns:
-                    - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\bauth\s*=)
+    pattern-either:
+      # requests calls that carry credentials with verify=False.
+      - patterns:
+          # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    if $OPTIN:
+                      ...
+                - metavariable-regex:
+                    metavariable: $OPTIN
+                    regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
+          - pattern: requests.$METHOD(..., verify=False, ...)
+          # Report only connections that carry credentials or session material;
+          # unauthenticated probes of public endpoints are not a credential exposure.
+          - pattern-either:
+              - pattern: requests.$METHOD(..., auth=$CREDENTIAL, ...)
+              - pattern: requests.$METHOD(..., cert=$CREDENTIAL, ...)
+              - pattern: requests.$METHOD(..., cookies=$CREDENTIAL, ...)
+              - patterns:
+                  - pattern-inside: |
+                      def $FUNCTION(...):
+                        $...BODY
+                  - metavariable-pattern:
+                      metavariable: $...BODY
+                      language: generic
+                      patterns:
+                        - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\bauth\s*=)
+      # SSL contexts created without certificate or hostname checks.
+      - patterns:
+          - pattern-either:
+              - pattern: ssl._create_unverified_context(...)
+              - pattern: $CTX.check_hostname = False
+              - pattern: $CTX.verify_mode = ssl.CERT_NONE
+              - pattern: 'ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)'
+              - pattern: urllib3.disable_warnings(...)
+          - pattern-not-inside: |
+              if $OPTIN:
+                ...
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
-      confidence: HIGH
+      confidence: MEDIUM
       cwe: ["CWE-295"]
+      scope: Credential-carrying requests calls with verify=False outside an operator opt-in, and unconditional SSL contexts without certificate or hostname checks.
   - id: javascript.request-command-injection
     message: Request data reaches a shell command; use execFile with validated arguments.
     severity: INFO
@@ -165,7 +201,7 @@ rules:
               - pattern: child_process.execSync($COMMAND, ...)
           - focus-metavariable: $COMMAND
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -200,7 +236,7 @@ rules:
           - pattern-not: '$DB.query({...}, ...)'
           - focus-metavariable: $QUERY
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -241,7 +277,7 @@ rules:
           - pattern: '$RES.send($HTML)'
           - focus-metavariable: $HTML
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -261,9 +297,258 @@ rules:
       - pattern: request.POST.get(...)
       - pattern: request.GET[...]
       - pattern: request.POST[...]
+      # http.server handlers: the raw request target in do_GET/do_POST/...
+      - patterns:
+          - pattern: self.path
+          - pattern-inside: |
+              def $DO(self, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $DO
+              regex: ^do_[A-Z]+$
+      # Tool, MCP and job handler arguments: params["input_path"], args.get("file")...
+      - patterns:
+          - pattern-either:
+              - pattern: $ARGS[$KEY]
+              - pattern: $ARGS.get($KEY, ...)
+          - metavariable-regex:
+              metavariable: $ARGS
+              regex: ^(params|arguments|inputs|input_data|tool_input|tool_args|tool_params|payload)$
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: ^["'](?i)\w*(path|file|filename|dir|directory|folder|dest|destination|target|output|input|location)\w*["']$
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)
+      - pattern: werkzeug.utils.secure_filename(...)
+      # Format checks that admit no path separator or dot segment (an MD5/SHA
+      # digest, a UUID, digits, alphanumerics) clear the checked value. Unlike a
+      # helper named *safe* or *within*, the format itself is the proof.
+      # A format check clears the value only where it decides the path: inside
+      # the branch it guards, or after a failed check (alone, as a disjunct, or
+      # through a stored result) that raises or returns.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if $CHECK($X):
+                    ...
+              - pattern-inside: |
+                  if <... not $CHECK($X) ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  if <... not $CHECK($X) ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  $OK = $CHECK($X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  $OK = $CHECK($X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  if $MOD.$CHECK($X):
+                    ...
+              - pattern-inside: |
+                  if <... not $MOD.$CHECK($X) ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  if <... not $MOD.$CHECK($X) ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  $OK = $MOD.$CHECK($X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  $OK = $MOD.$CHECK($X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    return ...
+                  ...
+          - metavariable-regex:
+              metavariable: $CHECK
+              regex: ^(is_md5|is_sha1|is_sha256|is_sha\d+|is_hex|is_uuid|valid_uuid|is_valid_uuid|is_int|is_integer|is_digit|is_numeric|is_alnum)$
+          - pattern: $X
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if $X.$TEST():
+                    ...
+              - pattern-inside: |
+                  if <... not $X.$TEST() ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  if <... not $X.$TEST() ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  $OK = $X.$TEST()
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  $OK = $X.$TEST()
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    return ...
+                  ...
+          - metavariable-regex:
+              metavariable: $TEST
+              regex: ^(isdigit|isalnum|isnumeric|isdecimal)$
+          - pattern: $X
+      # An anchored allow-list regex with no '.' or '/' decides the path on the branch it guards.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if re.$RM($RE, $X):
+                    ...
+              - pattern-inside: |
+                  if <... not re.$RM($RE, $X) ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  $OK = re.$RM($RE, $X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  if <... not re.$RM($RE, $X) ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  $OK = re.$RM($RE, $X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  if re.$RM($RE, $X, ...):
+                    ...
+              - pattern-inside: |
+                  if <... not re.$RM($RE, $X, ...) ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  $OK = re.$RM($RE, $X, ...)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  if <... not re.$RM($RE, $X, ...) ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  $OK = re.$RM($RE, $X, ...)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    return ...
+                  ...
+          - metavariable-regex:
+              metavariable: $RM
+              regex: ^(match|fullmatch)$
+          - metavariable-regex:
+              metavariable: $RE
+              regex: ^[rbu]*["']\^[^./"']*\$["']$
+          - pattern: $X
+      - pattern: int(...)
+      - pattern: uuid.UUID(...)
     pattern-sinks:
       - patterns:
           - pattern: open($PATH, ...)
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $ROOT = pathlib.Path(...).resolve()
+                        $PATH = ($ROOT / $NAME).resolve()
+                        if not $PATH.is_relative_to($ROOT):
+                          raise ...
+                        open($PATH, ...)
+                    - pattern-inside: |
+                        $ROOT = pathlib.Path(...).resolve()
+                        $PATH = ($ROOT / $NAME).resolve()
+                        $PATH.relative_to($ROOT)
+                        open($PATH, ...)
+                - pattern: open($PATH, ...)
+          - focus-metavariable: $PATH
+      # Opening, copying, moving or deleting through a library call.
+      - patterns:
+          - pattern: $MOD.open($PATH, ...)
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: ^(Image|PIL\.Image|io|codecs|gzip|bz2|lzma|aiofiles)$
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern-either:
+              - pattern: shutil.$OP($PATH, ...)
+              - pattern: shutil.$OP($SRC, $PATH, ...)
+              - pattern: os.$OP($PATH, ...)
+          - metavariable-regex:
+              metavariable: $OP
+              regex: ^(copy|copy2|copyfile|copytree|move|rmtree|remove|unlink|rename|replace|makedirs|mkdir|rmdir|listdir|scandir|chmod)$
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern-either:
+              - pattern: send_file($PATH, ...)
+              - pattern: FileResponse($PATH, ...)
+          - focus-metavariable: $PATH
+      # Joining request text under a base directory is the traversal itself,
+      # unless the joined value is then put through a containment guard.
+      - patterns:
+          - pattern-either:
+              - pattern: os.path.join($BASE, ..., $PATH, ...)
+              - patterns:
+                  - pattern: $BASE / $PATH
+                  # A path operand, not arithmetic.
+                  - metavariable-regex:
+                      metavariable: $BASE
+                      regex: ^.*(?i:path|dir|root|base|folder|home|cwd|tmp|temp|storage|upload|static|media).*$
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $ROOT = pathlib.Path(...).resolve()
+                        $TARGET = ($ROOT / $PATH).resolve()
+                        if not $TARGET.is_relative_to($ROOT):
+                          raise ...
+                    - pattern-inside: |
+                        $ROOT = pathlib.Path(...).resolve()
+                        $TARGET = ($ROOT / $PATH).resolve()
+                        $TARGET.relative_to($ROOT)
+                - pattern: $ROOT / $PATH
           - focus-metavariable: $PATH
       - patterns:
           - pattern: pathlib.Path($PATH).read_text(...)
@@ -284,7 +569,7 @@ rules:
           - pattern: Path($PATH).open(...)
           - focus-metavariable: $PATH
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -296,9 +581,31 @@ rules:
     languages: [javascript, typescript]
     mode: taint
     pattern-sources:
-      - pattern: '$REQ.query'
-      - pattern: '$REQ.body'
-      - pattern: '$REQ.params'
+      # Request objects only (req, request, ctx.request, incomingReq...), not
+      # any object with a params/body field such as route.params.
+      - patterns:
+          - pattern-either:
+              - pattern: '$REQ.query'
+              - pattern: '$REQ.body'
+              - pattern: '$REQ.params'
+              - pattern: '$REQ.url'
+              - pattern: '$REQ.path'
+              - pattern: '$REQ.originalUrl'
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request|\w*Req|\w*Request|ctx|ctx\.request|context\.request|event\.request)$
+      # Tool, MCP and API handler arguments: args.path, params.filePath...
+      - patterns:
+          - pattern-either:
+              - pattern: '$ARGS.$KEY'
+              - pattern: '($ARGS || {}).$KEY'
+              - pattern: '$ARGS?.$KEY'
+          - metavariable-regex:
+              metavariable: $ARGS
+              regex: ^(args|params|input|inputs|arguments|toolInput|toolArgs|payload)$
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: ^(?i)\w*(path|file|filename|dir|directory|folder|dest|destination|target|output|location)\w*$
     pattern-sanitizers:
       # Named containment/sanitizing helpers (safeRel, sanitizePath, resolveWithin...).
       - patterns:
@@ -339,8 +646,44 @@ rules:
       - patterns:
           - pattern: fs.createReadStream($PATH, ...)
           - focus-metavariable: $PATH
+      # Other fs calls on the path, through any fs-like module alias.
+      - patterns:
+          - pattern: $FS.$CALL($PATH, ...)
+          - metavariable-regex:
+              metavariable: $FS
+              regex: ^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$
+          - metavariable-regex:
+              metavariable: $CALL
+              regex: ^(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
+          - focus-metavariable: $PATH
+      # The same calls through a receiver bound to an fs module, under any name.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  import $FS from "$MOD"
+                  ...
+              - pattern-inside: |
+                  import * as $FS from "$MOD"
+                  ...
+              - pattern-inside: |
+                  $FS = require("$MOD")
+                  ...
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: ^(?:node:)?fs(?:/promises)?$|^(?:fs-extra|graceful-fs)$
+          - pattern: $FS.$CALL($PATH, ...)
+          - metavariable-regex:
+              metavariable: $CALL
+              regex: ^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
+          - focus-metavariable: $PATH
+      # Joining request text under a base directory is the traversal itself.
+      - patterns:
+          - pattern-either:
+              - pattern: path.join($BASE, ..., $PATH, ...)
+              - pattern: path.resolve($BASE, ..., $PATH, ...)
+          - focus-metavariable: $PATH
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -390,7 +733,7 @@ rules:
               - pattern: '\popen(..., command: $VALUE, ...)'
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -456,7 +799,7 @@ rules:
               - pattern: '\pg_query_params($VALUE, query: $PARAMS)'
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -476,8 +819,26 @@ rules:
         exact: true
       - pattern: '$_COOKIE[...]'
         exact: true
+      # The client's name for an uploaded file.
+      - pattern: '$_FILES[$F]["name"]'
+      - pattern: $UPLOAD->getClientOriginalName()
+      - pattern: $UPLOAD->getClientFilename()
+      - pattern: $UPLOAD->getClientName()
+      - patterns:
+          - pattern-inside: |
+              class $C extends $B implements $I { ... }
+          - metavariable-regex:
+              metavariable: $I
+              regex: .*UploadedFileInterface$
+          - pattern: $this->getName()
     pattern-sanitizers:
       - pattern: (int) $VALUE
+      - pattern: basename(...)
+      - patterns:
+          - pattern: $HELPER(...)
+          - metavariable-regex:
+              metavariable: $HELPER
+              regex: (?i).*(sanitize_?file_?name|safe|secure_?filename).*
       - pattern: (integer) $VALUE
       - pattern: intval(...)
     pattern-sinks:
@@ -499,9 +860,13 @@ rules:
               - pattern: '\readfile(..., filename: $VALUE, ...)'
               - pattern: 'file_put_contents(..., filename: $VALUE, ...)'
               - pattern: '\file_put_contents(..., filename: $VALUE, ...)'
+              - pattern: move_uploaded_file($TMP, $VALUE)
+              - pattern: \move_uploaded_file($TMP, $VALUE)
+              - pattern: $UPLOADED->move($VALUE, ...)
+              - pattern: $UPLOADED->moveTo($VALUE)
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -534,7 +899,7 @@ rules:
               - pattern: require_once $VALUE
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -568,7 +933,7 @@ rules:
               - pattern: '\unserialize(..., data: $VALUE, ...)'
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -606,7 +971,7 @@ rules:
           patterns:
             - pattern-regex: (?i)(authorization|bearer|setbasicauth|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential)
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -643,7 +1008,7 @@ rules:
           patterns:
             - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\w*user_?id\b|\bidentity\b|\bsession\w*|\baccount_?id\b)
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -677,7 +1042,7 @@ rules:
           @Profile("local")
           $RET $METHOD(...) { ... }
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -690,7 +1055,7 @@ rules:
     languages: [c, cpp]
     pattern: "gets($BUFFER)"
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -702,7 +1067,7 @@ rules:
     languages: [csharp]
     pattern: "System.Net.ServicePointManager.ServerCertificateValidationCallback = ($SENDER, $CERT, $CHAIN, $ERRORS) => true"
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
       confidence: MEDIUM
@@ -719,7 +1084,7 @@ rules:
       - pattern: "{..., verify_mode: OpenSSL::SSL::VERIFY_NONE, ...}"
       - pattern: "$F(..., ssl: {..., verify: false, ...}, ...)"
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -748,7 +1113,7 @@ rules:
                     language: generic
                     pattern-regex: (SecTrustEvaluate|evaluate\()
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -809,7 +1174,7 @@ rules:
               - pattern: "exec.CommandContext($C, $VALUE, ...)"
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -881,7 +1246,7 @@ rules:
                       regex: (?i)^(?!.*stmt).*(db|tx|conn|pool|sql|database|gorm)\w*$
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -927,7 +1292,7 @@ rules:
               - pattern: "(java.lang.Runtime $R).exec($VALUE)"
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -981,7 +1346,7 @@ rules:
               regex: ^(query\w*|update|batchUpdate|execute|createQuery|createNativeQuery)$
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -1024,7 +1389,7 @@ rules:
           - pattern: System.Diagnostics.Process.Start($VALUE)
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -1069,7 +1434,7 @@ rules:
               - pattern: $SET.FromSqlRaw($VALUE, ...)
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -1106,7 +1471,7 @@ rules:
               - pattern: Open3.$POPEN($VALUE, ...)
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -1156,7 +1521,7 @@ rules:
           - metavariable-regex: {metavariable: $MODEL, regex: '^[A-Z]\w*$'}
           - focus-metavariable: $VALUE
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -1280,11 +1645,13 @@ rules:
       - '**/pocs/**'
       - '**/CVE-*/**'
       - '**/cve-*/**'
-      - '**/*Generated*'
-      - '**/*generated*'
+      - '**/*.generated.*'
+      - '**/*_generated.*'
+      - '**/generated/**'
+      - '**/__generated__/**'
       - '**/*_pb2.py'
       - '**/*.pb.go'
-      - '**/Lib/**'
+      - '**/Lib/site-packages/**'
       - '**/site-packages/**'
       - '**/*venv*/**'
       - '**/node_modules/**'
@@ -1294,8 +1661,6 @@ rules:
       - '**/bower_components/**'
       - '**/.history/**'
       - '**/*.min.js'
-      - '**/wp-admin/**'
-      - '**/wp-includes/**'
       - '**/tests.rs'
       - '**/test_utils.rs'
       - '**/test_util.rs'
@@ -1339,11 +1704,34 @@ rules:
           - pattern-inside: |
               with tarfile.TarFile(...) as $T:
                 ...
+          # Opened inside a try, extracted after it.
+          - pattern-inside: |
+              try:
+                ...
+                $T = tarfile.open(...)
+              except $EX:
+                ...
+              ...
+          - pattern-inside: |
+              try:
+                ...
+                $T = tarfile.open(...)
+              except:
+                ...
+              ...
+          # A helper defined inside the with-block that extracts its own tar argument.
+          - patterns:
+              - pattern-inside: |
+                  with tarfile.open(...) as $W:
+                    ...
+              - pattern-inside: |
+                  def $FN(..., $T, ...):
+                    ...
       - pattern-not-inside: |
           $T.extraction_filter = $FILTER
           ...
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
     metadata:
       tier: review
       category: security
@@ -1452,11 +1840,13 @@ rules:
       - '**/pocs/**'
       - '**/CVE-*/**'
       - '**/cve-*/**'
-      - '**/*Generated*'
-      - '**/*generated*'
+      - '**/*.generated.*'
+      - '**/*_generated.*'
+      - '**/generated/**'
+      - '**/__generated__/**'
       - '**/*_pb2.py'
       - '**/*.pb.go'
-      - '**/Lib/**'
+      - '**/Lib/site-packages/**'
       - '**/site-packages/**'
       - '**/*venv*/**'
       - '**/node_modules/**'
@@ -1466,8 +1856,6 @@ rules:
       - '**/bower_components/**'
       - '**/.history/**'
       - '**/*.min.js'
-      - '**/wp-admin/**'
-      - '**/wp-includes/**'
       - '**/tests.rs'
       - '**/test_utils.rs'
       - '**/test_util.rs'
@@ -1598,11 +1986,13 @@ rules:
       - '**/pocs/**'
       - '**/CVE-*/**'
       - '**/cve-*/**'
-      - '**/*Generated*'
-      - '**/*generated*'
+      - '**/*.generated.*'
+      - '**/*_generated.*'
+      - '**/generated/**'
+      - '**/__generated__/**'
       - '**/*_pb2.py'
       - '**/*.pb.go'
-      - '**/Lib/**'
+      - '**/Lib/site-packages/**'
       - '**/site-packages/**'
       - '**/*venv*/**'
       - '**/node_modules/**'
@@ -1612,8 +2002,6 @@ rules:
       - '**/bower_components/**'
       - '**/.history/**'
       - '**/*.min.js'
-      - '**/wp-admin/**'
-      - '**/wp-includes/**'
       - '**/tests.rs'
       - '**/test_utils.rs'
       - '**/test_util.rs'
@@ -1803,11 +2191,13 @@ rules:
       - '**/pocs/**'
       - '**/CVE-*/**'
       - '**/cve-*/**'
-      - '**/*Generated*'
-      - '**/*generated*'
+      - '**/*.generated.*'
+      - '**/*_generated.*'
+      - '**/generated/**'
+      - '**/__generated__/**'
       - '**/*_pb2.py'
       - '**/*.pb.go'
-      - '**/Lib/**'
+      - '**/Lib/site-packages/**'
       - '**/site-packages/**'
       - '**/*venv*/**'
       - '**/node_modules/**'
@@ -1817,8 +2207,6 @@ rules:
       - '**/bower_components/**'
       - '**/.history/**'
       - '**/*.min.js'
-      - '**/wp-admin/**'
-      - '**/wp-includes/**'
       - '**/tests.rs'
       - '**/test_utils.rs'
       - '**/test_util.rs'
@@ -2004,11 +2392,13 @@ rules:
       - '**/pocs/**'
       - '**/CVE-*/**'
       - '**/cve-*/**'
-      - '**/*Generated*'
-      - '**/*generated*'
+      - '**/*.generated.*'
+      - '**/*_generated.*'
+      - '**/generated/**'
+      - '**/__generated__/**'
       - '**/*_pb2.py'
       - '**/*.pb.go'
-      - '**/Lib/**'
+      - '**/Lib/site-packages/**'
       - '**/site-packages/**'
       - '**/*venv*/**'
       - '**/node_modules/**'
@@ -2018,8 +2408,6 @@ rules:
       - '**/bower_components/**'
       - '**/.history/**'
       - '**/*.min.js'
-      - '**/wp-admin/**'
-      - '**/wp-includes/**'
       - '**/tests.rs'
       - '**/test_utils.rs'
       - '**/test_util.rs'
@@ -2046,6 +2434,9 @@ rules:
     - pattern: $Z->statIndex(...)
     - pattern: $Z->statName(...)
     - pattern: zip_entry_name(...)
+    # Metadata read out of the archive itself (a plugin manifest's name...).
+    - pattern: $Z->getFromName(...)
+    - pattern: $Z->getFromIndex(...)
     pattern-sanitizers:
     - pattern: basename(...)
     - patterns:
@@ -2062,6 +2453,7 @@ rules:
         - pattern: copy(..., $P, ...)
         - pattern: rename(..., $P, ...)
         - pattern: symlink(..., $P)
+        - pattern: $Z->extractTo($P, ...)
       - pattern-not-inside: "if (<... str_starts_with(<... $V ...>, ...) ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
       - pattern-not-inside: "if (<... strpos(<... $V ...>, ...) ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
       - pattern-not-inside: "if (<... str_contains(<... $V ...>, '..') ...>) {\n  ...\n  throw $E;\n}\n...\n<... $V ...>;\n"
@@ -2101,11 +2493,13 @@ rules:
       - '**/pocs/**'
       - '**/CVE-*/**'
       - '**/cve-*/**'
-      - '**/*Generated*'
-      - '**/*generated*'
+      - '**/*.generated.*'
+      - '**/*_generated.*'
+      - '**/generated/**'
+      - '**/__generated__/**'
       - '**/*_pb2.py'
       - '**/*.pb.go'
-      - '**/Lib/**'
+      - '**/Lib/site-packages/**'
       - '**/site-packages/**'
       - '**/*venv*/**'
       - '**/node_modules/**'
@@ -2115,8 +2509,6 @@ rules:
       - '**/bower_components/**'
       - '**/.history/**'
       - '**/*.min.js'
-      - '**/wp-admin/**'
-      - '**/wp-includes/**'
       - '**/tests.rs'
       - '**/test_utils.rs'
       - '**/test_util.rs'
@@ -2245,11 +2637,13 @@ rules:
       - '**/pocs/**'
       - '**/CVE-*/**'
       - '**/cve-*/**'
-      - '**/*Generated*'
-      - '**/*generated*'
+      - '**/*.generated.*'
+      - '**/*_generated.*'
+      - '**/generated/**'
+      - '**/__generated__/**'
       - '**/*_pb2.py'
       - '**/*.pb.go'
-      - '**/Lib/**'
+      - '**/Lib/site-packages/**'
       - '**/site-packages/**'
       - '**/*venv*/**'
       - '**/node_modules/**'
@@ -2259,8 +2653,6 @@ rules:
       - '**/bower_components/**'
       - '**/.history/**'
       - '**/*.min.js'
-      - '**/wp-admin/**'
-      - '**/wp-includes/**'
       - '**/tests.rs'
       - '**/test_utils.rs'
       - '**/test_util.rs'
@@ -2402,11 +2794,13 @@ rules:
       - '**/pocs/**'
       - '**/CVE-*/**'
       - '**/cve-*/**'
-      - '**/*Generated*'
-      - '**/*generated*'
+      - '**/*.generated.*'
+      - '**/*_generated.*'
+      - '**/generated/**'
+      - '**/__generated__/**'
       - '**/*_pb2.py'
       - '**/*.pb.go'
-      - '**/Lib/**'
+      - '**/Lib/site-packages/**'
       - '**/site-packages/**'
       - '**/*venv*/**'
       - '**/node_modules/**'
@@ -2416,8 +2810,6 @@ rules:
       - '**/bower_components/**'
       - '**/.history/**'
       - '**/*.min.js'
-      - '**/wp-admin/**'
-      - '**/wp-includes/**'
       - '**/tests.rs'
       - '**/test_utils.rs'
       - '**/test_util.rs'
@@ -2451,6 +2843,23 @@ rules:
         - pattern: params.fetch(...)
         - pattern: params.dig(...)
       exact: true
+      label: REQUEST
+    # Method parameters: storage keys and relative names may only reach a
+    # File.join under a root; any path-named parameter may reach a file server.
+    - patterns:
+      - pattern-inside: "def $M(..., $P, ...)\n  ...\nend\n"
+      - pattern: $P
+      - metavariable-regex:
+          metavariable: $P
+          regex: ^(?i)(key|blob_key|storage_key|relpath|rel_path|subpath|sub_path|filename|file_name)$
+      label: PARAM_KEY
+    - patterns:
+      - pattern-inside: "def $M(..., $P, ...)\n  ...\nend\n"
+      - pattern: $P
+      - metavariable-regex:
+          metavariable: $P
+          regex: ^(?i)\w*(path|file)\w*$
+      label: PARAM_PATH
     pattern-sanitizers:
     - pattern: File.basename(...)
     - pattern: $X.to_i
@@ -2569,6 +2978,17 @@ rules:
 
           '
       - focus-metavariable: $P
+      requires: REQUEST
+    - patterns:
+      - pattern: File.join($ROOT, ..., $P, ...)
+      - focus-metavariable: $P
+      requires: PARAM_KEY
+    - patterns:
+      - pattern-either:
+        - pattern: _serve_file($P, ...)
+        - pattern: serve_file($P, ...)
+      - focus-metavariable: $P
+      requires: REQUEST or PARAM_KEY or PARAM_PATH
     paths:
       exclude:
       - '**/test/**'
@@ -2598,11 +3018,13 @@ rules:
       - '**/pocs/**'
       - '**/CVE-*/**'
       - '**/cve-*/**'
-      - '**/*Generated*'
-      - '**/*generated*'
+      - '**/*.generated.*'
+      - '**/*_generated.*'
+      - '**/generated/**'
+      - '**/__generated__/**'
       - '**/*_pb2.py'
       - '**/*.pb.go'
-      - '**/Lib/**'
+      - '**/Lib/site-packages/**'
       - '**/site-packages/**'
       - '**/*venv*/**'
       - '**/node_modules/**'
@@ -2612,8 +3034,6 @@ rules:
       - '**/bower_components/**'
       - '**/.history/**'
       - '**/*.min.js'
-      - '**/wp-admin/**'
-      - '**/wp-includes/**'
       - '**/tests.rs'
       - '**/test_utils.rs'
       - '**/test_util.rs'
@@ -2662,7 +3082,7 @@ rules:
               - pattern: SafeString($P)
           - focus-metavariable: $P
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
     metadata:
       tier: review
       category: security
@@ -2713,7 +3133,7 @@ rules:
               - pattern: exit($P)
           - focus-metavariable: $P
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
     metadata:
       tier: review
       category: security
@@ -2770,7 +3190,7 @@ rules:
                 - pattern-not: $B.Buffer
           - focus-metavariable: $P
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
     metadata:
       tier: review
       category: security
@@ -2810,7 +3230,7 @@ rules:
               - pattern: 'render inline: $P'
           - focus-metavariable: $P
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
     metadata:
       tier: review
       category: security
@@ -2849,7 +3269,7 @@ rules:
           - metavariable-regex: {metavariable: $WRITE, regex: '^(write|print|println|printf|append|format)$'}
           - focus-metavariable: $P
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**"]
     metadata:
       tier: review
       category: security
@@ -2884,8 +3304,15 @@ rules:
               - pattern: subprocess.getstatusoutput($CMD)
               - pattern: asyncio.create_subprocess_shell($CMD, ...)
           - focus-metavariable: $CMD
+      # Command strings handed to a shell wrapper (secure_popen, run_command...).
+      - patterns:
+          - pattern: $RUN($CMD, ...)
+          - metavariable-regex:
+              metavariable: $RUN
+              regex: ^(\w*popen|run_command|run_cmd|run_shell|shell_exec|exec_command|execute_command)$
+          - focus-metavariable: $CMD
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -2920,9 +3347,6 @@ rules:
     pattern-sinks:
       - patterns:
           - pattern-either:
-              - pattern: exec($CMD, ...)
-              - pattern: execSync($CMD, ...)
-              - pattern: execAsync($CMD, ...)
               - pattern: $CP.exec($CMD, ...)
               - pattern: $CP.execSync($CMD, ...)
               - pattern: 'spawn($CMD, $A, {..., shell: true, ...})'
@@ -2932,7 +3356,31 @@ rules:
           - pattern-not-inside: function $FN(..., exec, ...) { ... }
           - metavariable-regex: {metavariable: $CP, regex: '^(cp|child_process|childProcess|child|proc|shell)$'}
           - focus-metavariable: $CMD
+      # A bare exec/execSync is a shell only when the module binds it from
+      # child_process or shelljs; test helpers named exec are not.
       - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  import { ... } from "$CPMOD"
+                  ...
+              - pattern-inside: |
+                  import $CPX from "$CPMOD"
+                  ...
+              - pattern-inside: |
+                  import * as $CPX from "$CPMOD"
+                  ...
+              - pattern-inside: |
+                  $CPX = require("$CPMOD")
+                  ...
+              - pattern-inside: |
+                  $CPX = require("$CPMOD").$CPM
+                  ...
+              - pattern-inside: |
+                  const {...} = require("$CPMOD")
+                  ...
+          - metavariable-regex:
+              metavariable: $CPMOD
+              regex: ^(?:(?:node:)?child_process|shelljs(?:\.exec)?|execa|cross-spawn)$
           - pattern-either:
               - pattern: exec($CMD, ...)
               - pattern: execSync($CMD, ...)
@@ -2941,8 +3389,47 @@ rules:
           - pattern-not-inside: function $FN(..., exec, ...) { ... }
           - pattern-not-inside: (..., exec, ...) => { ... }
           - focus-metavariable: $CMD
+      # Shell command text assembled from a parameter (`rm -rf "${dir}"`) and handed
+      # to a run/exec wrapper elsewhere; reported at the first placeholder.
+      - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
+      - patterns:
+          - pattern: $RUN($CMD, ...)
+          - metavariable-regex:
+              metavariable: $RUN
+              regex: ^(runCmd|runCommand|runWinCmd|runShell|execCommand|executeCommand|execShell)$
+          - focus-metavariable: $CMD
+      # A bare run()/shell() wrapper counts only in a module that imports
+      # child_process, so the literal prefilter keeps it off unrelated files.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  import { ... } from "$CPMOD"
+                  ...
+              - pattern-inside: |
+                  import $CPX from "$CPMOD"
+                  ...
+              - pattern-inside: |
+                  import * as $CPX from "$CPMOD"
+                  ...
+              - pattern-inside: |
+                  $CPX = require("$CPMOD")
+                  ...
+              - pattern-inside: |
+                  $CPX = require("$CPMOD").$CPM
+                  ...
+              - pattern-inside: |
+                  const {...} = require("$CPMOD")
+                  ...
+          - metavariable-regex:
+              metavariable: $CPMOD
+              regex: ^(?:node:)?child_process$
+          - pattern: $RUN($CMD, ...)
+          - metavariable-regex:
+              metavariable: $RUN
+              regex: ^(run|shell)$
+          - focus-metavariable: $CMD
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -2987,7 +3474,7 @@ rules:
                 - pattern-not: '[...]'
           - focus-metavariable: $CMD
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -3021,7 +3508,7 @@ rules:
           - metavariable-regex: {metavariable: $FLAG, regex: '^"(-c|/c|/C|-Command)"$'}
           - focus-metavariable: $CMD
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -3064,7 +3551,7 @@ rules:
           - focus-metavariable: $CMD
       - pattern: '`...#{$X}...`'
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -3118,7 +3605,7 @@ rules:
               - pattern: $MODEL.objects.extra(..., where=$Q, ...)
           - focus-metavariable: $Q
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -3136,6 +3623,16 @@ rules:
           - pattern: $P
           - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|rawsql|table|column|columns|grammar|builder|config|options|connection)$)\w+$'}
     pattern-sanitizers:
+      - patterns:
+          - pattern: $OBJ->$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(?i:sql_\w+|\w*escape\w*|\w*quote\w*|build\w*|in_set|wrap\w*)$
+      - patterns:
+          - pattern: $FN(...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(?i:\w*escape\w*|\w*quote\w*|addslashes)$
       - pattern: intval(...)
       - pattern: (int) $V
       - pattern: (float) $V
@@ -3191,8 +3688,38 @@ rules:
                     - pattern: '"..."'
                     - pattern-regex: ^\$\w+$
           - focus-metavariable: $Q
+      # SQL text assembled from a parameter inside a quoted SQL value
+      # ('... = \'' . $v, 'LIKE \'%' . $v, sprintf("... '%s'", $v)), wherever it
+      # is executed later. SQL compilers (Grammar/Builder/Compiler classes) are
+      # left out: they assemble already-quoted pieces by design.
+      - patterns:
+          - pattern: $LIT . $X
+          - metavariable-pattern:
+              metavariable: $LIT
+              patterns:
+                - pattern: '"..."'
+                # One regex over the whole literal, delimiters included (two
+                # pattern-regex terms would intersect their match ranges): SQL text
+                # whose content ends inside a value: = ', LIKE \'%, IN (, \', or a
+                # lone backtick opening a quoted identifier ('`' . $column).
+                - pattern-regex: '(?is)\A[''"]`[''"]\z|\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?[''\"%]).*?(=\s*|like\s*|in\s*\(\s*|\\''%?|"%?|''%?|`)[''"]\z'
+          - pattern-not-inside:
+              patterns:
+                - pattern: class $C extends $B { ... }
+                - metavariable-regex:
+                    metavariable: $C
+                    regex: (?i).*(Grammar|Builder|Compiler|Dialect|Platform).*
+          - focus-metavariable: $X
+      - patterns:
+          - pattern: sprintf($FMT, ..., $X, ...)
+          - metavariable-pattern:
+              metavariable: $FMT
+              patterns:
+                - pattern: '"..."'
+                - pattern-regex: '(?is)\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?[''\"%]).*?([''"](%%)*%?%s(%%)*%?[''"]|\\[''"]%s).*\z'
+          - focus-metavariable: $X
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -3218,6 +3745,12 @@ rules:
       - pattern: strconv.FormatInt(...)
       - pattern: pq.QuoteIdentifier(...)
       - pattern: pq.QuoteLiteral(...)
+      - patterns:
+          - pattern-either:
+              - pattern: $F(...)
+              - pattern: $O.$F(...)
+          # Validation, allow-list and quoting helpers return a value the caller has vetted.
+          - metavariable-regex: {metavariable: $F, regex: '(?i)^\w*(valid|sanitiz|escape|quote|allow|whitelist)\w*$'}
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -3240,8 +3773,43 @@ rules:
                     - pattern: $V
                     - pattern: $V.String()
           - focus-metavariable: $Q
+      # The same calls on a parameter declared as a database handle, under any name.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: func $F(..., $DB *$TYPE, ...) { ... }
+              - pattern-inside: func $F(..., $DB *$TYPE, ...) $R { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) $R { ... }
+          - metavariable-regex: {metavariable: $TYPE, regex: '^(sql\.(DB|Tx|Conn)|sqlx\.(DB|Tx)|gorm\.DB|pgxpool\.Pool|pgx\.Conn)$'}
+          - pattern-either:
+              - pattern: $DB.Query($Q, ...)
+              - pattern: $DB.QueryContext($C, $Q, ...)
+              - pattern: $DB.QueryRow($Q, ...)
+              - pattern: $DB.QueryRowContext($C, $Q, ...)
+              - pattern: $DB.Exec($Q, ...)
+              - pattern: $DB.ExecContext($C, $Q, ...)
+              - pattern: $DB.Raw($Q, ...)
+              - pattern: $DB.Select($DST, $Q, ...)
+              - pattern: $DB.Get($DST, $Q, ...)
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: fmt.Sprintf(...)
+                    - pattern: $A + $B
+                    - pattern: $V
+                    - pattern: $V.String()
+          - focus-metavariable: $Q
+      # Query-builder ordering and grouping take a column expression, not a bound value.
+      - patterns:
+          - pattern-either:
+              - pattern: $B.Order($Q)
+              - pattern: $B.OrderBy($Q, ...)
+              - pattern: $B.Group($Q)
+              - pattern: $B.GroupBy($Q, ...)
+          - focus-metavariable: $Q
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -3297,25 +3865,127 @@ rules:
               pattern-regex: (?i)\b(select\s[\s\S]+\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|where\s|order\s+by)\b
           - metavariable-regex: {metavariable: $DB, regex: '(?i)(^|\.)(db|database|conn|connection|client|pool|knex|sequelize|prisma|tx|trx|sql|pg|mysql|sqlite|\w*(db|conn|pool|client))$'}
           - focus-metavariable: $Q
+      # SQL text assembled from a parameter, wherever it is executed later.
+      - patterns:
+          - pattern: $LIT + $X
+          - metavariable-pattern:
+              metavariable: $LIT
+              patterns:
+                - pattern: '"..."'
+                - pattern-regex: '(?i)\b(select\s[\s\S]*?\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|where\s|order\s+by\s|values\s*\()'
+          - focus-metavariable: $X
+      # Every placeholder of a template literal that starts with a SQL statement
+      # (`SELECT ... WHERE id = ${userId}`), each reported where it sits. \G chains
+      # matches within one template; code-generation templates do not start with SQL.
+      # A tagged template (sql`...`, prisma.$queryRaw`...`) binds its values as parameters.
+      - pattern-regex: '(?i)(?:(?<![\w$\].)>])`\s*\(?\s*(?:select|insert\s+into|update|delete\s+from|with)\b|\G)[^`$]*(?:\$(?!\{)[^`$]*)*\K\$\{[^}`]*\}'
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
       confidence: LOW
       cwe: ["CWE-89"]
       scope: Function parameters interpolated into template or concatenated SQL passed to a driver call in the same function.
+  - id: ruby.parameter-sql-text
+    message: A value is interpolated into SQL text; pass it as a bound parameter or quote it with the adapter instead.
+    severity: INFO
+    languages: [ruby]
+    patterns:
+      - pattern-either:
+          # SQL text in a double-quoted literal with an interpolation that is not adapter quoting.
+          - pattern-regex: '"(?:[^"\\\n]|\\.)*?(?<![\w.])(?:(?i:select\s[^"\n]*?\bfrom|insert\s+into|update\s+[\w.`]+\s+set|delete\s+from)|WHERE|LIMIT|OFFSET|ORDER\s+BY|GROUP\s+BY|HAVING|AND|OR)\b(?:[^"\\\n]|\\.)*?#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name|connection\.quote\w*)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
+          # ActiveRecord query methods given an interpolated string.
+          - pattern-regex: '\.(?:where|order|reorder|group|having|joins|select|pluck|from|find_by_sql|lock|count_by_sql)\(\s*(?:Arel\.sql\(\s*)?"[^"\n]*#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
+      - pattern-not-regex: '(?m)^[ \t]*#(?!\{).*$'
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py", "**/db/migrate/**", "**/db/post_migrate/**"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: [CWE-89]
+  - id: java.parameter-sql-text
+    message: A method parameter is concatenated or formatted into SQL text; use a PreparedStatement placeholder or a bound query parameter instead.
+    severity: INFO
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., $T $P, ...) { ... }
+              - pattern-inside: $M(..., $T $P, ...) { ... }
+          - pattern: $P
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: $X.getClass().getName()
+      - patterns:
+          - pattern-either:
+              - pattern: $F(...)
+              - pattern: $O.$F(...)
+          # Validation, allow-list and quoting helpers return a value the caller has vetted.
+          - metavariable-regex: {metavariable: $F, regex: '(?i)^\w*(valid|sanitiz|escape|quote|allow|whitelist)\w*$'}
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: '"$SQL" + $X'
+              - pattern: '$A + "$SQL" + $X'
+          - metavariable-regex:
+              metavariable: $SQL
+              regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-either:
+              - pattern: 'String.format("$SQL", ...)'
+              - pattern: '"$SQL".formatted(...)'
+          # Only string placeholders carry text; %d and the like format numbers.
+          - metavariable-regex: {metavariable: $SQL, regex: '(?s).*%s'}
+          - metavariable-regex:
+              metavariable: $SQL
+              regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: [CWE-89]
   - id: python.parameter-path-join-without-containment
     message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
     severity: INFO
     languages: [python]
     patterns:
-      - pattern-inside: |
-          def $F(..., $P, ...):
-            ...
+      - pattern-either:
+          - pattern-inside: |
+              def $F(..., $P, ...):
+                ...
+          # Keys of a caller-supplied or instance mapping (template names, file
+          # names) written out one file per key.
+          - pattern-inside: |
+              def $F(..., $D, ...):
+                ...
+                for $P, $VAL in $D.items():
+                  ...
+          - pattern-inside: |
+              def $F(..., $D, ...):
+                ...
+                for $P, $VAL in ($D or {}).items():
+                  ...
+          - pattern-inside: |
+              def $F(self, ...):
+                ...
+                for $P, $VAL in self.$A.items():
+                  ...
       - pattern-either:
           - pattern: os.path.join($BASE, ..., $P, ...)
           - pattern: os.path.join($BASE, ..., f"...{$P}...", ...)
+          - pattern: os.path.join($BASE, ..., $P.strip(...), ...)
+          - pattern: os.path.join($BASE, ..., $P.lstrip(...), ...)
+          - pattern: os.path.join($BASE, ..., $P.rstrip(...), ...)
+          - pattern: $BASE / $P.strip(...)
+          - pattern: $BASE / $P.lstrip(...)
+          - pattern: $BASE / $P.rstrip(...)
           - pattern: $BASE / $P
           - pattern: $BASE / f"...{$P}..."
           - pattern: Path($BASE, ..., $P, ...)
@@ -3354,10 +4024,53 @@ rules:
             ...
             os.path.commonpath(...)
             ...
+      # Joined value resolved and compared, with a raise, before use.
+      - pattern-not-inside: |
+          $V = $J
+          ...
+          if <... Path($V).resolve() ...>:
+            ...
+            raise ...
+          ...
+      - pattern-not-inside: |
+          $V = $J
+          ...
+          if <... os.path.realpath($V) ...>:
+            ...
+            raise ...
+          ...
+      - pattern-not-inside: |
+          $V = $J
+          ...
+          if <... os.path.abspath($V) ...>:
+            ...
+            raise ...
+          ...
+      - pattern-not-inside: |
+          $V = $J
+          ...
+          if <... $V.resolve() ...>:
+            ...
+            raise ...
+          ...
+      # A prefix check only contains the path when the prefix ends in a separator;
+      # startswith(abspath(root)) alone also accepts root-evil/.
       - pattern-not-inside: |
           def $F(...):
             ...
-            $S.startswith(...)
+            <... $S.startswith(<... os.sep ...>) ...>
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            <... $S.startswith($R + "/") ...>
+            ...
+      - pattern-not-inside: |
+          def $F(...):
+            ...
+            <... os.sep ...>
+            ...
+            <... $S.startswith(...) ...>
             ...
       - pattern-not-inside: |
           def $F(...):
@@ -3384,12 +4097,6 @@ rules:
           def $F(...):
             ...
             if <... os.path.commonprefix(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $S.startswith(...) ...>:
               ...
             ...
       - pattern-not-inside: |
@@ -3442,7 +4149,7 @@ rules:
       - pattern-not: os.path.join($BASE, ..., os.path.basename($P), ...)
       - pattern-not: os.path.join($BASE, ..., secure_filename($P), ...)
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -3578,7 +4285,7 @@ rules:
       - pattern-not: path.Join($BASE, ..., path.Base($P), ...)
       - pattern-not-inside: securejoin.SecureJoin(...)
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
@@ -3589,162 +4296,203 @@ rules:
     message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
     severity: INFO
     languages: [javascript, typescript]
-    patterns:
-      - pattern-either:
-          - pattern-inside: function $F(..., $P, ...) { ... }
-          - pattern-inside: async function $F(..., $P, ...) { ... }
-          - pattern-inside: (..., $P, ...) => { ... }
-          - pattern-inside: async (..., $P, ...) => { ... }
-          - pattern-inside: |
-              class $C { ... $M(..., $P, ...) { ... } ... }
-          - pattern-inside: |
-              class $C { ... async $M(..., $P, ...) { ... } ... }
-      - pattern-either:
-          - pattern: path.join($BASE, ..., $P, ...)
-          - pattern: path.resolve($BASE, ..., $P, ...)
-          - pattern: join($BASE, ..., $P, ...)
-          - pattern: resolve($BASE, ..., $P, ...)
-      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
-      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
-      - metavariable-pattern:
-          metavariable: $BASE
-          patterns:
-            - pattern-not: $P
-      - pattern-either:
-          - pattern-inside: |
+    pattern-either:
+      # A parameter joined under a base directory with path.join/resolve.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $F(..., $P, ...) { ... }
+              - pattern-inside: async function $F(..., $P, ...) { ... }
+              - pattern-inside: (..., $P, ...) => { ... }
+              - pattern-inside: async (..., $P, ...) => { ... }
+              - pattern-inside: |
+                  class $C { ... $M(..., $P, ...) { ... } ... }
+              - pattern-inside: |
+                  class $C { ... async $M(..., $P, ...) { ... } ... }
+          - pattern-either:
+              - pattern: path.join($BASE, ..., $P, ...)
+              - pattern: path.resolve($BASE, ..., $P, ...)
+              - pattern: join($BASE, ..., $P, ...)
+              - pattern: resolve($BASE, ..., $P, ...)
+          - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+          - metavariable-pattern:
+              metavariable: $BASE
+              patterns:
+                - pattern-not: $P
+          # A name taken from a directory listing (readdir) is not caller input,
+          # even when it arrives as a callback parameter.
+          - pattern-not-inside: $FS.readdirSync(...).$ITER(function (..., $P, ...) { ... }, ...)
+          - pattern-not-inside: $FS.readdirSync(...).$ITER((..., $P, ...) => $BODY, ...)
+          - pattern-not-inside: |
+              $LIST = $FS.readdirSync(...)
+              ...
+          - pattern-not-inside: |
+              $LIST = await $FS.readdir(...)
+              ...
+          - pattern-not-inside: $FS.readdir($DIR, function ($ERR, $LIST) { ... })
+          - pattern-not-inside: $FS.readdir($DIR, ($ERR, $LIST) => { ... })
+          - pattern-not-inside: |
+              for (const $P of $FS.readdirSync(...)) { ... }
+          - pattern-either:
+              - pattern-inside: |
+                  function $F(...) {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  }
+              - pattern-inside: |
+                  async function $F(...) {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  }
+              - pattern-inside: |
+                  (...) => {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  }
+              - pattern-inside: |
+                  async (...) => {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  }
+              - pattern-inside: |
+                  class $C { ... $M(...) {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  } ... }
+              - pattern-inside: |
+                  class $C { ... async $M(...) {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  } ... }
+          - metavariable-regex: {metavariable: $FS, regex: '^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$'}
+          - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)$'}
+          - pattern-not-inside: |
               function $F(...) {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               }
-          - pattern-inside: |
+          - pattern-not-inside: |
               async function $F(...) {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               }
-          - pattern-inside: |
+          - pattern-not-inside: |
               (...) => {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               }
-          - pattern-inside: |
+          - pattern-not-inside: |
               async (...) => {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               }
-          - pattern-inside: |
+          - pattern-not-inside: |
               class $C { ... $M(...) {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               } ... }
-          - pattern-inside: |
+          - pattern-not-inside: |
               class $C { ... async $M(...) {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               } ... }
-      - metavariable-regex: {metavariable: $FS, regex: '^(fs|fsp|fsPromises|fse|promises|fs\.promises)$'}
-      - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync)$'}
-      - pattern-not-inside: |
-          function $F(...) {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          async function $F(...) {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          (...) => {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          async (...) => {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          class $C { ... $M(...) {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          } ... }
-      - pattern-not-inside: |
-          class $C { ... async $M(...) {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          } ... }
-      - pattern-not-inside: |
-          function $F(...) {
-            ...
-            <... path.relative(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          async function $F(...) {
-            ...
-            <... path.relative(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          class $C { ... async $M(...) {
-            ...
-            <... path.relative(...) ...>
-            ...
-          } ... }
-      - pattern-not-inside: |
-          function $F(...) {
-            ...
-            <... $P.includes("..") ...>
-            ...
-          }
-      - pattern-not-inside: |
-          async function $F(...) {
-            ...
-            <... $P.includes("..") ...>
-            ...
-          }
-      - pattern-not: path.join($BASE, ..., path.basename($P), ...)
-      - pattern-not: path.resolve($BASE, ..., path.basename($P), ...)
+          - pattern-not-inside: |
+              function $F(...) {
+                ...
+                <... path.relative(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              async function $F(...) {
+                ...
+                <... path.relative(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              class $C { ... async $M(...) {
+                ...
+                <... path.relative(...) ...>
+                ...
+              } ... }
+          - pattern-not-inside: |
+              function $F(...) {
+                ...
+                <... $P.includes("..") ...>
+                ...
+              }
+          - pattern-not-inside: |
+              async function $F(...) {
+                ...
+                <... $P.includes("..") ...>
+                ...
+              }
+          - pattern-not: path.join($BASE, ..., path.basename($P), ...)
+          - pattern-not: path.resolve($BASE, ..., path.basename($P), ...)
+      # A template-built path whose segment after a slash is a file-like name or
+      # field (`${dir}/${doc.filename}`), handed to an fs call with no containment.
+      - patterns:
+          - pattern-either:
+              - pattern: $FS.$SINK($T, ...)
+              - patterns:
+                  - pattern-inside: |
+                      $V = $T
+                      ...
+                  - pattern: $FS.$SINK($V, ...)
+          - metavariable-pattern:
+              metavariable: $T
+              pattern: '`...`'
+          - metavariable-regex:
+              metavariable: $T
+              regex: '(?s)^`.*/\$\{\s*(?:[\w$]+(?:\?)?\.)*(?i:[\w$]*(?:file|path|name|title|key|slug|dest|target|entry|member|asset|attachment|upload))[\w$]*\s*(?:as\s+\w+\s*)?\}'
+          - metavariable-regex:
+              metavariable: $T
+              regex: '^(?!(?s).*(?:\$\{\s*(?:__dirname|__filename|process\.cwd\(\)|import\.meta\.dirname)\s*\}/[^`$]*`$|/node_modules/))'
+          - metavariable-regex: {metavariable: $FS, regex: '^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$'}
+          - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)$'}
+          - pattern-not-inside: |
+              function $F(...) {
+                ...
+                <... $X.startsWith(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              async function $F(...) {
+                ...
+                <... $X.startsWith(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              (...) => {
+                ...
+                <... $X.startsWith(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              async (...) => {
+                ...
+                <... $X.startsWith(...) ...>
+                ...
+              }
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
       tier: review
       category: security
       confidence: LOW
       cwe: ["CWE-22"]
       scope: Function parameters joined under a base path in a function that calls fs and has no containment check; callers are not checked.
-  - id: javascript.html-template-unescaped-interpolation
-    message: A value is interpolated into an HTML tag name or quoted attribute of a template string without an escaper; escape it for the attribute context or build the element with DOM APIs.
-    severity: INFO
-    languages: [javascript, typescript]
-    patterns:
-      - pattern: '`...${$X}...`'
-      - metavariable-pattern:
-          metavariable: $X
-          patterns:
-            - pattern-not: $ESC(...)
-            - pattern-not: $O.$ESC(...)
-      - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})[A-Za-z_$][\w$.\[\]'"]*\s*\}"
-    metadata:
-      tier: review
-      category: security
-      confidence: LOW
-      cwe: ["CWE-79"]
-      scope: Template strings whose markup interpolates a plain identifier or member access into a double-quoted attribute; escaper calls and UPPER_CASE constants are excluded.
-    paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/examples/**", "**/scripts/**", "**/build/**", "**/dist/**", "**/gulpfile*", "**/node_modules/**", "**/*.min.js"]
   - id: javascript.dom-innerhtml-from-variable
     message: A non-literal value is assigned to innerHTML or outerHTML; use textContent, or sanitize the markup first.
     severity: INFO
@@ -3764,8 +4512,10 @@ rules:
             - pattern-not: DOMPurify.sanitize(...)
             - pattern-not: sanitize(...)
             - pattern-not: $ESC(...)
+      # A static placeholder on a class or namespace (AST.emptyHTML) is not data.
+      - metavariable-regex: {metavariable: $V, regex: '^(?![A-Z]\w*\.\w*(?i:empty|blank|none|default)\w*$)'}
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
@@ -3788,65 +4538,56 @@ rules:
             ...
           }
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-295"]
       scope: tls.Config ClientAuth set to a mode that requests or requires client certificates without chain verification.
-  - id: go.peer-certificate-trusted-without-verified-chain
-    message: A request's TLS peer certificate is used without checking that it verified; when client certificates are optional or unverified, PeerCertificates holds whatever the client sent. Require len(r.TLS.VerifiedChains) > 0 first.
+  - id: go.tls-peer-not-verified
+    message: The TLS peer is not verified; a gRPC client dials without transport security, or a handler trusts a peer certificate without checking VerifiedChains. Configure TLS credentials, or require len(r.TLS.VerifiedChains) > 0 first.
     severity: INFO
     languages: [go]
-    patterns:
-      - pattern-either:
-          - pattern: $R.TLS.PeerCertificates[0]
-          - pattern: $CS.PeerCertificates[0]
-      - pattern-either:
-          - pattern-inside: |
-              if <... len($R.TLS.PeerCertificates) ...> {
+    pattern-either:
+      # A peer certificate read under a length check without VerifiedChains.
+      - patterns:
+          - pattern-either:
+              - pattern: $R.TLS.PeerCertificates[0]
+              - pattern: $CS.PeerCertificates[0]
+          - pattern-either:
+              - pattern-inside: |
+                  if <... len($R.TLS.PeerCertificates) ...> {
+                    ...
+                  }
+              - pattern-inside: |
+                  if <... len($CS.PeerCertificates) ...> {
+                    ...
+                  }
+          - pattern-not-inside: |
+              if <... $X.VerifiedChains ...> {
                 ...
               }
-          - pattern-inside: |
-              if <... len($CS.PeerCertificates) ...> {
-                ...
-              }
-      - pattern-not-inside: |
-          if <... $X.VerifiedChains ...> {
-            ...
-          }
-      - pattern-either:
-          - pattern-inside: func $F(..., $R *http.Request, ...) { ... }
-          - pattern-inside: func $F(..., $R *http.Request, ...) $RET { ... }
-          - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) { ... }
-          - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) $RET { ... }
-          - pattern-inside: func ($CS tls.ConnectionState) error { ... }
+          - pattern-either:
+              - pattern-inside: func $F(..., $R *http.Request, ...) { ... }
+              - pattern-inside: func $F(..., $R *http.Request, ...) $RET { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $R *http.Request, ...) $RET { ... }
+              - pattern-inside: func ($CS tls.ConnectionState) error { ... }
+      # Unconditional insecure gRPC dial options.
+      - patterns:
+          - pattern-either:
+              - pattern: grpc.WithInsecure()
+              - pattern: grpc.WithTransportCredentials(insecure.NewCredentials())
+          - pattern-not-inside: |
+              if $OPTIN { ... }
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
-    metadata:
-      tier: review
-      category: security
-      confidence: LOW
-      cwe: ["CWE-295"]
-      scope: Handlers that read the first peer certificate under a length check without consulting VerifiedChains.
-  - id: go.grpc-insecure-transport
-    message: A gRPC client is dialed without transport security; configure credentials.NewTLS or credentials.NewClientTLSFromCert.
-    severity: INFO
-    languages: [go]
-    patterns:
-      - pattern-either:
-          - pattern: grpc.WithInsecure()
-          - pattern: grpc.WithTransportCredentials(insecure.NewCredentials())
-      - pattern-not-inside: |
-          if $OPTIN { ... }
-    paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
       confidence: LOW
       cwe: ["CWE-295", "CWE-319"]
-      scope: Unconditional insecure gRPC dial options; branches guarded by a configuration condition are excluded.
+      scope: Handlers that read the first peer certificate under a length check without consulting VerifiedChains, and unconditional insecure gRPC dial options.
   - id: javascript.tls-reject-unauthorized-disabled
     message: Certificate verification is disabled for a TLS connection; remove rejectUnauthorized false and trust the needed CA instead.
     severity: INFO
@@ -3860,32 +4601,10 @@ rules:
           if ($OPTIN) { ... }
       - pattern-not-inside: '$OPTIN ? $A : $B'
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
       tier: review
       category: security
       confidence: LOW
       cwe: ["CWE-295"]
       scope: Unconditional rejectUnauthorized false or NODE_TLS_REJECT_UNAUTHORIZED=0; option-guarded branches are excluded.
-  - id: python.ssl-context-verification-disabled
-    message: An SSL context with certificate or hostname verification disabled is created; use ssl.create_default_context() and load the needed CA instead.
-    severity: INFO
-    languages: [python]
-    patterns:
-      - pattern-either:
-          - pattern: ssl._create_unverified_context(...)
-          - pattern: $CTX.check_hostname = False
-          - pattern: $CTX.verify_mode = ssl.CERT_NONE
-          - pattern: 'ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)'
-          - pattern: urllib3.disable_warnings(...)
-      - pattern-not-inside: |
-          if $OPTIN:
-            ...
-    paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*Generated*", "**/*generated*", "**/*_pb2.py", "**/*.pb.go", "**/Lib/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/wp-admin/**", "**/wp-includes/**", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
-    metadata:
-      tier: review
-      category: security
-      confidence: LOW
-      cwe: ["CWE-295"]
-      scope: Unconditional SSL contexts without certificate or hostname checks; option-guarded branches are excluded.

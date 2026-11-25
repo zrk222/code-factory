@@ -20,3 +20,7 @@ deploy/deep-adapters/rules/tests/**/*.fixture text eol=lf
 deploy/deep-adapters/rules/semgrep-pattern-limited.yml text eol=lf
 # Offline publication catalog has a reviewed byte-level digest.
 factoryline/data/protocol_publications.json text eol=lf
+docs/evidence/*-exposed-*.json text eol=lf
+docs/evidence/precision-adjudicated-*.json text eol=lf
+docs/evidence/rule-confidence.json text eol=lf
+docs/evidence/review-parts-*/part-*.json text eol=lf

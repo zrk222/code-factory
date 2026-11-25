@@ -1,0 +1,1066 @@
+{
+ "schema": "factory.adjudicated-precision.v1",
+ "packet_sha256": "3ec98a4db2bce1b2408e385142764fe2ebddd2f4e3e94527c52bbcb220b5369e",
+ "reviewers": {
+  "claude-opus-5.5": "labels-claude-sepoct-20261125.json",
+  "codex-sol-6.2": "labels-codex-sepoct-20261125.json (sha256 40638283...)"
+ },
+ "judge": {
+  "fable-5.2": "judge-fable-sepoct-20261125.json",
+  "judge_packet_sha256": "1aa13773d457983596ff9cf67955bd907a1911714a207180db829388db2f4ed5"
+ },
+ "independence": "AI reviewers and AI judge only; independence from AI review is unestablished",
+ "candidate": "e9b80fd2 (ruleset 878f5a73)",
+ "cohort": "Sep-Oct 2026 (spent), alerts in changed files",
+ "agreement": {
+  "positions": 57,
+  "agreed": 9
+ },
+ "precision": {
+  "unique_alerts": 54,
+  "tp": 25,
+  "fp": 29,
+  "unclear": 0,
+  "tp_rate_wilson95": [
+   33.7,
+   59.4
+  ]
+ },
+ "per_rule": {
+  "javascript.dom-innerhtml-from-variable": {
+   "TP": 4,
+   "FP": 5,
+   "UNCLEAR": 0,
+   "wilson95": [
+    18.9,
+    73.3
+   ]
+  },
+  "javascript.html-template-unescaped-interpolation": {
+   "TP": 2,
+   "FP": 11,
+   "UNCLEAR": 0,
+   "wilson95": [
+    4.3,
+    42.2
+   ]
+  },
+  "javascript.parameter-shell-command": {
+   "TP": 5,
+   "FP": 6,
+   "UNCLEAR": 0,
+   "wilson95": [
+    21.3,
+    72.0
+   ]
+  },
+  "go.parameter-path-join-without-containment": {
+   "TP": 0,
+   "FP": 1,
+   "UNCLEAR": 0,
+   "wilson95": [
+    0.0,
+    79.3
+   ]
+  },
+  "javascript.parameter-path-join-without-containment": {
+   "TP": 8,
+   "FP": 2,
+   "UNCLEAR": 0,
+   "wilson95": [
+    49.0,
+    94.3
+   ]
+  },
+  "python.unsafe-deserialization-unscoped": {
+   "TP": 4,
+   "FP": 3,
+   "UNCLEAR": 0,
+   "wilson95": [
+    25.0,
+    84.2
+   ]
+  },
+  "python.parameter-path-join-without-containment": {
+   "TP": 2,
+   "FP": 0,
+   "UNCLEAR": 0,
+   "wilson95": [
+    34.2,
+    100.0
+   ]
+  },
+  "javascript.parameter-sql-text": {
+   "TP": 0,
+   "FP": 1,
+   "UNCLEAR": 0,
+   "wilson95": [
+    0.0,
+    79.3
+   ]
+  }
+ },
+ "strict_hunk_cases": 21,
+ "cases_with_tp_judged_hunk_alert": 15,
+ "key": {
+  "c121311f70c5": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true
+  },
+  "ba9487e0c7b9": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "5dbd6d89d1ff": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false
+  },
+  "606e7d959d8b": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "96eb5f20f582": {
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false
+  },
+  "bad875d6293c": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "16f122fc004f": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false
+  },
+  "6a4afde2db72": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true
+  },
+  "bfbe08cd450c": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "a8083221a149": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "b70592f060f2": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false
+  },
+  "3d4caed45da7": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "b5b7017de8d9": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false
+  },
+  "d23200c1663b": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false
+  },
+  "d24890aadae6": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "34e43b5171fc": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "36b0839042d5": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "887b0e0a41e5": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "9113fe0d8df3": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true
+  },
+  "b6d3b6e5c9a2": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true
+  },
+  "0489648efa3b": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "f59c025c9a5c": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true
+  },
+  "be83de90c058": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "0ef50d78feab": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "a67fb15d60d8": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "3b3a6256b622": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "83d9650c4706": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "df6369aedf18": {
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false
+  },
+  "53f70c545e41": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true
+  },
+  "80067240e0bb": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "2f653553788e": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "5b55151505df": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "410ac142fca5": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "71414e42998c": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "b79c24025d07": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": false
+  },
+  "ebe514b06a5b": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "9c33d4962663": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "6824d23c0f14": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true
+  },
+  "eae5173fdb9d": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "b7998e2a0f21": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true
+  },
+  "db5ffcbacff7": {
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false
+  },
+  "b7d92a742966": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "71e1eabe9095": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true
+  },
+  "32e582949803": {
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false
+  },
+  "3c8a552ec0cc": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true
+  },
+  "ca76ef479d52": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "dced12e18955": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false
+  },
+  "cb21576d4da1": {
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": false
+  },
+  "d7f1f65ed846": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": false
+  },
+  "e766fee9fe20": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "78b25ba978fd": {
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true
+  },
+  "01cd6f628776": {
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false
+  },
+  "b4b879dd7bf6": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true
+  },
+  "91f6214a79b3": {
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": false
+  }
+ },
+ "rows": [
+  {
+   "position": 0,
+   "item": "c121311f70c5",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/composition/useCopyCode.ts",
+   "line": 48,
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 1,
+   "item": "ba9487e0c7b9",
+   "repository_case": "GHSA-gcr2-9v8m-gq45",
+   "file": "packages/@dicebear/initials/src/index.ts",
+   "line": 38,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 2,
+   "item": "5dbd6d89d1ff",
+   "repository_case": "GHSA-pq96-jpmf-w254",
+   "file": "ui/src/plugins/meta/Meta.js",
+   "line": 132,
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 3,
+   "item": "606e7d959d8b",
+   "repository_case": "GHSA-6wfj-92cw-88vg",
+   "file": "js/gitDiffReal/generateDiff/index.js",
+   "line": 30,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 4,
+   "item": "96eb5f20f582",
+   "repository_case": "GHSA-99rq-75j6-5j9f",
+   "file": "kernel/server/serve.go",
+   "line": 949,
+   "rule": "go.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 5,
+   "item": "bad875d6293c",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 162,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 6,
+   "item": "16f122fc004f",
+   "repository_case": "GHSA-2cmg-v53w-8xfp",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/confluenceToMarkdown.ts",
+   "line": 165,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 7,
+   "item": "6a4afde2db72",
+   "repository_case": "GHSA-65hg-cf3f-5m39",
+   "file": "ts/Core/Renderer/HTML/AST.ts",
+   "line": 614,
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 8,
+   "item": "bfbe08cd450c",
+   "repository_case": "GHSA-3wgp-x9p5-c7cc",
+   "file": "packages/base-driver/lib/express/static.ts",
+   "line": 64,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 9,
+   "item": "a8083221a149",
+   "repository_case": "GHSA-2rx9-3g3h-c2jv",
+   "file": "pnpm11/installing/env-installer/src/installConfigDeps.ts",
+   "line": 290,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 10,
+   "item": "b70592f060f2",
+   "repository_case": "GHSA-c6gr-qvv4-5v3f",
+   "file": "src/purify.ts",
+   "line": 1625,
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 11,
+   "item": "3d4caed45da7",
+   "repository_case": "GHSA-8wqc-v2q8-vff2",
+   "file": "packages/commons-server/src/libs/server/server.ts",
+   "line": 2321,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 12,
+   "item": "b5b7017de8d9",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 239,
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 13,
+   "item": "d23200c1663b",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 243,
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 14,
+   "item": "d24890aadae6",
+   "repository_case": "GHSA-8mcc-hrx5-hvxc",
+   "file": "git/objects/submodule/base.py",
+   "line": 370,
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 15,
+   "item": "34e43b5171fc",
+   "repository_case": "GHSA-6wfj-92cw-88vg",
+   "file": "js/gitDiffReal/generateDiff/index.js",
+   "line": 29,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 16,
+   "item": "36b0839042d5",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 141,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 17,
+   "item": "887b0e0a41e5",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 168,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 18,
+   "item": "9113fe0d8df3",
+   "repository_case": "GHSA-xhq9-whgq-49j5",
+   "file": "packages/dashboard/src/lib/components/shared/table-cell/order-table-cell-components.tsx",
+   "line": 54,
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "FP",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 19,
+   "item": "b6d3b6e5c9a2",
+   "repository_case": "GHSA-rhp5-r9x4-f5g2",
+   "file": "nltk/parse/transitionparser.py",
+   "line": 560,
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 20,
+   "item": "0489648efa3b",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "file": "packages/test-es-module-consumer/suite.mjs",
+   "line": 4,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 21,
+   "item": "f59c025c9a5c",
+   "repository_case": "GHSA-qrfj-mgw8-j9c6",
+   "file": "packages/core/src/lib/plugins/html/utils/htmlStringToDOMNode.ts",
+   "line": 4,
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 22,
+   "item": "be83de90c058",
+   "repository_case": "GHSA-3753-m2x2-q623",
+   "file": "packages/renderers/doc/src/render/html.ts",
+   "line": 270,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 23,
+   "item": "0ef50d78feab",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 154,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 24,
+   "item": "a67fb15d60d8",
+   "repository_case": "GHSA-p223-2wr2-j562",
+   "file": "packages/payload/src/uploads/deleteAssociatedFiles.ts",
+   "line": 53,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 25,
+   "item": "3b3a6256b622",
+   "repository_case": "GHSA-75qf-886x-5xf2",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/helpers.ts",
+   "line": 163,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 26,
+   "item": "83d9650c4706",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "file": "packages/test-javascript-consumer/suite.js",
+   "line": 13,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 27,
+   "item": "df6369aedf18",
+   "repository_case": "GHSA-59cr-6r3x-644w",
+   "file": "git/objects/submodule/base.py",
+   "line": 380,
+   "rule": "python.parameter-path-join-without-containment",
+   "on_fix_hunk": false,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 28,
+   "item": "53f70c545e41",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/composition/useCopyCode.ts",
+   "line": 55,
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 29,
+   "item": "0ef50d78feab",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 154,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 30,
+   "item": "80067240e0bb",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 158,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 31,
+   "item": "2f653553788e",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 67,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 32,
+   "item": "5b55151505df",
+   "repository_case": "GHSA-pq96-jpmf-w254",
+   "file": "ui/src/plugins/meta/Meta.js",
+   "line": 224,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 33,
+   "item": "410ac142fca5",
+   "repository_case": "GHSA-2cmg-v53w-8xfp",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/confluenceToMarkdown.ts",
+   "line": 180,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 34,
+   "item": "71414e42998c",
+   "repository_case": "GHSA-p223-2wr2-j562",
+   "file": "packages/payload/src/uploads/deleteAssociatedFiles.ts",
+   "line": 37,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 35,
+   "item": "2f653553788e",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 67,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 36,
+   "item": "b79c24025d07",
+   "repository_case": "GHSA-27mw-82g8-phjj",
+   "file": "packages/kit/src/runtime/server/page/render.js",
+   "line": 686,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 37,
+   "item": "ebe514b06a5b",
+   "repository_case": "GHSA-pq96-jpmf-w254",
+   "file": "ui/src/plugins/meta/Meta.js",
+   "line": 169,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 38,
+   "item": "9c33d4962663",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "file": "packages/test-javascript-consumer/suite.js",
+   "line": 5,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 39,
+   "item": "6824d23c0f14",
+   "repository_case": "GHSA-gqvg-gmmx-x4hm",
+   "file": "mlflow/statsmodels/__init__.py",
+   "line": 310,
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 40,
+   "item": "eae5173fdb9d",
+   "repository_case": "GHSA-2cmg-v53w-8xfp",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/confluenceToMarkdown.ts",
+   "line": 128,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 41,
+   "item": "b7998e2a0f21",
+   "repository_case": "GHSA-qrfj-mgw8-j9c6",
+   "file": "packages/core/src/static/deserialize/htmlStringToEditorDOM.ts",
+   "line": 9,
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 42,
+   "item": "db5ffcbacff7",
+   "repository_case": "GHSA-9q4r-4842-93vw",
+   "file": "internal-packages/tsql/src/query/printer.ts",
+   "line": 481,
+   "rule": "javascript.parameter-sql-text",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 43,
+   "item": "b7d92a742966",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 89,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 44,
+   "item": "71e1eabe9095",
+   "repository_case": "GHSA-2vh9-42vm-xmv2",
+   "file": "lmdeploy/pytorch/disagg/conn/engine_conn.py",
+   "line": 79,
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 45,
+   "item": "32e582949803",
+   "repository_case": "GHSA-6688-9rhm-gjv2",
+   "file": "src/purify.ts",
+   "line": 1625,
+   "rule": "javascript.dom-innerhtml-from-variable",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 46,
+   "item": "3c8a552ec0cc",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "file": "packages/test-es-module-consumer/suite.mjs",
+   "line": 12,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "FP",
+   "judge": null,
+   "final": "FP"
+  },
+  {
+   "position": 47,
+   "item": "ca76ef479d52",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 98,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 48,
+   "item": "dced12e18955",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 144,
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false,
+   "claude": "TP",
+   "codex": "TP",
+   "judge": null,
+   "final": "TP"
+  },
+  {
+   "position": 49,
+   "item": "cb21576d4da1",
+   "repository_case": "GHSA-6wfj-92cw-88vg",
+   "file": "js/gitDiffReal/generateDiff/index.js",
+   "line": 64,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 50,
+   "item": "d7f1f65ed846",
+   "repository_case": "GHSA-27mw-82g8-phjj",
+   "file": "packages/kit/src/runtime/server/page/render.js",
+   "line": 694,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 51,
+   "item": "e766fee9fe20",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 185,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 52,
+   "item": "78b25ba978fd",
+   "repository_case": "GHSA-75qf-886x-5xf2",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/helpers.ts",
+   "line": 164,
+   "rule": "javascript.parameter-path-join-without-containment",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 53,
+   "item": "01cd6f628776",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 282,
+   "rule": "python.unsafe-deserialization-unscoped",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "TP",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 54,
+   "item": "b7d92a742966",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 89,
+   "rule": "javascript.parameter-shell-command",
+   "on_fix_hunk": true,
+   "claude": "TP",
+   "codex": "UNCLEAR",
+   "judge": "TP",
+   "final": "TP"
+  },
+  {
+   "position": 55,
+   "item": "b4b879dd7bf6",
+   "repository_case": "GHSA-27mw-82g8-phjj",
+   "file": "packages/kit/src/runtime/server/page/render.js",
+   "line": 589,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": true,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  },
+  {
+   "position": 56,
+   "item": "91f6214a79b3",
+   "repository_case": "GHSA-r223-96jv-q533",
+   "file": "generators/spring-boot/generator.ts",
+   "line": 357,
+   "rule": "javascript.html-template-unescaped-interpolation",
+   "on_fix_hunk": false,
+   "claude": "FP",
+   "codex": "UNCLEAR",
+   "judge": "FP",
+   "final": "FP"
+  }
+ ]
+}

@@ -1,0 +1,5351 @@
+{
+ "schema": "factory.recall-evaluation.v1",
+ "baseline_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
+ "candidate_sha256": "5ac7116bc9e76d68166bea40093d6edffb286e5b6bffc3d1ef7f492d3f72d119",
+ "extra_args": [],
+ "candidate_extra_args": [],
+ "decision": "REJECT",
+ "failures": [
+  "new engine errors/timeouts: GHSA-8f2v-2qhj-gfwg, GHSA-gvg7-pp82-cff3, GHSA-jjgq-jq8g-24w4",
+  "fix-side residuals 38 -> 59",
+  "control alerts +744 > 25"
+ ],
+ "gained": [
+  "GHSA-79cw-hfcc-7mw9",
+  "GHSA-59xm-4m8c-g3xj",
+  "GHSA-6pvm-2vjj-rx4w",
+  "GHSA-hhmc-q9hp-r662",
+  "GHSA-4pf7-cc4r-g63h",
+  "GHSA-8j49-mmcx-4mp5",
+  "GHSA-rm43-82j9-r4mj",
+  "GHSA-xrqw-3rrv-vx5w",
+  "GHSA-cj54-hpcc-gj6h",
+  "GHSA-2956-977x-2w3r",
+  "GHSA-f42x-p2mx-hm8r",
+  "GHSA-g65v-27r3-5p6m",
+  "GHSA-pmwx-rm49-xv39",
+  "GHSA-rxjr-6c9q-h67x",
+  "GHSA-92hr-gmr6-h8cp",
+  "GHSA-76pc-mqxp-3rq5",
+  "GHSA-88pr-878c-24wf",
+  "GHSA-p849-8hwh-84j9",
+  "GHSA-2xgg-r2wc-c5r2",
+  "GHSA-5jmr-gcrj-2c9q",
+  "GHSA-68wg-qv6r-j4vp",
+  "GHSA-j7g8-3qqg-8cvm"
+ ],
+ "lost_baseline_hits": [],
+ "new_errors": [
+  "GHSA-8f2v-2qhj-gfwg",
+  "GHSA-gvg7-pp82-cff3",
+  "GHSA-jjgq-jq8g-24w4"
+ ],
+ "residual": [
+  38,
+  59
+ ],
+ "control_increase": 744,
+ "dev": [
+  {
+   "manifest": "/home/claude/fresh/heldout-recall-manifest-20261124-fresh.json",
+   "before": {
+    "cases": 91,
+    "scored": 85,
+    "status": {
+     "scored": 85,
+     "no_in_language_source_change": 5,
+     "unfetchable": 1
+    },
+    "hunk_hits": 10,
+    "hunk_recall_wilson95": [
+     6.5,
+     20.3
+    ],
+    "trace_hits": 12,
+    "trace_recall_wilson95": [
+     8.3,
+     23.1
+    ],
+    "file_hits": 19,
+    "file_recall_wilson95": [
+     14.8,
+     32.3
+    ],
+    "distinct_fixes_hit": 8,
+    "outcomes": {
+     "hit": 10,
+     "miss": 75,
+     "timeout": 0,
+     "unknown": 6,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 141,
+     "per_scored_case": 1.7
+    },
+    "fix_side_residual_alerts": 13,
+    "by_family": {
+     "cmd": {
+      "hits": 2,
+      "scored": 10
+     },
+     "tls": {
+      "hits": 2,
+      "scored": 4
+     },
+     "xss": {
+      "hits": 3,
+      "scored": 18
+     },
+     "path": {
+      "hits": 1,
+      "scored": 33
+     },
+     "sql": {
+      "hits": 2,
+      "scored": 16
+     },
+     "deser": {
+      "hits": 0,
+      "scored": 5
+     }
+    },
+    "by_ecosystem": {
+     "Go": {
+      "hits": 2,
+      "scored": 7
+     },
+     "Maven": {
+      "hits": 0,
+      "scored": 8
+     },
+     "Packagist": {
+      "hits": 2,
+      "scored": 17
+     },
+     "PyPI": {
+      "hits": 1,
+      "scored": 22
+     },
+     "RubyGems": {
+      "hits": 0,
+      "scored": 7
+     },
+     "npm": {
+      "hits": 5,
+      "scored": 24
+     }
+    }
+   },
+   "after": {
+    "cases": 91,
+    "scored": 85,
+    "status": {
+     "scored": 85,
+     "no_in_language_source_change": 5,
+     "unfetchable": 1
+    },
+    "hunk_hits": 28,
+    "hunk_recall_wilson95": [
+     23.9,
+     43.5
+    ],
+    "trace_hits": 29,
+    "trace_recall_wilson95": [
+     24.9,
+     44.7
+    ],
+    "file_hits": 36,
+    "file_recall_wilson95": [
+     32.4,
+     53
+    ],
+    "distinct_fixes_hit": 25,
+    "outcomes": {
+     "hit": 28,
+     "miss": 56,
+     "timeout": 1,
+     "unknown": 6,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 254,
+     "per_scored_case": 3
+    },
+    "fix_side_residual_alerts": 24,
+    "by_family": {
+     "cmd": {
+      "hits": 2,
+      "scored": 10
+     },
+     "tls": {
+      "hits": 2,
+      "scored": 4
+     },
+     "xss": {
+      "hits": 3,
+      "scored": 18
+     },
+     "path": {
+      "hits": 15,
+      "scored": 33
+     },
+     "sql": {
+      "hits": 6,
+      "scored": 16
+     },
+     "deser": {
+      "hits": 0,
+      "scored": 5
+     }
+    },
+    "by_ecosystem": {
+     "Go": {
+      "hits": 2,
+      "scored": 7
+     },
+     "Maven": {
+      "hits": 0,
+      "scored": 8
+     },
+     "Packagist": {
+      "hits": 7,
+      "scored": 17
+     },
+     "PyPI": {
+      "hits": 7,
+      "scored": 22
+     },
+     "RubyGems": {
+      "hits": 2,
+      "scored": 7
+     },
+     "npm": {
+      "hits": 10,
+      "scored": 24
+     }
+    }
+   }
+  },
+  {
+   "manifest": "/home/claude/fresh/heldout-recall-manifest-20261124-overflow.json",
+   "before": {
+    "cases": 61,
+    "scored": 56,
+    "status": {
+     "scored": 56,
+     "no_in_language_source_change": 5
+    },
+    "hunk_hits": 4,
+    "hunk_recall_wilson95": [
+     2.8,
+     17
+    ],
+    "trace_hits": 4,
+    "trace_recall_wilson95": [
+     2.8,
+     17
+    ],
+    "file_hits": 11,
+    "file_recall_wilson95": [
+     11.3,
+     31.8
+    ],
+    "distinct_fixes_hit": 4,
+    "outcomes": {
+     "hit": 4,
+     "miss": 51,
+     "timeout": 1,
+     "unknown": 5,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 18,
+     "per_scored_case": 0.3
+    },
+    "fix_side_residual_alerts": 1,
+    "by_family": {
+     "sql": {
+      "hits": 0,
+      "scored": 4
+     },
+     "xss": {
+      "hits": 1,
+      "scored": 18
+     },
+     "path": {
+      "hits": 2,
+      "scored": 26
+     },
+     "cmd": {
+      "hits": 0,
+      "scored": 7
+     },
+     "code": {
+      "hits": 1,
+      "scored": 1
+     },
+     "deser": {
+      "hits": 1,
+      "scored": 2
+     }
+    },
+    "by_ecosystem": {
+     "npm": {
+      "hits": 3,
+      "scored": 26
+     },
+     "PyPI": {
+      "hits": 1,
+      "scored": 30
+     }
+    }
+   },
+   "after": {
+    "cases": 61,
+    "scored": 56,
+    "status": {
+     "scored": 56,
+     "no_in_language_source_change": 5
+    },
+    "hunk_hits": 6,
+    "hunk_recall_wilson95": [
+     5,
+     21.5
+    ],
+    "trace_hits": 6,
+    "trace_recall_wilson95": [
+     5,
+     21.5
+    ],
+    "file_hits": 16,
+    "file_recall_wilson95": [
+     18.4,
+     41.5
+    ],
+    "distinct_fixes_hit": 6,
+    "outcomes": {
+     "hit": 6,
+     "miss": 49,
+     "timeout": 1,
+     "unknown": 5,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 31,
+     "per_scored_case": 0.6
+    },
+    "fix_side_residual_alerts": 3,
+    "by_family": {
+     "sql": {
+      "hits": 1,
+      "scored": 4
+     },
+     "xss": {
+      "hits": 1,
+      "scored": 18
+     },
+     "path": {
+      "hits": 3,
+      "scored": 26
+     },
+     "cmd": {
+      "hits": 0,
+      "scored": 7
+     },
+     "code": {
+      "hits": 1,
+      "scored": 1
+     },
+     "deser": {
+      "hits": 1,
+      "scored": 2
+     }
+    },
+    "by_ecosystem": {
+     "npm": {
+      "hits": 4,
+      "scored": 26
+     },
+     "PyPI": {
+      "hits": 2,
+      "scored": 30
+     }
+    }
+   }
+  },
+  {
+   "manifest": "/home/claude/heldout-run/manifest.json",
+   "before": {
+    "cases": 113,
+    "scored": 107,
+    "status": {
+     "scored": 107,
+     "no_in_language_source_change": 6
+    },
+    "hunk_hits": 18,
+    "hunk_recall_wilson95": [
+     10.9,
+     25
+    ],
+    "trace_hits": 20,
+    "trace_recall_wilson95": [
+     12.4,
+     27.1
+    ],
+    "file_hits": 30,
+    "file_recall_wilson95": [
+     20.4,
+     37.2
+    ],
+    "distinct_fixes_hit": 18,
+    "outcomes": {
+     "hit": 18,
+     "miss": 89,
+     "timeout": 0,
+     "unknown": 6,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 96,
+     "per_scored_case": 0.9
+    },
+    "fix_side_residual_alerts": 15,
+    "by_family": {
+     "path": {
+      "hits": 5,
+      "scored": 47
+     },
+     "cmd": {
+      "hits": 4,
+      "scored": 12
+     },
+     "xss": {
+      "hits": 4,
+      "scored": 31
+     },
+     "tls": {
+      "hits": 2,
+      "scored": 6
+     },
+     "deser": {
+      "hits": 1,
+      "scored": 5
+     },
+     "incl": {
+      "hits": 0,
+      "scored": 2
+     },
+     "sql": {
+      "hits": 2,
+      "scored": 7
+     },
+     "code": {
+      "hits": 2,
+      "scored": 4
+     }
+    },
+    "by_ecosystem": {
+     "PyPI": {
+      "hits": 5,
+      "scored": 23
+     },
+     "RubyGems": {
+      "hits": 0,
+      "scored": 7
+     },
+     "npm": {
+      "hits": 7,
+      "scored": 24
+     },
+     "Go": {
+      "hits": 3,
+      "scored": 24
+     },
+     "Packagist": {
+      "hits": 3,
+      "scored": 24
+     },
+     "Maven": {
+      "hits": 0,
+      "scored": 5
+     }
+    }
+   },
+   "after": {
+    "cases": 113,
+    "scored": 107,
+    "status": {
+     "scored": 107,
+     "no_in_language_source_change": 6
+    },
+    "hunk_hits": 18,
+    "hunk_recall_wilson95": [
+     10.9,
+     25
+    ],
+    "trace_hits": 20,
+    "trace_recall_wilson95": [
+     12.4,
+     27.1
+    ],
+    "file_hits": 31,
+    "file_recall_wilson95": [
+     21.2,
+     38.2
+    ],
+    "distinct_fixes_hit": 18,
+    "outcomes": {
+     "hit": 18,
+     "miss": 89,
+     "timeout": 0,
+     "unknown": 6,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 114,
+     "per_scored_case": 1.1
+    },
+    "fix_side_residual_alerts": 21,
+    "by_family": {
+     "path": {
+      "hits": 5,
+      "scored": 47
+     },
+     "cmd": {
+      "hits": 4,
+      "scored": 12
+     },
+     "xss": {
+      "hits": 4,
+      "scored": 31
+     },
+     "tls": {
+      "hits": 2,
+      "scored": 6
+     },
+     "deser": {
+      "hits": 1,
+      "scored": 5
+     },
+     "incl": {
+      "hits": 0,
+      "scored": 2
+     },
+     "sql": {
+      "hits": 2,
+      "scored": 7
+     },
+     "code": {
+      "hits": 2,
+      "scored": 4
+     }
+    },
+    "by_ecosystem": {
+     "PyPI": {
+      "hits": 5,
+      "scored": 23
+     },
+     "RubyGems": {
+      "hits": 0,
+      "scored": 7
+     },
+     "npm": {
+      "hits": 7,
+      "scored": 24
+     },
+     "Go": {
+      "hits": 3,
+      "scored": 24
+     },
+     "Packagist": {
+      "hits": 3,
+      "scored": 24
+     },
+     "Maven": {
+      "hits": 0,
+      "scored": 5
+     }
+    }
+   }
+  },
+  {
+   "manifest": "/home/claude/heldout-run/dev-cases.json",
+   "before": {
+    "cases": 150,
+    "scored": 148,
+    "status": {
+     "scored": 148,
+     "no_in_language_source_change": 2
+    },
+    "hunk_hits": 19,
+    "hunk_recall_wilson95": [
+     8.4,
+     19.2
+    ],
+    "trace_hits": 19,
+    "trace_recall_wilson95": [
+     8.4,
+     19.2
+    ],
+    "file_hits": 24,
+    "file_recall_wilson95": [
+     11.1,
+     23
+    ],
+    "distinct_fixes_hit": 19,
+    "outcomes": {
+     "hit": 19,
+     "miss": 128,
+     "timeout": 1,
+     "unknown": 2,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 68,
+     "per_scored_case": 0.5
+    },
+    "fix_side_residual_alerts": 9,
+    "by_family": {
+     "path": {
+      "hits": 3,
+      "scored": 24
+     },
+     "sql": {
+      "hits": 1,
+      "scored": 43
+     },
+     "deser": {
+      "hits": 0,
+      "scored": 9
+     },
+     "tls": {
+      "hits": 6,
+      "scored": 20
+     },
+     "cmd": {
+      "hits": 7,
+      "scored": 37
+     },
+     "xss": {
+      "hits": 2,
+      "scored": 14
+     },
+     "incl": {
+      "hits": 0,
+      "scored": 1
+     }
+    },
+    "by_ecosystem": {
+     "Packagist": {
+      "hits": 4,
+      "scored": 25
+     },
+     "PyPI": {
+      "hits": 2,
+      "scored": 25
+     },
+     "Maven": {
+      "hits": 4,
+      "scored": 23
+     },
+     "Go": {
+      "hits": 1,
+      "scored": 25
+     },
+     "npm": {
+      "hits": 4,
+      "scored": 25
+     },
+     "RubyGems": {
+      "hits": 4,
+      "scored": 25
+     }
+    }
+   },
+   "after": {
+    "cases": 150,
+    "scored": 148,
+    "status": {
+     "scored": 148,
+     "no_in_language_source_change": 2
+    },
+    "hunk_hits": 21,
+    "hunk_recall_wilson95": [
+     9.5,
+     20.7
+    ],
+    "trace_hits": 21,
+    "trace_recall_wilson95": [
+     9.5,
+     20.7
+    ],
+    "file_hits": 26,
+    "file_recall_wilson95": [
+     12.3,
+     24.5
+    ],
+    "distinct_fixes_hit": 21,
+    "outcomes": {
+     "hit": 21,
+     "miss": 124,
+     "timeout": 3,
+     "unknown": 2,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 87,
+     "per_scored_case": 0.6
+    },
+    "fix_side_residual_alerts": 11,
+    "by_family": {
+     "path": {
+      "hits": 3,
+      "scored": 24
+     },
+     "sql": {
+      "hits": 3,
+      "scored": 43
+     },
+     "deser": {
+      "hits": 0,
+      "scored": 9
+     },
+     "tls": {
+      "hits": 6,
+      "scored": 20
+     },
+     "cmd": {
+      "hits": 7,
+      "scored": 37
+     },
+     "xss": {
+      "hits": 2,
+      "scored": 14
+     },
+     "incl": {
+      "hits": 0,
+      "scored": 1
+     }
+    },
+    "by_ecosystem": {
+     "Packagist": {
+      "hits": 6,
+      "scored": 25
+     },
+     "PyPI": {
+      "hits": 2,
+      "scored": 25
+     },
+     "Maven": {
+      "hits": 4,
+      "scored": 23
+     },
+     "Go": {
+      "hits": 1,
+      "scored": 25
+     },
+     "npm": {
+      "hits": 4,
+      "scored": 25
+     },
+     "RubyGems": {
+      "hits": 4,
+      "scored": 25
+     }
+    }
+   }
+  }
+ ],
+ "controls": [
+  {
+   "dir": "/home/claude/ctl/ZJONSSON_node-unzipper/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/apache_commons-compress/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/caddyserver_caddy/",
+   "before": 1,
+   "after": 1,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/composer_composer/",
+   "before": 0,
+   "after": 6,
+   "added": [
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Composer/Command/PackageDiscoveryTrait.php",
+     "line": 335,
+     "snippet": "$constraint = $this->getIO()->askAndValidate('Package \"<info>'.$name.'</info>\" does not exist but is provided by '.count($providers).' packages. Which version constraint would you like to use? [<info>"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Composer/Command/RequireCommand.php",
+     "line": 552,
+     "snippet": "$this->getIO()->warning('Version '.$requirements[$packageName].' looks like it may be a feature branch which is unlikely to keep working in the long run and may be in an unstable state');"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Composer/Command/ShowCommand.php",
+     "line": 1708,
+     "snippet": "throw new \\InvalidArgumentException('Invalid --cooldown-period value \"'.$override.'\", use an integer number of seconds or a duration like \"7 days\".', 0, $e);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Composer/DependencyResolver/Problem.php",
+     "line": 506,
+     "snippet": "return [\"- Root composer.json requires $packageName, it \", 'could not be found, it looks like its name is invalid, \"'.$illegalChars.'\" is not allowed in package names.'];"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Composer/DependencyResolver/Request.php",
+     "line": 76,
+     "snippet": "throw new \\LogicException('Overwriting requires seems like a bug ('.$packageName.' '.$this->requires[$packageName]->getPrettyString().' => '.$constraint->getPrettyString().', check why it is happening"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Composer/Downloader/GitDownloader.php",
+     "line": 504,
+     "snippet": "$exceptionExtra = \"\\nIt looks like the commit hash is not available in the repository, maybe \".($package->isDev() ? 'the commit was removed from the branch' : 'the tag was recreated').'? Run \"composer"
+    }
+   ],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/cthackers_adm-zip/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/expressjs_express/",
+   "before": 5,
+   "after": 5,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/getgrav_grav/",
+   "before": 4,
+   "after": 4,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/gohugoio_hugo/",
+   "before": 1,
+   "after": 1,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/jekyll_jekyll/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/jquery_jquery/",
+   "before": 1,
+   "after": 1,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/laravel_framework/",
+   "before": 1,
+   "after": 12,
+   "added": [
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Query/Grammars/SQLiteGrammar.php",
+     "line": 223,
+     "snippet": "return 'exists (select 1 from json_each('.$field.$path.') where '.$this->wrap('json_each.value').' is '.$value.')';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Query/Grammars/SqlServerGrammar.php",
+     "line": 199,
+     "snippet": "return $value.' in (select [value] from openjson('.$field.$path.'))';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Query/Grammars/SqlServerGrammar.php",
+     "line": 250,
+     "snippet": "return '(select count(*) from openjson('.$field.$path.')) '.$operator.' '.$value;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Query/Grammars/SqlServerGrammar.php",
+     "line": 521,
+     "snippet": "$sql .= 'when not matched then insert ('.$columns.') values ('.$columns.');';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Schema/Grammars/MySqlGrammar.php",
+     "line": 202,
+     "snippet": "$schema,"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Schema/Grammars/MySqlGrammar.php",
+     "line": 204,
+     "snippet": "$schema,"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Schema/Grammars/SQLiteGrammar.php",
+     "line": 197,
+     "snippet": "$schema = $this->quoteString($schema ?? 'main'),"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Schema/Grammars/SQLiteGrammar.php",
+     "line": 199,
+     "snippet": "$schema,"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Schema/Grammars/SQLiteGrammar.php",
+     "line": 200,
+     "snippet": "$schema"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Schema/Grammars/SQLiteGrammar.php",
+     "line": 218,
+     "snippet": "$schema = $this->quoteString($schema ?? 'main'),"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "src/Illuminate/Database/Schema/Grammars/SQLiteGrammar.php",
+     "line": 220,
+     "snippet": "$schema"
+    }
+   ],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/markedjs_marked/",
+   "before": 2,
+   "after": 2,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/mozilla_pdf.js/",
+   "before": 4,
+   "after": 11,
+   "added": [
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "src/core/internal_viewer_utils.js",
+     "line": 228,
+     "snippet": "expr: `(${_wrapLeft(a, PREC.CMP)} > ${_wrapLeft(b, PREC.CMP)} ? 1 : 0)`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "src/core/internal_viewer_utils.js",
+     "line": 233,
+     "snippet": "expr: `(${_wrapLeft(a, PREC.CMP)} >= ${_wrapLeft(b, PREC.CMP)} ? 1 : 0)`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "src/core/internal_viewer_utils.js",
+     "line": 238,
+     "snippet": "expr: `(${_wrapLeft(a, PREC.CMP)} < ${_wrapLeft(b, PREC.CMP)} ? 1 : 0)`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "src/core/internal_viewer_utils.js",
+     "line": 243,
+     "snippet": "expr: `(${_wrapLeft(a, PREC.CMP)} <= ${_wrapLeft(b, PREC.CMP)} ? 1 : 0)`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "src/core/internal_viewer_utils.js",
+     "line": 483,
+     "snippet": "tmpDecls.push(`  const ${name} = ${result.expr};`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "src/core/xfa/parser_base.js",
+     "line": 113,
+     "snippet": "warn(`XFA - multiple namespace definition in <${tagName}>`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "src/scripting_api/aform.js",
+     "line": 488,
+     "snippet": "const err = `${GlobalConstants.IDS_INVALID_VALUE} = \"${cMask}\"`;"
+    }
+   ],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/phpbb_phpbb/",
+   "before": 7,
+   "after": 687,
+   "added": [
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/add_permissions.php",
+     "line": 249,
+     "snippet": "$sql = 'SELECT group_id FROM ' . GROUPS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/add_permissions.php",
+     "line": 312,
+     "snippet": "$sql = ($ug_type == 'user') ? 'SELECT o.auth_option_id, o.auth_option, a.forum_id, a.auth_setting FROM ' . ACL_USERS_TABLE . ' a, ' . ACL_OPTIONS_TABLE . \" o WHERE a.auth_option_id = o.auth_option_id "
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/add_permissions.php",
+     "line": 312,
+     "snippet": "$sql = ($ug_type == 'user') ? 'SELECT o.auth_option_id, o.auth_option, a.forum_id, a.auth_setting FROM ' . ACL_USERS_TABLE . ' a, ' . ACL_OPTIONS_TABLE . \" o WHERE a.auth_option_id = o.auth_option_id "
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/benchmark.php",
+     "line": 171,
+     "snippet": "FROM \" . TOPICS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/benchmark.php",
+     "line": 196,
+     "snippet": "FROM \" . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/benchmark.php",
+     "line": 222,
+     "snippet": "$sql  = \"INSERT INTO \" . TOPICS_TABLE . \" (topic_title, topic_poster, topic_time, forum_id, topic_status, topic_type, topic_vote)"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/benchmark.php",
+     "line": 266,
+     "snippet": "$sql = \"INSERT INTO \" . POSTS_TABLE . \" (topic_id, forum_id, poster_id, attach_id, icon_id, post_username, post_time, poster_ip, post_visibility, bbcode_uid, enable_bbcode, enable_html, enable_smilies"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/benchmark.php",
+     "line": 296,
+     "snippet": "WHERE user_id = \" . $user_id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/benchmark.php",
+     "line": 418,
+     "snippet": "$sql = \"INSERT INTO \" . USERS_TABLE . \"\t(user_id, username, user_regdate, user_password, user_email, user_sig, user_sig_bbcode_uid, user_avatar, user_viewemail, user_attachsig, user_allowsmilies, user"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/benchmark.php",
+     "line": 418,
+     "snippet": "$sql = \"INSERT INTO \" . USERS_TABLE . \"\t(user_id, username, user_regdate, user_password, user_email, user_sig, user_sig_bbcode_uid, user_avatar, user_viewemail, user_attachsig, user_allowsmilies, user"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/develop/repair_bots.php",
+     "line": 144,
+     "snippet": "$sql = 'INSERT INTO ' . BOTS_TABLE . ' ' . $db->sql_build_array('INSERT', array("
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_attachments.php",
+     "line": 1348,
+     "snippet": "$sql = 'SELECT COUNT(a.attach_id) AS num_files, SUM(' . $this->db->cast_expr_to_bigint('a.filesize') . ') AS upload_dir_size"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_board.php",
+     "line": 1394,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_board.php",
+     "line": 1396,
+     "snippet": "WHERE ' . $db->sql_bit_and('forum_options', $option, '<> 0');"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_board.php",
+     "line": 1403,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_board.php",
+     "line": 1405,
+     "snippet": "WHERE ' . $db->sql_in_set('forum_id', $values);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_bots.php",
+     "line": 550,
+     "snippet": "$sql = 'SELECT username"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 928,
+     "snippet": "FROM ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1446,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1448,
+     "snippet": "WHERE left_id < \" . $from_data['right_id'] . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1453,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1455,
+     "snippet": "WHERE left_id > \" . $from_data['right_id'];"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1464,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1471,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1501,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1623,
+     "snippet": "FROM ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1664,
+     "snippet": "$sql = 'DELETE FROM ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1668,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1672,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1687,
+     "snippet": "FROM ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1702,
+     "snippet": "FROM ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1721,
+     "snippet": "$sql = 'DELETE FROM ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1725,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_GROUPS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1729,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_USERS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1743,
+     "snippet": "$sql = 'DELETE FROM ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1747,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_GROUPS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1751,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_USERS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1782,
+     "snippet": "$sql = 'UPDATE ' . EXTENSION_GROUPS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1848,
+     "snippet": "FROM ' . POSTS_TABLE . ' p, ' . ATTACHMENTS_TABLE . \" a"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1870,
+     "snippet": "$sql = 'SELECT poster_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 1944,
+     "snippet": "FROM \" . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 2010,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 2012,
+     "snippet": "WHERE user_id = ' . $poster_id . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 2016,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 2018,
+     "snippet": "WHERE user_id = ' . $poster_id . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 2077,
+     "snippet": "$sql = 'SELECT forum_id, forum_name, left_id, right_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_forums.php",
+     "line": 2078,
+     "snippet": "FROM ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_modules.php",
+     "line": 142,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_modules.php",
+     "line": 155,
+     "snippet": "$sql = 'UPDATE ' . MODULES_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_modules.php",
+     "line": 178,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_modules.php",
+     "line": 459,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permission_roles.php",
+     "line": 547,
+     "snippet": "FROM ' . ACL_OPTIONS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permission_roles.php",
+     "line": 560,
+     "snippet": "FROM ' . ACL_ROLES_DATA_TABLE . ' r, ' . ACL_OPTIONS_TABLE . ' o"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permission_roles.php",
+     "line": 589,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permission_roles.php",
+     "line": 593,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permission_roles.php",
+     "line": 598,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_ROLES_DATA_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permission_roles.php",
+     "line": 602,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_ROLES_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permissions.php",
+     "line": 965,
+     "snippet": "FROM ' . ACL_OPTIONS_TABLE . ' o, ' . ACL_ROLES_DATA_TABLE . ' r"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permissions.php",
+     "line": 1076,
+     "snippet": "FROM ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permissions.php",
+     "line": 1120,
+     "snippet": "FROM ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permissions.php",
+     "line": 1147,
+     "snippet": "$sql = 'SELECT DISTINCT g.group_name, g.group_id, g.group_type"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permissions.php",
+     "line": 1380,
+     "snippet": "FROM ' . ACL_OPTIONS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permissions.php",
+     "line": 1419,
+     "snippet": "FROM ' . USERS_TABLE . ' u, ' . ACL_USERS_TABLE . \" a"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_permissions.php",
+     "line": 1436,
+     "snippet": "FROM ' . GROUPS_TABLE . ' g, ' . ACL_GROUPS_TABLE . \" a"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_profile.php",
+     "line": 1020,
+     "snippet": "$sql = 'INSERT INTO ' . PROFILE_FIELDS_TABLE . ' ' . $db->sql_build_array('INSERT', $profile_fields);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_profile.php",
+     "line": 1027,
+     "snippet": "$sql = 'UPDATE ' . PROFILE_FIELDS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_profile.php",
+     "line": 1054,
+     "snippet": "$profile_sql[] = 'INSERT INTO ' . PROFILE_LANG_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_profile.php",
+     "line": 1124,
+     "snippet": "$profile_sql[] = 'INSERT INTO ' . PROFILE_FIELDS_LANG_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_profile.php",
+     "line": 1281,
+     "snippet": "$db->sql_query(\"INSERT INTO $table \" . $db->sql_build_array('INSERT', $sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_profile.php",
+     "line": 1288,
+     "snippet": "$sql = \"UPDATE $table SET \" . $db->sql_build_array('UPDATE', $sql_ary) . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_search.php",
+     "line": 505,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_search.php",
+     "line": 512,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_styles.php",
+     "line": 330,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_styles.php",
+     "line": 928,
+     "snippet": "$sql = 'UPDATE ' . STYLES_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_styles.php",
+     "line": 1250,
+     "snippet": "$sql = 'INSERT INTO ' . STYLES_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_styles.php",
+     "line": 1314,
+     "snippet": "$sql = 'SELECT style_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_styles.php",
+     "line": 1330,
+     "snippet": "WHERE user_style = ' . $id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/acp_styles.php",
+     "line": 1334,
+     "snippet": "$sql = 'DELETE FROM ' . STYLES_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 128,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 236,
+     "snippet": "$sql = 'SELECT user_id, forum_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 249,
+     "snippet": "$sql = 'SELECT group_id, forum_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 341,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 370,
+     "snippet": "FROM ' . ACL_ROLES_DATA_TABLE . ' r, ' . ACL_OPTIONS_TABLE . ' o"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 871,
+     "snippet": "$sql = 'SELECT role_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 1003,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_ROLES_DATA_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 1046,
+     "snippet": "FROM ' . ACL_OPTIONS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 1059,
+     "snippet": "$sql = \"SELECT auth_role_id, $id_field, forum_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 1295,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/acp/auth.php",
+     "line": 1298,
+     "snippet": "WHERE user_id = \" . $to_user_id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 613,
+     "snippet": "$sql = 'DELETE FROM ' . $table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 674,
+     "snippet": "FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 697,
+     "snippet": "$sql = 'DELETE FROM ' . TOPICS_TRACK_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 697,
+     "snippet": "$sql = 'DELETE FROM ' . TOPICS_TRACK_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 704,
+     "snippet": "FROM ' . FORUMS_TRACK_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 718,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TRACK_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 825,
+     "snippet": "$db->sql_query('INSERT INTO ' . TOPICS_TRACK_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 1004,
+     "snippet": "FROM ' . TOPICS_TRACK_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 1020,
+     "snippet": "FROM ' . FORUMS_TRACK_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 1198,
+     "snippet": "FROM ' . TOPICS_TABLE . ' t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 1290,
+     "snippet": "$sql = 'SELECT t.forum_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 1316,
+     "snippet": "$sql = 'SELECT t.topic_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 1317,
+     "snippet": "FROM ' . TOPICS_TABLE . ' t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 2581,
+     "snippet": "$sql = 'SELECT forum_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 3266,
+     "snippet": "$sql = 'SELECT COUNT(session_ip) as num_guests"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 3278,
+     "snippet": "FROM ' . SESSIONS_TABLE . ' s"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions.php",
+     "line": 3323,
+     "snippet": "$sql = 'SELECT s.session_user_id, s.session_ip, s.session_viewonline"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 198,
+     "snippet": "$exclude_sql = ($exclude_ids !== false && count($exclude_ids)) ? 'WHERE ' . $db->sql_in_set('group_id', array_map('intval', $exclude_ids), true) : '';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 203,
+     "snippet": "FROM ' . GROUPS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 318,
+     "snippet": "$sql = 'SELECT f2.*"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 371,
+     "snippet": "FROM ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 385,
+     "snippet": "FROM ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 413,
+     "snippet": "FROM ' . ACL_USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 435,
+     "snippet": "FROM ' . ACL_GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 460,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 464,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 563,
+     "snippet": "$sql = 'DELETE FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 563,
+     "snippet": "$sql = 'DELETE FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 571,
+     "snippet": "FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 608,
+     "snippet": "WHERE \" . $db->sql_in_set('topic_id', $topic_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 652,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 664,
+     "snippet": "FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 697,
+     "snippet": "$sql = 'UPDATE ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 699,
+     "snippet": "WHERE \" . $db->sql_in_set('post_id', $post_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 702,
+     "snippet": "$sql = 'UPDATE ' . ATTACHMENTS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 704,
+     "snippet": "WHERE \" . $db->sql_in_set('post_msg_id', $post_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 798,
+     "snippet": "FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 989,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1060,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1062,
+     "snippet": "WHERE user_id = ' . $poster_id . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1066,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1068,
+     "snippet": "WHERE user_id = ' . $poster_id . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1221,
+     "snippet": "FROM ' . TOPICS_TABLE . ' t2, ' . TOPICS_TABLE . ' t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1349,
+     "snippet": "$where_sql = 'WHERE (' . $mode[0] . \".$where_ids)\";"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1365,
+     "snippet": "$where_sql = 'WHERE ' . $db->sql_in_set($mode[0] . '.' . $where_type, $where_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1377,
+     "snippet": "$where_sql = 'WHERE ' . $db->sql_in_set($mode[0] . '.' . $where_type, $where_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1429,
+     "snippet": "FROM ' . TOPICS_TABLE . ' t, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1442,
+     "snippet": "FROM ' . TOPICS_TABLE . ' t, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1484,
+     "snippet": "FROM ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1499,
+     "snippet": "$sql = 'SELECT DISTINCT(post_id)"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1548,
+     "snippet": "FROM ' . POSTS_TABLE . \" t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1559,
+     "snippet": "FROM ' . TOPICS_TABLE . \" t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1589,
+     "snippet": "FROM ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1604,
+     "snippet": "$sql = 'SELECT DISTINCT(post_msg_id)"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1653,
+     "snippet": "FROM ' . POSTS_TABLE . \" t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1664,
+     "snippet": "FROM ' . TOPICS_TABLE . \" t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1695,
+     "snippet": "FROM ' . FORUMS_TABLE . \" f"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1928,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1930,
+     "snippet": "WHERE forum_id = ' . $forum_id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1943,
+     "snippet": "$sql = 'SELECT t.topic_id, t.forum_id, t.topic_moved_id, t.topic_visibility, ' . (($sync_extra) ? 't.topic_attachment, t.topic_reported, ' : '') . 't.topic_poster, t.topic_time, t.topic_posts_approved"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 1980,
+     "snippet": "FROM ' . POSTS_TABLE . \" t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2261,
+     "snippet": "FROM ' . TOPICS_TABLE . ' t, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2277,
+     "snippet": "FROM ' . TOPICS_TABLE . ' t, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2305,
+     "snippet": "$sql = 'UPDATE ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2307,
+     "snippet": "WHERE topic_id = ' . $topic_id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2401,
+     "snippet": "$sql = 'SELECT topic_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2402,
+     "snippet": "FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2417,
+     "snippet": "$sql = 'SELECT topic_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2418,
+     "snippet": "FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2455,
+     "snippet": "FROM ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2561,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2603,
+     "snippet": "FROM ' . GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2703,
+     "snippet": "$sql = 'DELETE FROM ' . ZEBRA_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2757,
+     "snippet": "AND ' . $db->sql_in_set('ug.group_id', $groups);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2763,
+     "snippet": "FROM ' . USER_GROUP_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2776,
+     "snippet": "$sql = 'DELETE FROM ' . ZEBRA_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2799,
+     "snippet": "$sql = 'DELETE FROM ' . ZEBRA_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2815,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2833,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2834,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2876,
+     "snippet": "$sql = 'SELECT user_id, username, user_colour, user_warnings, user_last_warning"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2877,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_admin.php",
+     "line": 2886,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_convert.php",
+     "line": 963,
+     "snippet": "$sql = 'INSERT INTO ' . USER_GROUP_TABLE . ' ' . $db->sql_build_array('INSERT', array("
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_convert.php",
+     "line": 990,
+     "snippet": "$sql = 'SELECT group_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_convert.php",
+     "line": 1005,
+     "snippet": "$sql = 'INSERT INTO ' . USER_GROUP_TABLE . ' (user_id, group_id, user_pending)"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_convert.php",
+     "line": 1015,
+     "snippet": "$sql = 'INSERT INTO ' . USER_GROUP_TABLE . \" (user_id, group_id, user_pending)"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_convert.php",
+     "line": 1340,
+     "snippet": "$sql = 'SELECT group_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_convert.php",
+     "line": 1366,
+     "snippet": "$sql = 'SELECT role_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_convert.php",
+     "line": 1376,
+     "snippet": "$sql = \"INSERT INTO $table ($id_field, forum_id, auth_role_id) VALUES ($ug_id, $forum_id, \" . $row['role_id'] . ')';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_convert.php",
+     "line": 1430,
+     "snippet": "$sql = ($ug_type == 'user') ? 'SELECT o.auth_option_id, o.auth_option, a.forum_id, a.auth_setting FROM ' . ACL_USERS_TABLE . ' a, ' . ACL_OPTIONS_TABLE . \" o WHERE a.auth_option_id = o.auth_option_id "
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_convert.php",
+     "line": 1430,
+     "snippet": "$sql = ($ug_type == 'user') ? 'SELECT o.auth_option_id, o.auth_option, a.forum_id, a.auth_setting FROM ' . ACL_USERS_TABLE . ' a, ' . ACL_OPTIONS_TABLE . \" o WHERE a.auth_option_id = o.auth_option_id "
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 40,
+     "snippet": "WHERE \" . $db->sql_in_set($column, $from_values);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 71,
+     "snippet": "$sql = \"UPDATE $table"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 81,
+     "snippet": "$sql = \"UPDATE $table"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 82,
+     "snippet": "SET $column = \" . (int) $to_value . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 100,
+     "snippet": "WHERE \" . $db->sql_in_set($column, $from_values);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 125,
+     "snippet": "WHERE \" . $db->sql_in_set($column, $from_values);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 162,
+     "snippet": "$sql = \"UPDATE $table"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 172,
+     "snippet": "$sql = \"UPDATE $table"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 173,
+     "snippet": "SET $column = \" . (int) $to_value . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 186,
+     "snippet": "WHERE $column = '\" . (int) $to_value . \"'"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_database_helper.php",
+     "line": 205,
+     "snippet": "WHERE \" . $db->sql_in_set($column, $from_values);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_display.php",
+     "line": 1345,
+     "snippet": "$sql = 'DELETE FROM ' . $table_sql . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_display.php",
+     "line": 1421,
+     "snippet": "$sql = 'INSERT INTO ' . $table_sql . \" (user_id, $where_sql, notify_status)"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_mcp.php",
+     "line": 359,
+     "snippet": "FROM \" . FORUMS_TABLE . \" f$read_tracking_join"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_mcp.php",
+     "line": 444,
+     "snippet": "FROM ' . TOPICS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_mcp.php",
+     "line": 461,
+     "snippet": "FROM ' . POSTS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_mcp.php",
+     "line": 480,
+     "snippet": "FROM ' . POSTS_TABLE . ' p, ' . TOPICS_TABLE . \" t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_mcp.php",
+     "line": 500,
+     "snippet": "FROM ' . TOPICS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_mcp.php",
+     "line": 546,
+     "snippet": "FROM ' . REPORTS_TABLE . ' r, ' . PRIVMSGS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_mcp.php",
+     "line": 554,
+     "snippet": "FROM ' . REPORTS_TABLE . ' r, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_mcp.php",
+     "line": 567,
+     "snippet": "FROM ' . LOG_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_mcp.php",
+     "line": 740,
+     "snippet": "WHERE \" . $db->sql_in_set($sql_id, $ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_module.php",
+     "line": 100,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 40,
+     "snippet": "FROM ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 286,
+     "snippet": "$sql = 'SELECT p.post_id as last_post_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 296,
+     "snippet": "$sql = 'SELECT p.' . $type . '_id, MAX(p.post_id) as last_post_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 298,
+     "snippet": "WHERE \" . $db->sql_in_set('p.' . $type . '_id', $ids) . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 411,
+     "snippet": "SET \" . implode(', ', $update_sql_ary) . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1055,
+     "snippet": "$sql = 'SELECT p.post_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1371,
+     "snippet": "FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1450,
+     "snippet": "$sql = 'SELECT p.post_id, p.poster_id, p.post_time, p.post_username, u.username, u.user_colour"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1464,
+     "snippet": "FROM ' . POSTS_TABLE . ' p, ' . USERS_TABLE . \" u"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1506,
+     "snippet": "$sql = 'SELECT MAX(post_id) as last_post_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1507,
+     "snippet": "FROM ' . POSTS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1517,
+     "snippet": "$sql = 'SELECT post_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1537,
+     "snippet": "FROM ' . ATTACHMENTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1561,
+     "snippet": "$db->sql_query(\"UPDATE $table SET $update_sql WHERE \" . $where_sql[$table]);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1568,
+     "snippet": "$sql = 'SELECT poster_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 1579,
+     "snippet": "$sql = 'DELETE FROM ' . TOPICS_POSTED_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2025,
+     "snippet": "$sql = 'INSERT INTO ' . TOPICS_TABLE . ' ' ."
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2047,
+     "snippet": "$sql = 'INSERT INTO ' . POSTS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_data[POSTS_TABLE]['sql']);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2091,
+     "snippet": "$sql = 'UPDATE ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2102,
+     "snippet": "$sql = 'UPDATE ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2331,
+     "snippet": "$sql = \"UPDATE $table SET \" . implode(', ', $update_ary['stat']) . ' WHERE ' . $where_sql[$table];"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2331,
+     "snippet": "$sql = \"UPDATE $table SET \" . implode(', ', $update_ary['stat']) . ' WHERE ' . $where_sql[$table];"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2682,
+     "snippet": "$sql = 'UPDATE ' . TOPICS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2690,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2701,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2718,
+     "snippet": "FROM ' . FORUMS_TRACK_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_posting.php",
+     "line": 2734,
+     "snippet": "FROM ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 128,
+     "snippet": "$sql = 'SELECT folder_id, COUNT(msg_id) as num_messages, SUM(pm_unread) as num_unread"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 170,
+     "snippet": "FROM ' . PRIVMSGS_FOLDER_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 795,
+     "snippet": "FROM ' . PRIVMSGS_FOLDER_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 818,
+     "snippet": "FROM ' . PRIVMSGS_TO_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 833,
+     "snippet": "$sql = 'UPDATE ' . PRIVMSGS_TO_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 837,
+     "snippet": "AND \" . $db->sql_in_set('msg_id', $move_msg_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 966,
+     "snippet": "$sql = 'UPDATE ' . PRIVMSGS_TO_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1058,
+     "snippet": "$sql = 'SELECT msg_id, pm_unread, pm_new"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1059,
+     "snippet": "FROM ' . PRIVMSGS_TO_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1089,
+     "snippet": "$sql = 'DELETE FROM ' . PRIVMSGS_TO_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1111,
+     "snippet": "$sql = 'DELETE FROM ' . PRIVMSGS_TO_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1202,
+     "snippet": "FROM ' . PRIVMSGS_TO_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1216,
+     "snippet": "$sql = 'SELECT msg_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1245,
+     "snippet": "$sql = 'SELECT msg_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1265,
+     "snippet": "$sql = 'SELECT user_id, COUNT(msg_id) as num_undelivered_privmsgs"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1329,
+     "snippet": "WHERE ' . $user_id_sql;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1333,
+     "snippet": "$sql = 'DELETE FROM ' . PRIVMSGS_TO_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1371,
+     "snippet": "WHERE ' . $author_id_sql;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1376,
+     "snippet": "WHERE ' . $author_id_sql;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1453,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1479,
+     "snippet": "FROM ' . GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1494,
+     "snippet": "$sql = 'SELECT g.group_id, g.group_name, g.group_colour, g.group_type, ug.user_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1759,
+     "snippet": "$db->sql_query('INSERT INTO ' . PRIVMSGS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_data));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1764,
+     "snippet": "$sql = 'UPDATE ' . PRIVMSGS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1960,
+     "snippet": "$sql = 'SELECT author_id, user_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 2216,
+     "snippet": "$sql = 'SELECT MAX(g.group_' . $setting . ') as max_setting"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 151,
+     "snippet": "$sql = \"UPDATE $table"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 294,
+     "snippet": "$sql = 'INSERT INTO ' . USERS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 306,
+     "snippet": "$sql = 'INSERT INTO ' . PROFILE_FIELDS_DATA_TABLE . ' ' ."
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 450,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 479,
+     "snippet": "$sql = 'SELECT r.post_id, p.topic_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 535,
+     "snippet": "$db->sql_query('DELETE FROM ' . REPORTS_TABLE . ' WHERE ' . $user_id_sql);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 608,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 613,
+     "snippet": "$sql = 'UPDATE ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 618,
+     "snippet": "$sql = 'UPDATE ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 623,
+     "snippet": "$sql = 'UPDATE ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 656,
+     "snippet": "WHERE ' . $db->sql_in_set('poster_id', $user_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 659,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 706,
+     "snippet": "WHERE \" . $user_id_sql;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 716,
+     "snippet": "WHERE ' . $db->sql_in_set('post_edit_user', $user_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 722,
+     "snippet": "WHERE ' . $db->sql_in_set('message_edit_user', $user_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 728,
+     "snippet": "WHERE ' . $db->sql_in_set('post_delete_user', $user_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 734,
+     "snippet": "WHERE ' . $db->sql_in_set('topic_delete_user', $user_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 738,
+     "snippet": "$sql = 'DELETE FROM ' . LOG_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 745,
+     "snippet": "WHERE ' . $user_id_sql;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 749,
+     "snippet": "$sql = 'DELETE FROM ' . ZEBRA_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 749,
+     "snippet": "$sql = 'DELETE FROM ' . ZEBRA_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 755,
+     "snippet": "$sql = 'DELETE FROM ' . BANS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 761,
+     "snippet": "$sql = 'DELETE FROM ' . SESSIONS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 825,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 881,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 883,
+     "snippet": "WHERE user_id = ' . $user_id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1240,
+     "snippet": "$sql = 'SELECT lang_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1340,
+     "snippet": "$sql = 'SELECT username"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1352,
+     "snippet": "$sql = 'SELECT group_name"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1503,
+     "snippet": "$sql = 'SELECT user_email"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1783,
+     "snippet": "$sql = 'UPDATE ' . GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1789,
+     "snippet": "$sql = 'UPDATE ' . MODERATOR_CACHE_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1822,
+     "snippet": "$sql = 'INSERT INTO ' . GROUPS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1932,
+     "snippet": "$sql = 'UPDATE ' . GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1951,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 1979,
+     "snippet": "FROM ' . USER_GROUP_TABLE . ' ug, ' . USERS_TABLE . \" u"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2035,
+     "snippet": "$sql = 'DELETE FROM ' . GROUPS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2040,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_GROUPS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2094,
+     "snippet": "$sql = 'SELECT user_id, group_leader"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2095,
+     "snippet": "FROM ' . USER_GROUP_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2167,
+     "snippet": "WHERE ' . $db->sql_in_set('user_id', $update_id_ary) . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2290,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2302,
+     "snippet": "$sql = 'SELECT g.group_id, g.group_name, ug.user_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2353,
+     "snippet": "$sql = 'DELETE FROM ' . USER_GROUP_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2353,
+     "snippet": "$sql = 'DELETE FROM ' . USER_GROUP_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2435,
+     "snippet": "WHERE group_id = \" . (int) $group_id . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2474,
+     "snippet": "WHERE group_id = ' . (int) $group_id . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2508,
+     "snippet": "$sql = 'SELECT user_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2509,
+     "snippet": "FROM ' . USER_GROUP_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2521,
+     "snippet": "$sql = 'UPDATE ' . USER_GROUP_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2525,
+     "snippet": "AND \" . $db->sql_in_set('user_id', $user_id_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2533,
+     "snippet": "$sql = 'SELECT u.user_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2534,
+     "snippet": "FROM ' . USERS_TABLE . ' u, ' . USER_GROUP_TABLE . ' ug"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2553,
+     "snippet": "$sql = 'UPDATE ' . USER_GROUP_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2556,
+     "snippet": "AND \" . $db->sql_in_set('user_id', $user_id_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2574,
+     "snippet": "$sql = 'SELECT user_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2575,
+     "snippet": "FROM ' . USER_GROUP_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2595,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2683,
+     "snippet": "$sql = 'SELECT group_name"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2728,
+     "snippet": "$sql = 'SELECT ' . implode(', ', array_keys($attribute_ary)) . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2756,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2759,
+     "snippet": "AND ' . $db->sql_in_set('user_id', $user_id_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2778,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2781,
+     "snippet": "AND \" . $db->sql_in_set('user_id', $user_id_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2793,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2795,
+     "snippet": "WHERE ' . $db->sql_in_set('user_id', $user_id_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2802,
+     "snippet": "$sql = 'UPDATE ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2804,
+     "snippet": "WHERE \" . $db->sql_in_set('forum_last_poster_id', $user_id_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2807,
+     "snippet": "$sql = 'UPDATE ' . TOPICS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2809,
+     "snippet": "WHERE \" . $db->sql_in_set('topic_poster', $user_id_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2812,
+     "snippet": "$sql = 'UPDATE ' . TOPICS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2814,
+     "snippet": "WHERE \" . $db->sql_in_set('topic_last_poster_id', $user_id_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2970,
+     "snippet": "FROM ' . ACL_GROUPS_TABLE . ' ag, ' . ACL_ROLES_TABLE . \" r"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 2986,
+     "snippet": "FROM ' . ACL_GROUPS_TABLE . ' ag, ' . ACL_OPTIONS_TABLE . ' o"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 3086,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 3122,
+     "snippet": "WHERE user_id = ' . $user_id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_user.php",
+     "line": 3130,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_forum.php",
+     "line": 188,
+     "snippet": "$sql = 'SELECT t.topic_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_forum.php",
+     "line": 413,
+     "snippet": "FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_forum.php",
+     "line": 482,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_forum.php",
+     "line": 533,
+     "snippet": "$sql = 'UPDATE ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_forum.php",
+     "line": 535,
+     "snippet": "WHERE topic_id = ' . $to_topic_id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 330,
+     "snippet": "$sql = 'SELECT topic_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 361,
+     "snippet": "SET $set_id = \" . (($action == 'lock' || $action == 'lock_post') ? ITEM_LOCKED : ITEM_UNLOCKED) . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 531,
+     "snippet": "WHERE \" . $db->sql_in_set('topic_id', $topic_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 537,
+     "snippet": "$sql = 'DELETE FROM ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 694,
+     "snippet": "WHERE ' . $db->sql_in_set('topic_id', $topic_ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 766,
+     "snippet": "$db->sql_query('INSERT INTO ' . TOPICS_TABLE . $db->sql_build_array('INSERT', $shadow));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1041,
+     "snippet": "$sql = 'SELECT topic_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1053,
+     "snippet": "$sql = 'SELECT topic_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1247,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1335,
+     "snippet": "$sql = 'SELECT post_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1519,
+     "snippet": "$db->sql_query('INSERT INTO ' . TOPICS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1540,
+     "snippet": "FROM ' . POLL_OPTIONS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1553,
+     "snippet": "$db->sql_query('INSERT INTO ' . POLL_OPTIONS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1559,
+     "snippet": "FROM ' . POSTS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1722,
+     "snippet": "FROM ' . TOPICS_WATCH_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_main.php",
+     "line": 1744,
+     "snippet": "FROM ' . BOOKMARKS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_post.php",
+     "line": 531,
+     "snippet": "$sql = 'SELECT COUNT(DISTINCT poster_id) as num_users"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_post.php",
+     "line": 597,
+     "snippet": "WHERE user_id = ' . $userdata['user_id'];"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_post.php",
+     "line": 627,
+     "snippet": "$sql = 'UPDATE ' . ATTACHMENTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 604,
+     "snippet": "$sql = \"SELECT r.$id_column, r.report_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 675,
+     "snippet": "$sql = \"SELECT r.report_id, r.$id_column, r.report_closed, r.user_id, r.user_notify, u.username, u.username_clean, u.user_email, u.user_lang"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 713,
+     "snippet": "$sql = 'SELECT DISTINCT topic_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 714,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 737,
+     "snippet": "WHERE ' . $db->sql_in_set('report_id', $report_id_list);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 741,
+     "snippet": "$sql = 'DELETE FROM ' . REPORTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 752,
+     "snippet": "WHERE ' . $db->sql_in_set('msg_id', $close_report_posts);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 764,
+     "snippet": "WHERE ' . $db->sql_in_set('post_id', $close_report_posts);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 769,
+     "snippet": "$sql = 'UPDATE ' . TOPICS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_reports.php",
+     "line": 771,
+     "snippet": "WHERE ' . $db->sql_in_set('topic_id', $close_report_topics) . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_topic.php",
+     "line": 589,
+     "snippet": "FROM ' . POSTS_TABLE . ' p, ' . USERS_TABLE . \" u"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_topic.php",
+     "line": 598,
+     "snippet": "FROM ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_topic.php",
+     "line": 643,
+     "snippet": "$sql = 'INSERT INTO ' . TOPICS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_topic.php",
+     "line": 668,
+     "snippet": "$sql = 'UPDATE ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_topic.php",
+     "line": 711,
+     "snippet": "FROM ' . TOPICS_WATCH_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_topic.php",
+     "line": 733,
+     "snippet": "FROM ' . BOOKMARKS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_topic.php",
+     "line": 874,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_warn.php",
+     "line": 625,
+     "snippet": "$db->sql_query('INSERT INTO ' . WARNINGS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_warn.php",
+     "line": 630,
+     "snippet": "WHERE user_id = ' . $user_row['user_id'];"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/mcp/mcp_warn.php",
+     "line": 635,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/message_parser.php",
+     "line": 1541,
+     "snippet": "$db->sql_query('INSERT INTO ' . ATTACHMENTS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/message_parser.php",
+     "line": 1686,
+     "snippet": "$db->sql_query('INSERT INTO ' . ATTACHMENTS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/message_parser.php",
+     "line": 1796,
+     "snippet": "FROM ' . ATTACHMENTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/ucp/ucp_pm_options.php",
+     "line": 854,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/ucp/ucp_pm_viewfolder.php",
+     "line": 233,
+     "snippet": "FROM ' . PRIVMSGS_TO_TABLE . ' t, ' . PRIVMSGS_TABLE . ' p, ' . USERS_TABLE . ' u"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/ucp/ucp_pm_viewfolder.php",
+     "line": 448,
+     "snippet": "FROM ' . PRIVMSGS_TO_TABLE . ' t, ' . PRIVMSGS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/ucp/ucp_pm_viewmessage.php",
+     "line": 124,
+     "snippet": "FROM ' . ATTACHMENTS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/ucp/ucp_pm_viewmessage.php",
+     "line": 438,
+     "snippet": "FROM ' . SESSIONS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/attachment/delete.php",
+     "line": 444,
+     "snippet": "$sql = 'SELECT COUNT(attach_id) AS num_entries"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/attachment/resync.php",
+     "line": 99,
+     "snippet": "$sql = 'SELECT ' . $this->attach_sql_id . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/attachment/resync.php",
+     "line": 117,
+     "snippet": "$sql = 'UPDATE ' . $this->resync_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/attachment/resync.php",
+     "line": 119,
+     "snippet": "WHERE ' . $this->db->sql_in_set($this->resync_sql_id, $ids);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 112,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 545,
+     "snippet": "$where_sql = ' WHERE ' . $db->sql_in_set('user_id', $user_id);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 580,
+     "snippet": "$sql = 'SELECT a.auth_role_id, a.' . $sql_id . ', a.forum_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 580,
+     "snippet": "$sql = 'SELECT a.auth_role_id, a.' . $sql_id . ', a.forum_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 621,
+     "snippet": "$sql_ary[] = 'SELECT a.user_id, a.forum_id, a.auth_setting, a.auth_option_id' . $sql_opts_select . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 624,
+     "snippet": "(($sql_opts_from) ? 'AND a.auth_option_id = ao.auth_option_id ' : '') ."
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 630,
+     "snippet": "$sql_ary[] = 'SELECT a.user_id, a.forum_id, r.auth_option_id, r.auth_setting, r.auth_option_id' . $sql_opts_select . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 633,
+     "snippet": "(($sql_opts_from) ? 'AND r.auth_option_id = ao.auth_option_id ' : '') ."
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 653,
+     "snippet": "$sql_ary[] = 'SELECT ug.user_id, a.forum_id, a.auth_setting, a.auth_option_id' . $sql_opts_select . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 656,
+     "snippet": "(($sql_opts_from) ? 'AND a.auth_option_id = ao.auth_option_id ' : '') . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 666,
+     "snippet": "$sql_ary[] = 'SELECT ug.user_id, a.forum_id, r.auth_setting, r.auth_option_id' . $sql_opts_select . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 669,
+     "snippet": "(($sql_opts_from) ? 'AND r.auth_option_id = ao.auth_option_id ' : '') . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 733,
+     "snippet": "$sql_ary[] = 'SELECT a.user_id, a.forum_id, a.auth_setting, a.auth_option_id, ao.auth_option"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 734,
+     "snippet": "FROM ' . ACL_USERS_TABLE . ' a, ' . ACL_OPTIONS_TABLE . ' ao"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 743,
+     "snippet": "$sql_ary[] = 'SELECT a.user_id, a.forum_id, r.auth_option_id, r.auth_setting, r.auth_option_id, ao.auth_option"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 744,
+     "snippet": "FROM ' . ACL_USERS_TABLE . ' a, ' . ACL_ROLES_DATA_TABLE . ' r, ' . ACL_OPTIONS_TABLE . ' ao"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 786,
+     "snippet": "$sql_ary[] = 'SELECT a.group_id, a.forum_id, a.auth_setting, a.auth_option_id, ao.auth_option"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 787,
+     "snippet": "FROM ' . ACL_GROUPS_TABLE . ' a, ' . ACL_OPTIONS_TABLE . \" ao"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 797,
+     "snippet": "$sql_ary[] = 'SELECT a.group_id, a.forum_id, r.auth_setting, r.auth_option_id, ao.auth_option"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 798,
+     "snippet": "FROM ' . ACL_GROUPS_TABLE . ' a, ' . ACL_ROLES_DATA_TABLE . ' r, ' . ACL_OPTIONS_TABLE . \" ao"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 858,
+     "snippet": "FROM ' . ACL_USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 878,
+     "snippet": "FROM ' . ACL_GROUPS_TABLE . ' a, ' . USER_GROUP_TABLE . ' ug, ' . GROUPS_TABLE . ' g"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 961,
+     "snippet": "$sql = 'SELECT user_id, username, user_password, user_passchg, user_email, user_type"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/auth.php",
+     "line": 1041,
+     "snippet": "$sql = 'DELETE FROM ' . SESSIONS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/db.php",
+     "line": 96,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/db.php",
+     "line": 131,
+     "snippet": "$sql = 'INSERT INTO ' . LOGIN_ATTEMPT_TABLE . $this->db->sql_build_array('INSERT', $attempt_data);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/db.php",
+     "line": 204,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/db.php",
+     "line": 212,
+     "snippet": "$sql = 'DELETE FROM ' . LOGIN_ATTEMPT_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/db.php",
+     "line": 221,
+     "snippet": "WHERE user_id = ' . $row['user_id'];"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/ldap.php",
+     "line": 212,
+     "snippet": "$sql ='SELECT user_id, username, user_password, user_passchg, user_email, user_type"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/oauth.php",
+     "line": 550,
+     "snippet": "$sql = 'DELETE FROM ' . $this->oauth_account_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/oauth.php",
+     "line": 691,
+     "snippet": "$sql = 'SELECT user_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/oauth.php",
+     "line": 705,
+     "snippet": "$sql = 'INSERT INTO ' . $this->oauth_account_table . ' ' . $this->db->sql_build_array('INSERT', $data);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/token_storage.php",
+     "line": 100,
+     "snippet": "$sql = 'UPDATE ' . $this->oauth_token_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/token_storage.php",
+     "line": 121,
+     "snippet": "$sql = 'INSERT INTO ' . $this->oauth_token_table . $this->db->sql_build_array('INSERT', $data);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/token_storage.php",
+     "line": 163,
+     "snippet": "$sql = 'DELETE FROM ' . $this->oauth_token_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/token_storage.php",
+     "line": 214,
+     "snippet": "$sql = 'INSERT INTO ' . $this->oauth_state_table . ' ' . $this->db->sql_build_array('INSERT', $data);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/token_storage.php",
+     "line": 275,
+     "snippet": "$sql = 'DELETE FROM ' . $this->oauth_state_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/token_storage.php",
+     "line": 504,
+     "snippet": "FROM ' . $this->oauth_token_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/auth/provider/oauth/token_storage.php",
+     "line": 522,
+     "snippet": "$sql = 'SELECT oauth_state, state_time"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/avatar/manager.php",
+     "line": 331,
+     "snippet": "$sql = 'UPDATE ' . $table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/avatar/manager.php",
+     "line": 341,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ban/manager.php",
+     "line": 118,
+     "snippet": "$sql = 'DELETE FROM ' . $this->bans_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ban/manager.php",
+     "line": 118,
+     "snippet": "$sql = 'DELETE FROM ' . $this->bans_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ban/manager.php",
+     "line": 203,
+     "snippet": "FROM ' . $this->bans_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ban/manager.php",
+     "line": 214,
+     "snippet": "$sql = 'DELETE FROM ' . $this->bans_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ban/type/base.php",
+     "line": 227,
+     "snippet": "$sql = 'DELETE FROM ' . $this->sessions_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ban/type/base.php",
+     "line": 233,
+     "snippet": "$sql = 'DELETE FROM ' . $this->sessions_keys_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ban/type/user.php",
+     "line": 56,
+     "snippet": "FROM ' . $this->users_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/captcha/plugins/base.php",
+     "line": 225,
+     "snippet": "FROM ' . CONFIRM_TABLE . ' c"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/captcha/plugins/qa.php",
+     "line": 749,
+     "snippet": "FROM ' . $this->table_captcha_questions . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/captcha/plugins/qa.php",
+     "line": 763,
+     "snippet": "FROM ' . $this->table_captcha_answers . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/captcha/plugins/qa.php",
+     "line": 814,
+     "snippet": "$sql = 'DELETE FROM ' . $this->table_captcha_answers . \" WHERE question_id = $question_id\";"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/captcha/plugins/qa.php",
+     "line": 822,
+     "snippet": "$sql = 'UPDATE ' . $this->table_captcha_questions . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/captcha/plugins/qa.php",
+     "line": 846,
+     "snippet": "$sql = 'INSERT INTO ' . $this->table_captcha_questions . ' ' . $db->sql_build_array('INSERT', $question_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/captcha/plugins/qa.php",
+     "line": 871,
+     "snippet": "$sql = 'INSERT INTO ' . $this->table_captcha_answers . ' ' . $db->sql_build_array('INSERT', $answer_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/config/db.php",
+     "line": 115,
+     "snippet": "$sql = 'DELETE FROM ' . $this->table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/config/db.php",
+     "line": 154,
+     "snippet": "$sql = 'UPDATE ' . $this->table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/config/db.php",
+     "line": 172,
+     "snippet": "$sql = 'INSERT INTO ' . $this->table . ' ' . $this->db->sql_build_array('INSERT', array("
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/config/db.php",
+     "line": 208,
+     "snippet": "$this->db->sql_query('UPDATE ' . $this->table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/config/db_text.php",
+     "line": 100,
+     "snippet": "$sql = 'UPDATE ' . $this->table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/config/db_text.php",
+     "line": 107,
+     "snippet": "$sql = 'INSERT INTO ' . $this->table . ' ' . $this->db->sql_build_array('INSERT', array("
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/config/db_text.php",
+     "line": 131,
+     "snippet": "FROM ' . $this->table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/config/db_text.php",
+     "line": 155,
+     "snippet": "FROM ' . $this->table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/console/command/fixup/fix_left_right_ids.php",
+     "line": 119,
+     "snippet": "$this->db->sql_query('UPDATE ' . $table . ' SET ' . $this->db->sql_build_array('UPDATE', array('left_id' => $i)) . \" WHERE $field = \" . (int) $row[$field]);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/console/command/fixup/fix_left_right_ids.php",
+     "line": 130,
+     "snippet": "$this->db->sql_query('UPDATE ' . $table . ' SET ' . $this->db->sql_build_array('UPDATE', array('right_id' => $i)) . \" WHERE $field = \" . (int) $row[$field]);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/console/command/thumbnail/delete.php",
+     "line": 169,
+     "snippet": "WHERE ' . $this->db->sql_in_set('attach_id', $thumbnail_deleted);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/console/command/thumbnail/generate.php",
+     "line": 220,
+     "snippet": "WHERE ' . $this->db->sql_in_set('attach_id', $thumbnail_created);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/content_visibility.php",
+     "line": 435,
+     "snippet": "FROM ' . $this->posts_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/content_visibility.php",
+     "line": 513,
+     "snippet": "$sql = 'UPDATE ' . $this->posts_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/content_visibility.php",
+     "line": 652,
+     "snippet": "FROM ' . POSTS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/content_visibility.php",
+     "line": 795,
+     "snippet": "$sql = 'UPDATE ' . $this->topics_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/cron/task/core/prune_shadow_topics.php",
+     "line": 175,
+     "snippet": "FROM ' . FORUMS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/driver.php",
+     "line": 733,
+     "snippet": "return $this->sql_query('INSERT INTO ' . $table . ' ' . $this->sql_build_array('INSERT', $sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/driver.php",
+     "line": 748,
+     "snippet": "$result = $this->sql_query('INSERT INTO ' . $table . ' ' . $this->sql_build_array('INSERT', $_sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/driver.php",
+     "line": 758,
+     "snippet": "return $this->sql_query('INSERT INTO ' . $table . ' ' . ' (' . implode(', ', array_keys($sql_ary[0])) . ') VALUES ' . implode(', ', $ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/driver.php",
+     "line": 889,
+     "snippet": "$sql .= ' ORDER BY ' . $array['ORDER_BY'];"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/driver.php",
+     "line": 1322,
+     "snippet": "FROM ' . $this->sql_escape($table_name);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/mssqlnative.php",
+     "line": 222,
+     "snippet": "$query .= ' WHERE line3 BETWEEN ' . ($offset+1) . ' AND ' . ($offset + $total);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/mssqlnative.php",
+     "line": 226,
+     "snippet": "$query .= ' WHERE line3 > ' . $offset;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/mysql_base.php",
+     "line": 97,
+     "snippet": "LIKE '\" . $this->sql_escape($table_name) . \"'\";"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/oracle.php",
+     "line": 474,
+     "snippet": "$query = 'SELECT * FROM (SELECT /*+ FIRST_ROWS */ rownum AS xrownum, a.* FROM (' . $query . ') a WHERE rownum <= ' . ($offset + $total) . ') WHERE xrownum >= ' . $offset;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/oracle.php",
+     "line": 474,
+     "snippet": "$query = 'SELECT * FROM (SELECT /*+ FIRST_ROWS */ rownum AS xrownum, a.* FROM (' . $query . ') a WHERE rownum <= ' . ($offset + $total) . ') WHERE xrownum >= ' . $offset;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/mssql_extractor.php",
+     "line": 226,
+     "snippet": "WHERE INFORMATION_SCHEMA.COLUMNS.TABLE_NAME = '\" . $this->db->sql_escape($table_name) . \"'\";"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/mssql_extractor.php",
+     "line": 295,
+     "snippet": "$sql_data .= \"INSERT INTO $table_name (\" . implode(', ', $schema_fields) . ') VALUES (' . implode(', ', $schema_vals) . \");\\nGO\\n\";"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/mssql_extractor.php",
+     "line": 400,
+     "snippet": "$sql_data .= \"INSERT INTO $table_name (\" . implode(', ', $schema_fields) . ') VALUES (' . implode(', ', $schema_vals) . \");\\nGO\\n\";"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/mysql_extractor.php",
+     "line": 118,
+     "snippet": "$sql_data\t\t= 'INSERT INTO ' . $table_name . ' (' . $fields . ') VALUES ';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/oracle_extractor.php",
+     "line": 239,
+     "snippet": "$sql_data = \"INSERT INTO $table_name (\" . implode(', ', $schema_fields) . ') VALUES (' . implode(', ', $schema_vals) . \")\\n/\\n\";"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/postgres_extractor.php",
+     "line": 93,
+     "snippet": "$field_query = \"SELECT a.attnum, a.attname as field, t.typname as type, a.attlen as length, a.atttypmod as lengthvar, a.attnotnull as notnull"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/postgres_extractor.php",
+     "line": 109,
+     "snippet": "WHERE (c.relname = '\" . $this->db->sql_escape($table_name) . \"')"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/postgres_extractor.php",
+     "line": 163,
+     "snippet": "$sql_pri_keys = \"SELECT ic.relname as index_name, bc.relname as tab_name, ta.attname as column_name, i.indisunique as unique_key, i.indisprimary as primary_key"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/postgres_extractor.php",
+     "line": 211,
+     "snippet": "$sql_checks = \"SELECT pc.conname AS index_name, pg_get_expr(pc.conbin, pc.conrelid) AS constraint_expr"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/sqlite3_extractor.php",
+     "line": 52,
+     "snippet": "$sql = \"SELECT sql"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/extractor/sqlite3_extractor.php",
+     "line": 108,
+     "snippet": "$sql_insert = 'INSERT INTO ' . $table_name . ' (' . implode(', ', array_keys($col_types)) . ') VALUES (';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/data/v30x/release_3_0_7_rc2.php",
+     "line": 62,
+     "snippet": "$sql = 'UPDATE ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/data/v310/passwords_convert_p1.php",
+     "line": 72,
+     "snippet": "$sql = 'UPDATE ' . $this->table_prefix . \"users"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/data/v31x/profilefield_remove_underscore_from_alpha.php",
+     "line": 42,
+     "snippet": "$sql = 'UPDATE ' . PROFILE_FIELDS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/data/v32x/merge_duplicate_bbcodes.php",
+     "line": 75,
+     "snippet": "$sql = 'UPDATE ' . BBCODES_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/profilefield_base_migration.php",
+     "line": 212,
+     "snippet": "$sql = 'UPDATE ' . $this->table_prefix . 'profile_fields_data"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 107,
+     "snippet": "$sql = 'SELECT module_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 108,
+     "snippet": "FROM ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 261,
+     "snippet": "$sql = 'SELECT left_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 262,
+     "snippet": "FROM ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 271,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 273,
+     "snippet": "WHERE module_class = '\" . $this->db->sql_escape($class) . \"'"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 278,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 280,
+     "snippet": "WHERE module_class = '\" . $this->db->sql_escape($class) . \"'"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 298,
+     "snippet": "$sql = 'SELECT right_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 299,
+     "snippet": "FROM ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 308,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 310,
+     "snippet": "WHERE module_class = '\" . $this->db->sql_escape($class) . \"'"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 315,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 317,
+     "snippet": "WHERE module_class = '\" . $this->db->sql_escape($class) . \"'"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 393,
+     "snippet": "$sql = 'SELECT module_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/module.php",
+     "line": 394,
+     "snippet": "FROM ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 92,
+     "snippet": "$sql = 'SELECT auth_option_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 134,
+     "snippet": "$sql = 'UPDATE ' . ACL_OPTIONS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 162,
+     "snippet": "FROM ' . $table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 209,
+     "snippet": "$sql = 'SELECT auth_option_id, is_global, is_local"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 252,
+     "snippet": "$sql = 'SELECT role_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 290,
+     "snippet": "$sql = 'SELECT MAX(role_order) AS max_role_order"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 304,
+     "snippet": "$sql = 'INSERT INTO ' . ACL_ROLES_TABLE . ' ' . $this->db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 325,
+     "snippet": "$sql = 'UPDATE ' . ACL_ROLES_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 396,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 400,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 404,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_ROLES_DATA_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 408,
+     "snippet": "$sql = 'DELETE FROM ' . ACL_ROLES_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 438,
+     "snippet": "FROM ' . ACL_OPTIONS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 464,
+     "snippet": "FROM ' . ACL_ROLES_DATA_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 475,
+     "snippet": "$sql = 'SELECT group_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 558,
+     "snippet": "$sql = 'UPDATE ' . $table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 589,
+     "snippet": "FROM ' . ACL_OPTIONS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migration/tool/permission.php",
+     "line": 620,
+     "snippet": "$sql = 'SELECT group_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migrator.php",
+     "line": 631,
+     "snippet": "$sql = 'DELETE FROM ' . $this->migrations_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migrator.php",
+     "line": 872,
+     "snippet": "$sql = 'UPDATE ' . $this->migrations_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/migrator.php",
+     "line": 880,
+     "snippet": "$sql = 'INSERT INTO ' . $this->migrations_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/extension/manager.php",
+     "line": 177,
+     "snippet": "$sql = 'INSERT INTO ' . $this->extension_table . ' ' . $this->db->sql_build_array('INSERT', $data);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/extension/manager.php",
+     "line": 183,
+     "snippet": "$sql = 'UPDATE ' . $this->extension_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/extension/manager.php",
+     "line": 191,
+     "snippet": "$sql = 'DELETE FROM ' . $this->extension_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/legend.php",
+     "line": 130,
+     "snippet": "WHERE group_legend > ' . $current_value;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/legend.php",
+     "line": 185,
+     "snippet": "$sql = 'UPDATE ' . GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/legend.php",
+     "line": 187,
+     "snippet": "WHERE group_legend > ' . self::GROUP_DISABLED . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/legend.php",
+     "line": 200,
+     "snippet": "$sql = 'UPDATE ' . GROUPS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 245,
+     "snippet": "$sql = 'INSERT INTO ' . TEAMPAGE_TABLE . ' ' . $this->db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 278,
+     "snippet": "$sql = 'INSERT INTO ' . TEAMPAGE_TABLE . ' ' . $this->db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 300,
+     "snippet": "WHERE teampage_position > ' . $current_value;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 303,
+     "snippet": "$sql = 'DELETE FROM ' . TEAMPAGE_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 328,
+     "snippet": "$sql = 'DELETE FROM ' . TEAMPAGE_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 328,
+     "snippet": "$sql = 'DELETE FROM ' . TEAMPAGE_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 337,
+     "snippet": "WHERE teampage_position > ' . $current_value;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 442,
+     "snippet": "$sql = 'UPDATE ' . TEAMPAGE_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 450,
+     "snippet": "$sql = 'UPDATE ' . TEAMPAGE_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 540,
+     "snippet": "$sql = 'UPDATE ' . TEAMPAGE_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/groupposition/teampage.php",
+     "line": 552,
+     "snippet": "$sql = 'UPDATE ' . TEAMPAGE_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/install/module/install_data/task/add_modules.php",
+     "line": 505,
+     "snippet": "$sql = 'SELECT module_id, left_id, right_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/install/module/install_data/task/add_modules.php",
+     "line": 515,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/log/log.php",
+     "line": 317,
+     "snippet": "$this->db->sql_query('INSERT INTO ' . $this->log_table . ' ' . $this->db->sql_build_array('INSERT', $sql_ary));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/log/log.php",
+     "line": 408,
+     "snippet": "$sql = 'DELETE FROM ' . $this->log_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/log/log.php",
+     "line": 980,
+     "snippet": "FROM ' . USERS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/members/controller/online_whois.php",
+     "line": 107,
+     "snippet": "$sql = 'SELECT u.user_id, u.username, u.user_type, s.session_ip"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 85,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 86,
+     "snippet": "FROM ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 205,
+     "snippet": "$sql = 'SELECT m2.*"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 206,
+     "snippet": "FROM ' . $this->modules_table . ' m1"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 365,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 373,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 384,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 392,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 412,
+     "snippet": "$sql = 'SELECT MAX(right_id) AS right_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 423,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 453,
+     "snippet": "$sql = 'DELETE FROM ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 453,
+     "snippet": "$sql = 'DELETE FROM ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 462,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 468,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 495,
+     "snippet": "$sql = 'SELECT module_id, left_id, right_id, module_langname"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/module/module_manager.php",
+     "line": 546,
+     "snippet": "$sql = 'UPDATE ' . $this->modules_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/manager.php",
+     "line": 729,
+     "snippet": "$sql = 'SELECT notify"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/manager.php",
+     "line": 741,
+     "snippet": "$sql = 'INSERT INTO ' . $this->user_notifications_table . ' ' ."
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/manager.php",
+     "line": 753,
+     "snippet": "$sql = 'UPDATE ' . $this->user_notifications_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/manager.php",
+     "line": 785,
+     "snippet": "$sql = 'UPDATE ' . $this->user_notifications_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/manager.php",
+     "line": 795,
+     "snippet": "$sql = 'INSERT INTO ' . $this->user_notifications_table . ' ' ."
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/manager.php",
+     "line": 818,
+     "snippet": "$sql = 'UPDATE ' . $this->notification_types_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/manager.php",
+     "line": 868,
+     "snippet": "$sql = 'UPDATE ' . $this->notification_types_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/manager.php",
+     "line": 1005,
+     "snippet": "$sql = 'INSERT INTO ' . $this->notification_types_table . ' ' . $this->db->sql_build_array('INSERT', array("
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/board.php",
+     "line": 300,
+     "snippet": "$sql = 'UPDATE ' . $this->notifications_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/board.php",
+     "line": 317,
+     "snippet": "$sql = 'UPDATE ' . $this->notifications_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/board.php",
+     "line": 319,
+     "snippet": "WHERE notification_time <= ' . (int) $time ."
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/board.php",
+     "line": 334,
+     "snippet": "$sql = 'UPDATE ' . $this->notifications_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/board.php",
+     "line": 336,
+     "snippet": "WHERE notification_time <= ' . (int) $time ."
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/board.php",
+     "line": 351,
+     "snippet": "$sql = 'UPDATE ' . $this->notifications_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/board.php",
+     "line": 364,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notifications_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/board.php",
+     "line": 364,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notifications_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/email.php",
+     "line": 146,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notification_emails_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/email.php",
+     "line": 146,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notification_emails_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/email.php",
+     "line": 158,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notification_emails_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/email.php",
+     "line": 158,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notification_emails_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/webpush.php",
+     "line": 320,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notification_webpush_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/webpush.php",
+     "line": 320,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notification_webpush_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/webpush.php",
+     "line": 332,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notification_webpush_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/webpush.php",
+     "line": 332,
+     "snippet": "$sql = 'DELETE FROM ' . $this->notification_webpush_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/webpush.php",
+     "line": 420,
+     "snippet": "FROM ' . $this->push_subscriptions_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/method/webpush.php",
+     "line": 442,
+     "snippet": "$sql = 'DELETE FROM ' . $this->push_subscriptions_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/type/base.php",
+     "line": 487,
+     "snippet": "$sql = 'SELECT user_id, method, notify"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/type/bookmark.php",
+     "line": 76,
+     "snippet": "$sql = 'SELECT user_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/type/post.php",
+     "line": 355,
+     "snippet": "$sql = 'SELECT user_id, mark_time FROM ' . TOPICS_TRACK_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/type/quote.php",
+     "line": 91,
+     "snippet": "$sql = 'SELECT user_id"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/notification/type/topic.php",
+     "line": 271,
+     "snippet": "$sql = 'SELECT user_id, mark_time FROM ' . TOPICS_TRACK_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/profilefields/manager.php",
+     "line": 291,
+     "snippet": "$sql = 'UPDATE ' . $this->fields_data_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/profilefields/manager.php",
+     "line": 301,
+     "snippet": "$sql = 'INSERT INTO ' . $this->fields_data_table . $this->db->sql_build_array('INSERT', $cp_data);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/profilefields/manager.php",
+     "line": 380,
+     "snippet": "FROM ' . $this->fields_data_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/profilefields/manager.php",
+     "line": 597,
+     "snippet": "AND ' . $this->db->sql_in_set('field_id', array_keys($profile_fields));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/profilefields/manager.php",
+     "line": 636,
+     "snippet": "$this->db->sql_query('DELETE FROM ' . $this->fields_table . ' WHERE ' . $where);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/profilefields/manager.php",
+     "line": 637,
+     "snippet": "$this->db->sql_query('DELETE FROM ' . $this->fields_data_lang_table . ' WHERE ' . $where);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/profilefields/manager.php",
+     "line": 638,
+     "snippet": "$this->db->sql_query('DELETE FROM ' . $this->fields_lang_table . ' WHERE ' . $where);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/profilefields/manager.php",
+     "line": 701,
+     "snippet": "AND ' . $this->db->sql_in_set('field_id', array_keys($profile_fields));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/profilefields/manager.php",
+     "line": 724,
+     "snippet": "$sql = 'SELECT field_id, field_ident"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/report/report_handler.php",
+     "line": 99,
+     "snippet": "$sql = 'INSERT INTO ' . REPORTS_TABLE . ' ' . $this->db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/report/report_handler_pm.php",
+     "line": 38,
+     "snippet": "FROM ' . REPORTS_REASONS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/report/report_handler_pm.php",
+     "line": 67,
+     "snippet": "WHERE msg_id = ' . $id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/report/report_handler_pm.php",
+     "line": 83,
+     "snippet": "$sql = 'INSERT INTO ' . PRIVMSGS_TO_TABLE . ' ' . $this->db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/report/report_handler_pm.php",
+     "line": 112,
+     "snippet": "$sql = 'SELECT p.*, pt.*"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/report/report_handler_post.php",
+     "line": 44,
+     "snippet": "FROM ' . REPORTS_REASONS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/report/report_handler_post.php",
+     "line": 73,
+     "snippet": "WHERE post_id = ' . $id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/report/report_handler_post.php",
+     "line": 106,
+     "snippet": "FROM ' . POSTS_TABLE . ' p, ' . TOPICS_TABLE . \" t"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/base.php",
+     "line": 185,
+     "snippet": "$sql = 'SELECT search_time"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/base.php",
+     "line": 199,
+     "snippet": "$sql = 'INSERT INTO ' . $this->search_results_table . ' ' . $this->db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/base.php",
+     "line": 256,
+     "snippet": "$sql = 'UPDATE ' . $this->search_results_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/base.php",
+     "line": 283,
+     "snippet": "FROM ' . $this->search_results_table . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_mysql.php",
+     "line": 539,
+     "snippet": "$sql = \"SELECT $sql_select"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_mysql.php",
+     "line": 540,
+     "snippet": "FROM $sql_from$sql_sort_table\" . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_mysql.php",
+     "line": 762,
+     "snippet": "$sql = \"SELECT $sql_select"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_mysql.php",
+     "line": 763,
+     "snippet": "FROM \" . $sql_sort_table . POSTS_TABLE . ' p' . (($firstpost_only) ? ', ' . TOPICS_TABLE . ' t ' : ' ') . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_mysql.php",
+     "line": 776,
+     "snippet": "$sql = \"SELECT $sql_select"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_mysql.php",
+     "line": 777,
+     "snippet": "FROM \" . $sql_sort_table . TOPICS_TABLE . ' t, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1185,
+     "snippet": "FROM ' . POSTS_TABLE . ' p' . (($firstpost_only) ? ', ' . TOPICS_TABLE . ' t ' : ' ') . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1205,
+     "snippet": "$sql .= ' FROM ' . TOPICS_TABLE . ' t, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1232,
+     "snippet": "$sql = \"SELECT $select"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1233,
+     "snippet": "FROM \" . $sql_sort_table . POSTS_TABLE . ' p' . (($firstpost_only) ? ', ' . TOPICS_TABLE . ' t' : '') . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1246,
+     "snippet": "$sql = \"SELECT $select"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1247,
+     "snippet": "FROM \" . $sql_sort_table . TOPICS_TABLE . ' t, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1344,
+     "snippet": "FROM ' . $this->search_wordlist_table . ' w, ' . $this->search_wordmatch_table . \" m"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1512,
+     "snippet": "$sql = 'SELECT w.word_id, w.word_text, m.title_match"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1554,
+     "snippet": "$sql = 'DELETE FROM ' . $this->search_wordmatch_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_postgres.php",
+     "line": 467,
+     "snippet": "$sql_where = \"WHERE (\" . $tmp_sql_match . \")"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_postgres.php",
+     "line": 687,
+     "snippet": "FROM \" . $sql_sort_table . POSTS_TABLE . ' p' . (($firstpost_only) ? ', ' . TOPICS_TABLE . ' t ' : ' ') . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_postgres.php",
+     "line": 701,
+     "snippet": "FROM \" . $sql_sort_table . TOPICS_TABLE . ' t, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_postgres.php",
+     "line": 732,
+     "snippet": "FROM \" . $sql_sort_table . POSTS_TABLE . ' p' . (($firstpost_only) ? ', ' . TOPICS_TABLE . ' t ' : ' ') . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_postgres.php",
+     "line": 744,
+     "snippet": "FROM \" . $sql_sort_table . TOPICS_TABLE . ' t, ' . POSTS_TABLE . \" p"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/session.php",
+     "line": 566,
+     "snippet": "$sql = 'SELECT u.*"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/session.php",
+     "line": 1503,
+     "snippet": "$sql = 'UPDATE ' . SESSIONS_KEYS_TABLE . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/session.php",
+     "line": 1510,
+     "snippet": "$sql = 'INSERT INTO ' . SESSIONS_KEYS_TABLE . ' ' . $db->sql_build_array('INSERT', $sql_ary);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/session.php",
+     "line": 1655,
+     "snippet": "$sql = 'UPDATE ' . SESSIONS_TABLE . ' SET ' . $db->sql_build_array('UPDATE', $session_data) . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/storage/controller/attachment.php",
+     "line": 350,
+     "snippet": "$sql = 'SELECT attach_id, post_msg_id, topic_id, in_message, poster_id,"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/storage/controller/attachment.php",
+     "line": 353,
+     "snippet": "FROM ' . ATTACHMENTS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/storage/controller/attachment.php",
+     "line": 514,
+     "snippet": "WHERE attach_id = ' . $id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/storage/file_tracker.php",
+     "line": 106,
+     "snippet": "$sql = 'DELETE FROM ' . $this->storage_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/storage/file_tracker.php",
+     "line": 130,
+     "snippet": "FROM ' .  $this->storage_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/storage/file_tracker.php",
+     "line": 156,
+     "snippet": "FROM ' .  $this->storage_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/storage/file_tracker.php",
+     "line": 178,
+     "snippet": "$sql = 'SELECT COUNT(file_id) AS numfiles"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/storage/file_tracker.php",
+     "line": 205,
+     "snippet": "$sql = 'SELECT SUM(filesize) AS totalsize"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/textreparser/plugins/poll_option.php",
+     "line": 34,
+     "snippet": "$sql = 'SELECT o.topic_id, o.poll_option_id, o.poll_option_text AS text, p.enable_bbcode, p.enable_smilies, p.enable_magic_url, p.bbcode_uid"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/textreparser/plugins/poll_option.php",
+     "line": 48,
+     "snippet": "$sql = 'UPDATE ' . POLL_OPTIONS_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/textreparser/plugins/poll_option.php",
+     "line": 50,
+     "snippet": "WHERE topic_id = \" . $record['topic_id'] . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/textreparser/plugins/poll_title.php",
+     "line": 34,
+     "snippet": "$sql = 'SELECT t.topic_id AS id, t.poll_title AS text, p.enable_bbcode, p.enable_smilies, p.enable_magic_url, p.bbcode_uid"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/textreparser/row_based_plugin.php",
+     "line": 98,
+     "snippet": "$sql = 'SELECT ' . implode(', ', $fields) . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/textreparser/row_based_plugin.php",
+     "line": 98,
+     "snippet": "$sql = 'SELECT ' . implode(', ', $fields) . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/textreparser/row_based_plugin.php",
+     "line": 112,
+     "snippet": "$sql = 'UPDATE ' . $this->table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/textreparser/row_based_plugin.php",
+     "line": 114,
+     "snippet": "WHERE \" . $columns['id'] . ' = ' . $record['id'];"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 130,
+     "snippet": "$sql = 'INSERT INTO ' . $this->table_name . ' ' . $this->db->sql_build_array('INSERT', $item_data);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 209,
+     "snippet": "$sql = 'DELETE FROM ' . $this->table_name . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 404,
+     "snippet": "FROM ' . $this->table_name . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 430,
+     "snippet": "$sql = 'SELECT MAX(' . $this->column_right_id . ') AS ' . $this->column_right_id . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 441,
+     "snippet": "$sql = 'UPDATE ' . $this->table_name . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 502,
+     "snippet": "FROM ' . $this->table_name . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 528,
+     "snippet": "$sql = 'SELECT MAX(' . $this->column_right_id . ') AS ' . $this->column_right_id . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 539,
+     "snippet": "$sql = 'UPDATE ' . $this->table_name . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 727,
+     "snippet": "$sql = 'UPDATE ' . $this->table_name . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 731,
+     "snippet": "' . ((!$set_subset_zero) ? ' WHERE ' . $sql_not_subset_items . ' ' . $this->get_sql_where('AND') : $this->get_sql_where('WHERE'));"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 755,
+     "snippet": "$sql = 'UPDATE ' . $this->table_name . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 846,
+     "snippet": "$sql = 'UPDATE ' . $this->table_name . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/tree/nestedset.php",
+     "line": 859,
+     "snippet": "$sql = 'UPDATE ' . $this->table_name . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ucp/controller/reset_password.php",
+     "line": 147,
+     "snippet": "WHERE user_id = ' . $user_id;"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ucp/controller/webpush.php",
+     "line": 335,
+     "snippet": "$sql = 'UPDATE ' . $this->push_subscriptions_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ucp/controller/webpush.php",
+     "line": 347,
+     "snippet": "$sql = 'INSERT INTO ' . $this->push_subscriptions_table . ' ' . $this->db->sql_build_array('INSERT', $subscription_data);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ucp/controller/webpush.php",
+     "line": 353,
+     "snippet": "$sql = 'DELETE FROM ' . $this->push_subscriptions_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/ucp/controller/webpush.php",
+     "line": 486,
+     "snippet": "$sql = 'DELETE FROM ' . $this->push_subscriptions_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/user.php",
+     "line": 773,
+     "snippet": "FROM ' . PROFILE_FIELDS_DATA_TABLE . \""
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/user_loader.php",
+     "line": 86,
+     "snippet": "$sql = 'SELECT *"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/user_loader.php",
+     "line": 87,
+     "snippet": "FROM ' . $this->users_table . '"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/user_loader.php",
+     "line": 111,
+     "snippet": "$sql = 'SELECT *"
+    }
+   ],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/rubygems_rubygems/",
+   "before": 3,
+   "after": 9,
+   "added": [
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/bundler/rubygems_gem_installer.rb",
+     "line": 129,
+     "snippet": "bin_script_path = File.join bindir, formatted_program_filename(filename)"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/commands/unpack_command.rb",
+     "line": 129,
+     "snippet": "this_path = File.join(path, \"cache\", filename)"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/installer.rb",
+     "line": 188,
+     "snippet": "generated_bin = File.join @bin_dir, formatted_program_filename(filename)"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/installer.rb",
+     "line": 537,
+     "snippet": "bin_script_path = File.join bindir, formatted_program_filename(filename)"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/installer.rb",
+     "line": 559,
+     "snippet": "src = File.join gem_dir, spec.bindir, filename"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/installer.rb",
+     "line": 560,
+     "snippet": "dst = File.join bindir, formatted_program_filename(filename)"
+    }
+   ],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/spring-projects_spring-petclinic/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/sveltejs_kit/",
+   "before": 7,
+   "after": 41,
+   "added": [
+    {
+     "rule": "javascript.parameter-path-join-without-containment",
+     "path": "packages/adapter-auto/index.js",
+     "line": 21,
+     "snippet": "const exists = (file) => fs.existsSync(path.join(dir, file));"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/adapter-bun/index.js",
+     "line": 99,
+     "snippet": "`export const app_dir = ${JSON.stringify(builder.config.appDir)};`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/adapter-bun/index.js",
+     "line": 100,
+     "snippet": "`export const base = ${JSON.stringify(builder.config.paths.base || '/')};`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/adapter-bun/index.js",
+     "line": 103,
+     "snippet": "`export const origin = ${JSON.stringify(builder.config.paths.origin)};`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/adapter-netlify/index.js",
+     "line": 387,
+     "snippet": "return `export const config = ${s(config)};\\n`;"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/adapter-node/index.js",
+     "line": 63,
+     "snippet": "`export const base = ${JSON.stringify(base)};`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/adapter-node/index.js",
+     "line": 64,
+     "snippet": "`export const app_path = ${JSON.stringify(builder.getAppPath())};`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/adapter-node/index.js",
+     "line": 65,
+     "snippet": "`export const origin = ${JSON.stringify(builder.config.paths.origin)};`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/adapter-node/index.js",
+     "line": 67,
+     "snippet": "`export const mime_types = ${JSON.stringify(builder.mimeTypes)};`,"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/enhanced-img/src/vite-plugin.js",
+     "line": 456,
+     "snippet": "return `{#if true}{@const ${src_var_name} = ${src_expression}}\\n${picture}\\n{/if}`;"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/adapt/builder.js",
+     "line": 234,
+     "snippet": "const manifest = ${generate_manifest({"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/env.js",
+     "line": 179,
+     "snippet": "exports.push(`export const ${name} = ${value};\\n`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/env.js",
+     "line": 182,
+     "snippet": "declarations.push(`explicit_public_env.${name} = ${value};`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/env.js",
+     "line": 283,
+     "snippet": "? `const { env } = ${global};`"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/env.js",
+     "line": 435,
+     "snippet": "declarations.push(`const ${alias} = ${expr};`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/env.js",
+     "line": 438,
+     "snippet": "declarations.push(`export const ${name} = ${expr};`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/sync/write_client_manifest.js",
+     "line": 160,
+     "snippet": "export const dictionary = ${dictionary};"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/sync/write_client_manifest.js",
+     "line": 174,
+     "snippet": "export const hash = ${s(kit.router.type === 'hash')};"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/sync/write_types/index.js",
+     "line": 247,
+     "snippet": "declarations.push(`type RouteId = '${route.id}';`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/sync/write_types/index.js",
+     "line": 444,
+     "snippet": "declarations.push(`type ${parent_type} = ${get_parent_type(node, 'LayoutServerData')};`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/sync/write_types/index.js",
+     "line": 482,
+     "snippet": "exports.push(`export type ${prefix}ServerData = ${server_data};`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/sync/write_types/index.js",
+     "line": 485,
+     "snippet": "declarations.push(`type ${parent_type} = ${get_parent_type(node, 'LayoutData')};`);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/core/sync/write_types/index.js",
+     "line": 516,
+     "snippet": "exports.push(`export type ${prefix}Data = ${data};`);"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 297,
+     "snippet": "if (fs.existsSync(file) && !fs.statSync(file).isDirectory()) {"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 297,
+     "snippet": "if (fs.existsSync(file) && !fs.statSync(file).isDirectory()) {"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 346,
+     "snippet": "path.resolve(root, decoded.slice(svelte_config.paths.base.length + 1))"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 348,
+     "snippet": "const is_file = fs.existsSync(file) && !fs.statSync(file).isDirectory();"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 348,
+     "snippet": "const is_file = fs.existsSync(file) && !fs.statSync(file).isDirectory();"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/exports/vite/plugins/remote.js",
+     "line": 164,
+     "snippet": "${declaration.id.name}.__.dev_loc = ${s({ line, column })}"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/preview/index.js",
+     "line": 197,
+     "snippet": "fs.createReadStream(filename).pipe(res);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/messages/client-errors.js",
+     "line": 65,
+     "snippet": "throw_error('navigation_external_url', `Cannot use \\`${_values.caller}\\` with an external URL. Use \\`window.location = \"${_values.url}\"\\` instead`, navigation_external_url);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/messages/client-errors.js",
+     "line": 78,
+     "snippet": "throw_error('navigation_route_missing', `Cannot use \\`${_values.caller}\\` with a URL that does not resolve to a route within the app. Use \\`window.location = \"${_values.url}\"\\` instead`, navigation_ro"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/runtime/server/page/server_routing.js",
+     "line": 158,
+     "snippet": "body = `${create_css_import(route, url, client)}export const route = ${csr_route};`;"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/runtime/server/page/server_routing.js",
+     "line": 161,
+     "snippet": "body += `\\nexport const params = ${devalue.uneval(params)}`;"
+    }
+   ],
+   "removed": []
+  }
+ ]
+}

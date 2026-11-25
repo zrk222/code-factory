@@ -46,10 +46,13 @@ The advisory study records strict old-side fix-hunk detections. CodeQL hit
 These measurements leave whole-product blind recall unestablished.
 [Inspect the lane-separated record](docs/evidence/advisory-recall-factory-20261121.json) or [verify recall and precision evidence](docs/RECALL_EVIDENCE.md).
 
-- **12 languages, one review workflow:** the configured native security worker
-  covers C, C++, C#, Go, Java, JavaScript, PHP, Python, Ruby, Rust, Swift and
-  TypeScript. Thirty rules separate default findings from review-only context;
-  worker setup and coverage gaps remain explicit.
+- **JavaScript/TypeScript and Python, plus qualified native workers:** on the
+  frozen Sep–Oct 2026 held-out advisories, the pattern lane found
+  JavaScript/TypeScript 13/79 and Python 1/41; Go was 0/4. Rules also run for
+  C, C++, C#, Go, Java, PHP, Ruby, Rust and Swift, but those languages have no
+  non-zero held-out recall yet, so they count as covered only through native
+  workers that pass qualification; worker setup and coverage gaps remain explicit.
+  [Per-language record](docs/RECALL_PRECISION.md).
 - **Measured strengths and gaps:** the fresh Round 7 default tier supported
   **38/40 decided alerts (95%; Wilson 83.5–98.6%)**, with **12 additional unclear**.
   Review tier supported **23/40 (57.5%)**, with 3 unclear. Advisory recall was

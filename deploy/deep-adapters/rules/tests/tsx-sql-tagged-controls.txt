@@ -1,0 +1,9 @@
+export function waitpointsTagged(prisma: any, snapshotId: string) {
+  // ok: javascript.parameter-sql-text
+  return prisma.$queryRaw`SELECT "B" FROM "_completedWaitpoints" WHERE "A" = ${snapshotId}`;
+}
+
+export function waitpointsTag(sql: any, ids: string[]) {
+  // ok: javascript.parameter-sql-text
+  return sql`SELECT id FROM "Waitpoint" WHERE id = ANY(${ids}::text[])`;
+}

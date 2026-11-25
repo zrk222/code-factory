@@ -22,26 +22,26 @@ func serverConfig(optional bool) *tls.Config {
 
 func authenticate(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		// ruleid: go.peer-certificate-trusted-without-verified-chain
+		// ruleid: go.tls-peer-not-verified
 		cert := r.TLS.PeerCertificates[0]
 		_ = cert
 	}
 	if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.PeerCertificates) > 0 {
-		// ok: go.peer-certificate-trusted-without-verified-chain
+		// ok: go.tls-peer-not-verified
 		cert := r.TLS.PeerCertificates[0]
 		_ = cert
 	}
 }
 
 func dial(addr string, plaintext bool) (*grpc.ClientConn, error) {
-	// ruleid: go.grpc-insecure-transport
+	// ruleid: go.tls-peer-not-verified
 	return grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
 
 func dialOpt(addr string, plaintext bool) (*grpc.ClientConn, error) {
 	opts := []grpc.DialOption{}
 	if plaintext {
-		// ok: go.grpc-insecure-transport
+		// ok: go.tls-peer-not-verified
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 	return grpc.Dial(addr, opts...)

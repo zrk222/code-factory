@@ -1,0 +1,1976 @@
+{
+  "reviewer": "codex-sol-6.2",
+  "packet_sha256": "c39c12809dce51ae6401388f4a0f39022a10323399d5266d72bc99882893d0e3",
+  "labels": [
+    {
+      "item": "93b7d579d7d3",
+      "verdict": "TP",
+      "reason": "The HTTP handler normalizes the request URL into a filename, checks only a string prefix without a directory boundary, and reads the resulting path."
+    },
+    {
+      "item": "c33bc4ad5519",
+      "verdict": "UNCLEAR",
+      "reason": "The policy unpickles metadata from the supplied model directory, but the artifact provenance and verification before loading are unspecified."
+    },
+    {
+      "item": "88fd34913bee",
+      "verdict": "TP",
+      "reason": "The code identifies the column names as caller dictionary keys and places them in SQL syntax while binding only the values."
+    },
+    {
+      "item": "6c41b0e7289f",
+      "verdict": "UNCLEAR",
+      "reason": "The flag helper stats a joined path, but the caller that provides the flag name and any preceding constraints are absent."
+    },
+    {
+      "item": "dade0b16212a",
+      "verdict": "UNCLEAR",
+      "reason": "The sanitizer reinserts serialized content from a disallowed node, but the complete traversal and subsequent checks for the inserted nodes are omitted."
+    },
+    {
+      "item": "43aaf59865a0",
+      "verdict": "UNCLEAR",
+      "reason": "The chmod acts on an archive destination, but the excerpt does not establish how the original file path was checked against the extraction root."
+    },
+    {
+      "item": "9e8b7f6f1f0b",
+      "verdict": "TP",
+      "reason": "The attachment writer passes a mail attachment filename into a joined output path and opens it for writing without shown confinement."
+    },
+    {
+      "item": "1981a5b9fd4f",
+      "verdict": "UNCLEAR",
+      "reason": "The fallback authenticates using the presented subject, but the server's client-certificate verification policy is omitted."
+    },
+    {
+      "item": "a448c076f655",
+      "verdict": "TP",
+      "reason": "The caching API accepts a relative download name and creates a filesystem path without enforcing containment inside the cache directory."
+    },
+    {
+      "item": "7ed060d0a376",
+      "verdict": "UNCLEAR",
+      "reason": "The helper concatenates an untyped admin argument, but the excerpt omits the callers and their constraints on the value."
+    },
+    {
+      "item": "6aa5c9943457",
+      "verdict": "FP",
+      "reason": "The marked table comes from the notification plugin's defined messages collection and is obtained in quoted form."
+    },
+    {
+      "item": "c5bcc7fa3e90",
+      "verdict": "UNCLEAR",
+      "reason": "The output path uses the archive entry name and relies on a described pre-pass whose actual containment and link checks are omitted."
+    },
+    {
+      "item": "bcdfce1636b4",
+      "verdict": "UNCLEAR",
+      "reason": "The rendered values pass through a sanitizer, but its implementation and the command runner's execution semantics are omitted."
+    },
+    {
+      "item": "1f81425d5709",
+      "verdict": "UNCLEAR",
+      "reason": "The shell runner receives interpolated database and schema settings, but the origin and allowed values of those settings are unspecified."
+    },
+    {
+      "item": "2233d9aee4e7",
+      "verdict": "TP",
+      "reason": "The trust manager's server validation callback explicitly accepts every presented certificate chain."
+    },
+    {
+      "item": "62d37e41d772",
+      "verdict": "UNCLEAR",
+      "reason": "Deletion uses only a temporary suffix check at this layer, but the source and earlier validation of the requested name are omitted."
+    },
+    {
+      "item": "db24c15d31ae",
+      "verdict": "UNCLEAR",
+      "reason": "The LDAP mobile value is rendered into a quoted attribute, but earlier processing of the LDAP field is omitted."
+    },
+    {
+      "item": "bad315d7b725",
+      "verdict": "TP",
+      "reason": "The endpoint reads a log path built from a session identifier taken directly from the request query without shown confinement."
+    },
+    {
+      "item": "642d60665d0a",
+      "verdict": "UNCLEAR",
+      "reason": "The custom adapter deliberately disables verification, but the excerpt omits how the application opts into or assigns it."
+    },
+    {
+      "item": "01bd769fb1ca",
+      "verdict": "UNCLEAR",
+      "reason": "The reader expects a leaf filename, but the excerpt omits who supplies it and whether that contract is enforced."
+    },
+    {
+      "item": "acfc5f66d628",
+      "verdict": "FP",
+      "reason": "This predicate gets the schema from the context's main wiki identifier rather than the request's selected wiki."
+    },
+    {
+      "item": "c5cb05d1bad3",
+      "verdict": "UNCLEAR",
+      "reason": "The LDAP Skype field is emitted into the cell as HTML, but its earlier processing and trust boundary are unspecified."
+    },
+    {
+      "item": "d48d74ca9753",
+      "verdict": "FP",
+      "reason": "The descending branch creates an ORM column identifier with no raw flag, so the ORM quotes it as a name."
+    },
+    {
+      "item": "28cbd6dd837d",
+      "verdict": "UNCLEAR",
+      "reason": "The reader expects a leaf filename, but the excerpt omits its callers and any enforced filename constraints."
+    },
+    {
+      "item": "437771c8c29b",
+      "verdict": "TP",
+      "reason": "The route inserts the request's session identifier directly into a log pathname and uses that pathname for filesystem access."
+    },
+    {
+      "item": "24d8698a0082",
+      "verdict": "UNCLEAR",
+      "reason": "The tax flag reaches a SQL literal, but its derivation and permissible values are omitted."
+    },
+    {
+      "item": "9e69b59dc57e",
+      "verdict": "FP",
+      "reason": "The insecure credentials are gated by the insecure configuration flag while the default branch uses TLS and host root CAs."
+    },
+    {
+      "item": "bdf18f123fd2",
+      "verdict": "UNCLEAR",
+      "reason": "The selection workaround reparses an existing element's markup, but the relevant markup's source and stability on reparse are unspecified."
+    },
+    {
+      "item": "a8f15e0e22c6",
+      "verdict": "FP",
+      "reason": "The lookup's shown caller reduces the selected cache filename to its basename before joining it to the cache directory."
+    },
+    {
+      "item": "9f7418df5e73",
+      "verdict": "FP",
+      "reason": "The query uses the documented sanitized table identifier and binds its offset as a separate parameter."
+    },
+    {
+      "item": "6c4f1e4e314c",
+      "verdict": "UNCLEAR",
+      "reason": "The donation status is emitted through a presentation helper whose output and data constraints are omitted."
+    },
+    {
+      "item": "da9aac0c387e",
+      "verdict": "UNCLEAR",
+      "reason": "The write uses a shortened session identifier, but the identifier's generation and constraints are unspecified."
+    },
+    {
+      "item": "e4d1c337bf6a",
+      "verdict": "FP",
+      "reason": "The lookup formats the typed user ID as an integer and takes the table prefix from database configuration."
+    },
+    {
+      "item": "eac94ac58eaf",
+      "verdict": "UNCLEAR",
+      "reason": "The template predicate stats a joined path, but whether untrusted users control the template argument is unspecified."
+    },
+    {
+      "item": "19ea1b6dfe6c",
+      "verdict": "UNCLEAR",
+      "reason": "The offset is appended as SQL text, but the caller's validation and runtime type constraints are omitted."
+    },
+    {
+      "item": "b842219632fb",
+      "verdict": "UNCLEAR",
+      "reason": "The flag name becomes a removal path, but the caller and any preceding constraints are omitted."
+    },
+    {
+      "item": "e5206e1fc195",
+      "verdict": "TP",
+      "reason": "The default dataset decoder hands external sample bytes directly to pickle when the sample has a matching extension."
+    },
+    {
+      "item": "ddf3443486f5",
+      "verdict": "UNCLEAR",
+      "reason": "The values are bound independently, but the function that generates the SQL text from search operations is omitted."
+    },
+    {
+      "item": "f1d1d63fa298",
+      "verdict": "FP",
+      "reason": "The cleanup stats a directory-enumerated child name only after applying the temporary archive filename pattern."
+    },
+    {
+      "item": "a2920c048c69",
+      "verdict": "UNCLEAR",
+      "reason": "The aggregate query references temporary table names, but the code that generates those names is omitted."
+    },
+    {
+      "item": "9fc13258ef80",
+      "verdict": "UNCLEAR",
+      "reason": "The rendered values pass through a sanitizer, but its implementation and the command runner's execution semantics are omitted."
+    },
+    {
+      "item": "e90c5a03ab2b",
+      "verdict": "FP",
+      "reason": "Both table reference components are included as escaped SQL literals inside fixed tuple syntax."
+    },
+    {
+      "item": "4514575d535c",
+      "verdict": "UNCLEAR",
+      "reason": "The plain CSV query interpolates temporary table names whose generation and constraints are unspecified."
+    },
+    {
+      "item": "486ee2f5d72b",
+      "verdict": "UNCLEAR",
+      "reason": "The LDAP login is printed without local encoding, but the directory field's admissible values and earlier processing are omitted."
+    },
+    {
+      "item": "a30ddec1f798",
+      "verdict": "UNCLEAR",
+      "reason": "The seller country code becomes a SQL literal, but how the seller code is selected or constrained is unspecified."
+    },
+    {
+      "item": "6a03f8d66888",
+      "verdict": "TP",
+      "reason": "Workflow-supplied column names and the update key enter the SQL syntax while the corresponding field values are separately bound."
+    },
+    {
+      "item": "26835d319fec",
+      "verdict": "UNCLEAR",
+      "reason": "The range endpoints are interpolated as SQL strings, but their origins and runtime conversion are omitted."
+    },
+    {
+      "item": "06ad60d62c22",
+      "verdict": "FP",
+      "reason": "The cleanup removes a matched direct directory entry by its enumerated filename."
+    },
+    {
+      "item": "232d409b7bf6",
+      "verdict": "UNCLEAR",
+      "reason": "The checkpoint ID becomes an unlink destination, but how the delete method receives or checks the ID is omitted."
+    },
+    {
+      "item": "b04d340ace7b",
+      "verdict": "UNCLEAR",
+      "reason": "The decoder unpickles decompressed bytes, but it is unclear whether the bytes are restricted to trusted generated model artifacts."
+    },
+    {
+      "item": "73e89affde90",
+      "verdict": "UNCLEAR",
+      "reason": "The command interpolates the merge filename, but the excerpt does not show how the stage lookup receives or validates it."
+    },
+    {
+      "item": "3403f7481e67",
+      "verdict": "FP",
+      "reason": "The marked join uses a single child name returned by enumeration of the developer plugin directory."
+    },
+    {
+      "item": "6d4cd69ca977",
+      "verdict": "UNCLEAR",
+      "reason": "The only formatted query arguments are temporary table names, but their generation is outside the excerpt."
+    },
+    {
+      "item": "102eea555df0",
+      "verdict": "UNCLEAR",
+      "reason": "The converter accepts a caller-selected local path by design, and the excerpt omits the caller's filesystem authority and any intended root boundary."
+    },
+    {
+      "item": "0c8ec89799f0",
+      "verdict": "UNCLEAR",
+      "reason": "The read is gated by a containment helper whose implementation falls outside the relevant excerpt."
+    },
+    {
+      "item": "0a918739437e",
+      "verdict": "UNCLEAR",
+      "reason": "The catalog query interpolates table and schema names, but the source and prior escaping of the arguments are unspecified."
+    },
+    {
+      "item": "7450355000d4",
+      "verdict": "UNCLEAR",
+      "reason": "The loader unpickles policy metadata from the model directory, but artifact provenance and integrity controls are unspecified."
+    },
+    {
+      "item": "e2b3fe647c78",
+      "verdict": "TP",
+      "reason": "The public encoder accepts an FFmpeg option string and sends it directly into a shell command."
+    },
+    {
+      "item": "033452469b13",
+      "verdict": "UNCLEAR",
+      "reason": "The read uses a temporary path supplied to the helper, but its provenance and confinement are omitted."
+    },
+    {
+      "item": "aa4a52d94bea",
+      "verdict": "FP",
+      "reason": "The downloader resolves the base and output paths and checks their common directory ancestry before writing to the resolved destination."
+    },
+    {
+      "item": "5a3137a68b56",
+      "verdict": "UNCLEAR",
+      "reason": "The receiver unpickles peer messages, but the socket's bind address, trust boundary and authentication are omitted."
+    },
+    {
+      "item": "a9324bcb4e6a",
+      "verdict": "TP",
+      "reason": "The code installs an HTTPS hostname verifier that accepts all names and sets the default socket factory to trust every certificate."
+    },
+    {
+      "item": "aff6aac06fbb",
+      "verdict": "UNCLEAR",
+      "reason": "The path is checked before opening, but the excerpt omits whether the helper enforces real-path confinement and link handling."
+    },
+    {
+      "item": "0437657d9df4",
+      "verdict": "TP",
+      "reason": "The decoded URL is resolved into a filesystem path and checked against an allowlist by bare string prefix without a directory boundary."
+    },
+    {
+      "item": "149afefb9cf0",
+      "verdict": "UNCLEAR",
+      "reason": "The library parses HTML after calling its prefilter, but the prefilter behavior and affected untrusted input flow are omitted."
+    },
+    {
+      "item": "1fd0be2babf7",
+      "verdict": "UNCLEAR",
+      "reason": "The handler writes a serialized redirect response, but the MIME type and browser interpretation of the result are unspecified."
+    },
+    {
+      "item": "fd6aa3802032",
+      "verdict": "FP",
+      "reason": "The amount is formatted as a price and used in a plain text cell."
+    },
+    {
+      "item": "abce25ef11a1",
+      "verdict": "FP",
+      "reason": "The marked amount has an integer type and is formatted using the integer conversion in the SQL template."
+    },
+    {
+      "item": "ecb2cc8b05fe",
+      "verdict": "UNCLEAR",
+      "reason": "The helper passes the double-quoted username to a shell, but its callers and name validation are omitted."
+    },
+    {
+      "item": "c2453cccf0fc",
+      "verdict": "UNCLEAR",
+      "reason": "The stat uses a generated export path, but the derivation and constraints of the session identifier are omitted."
+    },
+    {
+      "item": "556749b6e595",
+      "verdict": "UNCLEAR",
+      "reason": "The group lookup interpolates the username into a shell command, but its source and any validation are omitted."
+    },
+    {
+      "item": "022fd6154c63",
+      "verdict": "TP",
+      "reason": "The endpoint takes the filename from the request query and sends it to the file getter, including unchanged values outside the temporary-file branch."
+    },
+    {
+      "item": "c42ddf96255a",
+      "verdict": "TP",
+      "reason": "The read uses a URL-derived pathname guarded only by a prefix check that can match a sibling directory."
+    },
+    {
+      "item": "eed24f4c0d68",
+      "verdict": "UNCLEAR",
+      "reason": "The helper probes a joined filename before taking its basename, but the call site and prior validation are omitted."
+    },
+    {
+      "item": "af6c0c4a0b4d",
+      "verdict": "UNCLEAR",
+      "reason": "The backup name determines the write destination, but how the name is generated or selected is outside the excerpt."
+    },
+    {
+      "item": "4d025ab89cca",
+      "verdict": "UNCLEAR",
+      "reason": "The icon filename controls both reading and writing, but its derivation and previous validation are omitted."
+    },
+    {
+      "item": "e2a40ca77905",
+      "verdict": "UNCLEAR",
+      "reason": "The download name determines which directory is copied, but the caller and restrictions on that name are omitted."
+    },
+    {
+      "item": "6a4488df996a",
+      "verdict": "FP",
+      "reason": "The marked urllib3 call only changes warning display and does not change the request's certificate verification settings."
+    },
+    {
+      "item": "ef168f7e7df0",
+      "verdict": "FP",
+      "reason": "The update uses fixed column keys and a query builder that binds run values and the UUID separately."
+    },
+    {
+      "item": "1e3900d5794d",
+      "verdict": "TP",
+      "reason": "The existence test probes a log path built directly from the request query's session identifier and the route later opens that path."
+    },
+    {
+      "item": "6cd02ccd622e",
+      "verdict": "UNCLEAR",
+      "reason": "The query uses an order normalizer and a typed amount, but the helper's output and the content type slug constraints are unspecified."
+    },
+    {
+      "item": "8ef00804269e",
+      "verdict": "UNCLEAR",
+      "reason": "The component loads matching pickle artifacts from model storage, but that storage's source and authenticity guarantees are omitted."
+    },
+    {
+      "item": "3f5691d1b8da",
+      "verdict": "UNCLEAR",
+      "reason": "The extractor uses an entry-derived output path, but prior filtering of archive entries and links is omitted from the shown write flow."
+    },
+    {
+      "item": "d8330f4de16d",
+      "verdict": "UNCLEAR",
+      "reason": "The button parses localized text as HTML, but the origin and trust of the board's language values are unspecified."
+    },
+    {
+      "item": "b15787f20711",
+      "verdict": "UNCLEAR",
+      "reason": "The transfer writes files through its save callback and reports returned names, but the receive library's filename validation is omitted."
+    },
+    {
+      "item": "329d3d7e9c0b",
+      "verdict": "FP",
+      "reason": "The SQLAlchemy delete compares the token as a bound value."
+    },
+    {
+      "item": "870a37f5ebae",
+      "verdict": "TP",
+      "reason": "The public encoder passes the documented file or URL and option arguments into a composed shell command."
+    },
+    {
+      "item": "7023642dcc6d",
+      "verdict": "UNCLEAR",
+      "reason": "The report endpoint applies a regex to its identifier, but the regex pattern and thus its path restrictions are omitted."
+    },
+    {
+      "item": "b342cef08d5f",
+      "verdict": "UNCLEAR",
+      "reason": "The URL-derived pathname is probed and passed to the static server, but the case check and server containment guarantees are omitted."
+    },
+    {
+      "item": "b49022c41541",
+      "verdict": "TP",
+      "reason": "The endpoint runs a request-supplied command after a raw prefix match that does not enforce command token boundaries or constrain arguments."
+    },
+    {
+      "item": "f9c5a61233b0",
+      "verdict": "UNCLEAR",
+      "reason": "The mapped HQL entity name is interpolated, but whether users can set it or how mappings validate names is omitted."
+    },
+    {
+      "item": "7d0360997521",
+      "verdict": "TP",
+      "reason": "The group link places request-derived PHP_SELF in a quoted attribute without visible HTML encoding."
+    },
+    {
+      "item": "9f4906649121",
+      "verdict": "UNCLEAR",
+      "reason": "The query uses supplied identifier arguments as syntax, but the code mapping request resources to those arguments is omitted."
+    },
+    {
+      "item": "d4e6bda69e41",
+      "verdict": "UNCLEAR",
+      "reason": "The checkout path reaches the clone operation, but prior containment enforcement for the path argument is omitted."
+    },
+    {
+      "item": "b8d948bca1e9",
+      "verdict": "UNCLEAR",
+      "reason": "The helper interpolates the folder and branch into a shell command, but their origins and earlier validation are omitted."
+    },
+    {
+      "item": "583dd5a48b6a",
+      "verdict": "UNCLEAR",
+      "reason": "The query uses a primary key value and identifiers as raw SQL, but the callers and preceding normalization are omitted."
+    },
+    {
+      "item": "c6f903d692be",
+      "verdict": "UNCLEAR",
+      "reason": "The tar member paths are checked before extraction, but the boundary comparison and the supplied member filter's link behavior are omitted."
+    },
+    {
+      "item": "732dbd0d9263",
+      "verdict": "UNCLEAR",
+      "reason": "The town value comes from POST, but the select widget's handling and HTML escaping of that value are omitted."
+    },
+    {
+      "item": "c9f7f081a01e",
+      "verdict": "UNCLEAR",
+      "reason": "The function interpolates supplied block IDs into the IN list, but the call sites and ID format checks are omitted."
+    },
+    {
+      "item": "512507ce07d7",
+      "verdict": "UNCLEAR",
+      "reason": "The shell invocation includes an upload URL and file path, but how the uploader obtains and validates both arguments is omitted."
+    },
+    {
+      "item": "1c3164f47562",
+      "verdict": "UNCLEAR",
+      "reason": "The basename is fixed at classdump.txt, but prior validation of the request-derived upload digest is omitted."
+    },
+    {
+      "item": "e44763d068f2",
+      "verdict": "FP",
+      "reason": "Arithmetic converts the day count to a computed numeric timestamp before it is concatenated into the predicate."
+    },
+    {
+      "item": "a7a34a1de773",
+      "verdict": "TP",
+      "reason": "The diff options supply revision names and file filters that the tool appends directly to a shell command."
+    },
+    {
+      "item": "81ccfab966a9",
+      "verdict": "UNCLEAR",
+      "reason": "The primary key name is read from schema metadata, but how table names and raw key values are selected or validated is omitted."
+    },
+    {
+      "item": "a6b94644369c",
+      "verdict": "TP",
+      "reason": "The archive helper extracts each member without an explicit member filter or destination containment check on runtimes with unrestricted defaults."
+    },
+    {
+      "item": "0fc5d9233b55",
+      "verdict": "UNCLEAR",
+      "reason": "The upload digest comes from the request and is used after form validation, but the form's digest validation is omitted."
+    },
+    {
+      "item": "0faf57fc0743",
+      "verdict": "TP",
+      "reason": "The caller's dictionary keys directly supply SQL column syntax and placeholder names while values are bound separately."
+    },
+    {
+      "item": "2bfc49d84264",
+      "verdict": "UNCLEAR",
+      "reason": "The role filter becomes a raw SQL fragment, but the callers and any role allowlist outside the method are omitted."
+    },
+    {
+      "item": "27d28e8acb49",
+      "verdict": "UNCLEAR",
+      "reason": "The helper writes a filename made from the checkpoint name, but how callers select and validate that name is omitted."
+    },
+    {
+      "item": "9f51af2ce412",
+      "verdict": "FP",
+      "reason": "The marked identifier comes from the authenticated user record, separate from the request filter interpolated elsewhere."
+    },
+    {
+      "item": "5f48d460a8da",
+      "verdict": "FP",
+      "reason": "The tool checks for a fixed Git metadata file under the project directory the caller explicitly selects for inspection."
+    },
+    {
+      "item": "93cced73bfc5",
+      "verdict": "UNCLEAR",
+      "reason": "The importer writes through the joined relative path, but the caller's derivation and containment of that path are unspecified."
+    },
+    {
+      "item": "6705770ae260",
+      "verdict": "UNCLEAR",
+      "reason": "The deletion helper joins a backup name and removes the resulting tree, but the caller and name checks are omitted."
+    },
+    {
+      "item": "97aa1f2f7b54",
+      "verdict": "UNCLEAR",
+      "reason": "The function interpolates the search keyword into a shell pipeline, but the web call sites and prior validation are omitted."
+    },
+    {
+      "item": "353bc03156b6",
+      "verdict": "FP",
+      "reason": "The preview reset restores the same markup previously saved from that preview element rather than taking fresh content from a request."
+    },
+    {
+      "item": "b41b4600eb79",
+      "verdict": "FP",
+      "reason": "The file-type filter joins relative paths supplied by the directory enumeration itself."
+    },
+    {
+      "item": "dd34979d5d15",
+      "verdict": "UNCLEAR",
+      "reason": "The backup executes a string built from application paths, but the path sources and quoting guarantees are omitted."
+    },
+    {
+      "item": "e285686dfe8a",
+      "verdict": "FP",
+      "reason": "The fallback clears the node with an empty HTML value."
+    },
+    {
+      "item": "8b18a53bf1c5",
+      "verdict": "FP",
+      "reason": "The fallback loads markup into a separate document with no browsing context before sanitizer traversal."
+    },
+    {
+      "item": "0fd5a890c107",
+      "verdict": "UNCLEAR",
+      "reason": "The flag filename is joined into a write destination, but its provenance and any prior containment checks are unspecified."
+    },
+    {
+      "item": "e04ad5860494",
+      "verdict": "UNCLEAR",
+      "reason": "The write uses the POST-selected filename and checks editing permission, but the request's earlier path checks are outside the excerpt."
+    },
+    {
+      "item": "e27932c4d7c7",
+      "verdict": "FP",
+      "reason": "The marked comparison uses collection-defined field names and a quoted channel table alias rather than user query text."
+    },
+    {
+      "item": "db65fbf002c1",
+      "verdict": "FP",
+      "reason": "The marked option is part of a database-creation API documented to take deployment configuration."
+    },
+    {
+      "item": "d737eca00a3c",
+      "verdict": "TP",
+      "reason": "The payment action URL inserts request-derived PHP_SELF into an HTML attribute without encoding."
+    },
+    {
+      "item": "8215f3e6b082",
+      "verdict": "UNCLEAR",
+      "reason": "The pagination helper inserts the limit as SQL syntax, but the callers and any numeric coercion are omitted."
+    },
+    {
+      "item": "2cc5b762c0bf",
+      "verdict": "TP",
+      "reason": "The method installs an always-accept hostname verifier as the global HTTPS default."
+    },
+    {
+      "item": "6407e37b09c2",
+      "verdict": "TP",
+      "reason": "The session summary probes and later reads a path made from a query-supplied session identifier with no shown containment check."
+    },
+    {
+      "item": "f24998f8051e",
+      "verdict": "UNCLEAR",
+      "reason": "The method intentionally embeds an arbitrary condition in a read-only query, but the callers and table validator's effective restrictions are omitted."
+    },
+    {
+      "item": "670c4d883bc1",
+      "verdict": "FP",
+      "reason": "The entity discriminator comes from the existing mapped property record, while the property ID and name are bound separately."
+    },
+    {
+      "item": "36947fb839b8",
+      "verdict": "FP",
+      "reason": "The request guard decodes the selected path for validation and rejects parent-directory segments before the creation branch."
+    },
+    {
+      "item": "69e404ba940b",
+      "verdict": "UNCLEAR",
+      "reason": "The removal joins a normalized extension name, but the normalization helper's handling of path traversal is outside the excerpt."
+    },
+    {
+      "item": "a225f6c64098",
+      "verdict": "UNCLEAR",
+      "reason": "The query uses the seller's country code as SQL text, but the source and restrictions of that stored code are unspecified."
+    },
+    {
+      "item": "77e21d0a2437",
+      "verdict": "FP",
+      "reason": "The table name is taken from the plugin's fixed messages collection with identifier quoting requested."
+    },
+    {
+      "item": "c0b81a5df584",
+      "verdict": "UNCLEAR",
+      "reason": "The POST values enter finishUpload, but the helper's response construction and encoding are omitted."
+    },
+    {
+      "item": "32abb747b933",
+      "verdict": "UNCLEAR",
+      "reason": "The table name enters the SQL literal, but the relevant call sites and their identifier checks are unspecified."
+    },
+    {
+      "item": "a66a440ac34a",
+      "verdict": "FP",
+      "reason": "The extraction uses a safe absolute-path abstraction to join the tar member beneath the destination and aborts if the join fails."
+    },
+    {
+      "item": "3685f6f6f36c",
+      "verdict": "FP",
+      "reason": "The handler sets the response type to application/json and writes the serialized access response."
+    },
+    {
+      "item": "acb963a50cb4",
+      "verdict": "UNCLEAR",
+      "reason": "The demo sets an iframe's HTML, but the source of the preview data and the iframe isolation are omitted."
+    },
+    {
+      "item": "c689b177a7ec",
+      "verdict": "UNCLEAR",
+      "reason": "The action uses a sanitizer and operator policy, but their implementation and behavior for rendered arguments are omitted."
+    },
+    {
+      "item": "5680b1fc4764",
+      "verdict": "UNCLEAR",
+      "reason": "The session name selects the file passed to the JSON writer, but how names are supplied or constrained is omitted."
+    },
+    {
+      "item": "87717a5767ad",
+      "verdict": "UNCLEAR",
+      "reason": "The read-only transaction executes a constructed count statement, but the caller and constraints on the arbitrary expression are omitted."
+    },
+    {
+      "item": "7dcc0e89e559",
+      "verdict": "TP",
+      "reason": "The health check interpolates the supplied service name into a shell command executed through child_process.exec."
+    },
+    {
+      "item": "7f50c5e24aa1",
+      "verdict": "FP",
+      "reason": "The operation parses the HTML in a separate document without a browsing context."
+    },
+    {
+      "item": "70e937098026",
+      "verdict": "FP",
+      "reason": "The build task processes direct filenames from its configured output directory and checks the expected extension."
+    },
+    {
+      "item": "a1fc9d027963",
+      "verdict": "UNCLEAR",
+      "reason": "The route uses request values to produce the deletion filename, but the generator's containment behavior is omitted."
+    },
+    {
+      "item": "60571fb2b782",
+      "verdict": "UNCLEAR",
+      "reason": "The archive code checks entry paths before replacing a link, but the decisive checks for the link target and destination components are omitted."
+    },
+    {
+      "item": "3666c8f50cc2",
+      "verdict": "FP",
+      "reason": "The company field passes through HTML escaping before entering the quoted input attribute."
+    },
+    {
+      "item": "94343f55c49a",
+      "verdict": "UNCLEAR",
+      "reason": "The stored name is printed via a presentation helper whose encoding behavior is outside the excerpt."
+    },
+    {
+      "item": "b4b2e998212d",
+      "verdict": "UNCLEAR",
+      "reason": "The statement interpolates index and column identifiers, but the excerpt does not establish their effective sanitization."
+    },
+    {
+      "item": "12036306c390",
+      "verdict": "FP",
+      "reason": "The marked path uses a device name constrained to the two literal platform choices."
+    },
+    {
+      "item": "0b801b682c00",
+      "verdict": "UNCLEAR",
+      "reason": "The Windows helper invokes a shell with the service name, but the caller's control and earlier validation of the name are omitted."
+    },
+    {
+      "item": "c08c35690b4c",
+      "verdict": "TP",
+      "reason": "The no-op server trust callback belongs to the trust manager used to initialize the default HTTPS context."
+    },
+    {
+      "item": "74bf8fdb5fd9",
+      "verdict": "UNCLEAR",
+      "reason": "The console method shell-escapes the directory but appends the action verb directly, and its callers and action constraints are omitted."
+    },
+    {
+      "item": "ddc8eb03418b",
+      "verdict": "UNCLEAR",
+      "reason": "The query interpolates identifiers and a key value, but the exposed inputs and prior validation are omitted."
+    },
+    {
+      "item": "2d56c407a084",
+      "verdict": "TP",
+      "reason": "The bearer API builds its HTTPS client with an always-accept certificate strategy and a no-op hostname verifier."
+    },
+    {
+      "item": "8fceec4e7d0f",
+      "verdict": "UNCLEAR",
+      "reason": "The dependency lookup inserts a shell argument directly, but the private helper's caller and earlier name validation are omitted."
+    },
+    {
+      "item": "de47249e9934",
+      "verdict": "UNCLEAR",
+      "reason": "The resolver checks the joined path before use, but that helper's directory-boundary and link semantics are omitted."
+    },
+    {
+      "item": "471a82229a34",
+      "verdict": "FP",
+      "reason": "The recipient ID is a typed integer placed in a numeric formatting slot."
+    },
+    {
+      "item": "2bd07fbe51fd",
+      "verdict": "UNCLEAR",
+      "reason": "The backup deletion target depends on the supplied name, but the caller's source and containment checks are omitted."
+    },
+    {
+      "item": "cebc33b47ae9",
+      "verdict": "FP",
+      "reason": "The marked build-time read consumes server or universal filenames from the internal route nodes in the selected project."
+    },
+    {
+      "item": "e3c534a8045c",
+      "verdict": "UNCLEAR",
+      "reason": "The method applies a sanitizer before serializing and reparsing the result, but the excerpt does not establish whether that pipeline prevents unsafe markup mutations."
+    },
+    {
+      "item": "559b7fe82539",
+      "verdict": "FP",
+      "reason": "The fixed delete statement binds the enrollment ID and expands the UUID list into bound placeholders."
+    },
+    {
+      "item": "6608ebf00b64",
+      "verdict": "UNCLEAR",
+      "reason": "The private helper inserts the directory into a shell string, but where it obtains and validates the directory is omitted."
+    },
+    {
+      "item": "0d642c26ef90",
+      "verdict": "UNCLEAR",
+      "reason": "The LDAP Skype value is placed into the quoted attribute, but its earlier processing and allowed characters are unspecified."
+    },
+    {
+      "item": "a839db6a1fb7",
+      "verdict": "TP",
+      "reason": "The send-mail link includes unencoded request-derived PHP_SELF data in a quoted attribute."
+    },
+    {
+      "item": "4e12d1e28cd0",
+      "verdict": "UNCLEAR",
+      "reason": "The decoder unpickles a raw shared-storage value, but control of the shared buffer and its trust boundary are unspecified."
+    },
+    {
+      "item": "522cca30ace4",
+      "verdict": "TP",
+      "reason": "The REST method interpolates its sort direction argument into the query before execution while binding only the date."
+    },
+    {
+      "item": "5cd819568d61",
+      "verdict": "UNCLEAR",
+      "reason": "The Windows group lookup interpolates the username into a shell invocation, but the callers and earlier name validation are omitted."
+    },
+    {
+      "item": "a9848a6f431c",
+      "verdict": "UNCLEAR",
+      "reason": "The tarball path includes the supplied archive name, but its callers and allowed names are outside the excerpt."
+    },
+    {
+      "item": "2b485d5c8749",
+      "verdict": "UNCLEAR",
+      "reason": "The executed SQL includes a stored seller country code, but how that code is set or restricted is omitted."
+    },
+    {
+      "item": "db2b1855b811",
+      "verdict": "FP",
+      "reason": "The table name is enclosed in identifier quotes after every embedded identifier quote is doubled."
+    },
+    {
+      "item": "eb8249fd52a7",
+      "verdict": "UNCLEAR",
+      "reason": "The importer sends a generated string to a shell, but the option builder's treatment of upload metadata is omitted."
+    },
+    {
+      "item": "a53428172846",
+      "verdict": "UNCLEAR",
+      "reason": "The utility completes an existing query statement, but the caller's authority to supply HQL and later execution checks are unspecified."
+    },
+    {
+      "item": "28cd690480b2",
+      "verdict": "TP",
+      "reason": "The stop-word insertion places the method's arbitrary word argument directly in a SQL string while escaping only the language."
+    },
+    {
+      "item": "6bca09149793",
+      "verdict": "FP",
+      "reason": "The cropper assigns its built-in template as part of control initialization."
+    },
+    {
+      "item": "bc43618690fe",
+      "verdict": "TP",
+      "reason": "The remote stylesheet fetch explicitly disables certificate verification for its HTTPS connection."
+    },
+    {
+      "item": "bb1fec19a0bc",
+      "verdict": "UNCLEAR",
+      "reason": "The helper inserts the admin argument without numeric conversion, but the call sites and the argument's origin are omitted."
+    },
+    {
+      "item": "7b7a766f631f",
+      "verdict": "FP",
+      "reason": "The request device is reduced to one of two fixed platform strings before construction of the directory."
+    },
+    {
+      "item": "39ac6d4cdf77",
+      "verdict": "UNCLEAR",
+      "reason": "The file predicate checks readability rather than directory containment, but the route's path construction and request provenance are omitted."
+    },
+    {
+      "item": "cc7febd4d2a4",
+      "verdict": "FP",
+      "reason": "The query formats both message lookup arguments as integers and uses the configured table prefix."
+    },
+    {
+      "item": "66ea25ceb4dd",
+      "verdict": "TP",
+      "reason": "The helper passes archive-controlled members to tar extraction without an explicit filter on runtimes with unrestricted defaults."
+    },
+    {
+      "item": "b204eb844e57",
+      "verdict": "TP",
+      "reason": "The dashboard static handler checks only the request prefix and file type before serving the joined path."
+    },
+    {
+      "item": "8249b8c008c4",
+      "verdict": "UNCLEAR",
+      "reason": "The destination uses a formatted executable filename, but the formatter's confinement and the source of the name are omitted."
+    },
+    {
+      "item": "c7636a494434",
+      "verdict": "UNCLEAR",
+      "reason": "The catalog helper interpolates the table as a literal, but the callers and earlier escaping are omitted."
+    },
+    {
+      "item": "b4a14ede9f5e",
+      "verdict": "UNCLEAR",
+      "reason": "The public route resolves the requested filename and invokes a containment check, but the implementation of that check is omitted."
+    },
+    {
+      "item": "f96e049e809c",
+      "verdict": "FP",
+      "reason": "The marked comparison uses quoted collection metadata rather than the request's filter fields."
+    },
+    {
+      "item": "eed649244f56",
+      "verdict": "UNCLEAR",
+      "reason": "The installation path uses a formatted executable name, but the source and constraints of that name are omitted."
+    },
+    {
+      "item": "226b86d108a9",
+      "verdict": "TP",
+      "reason": "The upgrade executor interpolates request fields including the image and target version into a Bash command without shell argument separation."
+    },
+    {
+      "item": "8c9b47251e96",
+      "verdict": "UNCLEAR",
+      "reason": "The list query binds its arguments separately, but the builder's treatment of filtering and sort expressions is omitted."
+    },
+    {
+      "item": "b2f160984fea",
+      "verdict": "UNCLEAR",
+      "reason": "The directory creation uses the supplied output path after a dot-pair check, but the intended directory boundary and caller authority are unspecified."
+    },
+    {
+      "item": "b2ceccb9f900",
+      "verdict": "UNCLEAR",
+      "reason": "The restore command reaches a shell and contains schema fields, but how those fields are sourced and constrained is omitted."
+    },
+    {
+      "item": "b66a7bfae918",
+      "verdict": "UNCLEAR",
+      "reason": "The sample query includes a table and key value as raw SQL, but their callers and prior validation are omitted."
+    },
+    {
+      "item": "7486e78a274f",
+      "verdict": "UNCLEAR",
+      "reason": "The UUID-like identifier enters both the read and stat paths, but the route's validation and source of that identifier are omitted."
+    },
+    {
+      "item": "05cac59e44d0",
+      "verdict": "UNCLEAR",
+      "reason": "The private helper inserts a Docker service name in a shell invocation, but its callers and their validation are unspecified."
+    },
+    {
+      "item": "d8807b90c62d",
+      "verdict": "FP",
+      "reason": "The shown release helper derives its count from the result list and receives the platform-produced merge commit identifier from the cherry-pick flow."
+    },
+    {
+      "item": "1f63fbb6d88d",
+      "verdict": "TP",
+      "reason": "The group-edit form uses request-derived PHP_SELF as unencoded attribute content."
+    },
+    {
+      "item": "95ad0948cb3f",
+      "verdict": "FP",
+      "reason": "The tool explicitly lets callers select a project directory, and the marked existence check confirms that selected directory."
+    },
+    {
+      "item": "5fc4671e840b",
+      "verdict": "UNCLEAR",
+      "reason": "The table name is sanitized, but the excerpt omits the source and trust of the caller-supplied table definition."
+    },
+    {
+      "item": "e7d08f19619e",
+      "verdict": "UNCLEAR",
+      "reason": "The table name is interpolated into the schema query, but its origin and validation by the DAV resource mapping are omitted."
+    },
+    {
+      "item": "d68abd2aec4f",
+      "verdict": "UNCLEAR",
+      "reason": "The source directory is selected by the backup name, but who supplies it and any confinement checks are omitted."
+    },
+    {
+      "item": "46cae5629778",
+      "verdict": "UNCLEAR",
+      "reason": "The current scope supplies the group expression, but how that scope is constructed and whether it can incorporate request data are omitted."
+    },
+    {
+      "item": "9e7b2805ea60",
+      "verdict": "UNCLEAR",
+      "reason": "The SQL includes the supplied table and raw key value, but their callers and constraints are omitted."
+    },
+    {
+      "item": "de08d1cecf0d",
+      "verdict": "UNCLEAR",
+      "reason": "The key supplies directory and file components, but the source and validation of keys entering this storage method are omitted."
+    },
+    {
+      "item": "117716a010ba",
+      "verdict": "UNCLEAR",
+      "reason": "The body is serialized as JSON, but the handler's MIME type and browser handling of the returned redirect are unspecified."
+    },
+    {
+      "item": "dab119a705e8",
+      "verdict": "FP",
+      "reason": "The extractor rejects entries that escape the destination before it creates the output file."
+    },
+    {
+      "item": "6cdc1f564f3f",
+      "verdict": "TP",
+      "reason": "The OAuth HTTPS client turns off certificate verification when no CA file is configured."
+    },
+    {
+      "item": "7d8b4b07da09",
+      "verdict": "FP",
+      "reason": "The comparison uses identifiers obtained from the plugin's predefined collection metadata with quoting enabled."
+    },
+    {
+      "item": "1be4b6145a1a",
+      "verdict": "TP",
+      "reason": "The workflow creates directories from the output path before the path check that is meant to reject parent traversal."
+    },
+    {
+      "item": "f19ef48db750",
+      "verdict": "UNCLEAR",
+      "reason": "The namespace parameters are passed separately, but the batch SQL generator's handling of the query text is omitted."
+    },
+    {
+      "item": "cdab687c66eb",
+      "verdict": "FP",
+      "reason": "The operation writes a development test fixture with a quoted table name using its fixture-specific SQL representation."
+    },
+    {
+      "item": "26cc3158dd01",
+      "verdict": "UNCLEAR",
+      "reason": "The join is followed by a containment helper, but the helper's path-boundary and link guarantees are omitted."
+    },
+    {
+      "item": "cd7df1119cbb",
+      "verdict": "FP",
+      "reason": "The framework quotes the identifiers and takes the discriminator from its registered model subclasses."
+    },
+    {
+      "item": "b32dc56a0ab0",
+      "verdict": "UNCLEAR",
+      "reason": "The helper accepts a leaf directory argument without local confinement, but its callers and their constraints are omitted."
+    },
+    {
+      "item": "420a9c7e370f",
+      "verdict": "FP",
+      "reason": "The marked value is used in resource-query validation and does not form or execute SQL at this operation."
+    },
+    {
+      "item": "3191d0cf41b7",
+      "verdict": "UNCLEAR",
+      "reason": "The cleanup deletes the helper's temporary path parameter, but how that path is generated and confined is omitted."
+    },
+    {
+      "item": "144262148eb9",
+      "verdict": "UNCLEAR",
+      "reason": "The method interpolates the grouping expression as SQL syntax, but its source and any caller-side validation are unspecified."
+    },
+    {
+      "item": "6653c1e747e6",
+      "verdict": "UNCLEAR",
+      "reason": "The upload destination includes the selected name, but the excerpt omits name validation and how callers choose the destination."
+    },
+    {
+      "item": "ce0f8ce4483d",
+      "verdict": "FP",
+      "reason": "The profile UUID inputs are passed to the IN expansion as values and then bound separately at execution."
+    },
+    {
+      "item": "e642ed043333",
+      "verdict": "UNCLEAR",
+      "reason": "The model identifier becomes a temporary-file path component, but the caller and validation of the identifier are omitted."
+    },
+    {
+      "item": "3fda44c5f3aa",
+      "verdict": "FP",
+      "reason": "The plaintext credentials branch requires the explicit grpc scheme and is labeled nonproduction."
+    },
+    {
+      "item": "ba83bd4ed4e1",
+      "verdict": "TP",
+      "reason": "The supposedly secure grpcs branch disables peer verification when the caller omits TLS configuration."
+    },
+    {
+      "item": "e79d62161ba1",
+      "verdict": "TP",
+      "reason": "The donation list renders the stored company field in an HTML text cell without output encoding."
+    },
+    {
+      "item": "89cd761ae7fb",
+      "verdict": "UNCLEAR",
+      "reason": "The username enters two shell commands, but how the private helper receives or validates the username is omitted."
+    },
+    {
+      "item": "f8f6686248de",
+      "verdict": "TP",
+      "reason": "The summary handler uses a query-supplied identifier directly in the filename for subsequent filesystem operations."
+    },
+    {
+      "item": "ffdf994ccd8e",
+      "verdict": "UNCLEAR",
+      "reason": "The DELETE query inserts block identifier fragments, but their origin and validation are omitted."
+    },
+    {
+      "item": "c275a1055677",
+      "verdict": "TP",
+      "reason": "The tool builds its shell command from the selected service name and passes that command to child_process.exec."
+    },
+    {
+      "item": "376e75d469d1",
+      "verdict": "TP",
+      "reason": "The converter loads the selected checkpoint with full object deserialization before validating its version."
+    },
+    {
+      "item": "d2d206f03f33",
+      "verdict": "UNCLEAR",
+      "reason": "The query embeds a key value and identifiers, but their route provenance and validation are omitted."
+    },
+    {
+      "item": "8e4ef5855edc",
+      "verdict": "UNCLEAR",
+      "reason": "The identifiers arrive already quoted, but the code that constructs the WHERE fragment is omitted."
+    },
+    {
+      "item": "efd0aa7202a4",
+      "verdict": "TP",
+      "reason": "The restart operation inserts the option's service name into the Docker command and passes it to the shell runner."
+    },
+    {
+      "item": "25541ee48a6d",
+      "verdict": "TP",
+      "reason": "The CA-configured TLS fallback requests optional client certificates without asking TLS to verify those that are presented."
+    },
+    {
+      "item": "3a9c0aa3983b",
+      "verdict": "FP",
+      "reason": "This is a fixture-insert helper that takes a quoted table name and fixture-specific SQL representations."
+    },
+    {
+      "item": "3c6462f513ef",
+      "verdict": "UNCLEAR",
+      "reason": "The Windows link fallback embeds both paths in a shell string, but the origins and previous handling of those paths are omitted."
+    },
+    {
+      "item": "279f9eaccb27",
+      "verdict": "UNCLEAR",
+      "reason": "Joblib loads the artifact before schema checks, but how the caller obtains and verifies the artifact is omitted."
+    },
+    {
+      "item": "5695cd8f1c7b",
+      "verdict": "FP",
+      "reason": "The sender ID is a typed integer inserted through the numeric placeholder."
+    },
+    {
+      "item": "2825179f8667",
+      "verdict": "UNCLEAR",
+      "reason": "The write follows a dot-pair rejection check, but the intended filesystem root and caller authority to supply absolute paths are omitted."
+    },
+    {
+      "item": "9763cb2b3618",
+      "verdict": "UNCLEAR",
+      "reason": "The model artifact is loaded through pickle, but the model source and any integrity checks before loading are omitted."
+    },
+    {
+      "item": "7ff39312f945",
+      "verdict": "FP",
+      "reason": "The ordering column comes from the quoted field mapping for the plugin's defined messages collection."
+    },
+    {
+      "item": "c51e37967f75",
+      "verdict": "UNCLEAR",
+      "reason": "The LDAP first name is emitted directly into HTML, but the directory input and earlier encoding behavior are unspecified."
+    },
+    {
+      "item": "9fc2cab580af",
+      "verdict": "FP",
+      "reason": "The assignment reparses input into a new standalone document before the sanitizer's DOM traversal."
+    },
+    {
+      "item": "9a9bb9f6a878",
+      "verdict": "UNCLEAR",
+      "reason": "The file helper reads a resolved path, but the route-to-filename flow and the imported sanitizer's use are omitted."
+    },
+    {
+      "item": "5fa84313d3db",
+      "verdict": "UNCLEAR",
+      "reason": "The sort mode selects a fixed branch, but the locale values and collation inserted in the SQL have unspecified provenance and constraints."
+    },
+    {
+      "item": "0a3255e053eb",
+      "verdict": "UNCLEAR",
+      "reason": "The framework appends merged conditions, but the implementation that sanitizes or binds them is omitted."
+    },
+    {
+      "item": "d835da2764fd",
+      "verdict": "FP",
+      "reason": "The selected column comes from the defined message collection's quoted field mapping."
+    },
+    {
+      "item": "fce245ab63d8",
+      "verdict": "TP",
+      "reason": "The sandbox executor joins supplied skill filenames to a host staging directory and writes them before any confinement check."
+    },
+    {
+      "item": "1c26bd9fba66",
+      "verdict": "UNCLEAR",
+      "reason": "The host check is intentionally disabled by this adapter, but the excerpt stops before showing when configuration mounts the adapter."
+    },
+    {
+      "item": "e5165d54c100",
+      "verdict": "FP",
+      "reason": "The comparison uses the current authenticated user's record ID rather than a raw user filter."
+    },
+    {
+      "item": "afe776177c96",
+      "verdict": "FP",
+      "reason": "The sorting identifier comes from the predefined, quoted receive-timestamp field mapping."
+    },
+    {
+      "item": "6ea786a20138",
+      "verdict": "FP",
+      "reason": "The highlighted time bound is calculated as a numeric timestamp before SQL concatenation."
+    },
+    {
+      "item": "de5280e46a25",
+      "verdict": "TP",
+      "reason": "The installer reads the package manifest's name and uses it directly to select the extraction destination."
+    },
+    {
+      "item": "e194ec794d29",
+      "verdict": "FP",
+      "reason": "The status used by this helper comes from the fixed application status mapping rather than direct interpolation of the request string."
+    },
+    {
+      "item": "3bc5970491b4",
+      "verdict": "TP",
+      "reason": "The tool concatenates the selected service name into a Docker command and forwards it to the shell runner."
+    },
+    {
+      "item": "7b3562a93a24",
+      "verdict": "FP",
+      "reason": "The SQLAlchemy insert sends both the token and serialized state as bound values."
+    },
+    {
+      "item": "9f6770ba9f29",
+      "verdict": "FP",
+      "reason": "The delete query expands and binds the team and profile names separately via sqlx."
+    },
+    {
+      "item": "d706e93a0b7f",
+      "verdict": "UNCLEAR",
+      "reason": "The package executable name is formatted and used for file creation, but the formatter's containment and the name's source are omitted."
+    },
+    {
+      "item": "2ae85cbcf3bc",
+      "verdict": "TP",
+      "reason": "The dashboard serves the joined URL path after checking only whether it points to an existing file."
+    },
+    {
+      "item": "aa528d7a38d3",
+      "verdict": "FP",
+      "reason": "The image converter is explicitly given a local input path and reads that selected image as its documented workflow operation."
+    },
+    {
+      "item": "446a6ce1e165",
+      "verdict": "TP",
+      "reason": "The controller builds an ORDER BY expression directly from request sort parameters without showing an allowlist."
+    },
+    {
+      "item": "4cbf06d9e7a0",
+      "verdict": "UNCLEAR",
+      "reason": "The shared-storage decoder unpickles metadata before reading its type, but which peers can write to that storage is omitted."
+    },
+    {
+      "item": "0eccfdf73233",
+      "verdict": "FP",
+      "reason": "The predicate uses the authenticated user record's identifier rather than a request-supplied SQL expression."
+    },
+    {
+      "item": "d265aae4eb8b",
+      "verdict": "UNCLEAR",
+      "reason": "The route previously calls a safety helper for the source path, but the helper's containment behavior is omitted."
+    },
+    {
+      "item": "eccbf75bfd55",
+      "verdict": "UNCLEAR",
+      "reason": "The stage lookup passes the filename to a shell inside double quotes, but the caller and earlier filename validation are omitted."
+    },
+    {
+      "item": "7aaf86b1dbd2",
+      "verdict": "UNCLEAR",
+      "reason": "The model loader uses pickle for sparse feature sizes, but the model artifact's provenance and integrity guarantees are omitted."
+    },
+    {
+      "item": "b4b1242c91a1",
+      "verdict": "FP",
+      "reason": "The lockfile probe receives only fixed basenames selected within the package-manager detection routine."
+    },
+    {
+      "item": "a5986f8a0d31",
+      "verdict": "FP",
+      "reason": "The shown call supplies the extension installer's manifest filename, separate from the downloaded manifest data."
+    },
+    {
+      "item": "cf0955a86f25",
+      "verdict": "FP",
+      "reason": "The marked comparison interpolates a numeric timestamp computed by arithmetic."
+    },
+    {
+      "item": "b49eda323c2d",
+      "verdict": "FP",
+      "reason": "The documented API takes a developer-written HQL clause and supplies its dynamic values as distinct bound parameters."
+    },
+    {
+      "item": "07dcb12fa493",
+      "verdict": "FP",
+      "reason": "The console command is specifically designed to run project-configured development processes."
+    },
+    {
+      "item": "542d6d07dec1",
+      "verdict": "UNCLEAR",
+      "reason": "The uploaded filename flows into the destination, but the effective multipart name constraints and the destination root's derivation are omitted."
+    },
+    {
+      "item": "5d00cdb5e7f4",
+      "verdict": "UNCLEAR",
+      "reason": "The file is opened after a safety helper checks it, but the helper's real-path and link behavior is omitted."
+    },
+    {
+      "item": "f598dc0af297",
+      "verdict": "UNCLEAR",
+      "reason": "The backup name controls the write directory, but the caller and validation of that name are omitted."
+    },
+    {
+      "item": "549c2085c7bc",
+      "verdict": "FP",
+      "reason": "The status value is a literal and its column comes from the plugin's defined collection metadata."
+    },
+    {
+      "item": "4a2d92bd5712",
+      "verdict": "UNCLEAR",
+      "reason": "The helper completes an existing HQL statement, but the trust of query producers and execution restrictions are omitted."
+    },
+    {
+      "item": "5185029072a9",
+      "verdict": "TP",
+      "reason": "The ascending branch passes the supplied event sort field as a raw ORM order string while the other filters are bound."
+    },
+    {
+      "item": "d62dfc7207bf",
+      "verdict": "UNCLEAR",
+      "reason": "The preview serves the file only after its is_file check, but the implementation of that helper's root check is omitted."
+    },
+    {
+      "item": "f4288c1d8486",
+      "verdict": "UNCLEAR",
+      "reason": "The filesystem path incorporates the upload digest, but the extent of prior validation on that digest is omitted."
+    },
+    {
+      "item": "682b9a8d0016",
+      "verdict": "FP",
+      "reason": "The time limit is calculated as a numerical timestamp before it becomes SQL text."
+    },
+    {
+      "item": "7cf6e0f7afac",
+      "verdict": "TP",
+      "reason": "The server stats the URL-derived pathname after applying an incomplete directory-prefix check."
+    },
+    {
+      "item": "c7d9d27fb25e",
+      "verdict": "UNCLEAR",
+      "reason": "The helper rejects lexical escapes and a final symbolic link, but it does not establish whether its callers can provide paths through linked ancestor directories."
+    },
+    {
+      "item": "d387602d2a7d",
+      "verdict": "FP",
+      "reason": "The marked code constructs and throws a diagnostic message without any SQL processing."
+    },
+    {
+      "item": "ff0d88cbae96",
+      "verdict": "FP",
+      "reason": "The certificate file component comes directly from enumerating the configured certificate directory."
+    },
+    {
+      "item": "439a54db7fde",
+      "verdict": "UNCLEAR",
+      "reason": "The rights ID is escaped, but the separate entity argument enters SQL unbound and the caller's validation is omitted."
+    },
+    {
+      "item": "da39a3546f12",
+      "verdict": "FP",
+      "reason": "The route escapes the request parameter with escape-html before adding it to response text."
+    },
+    {
+      "item": "c1b2e1abdf30",
+      "verdict": "UNCLEAR",
+      "reason": "The order string is passed through a normalizer before interpolation, but the normalizer's constraints are omitted."
+    },
+    {
+      "item": "f570a1961877",
+      "verdict": "TP",
+      "reason": "The workflow-selected delete key is embedded in SQL identifier syntax without identifier escaping while the values are bound."
+    },
+    {
+      "item": "271a65f04bd1",
+      "verdict": "TP",
+      "reason": "The serializer uses template names from the configured map as filenames without checking they stay inside the save directory."
+    },
+    {
+      "item": "7c57ec2c39db",
+      "verdict": "UNCLEAR",
+      "reason": "The commands append the depth value before executing a shell, but the value's source and validation are omitted."
+    },
+    {
+      "item": "3ee9028380d3",
+      "verdict": "FP",
+      "reason": "The marked child path uses a leaf name returned by directory enumeration within the path selected for listing."
+    },
+    {
+      "item": "53403b88b3fd",
+      "verdict": "UNCLEAR",
+      "reason": "The request supplies the session filename fields, but the helper that constructs the streamed filename is omitted."
+    },
+    {
+      "item": "1cc298d84f75",
+      "verdict": "TP",
+      "reason": "The archive fallback changes ownership fields and retries extraction without checking member path containment on runtimes with unrestricted defaults."
+    },
+    {
+      "item": "ecc9a75f6da1",
+      "verdict": "UNCLEAR",
+      "reason": "The archive code checks the entry and hard-link target via helpers whose path and symlink guarantees are omitted."
+    },
+    {
+      "item": "3ef53dddba3e",
+      "verdict": "TP",
+      "reason": "The delete statement uses an unescaped workflow-selected column key in SQL syntax while separately binding the compared values."
+    },
+    {
+      "item": "f94bebea41c2",
+      "verdict": "UNCLEAR",
+      "reason": "The resolver calls a containment predicate, but its directory-boundary and link checks are not visible."
+    },
+    {
+      "item": "62f36109dab0",
+      "verdict": "TP",
+      "reason": "The handler parses HTML from clipboard or drag data in a page-owned element before restricting it to table processing."
+    },
+    {
+      "item": "01fcda6d3761",
+      "verdict": "TP",
+      "reason": "The REST history query interpolates the supplied sort direction as HQL syntax while separately binding the page and language values."
+    },
+    {
+      "item": "d4b2bac77b45",
+      "verdict": "UNCLEAR",
+      "reason": "The code URL-escapes two fields and serializes the redirect response, but the response MIME type and client interpretation are omitted."
+    },
+    {
+      "item": "8ca05ff6a0b8",
+      "verdict": "UNCLEAR",
+      "reason": "The LDAP fax is emitted into HTML, but its source constraints and any earlier encoding are unspecified."
+    },
+    {
+      "item": "858112ce9ccf",
+      "verdict": "FP",
+      "reason": "The route uses escape-html on the request identifier before interpolation into the response text."
+    },
+    {
+      "item": "d30c062aff0b",
+      "verdict": "UNCLEAR",
+      "reason": "The checkout removes a path based on the work item, but the creation of that work item and validation of its path are omitted."
+    },
+    {
+      "item": "369c5da0819e",
+      "verdict": "FP",
+      "reason": "The route selects a fixed filename from its built-in tab map before serving the file."
+    },
+    {
+      "item": "fc6bba679950",
+      "verdict": "TP",
+      "reason": "The artifact cache extracts every tar member without specifying a containment filter on runtimes with unrestricted extraction defaults."
+    },
+    {
+      "item": "53e2794f1638",
+      "verdict": "FP",
+      "reason": "The shell argument is the platform-generated merge commit identifier rather than user-provided pull request text."
+    },
+    {
+      "item": "d27dfc18073b",
+      "verdict": "FP",
+      "reason": "The editor validates the decoded request path for parent-directory segments before reaching the file open branch."
+    },
+    {
+      "item": "a918ae3a32cc",
+      "verdict": "UNCLEAR",
+      "reason": "The request-derived library path is checked before opening, but the check's containment guarantees are omitted."
+    },
+    {
+      "item": "02d652ac9ce8",
+      "verdict": "UNCLEAR",
+      "reason": "The locale prefix is placed in SQL text, but its source and validation are outside the excerpt."
+    },
+    {
+      "item": "61dd85ef5cad",
+      "verdict": "FP",
+      "reason": "The update takes a typed numeric ID and escapes both of its string values before query execution."
+    },
+    {
+      "item": "494a84b151ea",
+      "verdict": "UNCLEAR",
+      "reason": "The installer resolves a gem executable path, but the source and restrictions of the package bindir and filename are omitted."
+    },
+    {
+      "item": "7bab11306aa3",
+      "verdict": "UNCLEAR",
+      "reason": "The rollback interpolates the table name into SQL, but the source and constraints of the import instance name are omitted."
+    },
+    {
+      "item": "b35f5d78c5c7",
+      "verdict": "TP",
+      "reason": "The default dataset decoder loads sample bytes with full Python object deserialization explicitly enabled."
+    },
+    {
+      "item": "c94a9ed27dc1",
+      "verdict": "TP",
+      "reason": "The method interpolates the supplied stop word unescaped into a SQL string while escaping the neighboring language value."
+    },
+    {
+      "item": "8db09a46093e",
+      "verdict": "UNCLEAR",
+      "reason": "The loader uses joblib on an artifact selected from model storage, but that storage's provenance and integrity guarantees are omitted."
+    },
+    {
+      "item": "7416c9a569df",
+      "verdict": "FP",
+      "reason": "The workflow explicitly accepts an input file path, checks it for parent traversal, and reads it as the selected local JSON source."
+    },
+    {
+      "item": "6d4c3e11a2b7",
+      "verdict": "FP",
+      "reason": "The directory component is a computed digest of the bundle identifier, so the request string never becomes a path component verbatim."
+    },
+    {
+      "item": "4df1a5e8d8f3",
+      "verdict": "UNCLEAR",
+      "reason": "The code supports skipping verification and prompts before a retry, but the initial verification option's default and provenance are omitted."
+    },
+    {
+      "item": "6fa517730368",
+      "verdict": "UNCLEAR",
+      "reason": "The bound time is inserted into a SQL string, but the source and runtime conversion of that value are omitted."
+    },
+    {
+      "item": "90a9e349d732",
+      "verdict": "FP",
+      "reason": "The SQLAlchemy predicate treats the token as a bound comparison value."
+    },
+    {
+      "item": "e9c9561318e1",
+      "verdict": "TP",
+      "reason": "The filesystem probes use the decoded request path before authorization, and the later allowlist uses a prefix comparison without a directory boundary."
+    },
+    {
+      "item": "e9a1f77f5ff4",
+      "verdict": "UNCLEAR",
+      "reason": "The redirect URI is validated and the response is serialized as JSON, but the response MIME type and handling of the state field by clients are omitted."
+    },
+    {
+      "item": "c01716d9f01c",
+      "verdict": "UNCLEAR",
+      "reason": "The checkpoint loader opens a file named by the supplied identifier, but the callers and prior path checks are omitted."
+    },
+    {
+      "item": "8966a49d8f94",
+      "verdict": "UNCLEAR",
+      "reason": "The timestamp is normalized to a date string, but the source and validation of the interpolated base branch are omitted."
+    },
+    {
+      "item": "d6f5612c9e91",
+      "verdict": "UNCLEAR",
+      "reason": "The link target passes through a helper before creation, but the helper's symlink and containment guarantees are omitted."
+    },
+    {
+      "item": "cfb31559ecab",
+      "verdict": "FP",
+      "reason": "The marker stats an enumerated filename that matches the requested basename or a recognized extension."
+    },
+    {
+      "item": "d4e01a8f3cd3",
+      "verdict": "TP",
+      "reason": "The archive extraction fallback retries the member with ownership adjustments and no explicit confinement filter."
+    },
+    {
+      "item": "f57e35101539",
+      "verdict": "UNCLEAR",
+      "reason": "The execution binds its parameter list, but the SQL text builder and its treatment of filename or key fields are omitted."
+    },
+    {
+      "item": "c1d07f968fd9",
+      "verdict": "UNCLEAR",
+      "reason": "The locale is interpolated into the SQL catalog predicate, but the callers and permitted locale strings are omitted."
+    },
+    {
+      "item": "4e850bfa7d1f",
+      "verdict": "UNCLEAR",
+      "reason": "The authentication handler accepts a certificate subject from the TLS state, but the listener's peer-verification policy is omitted."
+    },
+    {
+      "item": "c31755757f3a",
+      "verdict": "TP",
+      "reason": "The REST method uses its sort argument directly as HQL syntax while binding the space and page fields."
+    },
+    {
+      "item": "2d7aa9a10f43",
+      "verdict": "FP",
+      "reason": "The deletion requires both a digest-format check and an exact existing scan record before constructing the path."
+    },
+    {
+      "item": "9347f73170c9",
+      "verdict": "UNCLEAR",
+      "reason": "The stat resolves the filename against the static root, but whether the caller uses the imported path sanitizer is unspecified."
+    },
+    {
+      "item": "d1104f466ef1",
+      "verdict": "FP",
+      "reason": "The marked file component comes from enumeration of the configured developer plugin directory."
+    },
+    {
+      "item": "52bc2075d437",
+      "verdict": "UNCLEAR",
+      "reason": "The matching persist method writes the example artifact, but the excerpt omits provenance and integrity verification for directories passed to the loader."
+    },
+    {
+      "item": "8a150d166a03",
+      "verdict": "UNCLEAR",
+      "reason": "The seller's country code is concatenated into a SQL literal, but its storage and validation are outside the excerpt."
+    },
+    {
+      "item": "8014bba5d413",
+      "verdict": "TP",
+      "reason": "The donation detail renders the stored company field directly into an HTML text cell."
+    },
+    {
+      "item": "f3dfde91cbac",
+      "verdict": "UNCLEAR",
+      "reason": "The request-derived path reaches a safety helper before the read, but the helper's path-confinement and symlink checks are omitted."
+    },
+    {
+      "item": "63b07d55edae",
+      "verdict": "TP",
+      "reason": "The downloader extracts the remote archive into a local directory, and the visible extraction wrapper adjusts permissions without validating member paths."
+    },
+    {
+      "item": "51719922fce2",
+      "verdict": "FP",
+      "reason": "The FROM identifier is the quoted table name of the plugin's defined message collection."
+    },
+    {
+      "item": "f129118ede69",
+      "verdict": "FP",
+      "reason": "The query builder uses a fixed table and column name and binds the run identifier as a value."
+    },
+    {
+      "item": "5b3c0a9f690d",
+      "verdict": "TP",
+      "reason": "The cancellation link inserts request-derived PHP_SELF into a quoted attribute without output encoding."
+    },
+    {
+      "item": "abbeaece0022",
+      "verdict": "TP",
+      "reason": "The category query places attribute headers into nested SQL and escapes only the inner literals before the outer crosstab statement embeds the whole query."
+    },
+    {
+      "item": "ac772ce57f0d",
+      "verdict": "UNCLEAR",
+      "reason": "The schema query interpolates the selected table, but how request resources map to table names and any validation are omitted."
+    },
+    {
+      "item": "e839afda0577",
+      "verdict": "TP",
+      "reason": "The transfer uses the incoming file name directly to select a download path without checking its containment."
+    },
+    {
+      "item": "59dacdb6d339",
+      "verdict": "TP",
+      "reason": "The upload destination concatenates request text to the base and relies on a substring check that does not verify resolved directory containment."
+    },
+    {
+      "item": "3d2167d7bfe1",
+      "verdict": "UNCLEAR",
+      "reason": "The loader calls pickle for example data, but the source of the model directory and integrity checks before loading are omitted."
+    },
+    {
+      "item": "1046e99b9bd9",
+      "verdict": "UNCLEAR",
+      "reason": "The entry name reaches a normalization helper before directory creation, but the helper's path boundary and link guarantees are omitted."
+    },
+    {
+      "item": "cbfce1245720",
+      "verdict": "UNCLEAR",
+      "reason": "The policy deserializes labels with pickle, but the artifact's provenance and any pre-load verification are omitted."
+    },
+    {
+      "item": "5b698f40bf8a",
+      "verdict": "UNCLEAR",
+      "reason": "The LDAP-derived account name is printed into the page without local encoding, but earlier processing and input constraints are unspecified."
+    },
+    {
+      "item": "f5a75e55e983",
+      "verdict": "FP",
+      "reason": "The directory component is required to match the digest format and refer to an existing scan record."
+    },
+    {
+      "item": "86a1b0b9f3b8",
+      "verdict": "UNCLEAR",
+      "reason": "The default branch requests any client certificate, but the excerpt omits whether a configured verification callback authenticates it."
+    },
+    {
+      "item": "a73e083fb76f",
+      "verdict": "UNCLEAR",
+      "reason": "The export values are bound, but the excerpt omits the caller's authority over the arbitrary condition used to prepare the statement."
+    },
+    {
+      "item": "252b0810d01d",
+      "verdict": "UNCLEAR",
+      "reason": "The descending branch uses a fixed sort direction, but locale and collation provenance and validation are omitted."
+    },
+    {
+      "item": "9b83b7247cfc",
+      "verdict": "FP",
+      "reason": "The marked ID is a typed integer formatted with a numeric placeholder, and the neighboring language value is escaped."
+    },
+    {
+      "item": "8a4c52fb4ade",
+      "verdict": "FP",
+      "reason": "The join uses a child name from readdirSync after checking that it is an organization module."
+    },
+    {
+      "item": "b83ba0f98c4c",
+      "verdict": "UNCLEAR",
+      "reason": "The acknowledgement is unpickled before comparison, but the peer trust and socket access controls are omitted."
+    },
+    {
+      "item": "b86011c9b876",
+      "verdict": "UNCLEAR",
+      "reason": "The order expression enters the query from a scope, but the source and validation of that scope value are omitted."
+    },
+    {
+      "item": "93cdf14b2a5e",
+      "verdict": "FP",
+      "reason": "The import tool explicitly reads a caller-selected local JSON file as the documented operation."
+    },
+    {
+      "item": "aa9cf19a2213",
+      "verdict": "UNCLEAR",
+      "reason": "The filename includes a shortened session ID, but its generation and character constraints are outside the excerpt."
+    },
+    {
+      "item": "09be60896fe9",
+      "verdict": "UNCLEAR",
+      "reason": "The count query binds its arguments separately, but the query builder's treatment of dynamic filters and SQL syntax is omitted."
+    },
+    {
+      "item": "5cbba033978a",
+      "verdict": "UNCLEAR",
+      "reason": "The helper interpolates a service name into a shell command, but how the dispatcher receives and validates that name is omitted."
+    },
+    {
+      "item": "4ee1238eb3b4",
+      "verdict": "UNCLEAR",
+      "reason": "The folder path enters a shell pipeline, but its source and any preceding handling for shell syntax are omitted."
+    },
+    {
+      "item": "7fd8f5e79292",
+      "verdict": "FP",
+      "reason": "The marked amount is declared as an integer and formatted with the numeric conversion."
+    },
+    {
+      "item": "4fdde3f3d15c",
+      "verdict": "UNCLEAR",
+      "reason": "The label artifact reaches a pickle loader, but the origin and integrity checks of the model files are unspecified."
+    },
+    {
+      "item": "969fb53d7023",
+      "verdict": "UNCLEAR",
+      "reason": "The helper appends a process name directly to the shell query, but how callers obtain and validate that name is omitted."
+    },
+    {
+      "item": "c861b73b62ed",
+      "verdict": "UNCLEAR",
+      "reason": "The schema query inserts the table name as SQL syntax, but its route provenance and validation are omitted."
+    },
+    {
+      "item": "282487f38237",
+      "verdict": "UNCLEAR",
+      "reason": "The HTTP URL is joined to the static directory, but the imported asset predicate's path constraints are outside the excerpt."
+    },
+    {
+      "item": "b4a474f98b8b",
+      "verdict": "UNCLEAR",
+      "reason": "The local branch uses enumerated names, but the system branch delegates path construction to a helper whose containment behavior is omitted."
+    },
+    {
+      "item": "b08d293cfde5",
+      "verdict": "FP",
+      "reason": "The marked link uses a fixed route and the donation object's record identifier rather than the request's script path."
+    },
+    {
+      "item": "0b3feba66afa",
+      "verdict": "TP",
+      "reason": "The donation detail renders the stored surname directly as HTML text without output encoding."
+    },
+    {
+      "item": "65d4abc76799",
+      "verdict": "FP",
+      "reason": "The selected title field comes from the predefined message collection's quoted column mapping."
+    },
+    {
+      "item": "a88b3af5bec0",
+      "verdict": "UNCLEAR",
+      "reason": "The recipe name selects a file under the recipes directory, but its callers and their name constraints are omitted."
+    },
+    {
+      "item": "23eb02f6428f",
+      "verdict": "UNCLEAR",
+      "reason": "The username is placed in a shell command for the sudo check, but the private helper's callers and name validation are omitted."
+    },
+    {
+      "item": "d4644e8555ac",
+      "verdict": "UNCLEAR",
+      "reason": "The plugin names are enumerated from the install directory, but the system path resolver's behavior is omitted."
+    },
+    {
+      "item": "9d46c36fa52f",
+      "verdict": "FP",
+      "reason": "The SELECT expression uses the defined message collection's mapped column and the query builder maps request status to predefined values."
+    },
+    {
+      "item": "7b1679c706d5",
+      "verdict": "FP",
+      "reason": "The request parameters select slice offsets and are not included in the response markup themselves."
+    },
+    {
+      "item": "3c4120feb2cc",
+      "verdict": "UNCLEAR",
+      "reason": "The helper passes folder and branch strings into the shell command, but the callers and constraints on those strings are omitted."
+    },
+    {
+      "item": "5f6f87541061",
+      "verdict": "UNCLEAR",
+      "reason": "The order value becomes SQL syntax, but who controls it and any prior validation are unspecified."
+    },
+    {
+      "item": "84f126df6904",
+      "verdict": "FP",
+      "reason": "The example loads controller directory entries obtained through enumeration of its own bundled folder."
+    },
+    {
+      "item": "a3d48c96c1e6",
+      "verdict": "FP",
+      "reason": "A computed digest and a fixed basename form the path beneath the configured upload directory."
+    },
+    {
+      "item": "c49f6f6bbf6f",
+      "verdict": "TP",
+      "reason": "The summary endpoint reads the filename formed with a query-supplied session identifier without a shown containment constraint."
+    },
+    {
+      "item": "90c07a79604b",
+      "verdict": "UNCLEAR",
+      "reason": "The route resolves the requested path and checks containment, but the implementation of that check is omitted."
+    },
+    {
+      "item": "57853e748d83",
+      "verdict": "FP",
+      "reason": "The marked join normalizes the path against a rooted virtual working directory before the result is mapped under the filesystem root."
+    },
+    {
+      "item": "72c0a9dbab5a",
+      "verdict": "FP",
+      "reason": "The marked identifier comes from the current authenticated user record."
+    },
+    {
+      "item": "ba9c8420833d",
+      "verdict": "TP",
+      "reason": "The deletion link inserts request-derived PHP_SELF into a quoted HTML attribute without escaping."
+    },
+    {
+      "item": "d90e67331541",
+      "verdict": "TP",
+      "reason": "The FTP listing method constructs a shell command from the request's file path and option without separating them into safe arguments."
+    },
+    {
+      "item": "b777d3bdd936",
+      "verdict": "FP",
+      "reason": "The query uses a readonly configuration prefix and formats the typed limit as an integer."
+    },
+    {
+      "item": "be669b77ce22",
+      "verdict": "UNCLEAR",
+      "reason": "The installer probes a formatted executable name, but the source and confinement of that name are omitted."
+    },
+    {
+      "item": "2dbaba973acd",
+      "verdict": "FP",
+      "reason": "The assignment is a parsing step inside a newly created document without a browsing context."
+    },
+    {
+      "item": "cfd6df94d224",
+      "verdict": "UNCLEAR",
+      "reason": "The request path is checked before use, but the imported safety helper's link and containment behavior is omitted."
+    },
+    {
+      "item": "64c9a4d523d1",
+      "verdict": "FP",
+      "reason": "The documented identifier filter is applied to the table name, which is then enclosed in SQL identifier quotes."
+    },
+    {
+      "item": "3216f1f814d0",
+      "verdict": "UNCLEAR",
+      "reason": "The Windows helper inserts the task name into a shell command, but how its callers obtain and validate that name is omitted."
+    },
+    {
+      "item": "dad1b5eb5826",
+      "verdict": "FP",
+      "reason": "The identifier is enclosed in double quotes after doubling all embedded identifier quotes."
+    },
+    {
+      "item": "2f6c11b86914",
+      "verdict": "TP",
+      "reason": "The runnable route sends a request parameter as part of a string response without HTML encoding."
+    },
+    {
+      "item": "026e776aa710",
+      "verdict": "FP",
+      "reason": "The amount is converted by the price formatter before being printed in the text cell."
+    },
+    {
+      "item": "e5456bc92e34",
+      "verdict": "FP",
+      "reason": "The build creates an output directory from its internal builder route ID rather than a path from an incoming HTTP request."
+    },
+    {
+      "item": "f18ebe26f65a",
+      "verdict": "TP",
+      "reason": "The create-user form places request-derived PHP_SELF directly in its quoted action attribute."
+    }
+  ]
+}

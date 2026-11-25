@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import argparse
 from base64 import urlsafe_b64decode
-from collections import Counter
+from collections import Counter, defaultdict
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import random
 import re
 import subprocess
 import sys
@@ -1824,9 +1825,846 @@ def main() -> int:
     )
 
 
+VERDICTS = ("TP", "FP", "UNCLEAR")
+FAMILIES = (
+    ({"CWE-22", "CWE-23", "CWE-73", "CWE-59"}, "path traversal"),
+    ({"CWE-79", "CWE-80", "CWE-116"}, "XSS / HTML injection"),
+    ({"CWE-78", "CWE-77", "CWE-88"}, "command injection"),
+    ({"CWE-89"}, "SQL injection"),
+    ({"CWE-502"}, "unsafe deserialization"),
+    ({"CWE-295", "CWE-319"}, "TLS / transport verification"),
+)
+INSTRUCTIONS = (
+    "For each item, decide whether the marked line (>) is a real instance of the claimed "
+    "weakness: attacker- or user-influenced data can reach it in a realistic deployment of "
+    "this library or application, with no effective validation in the shown or implied code. "
+    "Answer TP, FP or UNCLEAR, with one sentence of reasoning. Judge each item on its own; do "
+    "not look up advisories, fixes or other labels."
+)
+# A rule is eligible for the default tier only when the lower Wilson bound of
+# its adjudicated precision clears this, on at least MIN_DECIDED decided alerts.
+DEFAULT_TIER_LOWER_BOUND = 0.80
+REVIEW_TIER_LOWER_BOUND = 0.30
+MIN_DECIDED = 20
+
+
+def write_json(path: Path, value) -> str:
+    data = (json.dumps(value, indent=1, sort_keys=False) + "\n").encode()
+    path.write_bytes(data)
+    return digest(data)
+
+
+def read_json(path: Path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def review_wilson(successes: int, total: int) -> list[float] | None:
+    """Report the shared Wilson interval at the ledger's four-decimal precision."""
+    bounds = _wilson(successes, total)
+    return [round(bound, 4) for bound in bounds] if bounds is not None else None
+
+
+def beta_mean(successes: int, failures: int) -> float:
+    """Posterior mean under a uniform Beta(1, 1) prior."""
+    return round((successes + 1) / (successes + failures + 2), 4)
+
+
+def weakness(cwes: list[str]) -> str:
+    found = set(cwes)
+    for members, label in FAMILIES:
+        if found & members:
+            return label
+    return ", ".join(sorted(found)) or "unspecified"
+
+
+def rule_cwes(rules_path: Path) -> dict[str, list[str]]:
+    import yaml  # PyYAML ships with the factory extra.
+
+    rules = yaml.safe_load(rules_path.read_text(encoding="utf-8"))["rules"]
+    return {rule["id"]: list(rule.get("metadata", {}).get("cwe", [])) for rule in rules}
+
+
+def item_id(alert: dict) -> str:
+    raw = f"{alert['case']}|{alert['path']}|{alert['line']}|{alert['rule']}"
+    return digest(raw.encode())[:12]
+
+
+def context(root: Path, path: str, line: int, radius: int = 5) -> str:
+    source = (root / path).read_text(encoding="utf-8", errors="replace").splitlines()
+    first, last = max(0, line - 1 - radius), min(len(source), line + radius)
+    return "\n".join(
+        f"{index + 1:5}{'>' if index + 1 == line else ' '} {source[index]}"
+        for index in range(first, last)
+    )
+
+
+def stratified(alerts: list[dict], per_rule: int, seed: int) -> list[dict]:
+    """At most per_rule alerts per rule, drawn with a fixed seed, then shuffled."""
+    by_rule: dict[str, list[dict]] = defaultdict(list)
+    for alert in alerts:
+        by_rule[alert["rule"]].append(alert)
+    rng = random.Random(seed)
+    chosen = []
+    for rule in sorted(by_rule):
+        rows = sorted(by_rule[rule], key=item_id)
+        chosen.extend(rows if len(rows) <= per_rule else rng.sample(rows, per_rule))
+    rng.shuffle(chosen)
+    return chosen
+
+
+def wilson_exact(successes: int, total: int) -> tuple[float, float] | None:
+    """Unrounded Wilson 95% interval; tier decisions use these values only."""
+    if total <= 0:
+        return None
+    z = 1.96
+    phat = successes / total
+    denominator = 1 + z * z / total
+    centre = (phat + z * z / (2 * total)) / denominator
+    radius = (
+        z
+        * math.sqrt(phat * (1 - phat) / total + z * z / (4 * total * total))
+        / denominator
+    )
+    return max(0.0, centre - radius), min(1.0, centre + radius)
+
+
+def rule_revision(rule: dict) -> str:
+    """Digest of a rule's matching semantics; message and metadata edits keep it."""
+    semantic = {
+        key: value
+        for key, value in rule.items()
+        if key not in ("message", "metadata", "severity")
+    }
+    return digest(json.dumps(semantic, sort_keys=True, separators=(",", ":")).encode())
+
+
+def rule_revisions(rules_path: Path) -> dict[str, str]:
+    import yaml  # PyYAML ships with the factory extra.
+
+    rules = yaml.safe_load(rules_path.read_text(encoding="utf-8"))["rules"]
+    return {rule["id"]: rule_revision(rule) for rule in rules}
+
+
+def build_packet(args) -> None:
+    cwes = rule_cwes(Path(args.rules))
+    revisions = rule_revisions(Path(args.rules))
+    unique = {}
+    for alert in read_json(Path(args.alerts)):
+        unique.setdefault(item_id(alert), alert)
+    chosen = stratified(list(unique.values()), args.per_rule, args.seed)
+    items, key = [], {}
+    for alert in chosen:
+        identity = item_id(alert)
+        source = Path(alert["root"]) / alert["path"]
+        items.append(
+            {
+                "item": identity,
+                "repository_case": alert["case"],
+                "file": alert["path"],
+                "line": alert["line"],
+                "claimed_weakness": weakness(cwes.get(alert["rule"], [])),
+                "context": context(Path(alert["root"]), alert["path"], alert["line"]),
+            }
+        )
+        key[identity] = {
+            "rule": alert["rule"],
+            "rule_revision": revisions.get(alert["rule"]),
+            "source_sha256": digest(source.read_bytes()),
+            "span": alert.get("span"),
+            "on_fix_hunk": bool(alert.get("on_fix_hunk")),
+        }
+    packet = {
+        "schema": "factory.label-packet.v1",
+        "cohort": args.cohort,
+        "seed": args.seed,
+        "per_rule_cap": args.per_rule,
+        "rules_sha256": digest(Path(args.rules).read_bytes()),
+        "instructions": INSTRUCTIONS,
+        "items": items,
+    }
+    packet_sha = write_json(Path(args.out), packet)
+    write_json(Path(args.key), {"packet_sha256": packet_sha, "key": key})
+    print(
+        json.dumps(
+            {
+                "items": len(items),
+                "rules": dict(Counter(k["rule"] for k in key.values())),
+                "packet_sha256": packet_sha,
+            }
+        )
+    )
+
+
+def labels_by_position(packet: dict, labels: dict, packet_sha: str) -> list[dict]:
+    """Verify reviewer labels against the exact packet before pairing positions."""
+    if labels.get("packet_sha256") != packet_sha:
+        raise SystemExit("reviewer labels belong to a different packet")
+    rows = labels["labels"]
+    if [row["item"] for row in rows] != [item["item"] for item in packet["items"]]:
+        raise SystemExit("labels do not follow the packet's item order")
+    for row in rows:
+        if row["verdict"] not in VERDICTS:
+            raise SystemExit(f"invalid verdict {row['verdict']!r} for {row['item']}")
+    return rows
+
+
+def review_label_pair(paths, packet, packet_sha, reviewers=None):
+    """Pair two independently identified label documents."""
+    documents = [read_json(Path(path)) for path in paths]
+    identities = [document.get("reviewer") for document in documents]
+    if any(not isinstance(name, str) or not name.strip() for name in identities):
+        raise SystemExit("both label documents need reviewer identities")
+    if identities[0] == identities[1] or (
+        reviewers is not None and identities != list(reviewers)
+    ):
+        raise SystemExit(
+            "label documents must identify the two distinct expected reviewers"
+        )
+    return [labels_by_position(packet, document, packet_sha) for document in documents]
+
+
+def _file_pin(path) -> dict:
+    return {"file": Path(path).name, "sha256": digest(Path(path).read_bytes())}
+
+
+def build_judge(args) -> None:
+    """Disagreements for the judge, bound to the exact packet, label pair and context."""
+    packet_bytes = Path(args.packet).read_bytes()
+    packet, packet_sha = json.loads(packet_bytes), digest(packet_bytes)
+    first, second = review_label_pair(args.labels, packet, packet_sha)
+    reviewers = [read_json(Path(path))["reviewer"] for path in args.labels]
+    supplement = {}
+    if args.context:
+        document = read_json(Path(args.context))
+        if document.get("packet_sha256") != packet_sha:
+            raise SystemExit("context supplement belongs to a different packet")
+        supplement = {row["item"]: row for row in document["items"]}
+    disagreements = []
+    for index, (item, a, b) in enumerate(zip(packet["items"], first, second)):
+        if a["verdict"] == b["verdict"]:
+            continue
+        extra = supplement.get(item["item"], {})
+        disagreements.append(
+            {
+                "position": index,
+                **item,
+                **{
+                    key: extra[key]
+                    for key in ("context_wide", "file_header_imports")
+                    if key in extra
+                },
+                "reviewer_1": {"verdict": a["verdict"], "reason": a.get("reason", "")},
+                "reviewer_2": {"verdict": b["verdict"], "reason": b.get("reason", "")},
+            }
+        )
+    inputs = {
+        "packet": {"sha256": packet_sha},
+        "labels": [
+            {**_file_pin(path), "reviewer": name}
+            for path, name in zip(args.labels, reviewers)
+        ],
+    }
+    if args.context:
+        inputs["context_supplement"] = _file_pin(args.context)
+    judge_sha = write_json(
+        Path(args.out),
+        {
+            "schema": "factory.judge-packet.v2",
+            "packet_sha256": packet_sha,
+            "inputs": inputs,
+            "shown_to_judge": [
+                "context",
+                "context_wide",
+                "file_header_imports",
+                "reviewer_1",
+                "reviewer_2",
+            ]
+            if args.context
+            else ["context", "reviewer_1", "reviewer_2"],
+            "disagreements": disagreements,
+        },
+    )
+    print(
+        json.dumps(
+            {
+                "positions": len(first),
+                "disagreements": len(disagreements),
+                "judge_packet_sha256": judge_sha,
+            }
+        )
+    )
+
+
+def review_judge_verdicts(document, packet_sha, disagreements, judge_packet_sha=None):
+    """Verify the judge covered exactly its assigned positions and items."""
+    if document.get("packet_sha256") != packet_sha:
+        raise SystemExit("judge verdicts belong to a different packet")
+    if (
+        judge_packet_sha is not None
+        and document.get("judge_packet_sha256") != judge_packet_sha
+    ):
+        raise SystemExit("judge verdicts belong to a different judge assignment")
+    return _assigned_judge_verdicts(document["verdicts"], disagreements)
+
+
+def _assigned_judge_verdicts(rows, disagreements):
+    """Bind every verdict to one distinct assigned position."""
+    verdicts = {}
+    for row in rows:
+        position = row.get("position")
+        if (
+            type(position) is not int
+            or position in verdicts
+            or position not in disagreements
+        ):
+            raise SystemExit("judge supplied a duplicate or unassigned position")
+        if (
+            row.get("item") != disagreements[position]
+            or row.get("verdict") not in VERDICTS
+        ):
+            raise SystemExit("judge item or verdict does not match the assignment")
+        verdicts[position] = row["verdict"]
+    if set(verdicts) != set(disagreements):
+        raise SystemExit("judge left assigned disagreements without a verdict")
+    return verdicts
+
+
+def _verify_judge_assignment(path, packet_sha, label_paths, disagreements) -> str:
+    """The judge assignment must come from this packet and this exact label pair."""
+    assignment_bytes = Path(path).read_bytes()
+    assignment = json.loads(assignment_bytes)
+    if assignment.get("packet_sha256") != packet_sha:
+        raise SystemExit("judge assignment belongs to a different packet")
+    inputs = assignment.get("inputs", {})
+    pinned = [row["sha256"] for row in inputs.get("labels", [])] or [
+        inputs.get("labels_reviewer_1"),
+        inputs.get("labels_reviewer_2"),
+    ]  # the first exposed assignment pinned the pair under these two names
+    if pinned != [digest(Path(p).read_bytes()) for p in label_paths]:
+        raise SystemExit("judge assignment was built from a different label pair")
+    assigned = {row["position"]: row["item"] for row in assignment["disagreements"]}
+    if assigned != disagreements:
+        raise SystemExit(
+            "judge assignment positions differ from the label pair's disagreements"
+        )
+    return digest(assignment_bytes)
+
+
+def _adjudication_inputs(args, packet_sha: str, key_bytes: bytes) -> dict:
+    """Pin every input the adjudication read, by file name and digest."""
+    inputs = {
+        "packet": {"sha256": packet_sha},
+        "key": {"sha256": digest(key_bytes)},
+        "labels": [
+            {**_file_pin(path), "reviewer": name}
+            for path, name in zip(args.labels, args.reviewer)
+        ],
+    }
+    for name, path in (
+        ("judge_assignment", args.judge_packet),
+        ("judge", args.judge),
+        ("context_supplement", args.context),
+    ):
+        if path:
+            inputs[name] = _file_pin(path)
+    if args.effort_receipt:
+        inputs["effort_receipts"] = [_file_pin(path) for path in args.effort_receipt]
+    return inputs
+
+
+def adjudicate(args) -> None:
+    packet_bytes = Path(args.packet).read_bytes()
+    packet, packet_sha = json.loads(packet_bytes), digest(packet_bytes)
+    key_bytes = Path(args.key).read_bytes()
+    sealed = json.loads(key_bytes)
+    if sealed["packet_sha256"] != packet_sha:
+        raise SystemExit("key belongs to a different packet")
+    first, second = review_label_pair(args.labels, packet, packet_sha, args.reviewer)
+    disagreements = {
+        index: item["item"]
+        for index, (item, a, b) in enumerate(zip(packet["items"], first, second))
+        if a["verdict"] != b["verdict"]
+    }
+    judged, assignment_sha = {}, None
+    if args.judge:
+        if not args.judge_packet:
+            raise SystemExit(
+                "judge verdicts need the judge assignment they answer (--judge-packet)"
+            )
+        assignment_sha = _verify_judge_assignment(
+            args.judge_packet, packet_sha, args.labels, disagreements
+        )
+        judged = review_judge_verdicts(
+            read_json(Path(args.judge)), packet_sha, disagreements, assignment_sha
+        )
+    rows, final = [], {}
+    for index, (item, a, b) in enumerate(zip(packet["items"], first, second)):
+        if a["verdict"] == b["verdict"]:
+            verdict, judge = a["verdict"], None
+        elif index in judged:
+            verdict = judge = judged[index]
+        else:
+            raise SystemExit(f"disagreement at position {index} has no judge verdict")
+        if final.setdefault(item["item"], verdict) != verdict:
+            raise SystemExit(
+                f"duplicate item {item['item']} received different final verdicts"
+            )
+        rows.append(
+            {
+                "position": index,
+                "item": item["item"],
+                "case": item["repository_case"],
+                "file": item["file"],
+                "line": item["line"],
+                **sealed["key"][item["item"]],
+                "reviewer_1": a["verdict"],
+                "reviewer_2": b["verdict"],
+                "judge": judge,
+                "final": verdict,
+            }
+        )
+    inputs = _adjudication_inputs(args, packet_sha, key_bytes)
+    unique = {row["item"]: row for row in rows}
+    out = {
+        "schema": "factory.adjudicated-precision.v3",
+        "packet_sha256": packet_sha,
+        "reviewers": list(args.reviewer),
+        "judge": args.judge_name,
+        "inputs": inputs,
+        "independence": "AI reviewers and judge unless stated otherwise; independence from AI is unestablished",
+        "agreed_positions": sum(row["judge"] is None for row in rows),
+        "positions": len(rows),
+        "unresolved": {
+            "jointly_unclear": sorted(
+                r["item"]
+                for r in unique.values()
+                if r["judge"] is None and r["final"] == "UNCLEAR"
+            ),
+            "judge_unclear": sorted(
+                r["item"] for r in unique.values() if r["judge"] == "UNCLEAR"
+            ),
+        },
+        "final_counts": dict(Counter(row["final"] for row in unique.values())),
+        "rows": rows,
+    }
+    print(
+        json.dumps(
+            {
+                "digest": write_json(Path(args.out), out),
+                "unique": len(final),
+                "verdicts": out["final_counts"],
+            }
+        )
+    )
+
+
+def tier_for(tp: int, fp: int) -> str:
+    """Tier from the full-precision Wilson lower bound; rounding never promotes."""
+    decided = tp + fp
+    bounds = wilson_exact(tp, decided)
+    if decided < MIN_DECIDED or bounds is None:
+        return "unqualified"
+    if bounds[0] >= DEFAULT_TIER_LOWER_BOUND:
+        return "default"
+    return "review" if bounds[0] >= REVIEW_TIER_LOWER_BOUND else "retire"
+
+
+def _alert_identity(row: dict) -> tuple:
+    """Exact alert identity: source snapshot, location, rule and rule semantics."""
+    span = row.get("span")
+    location = json.dumps(span, sort_keys=True) if span else str(row["line"])
+    return (
+        row.get("case") or row.get("repository_case"),
+        row["file"],
+        row.get("source_sha256"),
+        location,
+        row["rule"],
+        row.get("rule_revision"),
+    )
+
+
+def _rule_confidence_summary(counts, stale, origins):
+    """Calculate confidence and provenance for one rule's deduplicated alerts."""
+    tp, fp, unclear = counts["TP"], counts["FP"], counts["UNCLEAR"]
+    decided = tp + fp
+    total = decided + unclear
+    return {
+        "tp": tp,
+        "fp": fp,
+        "unclear": unclear,
+        "decided": decided,
+        "decision_coverage": round(decided / total, 4) if total else None,
+        "precision": round(tp / decided, 4) if decided else None,
+        "wilson95": review_wilson(tp, decided),
+        "all_alert_precision_wilson95": review_wilson(tp, total),
+        "beta_mean": beta_mean(tp, fp),
+        "evidence_tier": tier_for(tp, fp),
+        "stale_rows_excluded": stale,
+        "sample_origins": sorted(origins),
+    }
+
+
+def compute_ledger(paths, revisions: dict[str, str] | None = None) -> dict:
+    """Per-rule confidence; independent of input order and of duplicate observations."""
+    verdicts: dict[tuple, str] = {}
+    origins: dict[tuple, set] = defaultdict(set)
+    stale: Counter = Counter()
+    sources = []
+    for path in sorted(paths, key=lambda p: digest(Path(p).read_bytes())):
+        data_bytes = Path(path).read_bytes()
+        data = json.loads(data_bytes)
+        sha = digest(data_bytes)
+        sources.append(
+            {
+                "file": Path(path).name,
+                "sha256": sha,
+                "independence": data.get("independence", "unstated"),
+            }
+        )
+        for row in data["rows"]:
+            # A row without a revision, or for a rule absent from the candidate,
+            # cannot vouch for the candidate's rule semantics.
+            if revisions is not None and (
+                row.get("rule_revision") is None
+                or row.get("rule_revision") != revisions.get(row["rule"])
+            ):
+                stale[row["rule"]] += 1
+                continue
+            identity = _alert_identity(row)
+            if verdicts.setdefault(identity, row["final"]) != row["final"]:
+                raise SystemExit(f"conflicting verdicts for one alert: {identity}")
+            origins[identity].add(sha)
+    per_rule: dict[str, Counter] = defaultdict(Counter)
+    rule_origins: dict[str, set] = defaultdict(set)
+    for identity, verdict in verdicts.items():
+        per_rule[identity[4]][verdict] += 1
+        rule_origins[identity[4]] |= origins[identity]
+    rules = {
+        rule: _rule_confidence_summary(
+            per_rule.get(rule, Counter()),
+            stale.get(rule, 0),
+            rule_origins.get(rule, ()),
+        )
+        for rule in sorted(set(per_rule) | set(stale))
+    }
+    return {
+        "schema": "factory.rule-confidence.v2",
+        "policy": {
+            "default_tier_wilson_lower": DEFAULT_TIER_LOWER_BOUND,
+            "review_tier_wilson_lower": REVIEW_TIER_LOWER_BOUND,
+            "minimum_decided_alerts": MIN_DECIDED,
+            "tier_bounds": "full-precision Wilson; displayed bounds are rounded",
+            "rule_binding": "rule revision digests"
+            if revisions is not None
+            else "unbound",
+        },
+        "sources": sources,
+        "rules": rules,
+    }
+
+
+def ledger(args) -> None:
+    revisions = rule_revisions(Path(args.rules)) if args.rules else None
+    out = compute_ledger(args.adjudicated, revisions)
+    if args.rules:
+        out["rules_sha256"] = digest(Path(args.rules).read_bytes())
+    print(
+        json.dumps(
+            {"digest": write_json(Path(args.out), out), "rules": len(out["rules"])}
+        )
+    )
+
+
+def _saved_ledger_problems(saved, evidence, rules_sha256):
+    """Describe any mismatch between persisted and recomputed confidence."""
+    problems = []
+    if saved.get("rules_sha256") != rules_sha256:
+        problems.append("saved ledger is bound to a different ruleset")
+    if sorted((s["file"], s["sha256"]) for s in saved.get("sources", [])) != sorted(
+        (s["file"], s["sha256"]) for s in evidence["sources"]
+    ):
+        problems.append("saved ledger cites stale or different adjudication receipts")
+    if saved.get("rules") != evidence["rules"]:
+        problems.append("saved ledger values differ from the recomputed evidence")
+    return problems
+
+
+def check(args) -> int:
+    """Recompute confidence from hash-verified adjudications for the exact candidate rules."""
+    import yaml
+
+    rules_bytes = Path(args.rules).read_bytes()
+    revisions = rule_revisions(Path(args.rules))
+    evidence = compute_ledger(args.adjudicated, revisions)
+    problems = []
+    if args.ledger:
+        problems.extend(
+            _saved_ledger_problems(
+                read_json(Path(args.ledger)), evidence, digest(rules_bytes)
+            )
+        )
+    confidence = evidence["rules"]
+    for rule in yaml.safe_load(rules_bytes.decode("utf-8"))["rules"]:
+        claimed = rule.get("metadata", {}).get("confidence")
+        entry = confidence.get(rule["id"], {})
+        tier = entry.get("evidence_tier", "unqualified")
+        if claimed == "HIGH" and tier != "default":
+            problems.append(
+                f"{rule['id']}: claims HIGH confidence but evidence tier is {tier}"
+            )
+        if tier == "retire":
+            problems.append(
+                f"{rule['id']}: evidence tier is retire ({entry.get('tp')}/{entry.get('decided')})"
+            )
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    return 1 if problems else 0
+
+
+# --- Resumable labeling: sealed part receipts -------------------------------
+# A long labeling pass is split into disjoint, half-open position ranges of one
+# packet. Each finished part is sealed: its labels are written first, then a
+# receipt that binds them to the packet, the context supplement, the reviewer
+# instructions, the reviewer and the effort. A crash before the receipt leaves
+# nothing to trust, so the part is labeled again. Merging recomputes counts
+# from the sealed labels and refuses gaps, overlaps and drifted pins.
+PART_SCHEMA = "factory.review-part.v1"
+PART_PIN_FIELDS = (
+    "packet_sha256",
+    "context_sha256",
+    "instructions_sha256",
+    "reviewer",
+    "effort",
+)
+
+
+def part_pins(packet_path, context_path, reviewer, effort) -> dict:
+    """Current pins; a part sealed under any other value is stale."""
+    if not reviewer.strip() or not effort.strip():
+        raise SystemExit("reviewer and effort are required pins")
+    return {
+        "packet_sha256": digest(Path(packet_path).read_bytes()),
+        "context_sha256": (
+            digest(Path(context_path).read_bytes()) if context_path else None
+        ),
+        "instructions_sha256": digest(INSTRUCTIONS.encode()),
+        "reviewer": reviewer,
+        "effort": effort,
+    }
+
+
+def _part_counts(packet: dict, start: int, stop: int, labels: list) -> dict:
+    """Every position in [start, stop) answered once, in packet order."""
+    items = packet["items"]
+    if not (0 <= start < stop <= len(items)):
+        raise ValueError(f"range [{start}, {stop}) is outside the packet")
+    expected = [item["item"] for item in items[start:stop]]
+    if [row.get("item") for row in labels] != expected:
+        raise ValueError("part labels do not cover the range in packet order")
+    counts = dict.fromkeys(VERDICTS, 0)
+    for row in labels:
+        if row.get("verdict") not in VERDICTS:
+            raise ValueError(f"invalid verdict for {row.get('item')}")
+        if not isinstance(row.get("reason"), str) or not row["reason"].strip():
+            raise ValueError(f"missing reason for {row['item']}")
+        counts[row["verdict"]] += 1
+    return {**counts, "positions": stop - start}
+
+
+def seal_part(args) -> None:
+    """Save part labels and publish their hash-bound completion marker last."""
+    packet = read_json(Path(args.packet))
+    start, stop = args.range
+    document = read_json(Path(args.labels))
+    labels = [
+        {"item": row["item"], "verdict": row["verdict"], "reason": row["reason"]}
+        for row in document["labels"]
+    ]
+    pins = part_pins(args.packet, args.context, args.reviewer, args.effort)
+    counts = _part_counts(packet, start, stop, labels)
+    root = Path(args.dir)
+    name = f"part-{start:05d}-{stop:05d}"
+    observations = root / f"{name}.labels.json"
+    _atomic_json(observations, {"range": [start, stop], "labels": labels})
+    receipt = {
+        "schema": PART_SCHEMA,
+        "range": [start, stop],
+        "state": "COMPLETE",
+        "pins": pins,
+        "counts": counts,
+        "labels": {
+            "path": observations.name,
+            "sha256": digest(observations.read_bytes()),
+        },
+    }
+    _atomic_json(root / f"{name}.receipt.json", receipt)  # Marker last.
+    print(json.dumps({"sealed": name, "counts": counts}))
+
+
+def _sealed_part_body(root: Path, reference: dict) -> dict:
+    """Read bounded label bytes from within the designated part directory."""
+    path = (root / relative_path(reference.get("path"))).resolve()
+    if path.parent != root.resolve():
+        raise ValueError("part labels outside the part directory")
+    with path.open("rb") as stream:
+        payload = stream.read(MAX_EVIDENCE_BYTES + 1)
+    if len(payload) > MAX_EVIDENCE_BYTES or digest(payload) != reference.get("sha256"):
+        raise ValueError("part labels digest mismatch")
+    return strict_json(payload)
+
+
+def validate_part(root: Path, receipt: dict, packet: dict, pins: dict) -> list:
+    """Fail closed; return the part's labels only when every check holds."""
+    if receipt.get("schema") != PART_SCHEMA or receipt.get("state") != "COMPLETE":
+        raise ValueError("not a complete part receipt")
+    for field in PART_PIN_FIELDS:
+        if receipt.get("pins", {}).get(field) != pins[field]:
+            raise ValueError(f"pin drift: {field}")
+    body = _sealed_part_body(root, receipt.get("labels", {}))
+    start, stop = receipt.get("range", [None, None])
+    if body.get("range") != [start, stop] or not all(
+        type(value) is int for value in (start, stop)
+    ):
+        raise ValueError("part range mismatch")
+    if _part_counts(packet, start, stop, body["labels"]) != receipt.get("counts"):
+        raise ValueError("counts disagree with sealed labels")
+    return body["labels"]
+
+
+def reconcile_parts(root: Path, packet: dict, pins: dict):
+    """Valid sealed parts by range, the rejected receipts, and uncovered ranges."""
+    valid, rejected = {}, {}
+    for path in sorted(root.glob("part-*.receipt.json")):
+        try:
+            receipt = strict_json(path.read_bytes())
+            labels = validate_part(root, receipt, packet, pins)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            rejected[path.name] = str(exc)
+            continue
+        valid[tuple(receipt["range"])] = labels
+    missing, cursor = [], 0
+    for start, stop in sorted(valid):
+        if start < cursor:
+            raise SystemExit(f"sealed parts overlap at position {start}")
+        if start > cursor:
+            missing.append([cursor, start])
+        cursor = stop
+    if cursor < len(packet["items"]):
+        missing.append([cursor, len(packet["items"])])
+    return valid, rejected, missing
+
+
+def merge_parts(args) -> int:
+    """Reconcile sealed parts and write labels once every position is covered."""
+    packet = read_json(Path(args.packet))
+    pins = part_pins(args.packet, args.context, args.reviewer, args.effort)
+    root = Path(args.dir)
+    valid, rejected, missing = reconcile_parts(root, packet, pins)
+    status = {
+        "sealed": [list(span) for span in sorted(valid)],
+        "rejected": rejected,
+        "missing": missing,
+    }
+    if missing or args.out is None:
+        print(json.dumps(status, indent=1))
+        return 2 if missing else 0
+    labels = [row for span in sorted(valid) for row in valid[span]]
+    write_json(
+        Path(args.out),
+        {
+            "reviewer": args.reviewer,
+            "effort": args.effort,
+            "conditions": args.conditions,
+            "packet_sha256": pins["packet_sha256"],
+            "parts": [
+                {
+                    "range": list(span),
+                    "receipt_sha256": digest(
+                        (
+                            root / f"part-{span[0]:05d}-{span[1]:05d}.receipt.json"
+                        ).read_bytes()
+                    ),
+                }
+                for span in sorted(valid)
+            ],
+            "labels": labels,
+        },
+    )
+    print(json.dumps({**status, "out": args.out, "labels": len(labels)}))
+    return 0
+
+
+def review_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="Blinded precision packets, adjudication and confidence ledger",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    packet = commands.add_parser("packet")
+    packet.add_argument("--alerts", required=True)
+    packet.add_argument("--rules", required=True)
+    packet.add_argument("--cohort", required=True)
+    packet.add_argument("--per-rule", type=int, default=30)
+    packet.add_argument("--seed", type=int, required=True)
+    packet.add_argument("--out", required=True)
+    packet.add_argument("--key", required=True)
+    judge = commands.add_parser("judge")
+    judge.add_argument("--packet", required=True)
+    judge.add_argument("--labels", nargs=2, required=True)
+    judge.add_argument("--context")
+    judge.add_argument("--out", required=True)
+    adjudicated = commands.add_parser("adjudicate")
+    adjudicated.add_argument("--packet", required=True)
+    adjudicated.add_argument("--key", required=True)
+    adjudicated.add_argument("--labels", nargs=2, required=True)
+    adjudicated.add_argument("--reviewer", nargs=2, required=True)
+    adjudicated.add_argument("--judge")
+    adjudicated.add_argument("--judge-packet")
+    adjudicated.add_argument("--judge-name")
+    adjudicated.add_argument("--context")
+    adjudicated.add_argument("--effort-receipt", action="append")
+    adjudicated.add_argument("--out", required=True)
+    led = commands.add_parser("ledger")
+    led.add_argument("--adjudicated", nargs="+", required=True)
+    led.add_argument("--rules")
+    led.add_argument("--out", required=True)
+    checked = commands.add_parser("check")
+    checked.add_argument("--adjudicated", nargs="+", required=True)
+    checked.add_argument("--rules", required=True)
+    checked.add_argument("--ledger")
+    for name in ("seal-part", "merge-parts"):
+        part = commands.add_parser(name)
+        part.add_argument("--packet", required=True)
+        part.add_argument("--context")
+        part.add_argument("--reviewer", required=True)
+        part.add_argument("--effort", required=True)
+        part.add_argument("--dir", required=True)
+        if name == "seal-part":
+            part.add_argument("--labels", required=True)
+            part.add_argument("--range", type=int, nargs=2, required=True)
+        else:
+            part.add_argument("--conditions", default="")
+            part.add_argument("--out")
+    args = parser.parse_args(argv)
+    if args.command == "merge-parts":
+        return merge_parts(args)
+    handlers = {
+        "seal-part": seal_part,
+        "packet": build_packet,
+        "judge": build_judge,
+        "adjudicate": adjudicate,
+        "ledger": ledger,
+    }
+    if args.command == "check":
+        return check(args)
+    handlers[args.command](args)
+    return 0
+
+
 if __name__ == "__main__":
     commands = {
         "advisory-recall": recall_main,
+        "review": review_main,
         "prepare-linked-captures": prepare_captures_main,
     }
     command = commands.get(sys.argv[1]) if len(sys.argv) > 1 else None

@@ -2337,3 +2337,656 @@ def test_prepare_linked_capture_batch(tmp_path, capsys, condition, error):
     ]
     assert _gain["prepare_captures_main"]([str(plan)]) == 0
     assert json.loads(capsys.readouterr().out) == result
+
+
+REVIEW_RULES = """rules:
+  - id: javascript.parameter-shell-command
+    metadata:
+      confidence: LOW
+      cwe: ["CWE-78"]
+  - id: python.unsafe-deserialization-unscoped
+    metadata:
+      confidence: HIGH
+      cwe: ["CWE-502"]
+"""
+
+
+def test_wilson_matches_known_interval():
+    assert _gain["review_wilson"](25, 54) == [0.3369, 0.5939]
+    assert _gain["review_wilson"](0, 0) is None
+    assert _gain["beta_mean"](0, 0) == 0.5
+
+
+def test_tiers_need_enough_decided_alerts_and_a_lower_bound():
+    assert _gain["tier_for"](19, 0) == "unqualified"
+    assert _gain["tier_for"](40, 1) == "default"
+    assert _gain["tier_for"](12, 8) == "review"
+    assert _gain["tier_for"](2, 18) == "retire"
+
+
+def _alerts(tmp_path: Path) -> Path:
+    source = tmp_path / "case" / "app.js"
+    source.parent.mkdir()
+    source.write_text("\n".join(f"line {n}" for n in range(1, 21)) + "\n")
+    rows = [
+        {
+            "case": "GHSA-aaaa-bbbb-cccc",
+            "root": str(tmp_path / "case"),
+            "path": "app.js",
+            "line": n,
+            "rule": "javascript.parameter-shell-command",
+            "on_fix_hunk": n == 3,
+        }
+        for n in (3, 7, 9)
+    ]
+    rows.append(dict(rows[0]))  # a duplicate report of the same alert
+    path = tmp_path / "alerts.json"
+    path.write_text(json.dumps(rows))
+    return path
+
+
+def test_blind_packet_samples_each_rule_without_order_bias(tmp_path):
+    rules = tmp_path / "review-rules.yml"
+    rules.write_text(REVIEW_RULES + "  - id: fixture.unmapped\n", encoding="utf-8")
+    cwes = _gain["rule_cwes"](rules)
+    assert cwes == {
+        "fixture.unmapped": [],
+        "javascript.parameter-shell-command": ["CWE-78"],
+        "python.unsafe-deserialization-unscoped": ["CWE-502"],
+    }
+    rows = _gain["read_json"](_alerts(tmp_path))[:-1]
+    identify = _gain["item_id"]
+    assert identify({**rows[0], "on_fix_hunk": False}) == identify(rows[0])
+    assert len({identify(row) for row in rows}) == len(rows)
+    other_rule = {**rows[0], "rule": "fixture.unmapped"}
+    assert identify(other_rule) != identify(rows[0])
+    rows.append(other_rule)
+    choose = _gain["stratified"]
+    selected = choose(rows, per_rule=2, seed=29)
+    assert selected == choose(list(reversed(rows)), per_rule=2, seed=29)
+    assert other_rule in selected
+    assert len(selected) == 3
+    malformed = tmp_path / "invalid.json"
+    malformed.write_text("{", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        _gain["read_json"](malformed)
+
+
+def test_packet_is_blinded_deduplicated_and_sealed(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    _gain["build_packet"](
+        argparse.Namespace(
+            alerts=_alerts(tmp_path),
+            rules=rules,
+            cohort="t",
+            seed=7,
+            per_rule=30,
+            out=tmp_path / "p.json",
+            key=tmp_path / "k.json",
+        )
+    )
+    packet = json.loads((tmp_path / "p.json").read_text())
+    key = json.loads((tmp_path / "k.json").read_text())
+    assert len(packet["items"]) == 3
+    assert all(
+        "rule" not in item and "on_fix_hunk" not in item for item in packet["items"]
+    )
+    assert {item["claimed_weakness"] for item in packet["items"]} == {
+        "command injection"
+    }
+    assert key["packet_sha256"] == _gain["digest"]((tmp_path / "p.json").read_bytes())
+    marked = [
+        line for line in packet["items"][0]["context"].splitlines() if line[5] == ">"
+    ]
+    assert len(marked) == 1
+
+
+def _labels(packet: dict, verdicts: list[str], name: str, tmp_path: Path) -> Path:
+    path = tmp_path / f"{name}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "reviewer": name,
+                "packet_sha256": _gain["digest"]((tmp_path / "p.json").read_bytes()),
+                "labels": [
+                    {"item": item["item"], "verdict": verdict, "reason": "r"}
+                    for item, verdict in zip(packet["items"], verdicts)
+                ],
+            }
+        )
+    )
+    return path
+
+
+def test_judge_and_adjudication_flow(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    _gain["review_main"](
+        [
+            "packet",
+            "--alerts",
+            str(_alerts(tmp_path)),
+            "--rules",
+            str(rules),
+            "--cohort",
+            "t",
+            "--seed",
+            "7",
+            "--out",
+            str(tmp_path / "p.json"),
+            "--key",
+            str(tmp_path / "k.json"),
+        ]
+    )
+    packet = json.loads((tmp_path / "p.json").read_text())
+    first = _labels(packet, ["TP", "FP", "TP"], "a", tmp_path)
+    second = _labels(packet, ["TP", "UNCLEAR", "FP"], "b", tmp_path)
+    packet_sha = _gain["digest"]((tmp_path / "p.json").read_bytes())
+    first_labels, second_labels = _gain["review_label_pair"](
+        [first, second], packet, packet_sha, ["a", "b"]
+    )
+    assert [row["verdict"] for row in first_labels] == ["TP", "FP", "TP"]
+    assert [row["verdict"] for row in second_labels] == ["TP", "UNCLEAR", "FP"]
+    transposed = {"packet_sha256": packet_sha, "labels": list(reversed(first_labels))}
+    with pytest.raises(SystemExit, match="item order"):
+        _gain["labels_by_position"](packet, transposed, packet_sha)
+    _gain["build_judge"](
+        argparse.Namespace(
+            packet=tmp_path / "p.json",
+            labels=[first, second],
+            context=None,
+            out=tmp_path / "j-in.json",
+        )
+    )
+    disagreements = json.loads((tmp_path / "j-in.json").read_text())["disagreements"]
+    assert [row["position"] for row in disagreements] == [1, 2]
+    (tmp_path / "j.json").write_text(
+        json.dumps(
+            {
+                "packet_sha256": _gain["digest"]((tmp_path / "p.json").read_bytes()),
+                "judge_packet_sha256": _gain["digest"](
+                    (tmp_path / "j-in.json").read_bytes()
+                ),
+                "verdicts": [
+                    {"position": 1, "item": disagreements[0]["item"], "verdict": "FP"},
+                    {"position": 2, "item": disagreements[1]["item"], "verdict": "TP"},
+                ],
+            }
+        )
+    )
+    _gain["review_main"](
+        [
+            "adjudicate",
+            "--packet",
+            str(tmp_path / "p.json"),
+            "--key",
+            str(tmp_path / "k.json"),
+            "--labels",
+            str(first),
+            str(second),
+            "--reviewer",
+            "a",
+            "b",
+            "--judge",
+            str(tmp_path / "j.json"),
+            "--judge-packet",
+            str(tmp_path / "j-in.json"),
+            "--judge-name",
+            "j",
+            "--out",
+            str(tmp_path / "adj.json"),
+        ]
+    )
+    adjudicated = json.loads((tmp_path / "adj.json").read_text())
+    assert adjudicated["inputs"]["judge_assignment"]["sha256"] == _gain["digest"](
+        (tmp_path / "j-in.json").read_bytes()
+    )
+    assert adjudicated["final_counts"] == {"TP": 2, "FP": 1}
+    assert [row["final"] for row in adjudicated["rows"]] == ["TP", "FP", "TP"]
+    _gain["review_main"](
+        [
+            "ledger",
+            "--adjudicated",
+            str(tmp_path / "adj.json"),
+            "--out",
+            str(tmp_path / "led.json"),
+        ]
+    )
+    entry = json.loads((tmp_path / "led.json").read_text())["rules"][
+        "javascript.parameter-shell-command"
+    ]
+    assert (entry["tp"], entry["fp"], entry["evidence_tier"]) == (2, 1, "unqualified")
+
+
+def test_adjudication_refuses_unjudged_disagreement_and_foreign_key(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    _gain["review_main"](
+        [
+            "packet",
+            "--alerts",
+            str(_alerts(tmp_path)),
+            "--rules",
+            str(rules),
+            "--cohort",
+            "t",
+            "--seed",
+            "7",
+            "--out",
+            str(tmp_path / "p.json"),
+            "--key",
+            str(tmp_path / "k.json"),
+        ]
+    )
+    packet = json.loads((tmp_path / "p.json").read_text())
+    first = _labels(packet, ["TP", "FP", "TP"], "a", tmp_path)
+    second = _labels(packet, ["TP", "TP", "TP"], "b", tmp_path)
+    args = [
+        "adjudicate",
+        "--packet",
+        str(tmp_path / "p.json"),
+        "--key",
+        str(tmp_path / "k.json"),
+        "--labels",
+        str(first),
+        str(second),
+        "--reviewer",
+        "a",
+        "b",
+        "--out",
+        str(tmp_path / "adj.json"),
+    ]
+    with pytest.raises(SystemExit, match="no judge verdict"):
+        _gain["review_main"](args)
+    labels = json.loads(first.read_text())
+    original = labels["packet_sha256"]
+    labels["packet_sha256"] = "0" * 64
+    first.write_text(json.dumps(labels))
+    with pytest.raises(
+        SystemExit, match="reviewer labels belong to a different packet"
+    ):
+        _gain["review_main"](args)
+    labels["packet_sha256"] = original
+    labels["reviewer"] = "b"
+    first.write_text(json.dumps(labels))
+    with pytest.raises(SystemExit, match="distinct expected reviewers"):
+        _gain["review_main"](args)
+    labels["reviewer"] = "a"
+    first.write_text(json.dumps(labels))
+    key = json.loads((tmp_path / "k.json").read_text())
+    key["packet_sha256"] = "0" * 64
+    (tmp_path / "k.json").write_text(json.dumps(key))
+    with pytest.raises(SystemExit, match="different packet"):
+        _gain["review_main"](args)
+
+
+def _adjudicated(tmp_path, rules, rows, name="adj.json"):
+    revisions = _gain["rule_revisions"](rules)
+    document = {
+        "independence": "test",
+        "rows": [
+            {
+                "case": "GHSA-aaaa-bbbb-cccc",
+                "file": "app.js",
+                "line": line,
+                "source_sha256": "s" * 64,
+                "rule": rule,
+                "rule_revision": revisions[rule],
+                "final": verdict,
+            }
+            for line, rule, verdict in rows
+        ],
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(document))
+    return path
+
+
+def test_tier_thresholds_use_full_precision_bounds():
+    # Rounded to four places these lower bounds read 0.8000 and 0.3000.
+    assert _gain["wilson_exact"](87, 99)[0] < 0.80
+    assert _gain["tier_for"](87, 12) == "review"
+    assert _gain["wilson_exact"](56, 150)[0] < 0.30
+    assert _gain["tier_for"](56, 94) == "retire"
+
+
+def test_ledger_is_order_independent_and_rejects_conflicts(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    shell = "javascript.parameter-shell-command"
+    first = _adjudicated(
+        tmp_path, rules, [(3, shell, "TP"), (7, shell, "FP")], "a.json"
+    )
+    second = _adjudicated(
+        tmp_path, rules, [(7, shell, "FP"), (9, shell, "UNCLEAR")], "b.json"
+    )
+    revisions = _gain["rule_revisions"](rules)
+    forward = _gain["compute_ledger"]([first, second], revisions)
+    backward = _gain["compute_ledger"]([second, first], revisions)
+    assert forward == backward
+    entry = forward["rules"][shell]
+    assert (entry["tp"], entry["fp"], entry["unclear"], entry["decided"]) == (
+        1,
+        1,
+        1,
+        2,
+    )
+    assert entry["decision_coverage"] == round(2 / 3, 4)
+    assert len(entry["sample_origins"]) == 2
+    conflict = _adjudicated(tmp_path, rules, [(7, shell, "TP")], "c.json")
+    with pytest.raises(SystemExit, match="conflicting verdicts"):
+        _gain["compute_ledger"]([first, conflict], revisions)
+
+
+def test_revised_rule_does_not_inherit_older_confidence(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    shell = "javascript.parameter-shell-command"
+    evidence = _adjudicated(tmp_path, rules, [(n, shell, "TP") for n in range(30)])
+    revised = tmp_path / "revised.yml"
+    revised.write_text(
+        REVIEW_RULES.replace(
+            "  - id: javascript.parameter-shell-command\n",
+            "  - id: javascript.parameter-shell-command\n    languages: [javascript]\n",
+        )
+    )
+    entry = _gain["compute_ledger"]([evidence], _gain["rule_revisions"](revised))[
+        "rules"
+    ][shell]
+    assert (entry["decided"], entry["stale_rows_excluded"], entry["evidence_tier"]) == (
+        0,
+        30,
+        "unqualified",
+    )
+    legacy = json.loads(evidence.read_text())
+    for row in legacy["rows"]:
+        del row["rule_revision"]
+    evidence.write_text(json.dumps(legacy))
+    unbound = _gain["compute_ledger"]([evidence], _gain["rule_revisions"](rules))
+    assert unbound["rules"][shell]["stale_rows_excluded"] == 30
+
+
+def test_check_recomputes_tiers_and_rejects_stale_or_inflated_ledgers(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    shell = "javascript.parameter-shell-command"
+    pickle = "python.unsafe-deserialization-unscoped"
+    weak = _adjudicated(
+        tmp_path, rules, [(n, shell, "FP") for n in range(25)] + [(99, shell, "TP")]
+    )
+    args = ["check", "--adjudicated", str(weak), "--rules", str(rules)]
+    # Retired shell evidence and HIGH confidence without evidence both fail.
+    assert _gain["review_main"](args) == 1
+    strong = _adjudicated(
+        tmp_path,
+        rules,
+        [(n, pickle, "TP") for n in range(60)]
+        + [(n, shell, "TP") for n in range(200, 260)],
+        "strong.json",
+    )
+    assert (
+        _gain["review_main"](
+            ["check", "--adjudicated", str(strong), "--rules", str(rules)]
+        )
+        == 0
+    )
+    led = tmp_path / "led.json"
+    _gain["review_main"](
+        [
+            "ledger",
+            "--adjudicated",
+            str(strong),
+            "--rules",
+            str(rules),
+            "--out",
+            str(led),
+        ]
+    )
+    assert (
+        _gain["review_main"](
+            [
+                *["check", "--adjudicated", str(strong)],
+                "--rules",
+                str(rules),
+                "--ledger",
+                str(led),
+            ]
+        )
+        == 0
+    )
+    inflated = json.loads(led.read_text())
+    inflated["rules"][pickle]["evidence_tier"] = "default"
+    inflated["rules"][pickle]["tp"] = 61
+    led.write_text(json.dumps(inflated))
+    assert (
+        _gain["review_main"](
+            [
+                "check",
+                "--adjudicated",
+                str(strong),
+                "--rules",
+                str(rules),
+                "--ledger",
+                str(led),
+            ]
+        )
+        == 1
+    )
+    _gain["review_main"](
+        ["ledger", "--adjudicated", str(weak), "--rules", str(rules), "--out", str(led)]
+    )
+    assert (
+        _gain["review_main"](
+            [
+                "check",
+                "--adjudicated",
+                str(strong),
+                "--rules",
+                str(rules),
+                "--ledger",
+                str(led),
+            ]
+        )
+        == 1
+    )
+
+
+def test_judge_from_a_different_label_pair_fails(tmp_path):
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES)
+    _gain["review_main"](
+        [
+            "packet",
+            "--alerts",
+            str(_alerts(tmp_path)),
+            "--rules",
+            str(rules),
+            "--cohort",
+            "t",
+            "--seed",
+            "7",
+            "--out",
+            str(tmp_path / "p.json"),
+            "--key",
+            str(tmp_path / "k.json"),
+        ]
+    )
+    packet = json.loads((tmp_path / "p.json").read_text())
+    first = _labels(packet, ["TP", "FP", "TP"], "a", tmp_path)
+    second = _labels(packet, ["TP", "UNCLEAR", "FP"], "b", tmp_path)
+    _gain["build_judge"](
+        argparse.Namespace(
+            packet=tmp_path / "p.json",
+            labels=[first, second],
+            context=None,
+            out=tmp_path / "j-in.json",
+        )
+    )
+    other = _labels(packet, ["TP", "UNCLEAR", "UNCLEAR"], "c", tmp_path)
+    disagreements = json.loads((tmp_path / "j-in.json").read_text())["disagreements"]
+    (tmp_path / "j.json").write_text(
+        json.dumps(
+            {
+                "packet_sha256": _gain["digest"]((tmp_path / "p.json").read_bytes()),
+                "judge_packet_sha256": _gain["digest"](
+                    (tmp_path / "j-in.json").read_bytes()
+                ),
+                "verdicts": [
+                    {"position": d["position"], "item": d["item"], "verdict": "FP"}
+                    for d in disagreements
+                ],
+            }
+        )
+    )
+    base = [
+        "adjudicate",
+        "--packet",
+        str(tmp_path / "p.json"),
+        "--key",
+        str(tmp_path / "k.json"),
+        "--judge",
+        str(tmp_path / "j.json"),
+        "--judge-packet",
+        str(tmp_path / "j-in.json"),
+        "--out",
+        str(tmp_path / "adj.json"),
+    ]
+    with pytest.raises(SystemExit, match="different label pair"):
+        _gain["review_main"](
+            [*base, "--labels", str(first), str(other), "--reviewer", "a", "c"]
+        )
+    _gain["review_main"](
+        [*base, "--labels", str(first), str(second), "--reviewer", "a", "b"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("replacement", "message"),
+    [
+        ({"packet_sha256": "foreign"}, "different packet"),
+        (
+            {"verdicts": [{"position": 0, "item": "other", "verdict": "TP"}]},
+            "item or verdict",
+        ),
+        (
+            {"verdicts": [{"position": 0, "item": "item", "verdict": "yes"}]},
+            "item or verdict",
+        ),
+        (
+            {"verdicts": [{"position": 1, "item": "item", "verdict": "TP"}]},
+            "unassigned position",
+        ),
+        (
+            {"verdicts": [{"position": 0, "item": "item", "verdict": "TP"}] * 2},
+            "duplicate or unassigned",
+        ),
+    ],
+)
+def test_judge_rejects_unbound_or_ambiguous_verdicts(replacement, message):
+    document = {"packet_sha256": "packet", "verdicts": [], **replacement}
+    with pytest.raises(SystemExit, match=message):
+        _gain["review_judge_verdicts"](document, "packet", {0: "item"})
+
+
+def _part_fixture(tmp_path):
+    packet = tmp_path / "packet.json"
+    packet.write_text(json.dumps({"items": [{"item": f"i{n}"} for n in range(6)]}))
+    parts = tmp_path / "parts"
+    common = [
+        "--packet",
+        str(packet),
+        "--reviewer",
+        "opus",
+        "--effort",
+        "high",
+        "--dir",
+        str(parts),
+    ]
+
+    def seal(start, stop, verdict="FP"):
+        labels = tmp_path / f"labels-{start}.json"
+        rows = [
+            {"item": f"i{n}", "verdict": verdict, "reason": "shown"}
+            for n in range(start, stop)
+        ]
+        labels.write_text(json.dumps({"labels": rows}))
+        _gain["seal_part"](
+            argparse.Namespace(
+                packet=packet,
+                context=None,
+                reviewer="opus",
+                effort="high",
+                dir=parts,
+                labels=labels,
+                range=(start, stop),
+            )
+        )
+
+    return packet, parts, common, seal
+
+
+def test_review_parts_resume_only_missing_and_merge_in_order(tmp_path, capsys):
+    packet, parts, common, seal = _part_fixture(tmp_path)
+    seal(0, 3, "TP")
+    packet_data = json.loads(packet.read_bytes())
+    pins = _gain["part_pins"](packet, None, "opus", "high")
+    assert pins["packet_sha256"] == hashlib.sha256(packet.read_bytes()).hexdigest()
+    receipt = json.loads((parts / "part-00000-00003.receipt.json").read_bytes())
+    labels = _gain["validate_part"](parts, receipt, packet_data, pins)
+    assert [row["item"] for row in labels] == ["i0", "i1", "i2"]
+    # A crash after the labels but before the receipt leaves nothing sealed.
+    (parts / "part-00003-00006.labels.json").write_text("{}")
+    valid, rejected, missing = _gain["reconcile_parts"](parts, packet_data, pins)
+    assert valid == {(0, 3): labels} and rejected == {} and missing == [[3, 6]]
+    capsys.readouterr()
+    assert (
+        _gain["review_main"](
+            ["merge-parts", *common, "--out", str(tmp_path / "m.json")]
+        )
+        == 2
+    )
+    assert json.loads(capsys.readouterr().out)["missing"] == [[3, 6]]
+    seal(3, 6)
+    out = tmp_path / "m.json"
+    args = argparse.Namespace(
+        packet=packet,
+        context=None,
+        reviewer="opus",
+        effort="high",
+        dir=parts,
+        conditions=None,
+        out=str(out),
+    )
+    assert _gain["merge_parts"](args) == 0
+    merged = json.loads(out.read_text())
+    assert [row["item"] for row in merged["labels"]] == [f"i{n}" for n in range(6)]
+    assert [row["verdict"] for row in merged["labels"]] == ["TP"] * 3 + ["FP"] * 3
+
+
+def test_review_parts_reject_tampering_drift_and_gaps(tmp_path, capsys):
+    _, parts, common, seal = _part_fixture(tmp_path)
+    seal(0, 3)
+    seal(3, 6)
+    sealed = parts / "part-00003-00006.labels.json"
+    body = json.loads(sealed.read_text())
+    body["labels"][0]["verdict"] = "TP"
+    sealed.write_text(json.dumps(body))
+    capsys.readouterr()
+    assert _gain["review_main"](["merge-parts", *common]) == 2
+    status = json.loads(capsys.readouterr().out)
+    assert status["missing"] == [[3, 6]]
+    assert "digest" in status["rejected"]["part-00003-00006.receipt.json"]
+    drifted = [*common]
+    drifted[drifted.index("high")] = "medium"
+    assert _gain["review_main"](["merge-parts", *drifted]) == 2
+    assert json.loads(capsys.readouterr().out)["missing"] == [[0, 6]]
+    with pytest.raises(ValueError, match="packet order"):
+        _gain["_part_counts"](
+            {"items": [{"item": "a"}, {"item": "b"}]},
+            0,
+            2,
+            [
+                {"item": "a", "verdict": "FP", "reason": "x"},
+            ],
+        )
