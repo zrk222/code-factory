@@ -1948,6 +1948,11 @@ def test_single_arm_cli_authenticates_execution_and_review_signatures(tmp_path, 
         "wrong_scope",
         "failed_run",
         "malformed_result",
+        "source_drift",
+        "tool_drift",
+        "scan_gap",
+        "dual_lane",
+        "second_parent",
     ],
 )
 def test_advisory_linked_recall_requires_trusted_exact_finding(
@@ -1957,9 +1962,15 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
     absent = copy.deepcopy(record["cases"][0])
     absent.update(ghsa="GHSA-2345-6789-cfgg", ecosystem="PHP")
     record["cases"].append(absent)
+    original = record["cases"][0]
+    if condition == "second_parent":
+        original["fixes"].append({"fix": "d" * 40, "parent": "c" * 40})
+        original["prefix_files"].append(
+            {**original["prefix_files"][0], "parent": "c" * 40}
+        )
+    revision = original["fixes"][-1]["parent"]
     record["summary"] = _gain["summarize_recall"](record)
     record_path, record_sha = _benchmark_file(tmp_path, "strict-recall", record)
-    original = record["cases"][0]
     result = {
         "ruleId": "fixture.arithmetic",
         "locations": [
@@ -1992,11 +2003,69 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
             ],
         },
     )
-    key = {
-        "ghsa": original["ghsa"],
-        "lane": "codeql",
-        "scope": "changed_files" if condition == "wrong_scope" else "repository",
+    source = tmp_path / "owned-source"
+    source_files = {
+        "src/App.py": b"source",
+        "src/library.py": b"# harmless source evidence\\n" * 50,
     }
+    for path, data in source_files.items():
+        target = source / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    tree = _gain["digest"](
+        _gain["canonical_bytes"](
+            {path: _gain["digest"](data) for path, data in source_files.items()}
+        )
+    )
+    scopes = [
+        {
+            "lane": "codeql",
+            "scope": "changed_files" if condition == "wrong_scope" else "repository",
+        },
+        {"lane": "pattern", "scope": "repository"},
+    ]
+    keys, rows = [], []
+    for scope in scopes if condition == "dual_lane" else scopes[:1]:
+        lane = scope["lane"]
+        key = {**scope, "ghsa": original["ghsa"], "source_revision": revision}
+        profile = record["candidate"][lane + "_lane"]
+        engine, rules = (
+            ("bundle_sha256", "query_sets_sha256")
+            if lane == "codeql"
+            else ("opengrep_binary_sha256", "ruleset_sha256")
+        )
+        report_sha = None if condition == "missing_digest" else capture_sha
+        coverage_path, coverage_sha = _benchmark_file(
+            tmp_path,
+            lane + "-coverage",
+            {
+                "schema": "factory.advisory-engine-coverage.v1",
+                "engine_sha256": _digest("other tool")
+                if condition == "tool_drift"
+                else profile[engine],
+                "configuration_sha256": profile[rules],
+                "source_revision": revision,
+                "source_tree_sha256": tree,
+                "sarif_sha256": report_sha,
+                "expected_paths": sorted(source_files),
+                "scanned_paths": ["src/App.py"]
+                if condition == "scan_gap"
+                else sorted(source_files),
+                "skipped": [],
+                "errors": [],
+            },
+        )
+        keys.append(key)
+        rows.append(
+            {
+                **key,
+                "state": "complete",
+                "source_root": source.name,
+                "source_tree_sha256": tree,
+                "capture": {"path": capture.name, "sha256": report_sha},
+                "coverage": {"path": coverage_path.name, "sha256": coverage_sha},
+            }
+        )
     observations, obs_sha = _benchmark_file(
         tmp_path,
         "linked-observations",
@@ -2006,20 +2075,8 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
             "candidate_sha256": _gain["digest"](
                 _gain["canonical_bytes"](record["candidate"])
             ),
-            "rows": [
-                {
-                    **key,
-                    "state": "complete",
-                    "source_revision": original["fixes"][0]["parent"],
-                    "source_tree_sha256": _digest("test-source-tree"),
-                    "capture": {
-                        "path": capture.name,
-                        "sha256": None
-                        if condition == "missing_digest"
-                        else capture_sha,
-                    },
-                }
-            ],
+            "registered_scopes": scopes,
+            "rows": rows,
         },
     )
     finding = {
@@ -2032,9 +2089,9 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
     }
     review_paths, subjects = [], []
     for reviewer in ("one", "two"):
-        label = {**key, "verdict": "linked", "finding": finding}
+        labels = [{**key, "verdict": "linked", "finding": finding} for key in keys]
         if reviewer == "two" and condition == "disagree":
-            label = {**key, "verdict": "unclear"}
+            labels = [{**key, "verdict": "unclear"} for key in keys]
         path, subject = _benchmark_file(
             tmp_path,
             reviewer,
@@ -2042,7 +2099,7 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
                 "schema": _gain["LABELS_SCHEMA"],
                 "observations_sha256": obs_sha,
                 "reviewer_id": reviewer,
-                "labels": [label],
+                "labels": labels,
             },
         )
         review_paths.extend(["--link-review", str(path)])
@@ -2056,6 +2113,8 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
     )
     if condition == "digest_drift":
         capture.write_bytes(capture.read_bytes() + b" ")
+    if condition == "source_drift":
+        (source / "src/library.py").write_bytes(b"# changed owned evidence")
     status = _gain["recall_main"](
         [
             str(record_path),
@@ -2066,12 +2125,15 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
         ]
     )
     output = json.loads(capsys.readouterr().out)
-    if condition in {"linked", "disagree"}:
+    if condition in {"linked", "disagree", "dual_lane", "second_parent"}:
         assert status == 0
         assert output["measurement"] == "STRICT_OLD_SIDE_HUNK"
         assert output["summary"]["total"]["combined_detected"] == 0
         linked = output["advisory_linked_recall"]
-        (results,) = linked["scope_results"]
+        results, pattern = linked["scope_results"]
+        assert pattern["total"]["unexecuted"] == (1 if condition == "dual_lane" else 2)
+        assert linked["combined"]["unique_linked"] == (condition != "disagree")
+        assert linked["combined"]["linked_by_both_lanes"] == (condition == "dual_lane")
         assert linked["publication_eligible"] is False
         assert results["by_ecosystem"]["PHP"]["unexecuted"] == 1
         total = results["total"]
@@ -2081,7 +2143,7 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
             total["linked"]
             == total["linked_outside_hunk"]
             == (total["linked_outside_changed_files"])
-            == (condition == "linked")
+            == (condition != "disagree")
         )
         assert total["review_unresolved"] == (condition == "disagree")
     else:
@@ -2095,4 +2157,7 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
             "wrong_scope": "outside its changed-file scan scope",
             "failed_run": "no successful execution evidence",
             "malformed_result": "invalid SARIF result",
+            "source_drift": "source snapshot byte fingerprints differ",
+            "tool_drift": "unbound to the source, tool",
+            "scan_gap": "incomplete registered scan coverage",
         }[condition] in output["error"]

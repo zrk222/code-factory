@@ -61,20 +61,31 @@ python scripts/verify_precision_gain.py advisory-recall recall.json `
 ```
 
 - The capture document uses schema `factory.advisory-link-observations.v1`.
-  Include `record_sha256` for the exact legacy document,
-  `candidate_sha256` for the canonical JSON of its candidate object, and
-  `rows` keyed by `ghsa`, `lane` (`pattern` or `codeql`), and `scope`
-  (`changed_files` or `repository`).
-- Each row identifies the first pre-fix commit in `source_revision` and a
-  `state` of `complete` or `unknown`. For a complete row include the
-  `source_tree_sha256` and a `capture` object with `path` and `sha256` for
-  a SARIF 2.1.0 report. Use paths relative to the capture document and
-  repository-relative finding URIs. Each SARIF run must record successful
-  execution. The `advisory-execution` statement covers the exact capture
-  document bytes.
+  Include `record_sha256` for the exact legacy document and
+  `candidate_sha256` for the canonical JSON of its candidate object. Declare
+  `registered_scopes` as the list of lane and scope pairs. Each pair contains
+  `lane` (`pattern` or `codeql`) and `scope` (`changed_files` or `repository`).
+  Keep unexecuted pairs in that declaration.
+- Include `rows` keyed by `ghsa`, `lane`, `scope`, and `source_revision`.
+  Use a registered pre-fix commit and a `state` of `complete` or `unknown`.
+  A complete row has a local `source_root` relative to the capture document.
+  Set `source_tree_sha256` to the SHA-256 of the canonical JSON object mapping
+  each repository-relative file path to its SHA-256. The verifier enumerates
+  the snapshot, hashes its files, and checks the legacy pre-fix file pins.
+- Include the `capture` and `coverage` references as objects with `path` and
+  `sha256`. The capture is a SARIF 2.1.0 report with successful invocations
+  and repository-relative finding URIs. The coverage document uses schema
+  `factory.advisory-engine-coverage.v1` and binds `source_revision`,
+  `source_tree_sha256`, `sarif_sha256`, `engine_sha256`, and
+  `configuration_sha256` to the same row and candidate. It reports
+  `expected_paths`, `scanned_paths`, `skipped`, and `errors`. For complete
+  observations, the expected and scanned path lists equal the local
+  snapshot and both diagnostic lists are empty. The execution collector
+  supplies this coverage record from its scanner run. Its
+  `advisory-execution` statement covers the exact capture document bytes.
 - Each reviewer uses schema `factory.advisory-link-labels.v1` with
   `reviewer_id`, `observations_sha256`, and `labels` for every complete row.
-  Use the same three row keys and a `verdict` of `linked`, `no_link`, or
+  Use the same four row keys and a `verdict` of `linked`, `no_link`, or
   `unclear`. A linked verdict cites a unique emitted `finding` by
   `path`, `rule`, `line`, and any emitted `column`, `end_line`, and
   `end_column`. Each `advisory-link-labels` statement covers its exact
@@ -83,6 +94,8 @@ python scripts/verify_precision_gain.py advisory-recall recall.json `
 Both authenticated reviewers must identify the same finding to credit a link.
 The result counts links outside the hunk and outside changed files separately.
 An unresolved review, a missing capture, and a reviewed no-link verdict remain
-separate outcomes. The result retains all registered advisories in each
-declared lane and scope. Legacy records have no such captures and report
-`NOT_MEASURED` for advisory-linked recall.
+separate outcomes. A no-link verdict requires all registered revisions for that
+case and scope. The result retains all registered advisories in each declared
+lane and scope, counts each linked advisory once in the combined result, and
+reports overlap between lanes. Legacy records report `NOT_MEASURED` for
+advisory-linked recall.

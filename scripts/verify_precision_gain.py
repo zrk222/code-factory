@@ -1215,6 +1215,85 @@ def _emitted_findings(root, capture):
     return findings
 
 
+def _scope_pair(row):
+    lane, scope = row["lane"], row["scope"]
+    if lane not in {"pattern", "codeql"} or scope not in {
+        "changed_files",
+        "repository",
+    }:
+        raise ValueError("invalid advisory lane or scan scope")
+    return lane, scope
+
+
+def _observed_source(root, row, case, candidate):
+    coverage_ref = row["coverage"]
+    if not _hash(coverage_ref.get("sha256")):
+        raise ValueError("linked capture requires a coverage SHA-256")
+    coverage, _ = _benchmark_evidence(
+        _recall_contained(root, coverage_ref["path"]), coverage_ref["sha256"]
+    )
+    lane, scope = _scope_pair(row)
+    profile = candidate[lane + "_lane"]
+    tool, configuration = (
+        ("opengrep_binary_sha256", "ruleset_sha256")
+        if lane == "pattern"
+        else ("bundle_sha256", "query_sets_sha256")
+    )
+    if (
+        coverage.get("schema") != "factory.advisory-engine-coverage.v1"
+        or coverage.get("engine_sha256") != profile[tool]
+        or coverage.get("configuration_sha256") != profile[configuration]
+        or coverage.get("source_revision") != row["source_revision"]
+        or coverage.get("source_tree_sha256") != row["source_tree_sha256"]
+        or coverage.get("sarif_sha256") != row["capture"]["sha256"]
+    ):
+        raise ValueError(
+            "linked capture is unbound to the source, tool, configuration or SARIF"
+        )
+    inventory, scanned = coverage["expected_paths"], coverage["scanned_paths"]
+    if (
+        not isinstance(inventory, list)
+        or not inventory
+        or not isinstance(scanned, list)
+        or sorted(relative_path(path) for path in inventory)
+        != sorted(relative_path(path) for path in scanned)
+        or len(set(inventory)) != len(inventory)
+        or coverage.get("skipped") != []
+        or coverage.get("errors") != []
+    ):
+        raise ValueError("linked capture has incomplete registered scan coverage")
+    source = _recall_contained(root, row["source_root"])
+    if not source.is_dir():
+        raise ValueError("linked source snapshot directory is missing")
+    actual = {
+        item.relative_to(source).as_posix()
+        for item in source.rglob("*")
+        if item.is_file() or item.is_symlink()
+    }
+    if actual != set(inventory):
+        raise ValueError(
+            "linked capture file inventory differs from the source snapshot"
+        )
+    source_hashes = {
+        path: digest(_recall_read(_recall_contained(source, path)))
+        for path in inventory
+    }
+    if digest(canonical_bytes(source_hashes)) != row["source_tree_sha256"]:
+        raise ValueError("linked source snapshot byte fingerprints differ")
+    changed = {
+        item["path"]: item["sha256"]
+        for item in case["prefix_files"]
+        if item["parent"] == row["source_revision"]
+    }
+    if not changed or any(
+        source_hashes.get(path) != sha for path, sha in changed.items()
+    ):
+        raise ValueError("linked source snapshot differs from registered pre-fix bytes")
+    if scope == "changed_files" and source_hashes.keys() != changed.keys():
+        raise ValueError("linked snapshot falls outside its changed-file scan scope")
+    return source_hashes
+
+
 def _observations(record, record_sha256, observations, root):
     if (
         observations.get("schema") != LINKS_SCHEMA
@@ -1222,47 +1301,39 @@ def _observations(record, record_sha256, observations, root):
         or observations.get("candidate_sha256")
         != digest(canonical_bytes(record["candidate"]))
         or not isinstance(observations.get("rows"), list)
-        or not observations["rows"]
     ):
         raise ValueError(
             "linked observations must bind the exact recall record and candidate"
         )
+    scopes = observations["registered_scopes"]
+    if not isinstance(scopes, list) or not scopes:
+        raise ValueError("register the advisory lane and scope matrix")
+    groups = {_scope_pair(item) for item in scopes}
+    if len(groups) != len(scopes):
+        raise ValueError("duplicate registered advisory scopes")
     known = {case["ghsa"]: case for case in record["cases"]}
-    groups, completed = set(), {}
-    seen = set()
+    completed, seen = {}, set()
     for row in observations["rows"]:
-        ghsa, lane, scope = row["ghsa"], row["lane"], row["scope"]
-        key = ghsa, lane, scope
+        ghsa, revision = row["ghsa"], row["source_revision"]
+        lane, scope = _scope_pair(row)
+        key = ghsa, lane, scope, revision
         if (
             key in seen
             or ghsa not in known
-            or lane not in {"pattern", "codeql"}
-            or scope not in {"changed_files", "repository"}
-            or row["source_revision"] != known[ghsa]["fixes"][0]["parent"]
+            or (lane, scope) not in groups
+            or revision not in {item["parent"] for item in known[ghsa]["fixes"]}
             or row.get("state") not in {"complete", "unknown"}
         ):
             raise ValueError("invalid or duplicate linked observation")
         seen.add(key)
-        groups.add((lane, scope))
         if row["state"] == "unknown":
             if row.get("capture") is not None:
-                raise ValueError(
-                    "unknown linked observation cannot assert a complete capture"
-                )
+                raise ValueError("unknown observation cannot assert a complete capture")
             continue
-        if not _hash(row.get("source_tree_sha256")):
-            raise ValueError("linked capture requires a source tree hash")
+        source_paths = _observed_source(root, row, known[ghsa], record["candidate"])
         findings = _emitted_findings(root, row["capture"])
-        if scope == "changed_files":
-            changed = {
-                item["path"]
-                for item in known[ghsa]["prefix_files"]
-                if item["parent"] == row["source_revision"]
-            }
-            if any(finding[0] not in changed for finding in findings):
-                raise ValueError(
-                    "linked finding falls outside its changed-file scan scope"
-                )
+        if any(finding[0] not in source_paths for finding in findings):
+            raise ValueError("linked finding is absent from the verified source scope")
         completed[key] = findings
     return known, groups, completed
 
@@ -1281,7 +1352,7 @@ def _link_reviews(reviews, observations_sha256, completed):
             )
         labels = {}
         for label in review["labels"]:
-            key = label["ghsa"], label["lane"], label["scope"]
+            key = label["ghsa"], label["lane"], label["scope"], label["source_revision"]
             verdict = label["verdict"]
             if (
                 key in labels
@@ -1355,39 +1426,53 @@ def _linked_advisory_metrics(
     first, second = _link_reviews(reviews, obs_sha, complete)
     population = Counter(case["ecosystem"] for case in known.values())
     results = []
+    lane_links = {"pattern": set(), "codeql": set()}
     for lane, scope in sorted(groups):
         counts = {ecosystem: Counter() for ecosystem in population}
-        for ghsa, row_lane, row_scope in complete:
-            if (row_lane, row_scope) != (lane, scope):
+        for ghsa, case in known.items():
+            parents = {item["parent"] for item in case["fixes"]}
+            keys = [
+                (ghsa, lane, scope, rev)
+                for rev in parents
+                if (ghsa, lane, scope, rev) in complete
+            ]
+            if not keys:
                 continue
-            case, key = known[ghsa], (ghsa, lane, scope)
             counter = counts[case["ecosystem"]]
             counter["executed"] += 1
-            verdict, finding = (
-                first[key] if first[key] == second[key] else ("unclear", None)
-            )
-            counter["review_unresolved" if verdict == "unclear" else verdict] += 1
-            if verdict != "linked":
-                continue
-            path, line, *_ = finding
-            revision = case["fixes"][0]["parent"]
-            files = [
-                item
-                for item in case["prefix_files"]
-                if item["parent"] == revision and item["path"] == path
+            matched = [
+                (key[3], first[key][1])
+                for key in keys
+                if first[key] == second[key] and first[key][0] == "linked"
             ]
-            if not _in_hunk(case, revision, path, line):
-                counter["linked_outside_hunk"] += 1
-            if not files:
-                counter["linked_outside_changed_files"] += 1
+            if matched:
+                lane_links[lane].add(ghsa)
+                counter["linked"] += 1
+                counter["linked_outside_hunk"] += any(
+                    not _in_hunk(case, revision, finding[0], finding[1])
+                    for revision, finding in matched
+                )
+                counter["linked_outside_changed_files"] += any(
+                    not any(
+                        item["parent"] == revision and item["path"] == finding[0]
+                        for item in case["prefix_files"]
+                    )
+                    for revision, finding in matched
+                )
+            elif len(keys) == len(parents) and all(
+                first[key] == second[key] == ("no_link", None) for key in keys
+            ):
+                counter["no_link"] += 1
+            else:
+                counter["review_unresolved"] += 1
         results.append(
             {
                 "lane": lane,
                 "scope": scope,
                 "total": _result_row(sum(counts.values(), Counter()), len(known)),
                 "by_ecosystem": {
-                    ecosystem: _result_row(counts[ecosystem], population[ecosystem])
-                    for ecosystem in sorted(population)
+                    name: _result_row(counts[name], population[name])
+                    for name in sorted(population)
                 },
             }
         )
@@ -1395,6 +1480,11 @@ def _linked_advisory_metrics(
         "state": "ADJUDICATED_SIGNED_OBSERVATIONS" if complete else "NOT_MEASURED",
         "provenance": provenance,
         "scope_results": results,
+        "combined": {
+            "registered": len(known),
+            "unique_linked": len(lane_links["pattern"] | lane_links["codeql"]),
+            "linked_by_both_lanes": len(lane_links["pattern"] & lane_links["codeql"]),
+        },
         "record_sha256": record_sha256,
         "observations_sha256": obs_sha,
         "publication_eligible": False,
