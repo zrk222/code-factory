@@ -462,11 +462,29 @@ def test_coordinator_public_cli_signed_child_owned_stop(tmp_path):
             child.communicate(timeout=10)
 
 
+def _coordinator_transport_path(tmp_path):
+    import os
+    import shutil
+    import sys
+
+    git = shutil.which("git")
+    assert git is not None
+    git_directory = Path(git).parent
+    if sys.platform == "linux":
+        # A shared executable directory can contain both Git and Docker.
+        git_directory = tmp_path / "git-only"
+        git_directory.mkdir()
+        shutil.copy2(git, git_directory / "git")
+    test_path = os.pathsep.join([str(git_directory), str(Path(sys.executable).parent)])
+    assert shutil.which("git", path=test_path)
+    assert shutil.which("docker", path=test_path) is None
+    return test_path
+
+
 def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
     import subprocess
     import time
     import os
-    import shutil
     import sys
     from factoryline.agentic_control import CoordinatorRequestStore
     from factoryline.deep_audit import deep_run_status
@@ -477,24 +495,12 @@ def test_coordinator_public_cli_terminal_replay_and_restart(tmp_path):
         )
     root, request, owner, context, _ = _coordinator_signed_fixture(tmp_path)
     context["store"].release(owner)
-    # This is terminal-history transport acceptance, not analyzer qualification.
-    # Retain real Git inventory and a signed fresh child, but deliberately omit
-    # Docker so placeholder lanes fail closed without host-dependent daemon waits.
-    git_directory = Path(shutil.which("git")).parent
-    if sys.platform == "linux":
-        # /usr/bin commonly contains both Git and Docker on hosted runners.
-        git_directory = tmp_path / "git-only"
-        git_directory.mkdir()
-        shutil.copy2(shutil.which("git"), git_directory / "git")
-    test_path = os.pathsep.join([str(git_directory), str(Path(sys.executable).parent)])
-    assert shutil.which("git", path=test_path)
-    assert shutil.which("docker", path=test_path) is None
     child = subprocess.Popen(
         _coordinator_cli_argv(root, "--lease-seconds", "120"),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={**os.environ, "PATH": test_path},
+        env={**os.environ, "PATH": _coordinator_transport_path(tmp_path)},
     )
     try:
         child.stdin.write((json.dumps(request) + "\n").encode())
@@ -1794,7 +1800,7 @@ def _coordinator_signed_fixture(tmp_path):
 
 
 @pytest.mark.parametrize("stop_child", [False, True])
-def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_child):
+def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, monkeypatch, stop_child):
     import os
     import sys
     import time
@@ -1808,6 +1814,8 @@ def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, stop_ch
             pytest.fail("selected CI host does not support native process identity")
         pytest.skip("native process creation identity unsupported")
     root, request, owner, context, inventory = _coordinator_signed_fixture(tmp_path)
+    # Run the signed transport against explicit unavailable-engine evidence.
+    monkeypatch.setenv("PATH", _coordinator_transport_path(tmp_path))
     observed_handshakes = []
     try:
         admitted = module.dispatch_deep_audit_request(root, request, owner, context)
