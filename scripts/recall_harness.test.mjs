@@ -1079,3 +1079,28 @@ test('checkpoint records are bound to their full input fingerprint', async () =>
     assert.equal(readCheckpoint(root, inputs), null);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('incomplete cases and rows with missing artifacts are rescanned, never resumed', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, baseline, candidate, opts } = fixture;
+  const checkpointDir = join(root, 'checkpoints');
+  const resumable = { ...opts, 'checkpoint-dir': checkpointDir };
+  // The candidate fixture is incomplete (parse error), so it is never checkpointed.
+  const incomplete = await scoreManifest(manifest, candidate, resumable);
+  assert.equal(incomplete.cases[0].status, 'incomplete');
+  assert.equal(existsSync(checkpointDir) ? readdirSync(checkpointDir).length : 0, 0);
+  const again = await scoreManifest(manifest, candidate, resumable);
+  assert.deepEqual(again.resumed_cases, []);
+  // A completed case resumes only while the SARIF it cites is intact.
+  const fresh = await scoreManifest(manifest, baseline, resumable);
+  assert.equal(readdirSync(checkpointDir).length, 1);
+  const sarif = join(workdir, fresh.cases[0].captures.old.sarif.path);
+  writeFileSync(sarif, '{}');
+  const rescanned = await scoreManifest(manifest, baseline, resumable);
+  assert.deepEqual(rescanned.resumed_cases, []);
+  assert.deepEqual(rescanned.summary, fresh.summary);
+  const { checkpointable, scorerSha256 } = await import('./recall_harness.mjs');
+  assert.equal(checkpointable({ status: 'unfetchable', outcome: 'unknown' }), false);
+  assert.equal(checkpointable({ status: 'incomplete', outcome: 'coverage_incomplete' }), false);
+  assert.equal(checkpointable({ status: 'scored', outcome: 'miss' }), true);
+  assert.match(scorerSha256(), /^[a-f0-9]{64}$/);
+}));

@@ -723,7 +723,37 @@ export function writeCheckpoint(root, inputs, result) {
   renameSync(staging, path);
 }
 
-const checkpointable = row => row.status !== 'error' && row.outcome !== 'timeout' && row.outcome !== 'error';
+// Only a finished, fully covered outcome is kept: scored hits and misses, and
+// cases whose fix changes no in-language source. Incomplete coverage,
+// unfetchable or parentless cases, timeouts and errors are always rescanned.
+const CHECKPOINT_STATUSES = new Set(['scored', 'no_old_side_source', 'no_in_language_source_change']);
+export const checkpointable = row => CHECKPOINT_STATUSES.has(row.status)
+  && (row.status === 'scored' ? ['hit', 'miss'].includes(row.outcome) : row.outcome === 'unknown');
+
+// The scorer's own code is part of every checkpoint key.
+let scorerFingerprint;
+export function scorerSha256() {
+  scorerFingerprint ??= caseDigest(['recall_harness.mjs', 'recall_coverage.mjs', 'recall_losses.mjs'].map(name =>
+    packet(name, readFileSync(new URL(`./${name}`, import.meta.url)))));
+  return scorerFingerprint;
+}
+
+// A saved row is reusable only while the captures and source packets it cites
+// are still present in this work directory with the same bytes.
+export function checkpointArtifactsIntact(workdir, row) {
+  try {
+    for (const side of ['old', 'fixed']) {
+      const capture = row.captures?.[side];
+      const packets = row.source_packets?.[side] ?? [];
+      if (!capture) { if (packets.length) return false; continue; }
+      for (const artifact of [capture.sarif, capture.native_report].filter(Boolean)) {
+        if (sha256(readFileSync(resolve(workdir, artifact.path))) !== artifact.sha256) return false;
+      }
+      verifyPreparedBytes(resolve(workdir, capture.source_root), packets);
+    }
+    return true;
+  } catch { return false; }
+}
 
 export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
   const manifestBytes = readFileSync(manifestPath);
@@ -740,11 +770,14 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
   const engineSha = checkpoints ? await fileFingerprint(executablePath(context.bin)) : null;
   const resumed = [];
   const checkpointed = async row => {
-    const inputs = { schema: 'factory.recall-case-checkpoint.v1', manifest_cases_sha256: manifestDigest,
-      case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
-      engine_sha256: engineSha, engine_args: context.extra, scope: context.scope };
+    const inputs = { schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
+      manifest_cases_sha256: manifestDigest, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
+      profile_sha256: context.profileSha256, engine_sha256: engineSha, engine_args: context.extra, scope: context.scope };
     const saved = readCheckpoint(checkpoints, inputs);
-    if (saved) { resumed.push(row.ghsa); return saved; }
+    if (saved && checkpointable(saved) && checkpointArtifactsIntact(context.workdir, saved)) {
+      resumed.push(row.ghsa);
+      return saved;
+    }
     const result = await one(row);
     if (checkpointable(result)) writeCheckpoint(checkpoints, inputs, result);
     return result;
@@ -1323,7 +1356,8 @@ async function controlDeltas_(opts) {
       if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
       scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
       const source = await controlSource(directory, excludedDirs);
-      const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v1', dir,
+      const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v2',
+        scorer_sha256: scorerSha256(), dir,
         source_tree: source.evidence, excluded: excludedDirs, baseline_sha256: base.rulesSha256 ?? sha256(readFileSync(base.rules)),
         candidate_sha256: candidate.rulesSha256 ?? sha256(readFileSync(candidate.rules)),
         profile_sha256: sha256(Buffer.from(JSON.stringify(base.profile))),
