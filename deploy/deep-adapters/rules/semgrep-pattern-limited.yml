@@ -4443,6 +4443,9 @@ rules:
       # A template-built path whose segment after a slash is a file-like name or
       # field (`${dir}/${doc.filename}`), handed to an fs call with no containment.
       - patterns:
+          # Literal gate: lets OpenGrep's prefilter skip files with no fs call, so this
+          # branch does not force full parses (and parse failures) on every JS/TS file.
+          - pattern-regex: '\b(?:fs\w*|\w*Fs|fse|fsp|fsPromises|promises)\.(?:readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)\s*\('
           - pattern-either:
               - pattern: $FS.$SINK($T, ...)
               - patterns:
