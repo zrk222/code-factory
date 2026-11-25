@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { hunkAdjudicationIdentity, hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -535,7 +535,7 @@ async function feederFixture(run, row = feederRow) {
 
     const scanner = join(root, 'scanner.mjs');
     writeFileSync(scanner, [
-      "import { appendFileSync, readFileSync, statSync, writeFileSync } from 'node:fs';",
+      "import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';",
       "import { basename, dirname } from 'node:path';",
       "if (process.argv.includes('--dump-ast')) { if (process.env.FIXTURE_PARSER_LIMIT === 'true') { console.error('node type: ERROR'); process.exit(3); } process.exit(0); }",
       "const rules = process.argv[process.argv.indexOf('--config') + 1];",
@@ -546,6 +546,11 @@ async function feederFixture(run, row = feederRow) {
       "const control = basename(process.cwd()) === 'control';",
       "const ruleText = readFileSync(rules, 'utf8');",
       "if (old && ruleText.includes('# rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
+      "const driftMarker = dirname(rules) + '/group-drift';",
+      "if (old && ruleText.includes('# group-drift ' + basename(dirname(process.cwd()))) && !existsSync(driftMarker)) {",
+      "  writeFileSync(driftMarker, '');",
+      "  appendFileSync(rules, '# drifted during scan\\n');",
+      "}",
       "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
       "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
@@ -674,7 +679,7 @@ test('evaluation refuses a missing or mismatched engine and ruleset drift withou
     writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# rules-drift\n');
     const drift = evaluate(process.execPath);
     assert.notEqual(drift.status, 0);
-    assert.match(drift.stderr, /Evaluation ruleset bytes changed during scoring/);
+    assert.match(drift.stderr, /Scan ruleset byte fingerprint differs/);
     assert.equal(existsSync(output), false);
   }));
 
@@ -1370,6 +1375,62 @@ test('checkpoint records are bound to their full input fingerprint', async () =>
     assert.equal(readCheckpoint(root, inputs), null);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('scored cases reach the checkpoint directory only under the verified executable pin', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, baseline, profile, opts } = fixture;
+  const checkpoints = join(root, 'case-engine-checkpoints');
+  const settings = { ...opts, 'checkpoint-dir': checkpoints };
+  const rulesBytes = readFileSync(baseline), profileBytes = readFileSync(profile);
+  const stale = '1'.repeat(64);
+  const engine = { path: process.execPath, receipt: { executable: basename(process.execPath),
+    executable_sha256: stale, version: process.version } };
+  const context = { profile: JSON.parse(profileBytes), profileSha256: sha256(profileBytes),
+    bin: engine.path, engine, rules: baseline, rulesSha256: sha256(rulesBytes),
+    ruleMap: ruleFamilies(rulesBytes.toString('utf8')), extra: [], workdir, scope: 'ecosystem' };
+  await assert.rejects(scoreManifest(manifest, baseline, settings, context), /engine executable bytes changed during case scoring/);
+  assert.equal(existsSync(checkpoints), false);
+
+  const actual = sha256(readFileSync(engine.path));
+  const verified = { ...context, engine: { ...engine, receipt: { ...engine.receipt, executable_sha256: actual } } };
+  const fresh = await scoreManifest(manifest, baseline, settings, verified);
+  assert.equal(fresh.cases[0].status, 'scored');
+  const records = readdirSync(checkpoints);
+  assert.equal(records.length, 1);
+  assert.equal(JSON.parse(readFileSync(join(checkpoints, records[0]), 'utf8')).inputs.engine_sha256, actual);
+  const warm = await scoreManifest(manifest, baseline, settings, verified);
+  assert.deepEqual(warm.resumed_cases, [fresh.cases[0].ghsa]);
+  await assert.rejects(scoreManifest(manifest, baseline, settings, { ...verified, engine: { ...verified.engine, path: profile } }),
+    /engine executable bytes changed during case scoring/);
+  assert.deepEqual(readdirSync(checkpoints), records);
+}));
+
+test('an interrupted scoring group preserves only earlier verified checkpoints', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, baseline, opts } = fixture;
+  const checkpoints = join(root, 'group-checkpoints');
+  const casesRoot = join(workdir, 'cases-v4');
+  const original = join(casesRoot, caseDigest([feederRow]));
+  const record = JSON.parse(readFileSync(join(original, 'case.json'), 'utf8'));
+  const cases = Array.from({ length: 18 }, (_, index) => ({ ...feederRow, ghsa: `GHSA-test-bulk-${String(index).padStart(4, '0')}` }));
+  for (const row of cases) {
+    const key = caseDigest([row]);
+    const folder = join(casesRoot, key);
+    cpSync(original, folder, { recursive: true });
+    writeFileSync(join(folder, 'case.json'), JSON.stringify({ ...record, case_sha256: key }));
+  }
+  writeFileSync(manifest, JSON.stringify({ cases, cases_sha256: caseDigest(cases) }));
+  const rules = readFileSync(baseline, 'utf8') + `# group-drift ${caseDigest([cases.at(-1)])}\n`;
+  writeFileSync(baseline, rules);
+  const settings = { ...opts, jobs: 1, 'checkpoint-dir': checkpoints };
+  await assert.rejects(scoreManifest(manifest, baseline, settings), /Scan ruleset byte fingerprint differs/);
+  assert.equal(existsSync(join(root, 'group-drift')), true);
+  assert.equal(readdirSync(checkpoints).length, 16);
+
+  writeFileSync(baseline, rules);
+  const resumed = await scoreManifest(manifest, baseline, settings);
+  assert.deepEqual(resumed.resumed_cases, cases.slice(0, 16).map(row => row.ghsa));
+  assert.equal(resumed.cases.filter(row => row.outcome === 'hit').length, cases.length);
+  assert.equal(readdirSync(checkpoints).length, cases.length);
+}));
 
 test('incomplete cases and rows with missing artifacts are rescanned, never resumed', () => feederFixture(async fixture => {
   const { root, workdir, manifest, baseline, candidate, opts } = fixture;

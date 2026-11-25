@@ -641,6 +641,7 @@ async function observeSide(context, source, report, expected) {
     const capture = captureReference(context, source, report, diagnostics);
     return { findings, diagnostics, coverage: findings.coverage, capture, submitted, verified: true };
   } catch (error) {
+    if (error instanceof RecallInputDrift) throw error;
     return { findings: [], submitted, diagnostics: { ...(diagnostics ?? error.diagnostics),
       other: 1, detail: String(error.message).slice(-300) } };
   }
@@ -672,9 +673,16 @@ async function pool(items, jobs, worker) {
   if (!Number.isSafeInteger(jobs) || jobs < 1) throw new Error('Recall jobs must be a positive integer');
   const out = new Array(items.length);
   let next = 0;
+  let failure;
   await Promise.all(Array.from({ length: Math.min(jobs, items.length) }, async () => {
-    while (next < items.length) { const index = next++; out[index] = await worker(items[index]); }
+    try {
+      while (!failure && next < items.length) {
+        const index = next++;
+        out[index] = await worker(items[index]);
+      }
+    } catch (error) { failure ??= { error }; }
   }));
+  if (failure) throw failure.error;
   return out;
 }
 
@@ -789,39 +797,65 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}, context 
 }
 
 async function scorePreparedManifest(manifest, opts, context) {
+  const checkpoints = opts['checkpoint-dir'] ? resolve(opts['checkpoint-dir']) : null;
+  const engine = context.engine ?? (checkpoints ? await bindRecallEngine(context.profile, context.bin) : null);
+  if (engine) context.bin = engine.path;
+  const verifyPins = async operation => {
+    if (engine) await verifyBoundEngine(engine, operation);
+    verifyRulesBytes(context);
+  };
+  await verifyPins('case scoring');
   mkdirSync(context.workdir, { recursive: true });
   context.scanRoot = mkdtempSync(join(context.workdir, 'scan-'));
   const one = async (row, scanContext = context) => {
     try { return { ...row, ...(await scoreOne(scanContext, row)) }; }
-    catch (error) { return { ...row, status: 'error', detail: String(error.message).slice(-300) }; }
+    catch (error) {
+      if (error instanceof RecallInputDrift) throw error;
+      return { ...row, status: 'error', detail: String(error.message).slice(-300) };
+    }
   };
-  const checkpoints = opts['checkpoint-dir'] ? resolve(opts['checkpoint-dir']) : null;
-  const engineSha = checkpoints
-    ? context.engineSha ?? await fileFingerprint(executablePath(context.bin)) : null;
   const resumed = [];
-  const checkpointed = async row => {
+  const checkpointed = async (row, staged) => {
     const inputs = { schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
       manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
-      profile_sha256: context.profileSha256, engine_sha256: engineSha, engine_args: context.extra, scope: context.scope };
+      profile_sha256: context.profileSha256, engine_sha256: engine.receipt.executable_sha256,
+      engine_args: context.extra, scope: context.scope };
     const saved = readCheckpoint(checkpoints, inputs);
     if (saved && checkpointable(saved) && checkpointArtifactsIntact(context.workdir, saved)) {
       resumed.push(row.ghsa);
       return saved;
     }
     const result = await one(row);
-    if (checkpointable(result)) writeCheckpoint(checkpoints, inputs, result);
+    if (checkpointable(result)) staged.push({ inputs, result });
     return result;
   };
-  const rows = await pool(manifest.cases, Number(opts.jobs ?? 6), checkpointed);
+  const jobs = Number(opts.jobs ?? 6);
+  const rows = [];
+  if (checkpoints) {
+    // Publish only after the group still matches the inputs used in its keys.
+    const groupSize = Math.max(16, jobs);
+    for (let start = 0; start < manifest.cases.length; start += groupSize) {
+      const staged = [];
+      const group = manifest.cases.slice(start, start + groupSize);
+      rows.push(...await pool(group, jobs, row => checkpointed(row, staged)));
+      await verifyPins('case checkpoint');
+      for (const { inputs, result } of staged) writeCheckpoint(checkpoints, inputs, result);
+    }
+  } else {
+    rows.push(...await pool(manifest.cases, jobs, row => one(row)));
+  }
   // Engine timeouts depend on machine load; repeat those cases one at a time
   // so a timeout is only recorded when it happens on an otherwise idle engine.
+  let retried = false;
   for (let index = 0; index < rows.length; index++) {
     if (rows[index].outcome !== 'timeout') continue;
+    retried = true;
     const initial = rows[index];
     const serial = { ...context, scanRoot: join(context.scanRoot, 'serial') };
     rows[index] = { ...(await one(manifest.cases[index], serial)), retried_serially: true,
       initial_scan_sides: initial.scan_sides, initial_captures: initial.captures };
   }
+  if (!checkpoints || retried) await verifyPins('case scoring');
   return { schema: 'factory.recall-result.v1', manifest: manifest.path, manifest_cases_sha256: manifest.casesSha256,
     manifest_sha256: manifest.sha256, ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
     scope: context.scope, engine_args: context.extra,
@@ -834,8 +868,7 @@ async function scorePreparedManifest(manifest, opts, context) {
 async function score(opts) {
   const context = scoringContext(opts, opts.rules);
   const engine = await bindRecallEngine(context.profile, context.bin);
-  context.bin = engine.path;
-  context.engineSha = engine.receipt.executable_sha256;
+  context.engine = engine;
   const out = await scoreManifest(opts.manifest, opts.rules, opts, context);
   await verifyBoundEngine(engine, 'scoring');
   writeFileSync(opts.out, `${JSON.stringify({ ...out, engine: engine.receipt }, null, 1)}\n`);
@@ -1218,15 +1251,15 @@ async function evaluate(input) {
   if (opts['probe-coverage'] !== undefined && !['true', 'false'].includes(opts['probe-coverage'])) {
     throw new Error('--probe-coverage requires true or false');
   }
-  const scoreArm = (manifest, path, settings) => scorePreparedManifest(manifest, settings,
-    { ...scoringContext(settings, path), engineSha: engine.receipt.executable_sha256 });
+  const scoreArm = (manifest, path, settings, expectedRules) => {
+    const context = scoringContext(settings, path);
+    if (context.rulesSha256 !== expectedRules) throw new RecallInputDrift('Evaluation ruleset bytes changed during scoring');
+    return scorePreparedManifest(manifest, settings, { ...context, engine });
+  };
   const dev = [];
   for (const manifest of manifests) {
-    const before = await scoreArm(manifest, opts.baseline, opts);
-    const after = await scoreArm(manifest, opts.candidate, candidateOpts);
-    if (before.ruleset_sha256 !== rules.baseline_sha256 || after.ruleset_sha256 !== rules.candidate_sha256) {
-      throw new Error('Evaluation ruleset bytes changed during scoring');
-    }
+    const before = await scoreArm(manifest, opts.baseline, opts, rules.baseline_sha256);
+    const after = await scoreArm(manifest, opts.candidate, candidateOpts, rules.candidate_sha256);
     dev.push({ manifest: manifest.path, before, after });
   }
   const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }, engine) : [];
