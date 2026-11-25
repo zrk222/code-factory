@@ -4493,6 +4493,95 @@ rules:
       confidence: LOW
       cwe: ["CWE-22"]
       scope: Function parameters joined under a base path in a function that calls fs and has no containment check; callers are not checked.
+  - id: javascript.html-template-unescaped-interpolation
+    message: A value is interpolated into an HTML tag name or quoted attribute of a template string without an escaper; escape it for the attribute context or build the element with DOM APIs.
+    severity: INFO
+    languages: [javascript, typescript]
+    pattern-either:
+      - patterns:
+          - pattern: '`...${$X}...`'
+          - metavariable-pattern:
+              metavariable: $X
+              patterns:
+                - pattern-not: $ESC(...)
+                - pattern-not: $O.$ESC(...)
+          - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex)\s*\})[A-Za-z_$][\w$]*[.\[][\w$.\[\]'"]*\s*\}"
+      # A plain local is reported unless it was assigned from an escaper.
+      - patterns:
+          - pattern: '`...${$X}...`'
+          - metavariable-pattern:
+              metavariable: $X
+              patterns:
+                - pattern-not: $ESC(...)
+                - pattern-not: $O.$ESC(...)
+          - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex)\s*\})(?P<VALUE>[A-Za-z_$][\w$]*)\s*\}"
+          - metavariable-comparison:
+              comparison: str($X) == str($VALUE)
+          - pattern-not-inside: |
+              $X = escapeHtml(...);
+              ...
+          - pattern-not-inside: |
+              $X = escapeHTML(...);
+              ...
+          - pattern-not-inside: |
+              $X = escape_html(...);
+              ...
+          - pattern-not-inside: |
+              $X = escapeAttr(...);
+              ...
+          - pattern-not-inside: |
+              $X = escapeAttribute(...);
+              ...
+          - pattern-not-inside: |
+              $X = escapeXml(...);
+              ...
+          - pattern-not-inside: |
+              $X = escapeXML(...);
+              ...
+          - pattern-not-inside: |
+              $X = escape(...);
+              ...
+          - pattern-not-inside: |
+              $X = encode(...);
+              ...
+          - pattern-not-inside: |
+              $X = sanitize(...);
+              ...
+          - pattern-not-inside: |
+              $X = encodeURIComponent(...);
+              ...
+          - pattern-not-inside: |
+              $X = encodeURI(...);
+              ...
+          - pattern-not-inside: |
+              $X = toAttributeString(...);
+              ...
+          - pattern-not-inside: |
+              $X = $O.escape(...);
+              ...
+          - pattern-not-inside: |
+              $X = $O.escapeHtml(...);
+              ...
+          - pattern-not-inside: |
+              $X = $O.escapeXml(...);
+              ...
+          - pattern-not-inside: |
+              $X = $O.escapeAttr(...);
+              ...
+          - pattern-not-inside: |
+              $X = $O.sanitize(...);
+              ...
+          - pattern-not-inside: |
+              $X = $O.encode(...);
+              ...
+    metadata:
+      tier: review
+      category: security
+      confidence: LOW
+      cwe: ["CWE-79"]
+      scope: Template strings whose markup interpolates a plain identifier or member access into a double-quoted attribute; escaper calls, locals assigned from an escaper and UPPER_CASE constants are excluded.
+    paths:
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/examples/**", "**/scripts/**", "**/build/**", "**/dist/**", "**/gulpfile*", "**/node_modules/**", "**/*.min.js"]
   - id: javascript.dom-innerhtml-from-variable
     message: A non-literal value is assigned to innerHTML or outerHTML; use textContent, or sanitize the markup first.
     severity: INFO
