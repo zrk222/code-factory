@@ -3523,6 +3523,12 @@ rules:
       - pattern: strconv.FormatInt(...)
       - pattern: pq.QuoteIdentifier(...)
       - pattern: pq.QuoteLiteral(...)
+      - patterns:
+          - pattern-either:
+              - pattern: $F(...)
+              - pattern: $O.$F(...)
+          # Validation, allow-list and quoting helpers return a value the caller has vetted.
+          - metavariable-regex: {metavariable: $F, regex: '(?i)^\w*(valid|sanitiz|escape|quote|allow|whitelist)\w*$'}
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -3650,33 +3656,44 @@ rules:
       confidence: LOW
       cwe: [CWE-89]
   - id: java.parameter-sql-text
-    message: A value is concatenated into SQL text; use a PreparedStatement placeholder or a bound query parameter instead.
+    message: A method parameter is concatenated or formatted into SQL text; use a PreparedStatement placeholder or a bound query parameter instead.
     severity: INFO
     languages: [java]
-    patterns:
-      - pattern-either:
-          - patterns:
-              - pattern-either:
-                  - pattern: '"$SQL" + $X'
-                  - pattern: '$A + "$SQL" + $X'
-              - pattern-not: '"$SQL" + "$Y"'
-              - pattern-not: '$A + "$SQL" + "$Y"'
-              - pattern-not: '"$SQL" + $C.$CONST'
-              - pattern-not: '$A + "$SQL" + $C.$CONST'
-              - metavariable-regex:
-                  metavariable: $X
-                  regex: '^(?![A-Z][A-Z0-9_]*$)(?!\d)(?!.*\b(?:quote\w*|escape\w*|getTableName|tableName)\s*\()(?!.*(?:getClass\(\)|\.class)\.get(?:Simple)?Name\(\)\s*$)'
-          - patterns:
-              - pattern-either:
-                  - pattern: 'String.format("$SQL", $ARG, ...)'
-                  - pattern: '"$SQL".formatted($ARG, ...)'
-              # Only string placeholders carry text; %d and the like format numbers.
-              - metavariable-regex:
-                  metavariable: $SQL
-                  regex: '(?s).*%s'
-      - metavariable-regex:
-          metavariable: $SQL
-          regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., $T $P, ...) { ... }
+              - pattern-inside: $M(..., $T $P, ...) { ... }
+          - pattern: $P
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: $X.getClass().getName()
+      - patterns:
+          - pattern-either:
+              - pattern: $F(...)
+              - pattern: $O.$F(...)
+          # Validation, allow-list and quoting helpers return a value the caller has vetted.
+          - metavariable-regex: {metavariable: $F, regex: '(?i)^\w*(valid|sanitiz|escape|quote|allow|whitelist)\w*$'}
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: '"$SQL" + $X'
+              - pattern: '$A + "$SQL" + $X'
+          - metavariable-regex:
+              metavariable: $SQL
+              regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-either:
+              - pattern: 'String.format("$SQL", ...)'
+              - pattern: '"$SQL".formatted(...)'
+          # Only string placeholders carry text; %d and the like format numbers.
+          - metavariable-regex: {metavariable: $SQL, regex: '(?s).*%s'}
+          - metavariable-regex:
+              metavariable: $SQL
+              regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:

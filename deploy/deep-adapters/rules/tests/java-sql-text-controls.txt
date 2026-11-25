@@ -19,6 +19,11 @@ class SearchStore {
         return connection.prepareStatement("select id from documents where owner = ?");
     }
 
+    String history(String order) {
+        // ok: java.parameter-sql-text
+        return String.format("select doc.name from XWikiDocument doc order by doc.date %s", getValidQueryOrder(order, "desc"));
+    }
+
     String constant() {
         // ok: java.parameter-sql-text
         return "select id from documents where kind = " + KIND_DOCUMENT;
