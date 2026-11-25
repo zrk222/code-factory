@@ -3754,7 +3754,8 @@ rules:
       # Every placeholder of a template literal that starts with a SQL statement
       # (`SELECT ... WHERE id = ${userId}`), each reported where it sits. \G chains
       # matches within one template; code-generation templates do not start with SQL.
-      - pattern-regex: '(?i)(?:`\s*\(?\s*(?:select|insert\s+into|update|delete\s+from|with)\b|\G)[^`$]*(?:\$(?!\{)[^`$]*)*\K\$\{[^}`]*\}'
+      # A tagged template (sql`...`, prisma.$queryRaw`...`) binds its values as parameters.
+      - pattern-regex: '(?i)(?:(?<![\w$\].)>])`\s*\(?\s*(?:select|insert\s+into|update|delete\s+from|with)\b|\G)[^`$]*(?:\$(?!\{)[^`$]*)*\K\$\{[^}`]*\}'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -4172,134 +4173,181 @@ rules:
     message: A function parameter is joined under a base directory and used for file access with no containment check; resolve the result and require it to stay under the base.
     severity: INFO
     languages: [javascript, typescript]
-    patterns:
-      - pattern-either:
-          - pattern-inside: function $F(..., $P, ...) { ... }
-          - pattern-inside: async function $F(..., $P, ...) { ... }
-          - pattern-inside: (..., $P, ...) => { ... }
-          - pattern-inside: async (..., $P, ...) => { ... }
-          - pattern-inside: |
-              class $C { ... $M(..., $P, ...) { ... } ... }
-          - pattern-inside: |
-              class $C { ... async $M(..., $P, ...) { ... } ... }
-      - pattern-either:
-          - pattern: path.join($BASE, ..., $P, ...)
-          - pattern: path.resolve($BASE, ..., $P, ...)
-          - pattern: join($BASE, ..., $P, ...)
-          - pattern: resolve($BASE, ..., $P, ...)
-      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
-      - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
-      - metavariable-pattern:
-          metavariable: $BASE
-          patterns:
-            - pattern-not: $P
-      - pattern-either:
-          - pattern-inside: |
+    pattern-either:
+      # A parameter joined under a base directory with path.join/resolve.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $F(..., $P, ...) { ... }
+              - pattern-inside: async function $F(..., $P, ...) { ... }
+              - pattern-inside: (..., $P, ...) => { ... }
+              - pattern-inside: async (..., $P, ...) => { ... }
+              - pattern-inside: |
+                  class $C { ... $M(..., $P, ...) { ... } ... }
+              - pattern-inside: |
+                  class $C { ... async $M(..., $P, ...) { ... } ... }
+          - pattern-either:
+              - pattern: path.join($BASE, ..., $P, ...)
+              - pattern: path.resolve($BASE, ..., $P, ...)
+              - pattern: join($BASE, ..., $P, ...)
+              - pattern: resolve($BASE, ..., $P, ...)
+          - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|path|key|id|slug|target|dest|member|entry|template|page|doc|resource|asset|upload|attachment)\w*$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
+          - metavariable-pattern:
+              metavariable: $BASE
+              patterns:
+                - pattern-not: $P
+          - pattern-either:
+              - pattern-inside: |
+                  function $F(...) {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  }
+              - pattern-inside: |
+                  async function $F(...) {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  }
+              - pattern-inside: |
+                  (...) => {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  }
+              - pattern-inside: |
+                  async (...) => {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  }
+              - pattern-inside: |
+                  class $C { ... $M(...) {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  } ... }
+              - pattern-inside: |
+                  class $C { ... async $M(...) {
+                    ...
+                    $FS.$SINK(...)
+                    ...
+                  } ... }
+          - metavariable-regex: {metavariable: $FS, regex: '^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$'}
+          - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)$'}
+          - pattern-not-inside: |
               function $F(...) {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               }
-          - pattern-inside: |
+          - pattern-not-inside: |
               async function $F(...) {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               }
-          - pattern-inside: |
+          - pattern-not-inside: |
               (...) => {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               }
-          - pattern-inside: |
+          - pattern-not-inside: |
               async (...) => {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               }
-          - pattern-inside: |
+          - pattern-not-inside: |
               class $C { ... $M(...) {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               } ... }
-          - pattern-inside: |
+          - pattern-not-inside: |
               class $C { ... async $M(...) {
                 ...
-                $FS.$SINK(...)
+                <... $X.startsWith(...) ...>
                 ...
               } ... }
-      - metavariable-regex: {metavariable: $FS, regex: '^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$'}
-      - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)$'}
-      - pattern-not-inside: |
-          function $F(...) {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          async function $F(...) {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          (...) => {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          async (...) => {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          class $C { ... $M(...) {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          } ... }
-      - pattern-not-inside: |
-          class $C { ... async $M(...) {
-            ...
-            <... $X.startsWith(...) ...>
-            ...
-          } ... }
-      - pattern-not-inside: |
-          function $F(...) {
-            ...
-            <... path.relative(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          async function $F(...) {
-            ...
-            <... path.relative(...) ...>
-            ...
-          }
-      - pattern-not-inside: |
-          class $C { ... async $M(...) {
-            ...
-            <... path.relative(...) ...>
-            ...
-          } ... }
-      - pattern-not-inside: |
-          function $F(...) {
-            ...
-            <... $P.includes("..") ...>
-            ...
-          }
-      - pattern-not-inside: |
-          async function $F(...) {
-            ...
-            <... $P.includes("..") ...>
-            ...
-          }
-      - pattern-not: path.join($BASE, ..., path.basename($P), ...)
-      - pattern-not: path.resolve($BASE, ..., path.basename($P), ...)
+          - pattern-not-inside: |
+              function $F(...) {
+                ...
+                <... path.relative(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              async function $F(...) {
+                ...
+                <... path.relative(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              class $C { ... async $M(...) {
+                ...
+                <... path.relative(...) ...>
+                ...
+              } ... }
+          - pattern-not-inside: |
+              function $F(...) {
+                ...
+                <... $P.includes("..") ...>
+                ...
+              }
+          - pattern-not-inside: |
+              async function $F(...) {
+                ...
+                <... $P.includes("..") ...>
+                ...
+              }
+          - pattern-not: path.join($BASE, ..., path.basename($P), ...)
+          - pattern-not: path.resolve($BASE, ..., path.basename($P), ...)
+      # A template-built path whose segment after a slash is a file-like name or
+      # field (`${dir}/${doc.filename}`), handed to an fs call with no containment.
+      - patterns:
+          - pattern-either:
+              - pattern: $FS.$SINK($T, ...)
+              - patterns:
+                  - pattern-inside: |
+                      $V = $T
+                      ...
+                  - pattern: $FS.$SINK($V, ...)
+          - metavariable-pattern:
+              metavariable: $T
+              pattern: '`...`'
+          - metavariable-regex:
+              metavariable: $T
+              regex: '(?s)^`.*/\$\{\s*(?:[\w$]+(?:\?)?\.)*(?i:[\w$]*(?:file|path|name|title|key|slug|dest|target|entry|member|asset|attachment|upload))[\w$]*\s*(?:as\s+\w+\s*)?\}'
+          - metavariable-regex:
+              metavariable: $T
+              regex: '^(?!(?s).*(?:\$\{\s*(?:__dirname|__filename|process\.cwd\(\)|import\.meta\.dirname)\s*\}/[^`$]*`$|/node_modules/))'
+          - metavariable-regex: {metavariable: $FS, regex: '^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$'}
+          - metavariable-regex: {metavariable: $SINK, regex: '^(readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|mkdir|mkdirSync|readdir|readdirSync|rename|renameSync|copyFile|copyFileSync|appendFile|appendFileSync|symlink|symlinkSync|open|openSync|stat|statSync|existsSync|copy|move|outputFile|remove)$'}
+          - pattern-not-inside: |
+              function $F(...) {
+                ...
+                <... $X.startsWith(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              async function $F(...) {
+                ...
+                <... $X.startsWith(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              (...) => {
+                ...
+                <... $X.startsWith(...) ...>
+                ...
+              }
+          - pattern-not-inside: |
+              async (...) => {
+                ...
+                <... $X.startsWith(...) ...>
+                ...
+              }
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -4319,7 +4367,7 @@ rules:
           patterns:
             - pattern-not: $ESC(...)
             - pattern-not: $O.$ESC(...)
-      - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})[A-Za-z_$][\w$.\[\]'"]*\s*\}"
+      - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex)\s*\})[A-Za-z_$][\w$.\[\]'"]*\s*\}"
     metadata:
       tier: review
       category: security
@@ -4347,6 +4395,8 @@ rules:
             - pattern-not: DOMPurify.sanitize(...)
             - pattern-not: sanitize(...)
             - pattern-not: $ESC(...)
+      # A static placeholder on a class or namespace (AST.emptyHTML) is not data.
+      - metavariable-regex: {metavariable: $V, regex: '^(?![A-Z]\w*\.\w*(?i:empty|blank|none|default)\w*$)'}
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
