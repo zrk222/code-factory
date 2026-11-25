@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate,
-  familiesFor, isTestPath, caseDigest, sha256, scoreManifest, validateRecallManifest } from './recall_harness.mjs';
+  familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest } from './recall_harness.mjs';
+import { changedFiles, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
 --- a/app/files.py
@@ -178,6 +179,67 @@ test('observation loop queues control alerts once and gates on labels', async ()
 
 const feederRow = { ghsa: 'GHSA-xxxx-yyyy-zzzz', ecosystem: 'PyPI', cwes: ['CWE-79'],
   published: '2026-09-10', repository: 'example/label-demo', fix: '1'.repeat(40) };
+
+test('priorExposure reads nested evidence and ignores non-JSON notes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'recall-prior-'));
+  try {
+    const nested = join(root, 'archived');
+    mkdirSync(nested);
+    writeFileSync(join(nested, 'exposed.json'), JSON.stringify([feederRow, feederRow]));
+    writeFileSync(join(root, 'note.txt'), 'GHSA-aaaa-bbbb-cccc');
+    const exposure = priorExposure([root, join(root, 'missing')]);
+    assert.deepEqual([...exposure.ids], [feederRow.ghsa]);
+    assert.deepEqual([...exposure.fixes], [feederRow.fix]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('changedFiles and engineCoverage distinguish source loss from analysis failures', () => {
+  const changes = changedFiles(Buffer.from('M\0app.py\0A\0new.py\0'));
+  assert.throws(() => changedFiles(Buffer.from('M\0app.py')), /Invalid changed-file inventory/);
+  assert.throws(() => engineCoverage({ paths: {} }), /Missing engine scan paths/);
+  const coverage = engineCoverage({ paths: { scanned: ['./app.py'] },
+    errors: [{ type: 'Syntax error', spans: [{ file: './app.py' }] }] });
+  const packet = { path: 'app.py', bytes: 2, sha256: sha256('ok') };
+  const scan = { submitted: true, verified: true, coverage, findings: [] };
+  const file_coverage = fileCoverage(changes, { packets: { old: [packet], fixed: [packet] },
+    scans: { old: scan, fixed: scan }, extensions: ['py'], isTestPath });
+  assert.equal(file_coverage.old[0].sha256, packet.sha256);
+  assert.equal(file_coverage.old[0].state, 'partial');
+  assert.deepEqual(summarizeCoverage([{ file_coverage }, {}]), {
+    'partial:parse': 2, 'absent:added_in_fix': 1, 'excluded:no_scored_hunk': 1,
+  });
+});
+
+test('observe preserves labels and rejects concurrent updates and corrupt input', () => {
+  const root = mkdtempSync(join(tmpdir(), 'recall-labels-'));
+  try {
+    const controls = join(root, 'controls.json'), labels = join(root, 'labels.json');
+    const lock = labels + '.lock';
+    writeFileSync(controls, JSON.stringify({ deltas: [] }));
+    const run = () => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'observe', '--controls', controls,
+      '--labels', labels], { encoding: 'utf8', timeout: 20000 });
+    assert.equal(run().status, 0);
+    const initial = readFileSync(labels, 'utf8');
+    writeFileSync(lock, '');
+    const blocked = run();
+    assert.notEqual(blocked.status, 0);
+    assert.match(blocked.stderr, /EEXIST/);
+    assert.equal(readFileSync(labels, 'utf8'), initial);
+    assert.ok(existsSync(lock));
+    rmSync(lock);
+    writeFileSync(labels, 'invalid JSON');
+    assert.notEqual(run().status, 0);
+    assert.equal(readFileSync(labels, 'utf8'), 'invalid JSON');
+    assert.equal(existsSync(lock), false);
+    writeFileSync(labels, initial);
+    assert.equal(run().status, 0);
+    assert.equal(readFileSync(labels, 'utf8'), initial);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('the feeder coalesces repeated metadata and rejects an ambiguous fix', () => {
   const window = { from: '2026-09-01', to: '2026-10-01' };

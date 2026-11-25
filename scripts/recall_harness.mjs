@@ -22,7 +22,7 @@
 // a precision proxy.
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, engineCoverage, fileCoverage, summarizeCoverage } from './recall_coverage.mjs';
@@ -48,8 +48,12 @@ export const scopeExtensions = (ecosystem, scope = 'ecosystem') =>
 
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec|specs|testdata|fixtures?)(\/|$)|_test\.|\.test\.|\.spec\.|Tests?\.(java|cs)$/;
 
-export const isTestPath = path => TEST_PATH.test(path);
-export const familiesFor = cwes => [...new Set(cwes.map(cwe => FAMILIES[cwe]).filter(Boolean))].sort();
+export function isTestPath(path) {
+  return TEST_PATH.test(path);
+}
+export function familiesFor(cwes) {
+  return [...new Set(cwes.map(cwe => FAMILIES[cwe]).filter(Boolean))].sort();
+}
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export const caseDigest = cases => sha256(JSON.stringify(cases.map(sortKeys)));
 
@@ -807,11 +811,39 @@ export function checkLabels(labels, deltas) {
     unclear: (labels?.labels ?? []).filter(label => label.verdict === 'UNCLEAR').length };
 }
 
+function readOptionalLabels(path) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return null;
+  }
+}
+
+function updateLabels(path, deltas) {
+  const destination = resolve(path);
+  const lock = destination + '.lock';
+  const descriptor = openSync(lock, 'wx', 0o600);
+  try {
+    const queued = queueLabels(readOptionalLabels(destination), deltas);
+    const staging = mkdtempSync(join(dirname(destination), '.recall-labels-'));
+    try {
+      const staged = join(staging, 'labels.json');
+      writeFileSync(staged, `${JSON.stringify(queued, null, 1)}\n`, { mode: 0o600 });
+      renameSync(staged, destination);
+    } finally {
+      rmSync(staging, { recursive: true, force: true });
+    }
+    return queued;
+  } finally {
+    closeSync(descriptor);
+    rmSync(lock, { force: true });
+  }
+}
+
 async function observe(opts) {
   const deltas = JSON.parse(readFileSync(opts.controls, 'utf8'));
-  const existing = existsSync(opts.labels) ? JSON.parse(readFileSync(opts.labels, 'utf8')) : null;
-  const queued = queueLabels(existing, deltas.deltas ?? deltas.controls ?? []);
-  writeFileSync(opts.labels, `${JSON.stringify(queued, null, 1)}\n`);
+  const queued = updateLabels(opts.labels, deltas.deltas ?? deltas.controls ?? []);
   console.log(`${queued.labels.length} labels, ${queued.labels.filter(label => !label.verdict).length} pending`);
 }
 
