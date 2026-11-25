@@ -207,6 +207,26 @@ development manifests (556 IDs, 1,288 fix commits). Composition: npm 69,
 PyPI 68, Go 61, Packagist 49, Maven 33, RubyGems 2. It is to be scored once,
 by the agreed candidate, with the registered 282-case denominator.
 
+## Advisory-level recall, pre-registered 25 Nov (not yet computed)
+
+Alongside the strict hunk rule, which stays primary, a whole-repository
+metric matches how a scanner is deployed: is the vulnerable version flagged
+anywhere? It is defined here before it is computed on any cohort.
+
+- **Flagged anywhere:** a case counts when a scan of the full tree at the
+  fix parent, with the production profile and in-ecosystem non-test files,
+  yields at least one alert in the advisory's CWE family. Denominator: the
+  registered cohort; unknown cases (no in-language change, unfetchable,
+  incomplete scan) are reported separately and count as not flagged.
+- **Reported with it, always:** (a) the same rate on the full tree at the
+  fix commit ("still flagged after fix"); (b) same-family alerts per KLOC on
+  the 18 benign controls; (c) "fix-resolved": a same-family alert at the
+  parent that is absent at the fix, in a changed file.
+
+"Flagged anywhere" can be met by an unrelated alert in a large repository,
+so it is only read together with (a) and (b). Per-language results are
+reported for each metric.
+
 ## Recall harness (`scripts/recall_harness.mjs`)
 
 Held-out numbers are produced by one committed tool instead of scratch scripts.

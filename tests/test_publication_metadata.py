@@ -683,7 +683,8 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert "docs/commercial-model.md" in readme
     normalized = " ".join(readme.split())
     assert "The full `[factory]` install requires Python 3.11+" in normalized
-    assert "12 languages, one review workflow" in normalized
+    assert "JavaScript/TypeScript and Python, plus qualified native workers" in normalized
+    assert "12 languages, one review workflow" not in normalized
     assert "worker setup and coverage gaps remain explicit" in normalized
     assert "38/40 decided alerts (95%; Wilson 83.5–98.6%)" in normalized
     assert "12 additional unclear" in normalized
