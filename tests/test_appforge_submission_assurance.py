@@ -1,5 +1,6 @@
 from __future__ import annotations
 import builtins
+import errno
 import hashlib
 import json
 import subprocess
@@ -8,6 +9,7 @@ import struct
 import zlib
 from pathlib import Path
 import pytest
+import factoryline.appforge_submission_assurance as assurance_module
 from factoryline.app_review_gate import RULES, verify_app_review_readiness
 from factoryline.appforge_store_media import verify_store_media
 from factoryline.appforge_submission_assurance import (
@@ -437,9 +439,21 @@ def _quality(tmp_path: Path) -> Path:
     return tmp_path / ".factory/appforge/quality-audit.json"
 
 
+def _disable_hard_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable(*_args: object) -> None:
+        raise OSError(errno.ENOTSUP, "hard links are unavailable")
+
+    monkeypatch.setattr(assurance_module.os, "link", unavailable)
+
+
+@pytest.mark.parametrize("hard_links", [True, False])
 def test_submission_dossier_only_emits_markdown_and_pdf_after_all_build_bound_gates_pass(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hard_links: bool,
 ) -> None:
+    if not hard_links:
+        _disable_hard_links(monkeypatch)
     receipt = verify_submission_assurance(
         tmp_path,
         _assurance_contract(tmp_path),
@@ -458,11 +472,138 @@ def test_submission_dossier_only_emits_markdown_and_pdf_after_all_build_bound_ga
     assert "Audited and passed" in markdown.read_text(encoding="utf-8")
     assert CANDIDATE["bundle_identifier"] in markdown.read_text(encoding="utf-8")
     assert pdf.read_bytes().startswith(b"%PDF-")
+    saved = json.loads((tmp_path / receipt["path"]).read_bytes())
+    assurance_module.verify_current_submission_assurance(tmp_path, saved, CANDIDATE)
 
 
+def test_report_failure_cannot_unlock_rehearsal_and_can_retry_same_paths(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from test_appforge_release_rehearsal import _profile
+    from factoryline.appforge_evidence_kit import CANDIDATE_SCHEMA
+
+    dossier = Path(".factory/appforge/submission-assurance.json")
+    reports = Path(".factory/appforge/reports")
+    quality = _quality(tmp_path)
+    candidate = _write(
+        tmp_path / "candidate.json",
+        {"schema": CANDIDATE_SCHEMA, "candidate": CANDIDATE},
+    )
+    profile = _profile(tmp_path, CANDIDATE)
+    assure = [
+        "revenue",
+        "submission-assurance",
+        "--root",
+        str(tmp_path),
+        "--contract",
+        str(_assurance_contract(tmp_path)),
+        "--app-review",
+        str(_app_review(tmp_path)),
+        "--store-media",
+        str(_media(tmp_path)),
+        "--saas-proof",
+        str(_saas(tmp_path)),
+        "--quality-audit",
+        str(quality),
+        "--out",
+        str(dossier),
+        "--report-dir",
+        str(reports),
+        "--json",
+    ]
+    rehearse = [
+        "revenue",
+        "appforge-rehearse",
+        "--root",
+        str(tmp_path),
+        "--candidate",
+        str(candidate),
+        "--submission-assurance",
+        str(dossier),
+        "--profile",
+        str(profile),
+        "--json",
+    ]
+    status = ["revenue", "appforge-status", "--root", str(tmp_path), "--json"]
+
+    def fail_pdf(path: Path, _receipt: dict) -> None:
+        path.write_bytes(b"interrupted")
+        raise OSError("simulated PDF render failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(assurance_module, "_pdf", fail_pdf)
+        assert main(assure) == 2
+        assert "simulated PDF render failure" in capsys.readouterr().err
+    assert not (tmp_path / dossier).exists()
+    assert not list((tmp_path / reports).glob("*"))
+    assert main(rehearse) == 2
+    capsys.readouterr()
+
+    assert main(assure) == 0
+    ready = json.loads(capsys.readouterr().out)
+    assert ready["marker"] == "APPFORGE_SUBMISSION_DOSSIER_READY"
+    assert len(ready["reports"]) == 2
+    assert main(status) == 0
+    assert json.loads(capsys.readouterr().out)["submission_assurance"]["latest"]["ok"]
+
+    original = quality.read_bytes()
+    failed = json.loads(original)
+    failed.update(marker="APPFORGE_QUALITY_AUDIT_BLOCKED", ok=False)
+    failed.pop("receipt_sha256")
+    _write(quality, {**failed, "receipt_sha256": _receipt_sha(failed)})
+    assert main(rehearse) == 2
+    error = json.loads(capsys.readouterr().err)
+    assert "UX, accessibility, and full-stack audit" in error["message"]
+    assert "submission-assurance" in error["message"]
+    assert main(status) == 0
+    stale = json.loads(capsys.readouterr().out)["submission_assurance"]
+    assert stale["latest"] is None
+    assert (
+        "UX, accessibility, and full-stack audit"
+        in stale["blockers"][str(dossier.as_posix())]
+    )
+
+    quality.write_bytes(original)
+    assert main(rehearse) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["external_ready_count"] == 0
+    assert result["authority"]["execution"] is False
+    assert main(status) == 0
+    assert (
+        json.loads(capsys.readouterr().out)["release_rehearsal"]["current_count"] == 1
+    )
+
+    (tmp_path / ready["reports"]["pdf"]).unlink()
+    assert main(status) == 0
+    projections = json.loads(capsys.readouterr().out)
+    assert (
+        "PDF report"
+        in projections["submission_assurance"]["blockers"][dossier.as_posix()]
+    )
+    assert projections["release_rehearsal"]["current_count"] == 0
+    assert main(rehearse) == 2
+    assert "PDF report" in json.loads(capsys.readouterr().err)["message"]
+
+    replacement = dossier.with_name("submission-assurance-retry.json")
+    assure[assure.index("--out") + 1] = str(replacement)
+    assure[assure.index("--report-dir") + 1] = str(reports / "retry")
+    assert main(assure) == 0
+    capsys.readouterr()
+    assert main(status) == 0
+    assert (
+        json.loads(capsys.readouterr().out)["submission_assurance"]["latest"]["path"]
+        == replacement.as_posix()
+    )
+
+
+@pytest.mark.parametrize("hard_links", [True, False])
 def test_submission_dossier_blocks_candidate_mismatch_without_emitting_final_reports(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hard_links: bool,
 ) -> None:
+    if not hard_links:
+        _disable_hard_links(monkeypatch)
     saas = _saas(tmp_path)
     value = json.loads(saas.read_text(encoding="utf-8"))
     value["release_candidate"]["build_number"] = "wrong"
@@ -487,6 +628,20 @@ def test_submission_dossier_blocks_candidate_mismatch_without_emitting_final_rep
         for item in receipt["findings"]
     )
     assert not (tmp_path / ".factory/appforge/reports").exists()
+
+
+def test_portable_publication_does_not_replace_an_existing_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_hard_links(monkeypatch)
+    target = tmp_path / "receipt.json"
+    target.write_bytes(b"existing dossier")
+    with pytest.raises(RevenueForgeError) as error:
+        assurance_module._atomic_json(target, {"ok": True}, exclusive=True)
+    assert error.value.code == "APPFORGE_ASSURANCE_OUTPUT_EXISTS"
+    assert target.read_bytes() == b"existing dossier"
+    assert list(tmp_path.iterdir()) == [target]
 
 
 def test_submission_dossier_fails_closed_when_the_contract_requires_oracle_authority(
@@ -575,6 +730,39 @@ def test_store_media_rejects_truncated_or_alpha_pngs(tmp_path: Path) -> None:
     assert receipt["ok"] is False
     assert any(
         item["code"] == "APPFORGE_MEDIA_ALPHA_REJECTED" for item in receipt["findings"]
+    )
+
+
+def test_store_media_hash_and_metadata_share_one_bounded_file_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import appforge_store_media
+
+    _media(tmp_path)
+    reads: list[Path] = []
+    original = Path.open
+
+    def count_reads(path, mode="r", *args, **kwargs):
+        if path.suffix == ".png" and mode == "rb":
+            reads.append(path)
+        return original(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", count_reads)
+    contract = tmp_path / "media-contract.json"
+    evidence = tmp_path / "media-evidence.json"
+    ready = verify_store_media(
+        tmp_path, contract, evidence, Path("verified-media.json")
+    )
+    assert ready["ok"] is True
+    assert len(reads) == len(set(reads)) == 2
+
+    monkeypatch.setattr(appforge_store_media, "MAX_MEDIA_BYTES", 8)
+    blocked = verify_store_media(
+        tmp_path, contract, evidence, Path("oversize-media.json")
+    )
+    assert blocked["ok"] is False
+    assert any(
+        item["code"] == "APPFORGE_MEDIA_FILE_TOO_LARGE" for item in blocked["findings"]
     )
 
 

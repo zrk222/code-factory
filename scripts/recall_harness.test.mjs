@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -181,6 +182,67 @@ test('gainRetention requires the archived cohort, hit and exact source packets',
   assert.deepEqual(gainRetention(reference, pairs({ ...hit, source_packets: { old: [], fixed: [] } })).lost, [ghsa]);
   assert.deepEqual(gainRetention(reference, pairs(hit, '2'.repeat(64))).lost, [ghsa]);
   assert.throws(() => gainRetention({ ...reference, gained: [ghsa, ghsa] }, pairs(hit)), /checkpoint membership differs/);
+});
+
+function savedAdjudication(root) {
+  const pair = { manifest_cases_sha256: '1'.repeat(64), manifest_sha256: '2'.repeat(64),
+    profile_sha256: '3'.repeat(64), ruleset_sha256: '4'.repeat(64) };
+  const engine = '5'.repeat(64);
+  const loc = ['fixture.arithmetic', 'sample.py', 1];
+  const ghsa = 'GHSA-2345-6789-cfgh';
+  const second = 'GHSA-2345-6789-cfgj';
+  const base = { status: 'scored', hunk_hit: true, hunk_findings: [loc], revisions: { old: 'a', fixed: 'b' },
+    source_packets: { old: [{ path: 'sample.py', sha256: 'c' }], fixed: [] },
+    file_coverage: { old: [{ path: 'sample.py', state: 'reported_scanned' }], fixed: [] } };
+  const sources = [{ ...base, ghsa }, { ...base, ghsa: second }];
+  const before = { ...pair, cases: sources, summary: { hunk_hits: 2, fix_side_residual_alerts: 0 } };
+  const after = { ...before, ruleset_sha256: '6'.repeat(64), cases: sources.map(row => ({ ...row, hunk_hit: false })),
+    summary: { hunk_hits: 0, fix_side_residual_alerts: 0 } };
+  const score = { schema: 'factory.recall-evaluation.v1', candidate_sha256: pair.ruleset_sha256,
+    engine: { executable_sha256: engine }, gained: [ghsa, second],
+    dev: [{ manifest_cases_sha256: pair.manifest_cases_sha256, after_evidence: before,
+      cases: sources.map(row => ({ ghsa: row.ghsa, before: 'miss', after: 'hit', hunk_findings: row.hunk_findings })) }] };
+  const vote = (id, final) => ({ item: id, repository_case: `example/owned ${id}`, rule: loc[0], file: loc[1],
+    line: loc[2], on_fix_hunk: true, final });
+  const fp = vote(ghsa, 'FP');
+  const adjudication = { schema: 'factory.adjudicated-precision.v1', candidate: 'owned (ruleset 44444444)',
+    cohort: 'owned (spent), changed files', rows: [fp, fp, vote(second, 'TP')] };
+  const save = (path, value) => {
+    const bytes = JSON.stringify(value);
+    writeFileSync(join(root, path), bytes);
+    return { path, sha256: sha256(bytes) };
+  };
+  const plan = { schema: 'factory.recall-adjudicated-losses.v1', score: save('score.json', score),
+    adjudication: save('adjudication.json', adjudication), manifest_cases_sha256: pair.manifest_cases_sha256 };
+  save('loss-plan.json', plan);
+  return { ghsa, second, before, after, score, plan, engine, loc, path: join(root, 'loss-plan.json') };
+}
+
+test('hash-bound adjudicated losses exempt only complete FP-only hunk removals', () => {
+  const root = mkdtempSync(join(tmpdir(), 'recall-loss-policy-'));
+  try {
+    const { ghsa, second, before, after, score, plan, engine, loc, path } = savedAdjudication(root);
+    const policy = loadAdjudicatedLosses(path, engine);
+    assert.equal(policy.receipt.score_sha256, plan.score.sha256);
+    assert.equal(policy.cases.get(ghsa).identity, hunkIdentity([loc]));
+    const compare = (left, right) => gate({ dev: [{ before: left, after: right }], controls: [], lossPolicy: policy });
+    const reviewed = compare(before, after);
+    assert.deepEqual(reviewed.raw_lost_baseline_hits, [ghsa, second]);
+    assert.deepEqual(reviewed.lost_fp_only, [ghsa]);
+    assert.deepEqual(reviewed.lost_baseline_hits, [second]);
+    assert.equal(reviewed.decision, 'REJECT');
+    assert.deepEqual(gainRetention(score, [{ after }], policy), { required: 2, retained: 0, lost: [second], lost_fp_only: [ghsa] });
+    const otherScope = { manifest_cases_sha256: '9'.repeat(64) };
+    assert.deepEqual(compare({ ...before, ...otherScope }, { ...after, ...otherScope }).lost_fp_only, []);
+    assert.deepEqual(compare({ ...before, engine_args: ['--other-options'] }, after).lost_fp_only, []);
+    const withUnreviewed = { ...before.cases[0], hunk_findings: [loc, loc] };
+    assert.deepEqual(compare({ ...before, cases: [withUnreviewed, before.cases[1]] }, after).lost_fp_only, []);
+    const incomplete = { ...after.cases[0], file_coverage: { old: [], fixed: [{ path: 'sample.py', state: 'partial' }] } };
+    assert.deepEqual(compare(before, { ...after, cases: [incomplete, after.cases[1]] }).lost_fp_only, []);
+    assert.throws(() => loadAdjudicatedLosses(path, '0'.repeat(64)), /engine differs/);
+    writeFileSync(join(root, 'adjudication.json'), '{}');
+    assert.throws(() => loadAdjudicatedLosses(path, engine), /source fingerprint differs/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('coverage gaps never count as misses and regressions fail on either revision', () => {
@@ -388,10 +450,10 @@ test('manifest validation preserves old seals and refuses changed case bytes', (
   assert.throws(() => validateRecallManifest({ cases }), /case digest differs/);
 });
 
-async function feederFixture(run) {
+async function feederFixture(run, row = feederRow) {
   const root = mkdtempSync(join(tmpdir(), 'recall-feeder-'));
   try {
-    const workdir = join(root, 'work'), caseKey = caseDigest([feederRow]);
+    const workdir = join(root, 'work'), caseKey = caseDigest([row]);
     const prepared = join(workdir, 'cases-v4', caseKey);
     const source = join(prepared, 'old', 'sample.py');
     const old = Buffer.from('print("before")\r\n'), fixed = Buffer.from('print("after")\n');
@@ -410,7 +472,7 @@ async function feederFixture(run) {
     const inventoryPath = join(prepared, 'changes.z');
     writeFileSync(inventoryPath, inventory);
     writeFileSync(join(prepared, 'case.json'), JSON.stringify({ status: 'ready', case_sha256: caseKey,
-      revisions: { old: '3'.repeat(40), fixed: feederRow.fix }, diff_sha256: sha256(diff),
+      revisions: { old: '3'.repeat(40), fixed: row.fix }, diff_sha256: sha256(diff),
       changed_files_sha256: sha256(inventory),
       source_packets: { old: fingerprints(old), fixed: fingerprints(fixed) } }));
 
@@ -433,7 +495,7 @@ async function feederFixture(run) {
       "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !process.argv.includes('--timeout=15')));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
       "const disputedParse = old && ruleText.includes('# candidate-parse');",
-      "const results = old && !missingCoverage ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
+      "const results = old && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
       "if (control && ruleText.includes('# control-missing-path')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'missing.py' }, region: { startLine: 1 } } }] });",
       "if (control && ruleText.includes('# reviewed-control')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn: 1 } } }] });",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
@@ -445,7 +507,7 @@ async function feederFixture(run) {
     const profile = join(root, 'profile.json');
     writeFileSync(profile, JSON.stringify({ engine: 'semgrep', commands: [{ argv: ['scanner', scanner, '--config', '{rules}',
       '--sarif-output', '{report}', '{source}'] }] }));
-    const rowText = JSON.stringify({ cases: [feederRow], cases_sha256: caseKey }, null, 2) + '\n';
+    const rowText = JSON.stringify({ cases: [row], cases_sha256: caseKey }, null, 2) + '\n';
     const manifest = join(root, 'manifest.json');
     writeFileSync(manifest, rowText);
     const baseline = join(root, 'baseline.yml'), candidate = join(root, 'candidate.yml');
@@ -802,6 +864,41 @@ test('a fixed parser probe classifies only reproduced engine limits', () => feed
     assert.equal(observation.sha256, evidence.source_packets.old[0].sha256);
   }
 }));
+
+test('evaluate preserves the raw lost hit with a pinned all-FP adjudication plan', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, profile, baseline, candidate, opts } = fixture;
+  writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# clean-miss\n');
+  const before = await scoreManifest(manifest, baseline, opts);
+  const prior = before.cases[0], expected = prior.ghsa;
+  const score = { schema: 'factory.recall-evaluation.v1', candidate_sha256: before.ruleset_sha256,
+    engine: { executable_sha256: sha256(readFileSync(process.execPath)) }, gained: [expected],
+    dev: [{ manifest_cases_sha256: before.manifest_cases_sha256, after_evidence: before,
+      cases: [{ ghsa: expected, before: 'miss', after: 'hit', hunk_findings: prior.hunk_findings }] }] };
+  const adjudication = { schema: 'factory.adjudicated-precision.v1', cohort: 'owned (spent)',
+    candidate: `owned (ruleset ${before.ruleset_sha256.slice(0, 8)})`,
+    rows: prior.hunk_findings.map(([rule, file, line], index) => ({ item: `owned-${index}`,
+      repository_case: `example/label-demo ${expected}`, rule, file, line, on_fix_hunk: true, final: 'FP' })) };
+  const save = (name, value) => {
+    const bytes = JSON.stringify(value);
+    writeFileSync(join(root, name), bytes);
+    return { path: name, sha256: sha256(bytes) };
+  };
+  const scoreRef = save('score.json', score);
+  const plan = save('loss-plan.json', { schema: 'factory.recall-adjudicated-losses.v1', score: scoreRef,
+    adjudication: save('adjudication.json', adjudication), manifest_cases_sha256: before.manifest_cases_sha256 });
+  const output = join(root, 'adjudicated-evaluation.json');
+  const run = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--baseline', baseline,
+    '--candidate', candidate, '--manifest', manifest, '--profile', profile, '--workdir', workdir,
+    '--opengrep', process.execPath, '--out', output, '--adjudicated-losses', join(root, plan.path),
+    '--retain-gains-from', join(root, scoreRef.path)], { encoding: 'utf8', timeout: 20000 });
+  assert.equal(run.status, 0, run.stderr);
+  const report = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(report.raw_lost_baseline_hits, [expected]);
+  assert.deepEqual(report.lost_fp_only, [expected]);
+  assert.deepEqual(report.lost_baseline_hits, []);
+  assert.deepEqual(report.gain_retention.lost_fp_only, [expected]);
+  assert.equal(report.gain_retention.retained, 0);
+}, { ...feederRow, ghsa: 'GHSA-2345-6789-cfgh' }));
 
 test('declared control directories are excluded and unrelated missing paths remain coverage gaps', () => feederFixture(fixture => {
   const { root, workdir, profile, baseline } = fixture;

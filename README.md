@@ -40,10 +40,11 @@ below belong to the earlier ruleset, not a fresh score for the shipped variant.
 the whole history, check visible behavior against approved pixels and Prestige
 tokens, and operate a foreground coordinator with signed fresh-worker handoffs.
 Missing evidence stays visible; your team retains the release decision.
-The newer advisory study records CodeQL detections in **15/91 analyzed cases**,
-with **70/161 not executed**. Pattern replay found **6/161 on exposed cases**;
-the lanes are not interchangeable and neither number is whole-CF blind recall.
-[Inspect the lane-separated record](docs/evidence/advisory-recall-factory-20261121.json).
+The advisory study records strict old-side fix-hunk detections. CodeQL hit
+**15/91 analyzed cases**, with **70/161 unexecuted**. Pattern replay hit
+**6/161 exposed cases**. Coverage and recall vary by lane and ecosystem.
+These measurements leave whole-product blind recall unestablished.
+[Inspect the lane-separated record](docs/evidence/advisory-recall-factory-20261121.json) or [verify recall and precision evidence](docs/RECALL_EVIDENCE.md).
 
 - **JavaScript/TypeScript and Python, plus qualified native workers:** on the
   frozen Sep–Oct 2026 held-out advisories, the pattern lane found

@@ -169,7 +169,7 @@ def test_pypi_storefront_has_identity_and_canonical_links():
     }
     assert (
         project["description"]
-        == "Local evidence for AI-built code: 12-language native security rules, SARIF review, signed claims and human-owned release decisions."
+        == "Local evidence for AI-built code with configured native security workers, SARIF review, signed claims and human-owned release decisions."
     )
     assert {
         "mvp",
@@ -683,7 +683,9 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert "docs/commercial-model.md" in readme
     normalized = " ".join(readme.split())
     assert "The full `[factory]` install requires Python 3.11+" in normalized
-    assert "JavaScript/TypeScript and Python, plus qualified native workers" in normalized
+    assert (
+        "JavaScript/TypeScript and Python, plus qualified native workers" in normalized
+    )
     assert "12 languages, one review workflow" not in normalized
     assert "worker setup and coverage gaps remain explicit" in normalized
     assert "38/40 decided alerts (95%; Wilson 83.5–98.6%)" in normalized

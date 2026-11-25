@@ -11,7 +11,7 @@ from factoryline.appforge_release_rehearsal import (
     create_release_rehearsal,
     release_rehearsal_projection,
 )
-from factoryline.appforge_submission_assurance import RECEIPT_SCHEMA as ASSURANCE_SCHEMA
+from factoryline.appforge_submission_assurance import verify_submission_assurance
 from factoryline.cli import main
 from factoryline.revenueforge import RevenueForgeError
 import re
@@ -31,6 +31,14 @@ from factoryline.release_route_integrity import release_route_checks
 import factoryline.release_candidate as candidate
 from scripts.verify_release_preflight import main as verify_release_preflight_main
 from scripts.verify_release_preflight import verify as verify_release_preflight
+from test_appforge_submission_assurance import (
+    CANDIDATE,
+    _app_review,
+    _assurance_contract,
+    _media,
+    _quality,
+    _saas,
+)
 
 
 def _sha(value: object) -> str:
@@ -48,20 +56,28 @@ def _write(path: Path, value: object) -> Path:
 
 
 def _candidate(root: Path) -> tuple[dict[str, str], Path]:
-    candidate = {
-        "bundle_identifier": "com.example.app",
-        "version": "1.2.3",
-        "build_number": "42",
-        "source_commit": "a" * 40,
-    }
+    candidate = CANDIDATE.copy()
     return candidate, _write(
         root / "candidate.json", {"schema": CANDIDATE_SCHEMA, "candidate": candidate}
     )
 
 
 def _assurance(root: Path, candidate: dict[str, str]) -> Path:
-    core = {"schema": ASSURANCE_SCHEMA, "ok": True, "candidate": candidate}
-    return _write(root / "assurance.json", {**core, "receipt_sha256": _sha(core)})
+    assert candidate == CANDIDATE
+    path = root / "assurance.json"
+    if not path.exists():
+        receipt = verify_submission_assurance(
+            root,
+            _assurance_contract(root),
+            _app_review(root),
+            _media(root),
+            _saas(root),
+            _quality(root),
+            path,
+            Path("reports"),
+        )
+        assert receipt["ok"]
+    return path
 
 
 def _profile(
@@ -162,6 +178,39 @@ def test_release_rehearsal_cli_writes_only_the_local_sealed_receipt(
     payload = json.loads(capsys.readouterr().out)
     assert payload["marker"] == "APPFORGE_RELEASE_REHEARSAL_READY"
     assert output.is_file()
+
+
+def test_release_rehearsal_status_reports_stale_and_ready_receipts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    candidate, candidate_path = _candidate(tmp_path)
+    assurance = _assurance(tmp_path, candidate)
+    profile = _profile(tmp_path, candidate)
+    second_profile = tmp_path / "second-profile.json"
+    second_profile.write_bytes(profile.read_bytes())
+    ready = Path(".factory/appforge/release-rehearsal-41.json")
+    stale = Path(".factory/appforge/release-rehearsal-42.json")
+    create_release_rehearsal(tmp_path, candidate_path, assurance, profile, ready)
+    create_release_rehearsal(tmp_path, candidate_path, assurance, second_profile, stale)
+    second_profile.unlink()
+
+    assert (
+        main(
+            [
+                "revenue",
+                "appforge-status",
+                "--root",
+                str(tmp_path),
+                "--stage",
+                "release-rehearsal",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert f"Stale or invalid receipt {stale.as_posix()}" in output
+    assert f"APPFORGE_RELEASE_REHEARSAL_READY  {ready.as_posix()}" in output
 
 
 @pytest.mark.parametrize(
@@ -332,10 +381,9 @@ def test_release_rehearsal_rejects_tampered_assurance_and_credential_like_profil
     tmp_path: Path,
 ) -> None:
     candidate, candidate_path = _candidate(tmp_path)
-    tampered = _assurance(tmp_path, candidate)
-    value = json.loads(tampered.read_text(encoding="utf-8"))
+    value = json.loads(_assurance(tmp_path, candidate).read_text(encoding="utf-8"))
     value["ok"] = False
-    _write(tampered, value)
+    tampered = _write(tmp_path / "tampered-assurance.json", value)
     with pytest.raises(RevenueForgeError) as assurance_error:
         create_release_rehearsal(
             tmp_path,

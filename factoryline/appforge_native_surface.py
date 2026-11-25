@@ -8,10 +8,11 @@ receipt separate from device, Store media, TestFlight, and Apple evidence.
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from .contract import write_atomic_json
 
 from datetime import datetime
-import json
 from pathlib import Path
 import re
 from typing import Any
@@ -518,17 +519,19 @@ def verify_native_surface(
     return {**result, "path": destination.relative_to(workspace).as_posix()}
 
 
-def native_surface_projection(root: Path) -> dict[str, Any]:
+def native_surface_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read only hash-valid native-surface receipts for Graph Ops/editor adapters."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
-    for path in sorted(
-        (workspace / ".factory" / "appforge").rglob("*native-surface*.json")
-    )[:100]:
+    for path in sorted(receipt_paths(workspace, "*native-surface*.json", inventory))[
+        :100
+    ]:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            value = read_receipt(workspace, path)
+        except (OSError, ValueError):
             invalid.append(path.relative_to(workspace).as_posix())
             continue
         if _sealed(value):
