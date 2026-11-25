@@ -534,7 +534,7 @@ async function feederFixture(run, row = feederRow) {
 
     const scanner = join(root, 'scanner.mjs');
     writeFileSync(scanner, [
-      "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';",
+      "import { appendFileSync, readFileSync, statSync, writeFileSync } from 'node:fs';",
       "import { basename, dirname } from 'node:path';",
       "if (process.argv.includes('--dump-ast')) { if (process.env.FIXTURE_PARSER_LIMIT === 'true') { console.error('node type: ERROR'); process.exit(3); } process.exit(0); }",
       "const rules = process.argv[process.argv.indexOf('--config') + 1];",
@@ -562,7 +562,9 @@ async function feederFixture(run, row = feederRow) {
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
       "if (devTimeout || controlTimeout) issues.push({ descriptor: { id: 'Timeout' }, level: 'warning' });",
       "const defaultIgnored = files.filter(path => path === 'ignored.py' || (path === 'candidate-only.py' && ruleText.includes('# candidate-default-ignore')));",
-      "const skipped = [...defaultIgnored.map(path => ({ path, reason: 'semgrepignore_patterns_match' })), ...(files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [])];",
+      "const sizeLimit = Number(process.argv.find(arg => arg.startsWith('--max-target-bytes='))?.split('=')[1] ?? 1000000);",
+      "const oversized = files.filter(path => path.startsWith('large-') && statSync(path).size > sizeLimit);",
+      "const skipped = [...defaultIgnored.map(path => ({ path, reason: 'semgrepignore_patterns_match' })), ...[...(files.includes('skipped.py') ? ['skipped.py'] : []), ...oversized].map(path => ({ path, reason: 'exceeded_size_limit' }))];",
       "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'unreported.py' && !skipped.some(item => item.path === path)), skipped }, errors: [...(files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : []), ...(disputedParse ? [{ type: 'Syntax error', path: 'sample.py' }] : [])] }));",
       "writeFileSync(report, JSON.stringify({ runs: [{ results, invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: issues }] }] }));",
       "process.exitCode = incomplete ? 2 : 0;",
@@ -1071,6 +1073,36 @@ test('paired controls record only shared scanner ignores and keep candidate skip
     { path: 'candidate-only.py', reason: 'semgrepignore_patterns_match' },
   ]);
   assert.deepEqual(rejected.scan_sides.after.control_coverage.excluded, exclusions);
+}));
+
+test('controls scan bounded larger files on both arms and preserve explicit size limits', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline } = fixture;
+  const control = join(root, 'control'), output = join(root, 'sizes.json');
+  mkdirSync(control);
+  writeFileSync(join(control, 'sample.py'), 'VALUE = 1\n');
+  writeFileSync(join(control, 'large-table.py'), Buffer.alloc(1_428_813, 32));
+  const run = (...extra) => {
+    const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls',
+      '--rules', baseline, '--rules', baseline, '--profile', profile, '--workdir', workdir,
+      '--opengrep', process.execPath, '--dir', control, '--out', output, ...extra],
+    { encoding: 'utf8', timeout: 30000 });
+    return { status: result.status, delta: JSON.parse(readFileSync(output, 'utf8')).deltas[0] };
+  };
+  const recovered = run();
+  assert.equal(recovered.status, 0);
+  assert.equal(recovered.delta.max_target_bytes, 1_428_813);
+  for (const side of Object.values(recovered.delta.scan_sides)) {
+    assert.deepEqual(side.control_coverage, { complete: true, expected: 2, reported: 2, gaps: [] });
+  }
+  const explicit = run('--extra-arg', '--max-target-bytes=1000000');
+  assert.equal(explicit.status, 2);
+  assert.equal(explicit.delta.max_target_bytes, undefined);
+  writeFileSync(join(control, 'large-over-budget.py'), Buffer.alloc(2_097_153, 32));
+  const beyond = run();
+  assert.equal(beyond.status, 2);
+  for (const side of Object.values(beyond.delta.scan_sides)) {
+    assert.deepEqual(side.control_coverage.gaps, [{ path: 'large-over-budget.py', reason: 'exceeded_size_limit' }]);
+  }
 }));
 
 test('control checkpoints resume only while the final and retry reports still match', () => feederFixture(fixture => {

@@ -1244,6 +1244,20 @@ async function evaluate(input) {
 }
 
 const CONTROL_TIMEOUT_RETRY_SECONDS = 15;
+const OPENGREP_DEFAULT_TARGET_BYTES = 1_000_000;
+const CONTROL_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
+
+function controlTargetBytes(directory, source, base, candidate) {
+  if (base.profile.engine !== 'semgrep') return null;
+  const argv = [...base.profile.commands[0].argv, ...base.extra, ...candidate.extra];
+  if (argv.some(arg => /^--max-target-bytes(?:=|$)/.test(arg))) return null;
+  // Match the existing source-evidence envelope for bounded local files.
+  const largest = source.eligible.reduce((limit, path) => {
+    const bytes = statSync(join(directory, path)).size;
+    return bytes <= CONTROL_SOURCE_MAX_BYTES && bytes > limit ? bytes : limit;
+  }, OPENGREP_DEFAULT_TARGET_BYTES);
+  return largest > OPENGREP_DEFAULT_TARGET_BYTES ? largest : null;
+}
 
 function controlRetryArgs(profile, baselineArgs, candidateArgs) {
   const hasTimeoutOverride = [...profile.commands[0].argv, ...baselineArgs, ...candidateArgs]
@@ -1470,25 +1484,31 @@ async function controlDeltas_(opts) {
       const reportsRoot = realpathSync(workdir);
       if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
       const source = await controlSource(directory, excludedDirs);
+      const maxTargetBytes = controlTargetBytes(directory, source, base, candidate);
+      const targetArgs = maxTargetBytes ? [`--max-target-bytes=${maxTargetBytes}`] : [];
+      const effectiveBase = { ...base, extra: [...base.extra, ...targetArgs] };
+      const effectiveCandidate = { ...candidate, extra: [...candidate.extra, ...targetArgs] };
       const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v3',
         scorer_sha256: scorerSha256(), dir,
         source_tree: source.evidence, excluded: excludedDirs, baseline_sha256: base.rulesSha256 ?? sha256(readFileSync(base.rules)),
         candidate_sha256: candidate.rulesSha256 ?? sha256(readFileSync(candidate.rules)),
         profile_sha256: sha256(Buffer.from(JSON.stringify(base.profile))),
-        engine_sha256: await fileFingerprint(executablePath(base.bin)), extra: base.extra,
-        candidate_extra: candidate.extra } : null;
+        engine_sha256: await fileFingerprint(executablePath(base.bin)), extra: effectiveBase.extra,
+        candidate_extra: effectiveCandidate.extra } : null;
       const savedDelta = checkpointInputs && readCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs);
       if (savedDelta && await controlCheckpointIntact(reportsRoot, savedDelta)) {
         deltas.push({ ...savedDelta, resumed_from_checkpoint: true });
         continue;
       }
       scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
-      const context = { base, candidate, directory, source, workdir: reportsRoot, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
+      const context = { base: effectiveBase, candidate: effectiveCandidate, directory, source,
+        workdir: reportsRoot, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
       let attempt = await controlPair(context, '');
-      let recovery = {};
+      const sizing = maxTargetBytes ? { max_target_bytes: maxTargetBytes } : {};
+      let recovery = sizing;
       if (attempt.issues.includes('timeout') && !attempt.issues.includes('error')) {
         const extra = controlRetryArgs(base.profile, base.extra, candidate.extra);
-        recovery = { initial_scan_sides: attempt.scan_sides, retry_extra_args: extra };
+        recovery = { ...sizing, initial_scan_sides: attempt.scan_sides, retry_extra_args: extra };
         attempt = await controlPair(context, '-retry', extra);
       }
       const { old, now, scan_sides, issues, control_scope_sha256 } = attempt;
