@@ -23,7 +23,7 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { accessSync, closeSync, constants, createReadStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, delimiter, dirname, extname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
 
@@ -982,24 +982,69 @@ function controlRetryArgs(profile, baselineArgs, candidateArgs) {
   return profile.engine === 'semgrep' && !hasTimeoutOverride ? [`--timeout=${CONTROL_TIMEOUT_RETRY_SECONDS}`] : [];
 }
 
-async function controlObservation(context, directory, report) {
-  let notes;
-  try {
-    if (context.rulesSha256) verifyRulesBytes(context);
-    const findings = await scan(context, directory, report);
-    notes = findings.notes;
-    if (context.rulesSha256) verifyRulesBytes(context);
-    return { findings, notes };
-  } catch (error) {
-    return { findings: [], notes: { ...(notes ?? error.diagnostics), other: 1, detail: String(error.message).slice(-300) } };
-  }
+function insideControl(root, path) {
+  const local = relative(root, path);
+  return !isAbsolute(local) && local !== '..' && !local.startsWith(`..${sep}`);
 }
 
-async function controlPair({ base, candidate, directory, reports }, suffix, retryArgs = []) {
-  const old = await controlObservation({ ...base, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`);
-  const now = await controlObservation({ ...candidate, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`);
+async function controlSource(root) {
+  const files = [];
+  const visit = async (directory, prefix) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === '.git') continue;
+      const location = join(directory, entry.name), path = prefix + entry.name;
+      if (entry.isDirectory()) {
+        await visit(location, path + '/');
+      } else if (entry.isFile()) {
+        files.push({ path, sha256: await fileFingerprint(location) });
+      } else if (entry.isSymbolicLink()) {
+        const target = realpathSync(location);
+        const targetParts = relative(root, target).split(sep);
+        if (!insideControl(root, target) || targetParts.includes('.git')) {
+          throw new Error('Control source link leaves the source tree');
+        }
+        files.push({ path, link_target: targetParts.join('/') });
+      } else {
+        throw new Error('Unsupported entry in control source tree');
+      }
+    }
+  };
+  await visit(root, '');
+  return { paths: new Set(files.map(file => file.path)),
+    evidence: { sha256: caseDigest(files.sort(byPath)), entries: files.length } };
+}
+
+async function controlObservation(context, directory, report, source) {
+  let notes, findings = [];
+  try {
+    if (context.rulesSha256) verifyRulesBytes(context);
+    findings = await scan({ ...context, packetPaths: source.paths }, directory, report);
+    notes = findings.notes;
+    if (context.rulesSha256) verifyRulesBytes(context);
+    if (findings.some(finding => !source.paths.has(finding.path))) {
+      throw new Error('Control finding path is absent from the source tree');
+    }
+  } catch (error) {
+    findings = [];
+    notes = { ...(notes ?? error.diagnostics), other: 1, detail: String(error.message).slice(-300) };
+  }
+  try {
+    if ((await controlSource(directory)).evidence.sha256 !== source.evidence.sha256) {
+      throw new Error('Control source byte fingerprints differ');
+    }
+  } catch (error) {
+    return { findings: [], notes: { ...notes, other: 1, source_error: String(error.message).slice(-300) }, sourceInvalid: true };
+  }
+  return { findings, notes };
+}
+
+async function controlPair({ base, candidate, directory, reports, source }, suffix, retryArgs = []) {
+  const old = await controlObservation({ ...base, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`, source);
+  const now = old.sourceInvalid ? { findings: [], notes: null }
+    : await controlObservation({ ...candidate, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`, source);
   const scan_sides = { before: old.notes, after: now.notes };
-  return { old: old.findings, now: now.findings, scan_sides, issues: Object.values(scan_sides).map(scanIssue) };
+  const issues = [old, now].map(side => side.sourceInvalid ? 'error' : scanIssue(side.notes));
+  return { old: old.findings, now: now.findings, scan_sides, issues };
 }
 
 function controlFindingIndex(findings) {
@@ -1025,12 +1070,17 @@ async function controlDeltas_(opts) {
     rules: resolve(after), rulesSha256: opts.ruleFingerprints?.candidate_sha256 };
   const deltas = [];
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
-  mkdirSync(workdir, { recursive: true });
-  const scanRoot = mkdtempSync(join(workdir, 'controls-'));
+  let scanRoot;
   for (const dir of [].concat(opts.dir)) {
     try {
-      const directory = resolve(dir);
-      const context = { base, candidate, directory, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
+      const directory = realpathSync(resolve(dir));
+      if (insideControl(directory, workdir)) throw new Error('Control scan reports must be outside the source tree');
+      mkdirSync(workdir, { recursive: true });
+      const reportsRoot = realpathSync(workdir);
+      if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
+      scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
+      const source = await controlSource(directory);
+      const context = { base, candidate, directory, source, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
       let attempt = await controlPair(context, '');
       let recovery = {};
       if (attempt.issues.includes('timeout') && !attempt.issues.includes('error')) {
@@ -1040,12 +1090,12 @@ async function controlDeltas_(opts) {
       }
       const { old, now, scan_sides, issues } = attempt;
       if (issues.some(Boolean)) {
-        deltas.push({ dir, error: 'Control scan incomplete', scan_sides, ...recovery });
+        deltas.push({ dir, error: 'Control scan incomplete', source_tree: source.evidence, scan_sides, ...recovery });
         continue;
       }
       const { added, removed } = controlFindingDeltas(old, now);
       const snip = f => withSnippet(directory, f);
-      deltas.push({ dir, before: old.length, after: now.length, scan_sides, ...recovery,
+      deltas.push({ dir, before: old.length, after: now.length, source_tree: source.evidence, scan_sides, ...recovery,
         added: added.map(snip), removed: removed.map(snip),
         emitted: now.map(snip) });
     } catch (error) { deltas.push({ dir, error: String(error.message).slice(-300) }); }

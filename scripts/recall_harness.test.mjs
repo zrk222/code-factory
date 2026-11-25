@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -424,11 +424,13 @@ async function feederFixture(run) {
       "const control = basename(process.cwd()) === 'control';",
       "const ruleText = readFileSync(rules, 'utf8');",
       "if (old && ruleText.includes('# rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
+      "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
       "const incomplete = !old && ruleText.includes('# incomplete');",
       "const devTimeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
       "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !process.argv.includes('--timeout=15')));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
       "const results = old && !missingCoverage ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
+      "if (control && ruleText.includes('# control-missing-path')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'missing.py' }, region: { startLine: 1 } } }] });",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
       "if (devTimeout || controlTimeout) issues.push({ descriptor: { id: 'Timeout' }, level: 'warning' });",
       "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'skipped.py' && path !== 'unreported.py'), skipped: files.includes('skipped.py') ? [{ path: 'skipped.py', reason: 'exceeded_size_limit' }] : [] }, errors: files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : [] }));",
@@ -609,6 +611,61 @@ test('changed prepared source, diff and inventory bytes cannot yield a measured 
   const inventoryDrift = await scoreManifest(manifest, baseline, opts);
   assert.equal(inventoryDrift.summary.scored, 0);
   assert.match(inventoryDrift.cases[0].detail, /inventory fingerprint differs/);
+}));
+
+test('paired controls bind source bytes and stop when input changes or leaves the tree', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline, candidate } = fixture;
+  const control = join(root, 'control'), output = join(root, 'controls.json');
+  mkdirSync(join(control, '.git'), { recursive: true });
+  writeFileSync(join(control, '.git', 'HEAD'), 'ignored checkout metadata\n');
+  const original = Buffer.from('# benign café input\r\n');
+  writeFileSync(join(control, 'sample.py'), original);
+  const stableRules = readFileSync(baseline, 'utf8');
+  writeFileSync(candidate, stableRules);
+
+  const controls = () => {
+    const run = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls', '--rules', baseline,
+      '--rules', candidate, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
+      '--dir', control, '--out', output], { encoding: 'utf8', timeout: 20000 });
+    assert.ok(existsSync(output), run.stderr);
+    return { status: run.status, result: JSON.parse(readFileSync(output, 'utf8')).deltas[0] };
+  };
+  const stable = controls();
+  assert.equal(stable.status, 0);
+  const sourceTree = { sha256: caseDigest([{ path: 'sample.py', sha256: sha256(original) }]), entries: 1 };
+  assert.deepEqual(stable.result.source_tree, sourceTree);
+
+  writeFileSync(baseline, stableRules + '# control-source-drift\n');
+  const drift = controls();
+  assert.equal(drift.status, 2);
+  assert.deepEqual(drift.result.source_tree, sourceTree);
+  assert.match(drift.result.scan_sides.before.source_error, /source byte fingerprints differ/);
+  assert.equal(drift.result.scan_sides.after, null);
+  assert.equal(drift.result.initial_scan_sides, undefined);
+
+  writeFileSync(baseline, stableRules);
+  writeFileSync(candidate, stableRules + '# control-missing-path\n');
+  const missing = controls();
+  assert.equal(missing.status, 2);
+  assert.match(missing.result.scan_sides.after.detail, /finding path is absent/);
+
+  writeFileSync(candidate, stableRules);
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+  mkdirSync(join(control, 'target'));
+  symlinkSync(join(control, 'target'), join(control, 'inside'), linkType);
+  const linked = controls();
+  assert.equal(linked.status, 0);
+  assert.deepEqual(linked.result.source_tree, { sha256: caseDigest([
+    { path: 'inside', link_target: 'target' },
+    { path: 'sample.py', sha256: sha256(readFileSync(join(control, 'sample.py'))) },
+  ]), entries: 2 });
+
+  const outside = join(root, 'outside');
+  mkdirSync(outside);
+  symlinkSync(outside, join(control, 'outside'), linkType);
+  const escaped = controls();
+  assert.equal(escaped.status, 2);
+  assert.match(escaped.result.error, /link leaves the source tree/);
 }));
 
 test('a successful serial retry keeps the original timed-out report fingerprint', () => feederFixture(async fixture => {
