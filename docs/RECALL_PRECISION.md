@@ -110,6 +110,137 @@ Still open: calls through dynamic imports or string dispatch (for example
 GeoNode's handler loaded by module path) are not resolved, so such sinks stay
 `public_api` or `unresolved`.
 
+## Fresh and overflow advisory sets (24 Nov)
+
+The November 24 selections were frozen from advisory metadata before their
+diffs were opened. The overflow sample covers npm and PyPI. The figures
+below describe the historical rule snapshots and their original scoring.
+
+| Set | Ruleset | Hunk recall | Wilson 95% | Path traversal |
+|---|---|---|---|---|
+| Fresh, original 85 scored | #384 head | 10/85 (11.8%) | 6.5–20.3% | 1/33 |
+| Fresh, after path tuning on these cases | historical traversal revision | 19/85 (22.4%) | 14.8–32.3% | 10/33 |
+| Overflow, original 56 scored | #384 head | 4/56 (7.1%) | 2.8–17.0% | 2/26 |
+| Overflow, original 56 scored | historical traversal revision | 5/56 (8.9%) | 3.9–19.3% | 3/26 |
+
+A repository and fix identity check revised the fresh baseline to
+[10/83 (12.0%)](https://github.com/zrk222/code-factory/blob/22bae917cbdfe39ca8c3e9a9fbf978b75a7ab6a1/docs/evidence/heldout-recall-results-20261124-fresh.json).
+The exposed tuning result retains its original 85-case denominator.
+
+The [overflow receipt](evidence/path-traversal-rules-20261124.json) records
+four scored rows matching three previously seen fixes. The retained
+historical candidate has **3/22 path hits and 5/52 overall**, across 49
+distinct scored fixes. The baseline receipt has aggregate totals, so the
+adjusted paired gain and retention of baseline hits remain unmeasured.
+The receipt keeps the original rule hash and outcomes. The containment
+correction has separate development controls and awaits benchmark scoring.
+
+Historical controls recorded 11 additional Python alerts, five additional
+JavaScript alerts, and zero firings of the Python request rule across 48
+Python repositories. These are alert counts. A paired run with blinded
+adjudication is needed to measure precision and the incremental effect of
+cross-function reach.
+
+## Paired development receipts (24 Nov, evening)
+
+Baseline is the main ruleset `816bbef3`. Development sets only; the Sep–Oct
+held-out set was not scored. Strict hunk recall, same definition as above.
+
+| Candidate | Fresh /85 | Overflow /56 | 113 set /107 | 161 set /148 | Lost | Residuals per hit | Control alerts | Decision |
+|---|---|---|---|---|---|---|---|---|
+| baseline `816bbef3` | 10 | 4 | 18 | 19 | — | 0.75 | — | — |
+| [`b986ab2`](evidence/recall-evaluation-b986ab2-dev.json) | 30 | 9 (/55) | 18 | 21 | 0 | 0.78 | +22 | ACCEPT |
+| [`21299b0`](evidence/recall-evaluation-21299b0-dev.json) | 30 | 9 | 18 | 30 | 0 | 0.77 | +22 | REJECT (one control) |
+| [`a79afe7`](evidence/recall-evaluation-a79afe7-dev.json) | 29 | 9 | 18 | 30 | 0 | 0.78 | +21 | ACCEPT |
+| [`07ebe50`](evidence/recall-evaluation-07ebe50-dev.json) | 29 | 9 | 18 | 30 | 0 | 0.78 | +21 | ACCEPT |
+
+`21299b0` adds Ruby and Java SQL-text rules, Go ordering/grouping sinks, and
+merges two rule pairs to stay at 64 rules. It passes every development
+gate. It fails one control gate. On pdf.js, both rulesets time out on the
+emscripten `*_nowasm_fallback.js` files. The candidate times out once more
+after a rescan, and it does so deterministically. The cause is the generic
+`run(`/`shell(` wrapper sink of `javascript.parameter-shell-command`. With
+those two names removed, that rule runs on one such file in 0.9 s instead
+of 7.6 s. `a79afe7` drops those two names and is accepted; it gives up
+one exposed hit (nocobase calls a local `run(command, env)` wrapper).
+Engine for all three receipts: OpenGrep 1.15.0, binary sha256 `a10cebc3…0e33`;
+`a79afe7` ruleset sha256 `2affe435…bbbe`; `07ebe50` (branch-aware Python
+format checks, fs and database receiver identity) ruleset sha256 `e3e5787c…`.
+
+Harness fixes found by these runs: the scan profile is pinned for both sides
+of a run; a parse warning that quotes source text is no longer counted as an
+engine timeout; and a control pair that differs only in timeouts is rescanned
+once, with the first attempt kept.
+
+## Sep–Oct held-out set, scored once (25 Nov)
+
+The [Sep–Oct manifest](evidence/heldout-recall-manifest-20261124-sepoct.json)
+(124 advisories, sha256 `d8a5f3bc…2a73`) was frozen from metadata in
+`5168ec4`, before the rule changes above. It shares no advisory or fix
+commit with any development set. Each ruleset scored it once, with the
+same harness, profile and engine
+([identities](evidence/heldout-recall-results-20261125-sepoct-identities.txt)).
+
+| Ruleset | Strict hunk recall | Wilson 95% | Path | XSS | Command | Alerts in changed files |
+|---|---|---|---|---|---|---|
+| [main `816bbef3`](evidence/heldout-recall-results-20261125-sepoct-baseline-816bbef3.json) | 13/124 (10.5%); 13/110 known (11.8%) | 7.0–19.2% (known) | 2/33 | 6/32 | 3/13 | 44 |
+| [candidate `07ebe50`](evidence/heldout-recall-results-20261125-sepoct-candidate-07ebe50.json) | 14/124 (11.3%); 14/110 known (12.7%) | 7.7–20.2% (known) | 3/33 | 6/32 | 3/13 | 91 |
+
+Fourteen cases are unknown (13 change no in-language source, one fix is
+unfetchable). The candidate gains one case (GHSA-8mcc-hrx5-hvxc, PyPI path)
+and loses none. Changed-file alerts double for that one gain.
+
+Most of the development gains did not carry over. On the exposed sets the
+same candidate went from 51 to 86 hits; on this held-out set it gains one.
+The rule changes since 24 Nov fit the exposed cases more than they
+generalize. They should not be cited as a recall improvement beyond 11.3% of the
+registered 124 (12.7% of the 110 with known outcomes).
+This manifest is now spent: any later scoring of it is a development run.
+
+## Q2 2026 held-out set, frozen 25 Nov (sealed)
+
+[282 advisories](evidence/heldout-recall-manifest-20261125-q2.json) published
+2026-04-01..2026-06-30, frozen from GitHub advisory-database metadata only
+(candidate metadata sha256 `6b45382a…c7e7`), before any further rule change,
+excluding every advisory and fix commit in `docs/evidence` and in the exposed
+development manifests (556 IDs, 1,288 fix commits). Composition: npm 69,
+PyPI 68, Go 61, Packagist 49, Maven 33, RubyGems 2. It is to be scored once,
+by the agreed candidate, with the registered 282-case denominator.
+
+## Advisory-level recall, pre-registered 25 Nov (not yet computed)
+
+Alongside the strict hunk rule, which stays primary, a whole-repository
+metric matches how a scanner is deployed: is the vulnerable version flagged
+anywhere? It is defined here before it is computed on any cohort.
+
+- **Flagged anywhere:** a case counts when a scan of the full tree at the
+  fix parent, with the production profile and in-ecosystem non-test files,
+  yields at least one alert in the advisory's CWE family. Denominator: the
+  registered cohort; unknown cases (no in-language change, unfetchable,
+  incomplete scan) are reported separately and count as not flagged.
+- **Reported with it, always:** (a) the same rate on the full tree at the
+  fix commit ("still flagged after fix"); (b) same-family alerts per KLOC on
+  the 18 benign controls; (c) "fix-resolved": a same-family alert at the
+  parent that is absent at the fix, in a changed file.
+
+"Flagged anywhere" can be met by an unrelated alert in a large repository,
+so it is only read together with (a) and (b). Per-language results are
+reported for each metric.
+
+## Recall harness (`scripts/recall_harness.mjs`)
+
+Held-out numbers are produced by one committed tool instead of scratch scripts.
+
+| Command | What it does |
+|---|---|
+| `freeze` | Selects cases from advisory metadata only. It excludes every earlier advisory ID and every earlier fix commit found under `docs/evidence`, keeps one case per fix commit and at most `--per-repo` per repository, and records a case digest. |
+| `score` | Runs the production profile argv (`deploy/deep-adapters/profiles/semgrep-pattern-limited.json`) with only the binary, ruleset and I/O paths substituted. It reports strict hunk recall (primary), trace overlap (an alert whose source or dataflow step is on a changed line; diagnostic only), file recall, fix-side residuals, and outcomes split into hit, miss, engine timeout, unknown and error. Alerts in changed files are reported as a review budget. |
+| `evaluate` | The gate for one candidate ruleset against a baseline: every dev manifest plus benign control repositories. It rejects lost baseline hits, new engine errors or timeouts, more fix-side residuals, control growth beyond `--max-control-increase`, and, with `--labels`, labeled false positives that return or labeled true positives that disappear. A flag on trial (for example `--taint-intrafile`) can apply to the candidate only. |
+| `observe` | Adds new control alerts to a label file (`TP`, `FP`, `UNCLEAR`, or pending). Labels are keyed by rule, repository, path and snippet digest, so line shifts do not orphan them. |
+
+A held-out manifest is scored once per ruleset; any later scoring of it is a
+development run and is reported as such.
+
 ## What a release claim needs
 
 1. **A new frozen advisory set.** The 113 set has been used to design rules,

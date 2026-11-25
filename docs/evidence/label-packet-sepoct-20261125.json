@@ -1,0 +1,464 @@
+{
+ "schema": "factory.label-packet.v1",
+ "cohort": "Sep-Oct 2026 held-out (spent; manifest d8a5f3bc), candidate e9b80fd2 alerts in changed files",
+ "seed": 20261125,
+ "instructions": "For each item, decide whether the marked line (>) is a real instance of the claimed weakness: attacker- or user-influenced data can reach it in a realistic deployment of this library or application, with no effective validation in the shown or implied code. Answer TP, FP or UNCLEAR, with one sentence of reasoning. Judge each item on its own; do not look up advisories, fixes or other labels.",
+ "items": [
+  {
+   "item": "c121311f70c5",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/composition/useCopyCode.ts",
+   "line": 48,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   43                })\n   44                .finally(() => {\n   45                  if (copyButton.dataset.isIcon) {\n   46                    copyButton.dataset.tips = msg;\n   47                  } else {\n   48>                   copyButton.innerHTML = msg;\n   49                  }\n   50  \n   51                  clearTimer = window.setTimeout(() => {\n   52                    if (copyButton.dataset.isIcon) {\n   53                      copyButton.dataset.tips = text;"
+  },
+  {
+   "item": "ba9487e0c7b9",
+   "repository_case": "GHSA-gcr2-9v8m-gq45",
+   "file": "packages/@dicebear/initials/src/index.ts",
+   "line": 38,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   33      options.chars ?? 2,\n   34    );\n   35  \n   36    // prettier-ignore\n   37    const svg = [\n   38>     `<text x=\"50%\" y=\"50%\" font-family=\"${escapeXml(fontFamily)}\" font-size=\"${fontSize}\" font-weight=\"${fontWeight}\" fill=\"${escapeXml(textColor)}\" text-anchor=\"middle\" dy=\"${(fontSize * .356).toFixed(3)}\">${escapeXml(initials)}</text>`,\n   39    ].join('');\n   40  \n   41    return {\n   42      attributes: {\n   43        viewBox: '0 0 100 100',"
+  },
+  {
+   "item": "5dbd6d89d1ff",
+   "repository_case": "GHSA-pq96-jpmf-w254",
+   "file": "ui/src/plugins/meta/Meta.js",
+   "line": 132,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  127            tag.setAttribute(att, metaType[name][att])\n  128          }\n  129        }\n  130        tag.dataset.qmeta = name\n  131        if (type === 'script') {\n  132>         tag.innerHTML = metaType[name].innerHTML || ''\n  133        }\n  134        document.head.append(tag)\n  135      }\n  136    })\n  137    Object.keys(add.htmlAttr)"
+  },
+  {
+   "item": "606e7d959d8b",
+   "repository_case": "GHSA-6wfj-92cw-88vg",
+   "file": "js/gitDiffReal/generateDiff/index.js",
+   "line": 30,
+   "claimed_weakness": "command injection",
+   "context": "   25    // Single quotes is needed here to avoid .. event not found\n   26    var gitHashCmd1 = 'printf ' + JSON.stringify(str1) + ' | git ' + gitDir + ' hash-object -w --stdin'\n   27    var gitHashCmd2 = 'printf ' + JSON.stringify(str2) + ' | git ' + gitDir + ' hash-object -w --stdin'\n   28  \n   29    var gitHashObj1 = exec(gitHashCmd1, {silent: true})\n   30>   var gitHashObj2 = exec(gitHashCmd2, {silent: true})\n   31  \n   32    /* istanbul ignore else */\n   33    if (gitHashObj1.code === 0 && gitHashObj2.code === 0) {\n   34  \n   35      var sha1 = gitHashObj1.stdout.replace(CR, '')"
+  },
+  {
+   "item": "96eb5f20f582",
+   "repository_case": "GHSA-99rq-75j6-5j9f",
+   "file": "kernel/server/serve.go",
+   "line": 949,
+   "claimed_weakness": "path traversal",
+   "context": "  944  \t// \u52a0\u5bc6\u7b14\u8bb0\u672c\u7684\u8d44\u6e90\u662f\u5bc6\u6587\uff0cimaging.Open \u65e0\u6cd5\u89e3\u6790\uff0c\u8df3\u8fc7\u7f29\u7565\u56fe\u751f\u6210\uff08\u7531 serveEncryptedAsset \u89e3\u5bc6\u8f93\u51fa\u539f\u56fe\uff09\n  945  \tif model.IsEncryptedAssetPath(assetAbsPath) {\n  946  \t\treturn false\n  947  \t}\n  948  \tif style := context.Query(\"style\"); style == \"thumb\" && model.NeedGenerateAssetsThumbnail(assetAbsPath) { // \u8bf7\u6c42\u7f29\u7565\u56fe\n  949> \t\tthumbnailPath := filepath.Join(util.TempDir, \"thumbnails\", \"assets\", requestPath)\n  950  \t\tif !gulu.File.IsExist(thumbnailPath) {\n  951  \t\t\t// \u5982\u679c\u7f29\u7565\u56fe\u4e0d\u5b58\u5728\uff0c\u5219\u751f\u6210\u7f29\u7565\u56fe\n  952  \t\t\terr := model.GenerateAssetsThumbnail(assetAbsPath, thumbnailPath)\n  953  \t\t\tif err != nil {\n  954  \t\t\t\tlogging.LogErrorf(\"generate thumbnail failed: %s\", err)"
+  },
+  {
+   "item": "bad875d6293c",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 162,
+   "claimed_weakness": "command injection",
+   "context": "  157  }\n  158  \n  159  export function listParentCommits(input: { sha: string }): string[] | null {\n  160    const limit = 200;\n  161    try {\n  162>     execSync(`git fetch --depth=${limit} origin ${input.sha}`);\n  163    } catch (error) {\n  164      if (error instanceof Error && error.message.includes(\"not our ref\")) {\n  165        return [];\n  166      }\n  167    }"
+  },
+  {
+   "item": "16f122fc004f",
+   "repository_case": "GHSA-2cmg-v53w-8xfp",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/confluenceToMarkdown.ts",
+   "line": 165,
+   "claimed_weakness": "path traversal",
+   "context": "  160                'This document looks to exist inside the GitHub repo. Will end the action.',\n  161              );\n  162            }\n  163          }\n  164  \n  165>         await fs.writeFile(repoFileDir, YAML.stringify(mkdocsFile));\n  166  \n  167          // This grabs the confluence html and converts it to markdown and adds attachments\n  168          const html = getConfluenceDoc.results[0].body.export_view.value;\n  169          const markdownToPublish = NodeHtmlMarkdown.translate(html);\n  170          let newString: string = markdownToPublish;"
+  },
+  {
+   "item": "6a4afde2db72",
+   "repository_case": "GHSA-65hg-cf3f-5m39",
+   "file": "ts/Core/Renderer/HTML/AST.ts",
+   "line": 614,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  609              //    https://issues.chromium.org/issues/40222135\n  610          }\n  611  \n  612          if (!doc) {\n  613              const body = createElement('div');\n  614>             body.innerHTML = markup;\n  615              doc = { body };\n  616          }\n  617  \n  618          const appendChildNodes = (\n  619              node: ChildNode,"
+  },
+  {
+   "item": "bfbe08cd450c",
+   "repository_case": "GHSA-3wgp-x9p5-c7cc",
+   "file": "packages/base-driver/lib/express/static.ts",
+   "line": 64,
+   "claimed_weakness": "path traversal",
+   "context": "   59    const template = await getTemplate(page);\n   60    res.send(template(params));\n   61  }\n   62  \n   63  async function getTemplate(templateName: string): Promise<(params: TemplateParams) => string> {\n   64>   const content = await fs.readFile(path.resolve(STATIC_DIR, 'test', templateName));\n   65    return compileLodashTemplate(content.toString());\n   66  }\n   67  \n   68  function resolveStaticDir(): string {\n   69    const fromDir = __dirname;"
+  },
+  {
+   "item": "a8083221a149",
+   "repository_case": "GHSA-2rx9-3g3h-c2jv",
+   "file": "pnpm11/installing/env-installer/src/installConfigDeps.ts",
+   "line": 290,
+   "claimed_weakness": "path traversal",
+   "context": "  285    const existingSiblings = await readModulesDir(opts.parentNodeModulesDir) ?? []\n  286    const orphanSiblings = existingSiblings.filter((name) => !expectedSiblings.has(name))\n  287    if (orphanSiblings.length > 0) {\n  288      opts.reportStarted()\n  289    }\n  290>   await Promise.all(orphanSiblings.map((name) => rimraf(path.join(opts.parentNodeModulesDir, name))))\n  291  \n  292    await Promise.all(compatibleSubdeps.map(async (subdep) => {\n  293      const subdepFullPkgId = `${subdep.name}@${subdep.version}:${subdep.resolution.integrity}`\n  294      const subdepRelPath = calcLeafGlobalVirtualStorePath(subdepFullPkgId, subdep.name, subdep.version)\n  295      const subdepDirInGlobalVirtualStore = path.join(opts.globalVirtualStoreDir, subdepRelPath, 'node_modules', subdep.name)"
+  },
+  {
+   "item": "b70592f060f2",
+   "repository_case": "GHSA-c6gr-qvv4-5v3f",
+   "file": "src/purify.ts",
+   "line": 1625,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1620  \n 1621      /* Use createHTMLDocument in case DOMParser is not available */\n 1622      if (!doc || !doc.documentElement) {\n 1623        doc = implementation.createDocument(NAMESPACE, 'template', null);\n 1624        try {\n 1625>         doc.documentElement.innerHTML = IS_EMPTY_INPUT\n 1626            ? emptyHTML\n 1627            : dirtyPayload;\n 1628        } catch (_) {\n 1629          // Syntax error if dirtyPayload is invalid xml\n 1630        }"
+  },
+  {
+   "item": "3d4caed45da7",
+   "repository_case": "GHSA-8wqc-v2q8-vff2",
+   "file": "packages/commons-server/src/libs/server/server.ts",
+   "line": 2321,
+   "claimed_weakness": "path traversal",
+   "context": " 2316      const resolvePath = (path: string) => {\n 2317        const isPathAbsolute = isAbsolute(path);\n 2318  \n 2319        return isPathAbsolute\n 2320          ? resolve(path)\n 2321>         : resolve(this.options.environmentDirectory, path);\n 2322      };\n 2323      // Convert backslashes to forward slashes (Windows compatibility)\n 2324      const rawFilePath = filePath.replace(/\\\\(?!\\.)/g, '/');\n 2325  \n 2326      // Check if there is any templating helper in the file path"
+  },
+  {
+   "item": "b5b7017de8d9",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 239,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  234          logger.debug(f'call method: {method}, request_id: {request_id}')\n  235          data = pickle.dumps(dict(request_id=request_id, method=method, args=args, kwargs=kwargs))\n  236          self.sync_socket.send(data)\n  237  \n  238          reply = self.sync_socket.recv()\n  239>         reply = pickle.loads(reply)\n  240          while reply['request_id'] != request_id:\n  241              self._set_reply(reply)\n  242              reply = self.sync_socket.recv()\n  243              reply = pickle.loads(reply)\n  244  "
+  },
+  {
+   "item": "d23200c1663b",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 243,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  238          reply = self.sync_socket.recv()\n  239          reply = pickle.loads(reply)\n  240          while reply['request_id'] != request_id:\n  241              self._set_reply(reply)\n  242              reply = self.sync_socket.recv()\n  243>             reply = pickle.loads(reply)\n  244  \n  245          logger.debug(f'recv reply request_id: {request_id}')\n  246          if reply['success']:\n  247              return reply['result']\n  248          else:"
+  },
+  {
+   "item": "d24890aadae6",
+   "repository_case": "GHSA-8mcc-hrx5-hvxc",
+   "file": "git/objects/submodule/base.py",
+   "line": 370,
+   "claimed_weakness": "path traversal",
+   "context": "  365          if cls._need_gitfile_submodules(repo.git):\n  366              kwargs[\"separate_git_dir\"] = module_abspath\n  367              module_abspath_dir = osp.dirname(module_abspath)\n  368              if not osp.isdir(module_abspath_dir):\n  369                  os.makedirs(module_abspath_dir)\n  370>             module_checkout_path = osp.join(repo.working_tree_dir, path)  # type: ignore[arg-type]\n  371  \n  372          if url.startswith(\"../\"):\n  373              remote_name = cast(\"RemoteReference\", repo.active_branch.tracking_branch()).remote_name\n  374              repo_remote_url = repo.remote(remote_name).url\n  375              url = os.path.join(repo_remote_url, url)"
+  },
+  {
+   "item": "34e43b5171fc",
+   "repository_case": "GHSA-6wfj-92cw-88vg",
+   "file": "js/gitDiffReal/generateDiff/index.js",
+   "line": 29,
+   "claimed_weakness": "command injection",
+   "context": "   24  \n   25    // Single quotes is needed here to avoid .. event not found\n   26    var gitHashCmd1 = 'printf ' + JSON.stringify(str1) + ' | git ' + gitDir + ' hash-object -w --stdin'\n   27    var gitHashCmd2 = 'printf ' + JSON.stringify(str2) + ' | git ' + gitDir + ' hash-object -w --stdin'\n   28  \n   29>   var gitHashObj1 = exec(gitHashCmd1, {silent: true})\n   30    var gitHashObj2 = exec(gitHashCmd2, {silent: true})\n   31  \n   32    /* istanbul ignore else */\n   33    if (gitHashObj1.code === 0 && gitHashObj2.code === 0) {\n   34  "
+  },
+  {
+   "item": "36b0839042d5",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 141,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  136  \n  137        checked = i - idx > 0 ? '' : 'checked';\n  138  \n  139        labels += `\n  140          <li>\n  141>           <input\n  142              type=\"radio\"\n  143              id=\"label-${prefix}-codetab-label-1-${_opts.editorId}-${idx}-${i - idx}\"\n  144              name=\"${prefix}-codetab-label-${_opts.editorId}-${idx}\"\n  145              class=\"${className}\"\n  146              ${checked}"
+  },
+  {
+   "item": "887b0e0a41e5",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 168,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  163              role=\"presentation\">\n  164            ${defaultRender!(tokens, i, options, env, slf)}\n  165          </div>`;\n  166  \n  167        langs += `\n  168>         <input\n  169            type=\"radio\"\n  170            name=\"${prefix}-codetab-lang-${_opts.editorId}-${idx}\"\n  171            class=\"${className}\"\n  172            ${checked}\n  173            role=\"presentation\">"
+  },
+  {
+   "item": "9113fe0d8df3",
+   "repository_case": "GHSA-xhq9-whgq-49j5",
+   "file": "packages/dashboard/src/lib/components/shared/table-cell/order-table-cell-components.tsx",
+   "line": 54,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   49  \n   50      // Strip HTML tags and decode HTML entities\n   51      const textContent = useMemo(() => {\n   52          if (!value) return '';\n   53          const div = document.createElement('div');\n   54>         div.innerHTML = value;\n   55          return div.textContent ?? '';\n   56      }, [value]);\n   57  \n   58      const shortLength = 100;\n   59      const maxLength = 500;"
+  },
+  {
+   "item": "b6d3b6e5c9a2",
+   "repository_case": "GHSA-rhp5-r9x4-f5g2",
+   "file": "nltk/parse/transitionparser.py",
+   "line": 560,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  555          :return: list (DependencyGraph) with the 'head' and 'rel' information\n  556          \"\"\"\n  557          result = []\n  558          # First load the model\n  559          with open(modelFile, \"rb\") as f:\n  560>             model = pickle_load(f)\n  561          operation = Transition(self._algorithm)\n  562  \n  563          for depgraph in depgraphs:\n  564              conf = Configuration(depgraph)\n  565              while len(conf.buffer) > 0:"
+  },
+  {
+   "item": "0489648efa3b",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "file": "packages/test-es-module-consumer/suite.mjs",
+   "line": 4,
+   "claimed_weakness": "command injection",
+   "context": "    1  import { strictEqual } from 'assert';\n    2  \n    3  export async function suite(name, simpleGit, ResetMode) {\n    4>    exec(`${name}: imports default`, async () => {\n    5        strictEqual(\n    6           await simpleGit().checkIsRepo(),\n    7           true,\n    8           'expected the current directory to be a valid git root'\n    9        );"
+  },
+  {
+   "item": "f59c025c9a5c",
+   "repository_case": "GHSA-qrfj-mgw8-j9c6",
+   "file": "packages/core/src/lib/plugins/html/utils/htmlStringToDOMNode.ts",
+   "line": 4,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "    1  /** Convert HTML string into HTML element. */\n    2  export const htmlStringToDOMNode = (rawHtml: string) => {\n    3    const node = document.createElement('body');\n    4>   node.innerHTML = rawHtml;\n    5  \n    6    return node;\n    7  };"
+  },
+  {
+   "item": "be83de90c058",
+   "repository_case": "GHSA-3753-m2x2-q623",
+   "file": "packages/renderers/doc/src/render/html.ts",
+   "line": 270,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  265    return img;\n  266  }\n  267  \n  268  function renderAttachmentNode(node: Extract<InlineNode, { type: 'attachment' }>): string {\n  269    const label = escapeHtml(node.asset.name || 'embedded-file');\n  270>   const inner = `<a class=\"msdoc-attachment\" href=\"${escapeHtml(node.asset.dataUrl)}\" download=\"${label}\">\ud83d\udcce ${label}</a>`;\n  271    if (node.href) {\n  272      return `<a class=\"msdoc-link\" href=\"${escapeHtml(node.href)}\" target=\"_blank\" rel=\"noreferrer noopener\">${inner}</a>`;\n  273    }\n  274    return inner;\n  275  }"
+  },
+  {
+   "item": "0ef50d78feab",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 154,
+   "claimed_weakness": "command injection",
+   "context": "  149    return null;\n  150  }\n  151  \n  152  function listShas(path: string, maxCount?: number): string[] {\n  153    const maxCountArg = maxCount ? `--max-count=${maxCount}` : \"\";\n  154>   const raw = execSync(`git log --format=\"%H\" ${maxCountArg} ${path}`.trim());\n  155    const shas = raw.toString().trim().split(\"\\n\");\n  156    return shas;\n  157  }\n  158  \n  159  export function listParentCommits(input: { sha: string }): string[] | null {"
+  },
+  {
+   "item": "a67fb15d60d8",
+   "repository_case": "GHSA-p223-2wr2-j562",
+   "file": "packages/payload/src/uploads/deleteAssociatedFiles.ts",
+   "line": 53,
+   "claimed_weakness": "path traversal",
+   "context": "   48  \n   49        for (const size of sizes) {\n   50          const sizeToDelete = `${staticPath}/${size.filename}`\n   51          try {\n   52            if (await fileExists(sizeToDelete)) {\n   53>             await fs.unlink(sizeToDelete)\n   54            }\n   55          } catch (ignore) {\n   56            throw new ErrorDeletingFile(req.t)\n   57          }\n   58        }"
+  },
+  {
+   "item": "3b3a6256b622",
+   "repository_case": "GHSA-75qf-886x-5xf2",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/helpers.ts",
+   "line": 163,
+   "claimed_weakness": "path traversal",
+   "context": "  158          },\n  159        });\n  160        if (!res.ok) {\n  161          throw await ResponseError.fromResponse(res);\n  162        } else if (res.body !== null) {\n  163>         fs.openSync(`${workspace}/${mkdocsDir}docs/img/${downloadTitle}`, 'w');\n  164          const writeStream = fs.createWriteStream(\n  165            `${workspace}/${mkdocsDir}docs/img/${downloadTitle}`,\n  166          );\n  167          // TODO(freben): This cast is sketchy, but for some reason the node types don't quite line up here\n  168          // https://stackoverflow.com/questions/44672942/stream-response-to-file-using-fetch-api-and-fs-createwritestream/73879265#73879265"
+  },
+  {
+   "item": "83d9650c4706",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "file": "packages/test-javascript-consumer/suite.js",
+   "line": 13,
+   "claimed_weakness": "command injection",
+   "context": "    8              true,\n    9              'expected the current directory to be a valid git root'\n   10           );\n   11        });\n   12  \n   13>       exec(`${name}: imports named exports`, async () => {\n   14           strictEqual(/hard/.test(ResetMode.HARD), true, 'expected valid ResetMode enum');\n   15        });\n   16     },\n   17  };\n   18  "
+  },
+  {
+   "item": "df6369aedf18",
+   "repository_case": "GHSA-59cr-6r3x-644w",
+   "file": "git/objects/submodule/base.py",
+   "line": 380,
+   "claimed_weakness": "path traversal",
+   "context": "  375              allow_unsafe_options = True\n  376              kwargs[\"separate_git_dir\"] = module_abspath\n  377              module_abspath_dir = osp.dirname(module_abspath)\n  378              if not osp.isdir(module_abspath_dir):\n  379                  os.makedirs(module_abspath_dir)\n  380>             module_checkout_path = osp.join(repo.working_tree_dir, path)  # type: ignore[arg-type]\n  381  \n  382          if url.startswith(\"../\"):\n  383              remote_name = cast(\"RemoteReference\", repo.active_branch.tracking_branch()).remote_name\n  384              repo_remote_url = repo.remote(remote_name).url\n  385              url = os.path.join(repo_remote_url, url)"
+  },
+  {
+   "item": "53f70c545e41",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/composition/useCopyCode.ts",
+   "line": 55,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   50  \n   51                  clearTimer = window.setTimeout(() => {\n   52                    if (copyButton.dataset.isIcon) {\n   53                      copyButton.dataset.tips = text;\n   54                    } else {\n   55>                     copyButton.innerHTML = text!;\n   56                    }\n   57                  }, 1500);\n   58                });\n   59            };\n   60  "
+  },
+  {
+   "item": "0ef50d78feab",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 154,
+   "claimed_weakness": "command injection",
+   "context": "  149    return null;\n  150  }\n  151  \n  152  function listShas(path: string, maxCount?: number): string[] {\n  153    const maxCountArg = maxCount ? `--max-count=${maxCount}` : \"\";\n  154>   const raw = execSync(`git log --format=\"%H\" ${maxCountArg} ${path}`.trim());\n  155    const shas = raw.toString().trim().split(\"\\n\");\n  156    return shas;\n  157  }\n  158  \n  159  export function listParentCommits(input: { sha: string }): string[] | null {"
+  },
+  {
+   "item": "80067240e0bb",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 158,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  153            </label>\n  154          </li>`;\n  155  \n  156        pres += `\n  157          <div role=\"tabpanel\">\n  158>           <input\n  159              type=\"radio\"\n  160              name=\"${prefix}-codetab-pre-${_opts.editorId}-${idx}\"\n  161              class=\"${className}\"\n  162              ${checked}\n  163              role=\"presentation\">"
+  },
+  {
+   "item": "2f653553788e",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 67,
+   "claimed_weakness": "command injection",
+   "context": "   62  /**\n   63   * Run git merge-base command.\n   64   */\n   65  function gitMergeBase(input: { base: string; head: string }) {\n   66    try {\n   67>     return execSync(`git merge-base ${input.head} ${input.base}`)\n   68        .toString()\n   69        .trim();\n   70    } catch (error) {\n   71      // When a merge base is not found, it returns a status of 1 with no error.\n   72      // In this case it's not a fatal error, just no merge-base found."
+  },
+  {
+   "item": "5b55151505df",
+   "repository_case": "GHSA-pq96-jpmf-w254",
+   "file": "ui/src/plugins/meta/Meta.js",
+   "line": 224,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  219  \n  220    ctx.bodyTags +=\n  221      Object.keys(data.noscript)\n  222        .map(\n  223          name =>\n  224>           `<noscript data-qmeta=\"${name}\">${data.noscript[name]}</noscript>`\n  225        )\n  226        .join('') +\n  227      `<script${nonce} id=\"qmeta-init\">window.__Q_META__=${delete data.noscript && JSON.stringify(data)}</script>`\n  228  }\n  229  "
+  },
+  {
+   "item": "410ac142fca5",
+   "repository_case": "GHSA-2cmg-v53w-8xfp",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/confluenceToMarkdown.ts",
+   "line": 180,
+   "claimed_weakness": "path traversal",
+   "context": "  175              : new RegExp(`(\\\\!\\\\[.*?\\\\]\\\\()(.*?${product[0]}.*?)(\\\\))`, 'gi');\n  176            newString = newString.replace(regex, `$1./img/${product[1]}$3`);\n  177          });\n  178  \n  179          ctx.logger.info(`Adding new file to repo.`);\n  180>         await fs.outputFile(\n  181            `${dirPath}/${filePathToMkdocs}docs/${titleWithSpaces.replace(\n  182              /\\s+/g,\n  183              '-',\n  184            )}.md`,\n  185            newString,"
+  },
+  {
+   "item": "71414e42998c",
+   "repository_case": "GHSA-p223-2wr2-j562",
+   "file": "packages/payload/src/uploads/deleteAssociatedFiles.ts",
+   "line": 37,
+   "claimed_weakness": "path traversal",
+   "context": "   32  \n   33      const fileToDelete = `${staticPath}/${doc.filename as string}`\n   34  \n   35      try {\n   36        if (await fileExists(fileToDelete)) {\n   37>         await fs.unlink(fileToDelete)\n   38        }\n   39      } catch (ignore) {\n   40        throw new ErrorDeletingFile(req.t)\n   41      }\n   42  "
+  },
+  {
+   "item": "2f653553788e",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 67,
+   "claimed_weakness": "command injection",
+   "context": "   62  /**\n   63   * Run git merge-base command.\n   64   */\n   65  function gitMergeBase(input: { base: string; head: string }) {\n   66    try {\n   67>     return execSync(`git merge-base ${input.head} ${input.base}`)\n   68        .toString()\n   69        .trim();\n   70    } catch (error) {\n   71      // When a merge base is not found, it returns a status of 1 with no error.\n   72      // In this case it's not a fatal error, just no merge-base found."
+  },
+  {
+   "item": "b79c24025d07",
+   "repository_case": "GHSA-27mw-82g8-phjj",
+   "file": "packages/kit/src/runtime/server/page/render.js",
+   "line": 686,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  681  \t/**\n  682  \t * @param {string} href\n  683  \t * @param {string[]} attributes\n  684  \t */\n  685  \tadd_stylesheet(href, attributes) {\n  686> \t\tthis.#stylesheet_links.push(`<link href=\"${href}\" ${attributes.join(' ')}>`);\n  687  \t}\n  688  \n  689  \t/**\n  690  \t * @param {string} href\n  691  \t * @param {string[]} attributes"
+  },
+  {
+   "item": "ebe514b06a5b",
+   "repository_case": "GHSA-pq96-jpmf-w254",
+   "file": "ui/src/plugins/meta/Meta.js",
+   "line": 169,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  164      for (const att in metaType) {\n  165        const attrs = Object.keys(metaType[att])\n  166          .filter(item => item !== 'innerHTML')\n  167          .map(getAttr(metaType[att]))\n  168  \n  169>       output += `<${type} ${attrs.join(' ')} data-qmeta=\"${att}\">`\n  170        if (type === 'script') {\n  171          output += (metaType[att].innerHTML || '') + '</script>'\n  172        }\n  173      }\n  174    })"
+  },
+  {
+   "item": "9c33d4962663",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "file": "packages/test-javascript-consumer/suite.js",
+   "line": 5,
+   "claimed_weakness": "command injection",
+   "context": "    1  const { strictEqual } = require('node:assert');\n    2  \n    3  module.exports = {\n    4     async suite(name, simpleGit, ResetMode) {\n    5>       exec(`${name}: imports default`, async () => {\n    6           strictEqual(\n    7              await simpleGit().checkIsRepo(),\n    8              true,\n    9              'expected the current directory to be a valid git root'\n   10           );"
+  },
+  {
+   "item": "6824d23c0f14",
+   "repository_case": "GHSA-gqvg-gmmx-x4hm",
+   "file": "mlflow/statsmodels/__init__.py",
+   "line": 310,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  305  \n  306  \n  307  def _load_model(path):\n  308      import statsmodels.iolib.api as smio\n  309  \n  310>     return smio.load_pickle(path)\n  311  \n  312  \n  313  def _load_pyfunc(path):\n  314      \"\"\"\n  315      Load PyFunc implementation. Called by ``pyfunc.load_model``."
+  },
+  {
+   "item": "eae5173fdb9d",
+   "repository_case": "GHSA-2cmg-v53w-8xfp",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/confluenceToMarkdown.ts",
+   "line": 128,
+   "claimed_weakness": "path traversal",
+   "context": "  123            `/rest/api/content/${getConfluenceDoc.results[0].id}/child/attachment`,\n  124            confluenceConfig,\n  125          );\n  126  \n  127          if (getDocAttachments.results.length) {\n  128>           fs.mkdirSync(`${dirPath}/${filePathToMkdocs}docs/img`, {\n  129              recursive: true,\n  130            });\n  131            productArray = await getAndWriteAttachments(\n  132              getDocAttachments,\n  133              dirPath,"
+  },
+  {
+   "item": "b7998e2a0f21",
+   "repository_case": "GHSA-qrfj-mgw8-j9c6",
+   "file": "packages/core/src/static/deserialize/htmlStringToEditorDOM.ts",
+   "line": 9,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "    4   * @param html - The HTML string to convert exported from Plate.\n    5   * @returns The Editor element without head and body.\n    6   */\n    7  export const getEditorDOMFromHtmlString = (html: string) => {\n    8    const node = document.createElement('body');\n    9>   node.innerHTML = html;\n   10    const editorNode = node.querySelector('[data-slate-editor=\"true\"]');\n   11  \n   12    return editorNode as HTMLElement;\n   13  };"
+  },
+  {
+   "item": "db5ffcbacff7",
+   "repository_case": "GHSA-9q4r-4842-93vw",
+   "file": "internal-packages/tsql/src/query/printer.ts",
+   "line": 481,
+   "claimed_weakness": "SQL injection",
+   "context": "  476      const space = this.pretty ? `\\n${this.indent(1)}` : \" \";\n  477      const comma = this.pretty ? `,\\n${this.indent(1)}` : \", \";\n  478  \n  479      // Build SQL clauses\n  480      const clauses: (string | null)[] = [\n  481>       `SELECT${space}${node.distinct ? \"DISTINCT \" : \"\"}${columns.join(comma)}`,\n  482        joinedTables.length > 0 ? `FROM${space}${joinedTables.join(space)}` : null,\n  483        arrayJoin || null,\n  484        prewhere ? `PREWHERE${space}${prewhere}` : null,\n  485        whereStr ? `WHERE${space}${whereStr}` : null,\n  486        groupBy && groupBy.length > 0 ? `GROUP BY${space}${groupBy.join(comma)}` : null,"
+  },
+  {
+   "item": "b7d92a742966",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 89,
+   "claimed_weakness": "command injection",
+   "context": "   84  /**\n   85   * Run git fetch with a specific ref and depth.\n   86   */\n   87  function gitFetch(input: { ref: string; depth: number; target: string }) {\n   88    execSync(\n   89>     `git fetch --force --update-head-ok --depth ${input.depth} origin ${input.ref}:${input.target}`,\n   90    );\n   91  }\n   92  \n   93  /**\n   94   * Check if an error is an exec error that includes stderr."
+  },
+  {
+   "item": "71e1eabe9095",
+   "repository_case": "GHSA-2vh9-42vm-xmv2",
+   "file": "lmdeploy/pytorch/disagg/conn/engine_conn.py",
+   "line": 79,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "   74          await self.p2p_sender[remote_engine_id].send_pyobj(\n   75              DistServeCacheFreeRequest(remote_engine_id=remote_engine_id, remote_session_id=remote_session_id))\n   76  \n   77      async def handle_zmq_recv(self, remote_engine_id: str):\n   78          while True:\n   79>             req: DistServeCacheFreeRequest = await self.p2p_receiver[remote_engine_id].recv_pyobj()\n   80              if isinstance(req, DistServeCacheFreeRequest):\n   81                  session_id = req.remote_session_id\n   82                  if session_id in self.engine.scheduler.sessions:\n   83                      self.engine.end_session(session_id=session_id)\n   84                  else:"
+  },
+  {
+   "item": "32e582949803",
+   "repository_case": "GHSA-6688-9rhm-gjv2",
+   "file": "src/purify.ts",
+   "line": 1625,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": " 1620  \n 1621      /* Use createHTMLDocument in case DOMParser is not available */\n 1622      if (!doc || !doc.documentElement) {\n 1623        doc = implementation.createDocument(NAMESPACE, 'template', null);\n 1624        try {\n 1625>         doc.documentElement.innerHTML = IS_EMPTY_INPUT\n 1626            ? emptyHTML\n 1627            : dirtyPayload;\n 1628        } catch (_) {\n 1629          // Syntax error if dirtyPayload is invalid xml\n 1630        }"
+  },
+  {
+   "item": "3c8a552ec0cc",
+   "repository_case": "GHSA-g4wm-2vf7-vfgr",
+   "file": "packages/test-es-module-consumer/suite.mjs",
+   "line": 12,
+   "claimed_weakness": "command injection",
+   "context": "    7           true,\n    8           'expected the current directory to be a valid git root'\n    9        );\n   10     });\n   11  \n   12>    exec(`${name}: imports named exports`, async () => {\n   13        strictEqual(/hard/.test(ResetMode.HARD), true, 'expected valid ResetMode enum');\n   14     });\n   15  }\n   16  \n   17  function exec(name, runner) {"
+  },
+  {
+   "item": "ca76ef479d52",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 98,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "   93          <${tagContainer} ${slf.renderAttrs(tmpToken as Token)}>\n   94            <${tagHeader} class=\"${prefix}-code-head\">\n   95              <div class=\"${prefix}-code-flag\"><span></span><span></span><span></span></div>\n   96              <div class=\"${prefix}-code-action\">\n   97                <span class=\"${prefix}-code-lang\">${md.utils.escapeHtml(tokens[idx].info.trim())}</span>\n   98>               <span class=\"${prefix}-copy-button\" data-tips=\"${codeCodeText}\"${isIcon ? ' data-is-icon=true' : ''}>${copyBtnHtml}</span>\n   99                ${_opts.extraTools instanceof Function ? _opts.extraTools({ lang: tokens[idx].info.trim() }) : _opts.extraTools || ''}\n  100                ${tagContainer === 'details' ? collapseTips : ''}\n  101              </div>\n  102            </${tagHeader}>\n  103            ${codeRendered}"
+  },
+  {
+   "item": "dced12e18955",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 144,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  139  \n  140      async def call_and_response(self):\n  141          \"\"\"Call method.\"\"\"\n  142          # receive message: [client_id, empty, request_data]\n  143          client_id, request_data = self.socket.recv_multipart()\n  144>         request = pickle.loads(request_data)\n  145  \n  146          method_name = request.get('method')\n  147          logger.debug(f'call method: {method_name}')\n  148          if method_name not in self.methods:\n  149              request_id = request.get('request_id')"
+  },
+  {
+   "item": "cb21576d4da1",
+   "repository_case": "GHSA-6wfj-92cw-88vg",
+   "file": "js/gitDiffReal/generateDiff/index.js",
+   "line": 64,
+   "claimed_weakness": "command injection",
+   "context": "   59            flags += ' ' + options.flags\n   60          }\n   61  \n   62          var newCommand = 'git ' + gitDir + ' diff ' + sha1 + ' ' + sha2 + flags\n   63  \n   64>         diffObj = exec(newCommand, {silent: true})\n   65  \n   66          if (diffObj.code === 129 && diffObj.stderr.indexOf('usage') > -1) {\n   67            logger.warn('Ignoring invalid git diff options: ' + options.flags)\n   68            logger.info('For valid git diff options refer to ' + config.gitDiffOptionsUrl)\n   69            if (options.flags === DEFAULTS.flags) {"
+  },
+  {
+   "item": "d7f1f65ed846",
+   "repository_case": "GHSA-27mw-82g8-phjj",
+   "file": "packages/kit/src/runtime/server/page/render.js",
+   "line": 694,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  689  \t/**\n  690  \t * @param {string} href\n  691  \t * @param {string[]} attributes\n  692  \t */\n  693  \tadd_link_tag(href, attributes) {\n  694> \t\tthis.#link_tags.push(`<link href=\"${href}\" ${attributes.join(' ')}>`);\n  695  \t}\n  696  \n  697  \t/** @param {string} tag */\n  698  \tadd_http_equiv(tag) {\n  699  \t\tthis.#http_equiv.push(tag);"
+  },
+  {
+   "item": "e766fee9fe20",
+   "repository_case": "GHSA-3rm2-h79c-8qw6",
+   "file": "packages/MdEditor/layouts/Content/markdownIt/code/index.ts",
+   "line": 185,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  180            <div class=\"${prefix}-code-flag\">\n  181              <ul class=\"${prefix}-codetab-label\" role=\"tablist\">${labels}</ul>\n  182            </div>\n  183            <div class=\"${prefix}-code-action\">\n  184              <span class=\"${prefix}-codetab-lang\">${langs}</span>\n  185>             <span class=\"${prefix}-copy-button\" data-tips=\"${codeCodeText}\"${isIcon ? ' data-is-icon=true' : ''}>${copyBtnHtml}</span>\n  186              ${_opts.extraTools instanceof Function ? _opts.extraTools({ lang: tokens[idx].info.trim() }) : _opts.extraTools || ''}\n  187              ${tagContainer === 'details' ? collapseTips : ''}\n  188            </div>\n  189          </${tagHeader}>\n  190          ${pres}"
+  },
+  {
+   "item": "78b25ba978fd",
+   "repository_case": "GHSA-75qf-886x-5xf2",
+   "file": "plugins/scaffolder-backend-module-confluence-to-markdown/src/actions/confluence/helpers.ts",
+   "line": 164,
+   "claimed_weakness": "path traversal",
+   "context": "  159        });\n  160        if (!res.ok) {\n  161          throw await ResponseError.fromResponse(res);\n  162        } else if (res.body !== null) {\n  163          fs.openSync(`${workspace}/${mkdocsDir}docs/img/${downloadTitle}`, 'w');\n  164>         const writeStream = fs.createWriteStream(\n  165            `${workspace}/${mkdocsDir}docs/img/${downloadTitle}`,\n  166          );\n  167          // TODO(freben): This cast is sketchy, but for some reason the node types don't quite line up here\n  168          // https://stackoverflow.com/questions/44672942/stream-response-to-file-using-fetch-api-and-fs-createwritestream/73879265#73879265\n  169          Readable.fromWeb(res.body as any).pipe(writeStream);"
+  },
+  {
+   "item": "01cd6f628776",
+   "repository_case": "GHSA-5h8j-6crg-7rmw",
+   "file": "lmdeploy/pytorch/engine/mp_engine/zmq_rpc.py",
+   "line": 282,
+   "claimed_weakness": "unsafe deserialization",
+   "context": "  277          self._listen_task = asyncio.current_task()\n  278          self.running = True\n  279          try:\n  280              while self.running:\n  281                  reply = await self.async_socket.recv()\n  282>                 reply = pickle.loads(reply)\n  283                  self._set_reply(reply)\n  284          except zmq.ZMQError:\n  285              logger.exception('AsyncRPCClient listen error')\n  286          finally:\n  287              self.running = False"
+  },
+  {
+   "item": "b7d92a742966",
+   "repository_case": "GHSA-4x45-gxvp-6283",
+   "file": "packages/core/src/ci-environment/git.ts",
+   "line": 89,
+   "claimed_weakness": "command injection",
+   "context": "   84  /**\n   85   * Run git fetch with a specific ref and depth.\n   86   */\n   87  function gitFetch(input: { ref: string; depth: number; target: string }) {\n   88    execSync(\n   89>     `git fetch --force --update-head-ok --depth ${input.depth} origin ${input.ref}:${input.target}`,\n   90    );\n   91  }\n   92  \n   93  /**\n   94   * Check if an error is an exec error that includes stderr."
+  },
+  {
+   "item": "b4b879dd7bf6",
+   "repository_case": "GHSA-27mw-82g8-phjj",
+   "file": "packages/kit/src/runtime/server/page/render.js",
+   "line": 589,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  584  \t\t\thead.add_http_equiv(csp_headers);\n  585  \t\t}\n  586  \n  587  \t\tif (state.prerendering?.cache) {\n  588  \t\t\thead.add_http_equiv(\n  589> \t\t\t\t`<meta http-equiv=\"cache-control\" content=\"${state.prerendering.cache}\">`\n  590  \t\t\t);\n  591  \t\t}\n  592  \t} else {\n  593  \t\tconst csp_header = csp.csp_provider.get_header();\n  594  \t\tif (csp_header) {"
+  },
+  {
+   "item": "91f6214a79b3",
+   "repository_case": "GHSA-r223-96jv-q533",
+   "file": "generators/spring-boot/generator.ts",
+   "line": 357,
+   "claimed_weakness": "XSS / HTML injection",
+   "context": "  352          source.addLogbackLogEntry = ({ file, name, level }) =>\n  353            this.editFile(\n  354              this.destinationPath(file),\n  355              createNeedleCallback({\n  356                needle: 'logback-add-log',\n  357>               contentToAdd: `<logger name=\"${name}\" level=\"${level}\"/>`,\n  358              }),\n  359            );\n  360          source.addMainLog = opts => source.addLogbackLogEntry!({ file: 'src/main/resources/logback-spring.xml', ...opts });\n  361          source.addTestLog = opts => source.addLogbackLogEntry!({ file: 'src/test/resources/logback.xml', ...opts });\n  362        },"
+  }
+ ]
+}

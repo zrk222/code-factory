@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findingKeys, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyFindingCountMatrix,
+import { findingKeys, mutationReports, verifyRuleMutation, verifySourceSinkFlows, verifyFlowControlMatrix, verifyFindingCountMatrix,
+  verifyNativeControlFindings,
   fixedReviewedFindingCounts, javascriptControlManifest, verifyJavascriptControlMatrix,
   tsxQualificationSuffix, appendExtensionControls, typescriptExtensionEndpoints } from './semgrep_mutation_controls.mjs';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
 const finding = (ruleId, line = 1) => ({ ruleId, locations: [{ physicalLocation: {
   artifactLocation: { uri: '/cases/control.py' }, region: { startLine: line },
@@ -17,6 +20,21 @@ test('disabled detector removes target and preserves unrelated findings', () => 
     state: 'PASS', disabled_rule_id: 'target', removed_findings: 1, retained_findings: 1,
     target_finding_keys: ['target|/cases/control.py|1'],
   });
+});
+
+test('mutationReports restores exact report bytes and rejects missing, reordered or invalid evidence', () => {
+  const first = Buffer.from(JSON.stringify(report([finding('other', 2)])) + '\r\n');
+  const second = Buffer.from(JSON.stringify(report([finding('target')])) + '\n');
+  const line = (rule, raw) => JSON.stringify([rule, gzipSync(raw).toString('base64')]);
+  const rows = [line('target', first), line('other', second)];
+  const rules = ['target', 'other'];
+  const unpack = archive => [...mutationReports(archive + '\n', rules)];
+  const reports = unpack(rows.join('\n'));
+  assert.deepEqual(reports, [{ ruleId: 'target', raw: first }, { ruleId: 'other', raw: second }]);
+  for (const { ruleId, raw } of reports) assert.equal(verifyRuleMutation(baseline, JSON.parse(raw), ruleId).state, 'PASS');
+  assert.throws(() => unpack(rows[0]), /Incomplete native mutation batch/);
+  assert.throws(() => unpack([...rows].reverse().join('\n')), /batch rule identity differs/);
+  assert.throws(() => unpack([rows[0], JSON.stringify(['other', 'bad'])].join('\n')));
 });
 
 for (const [name, mutated] of [
@@ -43,6 +61,35 @@ test('malformed native finding identity is rejected', () => {
   const ambiguous = finding('target');
   ambiguous.locations[0].physicalLocation.artifactLocation.uri = '/cases/control|other.py';
   assert.throws(() => findingKeys(report([ambiguous])));
+});
+
+function atSpan(rule, start, end) {
+  const result = finding(rule, 5);
+  const location = result.locations[0].physicalLocation;
+  location.artifactLocation.uri = '/src/control.py';
+  Object.assign(location.region, { startColumn: start, endColumn: end });
+  return result;
+}
+
+test('verifyNativeControlFindings requires precisely the registered overlaps', () => {
+  const outer = atSpan('target', 10, 30), inner = atSpan('target', 15, 22);
+  const manifest = [{ rule: 'target', path: 'control.py', line: 5, spans: [[10, 30], [15, 22]] }];
+  assert.deepEqual(verifyNativeControlFindings(report([outer, inner]), manifest), {
+    logical_keys: ['target|control.py|5'], raw_findings: 2,
+  });
+  for (const invalid of [[inner], [outer, inner, atSpan('target', 16, 23)],
+    [outer, atSpan('target', 15, 23)], [outer, outer]]) {
+    assert.throws(() => verifyNativeControlFindings(report(invalid), manifest), /native finding|Native finding spans/);
+  }
+  assert.throws(() => verifyNativeControlFindings(report([outer, inner]), [{ ...manifest[0], spans: undefined }]));
+});
+
+test('rule mutation preserves every unrelated span on the same line', () => {
+  const outer = atSpan('other', 10, 30), inner = atSpan('other', 15, 22);
+  const before = report([finding('target'), outer, inner]);
+  assert.equal(verifyRuleMutation(before, report([inner, outer]), 'target').retained_findings, 2);
+  assert.throws(() => verifyRuleMutation(before, report([outer, atSpan('other', 15, 23)]), 'target'));
+  assert.throws(() => findingKeys(report([outer, outer])), /Duplicate native findings/);
 });
 
 const flowManifest = [{ rule: 'target', path: 'control.go', source_line: 2, line: 5 }];
@@ -91,8 +138,8 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 196);
-  assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
+  assert.equal(balancedReplacement.length, 250);
+  assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 63);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
 });
@@ -101,7 +148,7 @@ test('fixed TSX qualification rejects omitted, substituted and wrong-language co
   const manifest = javascriptControlManifest();
   assert.doesNotThrow(() => verifyJavascriptControlMatrix(manifest));
   assert.equal(manifest.filter(item => item.path.endsWith('.js')).length, 10);
-  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 21);
+  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 30);
   assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 12);
   assert.deepEqual(manifest.filter(item => item.path.endsWith('.tsx')).slice(-2).map(item =>
     [item.source_line, item.line]), [[159, 162], [163, 165]]);
@@ -136,7 +183,7 @@ test('rule-family controls append as one parseable source per language at fixed 
     ['/t/semgrep-pattern-limited.py', 'import os\n'],
     ['/t/semgrep-pattern-limited.rb', '# controls\n'],
   ]);
-  const root = new URL('../deploy/deep-adapters/rules/tests', import.meta.url).pathname;
+  const root = fileURLToPath(new URL('../deploy/deep-adapters/rules/tests', import.meta.url));
   appendExtensionControls('/t', root, path => files.get(path) ?? readFileSync(path, 'utf8'), (path, content) => files.set(path, content));
   const go = files.get('/t/semgrep-pattern-limited.go');
   assert.equal(go.match(/^package /gm).length, 1);

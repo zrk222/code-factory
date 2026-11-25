@@ -1,0 +1,25 @@
+{
+  "counts": {
+    "FP": 54,
+    "TP": 29,
+    "UNCLEAR": 16,
+    "positions": 99
+  },
+  "labels": {
+    "path": "part-00000-00099.labels.json",
+    "sha256": "262a85ad3bd43643bc3e0e1a7290f2e81abc7a9f4a7a8d26f87f8b7f3050283a"
+  },
+  "pins": {
+    "context_sha256": "bce550b674259e3cea55e1d0ceb70764f4a362a9f3f6c546598eb52748ed4dee",
+    "effort": "high",
+    "instructions_sha256": "115d877c704945b15108ecb322f81183be743b94aa10b2af45affe8655408c08",
+    "packet_sha256": "c39c12809dce51ae6401388f4a0f39022a10323399d5266d72bc99882893d0e3",
+    "reviewer": "claude-opus-5.5"
+  },
+  "range": [
+    0,
+    99
+  ],
+  "schema": "factory.review-part.v1",
+  "state": "COMPLETE"
+}

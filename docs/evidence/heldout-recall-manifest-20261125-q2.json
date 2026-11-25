@@ -1,0 +1,2935 @@
+{
+ "schema": "factory.recall-heldout.v1",
+ "frozen_from": "advisory metadata only; no fix diff read",
+ "candidate_metadata_sha256": "6b45382adbc2309d865808c990fc0f3e112e9055f860cdf1249cff1d8493c7e7",
+ "window": [
+  "2026-04-01",
+  "2026-06-30"
+ ],
+ "exclusions": {
+  "prior_ids": 556,
+  "prior_fix_commits": 1288
+ },
+ "dropped": {
+  "family": 994,
+  "window": 261,
+  "prior_id": 9,
+  "prior_fix": 4,
+  "repository_cap": 39,
+  "duplicate_fix": 14
+ },
+ "counts": {
+  "Maven": 33,
+  "PyPI": 68,
+  "Go": 61,
+  "npm": 69,
+  "Packagist": 49,
+  "RubyGems": 2
+ },
+ "cases_sha256": "d2d39fd5ee4de3195b8c28c98eb569590167194d326abcdf0b465be830d36e8d",
+ "scoring_rule": "hunk rule: CWE-family alert on an old-side -U5 hunk line, in-language non-test file, fix parent",
+ "cases": [
+  {
+   "ghsa": "GHSA-7ph3-grqh-pv9v",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-06-30",
+   "repository": "apache/gravitino",
+   "fix": "5355bd075d54cad1323606723e72cc32ca564f24"
+  },
+  {
+   "ghsa": "GHSA-v798-mcc6-2m3m",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-06-30",
+   "repository": "langflow-ai/langflow",
+   "fix": "e7c33dbaade20b5295c7fa26bf83cc1ff68fba02"
+  },
+  {
+   "ghsa": "GHSA-vwxw-jrg6-9jxv",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-29",
+   "repository": "googleapis/mcp-toolbox",
+   "fix": "80a66021205e032a424fff87b3dc6d92da58aa77"
+  },
+  {
+   "ghsa": "GHSA-72r4-9c5j-mj57",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-06-27",
+   "repository": "pnpm/pnpm",
+   "fix": "612a2e6a7333f2b061f452a21b6e62c1c161747f"
+  },
+  {
+   "ghsa": "GHSA-2fp4-5v5c-4448",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22",
+    "CWE-639"
+   ],
+   "published": "2026-06-26",
+   "repository": "sentriz/gonic",
+   "fix": "0824bed88f6bbc490ba28bf09d28e5dfeb07b445"
+  },
+  {
+   "ghsa": "GHSA-4c8j-mgm4-qqvp",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-436",
+    "CWE-79"
+   ],
+   "published": "2026-06-26",
+   "repository": "umputun/remark42",
+   "fix": "78d6de6bce1e961f023969da3ec8a00dd80c9ae8"
+  },
+  {
+   "ghsa": "GHSA-75mw-h36v-2jv7",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-26",
+   "repository": "webcomics/dosage",
+   "fix": "b91fd5cc3889aed3d9cc81b98834648197b2859a"
+  },
+  {
+   "ghsa": "GHSA-f5gc-qxf8-mh9g",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-06-26",
+   "repository": "pontedilana/php-weasyprint",
+   "fix": "9e86a2b317237fc5728f712f5037164530117f7e"
+  },
+  {
+   "ghsa": "GHSA-pxcc-8665-phx8",
+   "ecosystem": "RubyGems",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-26",
+   "repository": "lsegal/yard",
+   "fix": "f78c19f0dd33a407085b4ed181bb60c0aa0078b4"
+  },
+  {
+   "ghsa": "GHSA-r937-wjx7-w2jp",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-06-26",
+   "repository": "JetBrains/kotlin",
+   "fix": "bf51df665b458fda7c3eaf436c4d88dc119d7ec6"
+  },
+  {
+   "ghsa": "GHSA-pp89-732f-3g8q",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-06-25",
+   "repository": "OpenIdentityPlatform/OpenAM",
+   "fix": "ca15cba9210f17c0f839b1c148964e1a3dc4a8ca"
+  },
+  {
+   "ghsa": "GHSA-6c99-87fr-6q7r",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-06-24",
+   "repository": "OpenIdentityPlatform/OpenAM",
+   "fix": "8b02328d36bc9cd40602128a6d399d1eda9e6753"
+  },
+  {
+   "ghsa": "GHSA-hrmj-8fm9-cg8x",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-24",
+   "repository": "jenkinsci/external-workspace-manager-plugin",
+   "fix": "2fccbbd398cf209f5931b48e006659dbee86ddf2"
+  },
+  {
+   "ghsa": "GHSA-q63x-9pfm-mjx4",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-06-24",
+   "repository": "feast-dev/feast",
+   "fix": "835cda8e2c1359f1f496ad72701dbd6a73bdb25a"
+  },
+  {
+   "ghsa": "GHSA-wp5x-hrrw-6r4g",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-06-24",
+   "repository": "jenkinsci/git-client-plugin",
+   "fix": "a10f61003e39fd9be6fada0560b13ba718b2716f"
+  },
+  {
+   "ghsa": "GHSA-3w28-36p9-w929",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79",
+    "CWE-80"
+   ],
+   "published": "2026-06-23",
+   "repository": "gogs/gogs",
+   "fix": "dd1bd9837aa196b3ed3a8ee21e5727b5d7a986a3"
+  },
+  {
+   "ghsa": "GHSA-85qj-f5wg-rwp9",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-06-23",
+   "repository": "spring-attic/spring-statemachine",
+   "fix": "6b77ea6b729e5346d83e31f36c43818665d67384"
+  },
+  {
+   "ghsa": "GHSA-89mr-xqfv-758m",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22",
+    "CWE-59",
+    "CWE-61"
+   ],
+   "published": "2026-06-23",
+   "repository": "gogs/gogs",
+   "fix": "04cb8afbb01d855454e59977a1cdbf522ea1db31"
+  },
+  {
+   "ghsa": "GHSA-c39w-43gm-34h5",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-23"
+   ],
+   "published": "2026-06-23",
+   "repository": "gogs/gogs",
+   "fix": "f6acd467305943aae8403cbac81f0118dd1235d7"
+  },
+  {
+   "ghsa": "GHSA-j3rv-43j4-c7qm",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-184",
+    "CWE-502"
+   ],
+   "published": "2026-06-23",
+   "repository": "FasterXML/jackson-databind",
+   "fix": "434d6c511de7fdd9872f29157aafb6162d12d8d5"
+  },
+  {
+   "ghsa": "GHSA-wc3f-xc32-435f",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-06-23",
+   "repository": "WWBN/AVideo",
+   "fix": "c1cfa2bea8a351a1d07f5758f82887403e3abf1f"
+  },
+  {
+   "ghsa": "GHSA-chxj-gxww-q98w",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-116"
+   ],
+   "published": "2026-06-22",
+   "repository": "apache/nifi",
+   "fix": "c9fd0be0ca428408137c70937761b46f95de5959"
+  },
+  {
+   "ghsa": "GHSA-fhrq-3gmx-p879",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-22",
+   "repository": "OpenIdentityPlatform/OpenAM",
+   "fix": "2f5e9bf4c28a4c9e97ded6ebd75e4e1ec241c894"
+  },
+  {
+   "ghsa": "GHSA-gh82-f9x8-5frx",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-22",
+   "repository": "keras-team/keras",
+   "fix": "d8caeb58cc9e61ea092445dc7a20908ca8d693e2"
+  },
+  {
+   "ghsa": "GHSA-hvqh-jw65-wcpq",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-22",
+   "repository": "devbridge/jQuery-Autocomplete",
+   "fix": "63ff096ff5b77a90aac7fb5dad7c86e538a59ce0"
+  },
+  {
+   "ghsa": "GHSA-v73p-f52r-fmmr",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-80"
+   ],
+   "published": "2026-06-22",
+   "repository": "apache/atlas",
+   "fix": "800f979307d6ea0f0b6563ec890f6b728022e497"
+  },
+  {
+   "ghsa": "GHSA-7pm4-56h2-5rxr",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-06-20",
+   "repository": "PrefectHQ/prefect",
+   "fix": "6a9d9918716ce4ee0297b69f3046f7067ef1faae"
+  },
+  {
+   "ghsa": "GHSA-2fmp-9rvw-hc96",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-06-19",
+   "repository": "Jovancoding/Network-AI",
+   "fix": "a59c13a1f0ce0e8a0779a90343eef92fac5ab4c3"
+  },
+  {
+   "ghsa": "GHSA-38x5-rcv4-xf7x",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-19",
+   "repository": "symfony/ux",
+   "fix": "fbc5e9a1bda7e4556be21bb1d970f382760ed9a9"
+  },
+  {
+   "ghsa": "GHSA-4936-9hrh-qqpw",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-06-19",
+   "repository": "tinacms/tinacms",
+   "fix": "77665ae73dd4f9563d339535e76fa811a8abdfbb"
+  },
+  {
+   "ghsa": "GHSA-869j-r97x-hx2g",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-346"
+   ],
+   "published": "2026-06-19",
+   "repository": "ankitects/anki",
+   "fix": "858e5689d0e4fd24f74856c7e8f245412694a219"
+  },
+  {
+   "ghsa": "GHSA-c29q-5xm7-5p62",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79",
+    "CWE-80"
+   ],
+   "published": "2026-06-19",
+   "repository": "StarCitizenWiki/mediawiki-extensions-EmbedVideo",
+   "fix": "9215564bf28a0ceb40be550a55ab78efc0accc56"
+  },
+  {
+   "ghsa": "GHSA-h5jc-78hr-3pc9",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-19",
+   "repository": "sveltia/sveltia-cms",
+   "fix": "8c46294eadf52a8ac48740ccb5054b99d65cff1b"
+  },
+  {
+   "ghsa": "GHSA-mwqm-4fw3-cjvr",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-19",
+   "repository": "symfony/ux",
+   "fix": "842ae54bc74de389299f975f01aafae272cb0019"
+  },
+  {
+   "ghsa": "GHSA-wwf9-7jrc-rv4q",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-19",
+   "repository": "outerbase/studio",
+   "fix": "b06fb85e5967440278d5a815721b360920566ab9"
+  },
+  {
+   "ghsa": "GHSA-x975-rgx4-5fh4",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-19",
+   "repository": "appium/appium-mcp",
+   "fix": "e222bbbd6fe2b656a320efcd143563f08061a83d"
+  },
+  {
+   "ghsa": "GHSA-xg3j-c7q4-f9ph",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-23"
+   ],
+   "published": "2026-06-19",
+   "repository": "canonical/microceph",
+   "fix": "5c2760d8fb765d670e2673d3a537b67eae4b67c6"
+  },
+  {
+   "ghsa": "GHSA-8m59-7xv8-735h",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-18",
+   "repository": "marimo-team/marimo",
+   "fix": "fdd55c8cf6260ae23bb411dc9d9269def5cf75d6"
+  },
+  {
+   "ghsa": "GHSA-cmwh-pvxp-8882",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-471",
+    "CWE-665",
+    "CWE-79"
+   ],
+   "published": "2026-06-18",
+   "repository": "cure53/DOMPurify",
+   "fix": "011bc3b2fcc4be17aa76f9030e8668207717acb9"
+  },
+  {
+   "ghsa": "GHSA-fcw5-x6j4-ccmp",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-1021",
+    "CWE-79"
+   ],
+   "published": "2026-06-18",
+   "repository": "jupyter-server/jupyter_server",
+   "fix": "6cbee8d65e71abac851c4492fea987ad080580bd"
+  },
+  {
+   "ghsa": "GHSA-hxpf-9xvq-wph8",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-18",
+   "repository": "Labs64/NetLicensing-MCP",
+   "fix": "b8fd0ea76d533202573eb24add9fb2fbd9331496"
+  },
+  {
+   "ghsa": "GHSA-p6gq-j5cr-w38f",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-73",
+    "CWE-918"
+   ],
+   "published": "2026-06-18",
+   "repository": "nodemailer/nodemailer",
+   "fix": "a82e060d978f27e5f41369a9a9807b1e3dedc2e2"
+  },
+  {
+   "ghsa": "GHSA-69qj-pvh9-c5wg",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-06-16",
+   "repository": "yt-dlp/yt-dlp",
+   "fix": "5faffa999fd33b373d47773e8ee639d072accec2"
+  },
+  {
+   "ghsa": "GHSA-7v5m-pr3q-6453",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-16",
+   "repository": "earendil-works/pi",
+   "fix": "6cb23f9b5d5b6d1747672f535b167d0d809ac010"
+  },
+  {
+   "ghsa": "GHSA-c54g-xjwj-8g82",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-16",
+   "repository": "gohugoio/hugo",
+   "fix": "e41a06447daa3071a01f333fdcec0a5153c3c8d1"
+  },
+  {
+   "ghsa": "GHSA-gr75-jv2w-4656",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-06-16",
+   "repository": "langchain-ai/langchain",
+   "fix": "dcaf7795a3e6590af55c3ff7bda6add6355e9ea6"
+  },
+  {
+   "ghsa": "GHSA-q8gq-377p-jq3r",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-617",
+    "CWE-94"
+   ],
+   "published": "2026-06-16",
+   "repository": "vllm-project/vllm",
+   "fix": "b3c7ffcab82c2439726f8cb213800f6f38c023d3"
+  },
+  {
+   "ghsa": "GHSA-58w9-8g37-x9v5",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-15",
+   "repository": "angular/angular",
+   "fix": "3c70270c96677c0dd33585f2afe8e187113e5fb4"
+  },
+  {
+   "ghsa": "GHSA-rgjc-h3x7-9mwg",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-471",
+    "CWE-79"
+   ],
+   "published": "2026-06-15",
+   "repository": "angular/angular",
+   "fix": "6bde84fa8e6a5770b54040fbbc9bf10d5d0386fa"
+  },
+  {
+   "ghsa": "GHSA-x5qj-865h-mgvm",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-1023",
+    "CWE-79"
+   ],
+   "published": "2026-06-15",
+   "repository": "symfony/symfony",
+   "fix": "069a70f9f26e61e9de3b7f9a864a86ed24b36bd0"
+  },
+  {
+   "ghsa": "GHSA-239w-m3h6-ch8v",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-06-12",
+   "repository": "filebrowser/filebrowser",
+   "fix": "7c2c0a11b31b2bb214d741005a0b02b1764208b3"
+  },
+  {
+   "ghsa": "GHSA-gxjx-7m74-hcq8",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-12",
+   "repository": "filebrowser/filebrowser",
+   "fix": "847d08bdd135e5c3659f2e6dea2f0cd36617af9b"
+  },
+  {
+   "ghsa": "GHSA-jh32-v29g-68pq",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-862",
+    "CWE-89"
+   ],
+   "published": "2026-06-12",
+   "repository": "TYPO3/typo3",
+   "fix": "c90493c13b633f328cf2c066182c90a1655ff0fc"
+  },
+  {
+   "ghsa": "GHSA-jvf5-rxvv-3mcg",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-12",
+   "repository": "TYPO3/html-sanitizer",
+   "fix": "bd1a88d9b5a5f67f1120ec41084e9c1a0675641c"
+  },
+  {
+   "ghsa": "GHSA-p5j5-4j3q-8mq8",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-12",
+   "repository": "TYPO3/html-sanitizer",
+   "fix": "8b5d0be44ded457ca993ec9ca93d859941c63764"
+  },
+  {
+   "ghsa": "GHSA-4x76-22x2-rx8v",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-06-11",
+   "repository": "OpenZeppelin/contracts-wizard",
+   "fix": "ec12c44f8d9e0491eba31037f95b36e98ec58b5f"
+  },
+  {
+   "ghsa": "GHSA-hqp4-2352-xf5r",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-11",
+   "repository": "keras-team/keras",
+   "fix": "2465b6657b02c8eed308759b7e800e295ae01888"
+  },
+  {
+   "ghsa": "GHSA-px92-q6rc-6mwv",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-06-11",
+   "repository": "spring-projects/spring-graphql",
+   "fix": "5579b6eca045126a27405b4cb1ae1f38d7577cb7"
+  },
+  {
+   "ghsa": "GHSA-rcvq-m9j9-6f4g",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-11",
+   "repository": "hapijs/inert",
+   "fix": "a65e5b271b5c3405af463469959c5e052eb23a62"
+  },
+  {
+   "ghsa": "GHSA-wxq4-cc2q-338q",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-11",
+   "repository": "mar10/wsgidav",
+   "fix": "f894ed8656d7bdd7438ab8148c5a02546cb15183"
+  },
+  {
+   "ghsa": "GHSA-7j4w-x8x8-5mvg",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-06-10",
+   "repository": "kubev2v/assisted-migration-agent",
+   "fix": "bcae0438ad8386321a300413d71c982a11b7b5b7"
+  },
+  {
+   "ghsa": "GHSA-8g5p-jxp9-457c",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "published": "2026-06-10",
+   "repository": "kubev2v/assisted-migration-agent",
+   "fix": "b940fec9f5032a0801e994054d30e81d64b2942a"
+  },
+  {
+   "ghsa": "GHSA-93qh-vwrm-c5pw",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-10",
+   "repository": "jenkinsci/jenkins",
+   "fix": "20041e8090d3b228d586169141ea7f12ffe4444d"
+  },
+  {
+   "ghsa": "GHSA-g2xq-2v27-4rh3",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-06-10",
+   "repository": "jenkinsci/jenkins",
+   "fix": "345a3190a49d1ac96c4ff1c2e9eef4102c8d63f6"
+  },
+  {
+   "ghsa": "GHSA-qv8h-rqr3-mph9",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-36"
+   ],
+   "published": "2026-06-10",
+   "repository": "Silverpeas/Silverpeas-Core",
+   "fix": "caa6e6d1ac967ebd29b39e11c2ef5e7fd0047eec"
+  },
+  {
+   "ghsa": "GHSA-vf2h-7x3w-97fr",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-06-10",
+   "repository": "kubev2v/migration-planner",
+   "fix": "6110711b1b71bb0d15348b934a490a5932b41f83"
+  },
+  {
+   "ghsa": "GHSA-6qwm-5fm9-cvjx",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79",
+    "CWE-80"
+   ],
+   "published": "2026-06-09",
+   "repository": "apache/answer",
+   "fix": "d1a4092c61ccd41988d1033fce47eb513adb433e"
+  },
+  {
+   "ghsa": "GHSA-f6vj-48fm-hmvx",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-09",
+   "repository": "apache/airflow",
+   "fix": "bc1df029af15cb1d35d5ca0d33bf9235500137cc"
+  },
+  {
+   "ghsa": "GHSA-jvc5-6g7q-c843",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-06-09",
+   "repository": "pheditor/pheditor",
+   "fix": "62b43df7cb8956a9b0deb9bec278ca8676c890c5"
+  },
+  {
+   "ghsa": "GHSA-x863-p983-p4f7",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-06-09",
+   "repository": "spring-projects/spring-framework",
+   "fix": "9bec52b1ec741976658e916850b31f41afd2da2d"
+  },
+  {
+   "ghsa": "GHSA-7hp6-g3pq-3pc3",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-06-08",
+   "repository": "forgekeep/nebula-mesh",
+   "fix": "c1506f7344ab375a145a7449b193af3f19bb41ef"
+  },
+  {
+   "ghsa": "GHSA-p2j4-c4g6-rpf5",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-200",
+    "CWE-22",
+    "CWE-918"
+   ],
+   "published": "2026-06-08",
+   "repository": "Basekick-Labs/arc",
+   "fix": "91bdc29d1a02178ccf8c66375eccf85203108dfb"
+  },
+  {
+   "ghsa": "GHSA-vjmr-f5fc-vr2w",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-08",
+   "repository": "hs-web/hsweb-framework",
+   "fix": "8009845b577d8a2c4bbf4fdd8e8913799a714be6"
+  },
+  {
+   "ghsa": "GHSA-jjrm-hr5f-673x",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-23"
+   ],
+   "published": "2026-06-05",
+   "repository": "fluxcd/source-controller",
+   "fix": "759bd6c451e7cc4327b38f42c8b671980165cb0e"
+  },
+  {
+   "ghsa": "GHSA-w8p5-mx5w-cpqj",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-88"
+   ],
+   "published": "2026-06-05",
+   "repository": "ansible/ansible",
+   "fix": "edee59aa15abcc74d920bb3e9c3835ab8db05a2f"
+  },
+  {
+   "ghsa": "GHSA-2fhx-q92v-5fhv",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-04",
+   "repository": "WWBN/AVideo",
+   "fix": "3e0b3ce2bfa766183ff0ae227439394db57b1a23"
+  },
+  {
+   "ghsa": "GHSA-4p62-hqp5-g644",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-77"
+   ],
+   "published": "2026-06-04",
+   "repository": "SepineTam/mcp-for-stata",
+   "fix": "e6f945941ae0c7cf5e74a428e0b3dc82b396382f"
+  },
+  {
+   "ghsa": "GHSA-66q5-cj5g-wrfx",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-04",
+   "repository": "WWBN/AVideo",
+   "fix": "7292129eaee5f609beae103b5cb387d55f17b877"
+  },
+  {
+   "ghsa": "GHSA-wqcr-7rf3-f64m",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-06-04",
+   "repository": "sylabs/singularity",
+   "fix": "c08791793e843d4c9c1f2fc1d9d12abef747378f"
+  },
+  {
+   "ghsa": "GHSA-c27g-q93r-2cwf",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-77"
+   ],
+   "published": "2026-06-03",
+   "repository": "vitejs/launch-editor",
+   "fix": "971291e8a6a91226e1616c5c0ec85423d2d50a5e"
+  },
+  {
+   "ghsa": "GHSA-ch57-39q2-4crm",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-03",
+   "repository": "zenitraM/malla",
+   "fix": "4086e2b5f61615a813b70b25bc76095083552135"
+  },
+  {
+   "ghsa": "GHSA-f22v-gfqf-p8f3",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-06-03",
+   "repository": "remix-run/react-router",
+   "fix": "ea28e66926460656815cee9b7f2dfaa872513a8c"
+  },
+  {
+   "ghsa": "GHSA-jg22-mg44-37j8",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-06-03",
+   "repository": "aio-libs/aiohttp",
+   "fix": "dcf40f30637e8752c76781cf6703b5a236749a00"
+  },
+  {
+   "ghsa": "GHSA-m3v4-v5gx-7wf5",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-06-02",
+   "repository": "maziyarpanahi/openmed",
+   "fix": "98724f65df98d7518b9006e6356740aa36c2f224"
+  },
+  {
+   "ghsa": "GHSA-85rw-g4f4-jprr",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-297"
+   ],
+   "published": "2026-06-01",
+   "repository": "apache/directory-ldap-api",
+   "fix": "57a7726d8b6436c74945c12f5ba4e12d232d2bac"
+  },
+  {
+   "ghsa": "GHSA-29h4-r29x-hchv",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-05-29",
+   "repository": "aws/amazon-redshift-python-driver",
+   "fix": "69a69dfdead75918e20384da52bcd760ded8dbca"
+  },
+  {
+   "ghsa": "GHSA-5j8p-5rrj-8wjg",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-29",
+   "repository": "hanxi/xiaomusic",
+   "fix": "88404da7a283f2c0a796a4cd16bbb6e6aa1f4722"
+  },
+  {
+   "ghsa": "GHSA-9277-mp7x-85jf",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-05-28",
+   "repository": "jelmer/dulwich",
+   "fix": "e3331b3b3a122fc313460182f928f59723580b7b"
+  },
+  {
+   "ghsa": "GHSA-c3px-h233-h6fq",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-28",
+   "repository": "getarcaneapp/arcane",
+   "fix": "b6cbffabf61dbc3f12a28d3b5830e3c6b7e67daf"
+  },
+  {
+   "ghsa": "GHSA-hhg7-c65m-h7ff",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-184",
+    "CWE-79"
+   ],
+   "published": "2026-05-28",
+   "repository": "symfony/symfony",
+   "fix": "26a598fcfc4f903cc55ff202f642ee621839825e"
+  },
+  {
+   "ghsa": "GHSA-r2f4-ff2p-xc64",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-05-28",
+   "repository": "pimcore/pimcore",
+   "fix": "6df625ff74015dc11f4bbe76170ce45bbd5dd61d"
+  },
+  {
+   "ghsa": "GHSA-v45h-mqf4-6939",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-23"
+   ],
+   "published": "2026-05-28",
+   "repository": "apache/ignite",
+   "fix": "5c42c7a303937844179ad470edb35c1ad1cee6ab"
+  },
+  {
+   "ghsa": "GHSA-28gh-q3gw-pvx8",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-27",
+   "repository": "Avaiga/taipy",
+   "fix": "129fd407ffca49ee4ab853772c88d0c873e038dd"
+  },
+  {
+   "ghsa": "GHSA-2gv2-cffp-j227",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22",
+    "CWE-36"
+   ],
+   "published": "2026-05-27",
+   "repository": "kata-containers/kata-containers",
+   "fix": "ffa59ce3aa7877d067c9a372df0c329a23a01744"
+  },
+  {
+   "ghsa": "GHSA-2qv6-9wx5-cwv4",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-27",
+   "repository": "harttle/liquidjs",
+   "fix": "26ea2856c7a90aec892b98d94a9b7a3e18539045"
+  },
+  {
+   "ghsa": "GHSA-3234-gxc3-pq6f",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-05-27",
+   "repository": "pimcore/pimcore",
+   "fix": "3fd7733464f464e58ffa49ed91550c1a3f9535f2"
+  },
+  {
+   "ghsa": "GHSA-36fc-7wjg-mfvj",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-05-27",
+   "repository": "pimcore/pimcore",
+   "fix": "4788bf3a3a7f2f760a8fe61e522565941e154e1e"
+  },
+  {
+   "ghsa": "GHSA-cv2p-68f4-f4pw",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-05-27",
+   "repository": "sipeed/picoclaw",
+   "fix": "01d694b9985a66c3d7119fc9f74ce8ed4f0f21b5"
+  },
+  {
+   "ghsa": "GHSA-h4ph-crvj-9h92",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-05-27",
+   "repository": "pimcore/admin-ui-classic-bundle",
+   "fix": "80e57a23d9e19574eddfe9b08e8f26785b2b0d90"
+  },
+  {
+   "ghsa": "GHSA-hmr5-2xcr-v8pp",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-27",
+   "repository": "symfony/symfony",
+   "fix": "863aa81c61166f1aa74b7732df316f76113acbdb"
+  },
+  {
+   "ghsa": "GHSA-ph9p-34f9-6g65",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-27",
+   "repository": "raszi/node-tmp",
+   "fix": "efa4a06f24374797ae32ab2b6ae39b7a611ae429"
+  },
+  {
+   "ghsa": "GHSA-29pf-2h5f-8g72",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-1066",
+    "CWE-502"
+   ],
+   "published": "2026-05-26",
+   "repository": "huggingface/transformers",
+   "fix": "a7f8e7ff37d87d1a1a0c8cf607971c607741452f"
+  },
+  {
+   "ghsa": "GHSA-fgmj-fm8m-jvvx",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-26",
+   "repository": "apache/echarts",
+   "fix": "1e39b00eedda0e4a0b048e099c0e13ce7149d90f"
+  },
+  {
+   "ghsa": "GHSA-hqmv-v56g-4m47",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-26",
+   "repository": "baptisteArno/typebot.io",
+   "fix": "2c3fc7267a5e1529ba4b1a2ab4f1edb3e3b8990b"
+  },
+  {
+   "ghsa": "GHSA-hxmh-2xc4-c894",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-05-26",
+   "repository": "Dolibarr/dolibarr",
+   "fix": "41709f07d0aef384723164877395ed081b44b810"
+  },
+  {
+   "ghsa": "GHSA-xq3r-2qv5-vqqm",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-23"
+   ],
+   "published": "2026-05-26",
+   "repository": "xwiki/xwiki-commons",
+   "fix": "a979cafd89f6a9c9c0b9ab19744d672df64429bf"
+  },
+  {
+   "ghsa": "GHSA-9xq9-36w5-q796",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-1188",
+    "CWE-915",
+    "CWE-94"
+   ],
+   "published": "2026-05-21",
+   "repository": "InternLM/lmdeploy",
+   "fix": "81be52961aa324fd5cd3cacebffba1ba051bc107"
+  },
+  {
+   "ghsa": "GHSA-fhhq-h4hg-549x",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-05-19",
+   "repository": "modelscope/modelscope",
+   "fix": "75d54927e112261d39598ca08c15b66a7ff3f735"
+  },
+  {
+   "ghsa": "GHSA-97r8-rf7q-wmjw",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-18",
+   "repository": "sveltia/sveltia-cms",
+   "fix": "43a6ac5d0182a503400d8ce1ac156e08f537b1b2"
+  },
+  {
+   "ghsa": "GHSA-jx93-pf6x-874r",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-18",
+   "repository": "mattermost/mattermost",
+   "fix": "5a1ea95044dc2d1ca601bfe9a4c1bc17990f3872"
+  },
+  {
+   "ghsa": "GHSA-x7m9-mwc2-g6w2",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-1336",
+    "CWE-693",
+    "CWE-94"
+   ],
+   "published": "2026-05-18",
+   "repository": "verbb/formie",
+   "fix": "f690d5623163ce2a95da305238d6367575486ee3"
+  },
+  {
+   "ghsa": "GHSA-f63h-wc26-pmvc",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-17",
+   "repository": "AstrBotDevs/AstrBot",
+   "fix": "aaec41e5054569ceaa1113593a34da7568e2d211"
+  },
+  {
+   "ghsa": "GHSA-3363-2ph6-35wh",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-15",
+   "repository": "pipecat-ai/pipecat",
+   "fix": "7519c26ac5508573c35fa3a9c4717b013993d129"
+  },
+  {
+   "ghsa": "GHSA-5hhf-xmfx-4vvr",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-295"
+   ],
+   "published": "2026-05-15",
+   "repository": "oviva-ag/epa4all-client",
+   "fix": "9111d6fbb939007036a7f74b2a93bb278cb5af32"
+  },
+  {
+   "ghsa": "GHSA-64rr-pp78-62ww",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-15",
+   "repository": "nukeviet/nukeviet",
+   "fix": "2a0860fbe22e2f6a3b90f802bf80b25e18699611"
+  },
+  {
+   "ghsa": "GHSA-6wxc-8mgq-w26m",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-15",
+   "repository": "WeblateOrg/weblate",
+   "fix": "8b0adf1d0b43dfc0d09da4b878857b2288b84f2d"
+  },
+  {
+   "ghsa": "GHSA-ch4j-vcf5-58x5",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-15",
+   "repository": "Cockpit-HQ/Cockpit",
+   "fix": "72a83fcfe85ad8330e9ae834bc02fa517b5749e9"
+  },
+  {
+   "ghsa": "GHSA-jrrg-99xh-5j2q",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-15",
+   "repository": "simplesamlphp/simplesamlphp-module-casserver",
+   "fix": "b84f3e4ed57c4d97e0dc73df102e7eff831a681f"
+  },
+  {
+   "ghsa": "GHSA-mq5j-pw29-jcv3",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-05-15",
+   "repository": "microsoft/apm",
+   "fix": "77d1dda8303c8d7ccb6148788a6274fdece98499"
+  },
+  {
+   "ghsa": "GHSA-5qrq-9645-g5g2",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-14",
+   "repository": "ethyca/fides",
+   "fix": "67e43b10b1096c7f84d5c0eeba08ee3b7846b7cd"
+  },
+  {
+   "ghsa": "GHSA-7p5m-v798-f8vv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-732",
+    "CWE-94",
+    "CWE-940"
+   ],
+   "published": "2026-05-14",
+   "repository": "electerm/electerm",
+   "fix": "0599e67069b00e376a2e962649aaad6096e63507"
+  },
+  {
+   "ghsa": "GHSA-f3cj-j4f6-wq85",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-14",
+   "repository": "sveltejs/svelte",
+   "fix": "a16ebc67bbcf8f708360195687e1b2719463e1a4"
+  },
+  {
+   "ghsa": "GHSA-fm77-94qm-4894",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-05-14",
+   "repository": "openclaw/crabbox",
+   "fix": "eaae40ae4ce009e60633f16f7f19600c74557f6f"
+  },
+  {
+   "ghsa": "GHSA-m8fg-67j7-cx4v",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-14",
+   "repository": "portainer/portainer",
+   "fix": "e02ae6b2fb69668d1cd7d07cb873dfcdd9cf1e42"
+  },
+  {
+   "ghsa": "GHSA-q23m-vm9r-5745",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-14",
+   "repository": "stefanprodan/podinfo",
+   "fix": "cbebb20fd48588d36fc7ff3e874c128eb89692f4"
+  },
+  {
+   "ghsa": "GHSA-q58j-g3f4-h26h",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-05-14",
+   "repository": "coreshop/CoreShop",
+   "fix": "cc1e3f547228ec5ebfc1dc0472f9a3cc5f4137a4"
+  },
+  {
+   "ghsa": "GHSA-rpr9-rxv7-x643",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-14",
+   "repository": "apostrophecms/apostrophe",
+   "fix": "8d4c882b4ed3a7ce802cd87f89f0c1cb7482b8c2"
+  },
+  {
+   "ghsa": "GHSA-g3xq-3gmv-qq8g",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78",
+    "CWE-94"
+   ],
+   "published": "2026-05-13",
+   "repository": "cnighswonger/claude-code-cache-fix",
+   "fix": "613e4df30547f3e6baf32d161eddc828f171da17"
+  },
+  {
+   "ghsa": "GHSA-xr5h-phrj-8vxv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-323",
+    "CWE-79"
+   ],
+   "published": "2026-05-13",
+   "repository": "withastro/astro",
+   "fix": "3d82220a1549e699e34ed433f3846a919f4c02bd"
+  },
+  {
+   "ghsa": "GHSA-hx53-77qj-8663",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-12",
+   "repository": "hashicorp/nomad",
+   "fix": "cd7240c4099ad33eda279924fb3a9459b162d120"
+  },
+  {
+   "ghsa": "GHSA-3cjv-h753-qf7h",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-11",
+   "repository": "openclaw/crabbox",
+   "fix": "6b07193fb5670aac315ea47215651c67b8127868"
+  },
+  {
+   "ghsa": "GHSA-42h5-h8qh-vv9v",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-11",
+   "repository": "mlflow/mlflow",
+   "fix": "6e801f4259d96804c73107315b24cef0f6aa115a"
+  },
+  {
+   "ghsa": "GHSA-5vpg-rj7q-qpw2",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-20",
+    "CWE-98"
+   ],
+   "published": "2026-05-11",
+   "repository": "yiisoft/yii2",
+   "fix": "109878b491dbffa541032bc99fb5e26d12cd0375"
+  },
+  {
+   "ghsa": "GHSA-6jh4-47v2-4g37",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-11",
+   "repository": "mantisbt/mantisbt",
+   "fix": "b1ebc57763f104eb5f541b7b4d1ce6948168abd9"
+  },
+  {
+   "ghsa": "GHSA-7mqj-8gj2-cg59",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-11",
+   "repository": "mantisbt/mantisbt",
+   "fix": "5cb4b469295889f5d2b01677c9bf82c143e0fdaa"
+  },
+  {
+   "ghsa": "GHSA-9c3j-xm6v-j7j3",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-358",
+    "CWE-79"
+   ],
+   "published": "2026-05-11",
+   "repository": "mantisbt/mantisbt",
+   "fix": "9e3bee2e7b909f4e3596985892b8bc8bee9e0bfe"
+  },
+  {
+   "ghsa": "GHSA-g8f2-4f4f-5jqw",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-05-11",
+   "repository": "nyariv/SandboxJS",
+   "fix": "826865251232611ec94078bab5a18ec875dad4a5"
+  },
+  {
+   "ghsa": "GHSA-8g7g-hmwm-6rv2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-200",
+    "CWE-22",
+    "CWE-918"
+   ],
+   "published": "2026-05-08",
+   "repository": "czlonkowski/n8n-mcp",
+   "fix": "1cfe9c6bddb4b1634e6e23323c18ea35fd196999"
+  },
+  {
+   "ghsa": "GHSA-fmg2-f5r9-24qc",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-08",
+   "repository": "getgrav/grav-plugin-admin",
+   "fix": "f67cc18e81d8767bb43d29ee6422c55ed0427803"
+  },
+  {
+   "ghsa": "GHSA-q4p8-8j9m-8hxj",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78",
+    "CWE-88"
+   ],
+   "published": "2026-05-08",
+   "repository": "electerm/electerm",
+   "fix": "24ce7103e264cffe6eb5476c0506a2379e6f8333"
+  },
+  {
+   "ghsa": "GHSA-r42m-953q-6vjx",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-08",
+   "repository": "grokability/snipe-it",
+   "fix": "28f493d84d057895fbb93b6570e7393a2c2fa438"
+  },
+  {
+   "ghsa": "GHSA-rqv2-m695-f8j4",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-116",
+    "CWE-79"
+   ],
+   "published": "2026-05-08",
+   "repository": "modelcontextprotocol/registry",
+   "fix": "78b7bbde07948049b916d76b4769faee461ff930"
+  },
+  {
+   "ghsa": "GHSA-3v85-fqvh-7rxf",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-116",
+    "CWE-79"
+   ],
+   "published": "2026-05-07",
+   "repository": "lin-snow/Ech0",
+   "fix": "fd320fe3e9021c8d8d284fb274775c018690520e"
+  },
+  {
+   "ghsa": "GHSA-5cmv-3rc4-7279",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79",
+    "CWE-80"
+   ],
+   "published": "2026-05-07",
+   "repository": "WeblateOrg/weblate",
+   "fix": "85abc9df88b7464f4c0e794aef752e45f4230f75"
+  },
+  {
+   "ghsa": "GHSA-98h9-4798-4q5v",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-05-07",
+   "repository": "huggingface/diffusers",
+   "fix": "a37f6f8394ac2a7ee8360c3abea811efe54512b1"
+  },
+  {
+   "ghsa": "GHSA-fwj3-42wh-8673",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-07",
+   "repository": "gtsteffaniak/filebrowser",
+   "fix": "112740bdd41de7d5eb01e13ba49d406bfc463f69"
+  },
+  {
+   "ghsa": "GHSA-gq5c-rw37-g46c",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-07",
+   "repository": "NeoRazorX/facturascripts",
+   "fix": "9066e10326029adf012114e27eb5f3f33f78ecfd"
+  },
+  {
+   "ghsa": "GHSA-j822-46r5-h4qx",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-07",
+   "repository": "krayin/laravel-crm",
+   "fix": "fc467040de21803cb2b67c2229d2dfcf731d2d3e"
+  },
+  {
+   "ghsa": "GHSA-mmpx-jh39-wrv6",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-07",
+   "repository": "gtsteffaniak/filebrowser",
+   "fix": "6bfc3974192e954f71cc5d1cd04baaaec3b76383"
+  },
+  {
+   "ghsa": "GHSA-xv9c-mjw8-79gf",
+   "ecosystem": "RubyGems",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-07",
+   "repository": "sidekiq-cron/sidekiq-cron",
+   "fix": "7b4ae4822f93ef4646f5cb55500ca4e25662db7c"
+  },
+  {
+   "ghsa": "GHSA-289f-fq7w-6q2w",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-05-06",
+   "repository": "thorsten/phpMyFAQ",
+   "fix": "b9f25109fddb38eee19987183798638d07943f92"
+  },
+  {
+   "ghsa": "GHSA-2h4p-vjrc-8xpq",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-06",
+   "repository": "sqlalchemy/mako",
+   "fix": "72e10c573ca0fbcbddd4455abca8ce92a61780d7"
+  },
+  {
+   "ghsa": "GHSA-3gmf-p6r4-q8m6",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-06",
+   "repository": "apache/wicket",
+   "fix": "72470983f689c61e6a6c0b7388ef955f23bb1e16"
+  },
+  {
+   "ghsa": "GHSA-fhq3-2gf3-8f3j",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-295",
+    "CWE-918"
+   ],
+   "published": "2026-05-06",
+   "repository": "MISP/misp-modules",
+   "fix": "52cda9caa003cafe87e14ae3721db5e16f6f111a"
+  },
+  {
+   "ghsa": "GHSA-w4rc-p66m-x6qq",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-20",
+    "CWE-73"
+   ],
+   "published": "2026-05-06",
+   "repository": "getgrav/grav-plugin-form",
+   "fix": "48bacc4187e1cff815000e526d5ca2878484867f"
+  },
+  {
+   "ghsa": "GHSA-xwqr-rcqg-22mr",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-05-06",
+   "repository": "flightphp/core",
+   "fix": "b8dd23aaa828cb289fa3c84e75b2a3717cab50b0"
+  },
+  {
+   "ghsa": "GHSA-526f-jxpj-jmg2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-05",
+   "repository": "apache/thrift",
+   "fix": "80184ddca4d4f60ac657bd82b2abc47269814f79"
+  },
+  {
+   "ghsa": "GHSA-7pwc-h2j2-rjgj",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-297"
+   ],
+   "published": "2026-05-05",
+   "repository": "apache/thrift",
+   "fix": "0919c3d5506151514e283a63e1fe1ce83e2449d8"
+  },
+  {
+   "ghsa": "GHSA-9695-8fr9-hw5q",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-05",
+   "repository": "getgrav/grav",
+   "fix": "5a12f9be8314682c8713e569e330f11805d0a663"
+  },
+  {
+   "ghsa": "GHSA-fw8g-cg8f-9j28",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-05-05",
+   "repository": "prometheus/prometheus",
+   "fix": "38f23b9075ced1de2b82d2dad8b2bebb1ecd5b7d"
+  },
+  {
+   "ghsa": "GHSA-hrcw-xc63-g29m",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-05",
+   "repository": "icip-cas/PPTAgent",
+   "fix": "418491a9a1c02d9d93194b5973bb58df35cf9d00"
+  },
+  {
+   "ghsa": "GHSA-r39h-4c2p-3jxp",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-05-05",
+   "repository": "openclaw/openclaw",
+   "fix": "993781e6e6eaf50f033cfc3e3bf4f47059740707"
+  },
+  {
+   "ghsa": "GHSA-gxxh-8vcj-w2mh",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-434",
+    "CWE-79"
+   ],
+   "published": "2026-05-04",
+   "repository": "mckenziearts/livewire-markdown-editor",
+   "fix": "1e60eaa5781e89704e112425f832774be85cd71f"
+  },
+  {
+   "ghsa": "GHSA-q4ph-8x8g-95f8",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-05-04",
+   "repository": "AzuraCast/AzuraCast",
+   "fix": "d6b8422fc2c36269df9d1adec89dfbba58828915"
+  },
+  {
+   "ghsa": "GHSA-qq3r-w4hj-gjp6",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-05-04",
+   "repository": "chainguard-dev/apko",
+   "fix": "f5a96e1299ac81c7ea9441705ec467688086f442"
+  },
+  {
+   "ghsa": "GHSA-vp2f-cqqp-478j",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-05-04",
+   "repository": "AzuraCast/AzuraCast",
+   "fix": "18c793b4427eb49e67a2fea99a89f1c9d9dd808d"
+  },
+  {
+   "ghsa": "GHSA-86hp-qxqp-w9wv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-77"
+   ],
+   "published": "2026-04-30",
+   "repository": "VetCoders/mcp-server-semgrep",
+   "fix": "141335da044e53c3f5b315e0386e01238405b771"
+  },
+  {
+   "ghsa": "GHSA-q7r4-hc83-hf2q",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-88"
+   ],
+   "published": "2026-04-30",
+   "repository": "gotenberg/gotenberg",
+   "fix": "405f1069c026bb08f319fb5a44e5c67c33208318"
+  },
+  {
+   "ghsa": "GHSA-55wf-5m3q-6jjf",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-29",
+   "repository": "Icinga/ipl-web",
+   "fix": "f387e92504d7a03bb857d1aee9b7410e06dd065d"
+  },
+  {
+   "ghsa": "GHSA-f6pr-83pg-ghh6",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-29",
+   "repository": "geopython/pygeoapi",
+   "fix": "bf25b8695edbdd5476eeffc102b633d1d3e45f52"
+  },
+  {
+   "ghsa": "GHSA-gfg9-5357-hv4c",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-200",
+    "CWE-22"
+   ],
+   "published": "2026-04-29",
+   "repository": "openclaw/openclaw",
+   "fix": "6e58f1f9f54bca1fea1268ec0ee4c01a2af03dde"
+  },
+  {
+   "ghsa": "GHSA-gw2x-mfwr-h46p",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-99"
+   ],
+   "published": "2026-04-29",
+   "repository": "xuxueli/xxl-job",
+   "fix": "d24e4ccd6073cc75305e1d3b9c29bc8db7437e7a"
+  },
+  {
+   "ghsa": "GHSA-h4hv-92pp-pcjg",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-29",
+   "repository": "gchq/CyberChef",
+   "fix": "9641ae07f92e9af50f10e978385465b2f4a36c4d"
+  },
+  {
+   "ghsa": "GHSA-h8cj-hpmg-636v",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-04-29",
+   "repository": "appsmithorg/appsmith",
+   "fix": "c8023ba4b3b54204ff3309c9e5c33664ad15ba32"
+  },
+  {
+   "ghsa": "GHSA-74m3-9qvm-rp9h",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22",
+    "CWE-61"
+   ],
+   "published": "2026-04-25",
+   "repository": "openziti/zrok",
+   "fix": "459bcfc1e121decae1b1d11c37ad94e4ed5bbf2e"
+  },
+  {
+   "ghsa": "GHSA-hffm-xvc3-vprc",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-04-25",
+   "repository": "steveukx/git-js",
+   "fix": "89a2294febed5dfe737c4c735d936bb6018746a8"
+  },
+  {
+   "ghsa": "GHSA-8x35-hph8-37hq",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-77"
+   ],
+   "published": "2026-04-24",
+   "repository": "electerm/electerm",
+   "fix": "59708b38c8a52f5db59d7d4eff98e31d573128ee"
+  },
+  {
+   "ghsa": "GHSA-gx2m-mcc2-r4p3",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-24",
+   "repository": "WeblateOrg/wlc",
+   "fix": "0f3e58f6d7457b05d48ef40f579a172c4c8b8469"
+  },
+  {
+   "ghsa": "GHSA-mw35-8rx3-xf9r",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502",
+    "CWE-94"
+   ],
+   "published": "2026-04-24",
+   "repository": "ray-project/ray",
+   "fix": "c02bd31ae31996805868baa446a131a8d304525f"
+  },
+  {
+   "ghsa": "GHSA-8h25-q488-4hxw",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-250",
+    "CWE-284",
+    "CWE-693",
+    "CWE-78",
+    "CWE-94"
+   ],
+   "published": "2026-04-23",
+   "repository": "th30d4y/OpenLearnX",
+   "fix": "14765d7d1856d564747c55c5412e2f38feab079e"
+  },
+  {
+   "ghsa": "GHSA-98f2-w9h9-7fp9",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-23",
+   "repository": "chainguard-dev/melange",
+   "fix": "5829ca45cfe14dfeb73ffb716992db3b1b7892ac"
+  },
+  {
+   "ghsa": "GHSA-m8mh-x359-vm8m",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-23",
+   "repository": "iBotPeaches/Apktool",
+   "fix": "e10a0450c7afcd9462c0b76bcbff0e7428b92bdd"
+  },
+  {
+   "ghsa": "GHSA-q2pw-xx38-p64j",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-23",
+   "repository": "chainguard-dev/melange",
+   "fix": "84f3b450ce6e472c4abb8dc4c26d0ce8ac1259ac"
+  },
+  {
+   "ghsa": "GHSA-qmcv-hh7c-3m56",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-04-23",
+   "repository": "h2oai/h2o-3",
+   "fix": "b9ae2d3c5220db2dc53753357a783e590364d044"
+  },
+  {
+   "ghsa": "GHSA-2jrg-rf5x-568g",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-297"
+   ],
+   "published": "2026-04-22",
+   "repository": "spring-projects/spring-security",
+   "fix": "88118afb8f9357ae7cc215500a441e89fee701c3"
+  },
+  {
+   "ghsa": "GHSA-4948-f92q-f432",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-04-22",
+   "repository": "nocobase/nocobase",
+   "fix": "202e2b8efe44ba90adbf1087f6f70881ff947604"
+  },
+  {
+   "ghsa": "GHSA-6457-mxpq-4fqq",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-94"
+   ],
+   "published": "2026-04-22",
+   "repository": "i18next/i18nextify",
+   "fix": "16f23dbcdcf893673587f7a03355bf7ce0a0e49e"
+  },
+  {
+   "ghsa": "GHSA-c3h8-g69v-pjrg",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-113",
+    "CWE-79"
+   ],
+   "published": "2026-04-22",
+   "repository": "i18next/i18next-http-middleware",
+   "fix": "65301c194593d46a84623b64e5fde2f51d3550f6"
+  },
+  {
+   "ghsa": "GHSA-h7mw-gpvr-xq4m",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-183",
+    "CWE-79"
+   ],
+   "published": "2026-04-22",
+   "repository": "cure53/DOMPurify",
+   "fix": "c361baa18dbdcb3344a41110f4c48ad85bf48f80"
+  },
+  {
+   "ghsa": "GHSA-hjh7-r5w8-5872",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-22",
+   "repository": "siyuan-note/siyuan",
+   "fix": "bb481e1290c4a34255652ede85a546504505d2a7"
+  },
+  {
+   "ghsa": "GHSA-j88v-2chj-qfwx",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-04-22",
+   "repository": "jackc/pgx",
+   "fix": "60644f84918a8af66d14a4b0d865d4edafd955da"
+  },
+  {
+   "ghsa": "GHSA-jfwf-28xr-xw6q",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-306",
+    "CWE-78"
+   ],
+   "published": "2026-04-22",
+   "repository": "rclone/rclone",
+   "fix": "2a9e952b38e03a96bf40c9eb6e8e22199865ee3b"
+  },
+  {
+   "ghsa": "GHSA-mgcp-mfp8-3q45",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-74"
+   ],
+   "published": "2026-04-22",
+   "repository": "locize/i18next-locize-backend",
+   "fix": "8f81ad4707aa0e90647fde4da5fbe5b23153c6e1"
+  },
+  {
+   "ghsa": "GHSA-p3h2-2j4p-p83g",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-22",
+   "repository": "samanhappy/mcphub",
+   "fix": "af5b013c09bb0add6b7ad9aaa5b875cf150d2a7c"
+  },
+  {
+   "ghsa": "GHSA-q89c-q3h5-w34g",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-74"
+   ],
+   "published": "2026-04-22",
+   "repository": "i18next/i18next-http-backend",
+   "fix": "4cee84f229c637b9c182366d3156f726d407a621"
+  },
+  {
+   "ghsa": "GHSA-vmj7-7xmm-4349",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-22",
+   "repository": "Silverpeas/Silverpeas-Core",
+   "fix": "7b4bacc80d11ab60423bdc6eb69e0176e9c27fc7"
+  },
+  {
+   "ghsa": "GHSA-w937-fg2h-xhq2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-346",
+    "CWE-79"
+   ],
+   "published": "2026-04-22",
+   "repository": "locize/locize",
+   "fix": "d006b75fadb8e8ab77b023e462850fc6e9170735"
+  },
+  {
+   "ghsa": "GHSA-wrwh-c28m-9jjh",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-284",
+    "CWE-89"
+   ],
+   "published": "2026-04-22",
+   "repository": "nocobase/nocobase",
+   "fix": "851aee543efa894142e0f7be03eb55d9cec06a91"
+  },
+  {
+   "ghsa": "GHSA-x2xq-qhjf-5mvg",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-22",
+   "repository": "ddev/ddev",
+   "fix": "05cbe299770a590b89bfc8dddab33e61b4302e43"
+  },
+  {
+   "ghsa": "GHSA-xfxp-ppx7-cqrp",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-04-22",
+   "repository": "apache/camel",
+   "fix": "ec297f89065b6cfc2682487a96411692d6c296e2"
+  },
+  {
+   "ghsa": "GHSA-xjvc-pw2r-6878",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-22",
+    "CWE-918"
+   ],
+   "published": "2026-04-22",
+   "repository": "flarum/framework",
+   "fix": "2d90a1f19f0e46f8c7e1b07c48ba74b5e38f8410"
+  },
+  {
+   "ghsa": "GHSA-676v-wh57-p375",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-04-21",
+   "repository": "Dolibarr/dolibarr",
+   "fix": "ba28d16da4cc0c221f49a878fecc8425501ceb96"
+  },
+  {
+   "ghsa": "GHSA-6vgr-cp5c-ffx3",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-04-21",
+   "repository": "openbao/openbao",
+   "fix": "80693a46ebb4fc2455f1c51ed1dd853b28c2fd77"
+  },
+  {
+   "ghsa": "GHSA-7ccv-rp6m-rffr",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-295",
+    "CWE-863"
+   ],
+   "published": "2026-04-21",
+   "repository": "openbao/openbao",
+   "fix": "9ab7a066826cc544c30e8b203f8f472076f366e1"
+  },
+  {
+   "ghsa": "GHSA-m6rx-7pvw-2f73",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-284"
+   ],
+   "published": "2026-04-21",
+   "repository": "Gitlawb/openclaude",
+   "fix": "7002cb302b78ea2a19da3f26226de24e2903fa1d"
+  },
+  {
+   "ghsa": "GHSA-mph4-q2vm-w2pw",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-88"
+   ],
+   "published": "2026-04-18",
+   "repository": "kubernetes-sigs/aws-efs-csi-driver",
+   "fix": "51806c22c5754bfbdeca6910f15571a07921b784"
+  },
+  {
+   "ghsa": "GHSA-66r7-m7xm-v49h",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-17",
+   "repository": "openclaw/openclaw",
+   "fix": "604777e4414cc3b2ff8861f18f4fb04374c702c6"
+  },
+  {
+   "ghsa": "GHSA-9qhq-v63v-fv3j",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-77",
+    "CWE-78"
+   ],
+   "published": "2026-04-17",
+   "repository": "MervinPraison/PraisonAI",
+   "fix": "47bff65413beaa3c21bf633c1fae4e684348368c"
+  },
+  {
+   "ghsa": "GHSA-c97m-vxhj-p7j6",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-17",
+   "repository": "yuin/goldmark",
+   "fix": "cb46bbc4eca29d55aa9721e04ad207c23ccc44f9"
+  },
+  {
+   "ghsa": "GHSA-p6x5-p4xf-cc4r",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-04-17",
+   "repository": "mauriciopoppe/math-codegen",
+   "fix": "4bb52d3030683362b3559ee8dd91350555a05f6b"
+  },
+  {
+   "ghsa": "GHSA-533q-w4g6-5586",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-16",
+   "repository": "psi-4ward/psitransfer",
+   "fix": "8b547bf3e09757122efa00aab90281e3915aa0c6"
+  },
+  {
+   "ghsa": "GHSA-855c-r2vq-c292",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-116",
+    "CWE-79"
+   ],
+   "published": "2026-04-16",
+   "repository": "apostrophecms/apostrophe",
+   "fix": "0e57dd07a56ae1ba1e3af646ba026db4d0ab5bb3"
+  },
+  {
+   "ghsa": "GHSA-97v6-998m-fp4g",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-16",
+   "repository": "apostrophecms/apostrophe",
+   "fix": "6a89bdb7acdb2e1e9bf1429961a6ba7f99410481"
+  },
+  {
+   "ghsa": "GHSA-ffgh-3jrf-8wvh",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-16",
+   "repository": "WeblateOrg/weblate",
+   "fix": "e30dbcb33ae78e754ecef192d54f996b89cb4e15"
+  },
+  {
+   "ghsa": "GHSA-gc9w-cc93-rjv8",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-04-16",
+   "repository": "froxlor/froxlor",
+   "fix": "3589ddf93ab59eb2a8971f0f56cbf6266d03c4ae"
+  },
+  {
+   "ghsa": "GHSA-hf5p-q87m-crj7",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-16",
+   "repository": "junrar/junrar",
+   "fix": "d77e9a83eb721cd51f9c23d7869d0e6ad7f952d7"
+  },
+  {
+   "ghsa": "GHSA-v92g-xgxw-vvmm",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-16",
+   "repository": "sqlalchemy/mako",
+   "fix": "e05ac61989a7fb9dd7dcde6cfd72dc48328719a3"
+  },
+  {
+   "ghsa": "GHSA-w59f-67xm-rxx7",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-98"
+   ],
+   "published": "2026-04-16",
+   "repository": "froxlor/froxlor",
+   "fix": "bc5e6dbaa90e6f3573129da640595e8c770e1d0c"
+  },
+  {
+   "ghsa": "GHSA-cw73-5f7h-m4gv",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-77"
+   ],
+   "published": "2026-04-15",
+   "repository": "Upsonic/Upsonic",
+   "fix": "855053fce0662227d9246268ff4a0844b481a305"
+  },
+  {
+   "ghsa": "GHSA-76hw-p97h-883f",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-14",
+   "repository": "wkentaro/gdown",
+   "fix": "af569fc6ed300b7974dee66dc51e9f01b57b4dff"
+  },
+  {
+   "ghsa": "GHSA-875v-7m49-8x88",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-04-14",
+   "repository": "craftcms/commerce",
+   "fix": "6d2d24b3a2b0c06593856d05446f82bd8af92d72"
+  },
+  {
+   "ghsa": "GHSA-8q5w-mmxf-48jg",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-14",
+   "repository": "siyuan-note/siyuan",
+   "fix": "b382f50e1880ed996364509de5a10a72d7409428"
+  },
+  {
+   "ghsa": "GHSA-hc8w-h2mf-hp59",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-04-14",
+   "repository": "containers/podman",
+   "fix": "571c842bd357ee626019ea97d030fb772fc654ed"
+  },
+  {
+   "ghsa": "GHSA-j98m-w3xp-9f56",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-14",
+   "repository": "haris-musa/excel-mcp-server",
+   "fix": "f51340ecd5778952405044b203d3a2d4c8a46833"
+  },
+  {
+   "ghsa": "GHSA-w4fj-87j5-f25c",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-80"
+   ],
+   "published": "2026-04-14",
+   "repository": "xwiki/xwiki-platform",
+   "fix": "3c8a2ec985641367015c2db937574fcd360c788c"
+  },
+  {
+   "ghsa": "GHSA-4f3f-g24h-fr8m",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-04-13",
+   "repository": "keras-team/keras",
+   "fix": "b6773d3decaef1b05d8e794458e148cb362f163f"
+  },
+  {
+   "ghsa": "GHSA-9pr4-rf97-79qh",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-434",
+    "CWE-79"
+   ],
+   "published": "2026-04-13",
+   "repository": "enchant97/note-mark",
+   "fix": "6bb62842ccb956870b9bf183629eba95e326e5e3"
+  },
+  {
+   "ghsa": "GHSA-jcxm-m3jx-f287",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-04-13",
+   "repository": "steveukx/git-js",
+   "fix": "1effd8e5012a5da05a9776512fac3e39b11f2d2d"
+  },
+  {
+   "ghsa": "GHSA-vffh-x6r8-xx99",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-13",
+   "repository": "prometheus/prometheus",
+   "fix": "07c6232d159bfb474a077788be184d87adcfac3c"
+  },
+  {
+   "ghsa": "GHSA-3wqj-33cg-xc48",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-04-10",
+   "repository": "danielgatis/rembg",
+   "fix": "7c76d3cdc5757ffbda6a76664b24cfbecdb80273"
+  },
+  {
+   "ghsa": "GHSA-45q4-x4r9-8fqj",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-10",
+   "repository": "go-vikunja/vikunja",
+   "fix": "0f3730d045f20e261e3cdfc6d93c325653395b64"
+  },
+  {
+   "ghsa": "GHSA-8wrq-fv5f-pfp2",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-10",
+   "repository": "parisneo/lollms",
+   "fix": "9767b882dbc893c388a286856beeaead69b8292a"
+  },
+  {
+   "ghsa": "GHSA-93vf-569f-22cq",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-10",
+   "repository": "rhukster/dom-sanitizer",
+   "fix": "49a98046b708a4c92f754f5b0ef1720bb85142e2"
+  },
+  {
+   "ghsa": "GHSA-9cp7-j3f8-p5jx",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-10",
+   "repository": "daptin/daptin",
+   "fix": "8d626bbb14f82160a08cbca53e0749f475f5742c"
+  },
+  {
+   "ghsa": "GHSA-hr2v-4r36-88hr",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-10",
+   "repository": "helm/helm",
+   "fix": "4e7994d4467182f535b6797c94b5b0e994a91436"
+  },
+  {
+   "ghsa": "GHSA-m5gr-86j6-99jp",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-10",
+   "repository": "gramps-project/gramps-web-api",
+   "fix": "3ed4342711e3ec849552df09b1fe2fbf2ca5c29a"
+  },
+  {
+   "ghsa": "GHSA-vj8v-p5vw-m6v5",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-20",
+    "CWE-22"
+   ],
+   "published": "2026-04-10",
+   "repository": "xrootd/xrootd",
+   "fix": "45efac7267a115ca4f2102214498e8cb011eb69b"
+  },
+  {
+   "ghsa": "GHSA-vmx8-mqv2-9gmg",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-10",
+   "repository": "helm/helm",
+   "fix": "36c8539e99bc42d7aef9b87d136254662d04f027"
+  },
+  {
+   "ghsa": "GHSA-x783-xp3g-mqhp",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-04-10",
+   "repository": "MervinPraison/PraisonAI",
+   "fix": "0accebb2e3c3ec2fca66bbea0444fb7a35f0b4ef"
+  },
+  {
+   "ghsa": "GHSA-x7mm-9vvv-64w8",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-10",
+   "repository": "unjs/unhead",
+   "fix": "64b5ac0aa30cc256ea6677ce3dc4f132f81b2ff6"
+  },
+  {
+   "ghsa": "GHSA-3xp3-pr8x-f755",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-77"
+   ],
+   "published": "2026-04-09",
+   "repository": "Agions/taskflow-ai",
+   "fix": "c1550b445b9f24f38c4414e9a545f5f79f23a0fe"
+  },
+  {
+   "ghsa": "GHSA-wp29-qmvj-frvp",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-77"
+   ],
+   "published": "2026-04-09",
+   "repository": "paipeline/MetaGPT",
+   "fix": "d04ffc8dc67903e8b327f78ec121df5e190ffc7b"
+  },
+  {
+   "ghsa": "GHSA-3xxc-pwj6-jgrj",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-295"
+   ],
+   "published": "2026-04-08",
+   "repository": "trailofbits/rfc3161-client",
+   "fix": "4f7d372297b4fba7b0119e9f954e4495ec0592c0"
+  },
+  {
+   "ghsa": "GHSA-5gfj-64gh-mgmw",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-08",
+   "repository": "Josh-XT/AGiXT",
+   "fix": "2079ea5a88fa671a921bf0b5eba887a5a1b73d5f"
+  },
+  {
+   "ghsa": "GHSA-92pp-h63x-v22m",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-08",
+   "repository": "honojs/node-server",
+   "fix": "025c30f55d589ddbe6048b151d77e904f67a8cc2"
+  },
+  {
+   "ghsa": "GHSA-r758-8hxw-4845",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-08",
+   "repository": "EmilStenstrom/justhtml",
+   "fix": "8adc4dfe31723dc522f44338f9bd98381c92b076"
+  },
+  {
+   "ghsa": "GHSA-v273-448j-v4qj",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-08",
+   "repository": "harttle/liquidjs",
+   "fix": "f41c1fc02fe901598f3328118b42b13bc6bc9b04"
+  },
+  {
+   "ghsa": "GHSA-w8wv-vfpc-hw2w",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-08",
+   "repository": "zauberzeug/nicegui",
+   "fix": "d38a702e3af2da5b0708f689be8d71413fc77056"
+  },
+  {
+   "ghsa": "GHSA-wmmm-f939-6g9c",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-08",
+   "repository": "honojs/hono",
+   "fix": "9aff14bd727f8b0435c963363fd803260e7b8e3c"
+  },
+  {
+   "ghsa": "GHSA-xf4j-xp2r-rqqx",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-08",
+   "repository": "honojs/hono",
+   "fix": "b470278920fffcfd6d76002755d6db53db827679"
+  },
+  {
+   "ghsa": "GHSA-69w3-r845-3855",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-04-07",
+   "repository": "huggingface/transformers",
+   "fix": "03c8082ba4594c9b8d6fe190ca9bed0e5f8ca396"
+  },
+  {
+   "ghsa": "GHSA-89gg-p5r5-q6r4",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-04-07",
+   "repository": "Project-MONAI/MONAI",
+   "fix": "9078a72f3992e49bd4560db510be9ec4ccf972cc"
+  },
+  {
+   "ghsa": "GHSA-cpm7-cfpx-3hvp",
+   "ecosystem": "Maven",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-07",
+   "repository": "NationalSecurityAgency/emissary",
+   "fix": "e2078417464b9004620dde28dcbca2f73ea06c13"
+  },
+  {
+   "ghsa": "GHSA-fh64-r2vc-xvhr",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-07",
+   "repository": "mlflow/mlflow",
+   "fix": "aca4dd0ec88a12f7655155c224371280e9b45dda"
+  },
+  {
+   "ghsa": "GHSA-q4gv-pjmh-c735",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "published": "2026-04-07",
+   "repository": "open-cluster-management-io/ocm",
+   "fix": "9e70cc1e21a15239c81111062c0b37df4b5a8026"
+  },
+  {
+   "ghsa": "GHSA-qmwh-9m9c-h36m",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-178",
+    "CWE-73"
+   ],
+   "published": "2026-04-07",
+   "repository": "gotenberg/gotenberg",
+   "fix": "15050a311b73d76d8b9223bafe7fa7ba71240011"
+  },
+  {
+   "ghsa": "GHSA-4w7w-66w2-5vf9",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-200",
+    "CWE-22"
+   ],
+   "published": "2026-04-06",
+   "repository": "vitejs/vite",
+   "fix": "79f002f2286c03c88c7b74c511c7f9fc6dc46694"
+  },
+  {
+   "ghsa": "GHSA-cjg8-h5qc-hrjv",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-06",
+   "repository": "kedro-org/kedro-plugins",
+   "fix": "65115f76b872217317734b6bde8927170c98fc4b"
+  },
+  {
+   "ghsa": "GHSA-wx4p-jr66-jfp9",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-77"
+   ],
+   "published": "2026-04-06",
+   "repository": "Nor2-io/heim-mcp",
+   "fix": "c321d8af25f77668781e6ccb43a1336f9185df37"
+  },
+  {
+   "ghsa": "GHSA-xqv9-qr76-hfq2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-77"
+   ],
+   "published": "2026-04-06",
+   "repository": "elgentos/magento2-dev-mcp",
+   "fix": "aa1ffcc0aea1b212c69787391783af27df15ae9d"
+  },
+  {
+   "ghsa": "GHSA-2wfh-rcwf-wh23",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-04",
+   "repository": "Budibase/budibase",
+   "fix": "6344d06d703660fd05995e61d581593c2349c879"
+  },
+  {
+   "ghsa": "GHSA-4744-96p5-mp2j",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502",
+    "CWE-863"
+   ],
+   "published": "2026-04-04",
+   "repository": "pyload/pyload",
+   "fix": "c4cf995a2803bdbe388addfc2b0f323277efc0e1"
+  },
+  {
+   "ghsa": "GHSA-8x9r-hvwg-c55h",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-04",
+   "repository": "coder/code-marketplace",
+   "fix": "988440dee05fceef8400ed725badc604dbf90792"
+  },
+  {
+   "ghsa": "GHSA-fcm4-4pj2-m5hf",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-04-04",
+   "repository": "Budibase/budibase",
+   "fix": "f0c731b409a96e401445a6a6030d2994ff4ac256"
+  },
+  {
+   "ghsa": "GHSA-2fr7-cc4f-wh98",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-04-03",
+   "repository": "devcode-it/openstamanager",
+   "fix": "43970676bcd6636ff8663652fd82579f737abb74"
+  },
+  {
+   "ghsa": "GHSA-6qcc-6q27-whp8",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-03",
+   "repository": "patrickhener/goshs",
+   "fix": "237f3af891a90df9b903b85f1cd3438040ca261a"
+  },
+  {
+   "ghsa": "GHSA-mcv8-8m8x-48pg",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-03",
+   "repository": "gohugoio/hugo",
+   "fix": "479fe6c654937a850b65e74551dc4e857d52898f"
+  },
+  {
+   "ghsa": "GHSA-9m2v-hc5g-5jpv",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-04-02",
+   "repository": "krayin/laravel-crm",
+   "fix": "73ed28d466bf14787fdb86a120c656a4af270153"
+  },
+  {
+   "ghsa": "GHSA-35xm-qvjg-8m42",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-94"
+   ],
+   "published": "2026-04-01",
+   "repository": "dbgate/dbgate",
+   "fix": "a7d2ed11f3f3d4dfb5d2e4e5467dedafa5fa947e"
+  },
+  {
+   "ghsa": "GHSA-5474-4w2j-mq4c",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-41"
+   ],
+   "published": "2026-04-01",
+   "repository": "anthropics/anthropic-sdk-typescript",
+   "fix": "0ac69b3438ee9c96b21a7d3c39c07b7cdb6995d9"
+  },
+  {
+   "ghsa": "GHSA-85v3-4m8g-hrh6",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-01",
+   "repository": "copier-org/copier",
+   "fix": "cb80a3ffc9c3787de3ed837e04ca29a0ff8ca3df"
+  },
+  {
+   "ghsa": "GHSA-cmw6-hcpp-c6jp",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-61"
+   ],
+   "published": "2026-04-01",
+   "repository": "onnx/onnx",
+   "fix": "4755f8053928dce18a61db8fec71b69c74f786cb"
+  },
+  {
+   "ghsa": "GHSA-ff66-236v-p4fg",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79",
+    "CWE-94"
+   ],
+   "published": "2026-04-01",
+   "repository": "siyuan-note/siyuan",
+   "fix": "918d1bd9f967d888f474f6764744a3d8cca4a501"
+  },
+  {
+   "ghsa": "GHSA-g87c-r2jp-293w",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-04-01",
+   "repository": "tinacms/tinacms",
+   "fix": "f124eabaca10dac9a4d765c9e4135813c4830955"
+  },
+  {
+   "ghsa": "GHSA-ghq9-vc6f-8qjf",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-94",
+    "CWE-95"
+   ],
+   "published": "2026-04-01",
+   "repository": "torchgeo/torchgeo",
+   "fix": "1a980788cb7089a1115f3b786c7daa9dd47d7d7a"
+  },
+  {
+   "ghsa": "GHSA-hgjq-p8cr-gg4h",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-04-01",
+   "repository": "copier-org/copier",
+   "fix": "5413062eb17b73dc885f5e645cdc161e69ef641b"
+  },
+  {
+   "ghsa": "GHSA-j6v5-g24h-vg4j",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-04-01",
+   "repository": "MontFerret/ferret",
+   "fix": "160ebad6bd50f153453e120f6d909f5b83322917"
+  },
+  {
+   "ghsa": "GHSA-p998-jp59-783m",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-36",
+    "CWE-918"
+   ],
+   "published": "2026-04-01",
+   "repository": "aio-libs/aiohttp",
+   "fix": "0ae2aa076c84573df83fc1fdc39eec0f5862fe3d"
+  },
+  {
+   "ghsa": "GHSA-prxj-3gcv-cqrh",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-295"
+   ],
+   "published": "2026-04-01",
+   "repository": "teslamotors/fleet-telemetry",
+   "fix": "d5ca0dab55812029fd38eb77f079f74ce4f47286"
+  },
+  {
+   "ghsa": "GHSA-r5fr-rjxr-66jc",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-94"
+   ],
+   "published": "2026-04-01",
+   "repository": "lodash/lodash",
+   "fix": "3469357cff396a26c363f8c1b5a91dde28ba4b1c"
+  },
+  {
+   "ghsa": "GHSA-vx58-fwwq-5g8j",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-04-01",
+   "repository": "nocobase/nocobase",
+   "fix": "75da3dddc4aba739c398f7072725dcf7f5487f5c"
+  },
+  {
+   "ghsa": "GHSA-whv5-4q2f-q68g",
+   "ecosystem": "Packagist",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-04-01",
+   "repository": "devcode-it/openstamanager",
+   "fix": "d2e38cbdf91a831cefc0da1548e02b297ae644cc"
+  }
+ ]
+}

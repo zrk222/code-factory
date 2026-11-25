@@ -1,0 +1,10 @@
+export const deleteUpload = async (staticPath: string, doc: { filename: string }) => {
+  const fileToDelete = `${staticPath}/${doc.filename}`;
+  // ruleid: javascript.parameter-path-join-without-containment
+  await fs.unlink(fileToDelete);
+};
+
+export const readBundled = (name: string) => {
+  // ok: javascript.parameter-path-join-without-containment
+  return fs.readFileSync(`${__dirname}/templates/default.html`, "utf8");
+};

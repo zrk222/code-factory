@@ -1,0 +1,1324 @@
+{
+ "frozen_at_utc": "2026-11-24",
+ "selection_rule": "GitHub-reviewed advisories already in the collected metadata, published 2026-09-01..2026-10-31, exactly one github.com fix commit, at least one scored CWE family; excluding every GHSA id and every fix commit used in any earlier dev or held-out set; one case per fix commit; at most 3 cases per repository; newest first then GHSA. Selected from metadata only before any diff was read, and before the next round of rule changes.",
+ "excluded_ids_count": 428,
+ "counts": {
+  "npm": 79,
+  "PyPI": 41,
+  "Go": 4
+ },
+ "cases_sha256": "1e7a58f7e64140d42f0c136aa186abbee018b245557fc2f16652ddcb5a0d0daf",
+ "scoring_rule": "Unchanged hunk rule. Scored once, after the rule changes are final.",
+ "cases": [
+  {
+   "ghsa": "GHSA-5ghw-9mgr-jvx2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-28",
+   "repository": "highcharts/highcharts",
+   "fix": "52abd4f8f8db87dd20eab7c01444112380e30e98"
+  },
+  {
+   "ghsa": "GHSA-65hg-cf3f-5m39",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-28",
+   "repository": "highcharts/highcharts",
+   "fix": "abde7c576793bf50b0e0636e59b49630de6dd0d5"
+  },
+  {
+   "ghsa": "GHSA-6g3c-p4fg-xv47",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-28",
+   "repository": "highcharts/highcharts",
+   "fix": "8fc970658fee6601625b42da29d27c3ef7c45e30"
+  },
+  {
+   "ghsa": "GHSA-7w82-6f9j-v9jp",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-28",
+   "repository": "starman69/mcp-sanitizer",
+   "fix": "200685889b073f7470859b0941b67b7f46255f09"
+  },
+  {
+   "ghsa": "GHSA-83rm-6c8r-g728",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-10-28",
+   "repository": "intlify/vue-i18n",
+   "fix": "43391d20e7c85403cb59bdb21b5d542819f54042"
+  },
+  {
+   "ghsa": "GHSA-8rc2-428q-7ww3",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-10-28",
+   "repository": "intlify/vue-i18n",
+   "fix": "d657ce8f4b3b6b198a8f6e3d09e2b57a5d019fb8"
+  },
+  {
+   "ghsa": "GHSA-9wx9-5pv9-3349",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-10-28",
+   "repository": "lxsmnsyc/seroval",
+   "fix": "f94ee0b63936dae954ff50d5b5e8ea7cb9b284e6"
+  },
+  {
+   "ghsa": "GHSA-f86p-h4j2-7qgj",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-94"
+   ],
+   "published": "2026-10-28",
+   "repository": "lxsmnsyc/seroval",
+   "fix": "1313ebbad9687bc0245e08bfd576376e57e0e5c1"
+  },
+  {
+   "ghsa": "GHSA-27mw-82g8-phjj",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-23",
+   "repository": "sveltejs/kit",
+   "fix": "d9d55b579743c80ee7cb59c272d864fd9253dae7"
+  },
+  {
+   "ghsa": "GHSA-h4fr-cmh5-qr62",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-23",
+   "repository": "fallow-rs/fallow",
+   "fix": "133d4c862c74f4b1f0a7417c65b7157c1144294d"
+  },
+  {
+   "ghsa": "GHSA-jfwm-3p3c-6hx5",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-10-23",
+   "repository": "fallow-rs/fallow",
+   "fix": "75c0c60948a53ddfe042e65b446343989f4c5649"
+  },
+  {
+   "ghsa": "GHSA-m5mm-p8h7-m29v",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-23",
+   "repository": "yahoo/serialize-javascript",
+   "fix": "2864b3c6260a3bfd52d2db3e70d1a079de108a61"
+  },
+  {
+   "ghsa": "GHSA-673q-mjm6-r5xr",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-10-22",
+   "repository": "vercel/next.js",
+   "fix": "a4cea6aec5da89d116b8960e113189cf51745d2f"
+  },
+  {
+   "ghsa": "GHSA-7587-9684-52r6",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-10-22",
+   "repository": "mem0ai/mem0",
+   "fix": "a2ffca32660537b7b304305f36774ae2a13452cb"
+  },
+  {
+   "ghsa": "GHSA-98hj-9722-w3j8",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-22",
+   "repository": "withastro/astro",
+   "fix": "a548223607b9bb146d5d90ddda495343f9a2a739"
+  },
+  {
+   "ghsa": "GHSA-c6gr-qvv4-5v3f",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-22",
+   "repository": "cure53/DOMPurify",
+   "fix": "a77a3e78b59f72fa4d1c83f22e121ad9cc7d3575"
+  },
+  {
+   "ghsa": "GHSA-mpr7-6m5w-76rw",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-22",
+   "repository": "withastro/astro",
+   "fix": "0b4dc3a211910b589d3805ab4dfedf11b0e712bb"
+  },
+  {
+   "ghsa": "GHSA-pjvx-prjx-h659",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-22",
+   "repository": "jupyter/nbconvert",
+   "fix": "ce4bd99aec31d81d759fa8eeb8643179392ec66f"
+  },
+  {
+   "ghsa": "GHSA-xfq5-w38q-pc2x",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-22",
+   "repository": "nuxt/nuxt",
+   "fix": "493565e99451a0f52330b1f6b979254a4a39e5d0"
+  },
+  {
+   "ghsa": "GHSA-5vjq-rrrf-7h2q",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-78",
+    "CWE-116"
+   ],
+   "published": "2026-10-21",
+   "repository": "pypa/virtualenv",
+   "fix": "5b915367da82bd024b2a0d28d2f98007034b4aa2"
+  },
+  {
+   "ghsa": "GHSA-8rjx-v5ww-45pp",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-78",
+    "CWE-94"
+   ],
+   "published": "2026-10-21",
+   "repository": "pypa/virtualenv",
+   "fix": "602b26623a724827ff171bf11fef4ad186d01f74"
+  },
+  {
+   "ghsa": "GHSA-c947-3pg5-gm8q",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-78",
+    "CWE-116"
+   ],
+   "published": "2026-10-21",
+   "repository": "pypa/virtualenv",
+   "fix": "3bddeaf8d02c3ee7f576503efb082f8f494cfcab"
+  },
+  {
+   "ghsa": "GHSA-w889-685w-c8fh",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-88",
+    "CWE-78"
+   ],
+   "published": "2026-10-21",
+   "repository": "python-pillow/Pillow",
+   "fix": "a2c363141da31a265dd536c945677db4b64f3ec9"
+  },
+  {
+   "ghsa": "GHSA-698v-4r3x-3vcv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-10-20",
+   "repository": "vitejs/launch-editor",
+   "fix": "3c2f9bf2ff8fe63d056a8f9cc52d825b66ca79fc"
+  },
+  {
+   "ghsa": "GHSA-2658-85cv-9wwq",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-10-19",
+   "repository": "mljar/mercury",
+   "fix": "c798a85924e6614c6fea7afe5a560e4554a1d09b"
+  },
+  {
+   "ghsa": "GHSA-pcc4-rvhr-2pr8",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-73",
+    "CWE-22",
+    "CWE-200"
+   ],
+   "published": "2026-10-19",
+   "repository": "Graphify-Labs/graphify",
+   "fix": "e1d9deed6a437f2c85458ef3c42519159f322b7b"
+  },
+  {
+   "ghsa": "GHSA-h4mw-j7qp-8mwm",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-20",
+    "CWE-78",
+    "CWE-88"
+   ],
+   "published": "2026-10-16",
+   "repository": "anthropics/claude-agent-sdk-python",
+   "fix": "347a1cb88d7652199399db1b7f914e0a459a6662"
+  },
+  {
+   "ghsa": "GHSA-vgf9-9mxx-hq54",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-16",
+   "repository": "QueueForge/ClickMigrate",
+   "fix": "6b1f2c0202630a82252b3331aa57e64327e112b6"
+  },
+  {
+   "ghsa": "GHSA-phv8-wgjp-g4p9",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-15",
+   "repository": "9001/copyparty",
+   "fix": "b331bb1c8c8cc306b91e4d94221969335a7a3e86"
+  },
+  {
+   "ghsa": "GHSA-qx66-fv34-fjm8",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-15",
+   "repository": "TanStack/router",
+   "fix": "d521abd71c69f1ff010bb3def4d417cb5fa058cb"
+  },
+  {
+   "ghsa": "GHSA-v5mq-3xhg-98m9",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-10-15",
+   "repository": "Unstructured-IO/unstructured",
+   "fix": "cda16b3f2170019be9c6ea5635946fb3eaa2d66f"
+  },
+  {
+   "ghsa": "GHSA-6wfj-92cw-88vg",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-10-14",
+   "repository": "danday74/git-diff",
+   "fix": "bfd727b6cf1daa671c3528d1d681f55b70e8fb19"
+  },
+  {
+   "ghsa": "GHSA-47c3-hpmg-7j6p",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-09",
+   "repository": "posit-dev/py-shiny",
+   "fix": "1d8ecb46cbc9621b7dc8812111d26692e086b376"
+  },
+  {
+   "ghsa": "GHSA-c42q-qvc3-j6vg",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-83"
+   ],
+   "published": "2026-10-09",
+   "repository": "tinacms/tinacms",
+   "fix": "5295e077f0d279c35686a0e481a15e33a4877e3b"
+  },
+  {
+   "ghsa": "GHSA-fr26-jjhm-638c",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-09",
+   "repository": "pyload/pyload",
+   "fix": "09eec1b431b6942a1917f094f2c77bfbf5637f60"
+  },
+  {
+   "ghsa": "GHSA-556j-vv39-8rqv",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-59",
+    "CWE-200",
+    "CWE-22"
+   ],
+   "published": "2026-10-08",
+   "repository": "masci/banks",
+   "fix": "23ed13e50b4e217693fa5f9c30943fac8a41582f"
+  },
+  {
+   "ghsa": "GHSA-77xj-x4rm-935c",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-10-08",
+   "repository": "datamodel-code-generator/datamodel-code-generator",
+   "fix": "5e94b8f4203198798ec66b8e48217f70af69a0dc"
+  },
+  {
+   "ghsa": "GHSA-9ffp-22j7-56r2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-08",
+   "repository": "jhipster/generator-jhipster",
+   "fix": "efe95edd4dedc3379735094936439410a51ce3d9"
+  },
+  {
+   "ghsa": "GHSA-cw24-x4mj-fw3q",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-08",
+   "repository": "indico/indico",
+   "fix": "d4c8c7127176efa4cb53c64119ca8ee2b551be18"
+  },
+  {
+   "ghsa": "GHSA-r223-96jv-q533",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-10-08",
+   "repository": "jhipster/generator-jhipster",
+   "fix": "f6f1579581da8db0d1b8bd28dd473b56951c83af"
+  },
+  {
+   "ghsa": "GHSA-2cmg-v53w-8xfp",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-07",
+   "repository": "backstage/backstage",
+   "fix": "5f0000c1d0af05571e357926b3fa33a453337ff0"
+  },
+  {
+   "ghsa": "GHSA-2pwp-2369-8fg3",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-434"
+   ],
+   "published": "2026-10-07",
+   "repository": "payloadcms/payload",
+   "fix": "a8c3a8e8e2680c96ec4f66f5b3854c5df6c35adf"
+  },
+  {
+   "ghsa": "GHSA-347q-26qq-h2p6",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-434"
+   ],
+   "published": "2026-10-07",
+   "repository": "TryGhost/Ghost",
+   "fix": "b41fe3f2c399cef058e6b487782a0b2263e86c03"
+  },
+  {
+   "ghsa": "GHSA-5m6h-8g35-p3m7",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-10-07",
+   "repository": "quasarframework/quasar",
+   "fix": "91271c38859bec51e154b60c24497a637ce903d7"
+  },
+  {
+   "ghsa": "GHSA-75qf-886x-5xf2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-10-07",
+   "repository": "backstage/backstage",
+   "fix": "506c2c11bce3ed9d1f8f50de5d6474b16e43a65e"
+  },
+  {
+   "ghsa": "GHSA-7649-wm97-w3j3",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-10-07",
+   "repository": "backstage/backstage",
+   "fix": "14e925ce5b905dd8daa64c3009722febda76034c"
+  },
+  {
+   "ghsa": "GHSA-8575-cr6v-7jh4",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-434"
+   ],
+   "published": "2026-10-07",
+   "repository": "TryGhost/Ghost",
+   "fix": "80686226d23df56749f6b7ebb484850a8eba8072"
+  },
+  {
+   "ghsa": "GHSA-gfjp-2p8f-94qv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-434"
+   ],
+   "published": "2026-10-07",
+   "repository": "TryGhost/Ghost",
+   "fix": "58669d5c8b898f8b69c1287c2779b29ecc7eb918"
+  },
+  {
+   "ghsa": "GHSA-p223-2wr2-j562",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-10-07",
+   "repository": "payloadcms/payload",
+   "fix": "6b74418f628fa633c2f297e5919a9f91b383dc11"
+  },
+  {
+   "ghsa": "GHSA-pj7x-6wpf-pgvp",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-10-07",
+   "repository": "payloadcms/payload",
+   "fix": "03b78c7e0901d19c67f07bdf6396a276010adbcc"
+  },
+  {
+   "ghsa": "GHSA-pq96-jpmf-w254",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-10-07",
+   "repository": "quasarframework/quasar",
+   "fix": "11505afe5b5218f2c468f130181815b898fd1e40"
+  },
+  {
+   "ghsa": "GHSA-q9mq-245r-4g93",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-10-07",
+   "repository": "quasarframework/quasar",
+   "fix": "6c009734b406e246a0855ed060e3a822de8aecc1"
+  },
+  {
+   "ghsa": "GHSA-x3q2-h9hx-4r4j",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-73",
+    "CWE-1188"
+   ],
+   "published": "2026-10-07",
+   "repository": "docling-project/docling",
+   "fix": "38b6fa0a465d46fdacbbec333f50fa19c4f6b342"
+  },
+  {
+   "ghsa": "GHSA-mc52-mwq4-vfx3",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-829",
+    "CWE-78",
+    "CWE-94",
+    "CWE-427"
+   ],
+   "published": "2026-10-06",
+   "repository": "knowns-dev/knowns",
+   "fix": "d3989829fb5095666d23d005b2f78a082832a396"
+  },
+  {
+   "ghsa": "GHSA-pqg4-j6r4-53mv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-10-06",
+   "repository": "ljharb/shell-quote",
+   "fix": "6002b2ed90c6b83095eb272b6b0adaf3a172b0bc"
+  },
+  {
+   "ghsa": "GHSA-2cv4-cqwr-gwf7",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-05",
+   "repository": "astral-sh/uv",
+   "fix": "67169645278ce082638d619beefa6d062540843b"
+  },
+  {
+   "ghsa": "GHSA-4xhp-xg4w-8ppm",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-05",
+   "repository": "docling-project/docling",
+   "fix": "6ee9965adfc364b3696a67c825ec2f0d9cee4311"
+  },
+  {
+   "ghsa": "GHSA-5639-2j2p-m4mx",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-05",
+   "repository": "sqlalchemy/mako",
+   "fix": "000ed85e4e48771eff460bf4fc721fb43de80e08"
+  },
+  {
+   "ghsa": "GHSA-6688-9rhm-gjv2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-10-05",
+   "repository": "cure53/DOMPurify",
+   "fix": "b9b9d80f7e401771c2ccaef5f45def7eec8f27d7"
+  },
+  {
+   "ghsa": "GHSA-6fw5-9hq8-w87g",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-295"
+   ],
+   "published": "2026-10-05",
+   "repository": "ardatan/graphql-tools",
+   "fix": "3831a0661514c91d99971052f983552556880402"
+  },
+  {
+   "ghsa": "GHSA-g2v6-rqmx-r4w6",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-10-05",
+   "repository": "vuejs/core",
+   "fix": "a2b40db9a83b36ed9da3a16403cf8f040262d73f"
+  },
+  {
+   "ghsa": "GHSA-g4wm-2vf7-vfgr",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-77",
+    "CWE-78"
+   ],
+   "published": "2026-10-05",
+   "repository": "steveukx/git-js",
+   "fix": "98864c678444d9336357c844efa4fd5a7984c0d7"
+  },
+  {
+   "ghsa": "GHSA-v5rq-49vh-5v5c",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78",
+    "CWE-184"
+   ],
+   "published": "2026-10-05",
+   "repository": "steveukx/git-js",
+   "fix": "68874c239f0c7a87f4a68c3d2c4a0d7c75bb27f4"
+  },
+  {
+   "ghsa": "GHSA-x6jw-m9v5-85vh",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78",
+    "CWE-184"
+   ],
+   "published": "2026-10-05",
+   "repository": "steveukx/git-js",
+   "fix": "d762810c13b331ff1e5eb24c0b434646d2a8d1b3"
+  },
+  {
+   "ghsa": "GHSA-5fqc-mrg8-w798",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-10-02",
+   "repository": "jelmer/dulwich",
+   "fix": "9571ac60b851fce228dae7ededb380c6ce9b3fb8"
+  },
+  {
+   "ghsa": "GHSA-8mcx-5rqc-vhmf",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-10-02",
+   "repository": "jelmer/dulwich",
+   "fix": "4ca77f9f470742ba246cd6fa07beb6d735045664"
+  },
+  {
+   "ghsa": "GHSA-9q4r-4842-93vw",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89",
+    "CWE-639"
+   ],
+   "published": "2026-10-02",
+   "repository": "triggerdotdev/trigger.dev",
+   "fix": "6997aeb05e27d2db47f9eda01fdc8a17c81a1ae0"
+  },
+  {
+   "ghsa": "GHSA-cm62-gvxx-vmxx",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-10-02",
+   "repository": "jelmer/dulwich",
+   "fix": "40a542cb02f9ac39a9eeac1193472903098698f9"
+  },
+  {
+   "ghsa": "GHSA-7q3f-wx44-378m",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-863"
+   ],
+   "published": "2026-10-01",
+   "repository": "patriksimek/vm2",
+   "fix": "6ac3916da84e060c403e407b6b6318fcc66b0e72"
+  },
+  {
+   "ghsa": "GHSA-59cr-6r3x-644w",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-09-30",
+   "repository": "gitpython-developers/GitPython",
+   "fix": "1ed0ebc2f2e74d979cdc367a4864a7731fdcc093"
+  },
+  {
+   "ghsa": "GHSA-gfhx-hw2g-v5hg",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-80"
+   ],
+   "published": "2026-09-30",
+   "repository": "yahoo/serialize-javascript",
+   "fix": "2bdbaaff9cb8a4639135eb24cfcd383d3fefb534"
+  },
+  {
+   "ghsa": "GHSA-hxh3-vqpv-xpqv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-30",
+   "repository": "honojs/hono",
+   "fix": "2b8ed402cdab6dfc5e829b480806dcd8db94161e"
+  },
+  {
+   "ghsa": "GHSA-hj66-6f7g-4r5v",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-29",
+   "repository": "oauthlib/oauthlib",
+   "fix": "c888359f3c42bec235b2c5caab2069c9ed62457c"
+  },
+  {
+   "ghsa": "GHSA-6vj9-mwq6-2f5v",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-295"
+   ],
+   "published": "2026-09-28",
+   "repository": "nodemailer/nodemailer",
+   "fix": "a6512dbcb3c6e7f2f70d3acccc5752defe3c61fe"
+  },
+  {
+   "ghsa": "GHSA-9gfj-28hw-jchp",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-863",
+    "CWE-306"
+   ],
+   "published": "2026-09-25",
+   "repository": "knowns-dev/knowns",
+   "fix": "09c5a96fd5817b941dc86669278c1a17db10ed4e"
+  },
+  {
+   "ghsa": "GHSA-fx6f-382r-j72c",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-1321"
+   ],
+   "published": "2026-09-24",
+   "repository": "gchq/CyberChef",
+   "fix": "85db3be5d0096859b810f0e8d3e151d5dc9b948f"
+  },
+  {
+   "ghsa": "GHSA-g28h-2cmm-rj9x",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-09-24",
+   "repository": "langchain-ai/langchain-nvidia",
+   "fix": "b483c7cad07dd9d5fd0fee2668238c4a08825d86"
+  },
+  {
+   "ghsa": "GHSA-j8r4-32c5-33rc",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-116"
+   ],
+   "published": "2026-09-24",
+   "repository": "cstigler/node-xhtml-purifier",
+   "fix": "21d461ad23e7bc9b3073693d5b51b9b8662044d3"
+  },
+  {
+   "ghsa": "GHSA-gvf2-2rh5-mpgf",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-23",
+   "repository": "OpenC3/cosmos",
+   "fix": "10371f8f410b9ad588f98dfa3befaaacb6587cd3"
+  },
+  {
+   "ghsa": "GHSA-wmw4-mw6x-6vfm",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-09-23",
+   "repository": "fecommunity/reactpress",
+   "fix": "78ecb70af1c021455c05fdcbe137212c70e310d6"
+  },
+  {
+   "ghsa": "GHSA-7hvx-28gp-mf6j",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-22",
+   "repository": "Unleash/unleash",
+   "fix": "7c89cedcbbb5aa826951373569930e0a3c4358db"
+  },
+  {
+   "ghsa": "GHSA-8gr3-5j6f-25gp",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-22",
+   "repository": "novuhq/novu",
+   "fix": "f105f3d41a4405a75f803634d49f15a967524d8a"
+  },
+  {
+   "ghsa": "GHSA-jjhp-8crj-mppq",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-09-22",
+   "repository": "roomi-fields/gemini-notebook-mcp",
+   "fix": "13828d9ff3933839ce14c1797d3b20a6bb7694a6"
+  },
+  {
+   "ghsa": "GHSA-xpjq-3w4w-w5wr",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-22",
+   "repository": "HKUDS/LightRAG",
+   "fix": "8bf032a5200f293b482dd945d436e25cd08bd953"
+  },
+  {
+   "ghsa": "GHSA-2vh9-42vm-xmv2",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-09-18",
+   "repository": "InternLM/lmdeploy",
+   "fix": "f05b4ad8bf2e2d84101a1d63b3c44fadd99223b2"
+  },
+  {
+   "ghsa": "GHSA-3753-m2x2-q623",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-83"
+   ],
+   "published": "2026-09-18",
+   "repository": "flyfish-dev/file-viewer",
+   "fix": "ef045680f8d9830a3eee9612f7df46a734361b07"
+  },
+  {
+   "ghsa": "GHSA-3rm2-h79c-8qw6",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-18",
+   "repository": "imzbf/md-editor-v3",
+   "fix": "2c07360420e74087f5bc63032ab155d93e0a0b10"
+  },
+  {
+   "ghsa": "GHSA-82r6-8w77-94w6",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-295",
+    "CWE-297"
+   ],
+   "published": "2026-09-18",
+   "repository": "agronholm/anyio",
+   "fix": "68f58915f82d9be8109ebbbd8f5d70577d43f2ce"
+  },
+  {
+   "ghsa": "GHSA-q69g-4hcv-6jg4",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-09-17",
+   "repository": "CycloneDX/cyclonedx-node-npm",
+   "fix": "15d3beb5bcd2b0b6eccfdf31192f5103b3f12c0f"
+  },
+  {
+   "ghsa": "GHSA-qrfj-mgw8-j9c6",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-17",
+   "repository": "udecode/plate",
+   "fix": "d02afe45d5ec3a9fb95e0745bc5820ff18a3c12b"
+  },
+  {
+   "ghsa": "GHSA-xhq9-whgq-49j5",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-17",
+   "repository": "vendurehq/vendure",
+   "fix": "d7aa42a3f0cb524297a1a2fdf700e4aba9aca684"
+  },
+  {
+   "ghsa": "GHSA-5h8j-6crg-7rmw",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-09-16",
+   "repository": "InternLM/lmdeploy",
+   "fix": "d86046a0e6b02ecaaf7cdb74346d0477130221c2"
+  },
+  {
+   "ghsa": "GHSA-cv3r-c5h8-f4g5",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-09-16",
+   "repository": "zereight/gitlab-mcp",
+   "fix": "e436ee4ad067b64584ec9312c9e9c9a2641c1976"
+  },
+  {
+   "ghsa": "GHSA-mxm6-v9r6-r94c",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-184"
+   ],
+   "published": "2026-09-16",
+   "repository": "nuxt-content/mdc",
+   "fix": "61d636c2983f021288e4fc5c4006733b38cf0d53"
+  },
+  {
+   "ghsa": "GHSA-8wqc-v2q8-vff2",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-23"
+   ],
+   "published": "2026-09-11",
+   "repository": "mockoon/mockoon",
+   "fix": "b42bdfb7f82e83f0e81bea8e6fe41adf5ec82585"
+  },
+  {
+   "ghsa": "GHSA-4x45-gxvp-6283",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78"
+   ],
+   "published": "2026-09-10",
+   "repository": "argos-ci/argos-javascript",
+   "fix": "8355f3af3be3f4fe361d58a688d21535cf672717"
+  },
+  {
+   "ghsa": "GHSA-jmc6-2wr8-h3wj",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79",
+    "CWE-1021"
+   ],
+   "published": "2026-09-10",
+   "repository": "open-webui/open-webui",
+   "fix": "54d7a223707f03172efbb9e754db6e69709956d0"
+  },
+  {
+   "ghsa": "GHSA-2q42-4q24-7rgv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-09-08",
+   "repository": "microsoft/typespec",
+   "fix": "e0f67bdf3c5a0875dfa98b475648af37caac71a6"
+  },
+  {
+   "ghsa": "GHSA-3hhw-38pf-pxj6",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-59",
+    "CWE-22"
+   ],
+   "published": "2026-09-08",
+   "repository": "nltk/nltk",
+   "fix": "ee1a42e51982c4dce6ad3ee77ff1ac43894288ab"
+  },
+  {
+   "ghsa": "GHSA-8mcc-hrx5-hvxc",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-73",
+    "CWE-22"
+   ],
+   "published": "2026-09-08",
+   "repository": "gitpython-developers/GitPython",
+   "fix": "b68afff45af0f49e79a3e2d2162018986b37ad5d"
+  },
+  {
+   "ghsa": "GHSA-c2jg-2778-ggm4",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-08",
+   "repository": "prowler-cloud/prowler",
+   "fix": "6db407ed3c17d4c73a8f619fdb30580c8465027f"
+  },
+  {
+   "ghsa": "GHSA-f833-7jw8-xwrv",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-09-08",
+   "repository": "nltk/nltk",
+   "fix": "736d3212a47de2005b85b785dde6720556d3925d"
+  },
+  {
+   "ghsa": "GHSA-gqvv-2mrq-wpjv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-09-08",
+   "repository": "honojs/hono",
+   "fix": "3a67f7f3997e1437d108f7bcba2dbcee2df69221"
+  },
+  {
+   "ghsa": "GHSA-jrc7-96c5-q579",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-08",
+   "repository": "maplibre/maplibre-gl-js",
+   "fix": "1da69f3cd913a39fa948708e01478663bf48bc27"
+  },
+  {
+   "ghsa": "GHSA-rhp5-r9x4-f5g2",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-09-08",
+   "repository": "nltk/nltk",
+   "fix": "f26b3753038d937b68145daf15e9636f8451053c"
+  },
+  {
+   "ghsa": "GHSA-62f5-cp2p-vq95",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-200"
+   ],
+   "published": "2026-09-04",
+   "repository": "codewhale-hq/Codewhale",
+   "fix": "43563356b98c6b993085554da82e77370160a31c"
+  },
+  {
+   "ghsa": "GHSA-w7wx-5q49-r59w",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-59"
+   ],
+   "published": "2026-09-04",
+   "repository": "codewhale-hq/Codewhale",
+   "fix": "26de44a8bd5051f8f944ea60b2c37ae1d2b7d25e"
+  },
+  {
+   "ghsa": "GHSA-2w86-xfrc-g85r",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-89",
+    "CWE-95"
+   ],
+   "published": "2026-09-03",
+   "repository": "orval-labs/orval",
+   "fix": "8ef1bfdf3f9bcaf9dabfbe2e42887f1c0e159ab6"
+  },
+  {
+   "ghsa": "GHSA-79wm-x847-7cvg",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-78",
+    "CWE-306",
+    "CWE-352"
+   ],
+   "published": "2026-09-03",
+   "repository": "davila7/claude-code-templates",
+   "fix": "bc4618b07232633c1c0aac12a43e436268d31783"
+  },
+  {
+   "ghsa": "GHSA-8q3c-rjr9-xxrp",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-09-03",
+   "repository": "VictoriaMetrics/VictoriaMetrics",
+   "fix": "710c920d6083327042a309e449fae4383617d817"
+  },
+  {
+   "ghsa": "GHSA-99rq-75j6-5j9f",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-03",
+   "repository": "siyuan-note/siyuan",
+   "fix": "f08dee71ba8e087a395d74f121de11e6a997ef14"
+  },
+  {
+   "ghsa": "GHSA-h6cj-26g5-67fv",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-22",
+    "CWE-73"
+   ],
+   "published": "2026-09-03",
+   "repository": "OpenListTeam/OpenList",
+   "fix": "9cc5dd969b9833c8cb4e14c338c3571dfdbe2108"
+  },
+  {
+   "ghsa": "GHSA-jxwj-j7wr-gfrw",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-03",
+   "repository": "apostrophecms/apostrophe",
+   "fix": "eae1fb2b72ec5d1c27d0977509c6482a0408f725"
+  },
+  {
+   "ghsa": "GHSA-q2vg-7qgx-x5fc",
+   "ecosystem": "Go",
+   "cwes": [
+    "CWE-89"
+   ],
+   "published": "2026-09-03",
+   "repository": "siyuan-note/siyuan",
+   "fix": "1a5b3431d5ab3036b19c1cc79486fedd6906fb57"
+  },
+  {
+   "ghsa": "GHSA-xvg9-69gf-fjrf",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-79"
+   ],
+   "published": "2026-09-03",
+   "repository": "squidfunk/mkdocs-material",
+   "fix": "52fb6be8aafe326419f34dc94d3211e7bbfbfb25"
+  },
+  {
+   "ghsa": "GHSA-79qf-vqgc-7xx3",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-09-02",
+   "repository": "apostrophecms/apostrophe",
+   "fix": "87cccf44a23d09420875ca8a3765eb3db843836a"
+  },
+  {
+   "ghsa": "GHSA-cp6q-959q-f8rh",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-1321"
+   ],
+   "published": "2026-09-02",
+   "repository": "ueberdosis/tiptap",
+   "fix": "01d7af8c983ee5954c63734f4fa46cb23ae3246d"
+  },
+  {
+   "ghsa": "GHSA-gcr2-9v8m-gq45",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-184"
+   ],
+   "published": "2026-09-02",
+   "repository": "dicebear/dicebear",
+   "fix": "922946d738c4e77ab6c412e27ede75941fec4b59"
+  },
+  {
+   "ghsa": "GHSA-p498-v437-472g",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-09-02",
+   "repository": "humanwhocodes/humanfs",
+   "fix": "22bbaa4487a3e6c1197ca619840de4615d0c3404"
+  },
+  {
+   "ghsa": "GHSA-p8rw-8qj3-hf33",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-94",
+    "CWE-22"
+   ],
+   "published": "2026-09-02",
+   "repository": "omnigent-ai/omnigent",
+   "fix": "7ca0cca3c9a65c04c489edf68f0e080424a26868"
+  },
+  {
+   "ghsa": "GHSA-x8wg-4xgc-vr54",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-22"
+   ],
+   "published": "2026-09-02",
+   "repository": "masci/banks",
+   "fix": "a215f6d779966945c56e0af5abed1ae5916fd9d3"
+  },
+  {
+   "ghsa": "GHSA-2rx9-3g3h-c2jv",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-22",
+    "CWE-59",
+    "CWE-73"
+   ],
+   "published": "2026-09-01",
+   "repository": "pnpm/pnpm",
+   "fix": "51300fd41c5e4c8f47635108e373cc3d1f324fa7"
+  },
+  {
+   "ghsa": "GHSA-3wgp-x9p5-c7cc",
+   "ecosystem": "npm",
+   "cwes": [
+    "CWE-79",
+    "CWE-489"
+   ],
+   "published": "2026-09-01",
+   "repository": "appium/appium",
+   "fix": "d94a40af9f8040191ee7888571a1c9d5aec59f89"
+  },
+  {
+   "ghsa": "GHSA-gqvg-gmmx-x4hm",
+   "ecosystem": "PyPI",
+   "cwes": [
+    "CWE-502"
+   ],
+   "published": "2026-09-01",
+   "repository": "mlflow/mlflow",
+   "fix": "38615289094a4b700a20b5d1dbfbe57bdfb0411f"
+  }
+ ]
+}

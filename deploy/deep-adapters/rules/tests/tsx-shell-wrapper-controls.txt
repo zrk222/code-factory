@@ -1,0 +1,8 @@
+import { execSync } from "child_process";
+
+const run = (command: string) => execSync(command).toString();
+
+export const dumpDatabase = (database: string) => {
+  // ruleid: javascript.parameter-shell-command
+  return run(`pg_dump ${database}`);
+};

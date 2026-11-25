@@ -1,0 +1,6473 @@
+{
+ "schema": "factory.recall-evaluation.v1",
+ "baseline_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
+ "candidate_sha256": "030867c58a2672743ebf4ab547d290573c0ba2e4df12bda26b26eeb5ddf35eec",
+ "extra_args": [],
+ "candidate_extra_args": [],
+ "decision": "ACCEPT",
+ "failures": [],
+ "gained": [
+  "GHSA-79cw-hfcc-7mw9",
+  "GHSA-59xm-4m8c-g3xj",
+  "GHSA-6pvm-2vjj-rx4w",
+  "GHSA-hhmc-q9hp-r662",
+  "GHSA-4pf7-cc4r-g63h",
+  "GHSA-8j49-mmcx-4mp5",
+  "GHSA-59fj-m2j6-hcxh",
+  "GHSA-rm43-82j9-r4mj",
+  "GHSA-xrqw-3rrv-vx5w",
+  "GHSA-cj54-hpcc-gj6h",
+  "GHSA-2956-977x-2w3r",
+  "GHSA-f42x-p2mx-hm8r",
+  "GHSA-g65v-27r3-5p6m",
+  "GHSA-pmwx-rm49-xv39",
+  "GHSA-p853-83gj-wjj3",
+  "GHSA-rxjr-6c9q-h67x",
+  "GHSA-92hr-gmr6-h8cp",
+  "GHSA-76pc-mqxp-3rq5",
+  "GHSA-88pr-878c-24wf",
+  "GHSA-p849-8hwh-84j9",
+  "GHSA-2xgg-r2wc-c5r2",
+  "GHSA-5jmr-gcrj-2c9q",
+  "GHSA-vcrf-j523-4mrf",
+  "GHSA-v5ff-xmfp-p245",
+  "GHSA-f3f2-mcxc-pwjx"
+ ],
+ "lost_baseline_hits": [],
+ "new_errors": [],
+ "residual": [
+  38,
+  58
+ ],
+ "residual_per_hit": [
+  0.75,
+  0.76
+ ],
+ "control_increase": 22,
+ "dev": [
+  {
+   "manifest": "/home/claude/fresh/heldout-recall-manifest-20261124-fresh.json",
+   "manifest_cases_sha256": "e9d0fe78171165310fa634699652f3bfd013bad559593c9b4790ea67ba1f476f",
+   "before": {
+    "cases": 91,
+    "scored": 85,
+    "status": {
+     "scored": 85,
+     "no_in_language_source_change": 5,
+     "unfetchable": 1
+    },
+    "hunk_hits": 10,
+    "hunk_recall_wilson95": [
+     6.5,
+     20.3
+    ],
+    "trace_hits": 12,
+    "trace_recall_wilson95": [
+     8.3,
+     23.1
+    ],
+    "file_hits": 19,
+    "file_recall_wilson95": [
+     14.8,
+     32.3
+    ],
+    "distinct_fixes_hit": 8,
+    "outcomes": {
+     "hit": 10,
+     "miss": 75,
+     "timeout": 0,
+     "unknown": 6,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 141,
+     "per_scored_case": 1.7
+    },
+    "fix_side_residual_alerts": 13,
+    "by_family": {
+     "cmd": {
+      "hits": 2,
+      "scored": 10
+     },
+     "tls": {
+      "hits": 2,
+      "scored": 4
+     },
+     "xss": {
+      "hits": 3,
+      "scored": 18
+     },
+     "path": {
+      "hits": 1,
+      "scored": 33
+     },
+     "sql": {
+      "hits": 2,
+      "scored": 16
+     },
+     "deser": {
+      "hits": 0,
+      "scored": 5
+     }
+    },
+    "by_ecosystem": {
+     "Go": {
+      "hits": 2,
+      "scored": 7
+     },
+     "Maven": {
+      "hits": 0,
+      "scored": 8
+     },
+     "Packagist": {
+      "hits": 2,
+      "scored": 17
+     },
+     "PyPI": {
+      "hits": 1,
+      "scored": 22
+     },
+     "RubyGems": {
+      "hits": 0,
+      "scored": 7
+     },
+     "npm": {
+      "hits": 5,
+      "scored": 24
+     }
+    }
+   },
+   "after": {
+    "cases": 91,
+    "scored": 85,
+    "status": {
+     "scored": 85,
+     "no_in_language_source_change": 5,
+     "unfetchable": 1
+    },
+    "hunk_hits": 30,
+    "hunk_recall_wilson95": [
+     26,
+     45.9
+    ],
+    "trace_hits": 30,
+    "trace_recall_wilson95": [
+     26,
+     45.9
+    ],
+    "file_hits": 36,
+    "file_recall_wilson95": [
+     32.4,
+     53
+    ],
+    "distinct_fixes_hit": 27,
+    "outcomes": {
+     "hit": 30,
+     "miss": 55,
+     "timeout": 0,
+     "unknown": 6,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 269,
+     "per_scored_case": 3.2
+    },
+    "fix_side_residual_alerts": 27,
+    "by_family": {
+     "cmd": {
+      "hits": 4,
+      "scored": 10
+     },
+     "tls": {
+      "hits": 2,
+      "scored": 4
+     },
+     "xss": {
+      "hits": 3,
+      "scored": 18
+     },
+     "path": {
+      "hits": 15,
+      "scored": 33
+     },
+     "sql": {
+      "hits": 6,
+      "scored": 16
+     },
+     "deser": {
+      "hits": 0,
+      "scored": 5
+     }
+    },
+    "by_ecosystem": {
+     "Go": {
+      "hits": 2,
+      "scored": 7
+     },
+     "Maven": {
+      "hits": 0,
+      "scored": 8
+     },
+     "Packagist": {
+      "hits": 7,
+      "scored": 17
+     },
+     "PyPI": {
+      "hits": 8,
+      "scored": 22
+     },
+     "RubyGems": {
+      "hits": 2,
+      "scored": 7
+     },
+     "npm": {
+      "hits": 11,
+      "scored": 24
+     }
+    }
+   },
+   "cases": [
+    {
+     "ghsa": "GHSA-3x77-wg38-92r3",
+     "fix": "f31377fce6ec31114e5a4398c0e5270552bce09f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f5pj-2738-996m",
+     "fix": "f31377fce6ec31114e5a4398c0e5270552bce09f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2m8m-jhrm-w6j2",
+     "fix": "e122fba1a57641b63a580aa26c026903a84e2e88",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-xc5w-4v5w-7x65",
+     "fix": "995ff79736f2bccc364448a3ece84087b550b232",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v95x-xhq5-4929",
+     "fix": "2ecadac1aa2fd8cded4c2ab768949f4c2ec83e2a",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "go.grpc-insecure-transport",
+       "pkg/intercp/client/client.go",
+       39
+      ],
+      [
+       "go.disabled-tls-verification",
+       "pkg/intercp/client/client.go",
+       48
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "go.grpc-insecure-transport",
+       "pkg/intercp/client/client.go",
+       39
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-wvmp-6r4v-j6cv",
+     "fix": "2ecadac1aa2fd8cded4c2ab768949f4c2ec83e2a",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "go.grpc-insecure-transport",
+       "pkg/intercp/client/client.go",
+       39
+      ],
+      [
+       "go.disabled-tls-verification",
+       "pkg/intercp/client/client.go",
+       48
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "go.grpc-insecure-transport",
+       "pkg/intercp/client/client.go",
+       39
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v5px-423j-pf7p",
+     "fix": "3356b86a8bfab3f960aa420310ebff765df9dede",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rxpg-wjf8-qv9c",
+     "fix": "4d47d5cdcf5d92c2c5bbbc19feada422923332e3",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pc63-qcmh-9cmg",
+     "fix": "692dbc9160de3b5de50ccedeee014716d0cedb7b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w2x5-gv52-9ccv",
+     "fix": "2696b4b48cbef2e81512f52f84f7477adff78b27",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mqjf-5f49-2fjh",
+     "fix": "d821c4d321dd91c22e31fcd5b1ce676645da5176",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-34pm-923j-7wf8",
+     "fix": "6c8e6d099ed172cbb6b003b7fb30b7bb1f8f710e",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pmhh-3w7g-xqp8",
+     "fix": "92f1aca552548b484bc7d4b94c51e48b8e6eca70",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9pwp-9qqc-pr26",
+     "fix": "2c28b253a44681fbbc562561eab6ad383d2ae558",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gf8h-gq53-288j",
+     "fix": "9dd0fbe07f70f118cf45042d3a9ffb32f3c21e08",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vqxv-6xrh-49cp",
+     "fix": "98cee2dfe701c2e16e5bcee34e6fd9d913925118",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w6w4-rjh9-9r58",
+     "fix": "7b022c4b6694dabc6204254dc917af9c38f2cb27",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-79cw-hfcc-7mw9",
+     "fix": "f532428cfbf4f5d6e299a13cedd5c29541802552",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-sql-text",
+       "src/Listing/Filter/EqualsFilter.php",
+       42
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Listing/Filter/LikeFilter.php",
+       42
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Note/Service/FilterService.php",
+       66
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Note/Service/FilterService.php",
+       70
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w23p-wrp7-ch38",
+     "fix": "b184c01bf11e213e601d965b4e96c8bb7248e980",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-59xm-4m8c-g3xj",
+     "fix": "ca41902a2a5422676227e5088f4cc1dec06044f1",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.archive-path-traversal",
+       "plugin/mine-admin/app-store/src/Service/Service.php",
+       123
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "php.archive-path-traversal",
+       "plugin/mine-admin/app-store/src/Service/Service.php",
+       136
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w27m-rmmf-g5w4",
+     "fix": "a1eaca5a1601c8a30e00814a4fc73ad0c185f89e",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2mhj-fhvg-v428",
+     "fix": "33a0e1887e1e31b4283b016ac5440c35ea5697b4",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-sql-text",
+       "models/DataObject/ClassDefinition/Data/Block.php",
+       736
+      ],
+      [
+       "php.parameter-sql-text",
+       "models/DataObject/ClassDefinition/Data/Block.php",
+       750
+      ],
+      [
+       "php.parameter-sql-text",
+       "models/DataObject/ClassDefinition/Data/Block.php",
+       761
+      ],
+      [
+       "php.parameter-sql-text",
+       "models/DataObject/ClassDefinition/Data/Block.php",
+       773
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6pvm-2vjj-rx4w",
+     "fix": "bd4b08b012234ccfcff07bfe6518062475b29e0a",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-sql-text",
+       "phpmyfaq/src/phpMyFAQ/Chat.php",
+       311
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "php.parameter-sql-text",
+       "phpmyfaq/src/phpMyFAQ/Chat.php",
+       315
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m7jc-g4rc-jmvh",
+     "fix": "50713de95adf5298536d93f4d999652525d36d43",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-c9w5-rwh3-7pm9",
+     "fix": "f5e463b9a3e986389ce285963e51a7f1fab6559f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hhmc-q9hp-r662",
+     "fix": "20ebcf4694d96d3c97fbc3938e360730e4f54618",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.request-path-traversal",
+       "system/HTTP/Files/UploadedFile.php",
+       149
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rjhh-76wf-8xmw",
+     "fix": "3c9f77a2e06ce319ae0092496af32cc8f3adc52e",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g3hq-hphg-8fhh",
+     "fix": "f40f5070d5a171b65359bc87568734d31de498e1",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.request-command-injection",
+       "pheditor.php",
+       617
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mw6p-33vw-46cc",
+     "fix": "6ad20bea2e01f33c6e4170775ae4d9dbe2c75325",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4pf7-cc4r-g63h",
+     "fix": "90ca54fb518e1c43a1ead6e4f5bf9f0389789841",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-sql-text",
+       "includes/services/ReactionManager.php",
+       356
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-89v6-j5x6-cmj3",
+     "fix": "5da27474c3ee62270c8a6b9d7055d494cdbd38e5",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8f2v-2qhj-gfwg",
+     "fix": "23d3cc124613b9428ab963b31807c08879a9c631",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9369-69wj-7m2f",
+     "fix": "8f70a8d6b8befa0e644d03c785701dbbc55b8fd0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qg78-vmvc-fhjw",
+     "fix": "f3b0dd093a7ace47dc29a515faeb02635baceae2",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p6gw-4frg-j7jw",
+     "fix": "6f35776c9188f130ab044ce557015d51aaa83500",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       339
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       376
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       392
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       405
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       428
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       444
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       457
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       482
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       498
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       509
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       531
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       547
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       350
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       386
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       404
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       415
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       432
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       445
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       461
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       474
+      ],
+      [
+       "python.parameter-sql-text",
+       "wsgidav/samples/mysql_dav_provider.py",
+       495
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2wxc-x7rj-hg8f",
+     "fix": "d730803b8e4e94c20c7580d90f94d1e05f9f58de",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mv8m-v9v6-5f94",
+     "fix": "1c1e861c9f241ce082b86bef6bedc7da9b676294",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qr67-gv47-xwwh",
+     "fix": "3d515ba9ba0cd9990d248bdf62bcf05d51261a88",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-ch89-h4r2-c8f8",
+     "fix": "2f9677abb2ea68eab864ee8b6a828fd0141612e1",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gxmw-5f7x-6g22",
+     "fix": "2f9677abb2ea68eab864ee8b6a828fd0141612e1",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w3fx-mc44-mf6j",
+     "fix": "0565fd0eccb915fce159929598b053ed79f6e0c9",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5gh2-94qg-qppq",
+     "fix": "c3e37113742a1ebeeb4f2ca58941f320f98805ea",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-cv22-g7mw-8v73",
+     "fix": "10d34b3f4fe3fec74b76527a409eb0acbac2e8ab",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hvq6-2r72-p2x7",
+     "fix": "b56a568844ff3702495945f73a31d0868285bf88",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8j49-mmcx-4mp5",
+     "fix": "62563ca429a75b3e5d47a13b958e1d2e7d5e2bbf",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.tarfile-extractall-without-filter",
+       "mobsf/DynamicAnalyzer/views/common/shared.py",
+       105
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rh9c-rqvg-f7pr",
+     "fix": "d665042c55fae83a295ebc0023e8b77f6c473a28",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-59fj-m2j6-hcxh",
+     "fix": "5c07c0d96423e9d5b9de71dd92e3717c66f504bd",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.parameter-shell-command",
+       "glances/actions.py",
+       128
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "python.parameter-shell-command",
+       "glances/actions.py",
+       144
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m42h-3232-vpv3",
+     "fix": "aec4fce1b84ad725b8975f7365b23a4f626572a9",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rm43-82j9-r4mj",
+     "fix": "ec474f458122c5c0ca718d0df3078c8080338b2c",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.request-path-traversal",
+       "atomic_agents/dashboard/serve.py",
+       63
+      ],
+      [
+       "python.request-path-traversal",
+       "atomic_agents/dashboard/serve.py",
+       73
+      ],
+      [
+       "python.request-path-traversal",
+       "atomic_agents/dashboard/serve.py",
+       79
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gg2p-37pv-v7fq",
+     "fix": "e0ef16ea1ed149ecd5dc9d4d0aa0fdbfa547f861",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3xpf-xq7r-v8c5",
+     "fix": "65a5fad7b97db99d490d81f4e0860282c3a4543c",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pwxh-7358-jq2x",
+     "fix": "bc600d3f085802c45aa8f38c30e6e8c986bde6cc",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3f7w-8rr8-f37f",
+     "fix": "3af0c2516c5e18c829da30338614688f6b69b49c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m2h6-j472-rp4c",
+     "fix": "4d035a4225965edeffd312079a510ef25fcfdcb2",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-xrqw-3rrv-vx5w",
+     "fix": "eaaaf8494dd5386634ae37d1d122212fdc315be5",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.parameter-path-join-without-containment",
+       "src/transformers/processing_utils.py",
+       1148
+      ],
+      [
+       "python.parameter-path-join-without-containment",
+       "src/transformers/tokenization_utils_base.py",
+       3316
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-c5px-58j2-7fqp",
+     "fix": "8f3b85afd02b692c4bc974b5176e12fb277ea801",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-cj54-hpcc-gj6h",
+     "fix": "3b986d13677b30fe6651c8c72ebb25957ac0a40d",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.parameter-path-join-without-containment",
+       "thumbor/loaders/file_loader.py",
+       19
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2956-977x-2w3r",
+     "fix": "d5f89d71303e3c1e6418d347c5c55fcd173cc8cc",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.request-path-traversal",
+       "src/core/modules/atomic/image/convert.py",
+       179
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "python.request-path-traversal",
+       "src/core/modules/atomic/image/convert.py",
+       187
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f42x-p2mx-hm8r",
+     "fix": "a040afb5db32c7e80b5e8a2f9b2164cf911cfa62",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.tarfile-extractall-without-filter",
+       "penelope.py",
+       3418
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g65v-27r3-5p6m",
+     "fix": "0e98469e6b9d81a5bd415781534a23d087c271f8",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "ruby.request-path-traversal",
+       "lib/guard/livereload/websocket.rb",
+       61
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pmwx-rm49-xv39",
+     "fix": "b242c8ad9bf58bbd7f5a032d153b0f29db54b9ba",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "ruby.request-path-traversal",
+       "lib/active_record/tenanted/storage.rb",
+       22
+      ],
+      [
+       "ruby.request-path-traversal",
+       "lib/active_record/tenanted/storage.rb",
+       22
+      ],
+      [
+       "ruby.request-path-traversal",
+       "lib/active_record/tenanted/storage.rb",
+       22
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "ruby.request-path-traversal",
+       "lib/active_record/tenanted/storage.rb",
+       33
+      ],
+      [
+       "ruby.request-path-traversal",
+       "lib/active_record/tenanted/storage.rb",
+       33
+      ],
+      [
+       "ruby.request-path-traversal",
+       "lib/active_record/tenanted/storage.rb",
+       33
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2xmw-f8j8-wfxc",
+     "fix": "efcf09690e9fa7d7abdfb987b785a55f87e287df",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5qhf-9phg-95m2",
+     "fix": "f1be9d893b5a8dd79240441a912d8897e74c38c0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9wjq-cp2p-hrgf",
+     "fix": "20867b9be689521887364b74822c41ef830523c9",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-cj75-f6xr-r4g7",
+     "fix": "74dcb8053e6da9921246ce71b06ad9fd65b19586",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-97jw-64cj-jc58",
+     "fix": "48e5fd2d602344c7d33019fbc5c8b087e315bb78",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g5xc-5w98-jfvm",
+     "fix": "0148cadba48064d430902678bbc5b4b62dc1c04f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gmxc-r82q-347r",
+     "fix": "b78f17df9b9183bd503fc4635fc8b3df6705047b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-q7m3-rhxg-7vxr",
+     "fix": "145a8876ff12375813bdcd4ae4fe78f460c53a98",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w93q-cq9w-58p7",
+     "fix": "9d43a5e082101d2d6475cba86e0d58d7c2cf6677",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3vfr-4gwf-qxfp",
+     "fix": "777bcf69bae2972aa7138a158c91619185653cf5",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-path-join-without-containment",
+       "lib/plugins/get-plugins-sync.js",
+       40
+      ],
+      [
+       "javascript.parameter-path-join-without-containment",
+       "lib/plugins/get-plugins-sync.js",
+       64
+      ],
+      [
+       "javascript.request-path-traversal",
+       "lib/service/service.js",
+       460
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "javascript.parameter-path-join-without-containment",
+       "lib/plugins/get-plugins-sync.js",
+       41
+      ],
+      [
+       "javascript.parameter-path-join-without-containment",
+       "lib/plugins/get-plugins-sync.js",
+       66
+      ],
+      [
+       "javascript.request-path-traversal",
+       "lib/service/service.js",
+       465
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m9mq-7m7q-xc6p",
+     "fix": "5352a4a56f626254b445bfa07e4bb48c5aad15c1",
+     "before": "unfetchable",
+     "after": "unfetchable",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qj6x-xx2h-8hvv",
+     "fix": "6214914ca811adf22d0ad503154494216eed68ba",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jg4p-g6xj-4qmf",
+     "fix": "baf2eaef61d334ef595b28c89e5c5e89e52daf7f",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "src/extractors/substack.ts",
+       181
+      ],
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "src/extractors/substack.ts",
+       186
+      ],
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "src/extractors/x-article.ts",
+       114
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p853-83gj-wjj3",
+     "fix": "0e1aba1b7b112ffc841588963f7343c00edd9806",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-shell-command",
+       "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+       575
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+       714
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+       771
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+       773
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+       775
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+       812
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+       900
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "packages/plugins/@nocobase/plugin-backups/src/server/adapters/database.ts",
+       901
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rxjr-6c9q-h67x",
+     "fix": "5686815955534f803d3d50738259efd0f741e62c",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.request-path-traversal",
+       "packages/tunnel/src/commands/tunnel/utils.ts",
+       55
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2mf3-mr2r-r4vf",
+     "fix": "381bdc305e0b10e45368d56324328b9b4f7017fc",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2jp7-wwpg-3p9w",
+     "fix": "86c56cf827dd6e5ff1b6cd3760f87adc47f58bb1",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-92hr-gmr6-h8cp",
+     "fix": "7ea99706483443239bbbc0f2df9aff8ab5de4805",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.request-path-traversal",
+       "src/node/hooks/express/admin.ts",
+       67
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "javascript.request-path-traversal",
+       "src/node/hooks/express/admin.ts",
+       67
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-49mq-fc6q-3h46",
+     "fix": "b4ee96dac799cbfba0a9f9c17844ce9d613cbcc7",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/code-analysis/smart-ast-grep.ts",
+       459
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/configuration/smart-package-json.ts",
+       421
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-branch.ts",
+       437
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-branch.ts",
+       437
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-branch.ts",
+       454
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-branch.ts",
+       485
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-branch.ts",
+       485
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-diff.ts",
+       298
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-diff.ts",
+       298
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-diff.ts",
+       366
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-diff.ts",
+       444
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-log.ts",
+       382
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-log.ts",
+       459
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-log.ts",
+       459
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-log.ts",
+       479
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-log.ts",
+       479
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       348
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       348
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       497
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       497
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       538
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       538
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       547
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       547
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       556
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       556
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-merge.ts",
+       607
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-status.ts",
+       578
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-status.ts",
+       579
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/file-operations/smart-status.ts",
+       581
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-cron.ts",
+       611
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-cron.ts",
+       651
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-cron.ts",
+       776
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-cron.ts",
+       817
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-cron.ts",
+       904
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-cron.ts",
+       991
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-cron.ts",
+       1020
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-process.ts",
+       452
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-process.ts",
+       491
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-process.ts",
+       584
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       325
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       357
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       376
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       397
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       412
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       412
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       464
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       471
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       514
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       521
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       562
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       567
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       574
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       617
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       624
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       663
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       670
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       736
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       736
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       858
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       871
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       883
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-service.ts",
+       883
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       886
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       918
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       963
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       999
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       1035
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       1074
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       1094
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       1115
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       1199
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       1244
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/tools/system-operations/smart-user.ts",
+       1266
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-76pc-mqxp-3rq5",
+     "fix": "b4ee96dac799cbfba0a9f9c17844ce9d613cbcc7",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.request-path-traversal",
+       "src/server/web-server.ts",
+       76
+      ],
+      [
+       "javascript.request-path-traversal",
+       "src/server/web-server.ts",
+       79
+      ],
+      [
+       "javascript.request-path-traversal",
+       "src/server/web-server.ts",
+       300
+      ],
+      [
+       "javascript.request-path-traversal",
+       "src/server/web-server.ts",
+       303
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pr22-p9rp-2cqv",
+     "fix": "a8bea3a4ceec4c852b880f4885119453c3d8588e",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "ghost/core/core/server/data/importer/importers/json-to-html.js",
+       43
+      ],
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "ghost/core/core/server/data/importer/importers/json-to-html.js",
+       48
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2gx6-7gx2-wwcf",
+     "fix": "a8bea3a4ceec4c852b880f4885119453c3d8588e",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "ghost/core/core/server/data/importer/importers/json-to-html.js",
+       43
+      ],
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "ghost/core/core/server/data/importer/importers/json-to-html.js",
+       48
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-88pr-878c-24wf",
+     "fix": "571b5d6218b1c129588ac625c8f20e30905a67cb",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-path-join-without-containment",
+       "packages/components/nodes/documentloaders/S3Directory/S3Directory.ts",
+       191
+      ],
+      [
+       "javascript.parameter-path-join-without-containment",
+       "packages/components/nodes/documentloaders/S3File/S3File.ts",
+       756
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-cj62-hvv2-2q5h",
+     "fix": "f466c300191a609ed36c8d7c5d1e33ccd440786b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-cjc9-q5gf-327p",
+     "fix": "fbaa92327e52607036a1e42204c9eadcc751d82c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-fxqj-rqcc-2cmp",
+     "fix": "7beca139e70f9075c6b19700fcb00dd8033e5da8",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v8fg-2rw7-q452",
+     "fix": "5deadd2410ae9136a21fb652db206d27bb715f26",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vpx6-8pjr-4g3v",
+     "fix": "f88e5aa49cf2804d7c2df22ef1640eb4ec43dd56",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-j839-gqq4-gf9j",
+     "fix": "5fba6ef2381d151d7cb8e3c5ad0b9996af0f97b0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p849-8hwh-84j9",
+     "fix": "68d64e3fcfb8be2ae4f3bfc9e1ee3f85b87c89ce",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       57
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       57
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       57
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       58
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       59
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       92
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       92
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       92
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       93
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/plugins/@nocobase/plugin-notification-in-app-message/src/server/defineMyInAppChannels.ts",
+       94
+      ]
+     ],
+     "retried_serially": false
+    }
+   ]
+  },
+  {
+   "manifest": "/home/claude/fresh/heldout-recall-manifest-20261124-overflow.json",
+   "manifest_cases_sha256": "a5ab90d8801fd2901061e02eec540a46d4e6d6595514ec09e886e44820ee6411",
+   "before": {
+    "cases": 61,
+    "scored": 56,
+    "status": {
+     "scored": 56,
+     "no_in_language_source_change": 5
+    },
+    "hunk_hits": 4,
+    "hunk_recall_wilson95": [
+     2.8,
+     17
+    ],
+    "trace_hits": 4,
+    "trace_recall_wilson95": [
+     2.8,
+     17
+    ],
+    "file_hits": 11,
+    "file_recall_wilson95": [
+     11.3,
+     31.8
+    ],
+    "distinct_fixes_hit": 4,
+    "outcomes": {
+     "hit": 4,
+     "miss": 52,
+     "timeout": 0,
+     "unknown": 5,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 18,
+     "per_scored_case": 0.3
+    },
+    "fix_side_residual_alerts": 1,
+    "by_family": {
+     "sql": {
+      "hits": 0,
+      "scored": 4
+     },
+     "xss": {
+      "hits": 1,
+      "scored": 18
+     },
+     "path": {
+      "hits": 2,
+      "scored": 26
+     },
+     "cmd": {
+      "hits": 0,
+      "scored": 7
+     },
+     "code": {
+      "hits": 1,
+      "scored": 1
+     },
+     "deser": {
+      "hits": 1,
+      "scored": 2
+     }
+    },
+    "by_ecosystem": {
+     "npm": {
+      "hits": 3,
+      "scored": 26
+     },
+     "PyPI": {
+      "hits": 1,
+      "scored": 30
+     }
+    }
+   },
+   "after": {
+    "cases": 61,
+    "scored": 56,
+    "status": {
+     "scored": 56,
+     "no_in_language_source_change": 5
+    },
+    "hunk_hits": 8,
+    "hunk_recall_wilson95": [
+     7.4,
+     25.7
+    ],
+    "trace_hits": 8,
+    "trace_recall_wilson95": [
+     7.4,
+     25.7
+    ],
+    "file_hits": 15,
+    "file_recall_wilson95": [
+     17,
+     39.6
+    ],
+    "distinct_fixes_hit": 8,
+    "outcomes": {
+     "hit": 8,
+     "miss": 48,
+     "timeout": 0,
+     "unknown": 5,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 45,
+     "per_scored_case": 0.8
+    },
+    "fix_side_residual_alerts": 4,
+    "by_family": {
+     "sql": {
+      "hits": 1,
+      "scored": 4
+     },
+     "xss": {
+      "hits": 1,
+      "scored": 18
+     },
+     "path": {
+      "hits": 3,
+      "scored": 26
+     },
+     "cmd": {
+      "hits": 2,
+      "scored": 7
+     },
+     "code": {
+      "hits": 1,
+      "scored": 1
+     },
+     "deser": {
+      "hits": 1,
+      "scored": 2
+     }
+    },
+    "by_ecosystem": {
+     "npm": {
+      "hits": 6,
+      "scored": 26
+     },
+     "PyPI": {
+      "hits": 2,
+      "scored": 30
+     }
+    }
+   },
+   "cases": [
+    {
+     "ghsa": "GHSA-pqh8-p93p-2rx7",
+     "fix": "15d3546c0618ffbaeaeca477337e08e92f2151bc",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rxcw-mc6f-6hr3",
+     "fix": "0ebb61692cbe84f9abf10ac76dd594dbb6343b90",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vccv-cmxp-4j9h",
+     "fix": "5a88e9630cbbdde33154ef8abe7557ddf7be418b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-wf43-fpp3-cf65",
+     "fix": "5a88e9630cbbdde33154ef8abe7557ddf7be418b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-442q-2j6p-642g",
+     "fix": "d2d5cecd9fd3a2a6dbf148bf0740b83a11fc6820",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-7wpj-vvmv-pgm8",
+     "fix": "1d30383b20a6f768786b8ada2f1b0945de13c316",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8359-h9fx-j6v9",
+     "fix": "2ff4a72b4550a2b2069754c5b075b1655067e5fb",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2xgg-r2wc-c5r2",
+     "fix": "2c61f389c9986c91ddd8ae161c2b5e8ec21c60ac",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-sql-text",
+       "packages/server/src/integrations/microsoftSqlServer.ts",
+       391
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/server/src/integrations/microsoftSqlServer.ts",
+       391
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/server/src/integrations/microsoftSqlServer.ts",
+       399
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/server/src/integrations/microsoftSqlServer.ts",
+       413
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-379c-qx7v-6h59",
+     "fix": "f989ef9b4cc6c0039a7a82458eebca49e2b58b4b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4h8q-hh2j-755w",
+     "fix": "30a3308446cd8f81a9446e5a2ed657c0d8d86072",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-53g2-mvcc-q9x3",
+     "fix": "9c0a993d9fc2ffe9d56b013b030bc238f9c0557c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6p8h-3wgx-97gf",
+     "fix": "ffcb5359e87619f4fe4a70a4aff5f08c5580ba97",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-83w8-p2f5-377r",
+     "fix": "db4276f846ba56b21f93768cd6636ee5e2fc58b1",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9xwg-3r6f-jcx2",
+     "fix": "edce35586d11a1ef78bb187bc60497fe6dbf3b64",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-frvj-c5qp-xj4w",
+     "fix": "05098d25a58d03738e01c4e85e8852c3b4ad849c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hhrp-gw25-jr43",
+     "fix": "41443a18f9e6403a072de69098a279c23e2d943c",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.unsafe-deserialization-unscoped",
+       "python/ray/data/_internal/datasource/webdataset_datasource.py",
+       223
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "python.unsafe-deserialization-unscoped",
+       "python/ray/data/_internal/datasource/webdataset_datasource.py",
+       247
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pmpg-2mxq-6xwr",
+     "fix": "dd8c0654b35cd89ce3645f2355f4bf2ff9a5dd80",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-r28c-9q8g-f849",
+     "fix": "95663d3eb7ba26f4854dd19d3b4f4425760cf56c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-r9mr-m37c-5fr3",
+     "fix": "e8d0fbf774d1f6baa3b481adfe48bd262e43b453",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-h8fp-f39c-q6mh",
+     "fix": "ce596e823f0d7b883a433af1d5a839a8b9fe0242",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jjmj-jmhj-qwj2",
+     "fix": "3a5b5ad0e5cf9918c646509563f5c41a89226ff3",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5jmr-gcrj-2c9q",
+     "fix": "6a15adcd64137d37f73dee76dfe7481f8c2d9196",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.parameter-path-join-without-containment",
+       "litellm/llms/litellm_proxy/skills/sandbox_executor.py",
+       99
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gf29-4f56-r2jf",
+     "fix": "f69dfc6dd2178a14ea1624d2e1d403c2e755042f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rcv6-pvrj-4xcg",
+     "fix": "f69dfc6dd2178a14ea1624d2e1d403c2e755042f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2f96-g7mh-g2hx",
+     "fix": "56806080c1348749b07daa4a2024ce47b3cad285",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5hxg-r395-fqxx",
+     "fix": "567fe858289876b68b8162a77bd46e1e1af79752",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-c2j3-45gr-mqc4",
+     "fix": "a9ca1e537422319a557a9a2aa61f003b23b4a197",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-frvp-7c67-39w9",
+     "fix": "cd076e117cfe4cb8d31f9eb11d2e8f38a6cb8faf",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vcrf-j523-4mrf",
+     "fix": "baa9e1dff469306cc23b8f4bd232d703f98bf68a",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-shell-command",
+       "packages/aws-cdk-lib/aws-lambda-nodejs/lib/bundling.ts",
+       641
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "javascript.parameter-shell-command",
+       "packages/aws-cdk-lib/aws-lambda-nodejs/lib/bundling.ts",
+       641
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w62v-xxxg-mg59",
+     "fix": "cd3f6f7194f0e5c9d4b26ae0cf232018d0f388fc",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4g3v-8h47-v7g6",
+     "fix": "092da560eea77ee63a3e2c583c80d8238544e42b",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "packages/astro/src/runtime/server/render/server-islands.ts",
+       201
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-7pw4-f3q4-r2p2",
+     "fix": "7ba0bb1dc7516e88caff9abd7767322af44b0294",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8c25-4j27-2rv3",
+     "fix": "c7101fcbb6e8790e8e39157c5ca2238fc6dd6cbc",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9jj8-v89v-xjvw",
+     "fix": "9d38b4517364831889b5b0d7b3465fd060403fd4",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f48w-9m4c-m7f5",
+     "fix": "5240e26c9dd91f9bc7140dcfacdb48d5a132830d",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g97x-gvcm-x72h",
+     "fix": "a3cb6e5655308797e8be021d6c7b5bab13cbace2",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pr2v-jx2c-wg9f",
+     "fix": "9c163aebeaad9e6e7d28bac1f33580eb00b0e421",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qfrw-5rxm-mhh2",
+     "fix": "c7101fcbb6e8790e8e39157c5ca2238fc6dd6cbc",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-r4rv-85jg-w4mf",
+     "fix": "1bef343ade163fc3bb95572b15be720084cdb993",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f7wf-v2vw-mpcx",
+     "fix": "84f6dfa692736a34ff36e2d2cf2188b71facf73b",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.request-path-traversal",
+       "src/index.ts",
+       1660
+      ],
+      [
+       "javascript.request-path-traversal",
+       "src/index.ts",
+       1677
+      ],
+      [
+       "javascript.request-path-traversal",
+       "src/index.ts",
+       1724
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "javascript.request-path-traversal",
+       "src/index.ts",
+       1761
+      ],
+      [
+       "javascript.request-path-traversal",
+       "src/index.ts",
+       1778
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-wxhm-2mq7-7697",
+     "fix": "88ac9948d7d37995edbb2f6d36913436626c39e1",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-62gx-5q78-wrvx",
+     "fix": "fdc97f9e652e0d38cb43911d31f827a12b248fc8",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rrh3-cwwj-g5mg",
+     "fix": "8a50be72c11569b6747c6b96d6e31a0a1962f1a8",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-997v-r4v7-9f3g",
+     "fix": "16e6e3ad8921a4e18ccc8c2afe474db7d002c001",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rwcv-whm8-fmxm",
+     "fix": "e53bdeff331f4b577918927d60477d4b50cca02f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-q65p-7p84-495c",
+     "fix": "3aa9cbc2bd49c23a32be0a89a5e620d13d843eab",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-wgvq-3jxh-4qg7",
+     "fix": "3aa9cbc2bd49c23a32be0a89a5e620d13d843eab",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3f4v-mp44-x4x2",
+     "fix": "1620b49f36945d8cc8ee5635b906c960df5097a0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g5r6-gv6m-f5jv",
+     "fix": "b041733473f95119dd539542a43c280737a8e460",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rrqj-82cc-g6h4",
+     "fix": "3aa9cbc2bd49c23a32be0a89a5e620d13d843eab",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w37c-cq55-frjp",
+     "fix": "1620b49f36945d8cc8ee5635b906c960df5097a0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8gh5-qqh8-hq3x",
+     "fix": "ef2aeb7c0eb976bac759e59ac359c94a5b8dc7e0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9f4f-jv96-8766",
+     "fix": "6fd082d55ffaf6eb226efdeebc7155e3693d2d01",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-22g5-r2x5-97cx",
+     "fix": "e5cab1e9a5dcea2bb3cbf888863fa7e65ab37edf",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-h9f9-h6gm-wc85",
+     "fix": "db7f116b1d3c5dcf94aded00d14118f81f3e225e",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v3mh-27qj-w836",
+     "fix": "0385bae70553223677753047b3e779d8b86b15c4",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-322x-v876-g883",
+     "fix": "785e6ac6e124d1a89b3ccf40bbd75fc8e4cb215d",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-38j7-23hf-9mhc",
+     "fix": "fde153d677a170c5816368f6586647f3af4ef284",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-path-join-without-containment",
+       "src/app/server/trzsz.js",
+       519
+      ],
+      [
+       "javascript.parameter-path-join-without-containment",
+       "src/app/server/trzsz.js",
+       557
+      ],
+      [
+       "javascript.parameter-path-join-without-containment",
+       "src/app/server/zmodem.js",
+       735
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pmch-g965-grmr",
+     "fix": "00b7dd7b79c5d03c94be284cf3459d98195ebfba",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v5ff-xmfp-p245",
+     "fix": "aa778818843b9c083bd711cd04644d102fcb5a42",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       116
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       117
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       118
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       118
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       127
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       128
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       129
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       129
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       138
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       139
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       140
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/app/lib/fs.js",
+       140
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-j36p-7w88-g82j",
+     "fix": "97d541f3d5fd05b2587a69ecc94b68fe5d2d7004",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    }
+   ]
+  },
+  {
+   "manifest": "/home/claude/heldout-run/manifest.json",
+   "before": {
+    "cases": 113,
+    "scored": 107,
+    "status": {
+     "scored": 107,
+     "no_in_language_source_change": 6
+    },
+    "hunk_hits": 18,
+    "hunk_recall_wilson95": [
+     10.9,
+     25
+    ],
+    "trace_hits": 20,
+    "trace_recall_wilson95": [
+     12.4,
+     27.1
+    ],
+    "file_hits": 30,
+    "file_recall_wilson95": [
+     20.4,
+     37.2
+    ],
+    "distinct_fixes_hit": 18,
+    "outcomes": {
+     "hit": 18,
+     "miss": 89,
+     "timeout": 0,
+     "unknown": 6,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 96,
+     "per_scored_case": 0.9
+    },
+    "fix_side_residual_alerts": 15,
+    "by_family": {
+     "path": {
+      "hits": 5,
+      "scored": 47
+     },
+     "cmd": {
+      "hits": 4,
+      "scored": 12
+     },
+     "xss": {
+      "hits": 4,
+      "scored": 31
+     },
+     "tls": {
+      "hits": 2,
+      "scored": 6
+     },
+     "deser": {
+      "hits": 1,
+      "scored": 5
+     },
+     "incl": {
+      "hits": 0,
+      "scored": 2
+     },
+     "sql": {
+      "hits": 2,
+      "scored": 7
+     },
+     "code": {
+      "hits": 2,
+      "scored": 4
+     }
+    },
+    "by_ecosystem": {
+     "PyPI": {
+      "hits": 5,
+      "scored": 23
+     },
+     "RubyGems": {
+      "hits": 0,
+      "scored": 7
+     },
+     "npm": {
+      "hits": 7,
+      "scored": 24
+     },
+     "Go": {
+      "hits": 3,
+      "scored": 24
+     },
+     "Packagist": {
+      "hits": 3,
+      "scored": 24
+     },
+     "Maven": {
+      "hits": 0,
+      "scored": 5
+     }
+    }
+   },
+   "after": {
+    "cases": 113,
+    "scored": 107,
+    "status": {
+     "scored": 107,
+     "no_in_language_source_change": 6
+    },
+    "hunk_hits": 18,
+    "hunk_recall_wilson95": [
+     10.9,
+     25
+    ],
+    "trace_hits": 20,
+    "trace_recall_wilson95": [
+     12.4,
+     27.1
+    ],
+    "file_hits": 31,
+    "file_recall_wilson95": [
+     21.2,
+     38.2
+    ],
+    "distinct_fixes_hit": 18,
+    "outcomes": {
+     "hit": 18,
+     "miss": 89,
+     "timeout": 0,
+     "unknown": 6,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 119,
+     "per_scored_case": 1.1
+    },
+    "fix_side_residual_alerts": 16,
+    "by_family": {
+     "path": {
+      "hits": 5,
+      "scored": 47
+     },
+     "cmd": {
+      "hits": 4,
+      "scored": 12
+     },
+     "xss": {
+      "hits": 4,
+      "scored": 31
+     },
+     "tls": {
+      "hits": 2,
+      "scored": 6
+     },
+     "deser": {
+      "hits": 1,
+      "scored": 5
+     },
+     "incl": {
+      "hits": 0,
+      "scored": 2
+     },
+     "sql": {
+      "hits": 2,
+      "scored": 7
+     },
+     "code": {
+      "hits": 2,
+      "scored": 4
+     }
+    },
+    "by_ecosystem": {
+     "PyPI": {
+      "hits": 5,
+      "scored": 23
+     },
+     "RubyGems": {
+      "hits": 0,
+      "scored": 7
+     },
+     "npm": {
+      "hits": 7,
+      "scored": 24
+     },
+     "Go": {
+      "hits": 3,
+      "scored": 24
+     },
+     "Packagist": {
+      "hits": 3,
+      "scored": 24
+     },
+     "Maven": {
+      "hits": 0,
+      "scored": 5
+     }
+    }
+   },
+   "cases": [
+    {
+     "ghsa": "GHSA-259w-wmqg-fp76",
+     "fix": "9c8637b280ee3e126885def5ff5b326c289ee7cf",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.tarfile-extractall-without-filter",
+       "src/termux_sync/__init__.py",
+       286
+      ],
+      [
+       "python.tarfile-extractall-without-filter",
+       "src/termux_sync/__init__.py",
+       291
+      ],
+      [
+       "python.tarfile-extractall-without-filter",
+       "termux-sync.py",
+       286
+      ],
+      [
+       "python.tarfile-extractall-without-filter",
+       "termux-sync.py",
+       291
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "python.tarfile-extractall-without-filter",
+       "src/termux_sync/__init__.py",
+       327
+      ],
+      [
+       "python.tarfile-extractall-without-filter",
+       "src/termux_sync/__init__.py",
+       335
+      ],
+      [
+       "python.tarfile-extractall-without-filter",
+       "termux-sync.py",
+       327
+      ],
+      [
+       "python.tarfile-extractall-without-filter",
+       "termux-sync.py",
+       335
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2h4w-29cv-2cmv",
+     "fix": "3cd86726bb731eb11d6270f0ef9e50e42b5abb39",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2w9f-fxwj-w2qf",
+     "fix": "4ca090665976e6fbc471c38689b399f84b43cdc7",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-35rr-xwfh-x789",
+     "fix": "b0fafdaaee7d0cac2ecfeb0eaf37b11cd40594ef",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-38xv-hf3p-h7mq",
+     "fix": "57842c5ee4e1407eda06a414a36510cce2db4252",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-396x-xmvh-p563",
+     "fix": "e929b31f0b183c5810bd2b833c1f6f643cbe5284",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3cgg-c5pp-57h6",
+     "fix": "fa3abc5a7a757f56c7212b2dbe99d1d2db995420",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "src/odt/to-html/html-renderer.ts",
+       197
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3f7j-7jwc-fxfj",
+     "fix": "5014c6d25cfce7363b937977327baa853cdba0bf",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-shell-command",
+       "lib/processes.js",
+       885
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "lib/processes.js",
+       1419
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "javascript.parameter-shell-command",
+       "lib/processes.js",
+       873
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "lib/processes.js",
+       1407
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3fx2-cqw9-xr3c",
+     "fix": "d89c7e100ec6fc1512544d23b0a7c5169699ef3e",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3gg2-335m-rxc6",
+     "fix": "15bbd96ad1b62a0b189db4fd8dc7bf8ef280c513",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3mgh-93r5-r7jf",
+     "fix": "208421b9d23d81cea3311a1eeb2a2ea81d637686",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4487-j8r4-4g2f",
+     "fix": "f6555609bd30f442fbfacd543155928ceccf98d0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-47m2-wp7j-p9vc",
+     "fix": "17edfbf4423b83211b075acc23a7d8640da63449",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-48v2-6jcm-fc99",
+     "fix": "c3731eeda01c0b3ec1dbd13cccd5a147c3182141",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4c2f-96cf-f5fc",
+     "fix": "a3ffd435aadd61aff1f75ec4b2e1a0f44ffabf16",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4fjg-2h4q-fwg3",
+     "fix": "0c2eea6338a2323cfff000160b9b5a56a38d2a06",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4vjg-vx72-qq4g",
+     "fix": "8d294b3139fec654a912969ac898037578a218cd",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4xm8-rg9h-jhq2",
+     "fix": "83689f040d7e90280dddc643f44f3e4ce348fbb1",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-path-join-without-containment",
+       "packages/resources-provider-plugin/src/filestorage.ts",
+       123
+      ],
+      [
+       "javascript.parameter-path-join-without-containment",
+       "packages/resources-provider-plugin/src/filestorage.ts",
+       135
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "javascript.parameter-path-join-without-containment",
+       "packages/resources-provider-plugin/src/filestorage.ts",
+       127
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5793-x2q3-c3q7",
+     "fix": "9534773d0f41400aac0945bf8aaebc38dfc72aff",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-58g7-7f52-h92c",
+     "fix": "f97213bab745e40f628720c21f4e8b31ee3e768b",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.dom-innerhtml-from-variable",
+       "ts/Dashboards/EditMode/Fullscreen.ts",
+       141
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-59f9-gqg8-mqpj",
+     "fix": "2a92b71827d754ae8920261e7ed0c4bb283ab2d7",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5m6c-38r8-5w76",
+     "fix": "c15c5406bb7b9551f94ab276705f9fd1cebbf2d2",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5x38-2vff-x55p",
+     "fix": "58c06bc251856b409c30ecb35a93f5f6c9bbc84a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-628f-v4f6-p37r",
+     "fix": "22505d5f79bc1a7f52e2cba5fddf6007e1f0408a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6757-hggm-hp2w",
+     "fix": "3d5625cc3c2474994107047d7a6ecb8e4008f9b0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6w3r-xr62-4xcp",
+     "fix": "5f48d711731311428aebfae61d46957762155b22",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6wcv-rj3c-mhv3",
+     "fix": "c43204ad4dab11d54e20574a52bc4e5835246ca5",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-7952-gx68-cjqr",
+     "fix": "4347315afab1ef5a2907978a754fbc5b0ff58e6f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-85gg-2gfq-q95m",
+     "fix": "2648c95aa550ce2d9361a8e75ed669d5f4b451b8",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-89m4-43j5-vhhx",
+     "fix": "e6e333b195a1e3ad271a18fd79d8ac1eb5289343",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8fh7-7q4q-cq52",
+     "fix": "e2159c8c8559da3f1c1485b463c794d656cd2fe4",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "go.peer-certificate-trusted-without-verified-chain",
+       "pkg/cloudauth/rpc_authenticator.go",
+       128
+      ],
+      [
+       "go.peer-certificate-trusted-without-verified-chain",
+       "pkg/rpc/authenticator.go",
+       130
+      ],
+      [
+       "go.tls-client-cert-requested-not-verified",
+       "pkg/rpc/state.go",
+       401
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8gmh-2hhj-2hv9",
+     "fix": "25c7c412a2f7e06c3cac92872e831f6d053703c5",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-97jj-33gv-5xf9",
+     "fix": "411afcc2a7402756d96c89af8882c724d12d47ca",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9fpx-fr6j-2vh6",
+     "fix": "1408290c0bb54872924a9b334a516db9758a2180",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.parameter-shell-command",
+       "geonode/upload/handlers/common/vector.py",
+       1595
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9hq4-hm3j-jmph",
+     "fix": "7034963403c5374fecceb02070d27b335329cede",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9qw7-j9xw-fv9c",
+     "fix": "823843d1cd19182df79bc907c767f5bcecb39a0b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9rjx-3jch-6vjf",
+     "fix": "23877db7e76f1e1df5c3e65ab30239219c3d2867",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9vhv-g5hf-m7m7",
+     "fix": "ba99f89c3ec7f1ef1c8b1ebce381c12b60dfea29",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-c3cj-3p6p-j822",
+     "fix": "75f2bbf79ca2f2eeb13080a2cebded1263396b49",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-c59x-vh6j-3w8v",
+     "fix": "a44a7af69bca87e92d9c4a701fcbbe4512e8d450",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-c7r6-vx3h-w5g2",
+     "fix": "b5cafdfcf7ec63924e83303763be8fcae340f70b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-crq5-92j2-j7wv",
+     "fix": "bcd99cdc1342ef58a0f132acb814af06a668a8d3",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-cw2g-2vwq-88w6",
+     "fix": "823843d1cd19182df79bc907c767f5bcecb39a0b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f46q-3v67-fmm4",
+     "fix": "a7d027dc684b210b62285c49f555ac88d64f35f0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f4j9-crrj-867q",
+     "fix": "5e476365378e41aa2745d003b2383d02008d7b44",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "packages/integrations/svelte/src/client.svelte.ts",
+       28
+      ],
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "packages/integrations/svelte/src/client.svelte.ts",
+       38
+      ],
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "packages/integrations/svelte/src/server.ts",
+       48
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f8ff-652m-j5rx",
+     "fix": "4e85972160a96e03a419a442d5bd8f21f2f02ddb",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f9j4-qggq-h239",
+     "fix": "790bb3164948625ffb043d2a162425d55923fe9a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-fg9w-wfp5-j933",
+     "fix": "fdde6d9ebf5fd612e817b49ec7fecd752802c268",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g29j-rwfv-h99w",
+     "fix": "61f43423a337b87db5fec1fe59f0725aaaa38df5",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g3qx-frcg-j979",
+     "fix": "fedc25e3f7251933d4a37b964bc3e8176beea28e",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g4c3-4g96-6g4m",
+     "fix": "4bdba1b9a8820bd70c0809317775d7f6eaa79844",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g5ff-637f-6q2m",
+     "fix": "065faf6e695be64a1a367601271839914e4a6621",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gh9r-c94j-cmp5",
+     "fix": "b21e1c9b47b4fccff21d3b0a6c0687a19410c2f0",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.unsafe-deserialization-unscoped",
+       "stanza/models/lemma/trainer.py",
+       59
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "python.unsafe-deserialization-unscoped",
+       "stanza/utils/lemma/convert_lemma_dict.py",
+       85
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gj7r-p794-hhq5",
+     "fix": "a76a1920dc7587be700a17f1592f58a9512ad214",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gq48-pqfc-9p58",
+     "fix": "24b6f95d4b90ab1483fb601c736ac6e7c059cd61",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gx83-3vf8-gh7j",
+     "fix": "eb3b7fc0f9c0d27f471550ac3316b17d1987388f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-h46v-rmh6-fq4f",
+     "fix": "696db92348623e88cc63c35f0a89ede481d55ad0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-h7wh-q2qr-458c",
+     "fix": "15f764c3563d5dd9b97ad32eaa7454577ccec4b9",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-h7ww-273w-6cm8",
+     "fix": "1bef343ade163fc3bb95572b15be720084cdb993",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hhww-mrg2-969h",
+     "fix": "13a193367f0ae2e7e8b29913e0d23a32d3bb0457",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hhxq-47xx-j5xx",
+     "fix": "e3cea6fa10a50fa29cf1fdddd772458fba076d5f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hq2p-f2vj-v3cm",
+     "fix": "b0bcc1318832b9055781f032853ef9d2264652cf",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-j44m-77cc-p3cc",
+     "fix": "7559ddf72f48684cc40ae78be9cebcaa07f5fa06",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-shell-command",
+       "plugin/API/standAlone/functions.php",
+       147
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jcff-cj73-4w4f",
+     "fix": "ad92002966053309f83b550861e2ef04bc714744",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jg26-q8hg-3pq4",
+     "fix": "d19c01487af8c3de2fb3aa145856707a6367392c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jmv2-qgxf-f995",
+     "fix": "290b196ddb48de11783ff128e2b7272c61490a20",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "packages/integrations/solid/src/server.ts",
+       70
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jpf4-98qj-qr67",
+     "fix": "1c440e755a97471c56fb0276ee8a8c4132974645",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jq3q-62jc-fqq9",
+     "fix": "d11642322b607556affaaa3fd631d4f8942c05d8",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       18
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       18
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       38
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       38
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       58
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       58
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       92
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       92
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       312
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       312
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       329
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       329
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       340
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       340
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       344
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       344
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       359
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/getGitHandler.ts",
+       359
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/githubProvider/cliProvider.ts",
+       19
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "src/utils/githubProvider/cliProvider.ts",
+       40
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jrjx-9jjw-747m",
+     "fix": "beb8fc0813eded89f985d3eb9a73535dd327726d",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jrq7-xrjx-pcfw",
+     "fix": "f92218e01054491fc1e6684dc6f7facaf8ab41eb",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jw3m-8q7m-f35r",
+     "fix": "ec2647fd4557962a971a1bc9435790b8e77ce961",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jwgx-mp9m-jwcr",
+     "fix": "5fee01752f2782e96fbe64fd13520b433d4a7535",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m37j-52j7-pjw7",
+     "fix": "adab2f25ea95ef4e6e41f50db9266a6701399422",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m65p-9j7q-6w33",
+     "fix": "81730a2ce4ebcd60d5d18f68c96f422ad7e30772",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mc8w-wjhw-45x5",
+     "fix": "9c8d16d50e2fdfd9693ab35c43280410cb4db2fc",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mf2p-wjp4-99pq",
+     "fix": "2daaa3a30570bc76a82f63fd21fb8c9c2cd5dc7c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mh32-jxcr-mh9f",
+     "fix": "e023abac912d7cb6af2b9fb5107ef5dabc667096",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mmg6-4qmv-6pc8",
+     "fix": "4d39331afc0e27752d16d9d91c34583e5e8487fb",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "go.parameter-path-join-without-containment",
+       "internal/config/template/parser.go",
+       330
+      ],
+      [
+       "go.parameter-path-join-without-containment",
+       "internal/config/template/parser.go",
+       345
+      ],
+      [
+       "go.parameter-path-join-without-containment",
+       "internal/config/template/parser.go",
+       386
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "go.parameter-path-join-without-containment",
+       "internal/config/template/parser.go",
+       236
+      ],
+      [
+       "go.parameter-path-join-without-containment",
+       "internal/config/template/parser.go",
+       338
+      ],
+      [
+       "go.parameter-path-join-without-containment",
+       "internal/config/template/parser.go",
+       353
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mqwx-84vv-mp26",
+     "fix": "118c3d08559e811c1bf69db7c5ed82a22bcf0bbc",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mrvp-7wmx-5m4h",
+     "fix": "867c055122fdf12220f973f862082037b695b9bd",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p23f-cm6q-2qp8",
+     "fix": "b26a4a307b8ae5067387ea76ce1fad6b7f4bf9e7",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p34x-fmph-9fjx",
+     "fix": "bbb6f1cfec22fee1ea0e6ecf1129d7103c85e09f",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.parameter-path-join-without-containment",
+       "src/cli/recipe.py",
+       68
+      ],
+      [
+       "python.request-path-traversal",
+       "src/core/modules/atomic/data/json_to_csv.py",
+       123
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "python.request-path-traversal",
+       "src/core/modules/atomic/data/json_to_csv.py",
+       127
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p623-mxf7-qxjm",
+     "fix": "059495787a1086868a28ba9eca8d089729242646",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p74g-f95m-7fx7",
+     "fix": "3db29e7771661f6418d88d186d8ff7817f5d6b6e",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p9h3-gvpq-5539",
+     "fix": "58754e4e3b86b58a0c4523012ef04a2ae990d2c8",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p9wj-w8xq-vjx6",
+     "fix": "62c04841e8252a1b5373afcd2b89fb9b8279e317",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pgwp-vc7q-cvj3",
+     "fix": "24b68068747ad632398e3b3bab2989e76e43ef82",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qqrg-8jpm-8mph",
+     "fix": "cea9c46eba4be31a06adf6980494623385e1296d",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qr6x-7v33-6qmg",
+     "fix": "b2758c6b39bb2b02df90a03128110339476984d3",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qxg3-46rw-79j8",
+     "fix": "ec509a22c808a5bd9dfad6a0a85c92ce6f411e21",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-r2q3-7m4h-63qg",
+     "fix": "5f37fb43728639c540cc7233283f1100e9315424",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-r3h5-4585-7x3w",
+     "fix": "7da442bb286e0c29e1c9e1add6727b7cbf434f1a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-r4mx-2gr2-8277",
+     "fix": "ac3a4c65677a3bc7a3d5b1e264fba41178d4ab32",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-r7h9-qx4h-77j5",
+     "fix": "2818347a7ebd399a036f35ada750f0b151464489",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       72
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       73
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       74
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       77
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       95
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       96
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       97
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       100
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       129
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       77
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       101
+      ],
+      [
+       "php.parameter-sql-text",
+       "src/Utils/ListFormatHelper.php",
+       132
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rr8v-fxxf-c986",
+     "fix": "0c2744fcc050e34a084f5131d5e167b13c342bfd",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rw77-vq4g-x3hp",
+     "fix": "d56ef5d75c3c007de095bc4c13b470c7ac783f0f",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-sql-text",
+       "phpmyfaq/src/phpMyFAQ/StopWords.php",
+       68
+      ],
+      [
+       "php.parameter-sql-text",
+       "phpmyfaq/src/phpMyFAQ/StopWords.php",
+       71
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rx7m-wxwq-vxr9",
+     "fix": "2c86406808bc2517efb35f5595b3a05761c2eacd",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v65j-hff3-753c",
+     "fix": "370156335b325bb81d14d89edf0a1f2643d50a84",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vcx7-pfrh-mcfg",
+     "fix": "f4e4bb1979832abd7e4eb1666e2b3cfc767f587a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vj3q-vp3g-j9c8",
+     "fix": "ec509a22c808a5bd9dfad6a0a85c92ce6f411e21",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vp3w-52v9-q57f",
+     "fix": "be70d1d836c83c3b084e768e31a399312d4cbe0b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vr5f-w35q-98jp",
+     "fix": "75e5471040ccb5674ea8d25c2aa16c80ccb70b2a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vvr2-h2jp-838m",
+     "fix": "6541e920a27961fa8f3ff49ef38c0e0bd09cd626",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.parameter-path-join-without-containment",
+       "codebase_rag/mcp/tools.py",
+       562
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vx32-xf7g-9ghr",
+     "fix": "eb7875f0a849cb33325956d0b75e27061d7a7fa3",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w34q-cm8f-9c5x",
+     "fix": "c65d435b43e5e6b82310e6b18dd4cdcb8ac63a0c",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "go.grpc-insecure-transport",
+       "exporters/otlp/otlplog/otlploggrpc/client.go",
+       111
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "go.grpc-insecure-transport",
+       "exporters/otlp/otlplog/otlploggrpc/client.go",
+       113
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w42c-h7hr-f67p",
+     "fix": "5ba2f066dd6dcd726c4e61b74851862dc596d994",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w6x2-f5m4-xw82",
+     "fix": "f126ff29549e0983f571fbc32dddcfbede251aa7",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w998-qmw9-mf4m",
+     "fix": "2daaa3a30570bc76a82f63fd21fb8c9c2cd5dc7c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-xgjr-7j9q-2h4r",
+     "fix": "c0a6525009a65265230185f16e8674dcc83aa024",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-xhv5-8fpq-g7hf",
+     "fix": "0fdf8e411de5d0c142ae2590cf1c54bdfc2e529a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-xvcc-vqjv-phqh",
+     "fix": "9e1a3592903a56e500959be72276ede1708c3437",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-xwg4-8hqh-79jq",
+     "fix": "9b61e6d04da1a3183c4ef4081cb64fd31ae0701f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-xxph-c9ww-hj94",
+     "fix": "b931fe9d6d5cf00bc55714ad3308d086f71850fe",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    }
+   ]
+  },
+  {
+   "manifest": "/home/claude/heldout-run/dev-cases.json",
+   "before": {
+    "cases": 150,
+    "scored": 148,
+    "status": {
+     "scored": 148,
+     "no_in_language_source_change": 2
+    },
+    "hunk_hits": 19,
+    "hunk_recall_wilson95": [
+     8.4,
+     19.2
+    ],
+    "trace_hits": 19,
+    "trace_recall_wilson95": [
+     8.4,
+     19.2
+    ],
+    "file_hits": 24,
+    "file_recall_wilson95": [
+     11.1,
+     23
+    ],
+    "distinct_fixes_hit": 19,
+    "outcomes": {
+     "hit": 19,
+     "miss": 129,
+     "timeout": 0,
+     "unknown": 2,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 68,
+     "per_scored_case": 0.5
+    },
+    "fix_side_residual_alerts": 9,
+    "by_family": {
+     "path": {
+      "hits": 3,
+      "scored": 24
+     },
+     "sql": {
+      "hits": 1,
+      "scored": 43
+     },
+     "deser": {
+      "hits": 0,
+      "scored": 9
+     },
+     "tls": {
+      "hits": 6,
+      "scored": 20
+     },
+     "cmd": {
+      "hits": 7,
+      "scored": 37
+     },
+     "xss": {
+      "hits": 2,
+      "scored": 14
+     },
+     "incl": {
+      "hits": 0,
+      "scored": 1
+     }
+    },
+    "by_ecosystem": {
+     "Packagist": {
+      "hits": 4,
+      "scored": 25
+     },
+     "PyPI": {
+      "hits": 2,
+      "scored": 25
+     },
+     "Maven": {
+      "hits": 4,
+      "scored": 23
+     },
+     "Go": {
+      "hits": 1,
+      "scored": 25
+     },
+     "npm": {
+      "hits": 4,
+      "scored": 25
+     },
+     "RubyGems": {
+      "hits": 4,
+      "scored": 25
+     }
+    }
+   },
+   "after": {
+    "cases": 150,
+    "scored": 148,
+    "status": {
+     "scored": 148,
+     "no_in_language_source_change": 2
+    },
+    "hunk_hits": 20,
+    "hunk_recall_wilson95": [
+     8.9,
+     20
+    ],
+    "trace_hits": 20,
+    "trace_recall_wilson95": [
+     8.9,
+     20
+    ],
+    "file_hits": 28,
+    "file_recall_wilson95": [
+     13.4,
+     26
+    ],
+    "distinct_fixes_hit": 20,
+    "outcomes": {
+     "hit": 20,
+     "miss": 128,
+     "timeout": 0,
+     "unknown": 2,
+     "error": 0
+    },
+    "review_budget": {
+     "alerts_in_changed_files": 87,
+     "per_scored_case": 0.6
+    },
+    "fix_side_residual_alerts": 11,
+    "by_family": {
+     "path": {
+      "hits": 3,
+      "scored": 24
+     },
+     "sql": {
+      "hits": 2,
+      "scored": 43
+     },
+     "deser": {
+      "hits": 0,
+      "scored": 9
+     },
+     "tls": {
+      "hits": 6,
+      "scored": 20
+     },
+     "cmd": {
+      "hits": 7,
+      "scored": 37
+     },
+     "xss": {
+      "hits": 2,
+      "scored": 14
+     },
+     "incl": {
+      "hits": 0,
+      "scored": 1
+     }
+    },
+    "by_ecosystem": {
+     "Packagist": {
+      "hits": 4,
+      "scored": 25
+     },
+     "PyPI": {
+      "hits": 2,
+      "scored": 25
+     },
+     "Maven": {
+      "hits": 4,
+      "scored": 23
+     },
+     "Go": {
+      "hits": 1,
+      "scored": 25
+     },
+     "npm": {
+      "hits": 5,
+      "scored": 25
+     },
+     "RubyGems": {
+      "hits": 4,
+      "scored": 25
+     }
+    }
+   },
+   "cases": [
+    {
+     "ghsa": "GHSA-2223-f22x-24cq",
+     "fix": "fd673f4f32140c97c68b1ed705764b819747fbdf",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-23fx-92m6-4f2g",
+     "fix": "60722c43cf975f319e94102e6bff320723776890",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-25gv-mvm7-5h3h",
+     "fix": "51e2227bfe54f5d67b09411ee9a336750164e73d",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2fmj-p74r-3wjm",
+     "fix": "d1aa487722b5a3cab9b222b85fdb5608a5a550c3",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2pm6-9fhx-vvg3",
+     "fix": "0f7a1376bbbd8c7658030d02e51c10a85b1dfdf7",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2rc4-7jc6-qffh",
+     "fix": "3ff8119ab8f794806a4cc82e21f760c123d92966",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-2x7r-93ww-cxrq",
+     "fix": "5bc9257fe2bc47d8b786a1b1bf96bafad23d8ddd",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-38jw-g2qx-4286",
+     "fix": "231dc69723f331dc02f65a31ab4c3d6869f40d6a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3hcm-ggvf-rch5",
+     "fix": "d1ecb46076145deb188abcba8f0699709ea17198",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3p24-9x7v-7789",
+     "fix": "1faf33f2494c0128f250d7d2e8f2da99bbd32ae8",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-3xgr-h5hq-7299",
+     "fix": "b82ea0640d98d9f4c742622325faeeb6248ee135",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "java.disabled-hostname-verification",
+       "data-prepper-plugins/geoip-processor/src/main/java/org/opensearch/dataprepper/plugins/geoip/extension/databasedownload/DBSource.java",
+       48
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4574-qv3w-fcmg",
+     "fix": "802a108057d250ee563120eaa5365a519afc0a71",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-463c-jhp2-4mm7",
+     "fix": "67b8102a19e8e516dc4228f5c42f9e4fba5046cb",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-shell-command",
+       "Classes/Controller/BackupBaseController.php",
+       312
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "php.parameter-shell-command",
+       "Classes/Controller/BackupBaseController.php",
+       344
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-465w-gg5p-85c9",
+     "fix": "93f5cd0b6698e8fe8772afb8f35816f6c086aef1",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4h97-wpxp-3757",
+     "fix": "bc9d45b476101e441cb1cc602dea03eb29232de4",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4m7p-55jm-3vwv",
+     "fix": "f7ae7b75a457976853539bff1db52373b85fdb85",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4x28-j85r-668q",
+     "fix": "a9986b86c53de0582248b39605660fbba0c21a29",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-4xf2-7qfv-mgfx",
+     "fix": "d80eb99e739a09984ad0ea94b12380236346ae42",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-sql-text",
+       "Classes/Domain/Service/IpToCountry/LocalDatabase.php",
+       49
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-527r-mfmj-prqf",
+     "fix": "5645ed4365980a34e30a9c57fe0793dff729e8e4",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5j9f-5wmp-7f8h",
+     "fix": "639aa135ab57d9e23c5bedeb0a5e9518eb0f486e",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "java.disabled-hostname-verification",
+       "src/main/java/org/jenkinsci/plugins/vmanager/ReportManager.java",
+       680
+      ],
+      [
+       "java.disabled-hostname-verification",
+       "src/main/java/org/jenkinsci/plugins/vmanager/ReportManager.java",
+       691
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "java.disabled-hostname-verification",
+       "src/main/java/org/jenkinsci/plugins/vmanager/ReportManager.java",
+       725
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5jpj-293f-rhvj",
+     "fix": "552af457a4c7ce80ea1678ab5889f475b36ea103",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "go.parameter-shell-command",
+       "edge/pkg/taskmanager/v1alpha1/taskexecutor/node_upgrade.go",
+       162
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5m9f-rphj-c435",
+     "fix": "1e7deb2e6020c9793a81385a53ea378ec63b9339",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "java.disabled-hostname-verification",
+       "src/main/java/com/rabbitmq/client/TrustEverythingTrustManager.java",
+       53
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "java.disabled-hostname-verification",
+       "src/main/java/com/rabbitmq/client/TrustEverythingTrustManager.java",
+       28
+      ],
+      [
+       "java.disabled-hostname-verification",
+       "src/main/java/com/rabbitmq/client/impl/OAuth2ClientCredentialsGrantCredentialsProvider.java",
+       569
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-5xpp-75jx-m839",
+     "fix": "bbfddde48672d0ee124fefdb3cb4442fd9dd4f03",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-shell-command",
+       "lib/network.js",
+       551
+      ],
+      [
+       "javascript.parameter-shell-command",
+       "lib/network.js",
+       552
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-63q7-h895-m982",
+     "fix": "02724b8eb048dd219d6725b05c3000936f11d62d",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-68wg-qv6r-j4vp",
+     "fix": "9bd991021abbcbfb19347a07dca8b7e518b8abc9",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-69p3-xp37-f692",
+     "fix": "109ea71de5a8881748f03ebbe103b49f0f1c7887",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6g56-v9qg-jp92",
+     "fix": "787bae461b23003a4daa4d1d639016a754cf6b00",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6gm7-j668-w6h9",
+     "fix": "a697830359df06246acca502ee2455614de68017",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6j63-35hj-vmcg",
+     "fix": "9ae920951b46ff0163b16c55d744e89acb1036d4",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6m7c-xfhp-p9fh",
+     "fix": "474ecbf46bc47a75265bada2599f12b2179de375",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6m8w-jc87-6cr7",
+     "fix": "ad2063247a14711882f18c387a511fc8094aa79c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6qjf-g333-pv38",
+     "fix": "1a7adfdd041105a5e45e774cadc6b973a292ba55",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6vmq-24h2-pj7j",
+     "fix": "b041733473f95119dd539542a43c280737a8e460",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6w89-c65w-jx2c",
+     "fix": "0fc374de4745eac52620eeb8caf6a7b76127529a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-6xxq-j39w-g3f6",
+     "fix": "0d6d29933e613fe177e9235415919a5428db67bc",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-72c7-4g63-hpw5",
+     "fix": "04ff20b600e28ce8fd1aa287534dd383a1cfefb9",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-72qq-p3r5-f7wq",
+     "fix": "71573078c4168b2dc166bb847c3a85715dadc675",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-7359-3c6r-hfc2",
+     "fix": "eb5b00a91d4ef0899082fdba929c34ccad6d4ccb",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "ruby.disabled-tls-verification",
+       "lib/oauth/consumer.rb",
+       351
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "ruby.disabled-tls-verification",
+       "lib/oauth/consumer.rb",
+       357
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-73wf-9vmv-5pv9",
+     "fix": "ea4cf2f54f0d961e24aa0b24fff9584bab39db93",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-74hp-mggr-hv58",
+     "fix": "f31377fce6ec31114e5a4398c0e5270552bce09f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-76wq-xw4h-f8wj",
+     "fix": "62f81f4d6b3ee40e9887ffd92ab14714bad93f18",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-784x-7w88-w564",
+     "fix": "dd7bf104e7ed59142909567ecd004335c3442ec5",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-79qw-g77v-2vfh",
+     "fix": "7c83ad84ff7a68565655253e2cf1c5d2da695c1a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-7cj7-rcw6-p68v",
+     "fix": "3a46c7dd00e4adc17a132b9438149bde94da244f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-7hxc-f267-h5q7",
+     "fix": "a8425b6c707335e42c35ee2aaf03af50ea4a494d",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-7vxr-6cxg-j3x8",
+     "fix": "828064f1a0ab69b2642c59cab8292a67bb44182c",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "ruby.parameter-shell-command",
+       "lib/ftpd/disk_file_system.rb",
+       221
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "ruby.parameter-shell-command",
+       "lib/ftpd/disk_file_system.rb",
+       222
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-7wqf-h36w-47mc",
+     "fix": "1d4fd5c6eacab0b88f8660f9d780174434393f1a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-85gf-wr67-f83w",
+     "fix": "93a9a77896bb66c949acb8e64bceafc74bc8c271",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8832-4mm5-x2r6",
+     "fix": "91e13043ffa89227c3fcdc3408f06da237d28c95",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "ruby.parameter-shell-command",
+       "lib/discordrb/voice/encoder.rb",
+       81
+      ],
+      [
+       "ruby.parameter-shell-command",
+       "lib/discordrb/voice/encoder.rb",
+       91
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "ruby.parameter-shell-command",
+       "lib/discordrb/voice/encoder.rb",
+       81
+      ],
+      [
+       "ruby.parameter-shell-command",
+       "lib/discordrb/voice/encoder.rb",
+       91
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8gqp-hr9g-pg62",
+     "fix": "e9816501df1e364a3d39d7fe37d6e167c40eaa1b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8grg-q944-cch5",
+     "fix": "3f3c1ab50604ab9ba99e25d2016fb85f3ba9dcd4",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-8qvf-mr4w-9x2c",
+     "fix": "c6b382f363b73ac32c402a2db3aadc7784f66a5b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-97jv-2hp6-3frj",
+     "fix": "2b088a73c121a52e006c0d76ea4da7ffeb7b4f4a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-9mh6-g99m-ppcw",
+     "fix": "9026da58f5c381cd4cb5932de829eff6eacbb65c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-c5r5-7pfh-6qg6",
+     "fix": "14406f4460f4e1ecabd25ca94f809b3ea7c5fb11",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-cgfv-jrfp-2r7v",
+     "fix": "02ac83074b81617add814b2a72d459abdf374147",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-cpv4-ggrr-7j9v",
+     "fix": "2bb1d779d4f4acaf70b6dfa35dd1899dccbb1ae6",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-cxwf-qc32-375f",
+     "fix": "84374037d34a3ac80dc18406834169c65869f11b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f3f2-mcxc-pwjx",
+     "fix": "f73fae6fe7fc34907bba102648a9997186aa4385",
+     "before": "miss",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-sql-text",
+       "packages/nodes-base/nodes/Microsoft/Sql/GenericFunctions.ts",
+       222
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/nodes-base/nodes/Microsoft/Sql/GenericFunctions.ts",
+       224
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "javascript.parameter-sql-text",
+       "packages/nodes-base/nodes/Microsoft/Sql/GenericFunctions.ts",
+       239
+      ],
+      [
+       "javascript.parameter-sql-text",
+       "packages/nodes-base/nodes/Microsoft/Sql/GenericFunctions.ts",
+       241
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f6wf-28g6-769x",
+     "fix": "99c048ce7a590c519b79fbd38ad0143a08183a1f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-f7w7-6pjc-wwm6",
+     "fix": "14e4efd925da58b9fa63f20969fb7349b8a9c30d",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-ff6c-w6qf-7xqc",
+     "fix": "35e689c904225add78e0c488cf04bad052666449",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "ruby.disabled-tls-verification",
+       "lib/css_parser/parser.rb",
+       646
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-ff98-w8hj-qrxf",
+     "fix": "2e421f32dfc589c02706265fd3c3137ffc06c4b1",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-fhff-qmm8-h2fp",
+     "fix": "3bf6d81ac4d38654c8ff012dbd0c3e9f17e7e346",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.tarfile-extractall-without-filter",
+       "mlflow/pyfunc/dbconnect_artifact_cache.py",
+       143
+      ]
+     ],
+     "fix_side_residual": [
+      [
+       "python.tarfile-extractall-without-filter",
+       "mlflow/pyfunc/dbconnect_artifact_cache.py",
+       144
+      ]
+     ],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-fr3h-cpq2-9496",
+     "fix": "3d6cb7a51f2ad7ea57e529121dbd5d56f29fefe8",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "python.parameter-path-join-without-containment",
+       "src/mailparser/utils.py",
+       806
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-fwj4-6wgp-mpxm",
+     "fix": "a0a793b08d4f0a897ee985d79a687ad043f99e57",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g23g-mw97-65c8",
+     "fix": "b0183d8e550836dc50282ee74ff421ee41b25a37",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-g72f-jw3w-mgh7",
+     "fix": "c8190fbefa3a50e7b0c16c001d2e05b0e920cfb4",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gjqq-6r35-w3r8",
+     "fix": "5a9c2f92e11f86f8997da8c672844468f930b7e4",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gpfj-4j6g-c4w9",
+     "fix": "32b7ea3f29ae8f256f9d19768387be42678ddf30",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.dom-innerhtml-from-variable",
+       "src/paste-markdown-table.ts",
+       91
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gprp-h92g-gc2h",
+     "fix": "743ebf8696ffa55161ed2c5ecf26b09f69e6bcf1",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gr4j-r575-g665",
+     "fix": "55c39dd55f12ce8dfab84f8ec13ad81423bee9f5",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-gvg7-pp82-cff3",
+     "fix": "de3864650300488a63d0541620e9828b00e94b42",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-h36j-8vv3-cj52",
+     "fix": "1b70f9b673259360b6a2339c4bd97db9ea6e552f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-h4h6-vccr-44h2",
+     "fix": "8067a8f13f8d22fb57b76d6800f7aefc12b044cd",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-h6r4-xvw6-jc5h",
+     "fix": "7f58ce3726dfec71537d8b80474a0f95a48a1574",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-h7cm-jvpp-69xf",
+     "fix": "b55f6064d0c6a965aee38f30281f99da7dc4420c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hc5w-gxxr-w8x8",
+     "fix": "0deaee625d14c6f05f63c86e5c3b7ae623a1138f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hj4w-hm2g-p6w5",
+     "fix": "a5450f11c95847cf51a17207af9a3ca5ab569b2c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hq7p-j377-6v63",
+     "fix": "d7aba06953f9fa789c411676b941d20df8ef73de",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hr8g-6v94-x4m9",
+     "fix": "ccf93ca736b89250ff4ce079a5aa56f5cbf0ebbd",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-hw6x-2qwv-rxr7",
+     "fix": "899123fa2eb9dd2c37137aae630c47c6be6b4b02",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-j3f9-p6hm-5w6q",
+     "fix": "129700ed449b1f02d70272d2ac802357c8c30c58",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-j456-xh4h-cpf2",
+     "fix": "6a17606293fe9d3ea1006f99dd3fed2e2b25d519",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-j6cv-98jx-mrwr",
+     "fix": "f9368df28518b6c4a92fd207c260f1978ec34d6e",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-j7g8-3qqg-8cvm",
+     "fix": "9748cb80d2f24c89218f358ca2f5ab88ee33396f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-j7wh-x834-p3r7",
+     "fix": "d5e2d0bce0dffef5f61bd8066954bc2d41181fc5",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jccv-3h4x-35mv",
+     "fix": "ca5089eeba42d16ce3a7f86be628ac7750780111",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jj27-h5hq-8x99",
+     "fix": "417a4071a776464d549509ed3aec121dbd2fda5e",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jj45-24rw-v6jw",
+     "fix": "e2cea690c3fe4453e94da896a69f832511f65179",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jjgq-jq8g-24w4",
+     "fix": "33e2179b65331d9d9179b59d746817c5be1fecdb",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jmm9-2p29-vh2w",
+     "fix": "354da43ab0a10b3b7b3f9cb0619aa562c3be8474",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jppv-gw3r-w3q8",
+     "fix": "5b8f8fc41a5d7d7d6a5d767e48464c60884d3aee",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jqmf-mx4f-hfr6",
+     "fix": "9454d4a27a763b80e1d6eb5763b86c88e9e4e714",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-jwhr-h7pc-3974",
+     "fix": "5a0ae2155692beab48c6a0578a3eff22304a2014",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "java.disabled-hostname-verification",
+       "src/main/java/io/jenkins/plugins/bitbucketpushandpullrequest/client/api/BitBucketPPRBearerAuthorizationApiConsumer.java",
+       65
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m3hq-3qj8-c5fm",
+     "fix": "8371e9ded99f9ec3e74caf2f283836109763e450",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m445-w3xr-vp2f",
+     "fix": "4daebdd422a6ba8c04162d023f8be355a8fe3184",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m462-mqw4-2c8m",
+     "fix": "222bce0c5c1abb2f58c3a6de1fe8c5d3accffb21",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-m734-r4g6-34f9",
+     "fix": "ee24cd08b8ccc32711264831c71b1da628df357b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mc7w-4cjf-c973",
+     "fix": "81a4b8620188e89f7e4fc985f3c89b58d4bcc86b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mf2p-h6hf-fcwm",
+     "fix": "bd1ab5ef024c648c3f9c0b409e54a6c227c7d8a2",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mhwp-qhpc-h3jm",
+     "fix": "1f2192e46d78ee0ba2b06373f2c24caf8440ff5b",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mj4x-vf5c-5xg8",
+     "fix": "5c65c5926fe7ca908b9c1d281f904e7d97ba8310",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mmcv-fvq8-r9x3",
+     "fix": "3e64d36cbdc34acaa82e0e6318112cd2eacb6fec",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mq84-hjqx-cwf2",
+     "fix": "61ac8c1e51862c471dee7b49029c356f55531487",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mrq8-fv7v-hhjg",
+     "fix": "b041733473f95119dd539542a43c280737a8e460",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mrww-27vc-gghv",
+     "fix": "945c2126f6db8f3bea7eeebe307c01fe92bca007",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mw36-7c6c-q4q2",
+     "fix": "0fec095d534126931c99fd38e9c6d41f5c685c1a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-mxg3-432p-mr72",
+     "fix": "8f409cb08aacc6e94704334e8b1fb2cd50f5dd98",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p6w9-r443-r752",
+     "fix": "63c05615694790f5790a04ef889f42b764fa53c9",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p77r-c6m3-gj2r",
+     "fix": "2bf9faee787eb004abbdfb6f4cc2fb06653defd5",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-p9qm-p942-q3w5",
+     "fix": "7313dc9b533c70f14b7672379c8b3b63d1fd8f51",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pj84-qjm3-77mg",
+     "fix": "71c3f0a6ccdb2ba43f43686826b0d62160df85e8",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pmw4-jgxx-pcq9",
+     "fix": "457b859450a37cba10ff3c431eb4aa67771122e3",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.parameter-path-join-without-containment",
+       "src/fs.js",
+       26
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-pxrr-hq57-q35p",
+     "fix": "2fbb45ee36b8c0caa5b924fe19f3c1a5e8603fa7",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-q27f-v3r6-9v77",
+     "fix": "e5fa144f8d21050dd1fc15a4dc8aa34ac6f30602",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-q296-9j5x-fxf4",
+     "fix": "b286378aa22bc48ed77d259200cb6863a532c2df",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-q433-mp6c-8v4f",
+     "fix": "1da5a6582a4f9d90c778db5687ddcd0c39d2c1ec",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-q7m5-3jmv-vm48",
+     "fix": "1620b49f36945d8cc8ee5635b906c960df5097a0",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-q9mp-79cp-9g8j",
+     "fix": "2b353971696717e980521b0e4baa1eba66c8d2bf",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qcpp-8x79-hhp3",
+     "fix": "9c280eae5419da680827024b60f6265956e31994",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qqh2-wvmv-h72m",
+     "fix": "2de1439f5be63d9d0e89bbacbd24fa28c8c3e29d",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-qrg7-hfx7-95c5",
+     "fix": "12397eec50155cb2d24aa70bdf9e90c5f3b9a727",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-r7j3-vvh2-xrpj",
+     "fix": "4cd5081e58810d3394d27a67219e8e4e0445d851",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-r8g5-cgf2-4m4m",
+     "fix": "70c1c6c31beb6baaf52c8db1b6c3c0e84a6f9dab",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rc6v-5rmx-w5mv",
+     "fix": "efbd980d8b636cb59f60f2d6ece1b80a9cf36535",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rjjv-87mx-6x3h",
+     "fix": "d338d4635a7fd947ba5112df6ee632c4a0979438",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "javascript.html-template-unescaped-interpolation",
+       "packages/kit/src/exports/vite/utils.js",
+       92
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rmjr-87wv-gf87",
+     "fix": "c54aaeb43a7941317c1f3c119ffa92090f988820",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rp2v-v467-q9vq",
+     "fix": "98af5c8c1e9c15fa888c900252e76116b0ec25d1",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-rqw2-ghq9-44m7",
+     "fix": "479415ce5249bcdebeb6570c72df2a87f45a7bbf",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v222-6mr4-qj29",
+     "fix": "c7ea001a597c7033575342c51483dab7b87ae155",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v253-rj99-jwpq",
+     "fix": "17432ad5bbed5c2e77255ca6d56a1449bbcfd943",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v529-vhwc-wfc5",
+     "fix": "9ba60c09c8836a37a2e4ea67ab35fe403e041415",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-v74c-qc46-9gg9",
+     "fix": "4e68894a1c54d763ac2697ea1ac993793da4107c",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vf2r-cxg9-p7rf",
+     "fix": "5b8bd52cdcffefb4ecded1b399c98cfa516afe03",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vj3g-5px3-gr46",
+     "fix": "c821099157a9767d4df208c6b12f214946507871",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vj9x-w7ch-f46p",
+     "fix": "66281c12479dc01a06258d8533eaddfb1770d5bd",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vp4f-wxgw-7x8x",
+     "fix": "bd20ea9533d0cda30809d929db85b1b76cef855a",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-vq7p-f4fv-rr5x",
+     "fix": "f0fb143af340c7529dd9e50f5514334756019356",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w2pm-r78h-4m7v",
+     "fix": "44c3feb604944599ad1c782a9942981c3991fa31",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-shell-command",
+       "src/Illuminate/Filesystem/Filesystem.php",
+       257
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-w5ff-2mjc-4phc",
+     "fix": "67d932eb05e1bc9b36796f73ff4f9fb47590598b",
+     "before": "hit",
+     "after": "hit",
+     "hunk_findings": [
+      [
+       "php.parameter-shell-command",
+       "plugin/SocialMediaPublisher/Objects/SocialUploader.php",
+       720
+      ]
+     ],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-wc3v-3457-c8cm",
+     "fix": "6ce29e743165890c10346f4c71d5bf79f1ecaf6f",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-wm65-ph3w-587c",
+     "fix": "b61dff84851c45369cf931db5bd93db177c657f6",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-wqmh-qccw-pqwf",
+     "fix": "31ff9e56f5038d61ec75344518912945f60dffec",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-x3wm-hffr-chwm",
+     "fix": "0d354a5f26ca23f7cac4e800e3b8734220230319",
+     "before": "no_in_language_source_change",
+     "after": "no_in_language_source_change",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-x485-rhg3-cqr4",
+     "fix": "0a9a360c590829d8a377ceae0cf997bbbbcc2df4",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-x67c-8pwr-m8g3",
+     "fix": "0a176345e02a0d19bdc7762e50e0b92002087d20",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-x843-g5mx-g377",
+     "fix": "70c1c6c31beb6baaf52c8db1b6c3c0e84a6f9dab",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-xf96-32q2-9rw2",
+     "fix": "ef0ea782b1f5cf7b08e74ea3002a16c708f66645",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    },
+    {
+     "ghsa": "GHSA-xr9m-gphc-9p63",
+     "fix": "abc4363e8393b29a5566b8c50144426af72bbc97",
+     "before": "miss",
+     "after": "miss",
+     "hunk_findings": [],
+     "fix_side_residual": [],
+     "retried_serially": false
+    }
+   ]
+  }
+ ],
+ "controls": [
+  {
+   "dir": "/home/claude/ctl/ZJONSSON_node-unzipper/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/apache_commons-compress/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/caddyserver_caddy/",
+   "before": 1,
+   "after": 1,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/composer_composer/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/cthackers_adm-zip/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/expressjs_express/",
+   "before": 5,
+   "after": 5,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/getgrav_grav/",
+   "before": 4,
+   "after": 4,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/gohugoio_hugo/",
+   "before": 1,
+   "after": 1,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/jekyll_jekyll/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/jquery_jquery/",
+   "before": 1,
+   "after": 1,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/laravel_framework/",
+   "before": 1,
+   "after": 1,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/markedjs_marked/",
+   "before": 2,
+   "after": 2,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/mozilla_pdf.js/",
+   "before": 4,
+   "after": 4,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/phpbb_phpbb/",
+   "before": 7,
+   "after": 11,
+   "added": [
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/includes/functions_privmsgs.php",
+     "line": 1978,
+     "snippet": "AND t.folder_id NOT IN (' . PRIVMSGS_NO_BOX . ', ' . PRIVMSGS_HOLD_BOX . ')"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/db/driver/mysqli.php",
+     "line": 500,
+     "snippet": "return '`' . $msg . '`';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_mysql.php",
+     "line": 536,
+     "snippet": "$sql_where_options .= ($sort_days) ? ' AND p.post_time >= ' . (time() - ($sort_days * 86400)) : '';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_mysql.php",
+     "line": 674,
+     "snippet": "$sql_time\t\t= ($sort_days) ? ' AND p.post_time >= ' . (time() - ($sort_days * 86400)) : '';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_native.php",
+     "line": 1095,
+     "snippet": "$sql_time\t\t= ($sort_days) ? ' AND p.post_time >= ' . (time() - ($sort_days * 86400)) : '';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_postgres.php",
+     "line": 458,
+     "snippet": "$sql_where_options .= ($sort_days) ? ' AND p.post_time >= ' . (time() - ($sort_days * 86400)) : '';"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/search/backend/fulltext_postgres.php",
+     "line": 606,
+     "snippet": "$sql_time\t\t= ($sort_days) ? ' AND p.post_time >= ' . (time() - ($sort_days * 86400)) : '';"
+    }
+   ],
+   "removed": [
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/mention/source/base_group.php",
+     "line": 160,
+     "snippet": "$result = $this->db->sql_query($this->query($keyword, $topic_id), $this->cache_ttl);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/mention/source/base_user.php",
+     "line": 117,
+     "snippet": "$result = $this->db->sql_query($this->query($keyword, $topic_id), $this->cache_ttl);"
+    },
+    {
+     "rule": "php.parameter-sql-text",
+     "path": "phpBB/phpbb/mention/source/base_user.php",
+     "line": 159,
+     "snippet": "$result = $this->db->sql_query_limit($this->query($keyword, $topic_id), $this->config['mention_batch_size'], 0);"
+    }
+   ]
+  },
+  {
+   "dir": "/home/claude/ctl/rubygems_rubygems/",
+   "before": 3,
+   "after": 9,
+   "added": [
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/bundler/rubygems_gem_installer.rb",
+     "line": 129,
+     "snippet": "bin_script_path = File.join bindir, formatted_program_filename(filename)"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/commands/unpack_command.rb",
+     "line": 129,
+     "snippet": "this_path = File.join(path, \"cache\", filename)"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/installer.rb",
+     "line": 188,
+     "snippet": "generated_bin = File.join @bin_dir, formatted_program_filename(filename)"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/installer.rb",
+     "line": 537,
+     "snippet": "bin_script_path = File.join bindir, formatted_program_filename(filename)"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/installer.rb",
+     "line": 559,
+     "snippet": "src = File.join gem_dir, spec.bindir, filename"
+    },
+    {
+     "rule": "ruby.request-path-traversal",
+     "path": "lib/rubygems/installer.rb",
+     "line": 560,
+     "snippet": "dst = File.join bindir, formatted_program_filename(filename)"
+    }
+   ],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/spring-projects_spring-petclinic/",
+   "before": 0,
+   "after": 0,
+   "added": [],
+   "removed": []
+  },
+  {
+   "dir": "/home/claude/ctl/sveltejs_kit/",
+   "before": 7,
+   "after": 19,
+   "added": [
+    {
+     "rule": "javascript.parameter-shell-command",
+     "path": "packages/adapter-auto/index.js",
+     "line": 10,
+     "snippet": "npm: (name, version) => `npm install -D ${name}@${version}`,"
+    },
+    {
+     "rule": "javascript.parameter-shell-command",
+     "path": "packages/adapter-auto/index.js",
+     "line": 11,
+     "snippet": "pnpm: (name, version) => `pnpm add -D ${name}@${version}`,"
+    },
+    {
+     "rule": "javascript.parameter-shell-command",
+     "path": "packages/adapter-auto/index.js",
+     "line": 12,
+     "snippet": "yarn: (name, version) => `yarn add -D ${name}@${version}`,"
+    },
+    {
+     "rule": "javascript.parameter-path-join-without-containment",
+     "path": "packages/adapter-auto/index.js",
+     "line": 21,
+     "snippet": "const exists = (file) => fs.existsSync(path.join(dir, file));"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 297,
+     "snippet": "if (fs.existsSync(file) && !fs.statSync(file).isDirectory()) {"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 297,
+     "snippet": "if (fs.existsSync(file) && !fs.statSync(file).isDirectory()) {"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 346,
+     "snippet": "path.resolve(root, decoded.slice(svelte_config.paths.base.length + 1))"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 348,
+     "snippet": "const is_file = fs.existsSync(file) && !fs.statSync(file).isDirectory();"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/dev/index.js",
+     "line": 348,
+     "snippet": "const is_file = fs.existsSync(file) && !fs.statSync(file).isDirectory();"
+    },
+    {
+     "rule": "javascript.request-path-traversal",
+     "path": "packages/kit/src/exports/vite/preview/index.js",
+     "line": 197,
+     "snippet": "fs.createReadStream(filename).pipe(res);"
+    },
+    {
+     "rule": "javascript.parameter-sql-text",
+     "path": "packages/kit/src/messages/shared-errors.js",
+     "line": 299,
+     "snippet": "throw_error('resolve_url_input', `Cannot use \\`resolve(...)\\` with an absolute or protocol-relative URL (got \"${_values.id}\")`, resolve_url_input);"
+    },
+    {
+     "rule": "javascript.parameter-shell-command",
+     "path": "packages/kit/src/runtime/app/server/remote/query.js",
+     "line": 180,
+     "snippet": "run: (event, state, arg) => run(event, state, () => validate(arg)),"
+    }
+   ],
+   "removed": []
+  }
+ ]
+}

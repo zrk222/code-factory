@@ -1,0 +1,43 @@
+{
+  "reviewer": "codex-sol-6.2",
+  "reasoning_effort": "high",
+  "configuration_provenance": "The delegating Codex session identified this reviewer as GPT-6.2 Sol at high reasoning effort. Runtime model configuration was not independently introspected in the isolated review.",
+  "git_revision": "776bf0b5edbfb024b4eddcfa685a3200cf9085a1",
+  "inputs": {
+    "label-packet": {
+      "object": "776bf0b5edbfb024b4eddcfa685a3200cf9085a1:docs/evidence/label-packet-exposed-20261125.json",
+      "sha256": "c39c12809dce51ae6401388f4a0f39022a10323399d5266d72bc99882893d0e3"
+    },
+    "label-context": {
+      "object": "776bf0b5edbfb024b4eddcfa685a3200cf9085a1:docs/evidence/label-context-exposed-20261125.json",
+      "sha256": "bce550b674259e3cea55e1d0ceb70764f4a362a9f3f6c546598eb52748ed4dee"
+    }
+  },
+  "source_context": "The approved supplement supplied 394 expanded context windows and relevant header excerpts joined by exact packet ID. The review used focused extracts from those windows and revisited wider sections where needed. No other sources, reviewers, rule definitions, answer keys, or previous verdicts were consulted.",
+  "batch_positions": [
+    [
+      1,
+      100
+    ],
+    [
+      101,
+      200
+    ],
+    [
+      201,
+      300
+    ],
+    [
+      301,
+      394
+    ]
+  ],
+  "row_count": 394,
+  "verdict_counts": {
+    "FP": 108,
+    "TP": 75,
+    "UNCLEAR": 211
+  },
+  "labels_sha256": "95234ef99c712d40323083b9d2dc19d2329061146092b011c9f82847fe2d693a",
+  "verification": "Checked both pinned input hashes, ID and source-location equality across inputs, 394 unique labels in original packet order, verdict enum, and nonempty one-line reasons. Paired precision is pending."
+}

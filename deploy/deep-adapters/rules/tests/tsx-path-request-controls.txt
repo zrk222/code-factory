@@ -1,0 +1,40 @@
+import * as http from "http";
+import fsDefault from "fs";
+
+export const staticProxy = (root: string) => (request: http.IncomingMessage, response: http.ServerResponse) => {
+  // ruleid: javascript.request-path-traversal
+  const target = path.join(root, request.url ?? "/");
+  response.end(target);
+};
+
+export function sessionLog(req: any) {
+  const sessionId = req.query.sessionId as string;
+  // ruleid: javascript.request-path-traversal
+  const file = path.join(LOG_DIR, `session-${sessionId}.jsonl`);
+  // ruleid: javascript.request-path-traversal
+  return fs.existsSync(file);
+}
+
+export function sessionLogSafe(req: any) {
+  const sessionId = path.basename(req.query.sessionId as string);
+  // ok: javascript.request-path-traversal
+  const file = path.join(LOG_DIR, `session-${sessionId}.jsonl`);
+  // ok: javascript.request-path-traversal
+  return fs.existsSync(file);
+}
+
+export async function downloadKeys(keys: string[], tempDir: string) {
+  await Promise.all(keys.map(async (key) => {
+    // ruleid: javascript.parameter-path-join-without-containment
+    const filePath = path.join(tempDir, key);
+    fsDefault.writeFileSync(filePath, "");
+  }));
+}
+
+export async function downloadKeysFlat(keys: string[], tempDir: string) {
+  await Promise.all(keys.map(async (key) => {
+    // ok: javascript.parameter-path-join-without-containment
+    const filePath = path.join(tempDir, path.basename(key));
+    fsDefault.writeFileSync(filePath, "");
+  }));
+}
