@@ -2534,7 +2534,9 @@ def test_blind_packet_and_ledger_distinguish_exact_alert_spans(tmp_path):
     }
     joined = [{**item, **key[item["item"]]} for item in packet["items"]]
     assert len({_gain["_alert_identity"](item) for item in joined}) == 3
-    assert all("rule" not in item and "on_fix_hunk" not in item for item in packet["items"])
+    assert all(
+        "rule" not in item and "on_fix_hunk" not in item for item in packet["items"]
+    )
 
 
 def test_packet_is_blinded_deduplicated_and_sealed(tmp_path):
