@@ -682,12 +682,33 @@ test('paired controls bind source bytes and stop when input changes or leaves th
     { path: 'sample.py', sha256: sha256(readFileSync(join(control, 'sample.py'))) },
   ]), entries: 2 });
 
+  symlinkSync(join(control, 'not-built'), join(control, 'generated'), linkType);
+  const dangling = controls();
+  assert.equal(dangling.status, 0, dangling.result.error);
+  assert.deepEqual(dangling.result.source_tree, { sha256: caseDigest([
+    { path: 'generated', link_target: 'not-built', link_state: 'dangling' },
+    { path: 'inside', link_target: 'target' },
+    { path: 'sample.py', sha256: sha256(readFileSync(join(control, 'sample.py'))) },
+  ]), entries: 3 });
+
+  const missingSource = join(control, 'missing.py');
+  symlinkSync(join(control, 'not-built'), missingSource, linkType);
+  const eligible = controls();
+  assert.equal(eligible.status, 2);
+  assert.match(eligible.result.error, /dangling control link occupies an eligible source path/i);
+  rmSync(missingSource);
+
   const outside = join(root, 'outside');
   mkdirSync(outside);
   symlinkSync(outside, join(control, 'outside'), linkType);
   const escaped = controls();
   assert.equal(escaped.status, 2);
   assert.match(escaped.result.error, /link leaves the source tree/);
+  rmSync(join(control, 'outside'));
+  symlinkSync(join(outside, 'missing'), join(control, 'broken-external'), linkType);
+  const escapedDangling = controls();
+  assert.equal(escapedDangling.status, 2);
+  assert.match(escapedDangling.result.error, /link leaves the source tree/);
 }));
 
 test('reviewed control gate requires a complete, source-bound population', () => feederFixture(fixture => {

@@ -22,7 +22,7 @@
 // a precision proxy.
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { accessSync, closeSync, constants, createReadStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
@@ -1011,6 +1011,36 @@ function insideControl(root, path) {
   return !isAbsolute(local) && local !== '..' && !local.startsWith(`..${sep}`);
 }
 
+function controlSourceExtension(path) {
+  return SCANNABLE_EXTENSIONS.includes(extname(path).slice(1).toLowerCase());
+}
+
+function controlLinkTarget(root, target) {
+  const parts = relative(root, target).split(sep);
+  if (!insideControl(root, target) || parts.includes('.git')) {
+    throw new Error('Control source link leaves the source tree');
+  }
+  return parts.join('/');
+}
+
+function controlLink(root, location) {
+  const link = readlinkSync(location);
+  const target = isAbsolute(link) ? link : `${dirname(location)}${sep}${link}`;
+  controlLinkTarget(root, resolve(target));
+  try {
+    return { link_target: controlLinkTarget(root, realpathSync.native(location)) };
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    if (controlSourceExtension(location)) throw new Error('Dangling control link occupies an eligible source path');
+    // Only record a missing final component with a resolvable in-tree parent.
+    const parent = realpathSync.native(dirname(target));
+    controlLinkTarget(root, parent);
+    const missing = join(parent, basename(target));
+    if (lstatSync(missing, { throwIfNoEntry: false })) throw error;
+    return { link_target: controlLinkTarget(root, missing), link_state: 'dangling' };
+  }
+}
+
 async function controlSource(root) {
   const files = [];
   const visit = async (directory, prefix) => {
@@ -1022,12 +1052,7 @@ async function controlSource(root) {
       } else if (entry.isFile()) {
         files.push({ path, sha256: await fileFingerprint(location) });
       } else if (entry.isSymbolicLink()) {
-        const target = realpathSync(location);
-        const targetParts = relative(root, target).split(sep);
-        if (!insideControl(root, target) || targetParts.includes('.git')) {
-          throw new Error('Control source link leaves the source tree');
-        }
-        files.push({ path, link_target: targetParts.join('/') });
+        files.push({ path, ...controlLink(root, location) });
       } else {
         throw new Error('Unsupported entry in control source tree');
       }
@@ -1035,7 +1060,7 @@ async function controlSource(root) {
   };
   await visit(root, '');
   return { paths: new Set(files.map(file => file.path)), hashes: new Map(files.map(file => [file.path, file.sha256])),
-    eligible: files.filter(file => file.sha256 && SCANNABLE_EXTENSIONS.includes(extname(file.path).slice(1).toLowerCase()))
+    eligible: files.filter(file => file.sha256 && controlSourceExtension(file.path))
       .map(file => file.path).sort(),
     evidence: { sha256: caseDigest(files.sort(byPath)), entries: files.length } };
 }
