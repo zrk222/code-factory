@@ -21,8 +21,22 @@ from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 @pytest.mark.parametrize(
     "mode",
-    ["complete", "unresolved", "omitted", "out_of_scope", "truncated", "missing", "wrong_attempt",
-     "modified_response", "unbound_obligation"],
+    [
+        "complete",
+        "unresolved",
+        "obligation_gap",
+        "omitted",
+        "out_of_scope",
+        "truncated",
+        "missing",
+        "wrong_attempt",
+        "modified_response",
+        "unbound_obligation",
+        "missing_receipt",
+        "malformed_receipt",
+        "incomplete_observation",
+        "lane_gap",
+    ],
 )
 def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mode):
     from types import ModuleType
@@ -57,9 +71,20 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         "sources": {path: "synthetic test text" for path in paths},
         "observations": [
             {
-                "lane_id": lane["id"], "engine": lane["engine"], "state": "OBSERVED",
-                "gaps": [], "findings": [], "metrics": None,
-                "obligations": [item["id"] for item in plan["obligations"] if item["engine"] == lane["engine"]],
+                "lane_id": lane["id"],
+                "engine": lane["engine"],
+                "state": "OBSERVED",
+                "gaps": [],
+                "findings": [],
+                "metrics": None,
+                "report_sha256": "1" * 64,
+                "coverage_sha256": "2" * 64,
+                "challenge_sha256": "3" * 64,
+                "obligations": [
+                    item["id"]
+                    for item in plan["obligations"]
+                    if item["engine"] == lane["engine"]
+                ],
             }
             for lane in plan["lanes"]
         ],
@@ -67,6 +92,21 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
     if mode == "unbound_obligation":
         packet["observations"][0]["obligations"] = []
         with pytest.raises(ValueError, match="differ from the observed lanes"):
+            review.family_inputs(plan, packet)
+        return
+    if mode in {"missing_receipt", "malformed_receipt"}:
+        packet["observations"][0]["challenge_sha256"] = (
+            None if mode == "missing_receipt" else "x" * 64
+        )
+        with pytest.raises(RuntimeAuditError, match="challenge_sha256"):
+            review.family_inputs(plan, packet)
+        return
+    if mode in {"incomplete_observation", "lane_gap"}:
+        if mode == "incomplete_observation":
+            packet["observations"][0]["state"] = "INCOMPLETE"
+        else:
+            packet["observations"][0]["gaps"] = ["missing report"]
+        with pytest.raises(ValueError, match="incomplete analyzer lane"):
             review.family_inputs(plan, packet)
         return
     monkeypatch.chdir(tmp_path)
@@ -94,20 +134,51 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         payload = json.loads(body["messages"][1]["content"])
         assigned = sorted(payload["sources"])
         schema = body["response_format"]["schema"]["properties"]["path_assessments"]
-        assert schema["required"] == assigned and schema["additionalProperties"] is False
-        assert {control["role"] for row in payload["obligations"] for control in row["controls"]} == {
-            "positive", "negative", "mutation",
+        assert (
+            schema["required"] == assigned and schema["additionalProperties"] is False
+        )
+        assert {
+            control["role"]
+            for row in payload["obligations"]
+            for control in row["controls"]
+        } == {
+            "positive",
+            "negative",
+            "mutation",
         }
+        for row in payload["obligations"]:
+            controls = {item["role"]: item["fixture_path"] for item in row["controls"]}
+            assert controls["positive"] == controls["mutation"] != controls["negative"]
+        assert all(
+            lane["receipts"]
+            == {
+                "report_sha256": "1" * 64,
+                "coverage_sha256": "2" * 64,
+                "challenge_sha256": "3" * 64,
+            }
+            for lane in payload["observations"]
+        )
+        if payload["family"] == "dependencies":
+            inventory = next(
+                lane for lane in payload["observations"] if lane["engine"] == "syft"
+            )
+            assert inventory["artifact_roles"] == ["sbom_json"]
+            assert inventory["findings"] == []
         expected_coverage.update(assigned)
         result = {
             "decision": "ACCEPT",
             "findings": [],
             "coverage_gaps": [],
-            "path_assessments": {path: {"state": "REVIEWED", "reason": "Synthetic evidence reviewed"}
-                                 for path in assigned},
+            "path_assessments": {
+                path: {"state": "REVIEWED", "reason": "Synthetic evidence reviewed"}
+                for path in assigned
+            },
         }
         if mode == "unresolved" and payload["family"] == "dependencies":
-            result["path_assessments"][assigned[0]] = {"state": "UNRESOLVED", "reason": "Manifest has insufficient evidence"}
+            result["path_assessments"][assigned[0]] = {
+                "state": "UNRESOLVED",
+                "reason": "Manifest has insufficient evidence",
+            }
             result["findings"] = [
                 {
                     "id": "fixture-finding",
@@ -117,10 +188,16 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                     "remediation": "Review the fixture evidence",
                 }
             ]
+        if mode == "obligation_gap" and payload["family"] == "dependencies":
+            result["coverage_gaps"] = [
+                "The ledger lacks evidence for a declared dependency obligation"
+            ]
         if mode == "omitted":
             del result["path_assessments"][assigned[0]]
         if mode == "out_of_scope":
-            result["path_assessments"]["outside.txt"] = result["path_assessments"][assigned[0]]
+            result["path_assessments"]["outside.txt"] = result["path_assessments"][
+                assigned[0]
+            ]
         finish = "length" if mode == "truncated" else "stop"
         return BytesIO(
             json.dumps(
@@ -189,6 +266,11 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         assert result["coverage_gaps"][0].endswith("Manifest has insufficient evidence")
         assert [finding["id"] for finding in result["findings"]] == ["fixture-finding"]
         assert "| dependencies | 3 | 2 | 1 | 0 | 1 |" in summary
+    elif mode == "obligation_gap":
+        assert result["decision"] == "INCOMPLETE"
+        assert result["coverage_gaps"] == [
+            "The ledger lacks evidence for a declared dependency obligation"
+        ]
     else:
         assert result["decision"] == "ACCEPT" and result["coverage_gaps"] == []
 
@@ -1800,7 +1882,9 @@ def _coordinator_signed_fixture(tmp_path):
 
 
 @pytest.mark.parametrize("stop_child", [False, True])
-def test_coordinator_native_signed_child_handshake_and_cleanup(tmp_path, monkeypatch, stop_child):
+def test_coordinator_native_signed_child_handshake_and_cleanup(
+    tmp_path, monkeypatch, stop_child
+):
     import os
     import sys
     import time

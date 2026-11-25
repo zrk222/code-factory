@@ -81,8 +81,8 @@ jobs:
                   raise ValueError("review source bytes differ from the pinned inventory")
               sources[relative] = source.decode("utf-8")
           observations = [
-              {key: lane[key] for key in ("lane_id", "engine", "state", "gaps", "findings", "metrics",
-                                          "obligations", "report_sha256", "coverage_sha256", "challenge_sha256")}
+              {key: lane[key] for key in ("lane_id", "engine", "state", "gaps", "findings", "metrics", "obligations")}
+              | {key: lane.get(key) for key in ("report_sha256", "coverage_sha256", "challenge_sha256")}
               for lane in evidence["lanes"]
           ]
           binding = {
@@ -128,7 +128,7 @@ jobs:
 
           from factoryline.deep_audit_attestation import _review_finding
           from factoryline.deep_audit_io import digest, strict_json
-          from factoryline.runtime_audit_common import canonical_bytes, require_str, sha256_bytes
+          from factoryline.runtime_audit_common import canonical_bytes, require_digest, require_str, sha256_bytes
 
 
           LOOPBACK = "http://127.0.0.1:18080"
@@ -141,9 +141,13 @@ jobs:
               "compare its source and declared control role with the observed evidence. Mark REVIEWED "
               "only after assessing its relevance to this family. Give one short source- or evidence-based "
               "reason, including when a file is support material or has no relevant pattern. Use UNRESOLVED "
-              "if the evidence is insufficient. A matching positive or mutation control is expected. "
-              "Report unexpected issues or contradictions, including unexpected findings on negative "
-              "controls. Use coverage_gaps for gaps that are not specific to a path."
+              "if the evidence is insufficient. The same positive fixture bytes are used in a mutation "
+              "run with changed detector settings. Record matching expected controls in the path assessment. "
+              "The sbom_json artifact role records inventory, so its lane can have zero vulnerability alerts. "
+              "An assigned path can provide context outside this family's registered checks. Use coverage_gaps "
+              "for missing evidence about a declared obligation beyond individual path assessments. Identify "
+              "the missing observation. Report "
+              "unexpected defects or contradictions as findings with a source line or recorded observation."
           )
 
 
@@ -155,6 +159,7 @@ jobs:
               for lane in plan["lanes"]:
                   families[lane["family"]].append(lane["id"])
               observations = {item["lane_id"]: item for item in packet["observations"]}
+              artifact_roles = {lane["id"]: lane["native_artifact_roles"] for lane in plan["lanes"]}
               expected = {lane["id"] for lane in plan["lanes"]}
               if (
                   len(families) != 6
@@ -179,6 +184,8 @@ jobs:
                       raise ValueError(f"review source set is incomplete for {family}")
                   covered.update(paths)
                   observed = [observations[lane_id] for lane_id in lane_ids]
+                  if any(row["state"] != "OBSERVED" or row["gaps"] != [] for row in observed):
+                      raise ValueError(f"review evidence contains an incomplete analyzer lane for {family}")
                   observed_obligations = {
                       (row["engine"], item) for row in observed for item in row["obligations"]
                   }
@@ -197,6 +204,9 @@ jobs:
                           } for item in obligations],
                           "observations": [{
                               "engine": row["engine"], "state": row["state"], "gaps": row["gaps"],
+                              "artifact_roles": artifact_roles[row["lane_id"]],
+                              "receipts": {key: require_digest(row.get(key), key)
+                                           for key in ("report_sha256", "coverage_sha256", "challenge_sha256")},
                               "findings": [{key: finding[key] for key in ("path", "rule_id", "line", "suppressed")}
                                            for finding in row["findings"]],
                               "metrics": row["metrics"],
