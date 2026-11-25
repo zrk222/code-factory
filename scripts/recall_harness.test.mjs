@@ -548,6 +548,7 @@ async function feederFixture(run, row = feederRow) {
       "if (old && ruleText.includes('# rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
       "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
+      "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
       "const incomplete = !old && ruleText.includes('# incomplete');",
       "const devTimeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
       "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !process.argv.includes('--timeout=15')));",
@@ -1135,6 +1136,54 @@ test('control checkpoints resume only while the final and retry reports still ma
   rmSync(join(workdir, firstReport));
   assert.equal(run().resumed_from_checkpoint, undefined);
   assert.equal(run().resumed_from_checkpoint, true);
+}));
+
+test('standalone controls bind the scanner and reject rules changed during scanning', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline, candidate, manifest } = fixture;
+  const control = join(root, 'control'), output = join(root, 'controls.json');
+  const checkpoint = join(root, 'control-checkpoints');
+  mkdirSync(control);
+  writeFileSync(join(control, 'sample.py'), 'VALUE = 1\n');
+  writeFileSync(profile, JSON.stringify(JSON.parse(readFileSync(profile, 'utf8')), null, 2) + '\n');
+  const run = () => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls', '--rules', baseline,
+    '--rules', candidate, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
+    '--dir', control, '--out', output, '--checkpoint-dir', checkpoint], { encoding: 'utf8', timeout: 30000 });
+
+  const original = readFileSync(baseline);
+  const drifting = Buffer.concat([original, Buffer.from('# control-rules-drift\n')]);
+  writeFileSync(candidate, drifting);
+  const drift = run();
+  assert.notEqual(drift.status, 0, 'changed rules were accepted');
+  assert.match(drift.stderr, /ruleset byte fingerprint differs/);
+  assert.equal(existsSync(output), false);
+  assert.equal(existsSync(checkpoint) ? readdirSync(checkpoint).length : 0, 0);
+
+  writeFileSync(candidate, drifting);
+  const evaluationOutput = join(root, 'evaluation.json');
+  const evaluation = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
+    '--baseline', baseline, '--candidate', candidate, '--profile', profile, '--workdir', workdir,
+    '--opengrep', process.execPath, '--jobs', '1', '--dir', control, '--out', evaluationOutput],
+  { encoding: 'utf8', timeout: 30000 });
+  assert.notEqual(evaluation.status, 0);
+  assert.match(evaluation.stderr, /ruleset byte fingerprint differs/);
+  assert.equal(existsSync(evaluationOutput), false);
+
+  writeFileSync(candidate, original);
+  const stable = run();
+  assert.equal(stable.status, 0, stable.stderr);
+  const receipt = JSON.parse(readFileSync(output, 'utf8'));
+  assert.equal(receipt.engine.version, process.version);
+  assert.equal(receipt.engine.executable_sha256, sha256(readFileSync(process.execPath)));
+  assert.equal(receipt.profile_sha256, sha256(readFileSync(profile)));
+  assert.equal(receipt.before_sha256, sha256(readFileSync(baseline)));
+  assert.equal(receipt.after_sha256, sha256(original));
+
+  rmSync(output);
+  writeFileSync(profile, JSON.stringify({ ...JSON.parse(readFileSync(profile, 'utf8')), tool_version: 'wrong-version' }));
+  const mismatchedVersion = run();
+  assert.notEqual(mismatchedVersion.status, 0);
+  assert.match(mismatchedVersion.stderr, /engine version differs from profile/);
+  assert.equal(existsSync(output), false);
 }));
 
 
