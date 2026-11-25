@@ -93,6 +93,34 @@ def test_appforge_projection_rejects_a_tampered_receipt(tmp_path: Path) -> None:
     assert projection["latest"] is None
 
 
+def test_design_status_preserves_depth_limit_and_isolates_bad_receipts(
+    tmp_path: Path,
+) -> None:
+    from factoryline import canonical_sha
+
+    base = tmp_path / ".factory/appforge"
+    for number in range(105):
+        path = base / f"design-{number:03}" / "appforge-design-receipt.json"
+        path.parent.mkdir(parents=True)
+        core = {"schema": "factory.appforge.design-receipt.v1", "number": number}
+        path.write_text(
+            json.dumps({**core, "receipt_sha256": canonical_sha(core)}),
+            encoding="utf-8",
+        )
+    malformed = base / "design-000" / "appforge-design-receipt.json"
+    malformed.write_bytes(b"\xff")
+    nested = base / "archive" / "nested" / malformed.name
+    nested.parent.mkdir(parents=True)
+    nested.write_text("null", encoding="utf-8")
+
+    full = appforge_design_projection(tmp_path)
+    focus = appforge_design_projection(tmp_path, stage="design")["status"]
+    assert full["current_count"] == focus["current_count"] == 99
+    assert full["invalid_count"] == focus["invalid_count"] == 1
+    assert full["latest"] == focus["latest"]
+    assert full["latest"]["number"] == 99
+
+
 def test_repeated_compile_skips_replacing_identical_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

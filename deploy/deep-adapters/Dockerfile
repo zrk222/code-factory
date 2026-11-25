@@ -50,36 +50,36 @@ LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="pattern-
 RUN HOME=/tmp /usr/bin/opengrep --version
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
-FROM sdk AS codeql-python-worker
+
+FROM sdk AS codeql-bundle
 USER 0:0
 ADD --checksum=sha256:1ec99cfa9420f04c2330784b4ddb8363a0dd67c3e4471cd93963c50e6c433717 https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.1/codeql-bundle-linux64.tar.zst /tmp/codeql-bundle.tar.zst
 COPY deploy/deep-adapters/requirements-codeql.txt /tmp/requirements-codeql.txt
 RUN python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-codeql.txt
 RUN python -c 'import tarfile,zstandard; stream=zstandard.ZstdDecompressor().stream_reader(open("/tmp/codeql-bundle.tar.zst","rb")); tarfile.open(fileobj=stream,mode="r|").extractall("/opt/codeql",filter="data")' && rm -f /tmp/codeql-bundle.tar.zst
+ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
+
+FROM codeql-bundle AS codeql-python-worker
 RUN /opt/codeql/codeql/codeql query compile --precompile --threads=4 --ram=4096 -- /opt/codeql/codeql/qlpacks/codeql/python-queries/1.8.11/codeql-suites/python-security-extended.qls && find /opt/codeql/codeql/qlpacks/codeql/python-queries/1.8.11 -type f -name '*.qlx' -exec chmod 0444 {} +
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-python-full.json /opt/factory/adapter-profile.json
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="python"
 
-ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
-FROM codeql-python-worker AS codeql-javascript-worker
-USER 0:0
+FROM codeql-bundle AS codeql-javascript-worker
 RUN chmod -R a+rX /opt/codeql/codeql/qlpacks/codeql/javascript-queries/2.4.6
 RUN /opt/codeql/codeql/codeql resolve queries --format=json /opt/codeql/codeql/qlpacks/codeql/javascript-queries/2.4.6/codeql-suites/javascript-security-extended.qls > /tmp/native-queries.json && python -c 'import json,pathlib; q=json.load(open("/tmp/native-queries.json")); assert q and all(pathlib.Path(p).with_suffix(".qlx").is_file() for p in q); print("Verified bundled compiled queries:",len(q))' && rm /tmp/native-queries.json
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-javascript-full.json /opt/factory/adapter-profile.json
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="javascript-typescript"
 
-FROM codeql-python-worker AS codeql-actions-worker
-USER 0:0
+FROM codeql-bundle AS codeql-actions-worker
 RUN chmod -R a+rX /opt/codeql/codeql/qlpacks/codeql/actions-queries/0.6.36
 RUN /opt/codeql/codeql/codeql resolve queries --format=json /opt/codeql/codeql/qlpacks/codeql/actions-queries/0.6.36/codeql-suites/actions-security-extended.qls > /tmp/native-queries.json && python -c 'import json,pathlib; q=json.load(open("/tmp/native-queries.json")); assert q and all(pathlib.Path(p).with_suffix(".qlx").is_file() for p in q); print("Verified bundled compiled queries:",len(q))' && rm /tmp/native-queries.json
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-actions-full.json /opt/factory/adapter-profile.json
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="actions"
 
-FROM codeql-python-worker AS codeql-ruby-worker
-USER 0:0
+FROM codeql-bundle AS codeql-ruby-worker
 RUN chmod -R a+rX /opt/codeql/codeql/qlpacks/codeql/ruby-queries/1.6.11
 RUN /opt/codeql/codeql/codeql resolve queries --format=json /opt/codeql/codeql/qlpacks/codeql/ruby-queries/1.6.11/codeql-suites/ruby-security-extended.qls > /tmp/native-queries.json && python -c 'import json,pathlib; q=json.load(open("/tmp/native-queries.json")); assert q and all(pathlib.Path(p).with_suffix(".qlx").is_file() for p in q); print("Verified bundled compiled queries:",len(q))' && rm /tmp/native-queries.json
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-ruby-full.json /opt/factory/adapter-profile.json

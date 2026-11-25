@@ -134,3 +134,124 @@ def test_appforge_status_is_a_read_only_projection_for_ide_adapters(
     assert result["marker"] == "APPFORGE_DESIGN_READ_ONLY"
     assert result["current_count"] == 0
     assert all(value is False for value in result["authority"].values())
+
+
+def test_appforge_stage_status_is_actionable_and_does_not_scan_other_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from factoryline import canonical_sha
+    from factoryline.appforge_design import appforge_status_lines
+
+    root = tmp_path / ".factory" / "appforge"
+    path = root / "submission-assurance.json"
+    core = {
+        "schema": "factory.appforge.submission-assurance-receipt.v1",
+        "marker": "APPFORGE_SUBMISSION_DOSSIER_BLOCKED",
+        "ok": False,
+        "findings": [
+            {"gate": "Store media truth", "detail": "Capture evidence is missing"}
+        ],
+    }
+    _write(path, {**core, "receipt_sha256": canonical_sha(core)})
+    _write(root / "quality-audit-corrupt.json", 42)
+    calls = []
+    rglob = Path.rglob
+
+    def recording_glob(directory, pattern):
+        calls.append(pattern)
+        return rglob(directory, pattern)
+
+    monkeypatch.setattr(Path, "rglob", recording_glob)
+    invocation = ["revenue", "appforge-status", "--root", str(tmp_path)]
+    focus = [*invocation, "--stage", "submission-assurance"]
+    original = path.read_bytes()
+    assert main([*focus, "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["schema"] == "factory.appforge.stage-projection.v1"
+    assert summary["status"]["latest"]["ok"] is False
+    assert summary["help_command"] == [
+        "factory",
+        "revenue",
+        "submission-assurance",
+        "--help",
+    ]
+    assert "Capture evidence is missing" in list(appforge_status_lines(summary))
+    assert calls == ["submission-assurance*.json"]
+
+    assert main(focus) == 0
+    output = capsys.readouterr().out
+    assert "Capture evidence is missing" in output
+    assert "factory revenue submission-assurance --help" in output
+    assert "quality-audit" not in output
+    assert path.read_bytes() == original
+
+    calls.clear()
+    assert main([*invocation, "--stage", "unknown", "--json"]) == 2
+    error = json.loads(capsys.readouterr().err)
+    assert error["code"] == "APPFORGE_STATUS_STAGE_UNKNOWN"
+    assert "submission-assurance" in error["message"]
+    assert calls == []
+
+    assert main([*invocation, "--json"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert calls == ["*.json"]
+    assert summary["quality_audit"]["invalid_count"] == 1
+    assert summary["submission_assurance"]["latest"]["ok"] is False
+
+
+def test_shared_receipt_discovery_and_reader_preserve_workspace_scope(
+    tmp_path: Path,
+) -> None:
+    from factoryline.revenue_evidence import read_receipt, receipt_paths
+
+    root = tmp_path / "workspace"
+    evidence = root / ".factory/appforge/reports"
+    target = _write(evidence / "receipt.json", {"current": True})
+    malformed = _write(evidence / "invalid.json", [])
+    _write(evidence / "receipt.log", {"irrelevant": True})
+    outside = _write(tmp_path / "outside.json", {"outside": True})
+    inventory = tuple(receipt_paths(root, "*.json"))
+    assert list(receipt_paths(root, "receipt*.json", inventory)) == [target]
+    assert read_receipt(root, target) == {"current": True}
+    with pytest.raises(ValueError, match="JSON object"):
+        read_receipt(root, malformed)
+    with pytest.raises(ValueError):
+        read_receipt(root, outside)
+
+
+@pytest.mark.parametrize("stage", ["app-review", "quality-audit"])
+def test_focused_status_shows_recorded_repair_guidance(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    stage: str,
+) -> None:
+    from factoryline import canonical_sha, compat_sha
+    from factoryline.app_review_gate import SCHEMA as REVIEW_SCHEMA
+    from factoryline.appforge_quality_audit import RECEIPT_SCHEMA as QUALITY_SCHEMA
+
+    current = {
+        "schema": REVIEW_SCHEMA if stage == "app-review" else QUALITY_SCHEMA,
+        "marker": "APP_REVIEW_BLOCKED"
+        if stage == "app-review"
+        else "APPFORGE_QUALITY_AUDIT_BLOCKED",
+        "ok": False,
+        "findings": [{"remediation": "Publish a reachable privacy policy."}],
+    }
+    digest = canonical_sha if stage == "app-review" else compat_sha
+    _write(
+        tmp_path / ".factory/appforge" / f"{stage}.json",
+        {**current, "receipt_sha256": digest(current)},
+    )
+    args = ["revenue", "appforge-status", "--root", str(tmp_path), "--stage", stage]
+    assert main([*args, "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_messages"] == ["Publish a reachable privacy policy."]
+    assert main(args) == 0
+    assert "Publish a reachable privacy policy." in capsys.readouterr().out
+
+    if stage == "quality-audit":
+        assert (
+            main(["revenue", "appforge-status", "--root", str(tmp_path), "--json"]) == 0
+        )
+        full = json.loads(capsys.readouterr().out)
+        assert "findings" not in full["quality_audit"]["latest"]

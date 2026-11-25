@@ -8,6 +8,8 @@ generate media, reach App Store Connect, or publish anything.
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from .contract import write_atomic_json as _atomic
 
 import json
@@ -534,16 +536,20 @@ def create_fastlane_capture_contract(
     return {**receipt, "path": target.relative_to(workspace).as_posix()}
 
 
-def fastlane_capture_projection(root: Path) -> dict[str, Any]:
+def fastlane_capture_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read hash-valid Fastlane capture contracts without running Fastlane."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
     base = workspace / ".factory" / "appforge"
     if base.exists():
-        for path in sorted(base.rglob("*fastlane-capture*.json"))[:100]:
+        for path in sorted(
+            receipt_paths(workspace, "*fastlane-capture*.json", inventory)
+        )[:100]:
             try:
-                value = json.loads(path.read_text(encoding="utf-8"))
+                value = read_receipt(workspace, path)
                 if _sealed(value, RECEIPT_SCHEMA, "APPFORGE_FASTLANE_CAPTURE_READY"):
                     current.append(
                         {
