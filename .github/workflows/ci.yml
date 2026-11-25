@@ -353,7 +353,6 @@ jobs:
         env:
           COVERAGE_FILE: .factory/test-reports/.coverage
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-          PYTEST_ADDOPTS: "--maxschedchunk=2"
         run: >-
           python -m pytest -p pytest_asyncio.plugin -p xdist.plugin -q -n 3 -p pytest_cov.plugin
           --junitxml=.factory/test-reports/pytest.xml --durations=20
