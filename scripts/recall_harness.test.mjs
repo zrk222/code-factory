@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -217,6 +217,19 @@ function savedAdjudication(root) {
   save('loss-plan.json', plan);
   return { ghsa, second, before, after, score, plan, engine, loc, path: join(root, 'loss-plan.json') };
 }
+
+test('adjudicated loss inputs reject non-files and enforce the byte cap', () => {
+  const root = mkdtempSync(join(tmpdir(), 'recall-loss-file-'));
+  try {
+    const { engine, path } = savedAdjudication(root);
+    assert.throws(() => loadAdjudicatedLosses(root, engine), /regular file|EISDIR|EPERM/);
+    assert.doesNotThrow(() => loadAdjudicatedLosses(path, engine));
+    truncateSync(join(root, 'score.json'), 32_000_001);
+    assert.throws(() => loadAdjudicatedLosses(path, engine), /byte limit/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('hash-bound adjudicated losses exempt only complete FP-only hunk removals', () => {
   const root = mkdtempSync(join(tmpdir(), 'recall-loss-policy-'));

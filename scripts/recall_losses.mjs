@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 
 // The loss plan pins two local JSON files as {path, sha256} under score and
@@ -9,10 +9,28 @@ const isPin = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const MAX_BYTES = 32_000_000;
 
 function readJson(path) {
-  if (statSync(path).size > MAX_BYTES) throw new Error('Adjudicated loss input exceeds the byte limit');
-  const bytes = readFileSync(path);
-  if (bytes.length > MAX_BYTES) throw new Error('Adjudicated loss input exceeds the byte limit');
-  return { data: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), sha256: digest(bytes) };
+  const fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile()) throw new Error('Adjudicated loss input must be a regular file');
+    if (opened.size > MAX_BYTES) throw new Error('Adjudicated loss input exceeds the byte limit');
+    const buffer = Buffer.alloc(opened.size + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const count = readSync(fd, buffer, offset, buffer.length - offset, null);
+      if (!count) break;
+      offset += count;
+    }
+    const finished = fstatSync(fd);
+    if (offset !== opened.size || finished.size !== opened.size
+        || finished.mtimeMs !== opened.mtimeMs || finished.ctimeMs !== opened.ctimeMs) {
+      throw new Error('Adjudicated loss input changed while being read');
+    }
+    const bytes = buffer.subarray(0, offset);
+    return { data: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), sha256: digest(bytes) };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function readPinned(directory, reference) {
