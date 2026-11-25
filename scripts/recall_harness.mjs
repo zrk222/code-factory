@@ -13,6 +13,7 @@
 //            [--adjudicated-losses plan.json] [--checkpoint-dir DIR]
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
+//   review-alerts --score result.json --score-sha256 HEX --workdir DIR --out alerts.json
 //   compare  before.json after.json
 //
 // Scoring runs the production profile argv (deploy/deep-adapters/profiles),
@@ -1757,6 +1758,71 @@ async function observe(opts) {
   console.log(`${queued.labels.length} labels, ${queued.labels.filter(label => !label.verdict).length} pending`);
 }
 
+function reviewCapturePath(root, name) {
+  if (typeof name !== 'string' || isAbsolute(name) || !insideControl(root, resolve(root, name))) {
+    throw new Error('Review capture path leaves the work directory');
+  }
+  const target = realpathSync(resolve(root, name));
+  if (!insideControl(root, target)) throw new Error('Review capture path leaves the work directory');
+  return target;
+}
+
+function oldReviewAlerts(root, row, rulesSha256) {
+  const capture = row.captures?.old;
+  const notes = row.scan_sides?.old;
+  if (!notes || notes.failed_exit !== false || ![0, 1].includes(notes.exit_code) || scanIssue(notes) || !capture?.sarif) {
+    throw new Error('Review score has no successful old-side capture');
+  }
+  const source = reviewCapturePath(root, capture.source_root);
+  const packets = row.source_packets.old;
+  verifyPreparedBytes(source, packets);
+  const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
+  const report = readFileSync(reviewCapturePath(root, capture.sarif.path));
+  if (sha256(report) !== capture.sarif.sha256 || capture.sarif.sha256 !== notes.report_sha256) {
+    throw new Error('Review SARIF digest differs from score capture');
+  }
+  const changed = new Set(row.changed_files);
+  const findings = sarifFindings(JSON.parse(utf8(report)), new Set(hashes.keys()));
+  if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
+  const selected = findings.filter(finding => changed.has(finding.path));
+  if (selected.length !== row.alerts_in_changed_files || (row.hunk_spans && row.hunk_spans.length !== row.hunk_findings.length)) {
+    throw new Error('Review findings differ from score capture');
+  }
+  const counts = new Map();
+  const actual = new Map();
+  const identity = (location, span) => JSON.stringify(row.hunk_spans ? [...location, span ?? null] : location);
+  for (const [index, location] of row.hunk_findings.entries()) {
+    const key = identity(location, row.hunk_spans?.[index]);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const alerts = selected.map(({ rule, path, line, span }) => {
+    const key = identity([rule, path, line], span);
+    const on_fix_hunk = counts.has(key);
+    if (on_fix_hunk) actual.set(key, (actual.get(key) ?? 0) + 1);
+    return { case: row.ghsa, root: source, path, line, rule, ...(span ? { span } : {}),
+      source_sha256: hashes.get(path), rules_sha256: rulesSha256, on_fix_hunk };
+  });
+  if ([...counts].some(([key, expected]) => actual.get(key) !== expected)) {
+    throw new Error('Review hunk positions differ from score capture');
+  }
+  return alerts;
+}
+
+function reviewAlerts(opts) {
+  const bytes = readFileSync(opts.score);
+  if (sha256(bytes) !== opts['score-sha256']) throw new Error('Review score digest mismatch');
+  const saved = JSON.parse(utf8(bytes));
+  if (saved.schema !== 'factory.recall-result.v1' || !Array.isArray(saved.cases)
+      || !/^[a-f0-9]{64}$/.test(saved.ruleset_sha256) || !/^[a-f0-9]{64}$/.test(saved.engine?.executable_sha256)) {
+    throw new Error('Review export requires a pinned standalone score receipt');
+  }
+  const root = realpathSync(resolve(opts.workdir ?? '.factory/recall-work'));
+  const cases = saved.cases.filter(row => row.status === 'scored' && checkpointable(row));
+  const alerts = cases.flatMap(row => oldReviewAlerts(root, row, saved.ruleset_sha256));
+  writeFileSync(opts.out, `${JSON.stringify(alerts, null, 1)}\n`);
+  console.log(JSON.stringify({ alerts: alerts.length, scored_cases: cases.length, omitted_cases: saved.cases.length - cases.length }));
+}
+
 async function controls(opts) {
   const [before, after] = [].concat(opts.rules);
   const profileBytes = readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
@@ -1794,6 +1860,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   else if (command === 'controls') await controls(opts);
   else if (command === 'evaluate') await evaluate(opts);
   else if (command === 'observe') await observe(opts);
+  else if (command === 'review-alerts') reviewAlerts(opts);
   else if (command === 'compare') compare(opts._);
   else { console.error('usage: recall_harness.mjs freeze|score|evaluate|controls|observe|compare ...'); process.exit(2); }
 }

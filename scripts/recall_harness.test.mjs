@@ -658,6 +658,41 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   assert.match(gate({ dev: [{ before, after: drifted }], controls: [] }).failures[0], /source byte fingerprints differ/);
 }));
 
+test('review-alerts exports pinned old-side reports with distinct spans on one line', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline, old } = fixture;
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# hunk-spans\n');
+  const saved = join(root, 'score.json');
+  const output = join(root, 'review-alerts.json');
+  const script = 'scripts/recall_harness.mjs';
+  const scored = spawnSync(process.execPath, [script, 'score', '--manifest', manifest,
+    '--rules', baseline, '--profile', profile, '--opengrep', process.execPath, '--workdir', workdir, '--out', saved], { encoding: 'utf8' });
+  assert.equal(scored.status, 0, scored.stderr);
+  const raw = readFileSync(saved);
+  const digest = sha256(raw);
+  const run = (pin = digest) => spawnSync(process.execPath, [script, 'review-alerts', '--score', saved,
+    '--score-sha256', pin, '--workdir', workdir, '--out', output], { encoding: 'utf8' });
+  const exported = run();
+  assert.equal(exported.status, 0, exported.stderr);
+  assert.deepEqual(JSON.parse(exported.stdout), { alerts: 2, scored_cases: 1, omitted_cases: 0 });
+  const records = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(records.map(({ span }) => span), [[1, 0, 4], [6, 0, 9]]);
+  for (const alert of records) {
+    assert.equal(alert.case, feederRow.ghsa);
+    assert.equal(alert.path, 'sample.py');
+    assert.equal(alert.rule, 'fixture.review');
+    assert.equal(alert.source_sha256, sha256(old));
+    assert.equal(alert.rules_sha256, sha256(readFileSync(baseline)));
+    assert.equal(alert.on_fix_hunk, true);
+  }
+
+  rmSync(output);
+  assert.match(run('0'.repeat(64)).stderr, /Review score digest mismatch/);
+  const report = join(workdir, JSON.parse(raw).cases[0].captures.old.sarif.path);
+  writeFileSync(report, ' ', { flag: 'a' });
+  assert.match(run().stderr, /Review SARIF digest differs/);
+  assert.equal(existsSync(output), false);
+}));
+
 test('evaluation refuses a missing or mismatched engine and ruleset drift without writing a new receipt', () =>
   feederFixture(({ root, workdir, manifest, baseline, candidate, profile }) => {
     const output = join(root, 'unqualified.json');

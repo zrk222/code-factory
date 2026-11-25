@@ -2540,19 +2540,20 @@ def test_blind_packet_and_ledger_distinguish_exact_alert_spans(tmp_path):
     )
 
 
-@pytest.mark.parametrize("matches_pin", [True, False])
+@pytest.mark.parametrize("mismatch", [None, "source", "ruleset"])
 def test_review_packet_binds_context_and_rules_from_single_reads(
-    tmp_path, monkeypatch, matches_pin
+    tmp_path, monkeypatch, mismatch
 ):
     alerts = _alerts(tmp_path)
     row = _gain["read_json"](alerts)[0]
     source = Path(row["root"]) / row["path"]
     source_sha = _gain["digest"](source.read_bytes())
-    row["source_sha256"] = source_sha if matches_pin else "0" * 64
-    alerts.write_text(json.dumps([row]), encoding="utf-8")
+    row["source_sha256"] = "0" * 64 if mismatch == "source" else source_sha
     rules = tmp_path / "rules.yml"
     rules.write_text(REVIEW_RULES, encoding="utf-8")
     rules_sha = _gain["digest"](rules.read_bytes())
+    row["rules_sha256"] = "0" * 64 if mismatch == "ruleset" else rules_sha
+    alerts.write_text(json.dumps([row]), encoding="utf-8")
     args = argparse.Namespace(
         alerts=alerts,
         rules=rules,
@@ -2571,8 +2572,8 @@ def test_review_packet_binds_context_and_rules_from_single_reads(
         return original_open(path, mode, *positional, **named)
 
     monkeypatch.setattr(Path, "open", tracked_open)
-    if not matches_pin:
-        with pytest.raises(ValueError, match="review source digest mismatch"):
+    if mismatch:
+        with pytest.raises(ValueError, match=f"review {mismatch} digest mismatch"):
             _gain["build_packet"](args)
         assert not args.out.exists() and not args.key.exists()
         return

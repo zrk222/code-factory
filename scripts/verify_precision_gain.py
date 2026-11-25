@@ -2064,10 +2064,14 @@ def rule_revisions(rules_path: Path) -> dict[str, str]:
 
 def build_packet(args) -> None:
     rules_raw, rules = load_review_rules(Path(args.rules))
+    rules_sha256 = digest(rules_raw)
     cwes = rule_cwes(rules)
     revisions = {rule["id"]: rule_revision(rule) for rule in rules}
     unique = {}
     for alert in read_json(Path(args.alerts)):
+        expected_rules = alert.get("rules_sha256")
+        if expected_rules is not None and expected_rules != rules_sha256:
+            raise ValueError("review ruleset digest mismatch")
         unique.setdefault(item_id(alert), alert)
     chosen = stratified(list(unique.values()), args.per_rule, args.seed)
     items, key = [], {}
@@ -2101,7 +2105,7 @@ def build_packet(args) -> None:
         "cohort": args.cohort,
         "seed": args.seed,
         "per_rule_cap": args.per_rule,
-        "rules_sha256": digest(rules_raw),
+        "rules_sha256": rules_sha256,
         "instructions": INSTRUCTIONS,
         "items": items,
     }
