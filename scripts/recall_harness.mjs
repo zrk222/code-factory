@@ -1235,7 +1235,11 @@ function controlLink(root, location, eligible) {
 
 async function controlSource(root, excludedDirs) {
   const files = [];
-  const outsideScope = path => path.split('/').slice(0, -1).some(part => excludedDirs.includes(part));
+  const exclusionReason = path => {
+    if (path.split('/').slice(0, -1).some(part => excludedDirs.includes(part))) return 'declared_control_exclusion';
+    if (isTestPath(path) || path.endsWith('_spec.rb')) return 'test_path';
+    return null;
+  };
   const visit = async (directory, prefix) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (entry.name === '.git') continue;
@@ -1245,7 +1249,7 @@ async function controlSource(root, excludedDirs) {
       } else if (entry.isFile()) {
         files.push({ path, sha256: await fileFingerprint(location) });
       } else if (entry.isSymbolicLink()) {
-        files.push({ path, ...controlLink(root, location, controlSourceExtension(path) && !outsideScope(path)) });
+        files.push({ path, ...controlLink(root, location, controlSourceExtension(path) && !exclusionReason(path)) });
       } else {
         throw new Error('Unsupported entry in control source tree');
       }
@@ -1253,7 +1257,8 @@ async function controlSource(root, excludedDirs) {
   };
   await visit(root, '');
   const supported = files.filter(file => file.sha256 && controlSourceExtension(file.path));
-  const excluded = new Set(supported.filter(({ path }) => outsideScope(path)).map(file => file.path).sort());
+  const excluded = new Map(supported.map(({ path }) => [path, exclusionReason(path)])
+    .filter(([, reason]) => reason));
   return { paths: new Set(files.map(file => file.path)), hashes: new Map(files.map(file => [file.path, file.sha256])),
     eligible: supported.map(file => file.path).filter(path => !excluded.has(path)).sort(), excluded, excludedDirs,
     evidence: { sha256: caseDigest(files.sort(byPath)), entries: files.length } };
@@ -1272,24 +1277,22 @@ function controlScanCoverage(eligible, engine) {
 }
 
 async function controlObservation(context, directory, report, source) {
-  let notes, findings = [];
+  let notes, coverage, findings = [];
   try {
     if (context.rulesSha256) verifyRulesBytes(context);
     findings = await scan({ ...context, packetPaths: source.paths }, directory, report, true);
     notes = findings.notes;
-    notes.control_coverage = controlScanCoverage(source.eligible, findings.coverage);
-    if (source.excluded.size) notes.control_coverage.excluded = [...source.excluded].map(path => ({ path, reason: 'declared_control_exclusion' }));
-    if (!notes.control_coverage.complete && !scanIssue(notes)) {
-      notes.other = 1;
-      notes.detail = 'Control scan must cover every eligible source file';
-    }
+    coverage = findings.coverage;
     if (context.rulesSha256) verifyRulesBytes(context);
     if (findings.some(finding => !source.paths.has(finding.path))) {
       throw new Error('Control finding path is absent from the source tree');
     }
-    if (findings.some(finding => source.excluded.has(finding.path))) {
+    if (findings.some(finding => source.excluded.get(finding.path) === 'declared_control_exclusion')) {
       throw new Error('Scanner emitted findings outside the declared control scope');
     }
+    const eligibleFindings = findings.filter(finding => !source.excluded.has(finding.path));
+    if (eligibleFindings.length !== findings.length) notes.excluded_test_findings = findings.length - eligibleFindings.length;
+    findings = eligibleFindings;
   } catch (error) {
     findings = [];
     notes = { ...(notes ?? error.diagnostics), other: 1, detail: String(error.message).slice(-300) };
@@ -1301,16 +1304,44 @@ async function controlObservation(context, directory, report, source) {
   } catch (error) {
     return { findings: [], notes: { ...notes, other: 1, source_error: String(error.message).slice(-300) }, sourceInvalid: true };
   }
-  return { findings, notes };
+  return { findings, notes, coverage };
+}
+
+function pairedControlScope(source, sides) {
+  const exclusions = new Map(source.excluded);
+  if (sides.every(side => side.coverage && !side.sourceInvalid && !scanIssue(side.notes))) {
+    const reported = new Set(sides.flatMap(side => side.findings.map(finding => finding.path)));
+    for (const path of source.eligible) {
+      const agreed = sides.every(({ coverage }) => coverage.skipped.get(path) === 'semgrepignore_patterns_match'
+        && !coverage.scanned.has(path) && !coverage.problems.has(path));
+      if (agreed && !reported.has(path)) exclusions.set(path, 'shared_semgrepignore_patterns_match');
+    }
+  }
+  const eligible = source.eligible.filter(path => !exclusions.has(path));
+  const excluded = [...exclusions].map(([path, reason]) => ({ path, reason })).sort(byPath);
+  return { eligible, excluded, sha256: caseDigest([{ source_sha256: source.evidence.sha256, eligible, excluded }]) };
+}
+
+function recordControlCoverage(side, scope) {
+  if (!side.notes) return;
+  const coverage = controlScanCoverage(scope.eligible, side.coverage);
+  if (scope.excluded.length) coverage.excluded = scope.excluded;
+  side.notes.control_coverage = coverage;
+  if (!coverage.complete && !scanIssue(side.notes)) {
+    side.notes.other = 1;
+    side.notes.detail = 'Control scan must cover every eligible source file';
+  }
 }
 
 async function controlPair({ base, candidate, directory, reports, source }, suffix, retryArgs = []) {
   const old = await controlObservation({ ...base, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`, source);
   const now = old.sourceInvalid ? { findings: [], notes: null }
     : await controlObservation({ ...candidate, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`, source);
+  const scope = pairedControlScope(source, [old, now]);
+  for (const side of [old, now]) recordControlCoverage(side, scope);
   const scan_sides = { before: old.notes, after: now.notes };
   const issues = [old, now].map(side => side.sourceInvalid ? 'error' : scanIssue(side.notes));
-  return { old: old.findings, now: now.findings, scan_sides, issues };
+  return { old: old.findings, now: now.findings, scan_sides, issues, control_scope_sha256: scope.sha256 };
 }
 
 function controlFindingIndex(findings) {
@@ -1373,15 +1404,15 @@ async function controlDeltas_(opts) {
         recovery = { initial_scan_sides: attempt.scan_sides, retry_extra_args: extra };
         attempt = await controlPair(context, '-retry', extra);
       }
-      const { old, now, scan_sides, issues } = attempt;
+      const { old, now, scan_sides, issues, control_scope_sha256 } = attempt;
       if (issues.some(Boolean)) {
-        deltas.push({ dir, error: 'Control scan incomplete', source_tree: source.evidence, scan_sides, ...recovery });
+        deltas.push({ dir, error: 'Control scan incomplete', source_tree: source.evidence, scan_sides, control_scope_sha256, ...recovery });
         continue;
       }
       const { added, removed } = controlFindingDeltas(old, now);
       const lines = controlSnippets(directory, [...old, ...now], source.hashes);
       const snip = f => withSnippet(lines, f);
-      const delta = { dir, before: old.length, after: now.length, source_tree: source.evidence, scan_sides, ...recovery,
+      const delta = { dir, before: old.length, after: now.length, source_tree: source.evidence, scan_sides, control_scope_sha256, ...recovery,
         added: added.map(snip), removed: removed.map(snip),
         emitted: now.map(snip) };
       if (checkpointInputs) writeCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs, delta);
