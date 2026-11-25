@@ -1244,8 +1244,7 @@ def recall_record():
 
 
 def test_advisory_recall_record_recomputes_lane_separated_summary(recall_record):
-    summary = _gain["summarize_recall"](recall_record)
-    assert _gain["verify_recall"](recall_record) == summary
+    summary = _gain["verify_recall"](recall_record)
     assert summary["total"] == {
         "cases": 161,
         "pattern_detected": 6,
@@ -1798,3 +1797,543 @@ def test_advisory_recall_replay_pattern_requires_identical_detections(
     altered.write_bytes(ruleset.read_bytes() + b"\n# altered\n")
     with pytest.raises(ValueError, match="ruleset bytes differ"):
         _gain["replay_pattern"](subset, cache, str(binary), altered)
+
+
+def _benchmark_file(tmp_path, name, value):
+    path = tmp_path / f"{name}.json"
+    path.write_bytes(_gain["canonical_bytes"](value))
+    return path, _gain["digest"](path.read_bytes())
+
+
+def _signed_benchmark_fixture(
+    tmp_path,
+    execution_purpose,
+    execution_hash,
+    review_purpose,
+    review_rows,
+    *,
+    duplicate_key=False,
+    wrong_role=False,
+):
+    from factoryline.enterprise_receipts import generate_key_material, sign_payload
+
+    entries, materials, signatures = [], [], []
+    subjects = [("collector", execution_purpose, execution_hash, "benchmark-execution")]
+    subjects.extend(
+        (identity, review_purpose, subject, "benchmark-review")
+        for identity, subject in review_rows
+    )
+    for index, (identity, purpose, subject, role) in enumerate(subjects):
+        keyid = f"signer-{index}"
+        if index == 2 and duplicate_key:
+            material = materials[-1]
+            root_key = {**entries[1], "keyid": keyid, "identity": identity}
+        else:
+            material = generate_key_material(
+                out_dir=tmp_path / keyid,
+                keyid=keyid,
+                identity=identity,
+                issuer="https://example.invalid/benchmark",
+            )
+            local_trust = json.loads(Path(material["trust_root"]).read_bytes())
+            (root_key,) = local_trust["keys"]
+        materials.append(material)
+        root_key["roles"] = [
+            "benchmark-execution" if index == 1 and wrong_role else role
+        ]
+        entries.append(root_key)
+        signatures.append(
+            sign_payload(
+                {
+                    "schema": _gain["STATEMENT_SCHEMA"],
+                    "purpose": purpose,
+                    "subject_sha256": subject,
+                },
+                payload_type=_gain["PAYLOAD_TYPE"],
+                private_key_path=Path(material["private_key"]),
+                keyid=keyid,
+                identity=identity,
+                issuer="https://example.invalid/benchmark",
+            )
+        )
+    local_trust["keys"] = entries
+    trust, pin = _benchmark_file(tmp_path, "benchmark-trust", local_trust)
+    bundle, _ = _benchmark_file(
+        tmp_path,
+        "benchmark-attestations",
+        {
+            "schema": _gain["PROVENANCE_SCHEMA"],
+            "execution": signatures[0],
+            "reviewers": signatures[1:],
+        },
+    )
+    return [
+        "--provenance",
+        str(bundle),
+        "--trust-root",
+        str(trust),
+        "--trust-root-sha256",
+        pin,
+    ]
+
+
+@pytest.mark.parametrize(
+    "proof", ["valid", "wrong_role", "same_key", "bad_pin", "wrong_subject"]
+)
+def test_single_arm_cli_authenticates_execution_and_review_signatures(tmp_path, proof):
+    contract, selection, reviewers = _single_arm_precision_panel()
+    selection_path, selection_hash = _benchmark_file(tmp_path, "selection", selection)
+    refs, subjects = [], []
+    for review in reviewers:
+        path, sha = _benchmark_file(tmp_path, review["reviewer_id"], review)
+        refs.append({"path": path.name, "sha256": sha})
+        subjects.append((review["reviewer_id"], sha))
+    contract.update(
+        selection={"path": selection_path.name, "sha256": selection_hash},
+        reviewers=refs,
+    )
+    contract_path, _ = _benchmark_file(tmp_path, "contract", contract)
+    options = _signed_benchmark_fixture(
+        tmp_path,
+        "precision-execution",
+        "0" * 64 if proof == "wrong_subject" else selection_hash,
+        "precision-labels",
+        subjects,
+        duplicate_key=proof == "same_key",
+        wrong_role=proof == "wrong_role",
+    )
+    if proof == "bad_pin":
+        options[-1] = "0" * 64
+    output = tmp_path / "signed-precision.json"
+    runner = subprocess.run(
+        [
+            sys.executable,
+            str(_ROOT / "scripts/verify_precision_gain.py"),
+            str(contract_path),
+            "--out",
+            str(output),
+            *options,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    measured = json.loads(output.read_bytes())
+    if proof == "valid":
+        assert runner.returncode == 0, runner.stderr
+        assert measured["provenance"]["state"] == "AUTHENTICATED_STATEMENTS"
+        assert measured["provenance"]["review_independence"] == "UNESTABLISHED"
+        assert measured["disagreements"] == ["b"]
+        assert measured["publication_eligible"] is False
+    else:
+        assert runner.returncode == 2
+        assert measured["state"] == "INVALID"
+        assert {
+            "wrong_role": "not authorized for benchmark-review",
+            "same_key": "distinct signer identities and keys",
+            "bad_pin": "evidence digest mismatch",
+            "wrong_subject": "different subject or purpose",
+        }[proof] in measured["reason"]
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "linked",
+        "disagree",
+        "wrong_span",
+        "ambiguous",
+        "digest_drift",
+        "missing_digest",
+        "wrong_scope",
+        "failed_run",
+        "malformed_result",
+        "source_drift",
+        "tool_drift",
+        "scan_gap",
+        "native_missing",
+        "native_gap",
+        "native_diagnostic",
+        "native_span_drift",
+        "native_digest_drift",
+        "dual_lane",
+        "second_parent",
+    ],
+)
+def test_advisory_linked_recall_requires_trusted_exact_finding(
+    tmp_path, capsys, condition
+):
+    record, *_ = _synthetic_recall(tmp_path)
+    absent = copy.deepcopy(record["cases"][0])
+    absent.update(ghsa="GHSA-2345-6789-cfgg", ecosystem="PHP")
+    record["cases"].append(absent)
+    original = record["cases"][0]
+    if condition == "second_parent":
+        original["fixes"].append({"fix": "d" * 40, "parent": "c" * 40})
+        original["prefix_files"].append(
+            {**original["prefix_files"][0], "parent": "c" * 40}
+        )
+    revision = original["fixes"][-1]["parent"]
+    record["summary"] = _gain["summarize_recall"](record)
+    record_path, record_sha = _benchmark_file(tmp_path, "strict-recall", record)
+    result = {
+        "ruleId": "fixture.arithmetic",
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": "src/library.py"},
+                    "region": {
+                        "startLine": 42,
+                        "startColumn": 4,
+                        "endLine": 42,
+                        "endColumn": 8,
+                    },
+                }
+            }
+        ],
+    }
+    capture, capture_sha = _benchmark_file(
+        tmp_path,
+        "owned-capture",
+        {
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "invocations": [{"executionSuccessful": condition != "failed_run"}],
+                    "results": {
+                        "ambiguous": [result, result],
+                        "malformed_result": ["invalid"],
+                    }.get(condition, [result]),
+                }
+            ],
+        },
+    )
+    source = tmp_path / "owned-source"
+    source_files = {
+        "src/App.py": b"source",
+        "src/library.py": b"# harmless source evidence\\n" * 50,
+    }
+    for path, data in source_files.items():
+        target = source / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    tree = _gain["digest"](
+        _gain["canonical_bytes"](
+            {path: _gain["digest"](data) for path, data in source_files.items()}
+        )
+    )
+    scopes = [
+        {
+            "lane": "codeql",
+            "scope": "changed_files" if condition == "wrong_scope" else "repository",
+        },
+        {"lane": "pattern", "scope": "repository"},
+    ]
+    keys, rows = [], []
+    raw_path = None
+    use_pattern = condition == "dual_lane" or condition.startswith("native_")
+    for scope in scopes if use_pattern else scopes[:1]:
+        lane = scope["lane"]
+        key = {**scope, "ghsa": original["ghsa"], "source_revision": revision}
+        profile = record["candidate"][lane + "_lane"]
+        engine, rules = (
+            ("bundle_sha256", "query_sets_sha256")
+            if lane == "codeql"
+            else ("opengrep_binary_sha256", "ruleset_sha256")
+        )
+        report_sha = None if condition == "missing_digest" else capture_sha
+        native = {}
+        if lane == "pattern" and condition != "native_missing":
+            raw_path, raw_sha = _benchmark_file(
+                tmp_path,
+                "original-pattern-report",
+                {
+                    "paths": {
+                        "scanned": ["src/App.py"]
+                        if condition == "native_gap"
+                        else sorted(source_files),
+                        "skipped": [],
+                    },
+                    "errors": ["partial analysis"]
+                    if condition == "native_diagnostic"
+                    else [],
+                    "results": [
+                        {
+                            "path": "src/library.py",
+                            "check_id": result["ruleId"],
+                            "start": {
+                                "line": 42,
+                                "col": 5 if condition == "native_span_drift" else 4,
+                            },
+                            "end": {"line": 42, "col": 8},
+                        }
+                    ],
+                },
+            )
+            native["native_report"] = {"path": raw_path.name, "sha256": raw_sha}
+        coverage_path, coverage_sha = _benchmark_file(
+            tmp_path,
+            lane + "-coverage",
+            {
+                "schema": "factory.advisory-engine-coverage.v1",
+                "engine_sha256": _digest("other tool")
+                if condition == "tool_drift"
+                else profile[engine],
+                "configuration_sha256": profile[rules],
+                "source_revision": revision,
+                "source_tree_sha256": tree,
+                "sarif_sha256": report_sha,
+                "expected_paths": sorted(source_files),
+                "scanned_paths": ["src/App.py"]
+                if condition == "scan_gap"
+                else sorted(source_files),
+                "skipped": [],
+                "errors": [],
+                **native,
+            },
+        )
+        keys.append(key)
+        rows.append(
+            {
+                **key,
+                "state": "complete",
+                "source_root": source.name,
+                "source_tree_sha256": tree,
+                "capture": {"path": capture.name, "sha256": report_sha},
+                "coverage": {"path": coverage_path.name, "sha256": coverage_sha},
+            }
+        )
+    observations, obs_sha = _benchmark_file(
+        tmp_path,
+        "linked-observations",
+        {
+            "schema": _gain["LINKS_SCHEMA"],
+            "record_sha256": record_sha,
+            "candidate_sha256": _gain["digest"](
+                _gain["canonical_bytes"](record["candidate"])
+            ),
+            "registered_scopes": scopes,
+            "rows": rows,
+        },
+    )
+    finding = {
+        "path": "src/library.py",
+        "line": 42,
+        "column": 5 if condition == "wrong_span" else 4,
+        "end_line": 42,
+        "end_column": 8,
+        "rule": result["ruleId"],
+    }
+    review_paths, subjects = [], []
+    for reviewer in ("one", "two"):
+        labels = [{**key, "verdict": "linked", "finding": finding} for key in keys]
+        if reviewer == "two" and condition == "disagree":
+            labels = [{**key, "verdict": "unclear"} for key in keys]
+        path, subject = _benchmark_file(
+            tmp_path,
+            reviewer,
+            {
+                "schema": _gain["LABELS_SCHEMA"],
+                "observations_sha256": obs_sha,
+                "reviewer_id": reviewer,
+                "labels": labels,
+            },
+        )
+        review_paths.extend(["--link-review", str(path)])
+        subjects.append((reviewer, subject))
+    options = _signed_benchmark_fixture(
+        tmp_path,
+        "advisory-execution",
+        obs_sha,
+        "advisory-link-labels",
+        subjects,
+    )
+    tampered = {"digest_drift": capture, "native_digest_drift": raw_path}.get(condition)
+    if tampered is not None:
+        tampered.write_bytes(tampered.read_bytes() + b" ")
+    if condition == "source_drift":
+        (source / "src/library.py").write_bytes(b"# changed owned evidence")
+    status = _gain["recall_main"](
+        [
+            str(record_path),
+            "--linked-observations",
+            str(observations),
+            *review_paths,
+            *options,
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+    if condition in {"linked", "disagree", "dual_lane", "second_parent"}:
+        assert status == 0
+        assert output["measurement"] == "STRICT_OLD_SIDE_HUNK"
+        assert output["summary"]["total"]["combined_detected"] == 0
+        linked = output["advisory_linked_recall"]
+        results, pattern = linked["scope_results"]
+        assert pattern["total"]["unexecuted"] == (1 if condition == "dual_lane" else 2)
+        assert linked["combined"]["unique_linked"] == (condition != "disagree")
+        assert linked["combined"]["linked_by_both_lanes"] == (condition == "dual_lane")
+        assert linked["publication_eligible"] is False
+        assert results["by_ecosystem"]["PHP"]["unexecuted"] == 1
+        total = results["total"]
+        assert total["registered"] == 2
+        assert total["executed"] == 1
+        assert (
+            total["linked"]
+            == total["linked_outside_hunk"]
+            == (total["linked_outside_changed_files"])
+            == (condition != "disagree")
+        )
+        assert total["review_unresolved"] == (condition == "disagree")
+    else:
+        assert status == 1
+        assert output["state"] == "REJECTED"
+        assert {
+            "wrong_span": "absent or ambiguous",
+            "ambiguous": "absent or ambiguous",
+            "missing_digest": "requires a SHA-256",
+            "digest_drift": "evidence digest mismatch",
+            "wrong_scope": "outside its changed-file scan scope",
+            "failed_run": "no successful execution evidence",
+            "malformed_result": "invalid SARIF result",
+            "source_drift": "source snapshot byte fingerprints differ",
+            "tool_drift": "unbound to the source, tool",
+            "scan_gap": "incomplete registered scan coverage",
+            "native_missing": "requires the original engine report",
+            "native_gap": "original pattern report has incomplete or different coverage",
+            "native_diagnostic": "original pattern report has incomplete or different coverage",
+            "native_span_drift": "original pattern report and SARIF findings differ",
+            "native_digest_drift": "evidence digest mismatch",
+        }[condition] in output["error"]
+
+
+@pytest.mark.parametrize(
+    ("condition", "error"),
+    [
+        ("valid", None),
+        ("wrong_tool", "do not match the registered candidate"),
+        ("wrong_version", "version differs from the candidate"),
+        ("scanner_fingerprint", "differs from the recorded scanner fingerprint"),
+        ("coverage_gap", "incomplete registered scan coverage"),
+        ("other_finding", "report and SARIF findings differ"),
+        ("source_drift", "differs from registered pre-fix bytes"),
+        ("duplicate", "duplicate linked observation"),
+    ],
+)
+def test_prepare_linked_capture_batch(tmp_path, capsys, condition, error):
+    record, _, old_file, engine, rules = _synthetic_recall(tmp_path)
+    case = record["cases"][0]
+    revision = case["fixes"][0]["parent"]
+    record_path, record_sha = _benchmark_file(tmp_path, "registered-record", record)
+    source_file = tmp_path / "source" / "src" / "App.py"
+    source_file.parent.mkdir(parents=True)
+    source_file.write_bytes(
+        b"changed" if condition == "source_drift" else old_file.read_bytes()
+    )
+    if condition == "wrong_tool":
+        engine.write_bytes(b"different engine artifact")
+    native, native_sha = _benchmark_file(
+        tmp_path,
+        "native",
+        {
+            "version": "mismatch" if condition == "wrong_version" else "1.15.0",
+            "paths": {
+                "scanned": [] if condition == "coverage_gap" else ["src/App.py"],
+                "skipped": [],
+            },
+            "errors": [],
+            "results": [
+                {
+                    "path": "src/App.py",
+                    "check_id": "python.other"
+                    if condition == "other_finding"
+                    else "python.synthetic",
+                    "start": {"line": 1, "col": 1},
+                    "end": {"line": 1, "col": 7},
+                }
+            ],
+        },
+    )
+    sarif, sarif_sha = _benchmark_file(
+        tmp_path,
+        "sarif",
+        {
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "invocations": [{"executionSuccessful": True}],
+                    "results": [
+                        {
+                            "ruleId": "python.synthetic",
+                            "locations": [
+                                {
+                                    "physicalLocation": {
+                                        "artifactLocation": {"uri": "src/App.py"},
+                                        "region": {
+                                            "startLine": 1,
+                                            "startColumn": 1,
+                                            "endLine": 1,
+                                            "endColumn": 7,
+                                        },
+                                    }
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    pattern = {"lane": "pattern", "scope": "changed_files"}
+    codeql = {"lane": "codeql", "scope": "repository"}
+    key = {"ghsa": case["ghsa"], "source_revision": revision}
+    complete = {
+        **pattern,
+        **key,
+        "state": "complete",
+        "source_root": "source",
+        "native_report": {"path": native.name, "sha256": native_sha},
+        "sarif": {
+            "path": sarif.name,
+            "sha256": "0" * 64 if condition == "scanner_fingerprint" else sarif_sha,
+        },
+    }
+    rows = [complete, {**codeql, **key, "state": "unknown"}]
+    if condition == "duplicate":
+        rows.append(complete)
+    plan, _ = _benchmark_file(
+        tmp_path,
+        "capture-plan",
+        {
+            "schema": "factory.advisory-capture-plan.v1",
+            "record": record_path.name,
+            "opengrep": engine.name,
+            "ruleset": rules.name,
+            "registered_scopes": [pattern, codeql],
+            "rows": rows,
+        },
+    )
+    status = _gain["prepare_captures_main"]([str(plan)])
+    result = json.loads(capsys.readouterr().out)
+    if error is not None:
+        assert status == 1
+        assert result["state"] == "REJECTED" and error in result["error"]
+        assert not list(tmp_path.glob("linked-observations-*.json"))
+        return
+
+    assert status == 0
+    assert result["state"] == "PREPARED"
+    assert result["provenance"] == "UNATTESTED"
+    assert result["complete_captures"] == 1
+    reference = result["observations"]
+    observations, _ = _gain["_benchmark_evidence"](
+        tmp_path / reference["path"], reference["sha256"]
+    )
+    _, groups, findings = _gain["_observations"](
+        record, record_sha, observations, tmp_path
+    )
+    assert groups == {("pattern", "changed_files"), ("codeql", "repository")}
+    assert list(next(iter(findings.values()))) == [
+        ("src/App.py", 1, 1, 1, 7, "python.synthetic")
+    ]
+    assert _gain["prepare_captures_main"]([str(plan)]) == 0
+    assert json.loads(capsys.readouterr().out) == result

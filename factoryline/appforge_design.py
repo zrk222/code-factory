@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 import hashlib
 import json
+from collections.abc import Callable, Iterator
 
+from . import canonical_sha, compat_sha
 from .revenueforge import AUTHORITY, RevenueForgeError
 from .revenue_evidence import _atomic_json, _local, _read_json, _seal
 from .app_review_gate import app_review_gate_projection
@@ -23,6 +25,7 @@ from .appforge_storefront_story import storefront_story_projection
 from .appforge_fastlane_capture import fastlane_capture_projection
 from .appforge_submission_integrity import submission_integrity_projection
 from .appforge_mobile_evidence import mobile_evidence_projection
+from .revenue_evidence import read_receipt, receipt_paths
 
 
 SCHEMA = "factory.appforge.design-director.v1"
@@ -55,17 +58,14 @@ BANNED_PATTERNS = {
 }
 
 
-def appforge_design_projection(root: Path) -> dict[str, Any]:
-    """Return a bounded, hash-verified summary of local AppForge design work."""
-    workspace = Path(root).resolve()
+def _design_status(workspace: Path) -> dict[str, Any]:
     current = 0
     invalid = 0
     latest: dict[str, Any] | None = None
-    for path in sorted(
-        (workspace / ".factory" / "appforge").glob("*/appforge-design-receipt.json")
-    )[:100]:
+    base = workspace / ".factory" / "appforge"
+    for path in sorted(base.glob("*/appforge-design-receipt.json"))[:100]:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = read_receipt(workspace, path)
             expected = value.pop("receipt_sha256")
             valid = (
                 value.get("schema") == "factory.appforge.design-receipt.v1"
@@ -79,7 +79,7 @@ def appforge_design_projection(root: Path) -> dict[str, Any]:
                 == expected
             )
             value["receipt_sha256"] = expected
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError):
             valid = False
             value = None
         if valid:
@@ -94,20 +94,6 @@ def appforge_design_projection(root: Path) -> dict[str, Any]:
         "current_count": current,
         "invalid_count": invalid,
         "latest": latest,
-        "init": appforge_init_projection(workspace),
-        "app_review": app_review_gate_projection(workspace),
-        "quality_audit": quality_audit_projection(workspace),
-        "submission_assurance": submission_assurance_projection(workspace),
-        "oracle_authority": appforge_oracle_projection(workspace),
-        "device_reality": device_reality_projection(workspace),
-        "eas_preflight": appforge_eas_projection(workspace),
-        "release_rehearsal": release_rehearsal_projection(workspace),
-        "native_surface": native_surface_projection(workspace),
-        "surface_matrix": surface_matrix_projection(workspace),
-        "storefront_story": storefront_story_projection(workspace),
-        "fastlane_capture": fastlane_capture_projection(workspace),
-        "submission_integrity": submission_integrity_projection(workspace),
-        "mobile_evidence": mobile_evidence_projection(workspace),
         "authority": {
             **AUTHORITY,
             "design_intent_override": False,
@@ -115,6 +101,136 @@ def appforge_design_projection(root: Path) -> dict[str, Any]:
         },
         "claim_boundary": "local design-receipt projection; not rendered UI, device proof, accessibility certification, performance proof, or App Review approval",
     }
+
+
+_STAGES: dict[str, tuple[Callable[..., dict[str, Any]], str]] = {
+    "init": (appforge_init_projection, "appforge-init"),
+    "design": (_design_status, "appforge-design"),
+    "native_surface": (native_surface_projection, "appforge-native-surface"),
+    "surface_matrix": (surface_matrix_projection, "appforge-surface-matrix"),
+    "device_reality": (device_reality_projection, "device-reality-gate"),
+    "eas_preflight": (appforge_eas_projection, "appforge-eas"),
+    "mobile_evidence": (mobile_evidence_projection, "appforge-mobile-evidence"),
+    "fastlane_capture": (fastlane_capture_projection, "appforge-fastlane-capture"),
+    "storefront_story": (storefront_story_projection, "appforge-storefront-story"),
+    "app_review": (app_review_gate_projection, "app-review-gate"),
+    "quality_audit": (quality_audit_projection, "quality-audit"),
+    "oracle_authority": (appforge_oracle_projection, "appforge-oracle"),
+    "submission_integrity": (
+        submission_integrity_projection,
+        "appforge-submission-integrity",
+    ),
+    "submission_assurance": (submission_assurance_projection, "submission-assurance"),
+    "release_rehearsal": (release_rehearsal_projection, "appforge-rehearse"),
+}
+
+
+def appforge_design_projection(
+    root: Path, *, stage: str | None = None
+) -> dict[str, Any]:
+    """Inspect one AppForge stage or reuse one path inventory for full status."""
+    workspace = Path(root).resolve()
+    if stage is not None:
+        selected = _STAGES.get(stage.replace("-", "_"))
+        if selected is None:
+            choices = ", ".join(name.replace("_", "-") for name in _STAGES)
+            raise RevenueForgeError(
+                "APPFORGE_STATUS_STAGE_UNKNOWN",
+                f"Unknown AppForge stage. Choose from {choices}.",
+            )
+        project, command = selected
+        status = project(workspace)
+        return {
+            "schema": "factory.appforge.stage-projection.v1",
+            "marker": "APPFORGE_STAGE_READ_ONLY",
+            "stage": stage.replace("_", "-"),
+            "status": status,
+            "repair_messages": _focused_repair_messages(workspace, status),
+            "help_command": ["factory", "revenue", command, "--help"],
+        }
+    inventory = tuple(receipt_paths(workspace, "*.json"))
+    return {
+        **_design_status(workspace),
+        **{
+            name: project(workspace, inventory=inventory)
+            for name, (project, _) in _STAGES.items()
+            if name != "design"
+        },
+    }
+
+
+def _repair_messages(findings: object) -> Iterator[str]:
+    if not isinstance(findings, list):
+        return
+    for finding in findings[:10]:
+        if not isinstance(finding, dict):
+            continue
+        for key in ("detail", "message", "remediation", "repair"):
+            value = finding.get(key)
+            if isinstance(value, str) and value.strip():
+                yield value[:500]
+
+
+def _focused_repair_messages(workspace: Path, status: dict[str, Any]) -> list[str]:
+    latest = status.get("latest") or {}
+    findings = latest.get("findings")
+    if findings:
+        return list(dict.fromkeys(_repair_messages(findings)))
+    path = latest.get("path")
+    if (
+        not isinstance(path, str)
+        or latest.get("ok") is not False
+        and "BLOCKED" not in str(latest.get("marker", ""))
+    ):
+        return []
+    try:
+        receipt, _ = _read_json(workspace, Path(path))
+    except (RevenueForgeError, OSError, RuntimeError, ValueError):
+        return []
+    seal = receipt.pop("receipt_sha256", None)
+    if seal == latest.get("receipt_sha256") and seal in (
+        canonical_sha(receipt),
+        compat_sha(receipt),
+    ):
+        return list(dict.fromkeys(_repair_messages(receipt.get("findings"))))
+    return []
+
+
+def _stage_status_lines(label: str, status: dict[str, Any]) -> Iterator[str]:
+    latest = status.get("latest") or {}
+    marker = latest.get("marker")
+    if status.get("invalid_count"):
+        yield f"{label} needs evidence review"
+        yield from status.get("blockers", {}).values()
+        invalid = status.get("invalid")
+        if isinstance(invalid, list):
+            yield from (f"Stale or invalid receipt {path}" for path in invalid[:10])
+    if isinstance(marker, str):
+        path = latest.get("path")
+        yield f"{label}  {marker}" + (f"  {path}" if isinstance(path, str) else "")
+    elif status.get("current_count"):
+        yield f"{label} has {status['current_count']} local receipts"
+    elif not status.get("invalid_count"):
+        yield f"{label} has no local receipts"
+
+
+def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
+    """Render evidence status without treating an inspection as a readiness gate."""
+    stage = payload.get("stage")
+    if stage is not None:
+        yield from _stage_status_lines(stage, payload["status"])
+        yield from payload.get("repair_messages", [])
+        yield " ".join(payload["help_command"])
+        return
+    found = False
+    for name in _STAGES:
+        status = payload if name == "design" else payload[name]
+        if status.get("current_count") or status.get("invalid_count"):
+            found = True
+            yield from _stage_status_lines(name.replace("_", "-"), status)
+            yield from _repair_messages((status.get("latest") or {}).get("findings"))
+    if not found:
+        yield "No local AppForge receipts. Start with factory revenue appforge-init --help."
 
 
 def _validated_brief(brief: dict[str, Any]) -> set[str]:
@@ -145,7 +261,9 @@ def _validated_brief(brief: dict[str, Any]) -> set[str]:
 
 
 def _design_palette(brief: dict[str, Any]) -> dict[str, Any]:
-    brand = brief.get("brand") if isinstance(brief.get("brand"), dict) else {}
+    brand = brief.get("brand")
+    if not isinstance(brand, dict):
+        brand = {}
     return {
         "primary_intent": str(brand.get("primary_intent") or "trust"),
         "accent_intent": str(brand.get("accent_intent") or brief["desired_emotion"]),

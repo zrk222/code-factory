@@ -8,6 +8,8 @@ Apple approval remain separate user-authorized actions.
 
 from __future__ import annotations
 
+from .revenue_evidence import read_receipt, receipt_paths
+
 from .contract import write_atomic_json as _atomic_json
 
 import hashlib
@@ -189,16 +191,18 @@ def verify_eas_preflight(
     return receipt
 
 
-def appforge_eas_projection(root: Path) -> dict[str, Any]:
+def appforge_eas_projection(
+    root: Path, *, inventory: tuple[Path, ...] | None = None
+) -> dict[str, Any]:
     """Read hash-valid local EAS preflight receipts without changing release state."""
     workspace = Path(root).resolve()
     current: list[dict[str, Any]] = []
     invalid: list[str] = []
-    for path in sorted(
-        (workspace / ".factory" / "appforge").rglob("*eas-preflight*.json")
-    )[:100]:
+    for path in sorted(receipt_paths(workspace, "*eas-preflight*.json", inventory))[
+        :100
+    ]:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = read_receipt(workspace, path)
             supplied = value.pop("receipt_sha256", None)
             if (
                 value.get("schema") == RECEIPT_SCHEMA

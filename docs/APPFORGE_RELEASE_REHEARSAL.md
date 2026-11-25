@@ -53,8 +53,11 @@ received a build.
 Prepare three workspace-contained JSON files:
 
 1. an exact AppForge release candidate;
-2. a hash-valid, ready submission-assurance receipt for that same candidate;
+2. a ready submission-assurance receipt for that same candidate, with its contract, gate receipts, Markdown, and PDF still available at their recorded digests;
 3. one credential-free release automation profile.
+
+Regenerate older dossiers that lack the contract and report references before
+using them for a new rehearsal.
 
 No raw secret, token, password, API key, private key, credential reference, or
 extra provider option is permitted in the profile. Secrets stay in the human
