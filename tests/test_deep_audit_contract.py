@@ -21,7 +21,8 @@ from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 @pytest.mark.parametrize(
     "mode",
-    ["complete", "omitted", "out_of_scope", "truncated", "missing", "wrong_attempt", "modified_response"],
+    ["complete", "unresolved", "omitted", "out_of_scope", "truncated", "missing", "wrong_attempt",
+     "modified_response", "unbound_obligation"],
 )
 def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mode):
     from types import ModuleType
@@ -55,9 +56,19 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         "binding": {"candidate_sha256": plan["candidate_sha256"]},
         "sources": {path: "synthetic test text" for path in paths},
         "observations": [
-            {"lane_id": lane["id"], "engine": lane["engine"]} for lane in plan["lanes"]
+            {
+                "lane_id": lane["id"], "engine": lane["engine"], "state": "OBSERVED",
+                "gaps": [], "findings": [], "metrics": None,
+                "obligations": [item["id"] for item in plan["obligations"] if item["engine"] == lane["engine"]],
+            }
+            for lane in plan["lanes"]
         ],
     }
+    if mode == "unbound_obligation":
+        packet["observations"][0]["obligations"] = []
+        with pytest.raises(ValueError, match="differ from the observed lanes"):
+            review.family_inputs(plan, packet)
+        return
     monkeypatch.chdir(tmp_path)
     staged_plan = tmp_path / "scripts" / plan_path.name
     staged_plan.parent.mkdir()
@@ -67,6 +78,8 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
     )
     monkeypatch.setenv("GITHUB_RUN_ID", "fixture-only")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    summary_path = tmp_path / "step-summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
     expected_coverage = set()
 
     def respond(request, timeout):
@@ -77,17 +90,24 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
             return health
         assert request.full_url == review.LOOPBACK + "/v1/chat/completions"
         assert 0 < timeout <= 1200
-        payload = json.loads(json.loads(request.data)["messages"][1]["content"])
+        body = json.loads(request.data)
+        payload = json.loads(body["messages"][1]["content"])
         assigned = sorted(payload["sources"])
+        schema = body["response_format"]["schema"]["properties"]["path_assessments"]
+        assert schema["required"] == assigned and schema["additionalProperties"] is False
+        assert {control["role"] for row in payload["obligations"] for control in row["controls"]} == {
+            "positive", "negative", "mutation",
+        }
         expected_coverage.update(assigned)
         result = {
             "decision": "ACCEPT",
             "findings": [],
             "coverage_gaps": [],
-            "reviewed_paths": assigned,
+            "path_assessments": {path: {"state": "REVIEWED", "reason": "Synthetic evidence reviewed"}
+                                 for path in assigned},
         }
-        if mode == "omitted" and payload["family"] == "dependencies":
-            result["reviewed_paths"] = assigned[1:]
+        if mode == "unresolved" and payload["family"] == "dependencies":
+            result["path_assessments"][assigned[0]] = {"state": "UNRESOLVED", "reason": "Manifest has insufficient evidence"}
             result["findings"] = [
                 {
                     "id": "fixture-finding",
@@ -97,8 +117,10 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
                     "remediation": "Review the fixture evidence",
                 }
             ]
+        if mode == "omitted":
+            del result["path_assessments"][assigned[0]]
         if mode == "out_of_scope":
-            result["reviewed_paths"] = ["outside.txt"]
+            result["path_assessments"]["outside.txt"] = result["path_assessments"][assigned[0]]
         finish = "length" if mode == "truncated" else "stop"
         return BytesIO(
             json.dumps(
@@ -118,7 +140,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
     outputs.mkdir()
     family = sorted(families)[0]
     monkeypatch.setenv("REVIEW_FAMILY", family)
-    if mode in {"out_of_scope", "truncated"}:
+    if mode in {"omitted", "out_of_scope", "truncated"}:
         with pytest.raises(ValueError):
             review.main()
         assert not (tmp_path / "review.json").exists()
@@ -155,13 +177,18 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         [sha256_bytes(row["raw_response"].encode()) for row in coverage]
     )
     assert result["authority"] == "none"
-    if mode == "omitted":
+    summary = summary_path.read_text(encoding="utf-8")
+    assert f"Six-family review · {result['decision']}" in summary
+    assert "Analyzer alerts | Review findings" in summary
+    if mode == "unresolved":
         assert result["decision"] == "INCOMPLETE"
         assert len(result["coverage_gaps"]) == 1
         assert result["coverage_gaps"][0].startswith(
-            "dependencies: review missing for "
+            "dependencies: unresolved review for "
         )
+        assert result["coverage_gaps"][0].endswith("Manifest has insufficient evidence")
         assert [finding["id"] for finding in result["findings"]] == ["fixture-finding"]
+        assert "| dependencies | 3 | 2 | 1 | 0 | 1 |" in summary
     else:
         assert result["decision"] == "ACCEPT" and result["coverage_gaps"] == []
 
