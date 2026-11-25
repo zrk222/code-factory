@@ -138,7 +138,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 244);
+  assert.equal(balancedReplacement.length, 249);
   assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
@@ -148,7 +148,7 @@ test('fixed TSX qualification rejects omitted, substituted and wrong-language co
   const manifest = javascriptControlManifest();
   assert.doesNotThrow(() => verifyJavascriptControlMatrix(manifest));
   assert.equal(manifest.filter(item => item.path.endsWith('.js')).length, 10);
-  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 28);
+  assert.equal(manifest.filter(item => item.path.endsWith('.ts')).length, 30);
   assert.equal(manifest.filter(item => item.path.endsWith('.tsx')).length, 12);
   assert.deepEqual(manifest.filter(item => item.path.endsWith('.tsx')).slice(-2).map(item =>
     [item.source_line, item.line]), [[159, 162], [163, 165]]);

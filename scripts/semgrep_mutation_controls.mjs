@@ -167,7 +167,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.disabled-tls-verification': 1,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
   'opt.factory.rules.go.parameter-shell-command': 1,
-  'opt.factory.rules.go.parameter-sql-text': 3,
+  'opt.factory.rules.go.parameter-sql-text': 4,
   'opt.factory.rules.go.request-command-injection': 3,
   'opt.factory.rules.go.request-html-injection': 2,
   'opt.factory.rules.go.request-path-traversal': 1,
@@ -189,7 +189,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.parameter-sql-text': 2,
   'opt.factory.rules.javascript.request-command-injection': 4,
   'opt.factory.rules.javascript.request-html-injection': 12,
-  'opt.factory.rules.javascript.request-path-traversal': 16,
+  'opt.factory.rules.javascript.request-path-traversal': 18,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
@@ -208,7 +208,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.parameter-sql-text': 2,
   'opt.factory.rules.python.request-command-injection': 2,
   'opt.factory.rules.python.request-html-injection': 1,
-  'opt.factory.rules.python.request-path-traversal': 26,
+  'opt.factory.rules.python.request-path-traversal': 28,
   'opt.factory.rules.python.request-sql-injection': 1,
   'opt.factory.rules.python.tarfile-extractall-without-filter': 5,
   'opt.factory.rules.python.unsafe-deserialization': 2,
@@ -236,6 +236,7 @@ export const typescriptExtensionEndpoints = Object.freeze([
   ['request-path-traversal', 305], ['request-path-traversal', 312], ['request-path-traversal', 314],
   ['parameter-path-join-without-containment', 328], ['parameter-sql-text', 343],
   ['parameter-shell-command', 358], ['parameter-shell-command', 360],
+  ['request-path-traversal', 379], ['request-path-traversal', 381],
 ]);
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
@@ -265,9 +266,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 244 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 249 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 244;
+const REVIEWED_FINDINGS = 249;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -321,6 +322,7 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'tsx-path-join-controls.txt'], ['ts', 'tsx-html-output-controls.txt'],
   ['ts', 'javascript-tls-trust-controls.txt'], ['ts', 'tsx-path-request-controls.txt'],
   ['ts', 'tsx-sql-text-controls.txt'], ['ts', 'tsx-shell-text-controls.txt'],
+  ['ts', 'tsx-fs-identity-controls.txt'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],

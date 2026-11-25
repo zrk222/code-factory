@@ -315,23 +315,102 @@ rules:
       # Format checks that admit no path separator or dot segment (an MD5/SHA
       # digest, a UUID, digits, alphanumerics) clear the checked value. Unlike a
       # helper named *safe* or *within*, the format itself is the proof.
-      - by-side-effect: true
-        patterns:
+      # A format check clears the value only where it decides the path: inside
+      # the branch it guards, or after a failed check (alone, as a disjunct, or
+      # through a stored result) that raises or returns.
+      - patterns:
           - pattern-either:
-              - pattern: $CHECK($X)
-              - pattern: $MOD.$CHECK($X)
+              - pattern-inside: |
+                  if $CHECK($X):
+                    ...
+              - pattern-inside: |
+                  if <... not $CHECK($X) ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  if <... not $CHECK($X) ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  $OK = $CHECK($X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  $OK = $CHECK($X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  if $MOD.$CHECK($X):
+                    ...
+              - pattern-inside: |
+                  if <... not $MOD.$CHECK($X) ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  if <... not $MOD.$CHECK($X) ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  $OK = $MOD.$CHECK($X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  $OK = $MOD.$CHECK($X)
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    return ...
+                  ...
           - metavariable-regex:
               metavariable: $CHECK
               regex: ^(is_md5|is_sha1|is_sha256|is_sha\d+|is_hex|is_uuid|valid_uuid|is_valid_uuid|is_int|is_integer|is_digit|is_numeric|is_alnum)$
-          - focus-metavariable: $X
-      - by-side-effect: true
-        patterns:
+          - pattern: $X
+      - patterns:
           - pattern-either:
-              - pattern: $X.isdigit()
-              - pattern: $X.isalnum()
-              - pattern: $X.isnumeric()
-              - pattern: $X.isdecimal()
-          - focus-metavariable: $X
+              - pattern-inside: |
+                  if $X.$TEST():
+                    ...
+              - pattern-inside: |
+                  if <... not $X.$TEST() ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  if <... not $X.$TEST() ...>:
+                    ...
+                    return ...
+                  ...
+              - pattern-inside: |
+                  $OK = $X.$TEST()
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    raise ...
+                  ...
+              - pattern-inside: |
+                  $OK = $X.$TEST()
+                  ...
+                  if <... not $OK ...>:
+                    ...
+                    return ...
+                  ...
+          - metavariable-regex:
+              metavariable: $TEST
+              regex: ^(isdigit|isalnum|isnumeric|isdecimal)$
+          - pattern: $X
       - pattern: int(...)
       - pattern: uuid.UUID(...)
     pattern-sinks:
@@ -504,6 +583,26 @@ rules:
           - metavariable-regex:
               metavariable: $CALL
               regex: ^(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
+          - focus-metavariable: $PATH
+      # The same calls through a receiver bound to an fs module, under any name.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  import $FS from "$MOD"
+                  ...
+              - pattern-inside: |
+                  import * as $FS from "$MOD"
+                  ...
+              - pattern-inside: |
+                  $FS = require("$MOD")
+                  ...
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: ^(?:node:)?fs(?:/promises)?$|^(?:fs-extra|graceful-fs)$
+          - pattern: $FS.$CALL($PATH, ...)
+          - metavariable-regex:
+              metavariable: $CALL
+              regex: ^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
           - focus-metavariable: $PATH
       # Joining request text under a base directory is the traversal itself.
       - patterns:
@@ -3204,7 +3303,7 @@ rules:
           - pattern: $RUN($CMD, ...)
           - metavariable-regex:
               metavariable: $RUN
-              regex: ^(run|runCmd|runCommand|runWinCmd|runShell|shell|execCommand|executeCommand|execShell)$
+              regex: ^(runCmd|runCommand|runWinCmd|runShell|execCommand|executeCommand|execShell)$
           - focus-metavariable: $CMD
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
@@ -3542,6 +3641,33 @@ rules:
               - pattern: $DB.Select($DST, $Q, ...)
               - pattern: $DB.Get($DST, $Q, ...)
           - metavariable-regex: {metavariable: $DB, regex: '(?i)(^|\.)(db|tx|conn|sqlx?|pool|database|dbconn|dbpool|\w*(db|tx|conn|pool))$'}
+          - metavariable-pattern:
+              metavariable: $Q
+              patterns:
+                - pattern-either:
+                    - pattern: fmt.Sprintf(...)
+                    - pattern: $A + $B
+                    - pattern: $V
+                    - pattern: $V.String()
+          - focus-metavariable: $Q
+      # The same calls on a parameter declared as a database handle, under any name.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: func $F(..., $DB *$TYPE, ...) { ... }
+              - pattern-inside: func $F(..., $DB *$TYPE, ...) $R { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) { ... }
+              - pattern-inside: func ($RV $RT) $F(..., $DB *$TYPE, ...) $R { ... }
+          - metavariable-regex: {metavariable: $TYPE, regex: '^(sql\.(DB|Tx|Conn)|sqlx\.(DB|Tx)|gorm\.DB|pgxpool\.Pool|pgx\.Conn)$'}
+          - pattern-either:
+              - pattern: $DB.Query($Q, ...)
+              - pattern: $DB.QueryContext($C, $Q, ...)
+              - pattern: $DB.QueryRow($Q, ...)
+              - pattern: $DB.QueryRowContext($C, $Q, ...)
+              - pattern: $DB.Exec($Q, ...)
+              - pattern: $DB.ExecContext($C, $Q, ...)
+              - pattern: $DB.Raw($Q, ...)
+              - pattern: $DB.Select($DST, $Q, ...)
+              - pattern: $DB.Get($DST, $Q, ...)
           - metavariable-pattern:
               metavariable: $Q
               patterns:
