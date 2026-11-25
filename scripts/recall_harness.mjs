@@ -1246,6 +1246,7 @@ async function evaluate(input) {
 const CONTROL_TIMEOUT_RETRY_SECONDS = 15;
 const OPENGREP_DEFAULT_TARGET_BYTES = 1_000_000;
 const CONTROL_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
+const CONTROL_HASH_BATCH_SIZE = 16;
 
 function controlTargetBytes(directory, source, base, candidate) {
   if (base.profile.engine !== 'semgrep') return null;
@@ -1302,6 +1303,12 @@ function controlLink(root, location, eligible) {
 
 async function controlSource(root, excludedDirs) {
   const files = [];
+  const pending = [];
+  const hashBatch = async () => {
+    files.push(...await Promise.all(pending.splice(0).map(async ({ path, location }) => ({
+      path, sha256: await fileFingerprint(location),
+    }))));
+  };
   const exclusionReason = path => {
     if (path.split('/').slice(0, -1).some(part => excludedDirs.includes(part))) return 'declared_control_exclusion';
     if (isTestPath(path) || path.endsWith('_spec.rb')) return 'test_path';
@@ -1314,7 +1321,8 @@ async function controlSource(root, excludedDirs) {
       if (entry.isDirectory()) {
         await visit(location, path + '/');
       } else if (entry.isFile()) {
-        files.push({ path, sha256: await fileFingerprint(location) });
+        pending.push({ path, location });
+        if (pending.length === CONTROL_HASH_BATCH_SIZE) await hashBatch();
       } else if (entry.isSymbolicLink()) {
         files.push({ path, ...controlLink(root, location, controlSourceExtension(path) && !exclusionReason(path)) });
       } else {
@@ -1323,6 +1331,7 @@ async function controlSource(root, excludedDirs) {
     }
   };
   await visit(root, '');
+  if (pending.length) await hashBatch();
   const supported = files.filter(file => file.sha256 && controlSourceExtension(file.path));
   const excluded = new Map(supported.map(({ path }) => [path, exclusionReason(path)])
     .filter(([, reason]) => reason));
