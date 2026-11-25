@@ -1300,27 +1300,32 @@ function legacyAlternatives(entries) {
   return keyCounts(new Map(entries.map(item => [item.key, item.legacy])).values());
 }
 
-export function queueLabels(existing, deltas, population) {
-  for (const binding of [population, existing?.control_population_sha256]) {
-    if (binding != null && (typeof binding !== 'string' || !/^[a-f0-9]{64}$/.test(binding))) {
-      throw new Error('Invalid control population fingerprint');
-    }
+function queueControlDelta(labels, delta) {
+  const repo = repoName(delta.dir);
+  const legacyCount = delta.emitted ? legacyAlternatives(alertKeys(repo, [...delta.emitted, ...(delta.removed ?? [])])) : new Map();
+  for (const alert of delta.emitted ?? delta.added ?? []) {
+    const key = labelKey(repo, alert), legacy = legacyLabelKey(repo, alert);
+    if (labels.has(legacy) && legacyCount.get(legacy) === 1) continue;
+    if (!labels.has(key)) labels.set(key, { key, repo, ...alert, verdict: null, note: '' });
   }
+}
+
+function validateControlPopulation(binding) {
+  if (binding != null && (typeof binding !== 'string' || !/^[a-f0-9]{64}$/.test(binding))) {
+    throw new Error('Invalid control population fingerprint');
+  }
+}
+
+export function queueLabels(existing, deltas, population) {
+  validateControlPopulation(population);
+  validateControlPopulation(existing?.control_population_sha256);
   const changed = population && existing && existing.control_population_sha256 !== population;
   const archived = { ...existing?.archived_labels };
   if (changed && existing.labels?.length) {
     archived[existing.control_population_sha256 ?? 'unbound'] = existing.labels;
   }
   const labels = new Map((changed ? [] : existing?.labels ?? []).map(label => [label.key, label]));
-  for (const delta of deltas) {
-    const repo = repoName(delta.dir);
-    const legacyCount = delta.emitted ? legacyAlternatives(alertKeys(repo, [...delta.emitted, ...(delta.removed ?? [])])) : new Map();
-    for (const alert of delta.emitted ?? delta.added ?? []) {
-      const key = labelKey(repo, alert), legacy = legacyLabelKey(repo, alert);
-      if (labels.has(legacy) && legacyCount.get(legacy) === 1) continue;
-      if (!labels.has(key)) labels.set(key, { key, repo, ...alert, verdict: null, note: '' });
-    }
-  }
+  for (const delta of deltas) queueControlDelta(labels, delta);
   return { schema: 'factory.recall-labels.v1', ...(population ? { control_population_sha256: population } : {}),
     ...(Object.keys(archived).length ? { archived_labels: archived } : {}),
     labels: [...labels.values()].sort((a, b) => a.key.localeCompare(b.key)) };
