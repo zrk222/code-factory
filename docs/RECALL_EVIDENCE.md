@@ -64,6 +64,13 @@ For the native report and SARIF, pass the scanner's `{path, sha256}` reference
 when available so preparation verifies the fingerprints recorded during scanning.
 For harness captures with work-directory-relative paths, place the plan in that
 work directory or make each path relative to the plan.
+To collect a saved `score` or `evaluate` result, place it in the same work
+directory and set `score_result` to its `{path, sha256}` reference in the plan.
+For complete pattern rows, supply the advisory ID, source revision, and
+`changed_files` scope. The collector takes the candidate's saved old-side path
+and report references, verifies the scan diagnostics and source packets, and
+binds the exact score receipt in the prepared observations.
+Saved score receipts have a 32 MB byte budget.
 Declare CodeQL scopes that still await capture and use `unknown` for any row
 without a complete observation. The collector reads local files, verifies the
 candidate pins and source snapshot, and writes a content-addressed observations
@@ -119,7 +126,10 @@ Both authenticated reviewers must identify the same finding to credit a link.
 The result counts links outside the hunk and outside changed files separately.
 An unresolved review, a missing capture, and a reviewed no-link verdict remain
 separate outcomes. A no-link verdict requires all registered revisions for that
-case and scope. The result retains all registered advisories in each declared
-lane and scope, counts each linked advisory once in the combined result, and
+case and scope. Each lane and scope reports the registered advisory families
+and ecosystems. An advisory can appear in multiple families, while cases with
+no mapped family appear under `unclassified`. The result retains all registered
+advisories in each declared lane and scope, counts each linked advisory once in
+the combined result, and
 reports overlap between lanes. Legacy records report `NOT_MEASURED` for
 advisory-linked recall.
