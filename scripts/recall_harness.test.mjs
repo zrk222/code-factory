@@ -303,7 +303,7 @@ test('line-only adjudication cannot waive two alerts on the same line', () => {
 });
 
 test('coverage gaps never count as misses and regressions fail on either revision', () => {
-  const clean = { path: 'sample.py', state: 'reported_scanned', reason: 'engine_scan_paths' };
+  const clean = { path: 'sample.py', sha256: sha256('fixture'), state: 'reported_scanned', reason: 'engine_scan_paths' };
   const base = { ghsa: 'A', status: 'scored', hunk_hit: false, fix_side_residual: [],
     families: ['path'], ecosystem: 'PyPI', file_coverage: { old: [clean], fixed: [clean] } };
   const incomplete = { ...base, file_coverage: { ...base.file_coverage,
@@ -323,6 +323,16 @@ test('coverage gaps never count as misses and regressions fail on either revisio
     fixed: [{ ...clean, state: 'partial', reason: 'parse' }] } };
   assert.equal(result(partialFixed).summary.hunk_hits, 1);
   assert.equal(compare(hit, partialFixed).decision, 'REJECT');
+  assert.equal(compare(partialFixed, partialFixed).decision, 'ACCEPT');
+  const failedFixed = { ...partialFixed, file_coverage: { ...partialFixed.file_coverage,
+    fixed: [{ ...clean, state: 'partial', reason: 'engine_error' }] },
+  parser_probe: { fixed: { confirmed_limits: [clean.path] } } };
+  assert.deepEqual(compare(partialFixed, failedFixed).new_coverage_gaps, ['A']);
+  assert.deepEqual(compare(hit, failedFixed).new_coverage_gaps, ['A']);
+  const probe = { path: clean.path, state: 'parse_limited', sha256: sha256('different source') };
+  const probed = sha256 => ({ ...partialFixed, parser_probe: { fixed: { observations: [{ ...probe, sha256 }] } } });
+  assert.deepEqual(compare(hit, probed(probe.sha256)).new_coverage_gaps, ['A']);
+  assert.deepEqual(compare(hit, probed(clean.sha256)).new_coverage_gaps, []);
 });
 
 test('outcomes separate hits, misses, engine timeouts, unknowns and errors', async () => {
@@ -423,6 +433,11 @@ test('changedFiles and engineCoverage distinguish source loss from analysis fail
   assert.throws(() => engineCoverage({ paths: {} }), /Missing engine scan paths/);
   const coverage = engineCoverage({ paths: { scanned: ['./app.py'] },
     errors: [{ type: 'Syntax error', spans: [{ file: './app.py' }] }] });
+  const pathError = { type: 'Timeout', path: './app.py' };
+  const parseError = { type: 'Syntax error', path: './app.py' };
+  for (const errors of [[pathError, parseError], [parseError, pathError]]) {
+    assert.equal(engineCoverage({ paths: { scanned: ['./app.py'] }, errors }).problems.get('app.py'), 'engine_error');
+  }
   const packet = { path: 'app.py', bytes: 2, sha256: sha256('ok') };
   const scan = { submitted: true, verified: true, coverage, findings: [] };
   const file_coverage = fileCoverage(changes, { packets: { old: [packet], fixed: [packet] },

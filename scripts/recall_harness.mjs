@@ -29,7 +29,7 @@ import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSy
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
+import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
 import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
 export const FAMILIES = Object.freeze({
@@ -916,12 +916,10 @@ function recordLostHit(changes, pair, old, row) {
   changes.rawLost.push(row.ghsa);
 }
 
-function hasNewCoverageGaps(old, row) {
-  return Object.entries(old.file_coverage ?? {}).some(([side, files]) => {
-    const previous = new Set(coverageGaps(files));
-    const confirmedLimits = new Set(row.parser_probe?.[side]?.confirmed_limits);
-    return coverageGaps(row.file_coverage?.[side]).some(path => !previous.has(path) && !confirmedLimits.has(path));
-  });
+function newCoverageEntries(before, after, side) {
+  const key = ({ path, state, reason }) => JSON.stringify([path, state, reason]);
+  const previous = new Set(coverageGapEntries(before.file_coverage?.[side]).map(key));
+  return coverageGapEntries(after.file_coverage?.[side]).filter(file => !previous.has(key(file)));
 }
 
 const PARSER_LANGUAGE = { c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
@@ -929,10 +927,15 @@ const PARSER_LANGUAGE = { c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp',
   php: 'php', py: 'python', pyi: 'python', rb: 'ruby', rs: 'rust', swift: 'swift',
   ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript' };
 
-function newParsePaths(before, after, side) {
-  const known = new Set(coverageGaps(before.file_coverage?.[side]));
-  return (after.file_coverage?.[side] ?? []).filter(file => file.state === 'partial' && file.reason === 'parse' && !known.has(file.path))
-    .map(file => file.path);
+const isParserGap = file => file.state === 'partial' && file.reason === 'parse';
+
+function hasNewCoverageGaps(before, after) {
+  return ['old', 'fixed'].some(side => {
+    const observations = after.parser_probe?.[side]?.observations ?? [];
+    return newCoverageEntries(before, after, side).some(file => !isParserGap(file) ||
+      !file.sha256 || !observations.some(item => item.state === 'parse_limited'
+        && item.path === file.path && item.sha256 === file.sha256));
+  });
 }
 
 async function probeCoverage(dev, opts) {
@@ -946,7 +949,7 @@ async function probeCoverage(dev, opts) {
       const old = baseline.get(row.ghsa);
       if (!old || caseInputFingerprint(old) !== caseInputFingerprint(row)) return;
       for (const side of ['old', 'fixed']) {
-        const paths = newParsePaths(old, row, side);
+        const paths = newCoverageEntries(old, row, side).filter(isParserGap).map(file => file.path);
         if (!paths.length || !row.captures?.[side]) continue;
         const source = resolve(workdir, row.captures[side].source_root);
         const packets = row.source_packets[side];
