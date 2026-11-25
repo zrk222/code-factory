@@ -19,7 +19,10 @@ from factoryline.enterprise_receipts import (
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
-@pytest.mark.parametrize("mode", ["complete", "omitted", "out_of_scope", "truncated"])
+@pytest.mark.parametrize(
+    "mode",
+    ["complete", "omitted", "out_of_scope", "truncated", "missing", "wrong_attempt", "modified_response"],
+)
 def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mode):
     from types import ModuleType
 
@@ -38,6 +41,10 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
     exec(compile(source, str(workflow_path), "exec"), review.__dict__)
     plan_path = repo / "scripts/deep-audit-keyless-plan.json"
     plan = json.loads(plan_path.read_bytes())
+    families = set(flow["jobs"]["analyze"]["strategy"]["matrix"]["family"])
+    assert families == {lane["family"] for lane in plan["lanes"]}
+    assert flow["jobs"]["sign"]["needs"] == "assemble"
+    assert "id-token" not in flow["jobs"]["assemble"]["permissions"]
     paths = {path for row in plan["obligations"] for path in row["paths"]}
     for row in plan["obligations"]:
         for challenge in row["challenges"]:
@@ -59,6 +66,7 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         json.dumps(packet), encoding="utf-8"
     )
     monkeypatch.setenv("GITHUB_RUN_ID", "fixture-only")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     expected_coverage = set()
 
     def respond(request, timeout):
@@ -106,12 +114,37 @@ def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mo
         )
 
     monkeypatch.setattr(review, "urlopen", respond)
+    outputs = tmp_path / "family-outputs"
+    outputs.mkdir()
+    family = sorted(families)[0]
+    monkeypatch.setenv("REVIEW_FAMILY", family)
     if mode in {"out_of_scope", "truncated"}:
         with pytest.raises(ValueError):
             review.main()
         assert not (tmp_path / "review.json").exists()
         return
 
+    for family in sorted(families, reverse=True):
+        if mode == "missing" and family == "dependencies":
+            continue
+        monkeypatch.setenv("REVIEW_FAMILY", family)
+        review.main()
+        output = outputs / f"keyless-review-family-1-{family}"
+        output.mkdir()
+        (tmp_path / "review-family.json").replace(output / "review-family.json")
+    monkeypatch.delenv("REVIEW_FAMILY")
+    if mode in {"missing", "wrong_attempt", "modified_response"}:
+        if mode == "wrong_attempt":
+            monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+        if mode == "modified_response":
+            path = outputs / "keyless-review-family-1-dependencies/review-family.json"
+            part = json.loads(path.read_bytes())
+            part["raw_response"] += " "
+            path.write_text(json.dumps(part), encoding="utf-8")
+        with pytest.raises(ValueError):
+            review.main()
+        assert not (tmp_path / "review.json").exists()
+        return
     review.main()
     result = json.loads((tmp_path / "review.json").read_bytes())
     coverage = json.loads((tmp_path / "review-coverage.json").read_bytes())

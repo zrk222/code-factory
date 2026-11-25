@@ -14,16 +14,25 @@ jobs:
     if: github.repository == 'zrk222/code-factory'
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [configuration, dependencies, fuzz, runtime, secrets, static]
+    env:
+      REVIEW_FAMILY: ${{ matrix.family }}
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+      - &python_setup
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.11'
-      - name: Stage the exact synthetic read set and audit evidence
+      - &stage_packet
+        name: Stage the exact synthetic read set and audit evidence
         env:
           REVIEW_PACKET: ${{ inputs.review_packet }}
         run: |
@@ -98,11 +107,14 @@ jobs:
           cmake --build llama/build --config Release --target llama-server --parallel 4
           curl --fail --silent --show-error --location --max-time 600 -o review.gguf 'https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/f74adce6aa16316c625447af059dbebe4983757c/qwen2.5-coder-3b-instruct-q4_k_m.gguf'
           printf '%s  %s\n' '724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7' review.gguf | sha256sum -c -
-      - name: Run the read-only specialty inference
+      - &review_operation
+        name: Run the read-only specialty inference
         run: |
-          env -i PATH=/usr/bin:/bin llama/build/bin/llama-server -m review.gguf --host 127.0.0.1 --port 18080 -c 24576 -t 4 > model.log 2>&1 &
-          model_pid=$!
-          trap 'kill "$model_pid" 2>/dev/null || true; wait "$model_pid" 2>/dev/null || true' EXIT
+          if [ -n "${REVIEW_FAMILY:-}" ]; then
+            env -i PATH=/usr/bin:/bin llama/build/bin/llama-server -m review.gguf --host 127.0.0.1 --port 18080 -c 24576 -np 1 -t 4 > model.log 2>&1 &
+            model_pid=$!
+            trap 'kill "$model_pid" 2>/dev/null || true; wait "$model_pid" 2>/dev/null || true' EXIT
+          fi
           python - <<'PY'
           """Run the scoped synthetic review and hash-bind the individual inferences."""
 
@@ -209,13 +221,28 @@ jobs:
               }
 
 
-          def review_family(payload, deadline):
-              family = payload["family"]
-              paths = payload["sources"].keys()
-              messages = [
+          def family_messages(payload):
+              return [
                   {"role": "system", "content": INSTRUCTIONS},
                   {"role": "user", "content": canonical_bytes(payload).decode()},
               ]
+
+
+          def checked_response(raw, payload):
+              if len(raw) > 131_072:
+                  raise ValueError("review response exceeded the byte budget")
+              choice = strict_json(raw)["choices"][0]
+              if choice["finish_reason"] != "stop":
+                  raise ValueError(f"inference did not finish for {payload['family']}")
+              result = strict_json(choice["message"]["content"].encode())
+              validate_response(result, payload["sources"].keys())
+              return result
+
+
+          def review_family(payload, deadline):
+              family = payload["family"]
+              paths = payload["sources"].keys()
+              messages = family_messages(payload)
               remaining = deadline - monotonic()
               if remaining <= 0:
                   raise TimeoutError(f"review inference budget exhausted before {family}")
@@ -235,22 +262,19 @@ jobs:
                   headers={"Content-Type": "application/json"},
               )
               started = monotonic()
+              print(f"Review starting: {family}", flush=True)
               with urlopen(request, timeout=remaining) as response:
                   raw = response.read(131_073)
-              if len(raw) > 131_072 or monotonic() > deadline:
-                  raise ValueError(f"review response exceeded budget for {family}")
-              choice = strict_json(raw)["choices"][0]
-              if choice["finish_reason"] != "stop":
-                  raise ValueError(f"inference did not finish for {family}")
-              result = strict_json(choice["message"]["content"].encode())
-              validate_response(result, paths)
+              elapsed_ms = round((monotonic() - started) * 1000)
+              if monotonic() > deadline:
+                  raise TimeoutError(f"review response exceeded the deadline for {family}")
+              checked_response(raw, payload)
+              print(f"Review response: {family} in {elapsed_ms} ms", flush=True)
               return {
                   "family": family,
                   "prompt_sha256": digest(messages),
                   "response_sha256": sha256_bytes(raw),
-                  "elapsed_ms": round((monotonic() - started) * 1000),
-                  "assigned_paths": sorted(paths),
-                  "result": result,
+                  "elapsed_ms": elapsed_ms,
                   "raw_response": raw.decode(),
               }
 
@@ -292,21 +316,66 @@ jobs:
               return {"decision": decision, "findings": findings, "coverage_gaps": gaps}
 
 
-          def main():
-              plan = strict_json(Path("scripts/deep-audit-keyless-plan.json").read_bytes())
-              packet = strict_json(Path("review-model-input.json").read_bytes())
-              inputs = family_inputs(plan, packet)
+          def wait_for_reviewer():
               for _ in range(120):
                   try:
                       with urlopen(f"{LOOPBACK}/health", timeout=2) as response:
                           if response.status == 200:
-                              break
+                              return
                   except URLError:
                       sleep(1)
-              else:
-                  raise SystemExit("reviewer did not become ready")
-              deadline = monotonic() + 1200
-              coverage = [review_family(payload, deadline) for payload in inputs]
+              raise SystemExit("reviewer did not become ready")
+
+
+          def read_family_parts(inputs, identity):
+              attempt = identity["run_attempt"]
+              root = Path("family-outputs")
+              expected = {
+                  f"keyless-review-family-{attempt}-{payload['family']}": payload for payload in inputs
+              }
+              if {path.name for path in root.iterdir()} != set(expected):
+                  raise ValueError("hosted review family artifacts are missing, extra, or from another attempt")
+              return [read_family_part(root / name / "review-family.json", payload, identity)
+                      for name, payload in expected.items()]
+
+
+          def read_family_part(path, payload, identity):
+              with path.open("rb") as stream:
+                  encoded = stream.read(1_048_577)
+              if len(encoded) > 1_048_576:
+                  raise ValueError("hosted review family artifact exceeds the byte budget")
+              part = strict_json(encoded)
+              if (
+                  set(part) != {"identity", "family", "prompt_sha256", "response_sha256", "elapsed_ms", "raw_response"}
+                  or part["identity"] != identity
+                  or part["family"] != payload["family"]
+                  or part["prompt_sha256"] != digest(family_messages(payload))
+              ):
+                  raise ValueError("hosted review family assignment differs from the staged packet")
+              raw = part["raw_response"].encode()
+              if part["response_sha256"] != sha256_bytes(raw):
+                  raise ValueError("hosted review family response fingerprint differs")
+              part.pop("identity")
+              return {**part, "assigned_paths": sorted(payload["sources"]), "result": checked_response(raw, payload)}
+
+
+          def main():
+              plan = strict_json(Path("scripts/deep-audit-keyless-plan.json").read_bytes())
+              packet = strict_json(Path("review-model-input.json").read_bytes())
+              inputs = family_inputs(plan, packet)
+              identity = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                          "binding_sha256": digest(packet["binding"])}
+              family = os.environ.get("REVIEW_FAMILY")
+              if family:
+                  payload = next((row for row in inputs if row["family"] == family), None)
+                  if payload is None:
+                      raise ValueError("hosted review family is absent from the staged plan")
+                  wait_for_reviewer()
+                  part = review_family(payload, monotonic() + 1200)
+                  Path("review-family.json").write_bytes(canonical_bytes({"identity": identity, **part}))
+                  return
+
+              coverage = read_family_parts(inputs, identity)
               now = datetime.now(timezone.utc)
               response_sha256 = digest([row["response_sha256"] for row in coverage])
               review = (
@@ -334,14 +403,35 @@ jobs:
           PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: keyless-review-model-output
+          name: keyless-review-family-${{ github.run_attempt }}-${{ matrix.family }}
+          path: review-family.json
+          if-no-files-found: error
+
+  assemble:
+    needs: analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - *python_setup
+      - *stage_packet
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          path: family-outputs
+          pattern: keyless-review-family-${{ github.run_attempt }}-*
+      - *review_operation
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: keyless-review-model-output-${{ github.run_attempt }}
           path: |
             review.json
             review-coverage.json
           if-no-files-found: error
 
   sign:
-    needs: analyze
+    needs: assemble
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -349,7 +439,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: keyless-review-model-output
+          name: keyless-review-model-output-${{ github.run_attempt }}
       - uses: sigstore/gh-action-sigstore-python@a5caf349bc536fbef3668a10ed7f5cd309a4b53d
         with:
           inputs: review.json
