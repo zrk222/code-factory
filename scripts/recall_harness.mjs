@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
 import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
@@ -569,6 +570,20 @@ async function buildPreparedCase(dir, row, scope) {
   return prepareChanges(repo, dir, parent, fix, scopeExtensions(row.ecosystem, scope));
 }
 
+export async function publishPreparedCase(staging, directory, { rename = renameSync, platform = process.platform } = {}) {
+  const record = join(directory, 'case.json');
+  for (const wait of [25, 75, 150, null]) {
+    try {
+      rename(staging, directory);
+      return;
+    } catch (error) {
+      if (existsSync(record)) return;
+      if (wait === null || platform !== 'win32' || !['EACCES', 'EBUSY', 'EPERM'].includes(error.code)) throw error;
+    }
+    await delay(wait);
+  }
+}
+
 async function prepareCase(workdir, row, scope = 'ecosystem') {
   const key = caseDigest([row]);
   const cache = join(workdir, scope === 'scannable' ? 'cases-v4-scannable' : 'cases-v4'), directory = join(cache, key);
@@ -583,8 +598,7 @@ async function prepareCase(workdir, row, scope = 'ecosystem') {
     if (data.status === 'unfetchable') return data;
     rmSync(join(staging, 'repo'), { recursive: true, force: true });
     writeFileSync(join(staging, 'case.json'), JSON.stringify({ ...data, case_sha256: key }));
-    try { renameSync(staging, directory); }
-    catch (error) { if (!existsSync(record)) throw error; }
+    await publishPreparedCase(staging, directory);
     return read();
   } finally {
     rmSync(staging, { recursive: true, force: true });

@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { hunkAdjudicationIdentity, hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
-  familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact } from './recall_harness.mjs';
+  familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
+  publishPreparedCase } from './recall_harness.mjs';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
@@ -1136,6 +1137,47 @@ test('control checkpoints resume only while the final and retry reports still ma
   assert.equal(run().resumed_from_checkpoint, true);
 }));
 
+
+test('case publication retries transient Windows locks and preserves a competing receipt', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'recall-publish-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stage = join(root, 'staged'), destination = join(root, 'committed');
+  mkdirSync(stage);
+  writeFileSync(join(stage, 'case.json'), 'staged');
+  const failed = code => Object.assign(new Error(code), { code });
+  let attempts = 0;
+  const rename = (source, target) => {
+    if (++attempts === 1) throw failed('EPERM');
+    renameSync(source, target);
+  };
+  await publishPreparedCase(stage, destination, { rename, platform: 'win32' });
+  assert.equal(attempts, 2);
+  assert.equal(readFileSync(join(destination, 'case.json'), 'utf8'), 'staged');
+
+  let competitors = 0;
+  await publishPreparedCase(stage, destination, { platform: 'win32', rename: () => {
+    competitors++;
+    throw failed('EEXIST');
+  } });
+  assert.equal(competitors, 1);
+  assert.equal(readFileSync(join(destination, 'case.json'), 'utf8'), 'staged');
+
+  for (const [platform, code] of [['linux', 'EPERM'], ['win32', 'EXDEV']]) {
+    let errors = 0;
+    await assert.rejects(publishPreparedCase(stage, join(root, 'missing'), { platform, rename: () => {
+      errors++;
+      throw failed(code);
+    } }), { code });
+    assert.equal(errors, 1);
+  }
+
+  let locks = 0;
+  await assert.rejects(publishPreparedCase(stage, join(root, 'missing'), { platform: 'win32', rename: () => {
+    locks++;
+    throw failed('EACCES');
+  } }), { code: 'EACCES' });
+  assert.equal(locks, 4);
+});
 
 test('local Git source bytes survive preparation, scanning, and the reported packet inventory', () =>
   feederFixture(async ({ root, workdir, manifest, baseline, profile }) => {
