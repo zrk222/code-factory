@@ -13,7 +13,7 @@ from functools import cache, partial
 
 from . import canonical_json_compat_bytes
 
-from .audit_action_refs import _primitive_source_capture
+from .audit_action_refs import _primitive_source_capture, _tier_native_evidence
 from .captured_operand_audit import _source_index, entry_reach_tier
 
 _ROLE_REBUILD_CONTEXT = ContextVar("factory-role-rebuild-context", default=None)
@@ -610,13 +610,9 @@ def build_finding_tier_report(
         for path, digest in ((row.get("path"), row.get("sha256")),)
         if isinstance(path, str) and isinstance(digest, str)
     }
-    regenerated = {}
-    if _verifier_native_rows is not None:
-        # Only the independent complete-source pass supplies this invocation-local
-        # cache. Serialized claims and producer-owned models never enter it.
-        regenerated = {path: [] for path in bindings}
-        for row in _verifier_native_rows:
-            regenerated.setdefault(row["path"], []).append(row)
+    regenerated, source_model_failed = _tier_native_evidence(
+        raw_findings, bindings, source_bytes, _verifier_native_rows
+    )
     signing_cache = {}
     pickle_origin_cache = {}
     get_source_index = cache(partial(_source_index, source_bytes))
@@ -643,7 +639,6 @@ def build_finding_tier_report(
     abstention_fraction, retention_fraction = (
         (abstentions / total, 1.0) if total else (None, None)
     )
-    source_model_failed = regenerated.get(("independent_source_model",), False) is None
     native_model_state, gate_coverage = (
         ("UNAVAILABLE", False)
         if source_model_failed
@@ -696,27 +691,6 @@ def build_finding_tier_report(
     report["ledger_sha256"] = _tier_sha256(ledger)
     report["report_sha256"] = _tier_sha256(report)
     return report
-
-
-def _finding_native_rows(finding, captured, bound, cache, sources=None, bindings=None):
-    if not bound or not str(finding.get("code", "")).startswith("SECURITY_"):
-        return []
-    path = finding["path"]
-    if path not in cache:
-        key = ("independent_source_model",)
-        if key not in cache:
-            cache[key] = _regenerate_source_model(sources, bindings)
-        if cache[key] is None:
-            return []
-        cache[path] = _regenerate_native_findings(
-            path,
-            captured,
-            source_model=cache[key],
-            provider_mutation_cache=cache.setdefault(
-                ("independent_provider_mutations",), {}
-            ),
-        )
-    return cache[path]
 
 
 def _pickle_byte_origin_fields(finding, captured, bound, cache, tier):
@@ -5062,8 +5036,10 @@ def _finding_tier_ledger_row(
     path, source_hash, captured, bound_source = _finding_source_binding(
         finding, bindings, source_bytes
     )
-    native_rows = _finding_native_rows(
-        finding, captured, bound_source, regenerated, source_bytes, bindings
+    native_rows = (
+        regenerated.get(path, [])
+        if bound_source and str(finding.get("code", "")).startswith("SECURITY_")
+        else []
     )
     signing_evidence, credential_evidence, context = _finding_credential_evidence(
         finding,
