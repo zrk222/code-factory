@@ -9,6 +9,7 @@
 //   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... --out deltas.json
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
 //            [--max-control-increase N] [--extra-arg ARG]... [--candidate-extra-arg ARG]... --out verdict.json
+//            [--probe-coverage true] [--control-exclude DIRECTORY]...
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
 //   compare  before.json after.json
@@ -326,13 +327,14 @@ export function summarize(rows) {
 }
 
 // Async child processes so --jobs really runs cases side by side.
-function runProcess(command, args, { cwd, env, timeout = 1800000, bytes = false } = {}) {
+function runProcess(command, args, { cwd, env, timeout = 1800000, bytes = false, discardStdout = false } = {}) {
   return new Promise(done => {
-    const child = spawn(command, args, { cwd, env: { ...process.env, ...env } });
+    const child = spawn(command, args, { cwd, env: { ...process.env, ...env },
+      ...(discardStdout ? { stdio: ['ignore', 'ignore', 'pipe'] } : {}) });
     const out = [], err = [];
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeout);
-    child.stdout.on('data', chunk => out.push(chunk));
+    child.stdout?.on('data', chunk => out.push(chunk));
     child.stderr.on('data', chunk => err.push(chunk));
     child.on('error', error => { clearTimeout(timer); done({ status: -1, stdout: '', stderr: String(error) }); });
     child.on('close', status => { clearTimeout(timer);
@@ -740,8 +742,59 @@ function caseInputFingerprint(row) {
 function hasNewCoverageGaps(old, row) {
   return Object.entries(old.file_coverage ?? {}).some(([side, files]) => {
     const previous = new Set(coverageGaps(files));
-    return coverageGaps(row.file_coverage?.[side]).some(path => !previous.has(path));
+    const confirmedLimits = new Set(row.parser_probe?.[side]?.confirmed_limits);
+    return coverageGaps(row.file_coverage?.[side]).some(path => !previous.has(path) && !confirmedLimits.has(path));
   });
+}
+
+const PARSER_LANGUAGE = { c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
+  go: 'go', java: 'java', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  php: 'php', py: 'python', pyi: 'python', rb: 'ruby', rs: 'rust', swift: 'swift',
+  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript' };
+
+function newParsePaths(before, after, side) {
+  const known = new Set(coverageGaps(before.file_coverage?.[side]));
+  return (after.file_coverage?.[side] ?? []).filter(file => file.state === 'partial' && file.reason === 'parse' && !known.has(file.path))
+    .map(file => file.path);
+}
+
+async function probeCoverage(dev, opts) {
+  const workdir = resolve(opts.workdir ?? '.factory/recall-work');
+  const profile = JSON.parse(utf8(opts.profileBytes));
+  if (profile.engine !== 'semgrep') throw new Error('Fixed parser probe requires an OpenGrep profile');
+  const prefix = [profile.commands[0].argv[1], '--dump-ast', '--json', '--disable-version-check'];
+  for (const { before, after } of dev) {
+    const baseline = indexCases(before.cases);
+    await pool(after.cases, Number(opts.jobs ?? 6), async row => {
+      const old = baseline.get(row.ghsa);
+      if (!old || caseInputFingerprint(old) !== caseInputFingerprint(row)) return;
+      for (const side of ['old', 'fixed']) {
+        const paths = newParsePaths(old, row, side);
+        if (!paths.length || !row.captures?.[side]) continue;
+        const source = resolve(workdir, row.captures[side].source_root);
+        const packets = row.source_packets[side];
+        const packetsByPath = new Map(packets.map(packet => [packet.path, packet]));
+        verifyPreparedBytes(source, packets);
+        const observations = [];
+        for (const path of paths) {
+          const language = PARSER_LANGUAGE[extname(path).slice(1).toLowerCase()];
+          const packet = packetsByPath.get(path);
+          if (!language || !packet) continue;
+          const run = await runProcess(opts.opengrep, [...prefix, '--lang', language, join(source, path)],
+            { cwd: source, timeout: 60000, discardStdout: true });
+          const partial = run.status === 3 && /node type: ERROR|(?:syntax|parse) error|PartialParsing/i.test(run.stderr);
+          observations.push({ path, language, sha256: packet.sha256,
+            exit_code: run.status, timed_out: run.timedOut, diagnostic_sha256: sha256(run.stderr),
+            state: run.timedOut ? 'unresolved' : partial ? 'parse_limited' : run.status === 0 ? 'parsed' : 'unresolved' });
+        }
+        verifyPreparedBytes(source, packets);
+        row.parser_probe ??= {};
+        row.parser_probe[side] = { disputed_paths: paths, observations,
+          confirmed_limits: observations.filter(item => item.state === 'parse_limited').map(item => item.path) };
+      }
+    });
+  }
+  return { method: 'opengrep_dump_ast_v1', profile_sha256: sha256(opts.profileBytes), options: prefix.slice(1) };
 }
 
 function measureCaseChange(old, row, { lost, gained, newErrors, newCoverageGaps, failures }) {
@@ -810,9 +863,9 @@ function evaluationEvidence(result) {
   return { manifest_sha256: result.manifest_sha256, cases_sha256: result.manifest_cases_sha256,
     profile_sha256: result.profile_sha256, ruleset_sha256: result.ruleset_sha256, scan_directory: result.scan_directory,
     cases: result.cases.map(({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256, file_coverage,
-      scan_sides, initial_scan_sides, captures, initial_captures, retried_serially, outcome, status }) =>
+      scan_sides, initial_scan_sides, captures, initial_captures, parser_probe, retried_serially, outcome, status }) =>
       ({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256,
-        file_coverage, scan_sides, initial_scan_sides, captures, initial_captures, retried_serially, outcome, status })) };
+        file_coverage, scan_sides, initial_scan_sides, captures, initial_captures, parser_probe, retried_serially, outcome, status })) };
 }
 
 function pairedCaseEvidence({ before, after }) {
@@ -959,6 +1012,7 @@ async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
   const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
+  const excludedDirs = controlExcludedDirectories(opts);
   const labels = suppliedLabels(opts);
   const reviewOption = opts['require-reviewed-controls'];
   if (reviewOption !== undefined && reviewOption !== 'true') {
@@ -971,6 +1025,9 @@ async function evaluate(input) {
   const manifests = [].concat(opts.manifest);
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
   const candidateOpts = { ...opts, 'extra-arg': [].concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []) };
+  if (opts['probe-coverage'] !== undefined && !['true', 'false'].includes(opts['probe-coverage'])) {
+    throw new Error('--probe-coverage requires true or false');
+  }
   const dev = [];
   for (const manifest of manifests) {
     const before = await scoreManifest(manifest, opts.baseline, opts);
@@ -981,6 +1038,7 @@ async function evaluate(input) {
     dev.push({ manifest, before, after });
   }
   const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }) : [];
+  const parserProbe = opts['probe-coverage'] === 'true' ? await probeCoverage(dev, opts) : null;
   if (await fileFingerprint(engine.path) !== engine.receipt.executable_sha256) {
     throw new Error('Recall engine executable bytes changed during evaluation');
   }
@@ -988,12 +1046,14 @@ async function evaluate(input) {
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0) });
   if (checkpoint) applyGainRetention(verdict, checkpoint, dev);
   const settings = { ...rules, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
-    extra_args: [].concat(opts['extra-arg'] ?? []), candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []) };
+    extra_args: [].concat(opts['extra-arg'] ?? []), candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []),
+    ...(excludedDirs.length ? { control_excluded_directories: excludedDirs } : {}) };
   const population = reviewPopulation(settings, controlDeltas);
   const requireReviewed = reviewOption === 'true';
   verdict.precision_evidence = precisionEvidence(verdict, labels, controlDeltas, population, requireReviewed);
   verdict.decision = verdict.failures.length ? 'REJECT' : 'ACCEPT';
   const out = { schema: 'factory.recall-evaluation.v1', ...settings, ...verdict,
+    parser_probe: parserProbe,
     decision_scope: requireReviewed ? 'reviewed_development_controls' : 'development',
     control_population_sha256: population,
     dev: dev.map(pair => ({ manifest: pair.manifest, manifest_cases_sha256: pair.after.manifest_cases_sha256,
@@ -1033,7 +1093,7 @@ function controlLinkTarget(root, target) {
   return parts.join('/');
 }
 
-function controlLink(root, location) {
+function controlLink(root, location, eligible) {
   const link = readlinkSync(location);
   const target = isAbsolute(link) ? link : `${dirname(location)}${sep}${link}`;
   controlLinkTarget(root, resolve(target));
@@ -1041,7 +1101,7 @@ function controlLink(root, location) {
     return { link_target: controlLinkTarget(root, realpathSync.native(location)) };
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    if (controlSourceExtension(location)) throw new Error('Dangling control link occupies an eligible source path');
+    if (eligible) throw new Error('Dangling control link occupies an eligible source path');
     // Only record a missing final component with a resolvable in-tree parent.
     const parent = realpathSync.native(dirname(target));
     controlLinkTarget(root, parent);
@@ -1051,8 +1111,9 @@ function controlLink(root, location) {
   }
 }
 
-async function controlSource(root) {
+async function controlSource(root, excludedDirs) {
   const files = [];
+  const outsideScope = path => path.split('/').slice(0, -1).some(part => excludedDirs.includes(part));
   const visit = async (directory, prefix) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (entry.name === '.git') continue;
@@ -1062,16 +1123,17 @@ async function controlSource(root) {
       } else if (entry.isFile()) {
         files.push({ path, sha256: await fileFingerprint(location) });
       } else if (entry.isSymbolicLink()) {
-        files.push({ path, ...controlLink(root, location) });
+        files.push({ path, ...controlLink(root, location, controlSourceExtension(path) && !outsideScope(path)) });
       } else {
         throw new Error('Unsupported entry in control source tree');
       }
     }
   };
   await visit(root, '');
+  const supported = files.filter(file => file.sha256 && controlSourceExtension(file.path));
+  const excluded = new Set(supported.filter(({ path }) => outsideScope(path)).map(file => file.path).sort());
   return { paths: new Set(files.map(file => file.path)), hashes: new Map(files.map(file => [file.path, file.sha256])),
-    eligible: files.filter(file => file.sha256 && controlSourceExtension(file.path))
-      .map(file => file.path).sort(),
+    eligible: supported.map(file => file.path).filter(path => !excluded.has(path)).sort(), excluded, excludedDirs,
     evidence: { sha256: caseDigest(files.sort(byPath)), entries: files.length } };
 }
 
@@ -1094,6 +1156,7 @@ async function controlObservation(context, directory, report, source) {
     findings = await scan({ ...context, packetPaths: source.paths }, directory, report, true);
     notes = findings.notes;
     notes.control_coverage = controlScanCoverage(source.eligible, findings.coverage);
+    if (source.excluded.size) notes.control_coverage.excluded = [...source.excluded].map(path => ({ path, reason: 'declared_control_exclusion' }));
     if (!notes.control_coverage.complete && !scanIssue(notes)) {
       notes.other = 1;
       notes.detail = 'Control scan must cover every eligible source file';
@@ -1102,12 +1165,15 @@ async function controlObservation(context, directory, report, source) {
     if (findings.some(finding => !source.paths.has(finding.path))) {
       throw new Error('Control finding path is absent from the source tree');
     }
+    if (findings.some(finding => source.excluded.has(finding.path))) {
+      throw new Error('Scanner emitted findings outside the declared control scope');
+    }
   } catch (error) {
     findings = [];
     notes = { ...(notes ?? error.diagnostics), other: 1, detail: String(error.message).slice(-300) };
   }
   try {
-    if ((await controlSource(directory)).evidence.sha256 !== source.evidence.sha256) {
+    if ((await controlSource(directory, source.excludedDirs)).evidence.sha256 !== source.evidence.sha256) {
       throw new Error('Control source byte fingerprints differ');
     }
   } catch (error) {
@@ -1139,10 +1205,20 @@ export function controlFindingDeltas(before, after) {
   return { added: onlyIn(now, old), removed: onlyIn(old, now) };
 }
 
+function controlExcludedDirectories(opts) {
+  const excludedDirs = [...new Set([].concat(opts['control-exclude'] ?? []))].sort();
+  if (excludedDirs.some(path => typeof path !== 'string' || !/^[\w-][\w.-]*$/.test(path))) {
+    throw new Error('--control-exclude requires a single directory name');
+  }
+  return excludedDirs;
+}
+
 async function controlDeltas_(opts) {
   const [before, after] = [].concat(opts.rules);
+  const excludedDirs = controlExcludedDirectories(opts);
+  const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/**`, '--exclude', `**/${path}/**`]);
   const base = { profile: JSON.parse(utf8(opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'))),
-    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? []),
+    bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', extra: [].concat(opts['extra-arg'] ?? [], exclusionArgs),
     rules: resolve(before), rulesSha256: opts.ruleFingerprints?.baseline_sha256 };
   const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
     rules: resolve(after), rulesSha256: opts.ruleFingerprints?.candidate_sha256 };
@@ -1157,7 +1233,7 @@ async function controlDeltas_(opts) {
       const reportsRoot = realpathSync(workdir);
       if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
       scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
-      const source = await controlSource(directory);
+      const source = await controlSource(directory, excludedDirs);
       const context = { base, candidate, directory, source, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
       let attempt = await controlPair(context, '');
       let recovery = {};
@@ -1336,7 +1412,7 @@ async function controls(opts) {
   const [before, after] = [].concat(opts.rules);
   const deltas = await controlDeltas_(opts);
   writeFileSync(opts.out, `${JSON.stringify({ schema: 'factory.recall-controls.v1', before_sha256: sha256(readFileSync(before)),
-    after_sha256: sha256(readFileSync(after)), deltas }, null, 1)}\n`);
+    after_sha256: sha256(readFileSync(after)), control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
   for (const delta of deltas) console.log(delta.dir, delta.before, '->', delta.after, delta.error ?? '');
   if (deltas.some(delta => delta.error)) process.exitCode = 2;
 }
