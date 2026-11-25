@@ -2459,25 +2459,46 @@ def _alerts(tmp_path: Path) -> Path:
     return path
 
 
+def test_blind_packet_samples_each_rule_without_order_bias(tmp_path):
+    rules = tmp_path / "review-rules.yml"
+    rules.write_text(REVIEW_RULES + "  - id: fixture.unmapped\n", encoding="utf-8")
+    cwes = _gain["rule_cwes"](rules)
+    assert cwes == {
+        "fixture.unmapped": [],
+        "javascript.parameter-shell-command": ["CWE-78"],
+        "python.unsafe-deserialization-unscoped": ["CWE-502"],
+    }
+    rows = _gain["read_json"](_alerts(tmp_path))[:-1]
+    identify = _gain["item_id"]
+    assert identify({**rows[0], "on_fix_hunk": False}) == identify(rows[0])
+    assert len({identify(row) for row in rows}) == len(rows)
+    other_rule = {**rows[0], "rule": "fixture.unmapped"}
+    assert identify(other_rule) != identify(rows[0])
+    rows.append(other_rule)
+    choose = _gain["stratified"]
+    selected = choose(rows, per_rule=2, seed=29)
+    assert selected == choose(list(reversed(rows)), per_rule=2, seed=29)
+    assert other_rule in selected
+    assert len(selected) == 3
+    malformed = tmp_path / "invalid.json"
+    malformed.write_text("{", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        _gain["read_json"](malformed)
+
+
 def test_packet_is_blinded_deduplicated_and_sealed(tmp_path):
     rules = tmp_path / "rules.yml"
     rules.write_text(REVIEW_RULES)
-    _gain["review_main"](
-        [
-            "packet",
-            "--alerts",
-            str(_alerts(tmp_path)),
-            "--rules",
-            str(rules),
-            "--cohort",
-            "t",
-            "--seed",
-            "7",
-            "--out",
-            str(tmp_path / "p.json"),
-            "--key",
-            str(tmp_path / "k.json"),
-        ]
+    _gain["build_packet"](
+        argparse.Namespace(
+            alerts=_alerts(tmp_path),
+            rules=rules,
+            cohort="t",
+            seed=7,
+            per_rule=30,
+            out=tmp_path / "p.json",
+            key=tmp_path / "k.json",
+        )
     )
     packet = json.loads((tmp_path / "p.json").read_text())
     key = json.loads((tmp_path / "k.json").read_text())
@@ -2535,17 +2556,21 @@ def test_judge_and_adjudication_flow(tmp_path):
     packet = json.loads((tmp_path / "p.json").read_text())
     first = _labels(packet, ["TP", "FP", "TP"], "a", tmp_path)
     second = _labels(packet, ["TP", "UNCLEAR", "FP"], "b", tmp_path)
-    _gain["review_main"](
-        [
-            "judge",
-            "--packet",
-            str(tmp_path / "p.json"),
-            "--labels",
-            str(first),
-            str(second),
-            "--out",
-            str(tmp_path / "j-in.json"),
-        ]
+    packet_sha = _gain["digest"]((tmp_path / "p.json").read_bytes())
+    first_labels, second_labels = _gain["review_label_pair"](
+        [first, second], packet, packet_sha, ["a", "b"]
+    )
+    assert [row["verdict"] for row in first_labels] == ["TP", "FP", "TP"]
+    assert [row["verdict"] for row in second_labels] == ["TP", "UNCLEAR", "FP"]
+    transposed = {"packet_sha256": packet_sha, "labels": list(reversed(first_labels))}
+    with pytest.raises(SystemExit, match="item order"):
+        _gain["labels_by_position"](packet, transposed, packet_sha)
+    _gain["build_judge"](
+        argparse.Namespace(
+            packet=tmp_path / "p.json",
+            labels=[first, second],
+            out=tmp_path / "j-in.json",
+        )
     )
     disagreements = json.loads((tmp_path / "j-in.json").read_text())["disagreements"]
     assert [row["position"] for row in disagreements] == [1, 2]
