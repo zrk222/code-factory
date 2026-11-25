@@ -1,0 +1,11 @@
+export function attachment(name: string, href: string) {
+  const label = escapeHtml(name);
+  // ok: javascript.html-template-unescaped-interpolation
+  return `<a class="attachment" download="${label}">${label}</a>`;
+}
+
+export function attachmentRaw(name: string) {
+  const label = name.trim();
+  // ruleid: javascript.html-template-unescaped-interpolation
+  return `<a class="attachment" download="${label}">${label}</a>`;
+}

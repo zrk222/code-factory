@@ -1,20 +1,20 @@
 export function span(css: string, html: string) {
-  // retired rule: html-template interpolation (precision 2/13, 25 Nov)
+  // ruleid: javascript.html-template-unescaped-interpolation
   return `<span style="${css}">${html}</span>`;
 }
 
 export function spanSafe(css: string, html: string) {
-  // retired rule: html-template interpolation, safe form
+  // ok: javascript.html-template-unescaped-interpolation
   return `<span style="${escapeAttr(css)}">${html}</span>`;
 }
 
 export function slot(tagName: string, name: string, value: string) {
-  // retired rule: html-template interpolation (precision 2/13, 25 Nov)
+  // ruleid: javascript.html-template-unescaped-interpolation
   return `<${tagName} name="${name}">${value}</${tagName}>`;
 }
 
 export function text(name: string) {
-  // retired rule: html-template interpolation, safe form
+  // ok: javascript.html-template-unescaped-interpolation
   return `Hello ${name}`;
 }
 

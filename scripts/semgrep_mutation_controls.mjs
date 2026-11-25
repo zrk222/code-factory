@@ -184,6 +184,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.archive-path-traversal': 3,
   'opt.factory.rules.javascript.dom-innerhtml-from-variable': 1,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
+  'opt.factory.rules.javascript.html-template-unescaped-interpolation': 3,
   'opt.factory.rules.javascript.parameter-shell-command': 6,
   'opt.factory.rules.javascript.parameter-sql-text': 2,
   'opt.factory.rules.javascript.request-command-injection': 4,
@@ -230,13 +231,15 @@ export const typescriptExtensionEndpoints = Object.freeze([
   // The direct sink and interpolation are separate native spans on these lines.
   ['parameter-shell-command', 207, [[19, 78], [28, 41]]], ['parameter-shell-command', 217],
   ['parameter-sql-text', 233, [[21, 65], [56, 63]]], ['parameter-path-join-without-containment', 247],
+  ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
   ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
   ['request-path-traversal', 305], ['request-path-traversal', 312], ['request-path-traversal', 314],
   ['parameter-path-join-without-containment', 328], ['parameter-sql-text', 343],
   ['parameter-shell-command', 358], ['parameter-shell-command', 360],
   ['request-path-traversal', 379], ['request-path-traversal', 381],
   ['parameter-path-join-without-containment', 403],
-  ['parameter-shell-command', 417],
+  ['parameter-shell-command', 417], ['parameter-shell-command', 431],
+  ['html-template-unescaped-interpolation', 443],
 ]);
 export const tsxQualificationSuffix = readFileSync(
   new URL('../deploy/deep-adapters/rules/tests/tsx-controls.txt', import.meta.url), 'utf8');
@@ -266,9 +269,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 63 rules (under the 64-rule deep-audit bound) and 252 annotated findings.
-const REVIEWED_RULES = 63;
-const REVIEWED_FINDINGS = 252;
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 255 annotated findings.
+const REVIEWED_RULES = 64;
+const REVIEWED_FINDINGS = 255;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -324,7 +327,8 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'tsx-sql-text-controls.txt'], ['ts', 'tsx-shell-text-controls.txt'],
   ['ts', 'tsx-fs-identity-controls.txt'], ['ts', 'tsx-sql-tagged-controls.txt'],
   ['ts', 'tsx-path-template-controls.txt'], ['ts', 'tsx-shell-wrapper-controls.txt'],
-  ['ts', 'tsx-shell-binding-controls.txt'], ['ts', 'tsx-shell-helper-controls.txt'],
+  ['ts', 'tsx-shell-binding-controls.txt'],
+  ['ts', 'tsx-html-escaped-local-controls.txt'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
