@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -1035,4 +1035,47 @@ test('a control incomplete on both rulesets is rejected even with matching count
   const pair = { before: result([]), after: result([]) };
   assert.equal(gate({ dev: [pair], controls: [{ dir: 'control', before: 4, after: 4, incomplete_on_both: 'timeout' }] }).decision, 'REJECT');
   assert.equal(gate({ dev: [pair], controls: [{ dir: 'pdf.js', error: 'Control scan incomplete' }] }).decision, 'REJECT');
+});
+
+test('a resumed score reuses only exactly matching completed cases', () => feederFixture(async fixture => {
+  const { root, manifest, baseline, opts } = fixture;
+  const checkpointDir = join(root, 'checkpoints');
+  const resumable = { ...opts, 'checkpoint-dir': checkpointDir };
+  const fresh = await scoreManifest(manifest, baseline, resumable);
+  assert.deepEqual(fresh.resumed_cases, []);
+  assert.equal(readdirSync(checkpointDir).length, 1);
+  // A second run after an interruption reuses the completed case and reports the same outcome.
+  const resumed = await scoreManifest(manifest, baseline, resumable);
+  assert.deepEqual(resumed.resumed_cases, [feederRow.ghsa]);
+  assert.deepEqual(resumed.summary, fresh.summary);
+  assert.deepEqual(resumed.cases.map(row => [row.ghsa, row.outcome, row.hunk_hit]),
+    fresh.cases.map(row => [row.ghsa, row.outcome, row.hunk_hit]));
+  // Any change to the ruleset bytes misses the checkpoint.
+  const revised = join(root, 'revised.yml');
+  writeFileSync(revised, readFileSync(baseline, 'utf8') + '# clean-miss\n');
+  const changed = await scoreManifest(manifest, revised, resumable);
+  assert.deepEqual(changed.resumed_cases, []);
+  assert.equal(changed.summary.hunk_hits, 0);
+  // A timed-out case is never kept, so a resumed run rescans it.
+  const timeouts = join(root, 'retry.yml');
+  writeFileSync(timeouts, readFileSync(baseline, 'utf8') + '# retry\n');
+  const before = readdirSync(checkpointDir).length;
+  const interruptedByTimeout = await scoreManifest(manifest, timeouts, { ...resumable, jobs: 1 });
+  assert.ok(interruptedByTimeout.cases[0].retried_serially);
+  // Even when the serial retry then finishes, the timed-out pass is not checkpointed.
+  assert.equal(readdirSync(checkpointDir).length, before);
+}));
+
+test('checkpoint records are bound to their full input fingerprint', async () => {
+  const { checkpointKey, readCheckpoint, writeCheckpoint } = await import('./recall_harness.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'cf-checkpoint-'));
+  try {
+    const inputs = { case_sha256: 'a', ruleset_sha256: 'b' };
+    writeCheckpoint(root, inputs, { outcome: 'hit' });
+    assert.deepEqual(readCheckpoint(root, inputs), { outcome: 'hit' });
+    assert.equal(readCheckpoint(root, { ...inputs, ruleset_sha256: 'c' }), null);
+    // A record whose stored inputs do not match its name is ignored.
+    writeFileSync(join(root, `${checkpointKey(inputs)}.json`), JSON.stringify({ inputs: { other: 1 }, result: { outcome: 'hit' } }));
+    assert.equal(readCheckpoint(root, inputs), null);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

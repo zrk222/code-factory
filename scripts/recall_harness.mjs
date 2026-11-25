@@ -10,7 +10,7 @@
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
 //            [--max-control-increase N] [--extra-arg ARG]... [--candidate-extra-arg ARG]... --out verdict.json
 //            [--probe-coverage true] [--control-exclude DIRECTORY]...
-//            [--adjudicated-losses plan.json]
+//            [--adjudicated-losses plan.json] [--checkpoint-dir DIR]
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
 //   compare  before.json after.json
@@ -696,6 +696,35 @@ function scoringContext(opts, rulesPath) {
     scope: opts.scope === 'scannable' ? 'scannable' : 'ecosystem' };
 }
 
+// Restartable qualification: a completed scored case (or control pair) is
+// kept under the exact fingerprint of everything that decides its outcome,
+// and reused only when every input matches. Timeouts and errors are never
+// kept, so a resumed run rescans them.
+export function checkpointKey(inputs) {
+  return sha256(Buffer.from(JSON.stringify(inputs)));
+}
+
+export function readCheckpoint(root, inputs) {
+  if (!root) return null;
+  const path = join(root, `${checkpointKey(inputs)}.json`);
+  if (!existsSync(path)) return null;
+  try {
+    const saved = JSON.parse(readFileSync(path, 'utf8'));
+    return JSON.stringify(saved.inputs) === JSON.stringify(inputs) ? saved.result : null;
+  } catch { return null; }
+}
+
+export function writeCheckpoint(root, inputs, result) {
+  if (!root) return;
+  mkdirSync(root, { recursive: true });
+  const path = join(root, `${checkpointKey(inputs)}.json`);
+  const staging = `${path}.${process.pid}.tmp`;
+  writeFileSync(staging, JSON.stringify({ inputs, result }));
+  renameSync(staging, path);
+}
+
+const checkpointable = row => row.status !== 'error' && row.outcome !== 'timeout' && row.outcome !== 'error';
+
 export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
   const manifestBytes = readFileSync(manifestPath);
   const manifest = JSON.parse(utf8(manifestBytes));
@@ -707,7 +736,20 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
     try { return { ...row, ...(await scoreOne(scanContext, row)) }; }
     catch (error) { return { ...row, status: 'error', detail: String(error.message).slice(-300) }; }
   };
-  const rows = await pool(manifest.cases, Number(opts.jobs ?? 6), one);
+  const checkpoints = opts['checkpoint-dir'] ? resolve(opts['checkpoint-dir']) : null;
+  const engineSha = checkpoints ? await fileFingerprint(executablePath(context.bin)) : null;
+  const resumed = [];
+  const checkpointed = async row => {
+    const inputs = { schema: 'factory.recall-case-checkpoint.v1', manifest_cases_sha256: manifestDigest,
+      case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
+      engine_sha256: engineSha, engine_args: context.extra, scope: context.scope };
+    const saved = readCheckpoint(checkpoints, inputs);
+    if (saved) { resumed.push(row.ghsa); return saved; }
+    const result = await one(row);
+    if (checkpointable(result)) writeCheckpoint(checkpoints, inputs, result);
+    return result;
+  };
+  const rows = await pool(manifest.cases, Number(opts.jobs ?? 6), checkpointed);
   // Engine timeouts depend on machine load; repeat those cases one at a time
   // so a timeout is only recorded when it happens on an otherwise idle engine.
   for (let index = 0; index < rows.length; index++) {
@@ -721,6 +763,7 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
     manifest_sha256: sha256(manifestBytes), ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
     scope: context.scope, engine_args: context.extra,
     scan_directory: basename(context.scanRoot),
+    ...(checkpoints ? { resumed_cases: resumed.sort() } : {}),
     argv: profileArgv(context.profile, { bin: context.bin, rules: '{rules}', report: '{report}', source: '{source}', extra: context.extra }),
     summary: summarize(rows), cases: rows };
 }
@@ -1280,6 +1323,14 @@ async function controlDeltas_(opts) {
       if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
       scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
       const source = await controlSource(directory, excludedDirs);
+      const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v1', dir,
+        source_tree: source.evidence, excluded: excludedDirs, baseline_sha256: base.rulesSha256 ?? sha256(readFileSync(base.rules)),
+        candidate_sha256: candidate.rulesSha256 ?? sha256(readFileSync(candidate.rules)),
+        profile_sha256: sha256(Buffer.from(JSON.stringify(base.profile))),
+        engine_sha256: await fileFingerprint(executablePath(base.bin)), extra: base.extra,
+        candidate_extra: candidate.extra } : null;
+      const savedDelta = checkpointInputs && readCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs);
+      if (savedDelta) { deltas.push({ ...savedDelta, resumed_from_checkpoint: true }); continue; }
       const context = { base, candidate, directory, source, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
       let attempt = await controlPair(context, '');
       let recovery = {};
@@ -1296,9 +1347,11 @@ async function controlDeltas_(opts) {
       const { added, removed } = controlFindingDeltas(old, now);
       const lines = controlSnippets(directory, [...old, ...now], source.hashes);
       const snip = f => withSnippet(lines, f);
-      deltas.push({ dir, before: old.length, after: now.length, source_tree: source.evidence, scan_sides, ...recovery,
+      const delta = { dir, before: old.length, after: now.length, source_tree: source.evidence, scan_sides, ...recovery,
         added: added.map(snip), removed: removed.map(snip),
-        emitted: now.map(snip) });
+        emitted: now.map(snip) };
+      if (checkpointInputs) writeCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs, delta);
+      deltas.push(delta);
     } catch (error) { deltas.push({ dir, error: String(error.message).slice(-300) }); }
   }
   return deltas;
