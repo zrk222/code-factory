@@ -152,6 +152,7 @@ held-out set was not scored. Strict hunk recall, same definition as above.
 | [`b986ab2`](evidence/recall-evaluation-b986ab2-dev.json) | 30 | 9 (/55) | 18 | 21 | 0 | 0.78 | +22 | ACCEPT |
 | [`21299b0`](evidence/recall-evaluation-21299b0-dev.json) | 30 | 9 | 18 | 30 | 0 | 0.77 | +22 | REJECT (one control) |
 | [`a79afe7`](evidence/recall-evaluation-a79afe7-dev.json) | 29 | 9 | 18 | 30 | 0 | 0.78 | +21 | ACCEPT |
+| [`07ebe50`](evidence/recall-evaluation-07ebe50-dev.json) | 29 | 9 | 18 | 30 | 0 | 0.78 | +21 | ACCEPT |
 
 `21299b0` adds Ruby and Java SQL-text rules, Go ordering/grouping sinks, and
 merges two rule pairs to stay at 64 rules. It passes every development
@@ -163,7 +164,8 @@ those two names removed, that rule runs on one such file in 0.9 s instead
 of 7.6 s. `a79afe7` drops those two names and is accepted; it gives up
 one exposed hit (nocobase calls a local `run(command, env)` wrapper).
 Engine for all three receipts: OpenGrep 1.15.0, binary sha256 `a10cebc3…0e33`;
-`a79afe7` ruleset sha256 `2affe435…bbbe`.
+`a79afe7` ruleset sha256 `2affe435…bbbe`; `07ebe50` (branch-aware Python
+format checks, fs and database receiver identity) ruleset sha256 `e3e5787c…`.
 
 Harness fixes found by these runs: the scan profile is pinned for both sides
 of a run; a parse warning that quotes source text is no longer counted as an
