@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention,
+import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest } from './recall_harness.mjs';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 
@@ -241,6 +241,42 @@ test('observation loop queues control alerts once and gates on labels', async ()
   assert.deepEqual(checkLabels(tp, deltas).labeled_precision.tp, 1);
 });
 
+test('controlFindingDeltas keeps each same-line region and rejects duplicated evidence', () => {
+  const findings = columns => sarifFindings({ runs: [{ results: columns.map(startColumn => {
+    const location = loc('sample.py', 3);
+    Object.assign(location.physicalLocation.region, { startColumn, endLine: 3, endColumn: startColumn + 1 });
+    return { ruleId: 'fixture.review', locations: [location] };
+  }) }] });
+  const before = findings([2, 5]), after = findings([2, 7]);
+  assert.deepEqual(controlFindingDeltas(before, after), { added: [after[1]], removed: [before[1]] });
+  assert.throws(() => controlFindingDeltas(before, findings([2, 2])), /Duplicate scanner span/);
+});
+
+test('precision evidence uses current emitted decisions and reports legacy span conflicts', async () => {
+  const { queueLabels, checkLabels, labelKey } = await import('./recall_harness.mjs');
+  const common = { rule: 'fixture.review', path: 'sample.py', line: 3, snippet: 'review marker' };
+  const first = { ...common, span: [2, 0, 4] }, second = { ...common, span: [6, 0, 8] };
+  const historical = { ...common, line: 7, snippet: 'previous review' };
+  const delta = { dir: '/ctl/demo', added: [first, second], emitted: [first, second] };
+  const label = (repo, alert, verdict) => ({ ...alert, repo, key: labelKey(repo, alert), verdict });
+  const review = checkLabels({ labels: [label('demo', first, 'TP'), label('demo', historical, 'FP'),
+    label('other', historical, 'TP')] }, [delta]);
+  assert.deepEqual([review.emitted, review.judged, review.unreviewed_emitted], [2, 1, 1]);
+  assert.deepEqual([review.labeled_precision.tp, review.labeled_precision.fp], [1, 0]);
+  assert.deepEqual(review.tp_dropped, []);
+  const legacy = label('demo', common, 'FP');
+  const ambiguous = checkLabels({ labels: [legacy] }, [delta]);
+  assert.deepEqual(ambiguous.ambiguous_labels, [legacy.key]);
+  assert.equal(ambiguous.labeled_precision, null);
+  assert.equal(queueLabels({ labels: [legacy] }, [delta]).labels.length, 3);
+  assert.deepEqual(checkLabels({ labels: [legacy] }, [{ ...delta, emitted: [first] }]).fp_returned, [legacy.key]);
+  const swapped = { ...delta, added: [second], removed: [first], emitted: [second] };
+  assert.deepEqual(checkLabels({ labels: [legacy] }, [swapped]).ambiguous_labels, [legacy.key]);
+  assert.equal(queueLabels({ labels: [legacy] }, [swapped]).labels.length, 2);
+  assert.equal(queueLabels({ labels: [legacy] }, [{ dir: delta.dir, added: [second] }]).labels.length, 2);
+  assert.notEqual(labelKey('demo', first), labelKey('demo', second));
+});
+
 
 const feederRow = { ghsa: 'GHSA-xxxx-yyyy-zzzz', ecosystem: 'PyPI', cwes: ['CWE-79'],
   published: '2026-09-10', repository: 'example/label-demo', fix: '1'.repeat(40) };
@@ -444,6 +480,7 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   const dev = evaluation.dev[0];
   const observed = dev.after_evidence.cases[0];
   assert.equal(evaluation.decision, 'REJECT');
+  assert.deepEqual(evaluation.precision_evidence, { state: 'not_run', emitted: 0, adjudicated: 0, unreviewed: 0 });
   assert.deepEqual(evaluation.new_errors, [feederRow.ghsa]);
   assert.deepEqual(evaluation.new_coverage_gaps, []);
   assert.deepEqual(dev.cases[0].matched_hunk_families, ['xss']);
@@ -464,9 +501,12 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
 test('evaluation refuses a missing or mismatched engine and ruleset drift without writing a new receipt', () =>
   feederFixture(({ root, workdir, manifest, baseline, candidate, profile }) => {
     const output = join(root, 'unqualified.json');
-    const evaluate = opengrep => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
+    const evaluate = (opengrep, ...extra) => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
       '--baseline', baseline, '--candidate', candidate, '--profile', profile, '--workdir', workdir,
-      '--opengrep', opengrep, '--jobs', '1', '--out', output], { encoding: 'utf8' });
+      '--opengrep', opengrep, '--jobs', '1', '--out', output, ...extra], { encoding: 'utf8' });
+    const missingLabels = evaluate(process.execPath, '--dir', root, '--labels', join(root, 'missing-labels.json'));
+    assert.notEqual(missingLabels.status, 0);
+    assert.match(missingLabels.stderr, /ENOENT.*missing-labels/);
     const missing = evaluate(join(root, 'unavailable-engine'));
     assert.notEqual(missing.status, 0);
     assert.match(missing.stderr, /engine executable could not be resolved/);

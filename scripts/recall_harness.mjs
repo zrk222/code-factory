@@ -222,6 +222,12 @@ export function profileArgv(profile, { bin, rules, report, source, extra = [] })
   return argv;
 }
 
+function regionSpan({ startLine, startColumn, endLine, endColumn }) {
+  const lineOffset = (endLine ?? startLine) - startLine;
+  if (startColumn === undefined && lineOffset === 0 && endColumn === undefined) return null;
+  return [startColumn ?? null, lineOffset, endColumn ?? null];
+}
+
 export function sarifFindings(sarif, packetPaths) {
   const out = [];
   const clean = loc => sarifPath(loc.artifactLocation.uri, packetPaths);
@@ -232,8 +238,9 @@ export function sarifFindings(sarif, packetPaths) {
       const trace = (result.codeFlows ?? []).flatMap(flow => flow.threadFlows ?? [])
         .flatMap(thread => thread.locations ?? []).map(step => step.location?.physicalLocation)
         .filter(step => step?.artifactLocation && step.region).map(step => [clean(step), step.region.startLine]);
+      const span = regionSpan(location.region);
       out.push({ rule: result.ruleId.split('.').slice(-2).join('.'), path: clean(location),
-        line: location.region.startLine, trace });
+        line: location.region.startLine, ...(span ? { span } : {}), trace });
     }
   }
   return out;
@@ -896,10 +903,39 @@ function applyGainRetention(verdict, bytes, pairs) {
   if (retention.lost.length) verdict.failures.push(`lost ${retention.lost.length} checkpoint hit(s): ${retention.lost.join(', ')}`);
 }
 
+function suppliedLabels(opts) {
+  if (!opts.labels) return null;
+  if (!opts.dir) throw new Error('Control directories are required when reviewing labels');
+  const labels = JSON.parse(utf8(readFileSync(opts.labels)));
+  if (!Array.isArray(labels?.labels)) throw new Error('Invalid control label sheet');
+  return labels;
+}
+
+function precisionState(controls, review) {
+  if (!controls.length) return 'not_run';
+  if (controls.some(delta => delta.error || delta.incomplete_on_both)) return 'incomplete';
+  if (!review.emitted) return 'no_alerts';
+  if (!review.judged) return 'unreviewed';
+  return review.unreviewed_emitted || review.ambiguous_labels.length ? 'partially_reviewed' : 'reviewed';
+}
+
+function precisionEvidence(verdict, labels, controls) {
+  const review = checkLabels(labels, controls);
+  if (labels) {
+    verdict.labels = review;
+    if (review.fp_returned.length) verdict.failures.push(`labeled false positives emitted again: ${review.fp_returned.length}`);
+    if (review.tp_dropped.length) verdict.failures.push(`labeled true positives no longer emitted: ${review.tp_dropped.length}`);
+    if (review.ambiguous_labels.length) verdict.failures.push(`ambiguous control label matches: ${review.ambiguous_labels.length}`);
+  }
+  return { state: precisionState(controls, review), emitted: review.emitted,
+    adjudicated: review.judged, unreviewed: review.unreviewed_emitted };
+}
+
 async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
   const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
+  const labels = suppliedLabels(opts);
   const engine = await bindEvaluationEngine(JSON.parse(utf8(opts.profileBytes)),
     opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
   opts.opengrep = engine.path;
@@ -923,11 +959,7 @@ async function evaluate(input) {
   verifyEvaluationRules(opts, rules);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0) });
   if (checkpoint) applyGainRetention(verdict, checkpoint, dev);
-  if (opts.labels && existsSync(opts.labels)) {
-    verdict.labels = checkLabels(JSON.parse(readFileSync(opts.labels, 'utf8')), controlDeltas);
-    if (verdict.labels.fp_returned.length) verdict.failures.push(`labeled false positives emitted again: ${verdict.labels.fp_returned.length}`);
-    if (verdict.labels.tp_dropped.length) verdict.failures.push(`labeled true positives no longer emitted: ${verdict.labels.tp_dropped.length}`);
-  }
+  verdict.precision_evidence = precisionEvidence(verdict, labels, controlDeltas);
   verdict.decision = verdict.failures.length ? 'REJECT' : 'ACCEPT';
   const out = { schema: 'factory.recall-evaluation.v1', ...rules, engine: engine.receipt,
     profile_sha256: sha256(opts.profileBytes), extra_args: [].concat(opts['extra-arg'] ?? []),
@@ -970,6 +1002,20 @@ async function controlPair({ base, candidate, directory, reports }, suffix, retr
   return { old: old.findings, now: now.findings, scan_sides, issues: Object.values(scan_sides).map(scanIssue) };
 }
 
+function controlFindingIndex(findings) {
+  const bySpan = new Map(findings.map(finding => [
+    JSON.stringify([finding.rule, finding.path, finding.line, finding.span ?? null]), finding,
+  ]));
+  if (bySpan.size !== findings.length) throw new Error('Duplicate scanner span in precision controls');
+  return bySpan;
+}
+
+export function controlFindingDeltas(before, after) {
+  const old = controlFindingIndex(before), now = controlFindingIndex(after);
+  const onlyIn = (left, right) => [...left.entries()].filter(([key]) => !right.has(key)).map(([, finding]) => finding);
+  return { added: onlyIn(now, old), removed: onlyIn(old, now) };
+}
+
 async function controlDeltas_(opts) {
   const [before, after] = [].concat(opts.rules);
   const base = { profile: JSON.parse(utf8(opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json'))),
@@ -977,7 +1023,6 @@ async function controlDeltas_(opts) {
     rules: resolve(before), rulesSha256: opts.ruleFingerprints?.baseline_sha256 };
   const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
     rules: resolve(after), rulesSha256: opts.ruleFingerprints?.candidate_sha256 };
-  const key = f => `${f.rule}|${f.path}|${f.line}`;
   const deltas = [];
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
   mkdirSync(workdir, { recursive: true });
@@ -998,10 +1043,10 @@ async function controlDeltas_(opts) {
         deltas.push({ dir, error: 'Control scan incomplete', scan_sides, ...recovery });
         continue;
       }
-      const oldKeys = new Set(old.map(key)), newKeys = new Set(now.map(key));
+      const { added, removed } = controlFindingDeltas(old, now);
       const snip = f => withSnippet(directory, f);
       deltas.push({ dir, before: old.length, after: now.length, scan_sides, ...recovery,
-        added: now.filter(f => !oldKeys.has(key(f))).map(snip), removed: old.filter(f => !newKeys.has(key(f))).map(snip),
+        added: added.map(snip), removed: removed.map(snip),
         emitted: now.map(snip) });
     } catch (error) { deltas.push({ dir, error: String(error.message).slice(-300) }); }
   }
@@ -1012,33 +1057,89 @@ async function controlDeltas_(opts) {
 function withSnippet(root, finding) {
   let text = '';
   try { text = readFileSync(join(root, finding.path), 'utf8').split('\n')[finding.line - 1] ?? ''; } catch { /* moved */ }
-  return { rule: finding.rule, path: finding.path, line: finding.line, snippet: text.trim().slice(0, 200) };
+  const { rule, path, line, span } = finding;
+  return { rule, path, line, ...(span ? { span } : {}), snippet: text.trim().slice(0, 200) };
 }
 
-export const labelKey = (repo, alert) => `${alert.rule}|${repo}|${alert.path}|${sha256(alert.snippet ?? '').slice(0, 16)}`;
+const legacyLabelKey = (repo, alert) => `${alert.rule}|${repo}|${alert.path}|${sha256(alert.snippet ?? '').slice(0, 16)}`;
+export function labelKey(repo, alert) {
+  const legacy = legacyLabelKey(repo, alert);
+  return alert.span ? `${legacy}|${alert.line}:${alert.span.join(':')}` : legacy;
+}
 const repoName = dir => basename(resolve(dir.replaceAll('\\', '/')));
+
+function keyCounts(values) {
+  const counts = new Map();
+  for (const key of values) counts.set(key, (counts.get(key) ?? 0) + 1);
+  return counts;
+}
+
+function alertKeys(repo, alerts) {
+  return (alerts ?? []).map(alert => ({ key: labelKey(repo, alert), legacy: legacyLabelKey(repo, alert) }));
+}
+
+function legacyAlternatives(entries) {
+  return keyCounts(new Map(entries.map(item => [item.key, item.legacy])).values());
+}
 
 export function queueLabels(existing, deltas) {
   const labels = new Map((existing?.labels ?? []).map(label => [label.key, label]));
   for (const delta of deltas) {
+    const repo = repoName(delta.dir);
+    const legacyCount = delta.emitted ? legacyAlternatives(alertKeys(repo, [...delta.emitted, ...(delta.removed ?? [])])) : new Map();
     for (const alert of delta.added ?? []) {
-      const key = labelKey(repoName(delta.dir), alert);
-      if (!labels.has(key)) labels.set(key, { key, repo: repoName(delta.dir), ...alert, verdict: null, note: '' });
+      const key = labelKey(repo, alert), legacy = legacyLabelKey(repo, alert);
+      if (labels.has(legacy) && legacyCount.get(legacy) === 1) continue;
+      if (!labels.has(key)) labels.set(key, { key, repo, ...alert, verdict: null, note: '' });
     }
   }
   return { schema: 'factory.recall-labels.v1', labels: [...labels.values()].sort((a, b) => a.key.localeCompare(b.key)) };
 }
 
+function controlLabelEvidence(deltas) {
+  const completed = deltas.filter(delta => !delta.error && !delta.incomplete_on_both);
+  const repos = new Set(completed.map(delta => repoName(delta.dir)));
+  const emitted = completed.flatMap(delta => alertKeys(repoName(delta.dir), delta.emitted));
+  const removed = completed.flatMap(delta => alertKeys(repoName(delta.dir), delta.removed));
+  return { repos, emitted, exact: keyCounts(emitted.map(item => item.key)),
+    legacy: keyCounts(emitted.map(item => item.legacy)), alternatives: legacyAlternatives([...emitted, ...removed]) };
+}
+
+function reviewedCount(label, evidence) {
+  if (label.span) return evidence.exact.get(label.key) ?? 0;
+  const count = evidence.legacy.get(label.key) ?? 0;
+  return count ? Math.max(count, evidence.alternatives.get(label.key)) : 0;
+}
+
+function reviewedControlMatches(rows, evidence) {
+  const matches = new Map(), ambiguous = [], fpReturned = [], tpDropped = [];
+  for (const label of rows) {
+    if (!evidence.repos.has(label.repo ?? label.key.split('|')[1])) continue;
+    const count = reviewedCount(label, evidence);
+    if (count > 1) {
+      ambiguous.push(label.key);
+      continue;
+    }
+    if (count === 1) matches.set(label.key, label.verdict);
+    if (count === 1 && label.verdict === 'FP') fpReturned.push(label.key);
+    if (count === 0 && label.verdict === 'TP') tpDropped.push(label.key);
+  }
+  return { matches, ambiguous, fpReturned, tpDropped };
+}
+
 export function checkLabels(labels, deltas) {
-  const emitted = new Set(deltas.flatMap(delta => (delta.emitted ?? []).map(alert => labelKey(repoName(delta.dir), alert))));
-  const judged = (labels?.labels ?? []).filter(label => label.verdict === 'TP' || label.verdict === 'FP');
-  const fpReturned = judged.filter(label => label.verdict === 'FP' && emitted.has(label.key)).map(label => label.key);
-  const tpDropped = judged.filter(label => label.verdict === 'TP' && !emitted.has(label.key)).map(label => label.key);
-  const tp = judged.filter(label => label.verdict === 'TP').length;
-  return { judged: judged.length, labeled_precision: judged.length ? { tp, fp: judged.length - tp, wilson95: wilson(tp, judged.length) } : null,
-    fp_returned: fpReturned, tp_dropped: tpDropped, pending: (labels?.labels ?? []).filter(label => !label.verdict).length,
-    // UNCLEAR is an explicit label, kept out of the precision denominator.
-    unclear: (labels?.labels ?? []).filter(label => label.verdict === 'UNCLEAR').length };
+  const sheet = labels?.labels ?? [];
+  const reviewed = sheet.filter(label => label.verdict === 'TP' || label.verdict === 'FP');
+  const evidence = controlLabelEvidence(deltas);
+  const { matches, ambiguous, fpReturned, tpDropped } = reviewedControlMatches(reviewed, evidence);
+  const decisions = evidence.emitted.map(item => matches.get(item.key) ?? matches.get(item.legacy));
+  const tp = decisions.filter(verdict => verdict === 'TP').length;
+  const fp = decisions.filter(verdict => verdict === 'FP').length;
+  const judged = tp + fp;
+  return { judged, emitted: decisions.length, unreviewed_emitted: decisions.length - judged,
+    labeled_precision: judged ? { tp, fp, wilson95: wilson(tp, judged) } : null,
+    fp_returned: fpReturned, tp_dropped: tpDropped, ambiguous_labels: ambiguous,
+    pending: sheet.filter(label => !label.verdict).length, unclear: sheet.filter(label => label.verdict === 'UNCLEAR').length };
 }
 
 function readOptionalLabels(path) {
