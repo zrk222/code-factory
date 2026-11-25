@@ -1307,6 +1307,8 @@ test('case publication retries transient Windows locks and preserves a competing
 
 test('local Git source bytes survive preparation, scanning, and the reported packet inventory', () =>
   feederFixture(async ({ root, workdir, manifest, baseline, profile }) => {
+    const scanWorkdir = process.platform === 'win32'
+      ? join(root, 'w'.repeat(Math.max(1, 170 - root.length - 1))) : workdir;
     const repository = join(root, 'local-repo');
     mkdirSync(repository);
     const git = (...args) => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8' }).trim();
@@ -1343,18 +1345,19 @@ test('local Git source bytes survive preparation, scanning, and the reported pac
     const out = join(root, 'score.json');
     const override = 'url.' + pathToFileURL(repository).href + '.insteadOf';
     const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'score', '--manifest', manifest,
-      '--rules', baseline, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
+      '--rules', baseline, '--profile', profile, '--workdir', scanWorkdir, '--opengrep', process.execPath,
       '--jobs', '1', '--out', out], { encoding: 'utf8', timeout: 20000, env: { ...process.env,
         GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: override,
         GIT_CONFIG_VALUE_0: 'https://github.com/example/label-demo.git', GIT_ALLOW_PROTOCOL: 'file' } });
     assert.equal(result.status, 0, result.stderr);
     const scored = JSON.parse(readFileSync(out, 'utf8'));
     const captured = scored.cases[0];
-    const directory = join(workdir, 'cases-v4', caseDigest([current]));
+    const directory = join(scanWorkdir, 'cases-v4', caseDigest([current]));
     assert.equal(captured.status, 'scored', captured.detail);
     assert.equal(scored.summary.scored, 1);
     assert.equal(scored.summary.hunk_hits, 1);
     assert.deepEqual(captured.revisions, { old: parent, fixed: fix });
+    if (process.platform === 'win32') assert.equal(captured.scan_sides.old.windows_source_alias, true);
     assert.deepEqual(readFileSync(join(directory, 'old', 'sample.py')), beforeBytes);
     assert.deepEqual(readFileSync(join(directory, 'new', 'sample.py')), afterBytes);
     assert.deepEqual(readFileSync(join(directory, 'old', 'long file.py')), longBefore);

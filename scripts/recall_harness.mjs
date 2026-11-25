@@ -25,7 +25,8 @@
 // a precision proxy.
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, readdirSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
@@ -593,7 +594,8 @@ async function prepareCase(workdir, row, scope = 'ecosystem') {
   if (existsSync(record)) return read();
 
   mkdirSync(cache, { recursive: true });
-  const staging = mkdtempSync(join(cache, key + '-'));
+  // Keep Git pack paths short on Windows and publish the staging directory by rename.
+  const staging = mkdtempSync(join(workdir, 'c-'));
   try {
     const data = await buildPreparedCase(staging, row, scope);
     if (data.status === 'unfetchable') return data;
@@ -626,6 +628,22 @@ function captureReference(context, source, report, diagnostics) {
   return { source_root: relative(context.workdir, source).split(sep).join('/'), ...reportReferences(context, report, diagnostics) };
 }
 
+async function withOpenGrepSource(profile, source, paths, run) {
+  const exceedsWindowsLimit = root => [...paths].some(path => join(root, path).length >= 260);
+  if (process.platform !== 'win32' || profile.engine !== 'semgrep' || !exceedsWindowsLimit(source)) return run(source);
+  // OpenGrep's native scanner may silently drop findings when it cannot open long paths.
+  const root = mkdtempSync(join(tmpdir(), 'cf-scan-'));
+  const alias = join(root, basename(source));
+  try {
+    if (exceedsWindowsLimit(alias)) throw new Error('OpenGrep input path exceeds the Windows limit under the temporary directory');
+    symlinkSync(source, alias, 'junction');
+    return await run(alias);
+  } finally {
+    rmSync(alias, { force: true });
+    rmdirSync(root);
+  }
+}
+
 async function observeSide(context, source, report, expected) {
   if (!source) return { findings: [], diagnostics: null, submitted: false };
   let diagnostics;
@@ -635,7 +653,11 @@ async function observeSide(context, source, report, expected) {
     verifyRulesBytes(context);
     submitted = true;
     const packetPaths = new Set(expected.map(row => row.path));
-    const findings = await scan({ ...context, packetPaths }, source, report, true);
+    const findings = await withOpenGrepSource(context.profile, source, packetPaths, async scanSource => {
+      const result = await scan({ ...context, packetPaths }, scanSource, report, true);
+      if (scanSource !== source) result.notes.windows_source_alias = true;
+      return result;
+    });
     diagnostics = findings.notes;
     verifyRulesBytes(context);
     verifyPreparedBytes(source, expected);
@@ -956,17 +978,19 @@ async function probeCoverage(dev, opts) {
         const packetsByPath = new Map(packets.map(packet => [packet.path, packet]));
         verifyPreparedBytes(source, packets);
         const observations = [];
-        for (const path of paths) {
-          const language = PARSER_LANGUAGE[extname(path).slice(1).toLowerCase()];
-          const packet = packetsByPath.get(path);
-          if (!language || !packet) continue;
-          const run = await runProcess(opts.opengrep, [...prefix, '--lang', language, join(source, path)],
-            { cwd: source, timeout: 60000, discardStdout: true });
-          const partial = run.status === 3 && /node type: ERROR|(?:syntax|parse) error|PartialParsing/i.test(run.stderr);
-          observations.push({ path, language, sha256: packet.sha256,
-            exit_code: run.status, timed_out: run.timedOut, diagnostic_sha256: sha256(run.stderr),
-            state: run.timedOut ? 'unresolved' : partial ? 'parse_limited' : run.status === 0 ? 'parsed' : 'unresolved' });
-        }
+        await withOpenGrepSource(profile, source, paths, async scanSource => {
+          for (const path of paths) {
+            const language = PARSER_LANGUAGE[extname(path).slice(1).toLowerCase()];
+            const packet = packetsByPath.get(path);
+            if (!language || !packet) continue;
+            const run = await runProcess(opts.opengrep, [...prefix, '--lang', language, join(scanSource, path)],
+              { cwd: scanSource, timeout: 60000, discardStdout: true });
+            const partial = run.status === 3 && /node type: ERROR|(?:syntax|parse) error|PartialParsing/i.test(run.stderr);
+            observations.push({ path, language, sha256: packet.sha256,
+              exit_code: run.status, timed_out: run.timedOut, diagnostic_sha256: sha256(run.stderr),
+              state: run.timedOut ? 'unresolved' : partial ? 'parse_limited' : run.status === 0 ? 'parsed' : 'unresolved' });
+          }
+        });
         verifyPreparedBytes(source, packets);
         row.parser_probe ??= {};
         row.parser_probe[side] = { disputed_paths: paths, observations,
