@@ -757,23 +757,37 @@ async function controlDeltas_(opts) {
   for (const dir of [].concat(opts.dir)) {
     try {
       const reports = join(scanRoot, sha256(resolve(dir)).slice(0, 16));
-      const old = await scan({ ...base, rules: resolve(before) }, resolve(dir), `${reports}/before.sarif`);
-      const now = await scan({ ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])], rules: resolve(after) },
-        resolve(dir), `${reports}/after.sarif`);
-      const scan_sides = { before: old.notes, after: now.notes };
-      // An engine limit the baseline hits too (same issue class, no more
-      // timeouts for the candidate) is not a candidate regression; record it
-      // with the delta instead of failing the control.
-      const issues = Object.values(scan_sides).map(scanIssue);
-      const sameIncomplete = Boolean(issues[0]) && issues[0] === issues[1]
-        && (scan_sides.after.timeouts ?? 0) <= (scan_sides.before.timeouts ?? 0);
-      if (issues.some(Boolean) && !sameIncomplete) {
-        deltas.push({ dir, error: 'Control scan incomplete', scan_sides });
+      const pair = async suffix => {
+        const old = await scan({ ...base, rules: resolve(before) }, resolve(dir), `${reports}/before${suffix}.sarif`);
+        const now = await scan({ ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])], rules: resolve(after) },
+          resolve(dir), `${reports}/after${suffix}.sarif`);
+        const scan_sides = { before: old.notes, after: now.notes };
+        // An engine limit the baseline hits too (same issue class, no more
+        // timeouts for the candidate) is not a candidate regression; record it
+        // with the delta instead of failing the control.
+        const issues = Object.values(scan_sides).map(scanIssue);
+        const sameIncomplete = Boolean(issues[0]) && issues[0] === issues[1]
+          && (scan_sides.after.timeouts ?? 0) <= (scan_sides.before.timeouts ?? 0);
+        return { old, now, scan_sides, issues, sameIncomplete, failed: issues.some(Boolean) && !sameIncomplete };
+      };
+      let attempt = await pair('');
+      let initial_scan_sides;
+      // Per-file engine timeouts move with machine load, as on the dev side:
+      // a pair that differs only in timeouts is scanned once more, both sides
+      // again, and the first attempt is kept in the record.
+      if (attempt.failed && attempt.issues.every(issue => !issue || issue === 'timeout')) {
+        initial_scan_sides = attempt.scan_sides;
+        attempt = await pair('-retry');
+      }
+      const { old, now, scan_sides, issues, sameIncomplete } = attempt;
+      if (attempt.failed) {
+        deltas.push({ dir, error: 'Control scan incomplete', scan_sides, ...(initial_scan_sides ? { initial_scan_sides } : {}) });
         continue;
       }
       const oldKeys = new Set(old.map(key)), newKeys = new Set(now.map(key));
       const snip = f => withSnippet(resolve(dir), f);
-      deltas.push({ dir, before: old.length, after: now.length, scan_sides, ...(sameIncomplete ? { incomplete_on_both: issues[0] } : {}),
+      deltas.push({ dir, before: old.length, after: now.length, scan_sides, ...(initial_scan_sides ? { initial_scan_sides } : {}),
+        ...(sameIncomplete ? { incomplete_on_both: issues[0] } : {}),
         added: now.filter(f => !oldKeys.has(key(f))).map(snip), removed: old.filter(f => !newKeys.has(key(f))).map(snip),
         emitted: now.map(snip) });
     } catch (error) { deltas.push({ dir, error: String(error.message).slice(-300) }); }
