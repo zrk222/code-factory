@@ -132,6 +132,12 @@ reports overlap between lanes. Legacy records report `NOT_MEASURED` for
 advisory-linked recall.
 
 
+## Installed verifier
+
+`factory-recall-evidence` is included in the Code Factory wheel. It accepts
+the same arguments as `python scripts/verify_precision_gain.py`, including
+`prepare-linked-captures`, `advisory-recall`, and `review`.
+
 ## Blinded alert review
 
 Run `python scripts/verify_precision_gain.py review --help` for the `packet`,

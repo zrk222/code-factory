@@ -133,6 +133,7 @@ indent-style = "space"
 
 [project.scripts]
 factory = "factoryline.cli_bootstrap:main"
+factory-recall-evidence = "factoryline.cli_audit:recall_evidence_main"
 
 [tool.setuptools]
 packages = ["factoryline", "factoryline.builtin_packs"]
@@ -147,4 +148,4 @@ factoryline = ["**/__pycache__/*", "**/*.py[cod]"]
 [tool.setuptools.data-files]
 "share/code-factory/deep-adapters/profiles" = ["deploy/deep-adapters/profiles/*.json"]
 "share/code-factory/deep-adapters" = ["deploy/deep-adapters/README.md"]
-"share/code-factory/evaluation" = ["scripts/evaluate_jev.mjs", "scripts/jev_evidence.mjs"]
+"share/code-factory/evaluation" = ["scripts/evaluate_jev.mjs", "scripts/jev_evidence.mjs", "scripts/verify_precision_gain.py"]
