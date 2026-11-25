@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
-import { hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
+import { hunkAdjudicationIdentity, hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -267,6 +267,40 @@ test('hash-bound adjudicated losses exempt only complete FP-only hunk removals',
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('line-only adjudication cannot waive two alerts on the same line', () => {
+  const root = mkdtempSync(join(tmpdir(), 'recall-loss-same-line-'));
+  try {
+    const { ghsa, score, plan, engine, loc, path } = savedAdjudication(root);
+    const row = score.dev[0].cases[0];
+    row.hunk_findings = [loc, loc];
+    const adjudication = JSON.parse(readFileSync(join(root, plan.adjudication.path), 'utf8'));
+    adjudication.rows = [adjudication.rows[0], { ...adjudication.rows[0], item: 'second-position' }];
+    const persist = () => {
+      for (const [reference, value] of [[plan.score, score], [plan.adjudication, adjudication]]) {
+        const bytes = JSON.stringify(value);
+        writeFileSync(join(root, reference.path), bytes);
+        reference.sha256 = sha256(bytes);
+      }
+      writeFileSync(path, JSON.stringify(plan));
+      return loadAdjudicatedLosses(path, engine);
+    };
+    assert.equal(persist().cases.has(ghsa), false);
+    row.hunk_spans = [[1, 0, 4], [6, 0, 9]];
+    assert.equal(hunkAdjudicationIdentity({ ...row, hunk_spans: [[1, 0, null], [6, 0, 9]] }, true), null);
+    assert.equal(persist().cases.has(ghsa), false);
+    adjudication.rows.forEach((vote, index) => { vote.span = row.hunk_spans[index]; });
+    assert.equal(persist().cases.has(ghsa), true);
+    row.hunk_findings.push(loc);
+    row.hunk_spans.push(row.hunk_spans[0]);
+    assert.equal(persist().cases.has(ghsa), true);
+    adjudication.rows[1].span = [6, 0, 10];
+    assert.equal(persist().cases.has(ghsa), false);
+    adjudication.rows[1].span = row.hunk_spans[1];
+    adjudication.rows[1].source_sha256 = 'b'.repeat(64);
+    assert.equal(persist().cases.has(ghsa), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('coverage gaps never count as misses and regressions fail on either revision', () => {
   const clean = { path: 'sample.py', state: 'reported_scanned', reason: 'engine_scan_paths' };
   const base = { ghsa: 'A', status: 'scored', hunk_hit: false, fix_side_residual: [],
@@ -519,6 +553,10 @@ async function feederFixture(run, row = feederRow) {
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
       "const disputedParse = old && ruleText.includes('# candidate-parse');",
       "const results = old && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
+      "if (results.length && ruleText.includes('# hunk-spans')) {",
+      "  const span = (startColumn, endColumn) => ({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn, endColumn } } }] });",
+      "  results.splice(0, 1, span(1, 4), span(6, 9));",
+      "}",
       "if (control && ruleText.includes('# control-missing-path')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'missing.py' }, region: { startLine: 1 } } }] });",
       "if (control && ruleText.includes('# reviewed-control')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn: 1 } } }] });",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
@@ -935,19 +973,23 @@ test('a fixed parser probe classifies only reproduced engine limits', () => feed
   }
 }));
 
-test('evaluate preserves the raw lost hit with a pinned all-FP adjudication plan', () => feederFixture(async fixture => {
+test('evaluate preserves a raw lost hit with two pinned all-FP spans on the same line', () => feederFixture(async fixture => {
   const { root, workdir, manifest, profile, baseline, candidate, opts } = fixture;
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# hunk-spans\n');
   writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# clean-miss\n');
   const before = await scoreManifest(manifest, baseline, opts);
   const prior = before.cases[0], expected = prior.ghsa;
+  assert.deepEqual(prior.hunk_spans, [[1, 0, 4], [6, 0, 9]]);
   const score = { schema: 'factory.recall-evaluation.v1', candidate_sha256: before.ruleset_sha256,
     engine: { executable_sha256: sha256(readFileSync(process.execPath)) }, gained: [expected],
     dev: [{ manifest_cases_sha256: before.manifest_cases_sha256, after_evidence: before,
-      cases: [{ ghsa: expected, before: 'miss', after: 'hit', hunk_findings: prior.hunk_findings }] }] };
+      cases: [{ ghsa: expected, before: 'miss', after: 'hit',
+        hunk_findings: prior.hunk_findings, hunk_spans: prior.hunk_spans }] }] };
   const adjudication = { schema: 'factory.adjudicated-precision.v1', cohort: 'owned (spent)',
     candidate: `owned (ruleset ${before.ruleset_sha256.slice(0, 8)})`,
     rows: prior.hunk_findings.map(([rule, file, line], index) => ({ item: `owned-${index}`,
-      repository_case: `example/label-demo ${expected}`, rule, file, line, on_fix_hunk: true, final: 'FP' })) };
+      repository_case: `example/label-demo ${expected}`, rule, file, line, on_fix_hunk: true, final: 'FP',
+      span: prior.hunk_spans[index], source_sha256: prior.source_packets.old[0].sha256 })) };
   const save = (name, value) => {
     const bytes = JSON.stringify(value);
     writeFileSync(join(root, name), bytes);

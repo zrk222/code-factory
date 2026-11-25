@@ -43,6 +43,15 @@ function readPinned(directory, reference) {
   return input;
 }
 
+function validSpan(span) {
+  if (!Array.isArray(span) || span.length !== 3) return false;
+  const [start, offset, end] = span;
+  return Number.isSafeInteger(offset) && offset >= 0
+    && [start, end].every(column => column === null || (Number.isSafeInteger(column) && column > 0))
+    && (offset > 0 || start !== null || end !== null)
+    && (offset !== 0 || (end ?? Infinity) >= (start ?? 0));
+}
+
 function reviewedFinding(row) {
   const cases = row.repository_case.match(/GHSA-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}/g);
   const fields = [row.item, row.rule, row.file];
@@ -50,7 +59,11 @@ function reviewedFinding(row) {
       || !Number.isSafeInteger(row.line) || row.line < 1 || !['FP', 'TP', 'UNCLEAR'].includes(row.final)) {
     throw new Error('Invalid hunk adjudication identity or verdict');
   }
-  return { ghsa: cases[0], location: [row.rule, row.file, row.line], verdict: row.final };
+  if (row.span != null && !validSpan(row.span)) throw new Error('Invalid hunk adjudication span');
+  if (row.source_sha256 != null && !isPin(row.source_sha256)) throw new Error('Invalid hunk adjudication source SHA-256');
+  const location = [row.rule, row.file, row.line];
+  if (row.span != null) location.push(row.span);
+  return { ghsa: cases[0], location, verdict: row.final, sourceSha256: row.source_sha256 ?? null };
 }
 
 function reviewedHunks(rows) {
@@ -69,8 +82,22 @@ function reviewedHunks(rows) {
   return grouped;
 }
 
-export function hunkIdentity(findings) {
-  return JSON.stringify(findings.map(finding => JSON.stringify(finding)).sort());
+export function hunkIdentity(findings, spanBound = null) {
+  const locations = findings.map(finding => JSON.stringify(finding));
+  if (spanBound === null) return JSON.stringify(locations.sort());
+  const distinct = [...new Set(locations)];
+  // Line-only votes cannot distinguish multiple alerts. Exact repeats are one alert.
+  return !spanBound && distinct.length !== locations.length ? null : JSON.stringify(distinct.sort());
+}
+
+export function hunkAdjudicationIdentity(row, spanBound) {
+  const findings = row.hunk_findings ?? [];
+  if (!findings.length) return null;
+  if (!spanBound) return hunkIdentity(findings, false);
+  const spans = row.hunk_spans;
+  if (!Array.isArray(spans) || spans.length !== findings.length) return null;
+  if (!spans.every(span => validSpan(span) && span[0] !== null && span[2] !== null)) return null;
+  return hunkIdentity(findings.map((finding, index) => [...finding, spans[index]]), true);
 }
 
 function boundCohort(score, adjudication, cohort) {
@@ -89,6 +116,16 @@ function boundCohort(score, adjudication, cohort) {
   return blocks[0];
 }
 
+function matchReviewedHunks(row, source, votes) {
+  const spanBound = votes[0].location.length === 4;
+  if (!votes.every(vote => vote.verdict === 'FP' && (vote.location.length === 4) === spanBound)) return null;
+  const sourcePins = new Map((source.source_packets.old ?? []).map(packet => [packet.path, packet.sha256]));
+  if (votes.some(vote => vote.sourceSha256 && vote.sourceSha256 !== sourcePins.get(vote.location[1]))) return null;
+  const identity = hunkAdjudicationIdentity(row, spanBound);
+  return identity && identity === hunkIdentity(votes.map(vote => vote.location), spanBound)
+    ? { source, identity, spanBound } : null;
+}
+
 function fpOnlyCases(block, labels) {
   const evidence = new Map(block.after_evidence.cases.map(row => [row.ghsa, row]));
   if (evidence.size !== block.after_evidence.cases.length || new Set(block.cases.map(row => row.ghsa)).size !== block.cases.length) {
@@ -98,9 +135,8 @@ function fpOnlyCases(block, labels) {
   for (const row of block.cases) {
     const votes = labels.get(row.ghsa), source = evidence.get(row.ghsa);
     if (row.after !== 'hit' || !votes?.length || !source?.revisions || !source.source_packets) continue;
-    if (!votes.every(vote => vote.verdict === 'FP')) continue;
-    const identity = hunkIdentity(row.hunk_findings);
-    if (identity === hunkIdentity(votes.map(vote => vote.location))) result.set(row.ghsa, { source, identity });
+    const match = matchReviewedHunks(row, source, votes);
+    if (match) result.set(row.ghsa, match);
   }
   return result;
 }

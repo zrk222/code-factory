@@ -28,7 +28,7 @@ import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSy
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
-import { hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
+import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
 export const FAMILIES = Object.freeze({
   'CWE-78': 'cmd', 'CWE-88': 'cmd', 'CWE-77': 'cmd', 'CWE-89': 'sql',
@@ -262,8 +262,10 @@ export function scoreCase({ families, hunks, oldFindings, newFindings, rules }) 
     .some(([path, line]) => hunks[path]?.old.includes(line)));
   const residual = newFindings.filter(relevant).filter(f => Object.values(hunks)
     .some(entry => entry.new_path === f.path && entry.new.includes(f.line)));
+  const hunkSpans = hunkHits.map(f => f.span ?? null);
   return { hunk_hit: hunkHits.length > 0, trace_hit: traceHits.length > 0, file_hit: oldHits.length > 0,
-    hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]), matched_hunk_families: matchedFamilies,
+    hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]),
+    ...(hunkSpans.some(Boolean) ? { hunk_spans: hunkSpans } : {}), matched_hunk_families: matchedFamilies,
     alerts_in_changed_files: changedFindings.length, family_alerts_in_changed_files: oldHits.length,
     fix_side_residual: residual.map(f => [f.rule, f.path, f.line]) };
 }
@@ -854,7 +856,7 @@ function adjudicatedFpMiss(policy, before, old, after, row) {
   if (!sameAdjudicationScope(before, evidence) || !sameAdjudicationScope(after, evidence)) return false;
   const input = caseInputFingerprint(known.source);
   return caseInputFingerprint(old) === input && caseInputFingerprint(row) === input
-    && hunkIdentity(old.hunk_findings ?? []) === known.identity;
+    && hunkAdjudicationIdentity(old, known.spanBound) === known.identity;
 }
 
 function recordLostHit(changes, pair, old, row) {
@@ -1010,6 +1012,7 @@ function pairedCaseEvidence({ before, after }) {
     const previous = baseline.get(row.ghsa);
     return { ghsa: row.ghsa, fix: row.fix, before: previous?.outcome ?? previous?.status ?? null,
       after: row.outcome ?? row.status, hunk_findings: row.hunk_findings ?? [],
+      ...(row.hunk_spans ? { hunk_spans: row.hunk_spans } : {}),
       matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
       retried_serially: Boolean(row.retried_serially) };
   });
@@ -1075,7 +1078,7 @@ function recordedGainsIn(block, required, engineArgs) {
       const source = evidence.get(row.ghsa);
       if (!source?.revisions || !source.source_packets) throw new Error('Recall gain checkpoint is missing case input evidence');
       return [row.ghsa, { cohort, input: caseInputFingerprint(source),
-        prior: { ...source, hunk_findings: row.hunk_findings },
+        prior: { ...source, hunk_findings: row.hunk_findings, hunk_spans: row.hunk_spans },
         scope: { manifest_cases_sha256: cohort, manifest_sha256: block.after_evidence.manifest_sha256,
           profile_sha256: block.after_evidence.profile_sha256, ruleset_sha256: block.after_evidence.ruleset_sha256,
           engine_args: engineArgs } }];
