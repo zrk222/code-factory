@@ -1360,7 +1360,9 @@ def test_ci_runtime_coverage_keeps_default_data_file_in_ignored_reports_dir() ->
     assert " -n 3 " in CI_COVERAGE_COMMAND
     assert "--cov=factoryline --cov-branch" in CI_COVERAGE_COMMAND
     assert "--factory-ci-shard" not in CI_COVERAGE_COMMAND
-    assert "&& 30 ||" in workflow["jobs"]["test"]["timeout-minutes"]
+    deadline = workflow["jobs"]["test"]["timeout-minutes"]
+    assert "matrix.os == 'ubuntu-latest' && matrix.python == '3.11' && 40" in deadline
+    assert "matrix.os == 'macos-latest' && matrix.python == '3.10' && 35" in deadline
 
 
 def test_ci_receipt_binds_clean_commit_exact_command_and_required_artifacts(
