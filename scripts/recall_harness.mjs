@@ -755,11 +755,11 @@ export function checkpointArtifactsIntact(workdir, row) {
   } catch { return false; }
 }
 
-export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
+export async function scoreManifest(manifestPath, rulesPath, opts = {}, context = null) {
   const manifestBytes = readFileSync(manifestPath);
   const manifest = JSON.parse(utf8(manifestBytes));
   const manifestDigest = validateRecallManifest(manifest);
-  const context = scoringContext(opts, rulesPath);
+  context ??= scoringContext(opts, rulesPath);
   mkdirSync(context.workdir, { recursive: true });
   context.scanRoot = mkdtempSync(join(context.workdir, 'scan-'));
   const one = async (row, scanContext = context) => {
@@ -767,7 +767,8 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
     catch (error) { return { ...row, status: 'error', detail: String(error.message).slice(-300) }; }
   };
   const checkpoints = opts['checkpoint-dir'] ? resolve(opts['checkpoint-dir']) : null;
-  const engineSha = checkpoints ? await fileFingerprint(executablePath(context.bin)) : null;
+  const engineSha = checkpoints
+    ? context.engineSha ?? await fileFingerprint(executablePath(context.bin)) : null;
   const resumed = [];
   const checkpointed = async row => {
     const inputs = { schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
@@ -802,8 +803,13 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}) {
 }
 
 async function score(opts) {
-  const out = await scoreManifest(opts.manifest, opts.rules, opts);
-  writeFileSync(opts.out, `${JSON.stringify(out, null, 1)}\n`);
+  const context = scoringContext(opts, opts.rules);
+  const engine = await bindRecallEngine(context.profile, context.bin);
+  context.bin = engine.path;
+  context.engineSha = engine.receipt.executable_sha256;
+  const out = await scoreManifest(opts.manifest, opts.rules, opts, context);
+  await verifyBoundEngine(engine, 'scoring');
+  writeFileSync(opts.out, `${JSON.stringify({ ...out, engine: engine.receipt }, null, 1)}\n`);
   console.log(JSON.stringify(out.summary, null, 1));
 }
 
@@ -1013,7 +1019,7 @@ async function fileFingerprint(path) {
   return digest.digest('hex');
 }
 
-async function bindEvaluationEngine(profile, command) {
+async function bindRecallEngine(profile, command) {
   const path = executablePath(command);
   const executable_sha256 = await fileFingerprint(path);
   const args = profile.version_argv?.slice(1) ?? ['--version'];
@@ -1022,6 +1028,12 @@ async function bindEvaluationEngine(profile, command) {
   if (probe.status !== 0 || !/^[^\r\n]{1,128}$/.test(version)) throw new Error('Recall engine version probe failed');
   if (profile.tool_version && version !== profile.tool_version) throw new Error('Recall engine version differs from profile');
   return { path, receipt: { executable: basename(path), executable_sha256, version } };
+}
+
+async function verifyBoundEngine(engine, operation) {
+  if (await fileFingerprint(engine.path) !== engine.receipt.executable_sha256) {
+    throw new Error(`Recall engine executable bytes changed during ${operation}`);
+  }
 }
 
 function evaluationRules(opts) {
@@ -1138,7 +1150,7 @@ async function evaluate(input) {
   if (reviewOption !== undefined && reviewOption !== 'true') {
     throw new Error('--require-reviewed-controls accepts true');
   }
-  const engine = await bindEvaluationEngine(JSON.parse(utf8(opts.profileBytes)),
+  const engine = await bindRecallEngine(JSON.parse(utf8(opts.profileBytes)),
     opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
   const lossPolicy = opts['adjudicated-losses']
     ? loadAdjudicatedLosses(opts['adjudicated-losses'], engine.receipt.executable_sha256) : null;
@@ -1161,9 +1173,7 @@ async function evaluate(input) {
   }
   const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }) : [];
   const parserProbe = opts['probe-coverage'] === 'true' ? await probeCoverage(dev, opts) : null;
-  if (await fileFingerprint(engine.path) !== engine.receipt.executable_sha256) {
-    throw new Error('Recall engine executable bytes changed during evaluation');
-  }
+  await verifyBoundEngine(engine, 'evaluation');
   verifyEvaluationRules(opts, rules);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0), lossPolicy });
   if (checkpoint) applyGainRetention(verdict, checkpoint, dev, lossPolicy);

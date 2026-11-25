@@ -1966,8 +1966,13 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
     record, *_ = _synthetic_recall(tmp_path)
     absent = copy.deepcopy(record["cases"][0])
     absent.update(ghsa="GHSA-2345-6789-cfgg", ecosystem="PHP")
+    absent.pop("cwes")
     record["cases"].append(absent)
     original = record["cases"][0]
+    record["detection_rule"]["class_families"].update(
+        {"CWE-297": "tls", "CWE-79": "xss"}
+    )
+    original["cwes"].extend(["CWE-297", "CWE-79"])
     if condition == "second_parent":
         original["fixes"].append({"fix": "d" * 40, "parent": "c" * 40})
         original["prefix_files"].append(
@@ -2174,6 +2179,12 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
         assert linked["combined"]["linked_by_both_lanes"] == (condition == "dual_lane")
         assert linked["publication_eligible"] is False
         assert results["by_ecosystem"]["PHP"]["unexecuted"] == 1
+        assert results["by_family"] == {
+            "tls": results["by_ecosystem"]["python"],
+            "unclassified": results["by_ecosystem"]["PHP"],
+            "xss": results["by_ecosystem"]["python"],
+        }
+        assert pattern["by_family"]["tls"]["executed"] == (condition == "dual_lane")
         total = results["total"]
         assert total["registered"] == 2
         assert total["executed"] == 1
@@ -2206,6 +2217,62 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
         }[condition] in output["error"]
 
 
+def _saved_score_fixture(tmp_path, complete, case, pattern, condition):
+    revision = complete["source_revision"]
+    packets = copy.deepcopy(case["prefix_files"])
+    if condition == "score_packet":
+        packets[0]["sha256"] = "0" * 64
+    score_case = {
+        "ghsa": complete["ghsa"],
+        "revisions": {"old": "0" * 40 if condition == "score_revision" else revision},
+        "source_packets": {"old": packets},
+        "captures": {
+            "old": {
+                key: complete[key] for key in ("source_root", "sarif", "native_report")
+            }
+        },
+        "scan_sides": {
+            "old": {
+                "failed_exit": False,
+                "exit_code": 0,
+                "timeouts": int(condition == "score_timeout"),
+                "blocking_parse_errors": 0,
+                "other": 0,
+                "report_sha256": "0" * 64
+                if condition == "score_ref"
+                else complete["sarif"]["sha256"],
+                "coverage_report_sha256": complete["native_report"]["sha256"],
+            }
+        },
+    }
+    section = {
+        "ruleset_sha256": "0" * 64
+        if condition == "score_rules"
+        else pattern["ruleset_sha256"],
+        "cases": [score_case, score_case]
+        if condition == "score_duplicate"
+        else [score_case],
+    }
+    engine = {
+        "executable_sha256": "0" * 64
+        if condition in {"score_engine", "score_engine_plain"}
+        else pattern["opengrep_binary_sha256"]
+    }
+    if condition in {"score_eval", "score_engine"}:
+        score = {
+            "schema": "factory.recall-evaluation.v1",
+            "dev": [{"after_evidence": section}],
+        }
+    else:
+        score = {"schema": "factory.recall-result.v1", **section}
+    if condition != "score_engine_missing":
+        score["engine"] = engine
+    if condition == "score_large":
+        score["padding"] = " " * 10_100_000
+    path, checksum = _benchmark_file(tmp_path, "saved-score", score)
+    return {"path": path.name, "sha256": checksum}
+
+
 @pytest.mark.parametrize(
     ("condition", "error"),
     [
@@ -2217,6 +2284,19 @@ def test_advisory_linked_recall_requires_trusted_exact_finding(
         ("other_finding", "report and SARIF findings differ"),
         ("source_drift", "differs from registered pre-fix bytes"),
         ("duplicate", "duplicate linked observation"),
+        ("score_plain", None),
+        ("score_large", None),
+        ("score_eval", None),
+        ("score_revision", "no capture at the registered revision"),
+        ("score_rules", "saved score ruleset differs"),
+        ("score_engine", "saved evaluation engine differs"),
+        ("score_engine_plain", "saved score engine differs"),
+        ("score_engine_missing", "saved score has no scanner fingerprint"),
+        ("score_timeout", "old-side execution errors"),
+        ("score_ref", "references disagree with scanner receipts"),
+        ("score_packet", "differs from saved score packet fingerprints"),
+        ("score_duplicate", "duplicate saved score case and revision"),
+        ("score_conflict", "requires an unambiguous changed-file scope"),
     ],
 )
 def test_prepare_linked_capture_batch(tmp_path, capsys, condition, error):
@@ -2300,18 +2380,21 @@ def test_prepare_linked_capture_batch(tmp_path, capsys, condition, error):
     rows = [complete, {**codeql, **key, "state": "unknown"}]
     if condition == "duplicate":
         rows.append(complete)
-    plan, _ = _benchmark_file(
-        tmp_path,
-        "capture-plan",
-        {
-            "schema": "factory.advisory-capture-plan.v1",
-            "record": record_path.name,
-            "opengrep": engine.name,
-            "ruleset": rules.name,
-            "registered_scopes": [pattern, codeql],
-            "rows": rows,
-        },
-    )
+    plan_data = {
+        "schema": "factory.advisory-capture-plan.v1",
+        "record": record_path.name,
+        "opengrep": engine.name,
+        "ruleset": rules.name,
+        "registered_scopes": [pattern, codeql],
+        "rows": rows,
+    }
+    if condition.startswith("score_"):
+        plan_data["score_result"] = _saved_score_fixture(
+            tmp_path, complete, case, record["candidate"]["pattern_lane"], condition
+        )
+        if condition != "score_conflict":
+            rows[0] = {**pattern, **key, "state": "complete"}
+    plan, _ = _benchmark_file(tmp_path, "capture-plan", plan_data)
     status = _gain["prepare_captures_main"]([str(plan)])
     result = json.loads(capsys.readouterr().out)
     if error is not None:
@@ -2337,6 +2420,12 @@ def test_prepare_linked_capture_batch(tmp_path, capsys, condition, error):
     ]
     assert _gain["prepare_captures_main"]([str(plan)]) == 0
     assert json.loads(capsys.readouterr().out) == result
+    if reference := plan_data.get("score_result"):
+        assert observations["score_result"] == reference
+        original = tmp_path / reference["path"]
+        original.write_bytes(original.read_bytes() + b" ")
+        with pytest.raises(ValueError, match="recorded scanner fingerprint"):
+            _gain["_observations"](record, record_sha, observations, tmp_path)
 
 
 REVIEW_RULES = """rules:

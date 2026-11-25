@@ -549,15 +549,32 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
     sha256(readFileSync(join(workdir, before.scan_directory, feederRow.ghsa, 'old.sarif.coverage.json'))));
   assert.equal(before.cases[0].file_coverage.fixed[0].reason, 'engine_scan_paths');
 
+  const expectedEngine = {
+    executable: basename(process.execPath), executable_sha256: sha256(readFileSync(process.execPath)), version: process.version,
+  };
+  const scoreOutput = join(root, 'score.json');
+  const scoreArgs = ['scripts/recall_harness.mjs', 'score', '--manifest', manifest,
+    '--rules', baseline, '--workdir', workdir, '--opengrep', process.execPath, '--jobs', '1'];
+  const score = spawnSync(process.execPath, [...scoreArgs, '--profile', profile, '--out', scoreOutput], { encoding: 'utf8' });
+  assert.equal(score.status, 0, score.stderr);
+  const savedScore = JSON.parse(readFileSync(scoreOutput, 'utf8'));
+  assert.deepEqual(savedScore.engine, expectedEngine);
+  assert.deepEqual(savedScore.cases[0].source_packets, before.cases[0].source_packets);
+  const invalidProfile = join(root, 'invalid-engine-profile.json');
+  const rejectedOutput = join(root, 'rejected-score.json');
+  writeFileSync(invalidProfile, JSON.stringify({ ...JSON.parse(readFileSync(profile, 'utf8')), tool_version: 'wrong-version' }));
+  const rejected = spawnSync(process.execPath, [...scoreArgs, '--profile', invalidProfile, '--out', rejectedOutput], { encoding: 'utf8' });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /engine version differs from profile/);
+  assert.equal(existsSync(rejectedOutput), false);
+
   const output = join(root, 'evaluation.json');
   const engine = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--manifest', manifest,
     '--baseline', baseline, '--candidate', candidate, '--profile', profile, '--workdir', workdir,
     '--opengrep', process.execPath, '--jobs', '1', '--out', output], { encoding: 'utf8' });
   assert.equal(engine.status, 2, engine.stderr);
   const evaluation = JSON.parse(readFileSync(output, 'utf8'));
-  assert.deepEqual(evaluation.engine, {
-    executable: basename(process.execPath), executable_sha256: sha256(readFileSync(process.execPath)), version: process.version,
-  });
+  assert.deepEqual(evaluation.engine, expectedEngine);
   assert.equal(evaluation.profile_sha256, sha256(readFileSync(profile)));
   assert.equal(evaluation.baseline_sha256, sha256(readFileSync(baseline)));
   assert.equal(evaluation.candidate_sha256, sha256(readFileSync(candidate)));

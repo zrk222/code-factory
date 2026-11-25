@@ -576,6 +576,57 @@ def rebuild_application_fixture_context(audit, model, verified, fixture_bindings
     return contexts
 
 
+def _tier_native_evidence(findings, bindings, source_bytes, verifier_rows):
+    """Regenerate each bound security file in one provisional snapshot batch."""
+    from .primitive_observation_binding import (
+        _finding_source_binding,
+        _regenerate_native_findings,
+        _regenerate_source_model,
+    )
+
+    if verifier_rows is not None:
+        # Only the independent complete-source pass supplies these rows.
+        native = {path: [] for path in bindings}
+        for row in verifier_rows:
+            native.setdefault(row["path"], []).append(row)
+        return native, False
+
+    paths = dict.fromkeys(
+        finding["path"]
+        for finding in findings
+        if isinstance(finding, dict)
+        and isinstance(finding.get("path"), str)
+        and str(finding.get("code", "")).startswith("SECURITY_")
+    )
+    captured = {}
+    for path in paths:
+        _, _, raw, bound = _finding_source_binding(
+            {"path": path}, bindings, source_bytes
+        )
+        if bound:
+            captured[path] = raw
+    if not captured:
+        return {}, False
+
+    from . import review_audits as audit
+
+    model = _regenerate_source_model(source_bytes, bindings)
+    if model is None:
+        return {}, True
+    mutations = {}
+    try:
+        with audit._security_snapshot_analysis_batch({"source": model}):
+            native = {
+                path: _regenerate_native_findings(
+                    path, raw, source_model=model, provider_mutation_cache=mutations
+                )
+                for path, raw in captured.items()
+            }
+    except Exception:
+        return {}, True
+    return native, False
+
+
 def _security_scan_verification_state(audit, core, captured, primitive):
     """Snapshot the complete source, tenant and implementation identity for resealing."""
     from . import finite_capture
@@ -607,6 +658,7 @@ def _security_scan_verification_state(audit, core, captured, primitive):
     )
     functions = (
         "_regenerate_native_findings",
+        "_tier_native_evidence",
         "_trusted_core_native_security_rows",
         "build_finding_tier_report",
         "_trusted_core_regenerated_tiers",
