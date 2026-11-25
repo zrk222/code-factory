@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 import json
 
@@ -16,6 +17,120 @@ from factoryline.enterprise_receipts import (
     EnterpriseReceiptError,
 )
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
+
+
+@pytest.mark.parametrize("mode", ["complete", "omitted", "out_of_scope", "truncated"])
+def test_keyless_review_requires_exact_family_coverage(tmp_path, monkeypatch, mode):
+    from types import ModuleType
+
+    import yaml
+
+    repo = Path(__file__).resolve().parents[1]
+    workflow_path = repo / ".github/workflows/deep-audit-keyless-reviewer.yml"
+    flow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    step = next(
+        item
+        for item in flow["jobs"]["analyze"]["steps"]
+        if item.get("name") == "Run the read-only specialty inference"
+    )
+    source = step["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    review = ModuleType("family_review")
+    exec(compile(source, str(workflow_path), "exec"), review.__dict__)
+    plan_path = repo / "scripts/deep-audit-keyless-plan.json"
+    plan = json.loads(plan_path.read_bytes())
+    paths = {path for row in plan["obligations"] for path in row["paths"]}
+    for row in plan["obligations"]:
+        for challenge in row["challenges"]:
+            paths.add(challenge["fixture_path"])
+            paths.update(challenge["fixture_manifest"])
+    assert len(paths) == 19
+    packet = {
+        "binding": {"candidate_sha256": plan["candidate_sha256"]},
+        "sources": {path: "synthetic test text" for path in paths},
+        "observations": [
+            {"lane_id": lane["id"], "engine": lane["engine"]} for lane in plan["lanes"]
+        ],
+    }
+    monkeypatch.chdir(tmp_path)
+    staged_plan = tmp_path / "scripts" / plan_path.name
+    staged_plan.parent.mkdir()
+    staged_plan.write_bytes(plan_path.read_bytes())
+    (tmp_path / "review-model-input.json").write_text(
+        json.dumps(packet), encoding="utf-8"
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "fixture-only")
+    expected_coverage = set()
+
+    def respond(request, timeout):
+        if isinstance(request, str):
+            assert request == review.LOOPBACK + "/health"
+            health = BytesIO()
+            health.status = 200
+            return health
+        assert request.full_url == review.LOOPBACK + "/v1/chat/completions"
+        assert 0 < timeout <= 1200
+        payload = json.loads(json.loads(request.data)["messages"][1]["content"])
+        assigned = sorted(payload["sources"])
+        expected_coverage.update(assigned)
+        result = {
+            "decision": "ACCEPT",
+            "findings": [],
+            "coverage_gaps": [],
+            "reviewed_paths": assigned,
+        }
+        if mode == "omitted" and payload["family"] == "dependencies":
+            result["reviewed_paths"] = assigned[1:]
+            result["findings"] = [
+                {
+                    "id": "fixture-finding",
+                    "severity": "low",
+                    "path": assigned[-1],
+                    "evidence": "Synthetic evidence disposition",
+                    "remediation": "Review the fixture evidence",
+                }
+            ]
+        if mode == "out_of_scope":
+            result["reviewed_paths"] = ["outside.txt"]
+        finish = "length" if mode == "truncated" else "stop"
+        return BytesIO(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": json.dumps(result)},
+                            "finish_reason": finish,
+                        }
+                    ]
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(review, "urlopen", respond)
+    if mode in {"out_of_scope", "truncated"}:
+        with pytest.raises(ValueError):
+            review.main()
+        assert not (tmp_path / "review.json").exists()
+        return
+
+    review.main()
+    result = json.loads((tmp_path / "review.json").read_bytes())
+    coverage = json.loads((tmp_path / "review-coverage.json").read_bytes())
+    assert expected_coverage == paths
+    assert len({row["family"] for row in coverage}) == 6
+    assert result["prompt_sha256"] == digest([row["prompt_sha256"] for row in coverage])
+    assert result["response_sha256"] == digest(
+        [sha256_bytes(row["raw_response"].encode()) for row in coverage]
+    )
+    assert result["authority"] == "none"
+    if mode == "omitted":
+        assert result["decision"] == "INCOMPLETE"
+        assert len(result["coverage_gaps"]) == 1
+        assert result["coverage_gaps"][0].startswith(
+            "dependencies: review missing for "
+        )
+        assert [finding["id"] for finding in result["findings"]] == ["fixture-finding"]
+    else:
+        assert result["decision"] == "ACCEPT" and result["coverage_gaps"] == []
 
 
 def _keyless_authorization_fixture(tmp_path):
