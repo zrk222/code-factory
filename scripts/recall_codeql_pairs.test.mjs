@@ -7,6 +7,14 @@ import test from 'node:test';
 import { caseDigest, sha256, sortKeys } from './recall_harness.mjs';
 import { scoreCodeqlPairs } from './recall_codeql_pairs.mjs';
 
+const nativeFixtures = {
+  Go: ['sample.go', 'go/diagnostics/successfully-extracted-files'],
+  Maven: ['Sample.java', 'java/diagnostics/successfully-extracted-files'],
+  npm: ['sample.js', 'factory/js/diagnostics/parsed-source-files'],
+  PyPI: ['sample.py', 'py/diagnostics/successfully-extracted-files'],
+  RubyGems: ['sample.rb', 'rb/diagnostics/successfully-extracted-files'],
+};
+
 function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI') {
   const root = mkdtempSync(join(tmpdir(), 'cf-codeql-pair-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -15,9 +23,7 @@ function stagedPair(t, archivePrefix = 'src', ecosystem = 'PyPI') {
     return { path, sha256: sha256(bytes) };
   };
   const json = (path, value) => write(path, JSON.stringify(value));
-  const sample = ecosystem === 'npm' ? 'sample.js' : 'sample.py';
-  const extractionId = ecosystem === 'npm' ? 'factory/js/diagnostics/parsed-source-files'
-    : 'py/diagnostics/successfully-extracted-files';
+  const [sample, extractionId] = nativeFixtures[ecosystem];
   const row = { ghsa: 'GHSA-2222-3333-4444', repository: 'example/project', ecosystem,
     fix: 'b'.repeat(40), cwes: ['CWE-89'] };
   const manifest = json('manifest.json', { cases: [row], cases_sha256: caseDigest([row]) });
@@ -76,6 +82,15 @@ test('JavaScript needs parsed content evidence in addition to archive membership
   assert.equal(recorded.hunk_hit, true);
   assert.equal(recorded.native_coverage.fixed.complete, false);
   assert.deepEqual(recorded.native_coverage.fixed.missing, ['sample.js']);
+});
+
+test('each registered native lane accepts its own exact extraction diagnostic', t => {
+  for (const ecosystem of ['Go', 'Maven', 'RubyGems']) {
+    const { value, run } = stagedPair(t, 'src', ecosystem);
+    const [scored] = run(value).cases;
+    assert.equal(scored.native_coverage.old.complete, true, ecosystem);
+    assert.equal(scored.native_coverage.fixed.complete, true, ecosystem);
+  }
 });
 
 test('paired CodeQL scoring requires both revisions and verifies actual source archive bytes', t => {
@@ -272,6 +287,8 @@ test('native and pattern hits join only on identical evidence and are counted on
     locations: [{ physicalLocation: { artifactLocation: { uri } } }] });
   for (const notifications of [
     [note('py/baseline/expected-extracted-files')],
+    [note('rb/diagnostics/successfully-extracted-files')],
+    [note('unexpected/py/diagnostics/successfully-extracted-files')],
     [note('py/diagnostics/successfully-extracted-files', 'other.py')],
     [note('py/diagnostics/successfully-extracted-files'), note('py/extractor/parse-error')],
   ]) {
