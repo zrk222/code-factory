@@ -963,7 +963,7 @@ rules:
       cwe: ["CWE-98"]
       scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
   - id: php.request-unsafe-deserialization
-    message: Request data reaches unserialize; use a non-executable format with schema validation.
+    message: Review unsafe deserialization and ignored class-filter options. Prefer a non-executable format with schema validation.
     severity: WARNING
     languages: [php]
     mode: taint
@@ -975,6 +975,20 @@ rules:
       - pattern: '$_REQUEST[...]'
         exact: true
       - pattern: '$_COOKIE[...]'
+        exact: true
+      - patterns:
+          - pattern-either:
+              - pattern: unserialize($VALUE, $OPTIONS)
+              - pattern: \unserialize($VALUE, $OPTIONS)
+          - metavariable-regex:
+              metavariable: $OPTIONS
+              regex: '(?s)\A\s*\[\s*[''"]allowedClasses[''"]\s*=>(?!.*[''"]allowed_classes[''"]\s*=>)'
+          - metavariable-pattern:
+              metavariable: $VALUE
+              pattern-either:
+                - pattern: file_get_contents(...)
+                - pattern: (string) file_get_contents(...)
+          - focus-metavariable: $VALUE
         exact: true
     pattern-sanitizers:
       - pattern: (int) $VALUE
@@ -4060,6 +4074,11 @@ rules:
                 - pattern: '"..."'
                 - pattern-regex: '(?is)\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?[''\"%]).*?([''"](%%)*%?%s(%%)*%?[''"]|\\[''"]%s).*\z'
           - focus-metavariable: $X
+      - patterns:
+          - pattern-either:
+              - pattern: '"LIMIT " . $OPTIONS["limit"]'
+              - pattern: '"OFFSET " . $OPTIONS["offset"]'
+          - focus-metavariable: $OPTIONS
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:

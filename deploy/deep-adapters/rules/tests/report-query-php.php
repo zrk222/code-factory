@@ -23,3 +23,27 @@ function other_accessor($reader) {
     // ok: php.request-sql-injection
     return ' AND item = ' . $value;
 }
+
+function decodedRecordWithMisspelledOption(string $filename) {
+    // ruleid: php.request-unsafe-deserialization
+    return unserialize((string) file_get_contents($filename), [
+        'allowedClasses' => [RecordFixture::class],
+    ]);
+}
+
+function decodedRecordWithRecognizedOption(string $filename) {
+    // ok: php.request-unsafe-deserialization
+    return unserialize((string) file_get_contents($filename), [
+        'allowed_classes' => [RecordFixture::class],
+    ]);
+}
+
+function paginationFromOptions(array $parameters) {
+    // ruleid: php.parameter-sql-text
+    return 'LIMIT ' . $parameters['limit'];
+}
+
+function paginationWithIntegerConversion(array $parameters) {
+    // ok: php.parameter-sql-text
+    return 'LIMIT ' . (int) $parameters['limit'];
+}
