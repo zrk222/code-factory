@@ -229,8 +229,8 @@ export const fixedReviewedFindingCounts = Object.freeze({
 export const typescriptExtensionEndpoints = Object.freeze([
   ['archive-path-traversal', 165], ['archive-path-traversal', 185], ['archive-path-traversal', 194],
   // The direct sink and interpolation are separate native spans on these lines.
-  ['parameter-shell-command', 207, [[19, 78], [28, 41]]], ['parameter-shell-command', 217],
-  ['parameter-sql-text', 233, [[21, 65], [56, 63]]], ['parameter-path-join-without-containment', 247],
+  ['parameter-shell-command', 207], ['parameter-shell-command', 217],
+  ['parameter-sql-text', 233], ['parameter-path-join-without-containment', 247],
   ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
   ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
   ['request-path-traversal', 305], ['request-path-traversal', 312],

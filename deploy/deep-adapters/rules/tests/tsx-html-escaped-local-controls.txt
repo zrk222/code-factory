@@ -34,3 +34,9 @@ export function rawQuery(db: any, name: string) {
   // ruleid: javascript.parameter-sql-text
   return db.query(`SELECT * FROM users WHERE name = '${name}'`);
 }
+
+export function anchor(href: string) {
+  href = escapeHtmlEntities(cleanUrl(href));
+  // ok: javascript.html-template-unescaped-interpolation
+  return '<a href="' + href + '">';
+}

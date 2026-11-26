@@ -3393,7 +3393,17 @@ rules:
           - focus-metavariable: $CMD
       # Shell command text assembled from a parameter (`rm -rf "${dir}"`) and handed
       # to a run/exec wrapper elsewhere; reported at the first placeholder.
-      - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
+      # A command template passed straight to exec/execSync is reported once, as that
+      # call's command argument; this branch covers templates built elsewhere.
+      - patterns:
+          - pattern-regex: '`\s*(?:rm|mv|cp|ln|cat|chmod|chown|mkdir|tar|unzip|zip|7z|git|curl|wget|ssh|scp|rsync|docker|kubectl|npm|npx|yarn|pnpm|node|python3?|bash|sh|zsh|powershell|pwsh|cmd|Remove-Item|Move-Item|Copy-Item|ffmpeg|convert|open|xdg-open|start)\s[^`]*?\K\$\{[^}`]*\}'
+          - pattern-not-inside:
+              pattern-either:
+                - pattern: 'exec(`...`, ...)'
+                - pattern: 'execSync(`...`, ...)'
+                - pattern: 'execAsync(`...`, ...)'
+                - pattern: '$CP.exec(`...`, ...)'
+                - pattern: '$CP.execSync(`...`, ...)'
       - patterns:
           - pattern: $RUN($CMD, ...)
           - metavariable-regex:
@@ -4629,7 +4639,17 @@ rules:
       # character class keeps out jQuery attribute selectors ([name="' + v + '"]),
       # which are queries, not markup.
       - patterns:
+          - pattern: $L + $X + $R
           - pattern-regex: '(?:^|[^\w\[\-])[\w:-]*=(?:"''|\\"[''"]|\\''[''"])\s*\+\s*(?P<VALUE>[A-Za-z_$][\w$.]*(?:\[[^\]\n]{1,40}\])?)\s*\+\s*(?:''"|[''"]\\"|[''"]\\'')'
+          - metavariable-comparison:
+              comparison: str($X) == str($VALUE)
+          # A local reassigned from an escaper or URL cleaner is no longer raw input.
+          - pattern-not-inside:
+              patterns:
+                - pattern: |
+                    $X = $ESC(...);
+                    ...
+                - metavariable-regex: {metavariable: $ESC, regex: '(?i)(\w+\.)*\w*(escape|sanitiz|encode|clean|quote)\w*'}
           - metavariable-regex:
               metavariable: $VALUE
               regex: '^(?![A-Z_][A-Z0-9_]*$)(?!(?:width|height|x|y|size|index|count|i|j|k|n|id)$)(?!\w*(?:Width|Height)$)'
