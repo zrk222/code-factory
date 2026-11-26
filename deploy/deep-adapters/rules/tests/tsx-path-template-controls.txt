@@ -8,3 +8,8 @@ export const readBundled = (name: string) => {
   // ok: javascript.parameter-path-join-without-containment
   return fs.readFileSync(`${__dirname}/templates/default.html`, "utf8");
 };
+
+export const describeInstall = (pkg: string, version: string) => {
+  // ok: javascript.parameter-shell-command
+  return `npm install -D ${pkg}@${version}`;
+};

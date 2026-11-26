@@ -260,3 +260,7 @@ def tls_operator_opt_in_safe(args, token):
     if args.insecure:
         # ok: python.disabled-tls-verification
         return requests.get(args.url, headers=headers, verify=False)
+
+def choose_ssl_context(options):
+    # ok: python.disabled-tls-verification
+    return ssl.create_default_context() if options.verify_ssl_cert else ssl._create_unverified_context()

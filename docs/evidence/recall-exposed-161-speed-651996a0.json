@@ -1,0 +1,157 @@
+{
+  "schema": "factory.recall-exposed-speed-variant.v1",
+  "scope": "fresh exposed full replay, correctness comparison",
+  "cohort": {
+    "cases": 161,
+    "manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+    "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+    "engine": {
+      "executable": "opengrep.exe",
+      "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+      "version": "2.1.0"
+    },
+    "engine_args": [
+      "--timeout=15",
+      "--jobs=1"
+    ],
+    "case_workers": 2
+  },
+  "baseline": {
+    "rules_sha256": "5fa9c86a1ef6c90bff6d8acfaaac54314644bc8ae37ff49b3053b4340afccd63",
+    "score_sha256": "7f1b2672808852b485e25d7cd7230e0999788c1f722c067ef48631ca4ce230e7",
+    "outcomes": {
+      "hit": 53,
+      "miss": 103,
+      "timeout": 0,
+      "unknown": 2,
+      "error": 0,
+      "coverage_incomplete": 3
+    },
+    "fixed_side_residuals": 24
+  },
+  "variant": {
+    "rules_sha256": "651996a05d2aa4a498b69effc2112e04d7c465be15ab7fc2551dd8cb4f36b5cf",
+    "score_sha256": "26188605b83c918f9115bf6a8124e228ed67dd4eaf5c63771cc143bdb3305aae",
+    "outcomes": {
+      "hit": 53,
+      "miss": 103,
+      "timeout": 0,
+      "unknown": 2,
+      "error": 0,
+      "coverage_incomplete": 3
+    },
+    "fixed_side_residuals": 24
+  },
+  "retention": {
+    "lost": [],
+    "gained": []
+  },
+  "finding_span_changes": [],
+  "coverage_changes": [],
+  "stress_canary": {
+    "schema": "factory.recall-speed-canary.v1",
+    "scope": "30 preselected large exposed files in five languages; fixture trees, ABBA, one engine worker, no end-to-end speed claim",
+    "inventory_sha256": "2581992254cb58c12868293bf6dbb8fd93f73f2645ae13594d8c509aed1369ae",
+    "base_rules_sha256": "5fa9c86a1ef6c90bff6d8acfaaac54314644bc8ae37ff49b3053b4340afccd63",
+    "variant_rules_sha256": "651996a05d2aa4a498b69effc2112e04d7c465be15ab7fc2551dd8cb4f36b5cf",
+    "samples": [
+      {
+        "arm": "base",
+        "wall_seconds": 34.8490306,
+        "code": 0,
+        "paths": 29,
+        "results": 55,
+        "errors": 0
+      },
+      {
+        "arm": "focused",
+        "wall_seconds": 23.6071861,
+        "code": 0,
+        "paths": 29,
+        "results": 55,
+        "errors": 0
+      },
+      {
+        "arm": "focused",
+        "wall_seconds": 25.8994436,
+        "code": 0,
+        "paths": 29,
+        "results": 55,
+        "errors": 0
+      },
+      {
+        "arm": "base",
+        "wall_seconds": 36.0300733,
+        "code": 0,
+        "paths": 29,
+        "results": 55,
+        "errors": 0
+      }
+    ],
+    "equal_alert_spans_coverage_errors": true,
+    "removed": [],
+    "added": [],
+    "baseline_median_seconds": 35.439551949999995,
+    "variant_median_seconds": 24.753314850000002,
+    "wall_reduction": 0.30153420435666634
+  },
+  "registration_gate": {
+    "schema": "factory.registered-recall-retention.v1",
+    "reference_sha256": "0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf",
+    "candidate_score_sha256": "26188605b83c918f9115bf6a8124e228ed67dd4eaf5c63771cc143bdb3305aae",
+    "candidate_rules_sha256": "651996a05d2aa4a498b69effc2112e04d7c465be15ab7fc2551dd8cb4f36b5cf",
+    "decision": "REJECT",
+    "summary": {
+      "registered_cases": 161,
+      "verified_bindings": 161,
+      "reference_hunk_hits": 39,
+      "retained_hunk_hits": 39,
+      "candidate_outcomes": {
+        "hit": 53,
+        "miss": 103,
+        "timeout": 0,
+        "unknown": 2,
+        "error": 0,
+        "coverage_incomplete": 3
+      },
+      "reference_fixed_side_residual_alerts": 17,
+      "candidate_fixed_side_residual_alerts": 24,
+      "candidate_hunk_hits": 53
+    },
+    "lost": [],
+    "gained": [
+      "GHSA-23fx-92m6-4f2g",
+      "GHSA-2jh5-g5ch-43q5",
+      "GHSA-6g56-v9qg-jp92",
+      "GHSA-6m7c-xfhp-p9fh",
+      "GHSA-6qjf-g333-pv38",
+      "GHSA-85gf-wr67-f83w",
+      "GHSA-gjqq-6r35-w3r8",
+      "GHSA-jjgq-jq8g-24w4",
+      "GHSA-jppv-gw3r-w3q8",
+      "GHSA-mc7w-4cjf-c973",
+      "GHSA-mxg3-432p-mr72",
+      "GHSA-v222-6mr4-qj29",
+      "GHSA-vj9x-w7ch-f46p",
+      "GHSA-vq7p-f4fv-rr5x"
+    ],
+    "new_unresolved": [],
+    "failures": [
+      {
+        "code": "FIXED_SIDE_RESIDUALS_INCREASED"
+      }
+    ],
+    "verified_capture_cases": 160
+  },
+  "packaged_engine_fixture_proof": {
+    "tool": "OpenGrep 1.15.0 legacy",
+    "native_findings": 288,
+    "manifest_sha256": "1cd054dcbc2081f4ae683ac02a2b5c433e7871501ec9e0d030300a4ddf8e9543",
+    "native_sarif_sha256": "408be937d3da3bd59b8ef973e9c8144751bfb2dbc634c52aa1da244e418bfbfd"
+  },
+  "remaining": {
+    "benign_controls": "NOT_RUN",
+    "blind_precision": "NOT_RUN",
+    "held_out_q2": "SEALED"
+  }
+}

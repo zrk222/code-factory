@@ -1,0 +1,68 @@
+{
+  "schema": "factory.recall-discarded-path-guard.v1",
+  "scope": "Registered exposed retention and static detector regression",
+  "previous_commit": "a0329173be3fef9127f7f21e1026e65871c57da1",
+  "prior_rules_sha256": "85c58d9e00a5cb20df62345f3a64a97de89b3f823f5c0bd656c18dcf1396736d",
+  "candidate_rules_sha256": "75b3a4cbc7462d93a3d244ab58db329ede575f11b7108450b0f322aeb3122a94",
+  "registered_manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "engine": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "engine_args": [
+    "--timeout=15",
+    "--jobs=1"
+  ],
+  "score_sha256": "8d0eec3315f83a9f3eedc9637b7fe9ba0ed186717c51793a9e44dc4eb0dd6612",
+  "qualification_sha256": "d846e4d377ff523843c20df8c44ffe05305b0f8fe5f803247b29659d9a5ca207",
+  "qualified_capture_cases": 160,
+  "exact_case_outcomes": {
+    "hit": 55,
+    "miss": 101,
+    "timeout": 0,
+    "unknown": 2,
+    "error": 0,
+    "coverage_incomplete": 3
+  },
+  "retained_reference_hits": 39,
+  "retained_previous_hits": 55,
+  "additional_cases": [],
+  "fixed_side_residual_alerts": 17,
+  "reused_checkpoints": 0,
+  "exact_changed_file_alerts": {
+    "before": 258,
+    "after": 258,
+    "score_export_sha256": "3c0200c19c1450237b9dbd2403453412f80f4faad653a74ced8783a74f01dfea"
+  },
+  "control_comparison": {
+    "verified_complete": 10,
+    "expected": 18,
+    "before": 28,
+    "after": 28,
+    "receipt_sha256": "2836f6bad2aa91c77a9938f6c49fcee89492be50f0f76fffefa5328c8b6f0a80"
+  },
+  "scoped_native_fixture": {
+    "expected": 292,
+    "observed": 292,
+    "red_before_green_after": [
+      "python.parameter-path-join-without-containment",
+      "report-path.py",
+      27
+    ],
+    "enforced_guard_quiet": [
+      "python.parameter-path-join-without-containment",
+      "report-path.py",
+      34
+    ],
+    "manifest_sha256": "ace8836b658c6d0bd9b13dcd8b8dfab15c577d2d2438ff6f2bacd634a40b2528",
+    "before_sarif_sha256": "63707bfad32b6678c3d60868d19a4ef484dbb426a7b929fb43f16bd6348783fd",
+    "after_sarif_sha256": "ba32694aa29d1c27e127328c05645fb97de0ddac09cb33c88a1cef7584ac842a"
+  },
+  "mutation_tests_passed": 22,
+  "runtime": {
+    "wall_seconds": 231.6593087
+  },
+  "held_out_q2": "SEALED"
+}

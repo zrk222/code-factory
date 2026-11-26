@@ -1,0 +1,87 @@
+{
+  "schema": "factory.recall-csharp-sql-projection.v1",
+  "scope": "Registered exposed recall and exact paired control comparison",
+  "prior_commit": "e2c55450d33a43a03a8834554c9b401a2f834c3d",
+  "prior_rules_sha256": "f2d2e252ce63487078175c2ea022ded46fe3eedf43f959e23bd73c78a3e703cc",
+  "candidate_rules_sha256": "ee319f151e87fb44621e6190ca826b3d47058baf947bce02db323ebbc4539d42",
+  "registered_manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+  "case_manifest_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "engine": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "engine_args": [
+    "--timeout=15",
+    "--jobs=1"
+  ],
+  "case_workers": 2,
+  "reused_checkpoints": 0,
+  "score_sha256": "48acc2dec3c4458bb465c7cfde087f7e0f6e0a9c63de484cd4682787b179f90a",
+  "qualification_sha256": "5d4b8673ef86873d4c7bec04a086164338622d4ab8cd8586cffa75edd86c1e0f",
+  "outcomes": {
+    "hit": 57,
+    "miss": 99,
+    "timeout": 0,
+    "unknown": 2,
+    "error": 0,
+    "coverage_incomplete": 3
+  },
+  "verified_case_bindings": 161,
+  "verified_capture_cases": 160,
+  "retained_reference_hits": 39,
+  "retained_previous_hits": 56,
+  "additional_case": {
+    "advisory": "GHSA-vmw2-qwm8-x84c",
+    "old_side_finding": [
+      [
+        "csharp.request-sql-injection",
+        "src/Marten/Linq/SqlGeneration/Filters/FullTextWhereFragment.cs",
+        30
+      ]
+    ],
+    "fixed_side_alerts": 0
+  },
+  "exact_changed_file_alerts": {
+    "before": 259,
+    "after": 260,
+    "removed": 0,
+    "added": 1,
+    "export_sha256": "282f7669c3c59177e9a08ff31f57b5e9413c7c20ec70ef241628df3af13c07fd"
+  },
+  "fixed_side_residual_alerts": 17,
+  "control_comparison": {
+    "verified_complete": 16,
+    "expected": 18,
+    "before": 39,
+    "after": 39,
+    "receipt_sha256": "bcc7cb2ae748b84dd807a3cfa3ea1a7a80cae3274d827dfaea4098e1e2bb8dda"
+  },
+  "native_1_15": {
+    "expected": 294,
+    "findings": 294,
+    "prior_preserved": 293,
+    "added_exact_fixture": [
+      "csharp.request-sql-injection",
+      "csharp-sql-builder.cs",
+      78
+    ],
+    "fixture_manifest_sha256": "a7b8ec660ed81234a85a582efedb85d101fdda599100be788d9f543336351f45",
+    "sarif_before_sha256": "bd1a2b302b24c57908ee4b5614224839f4d63e6200ff0b3e499002ef41a7c669",
+    "sarif_after_sha256": "cfe949e5059ec743e9bec87e765501f03408496f0561c188477dcb59d268cdab",
+    "legacy_mutation_sarif_sha256": "5271e2e84874de4a55fff2b57860b689cbfa765db34a216c6fa8a1a767a0676b",
+    "modern_mutation_sarif_sha256": "4db5d7559ab560a0684897eb490c63cecc04d461bb0670768006d3ff30d80c55"
+  },
+  "mutation_tests_passed": 22,
+  "runtime": {
+    "wall_seconds": 236.9419161
+  },
+  "held_out_q2": "SEALED",
+  "direct_cross_engine_regression": {
+    "csharp-regconfig-compatible-legacy-fixed.sarif": "c0a8654f52f40506cb0093266c59dc99b3e0ee1ed269ab7ab3c65914b35f7386",
+    "csharp-regconfig-compatible-legacy-old.sarif": "72a63c2e53393be683af8a7bd52777045b97546c62c591e220949ec5a707eb57",
+    "csharp-regconfig-compatible-modern-fixed.sarif": "e1ba15721c1849652754976ce46496dcca6133a27a1f273be04ceab68c4d3371",
+    "csharp-regconfig-compatible-modern-old.sarif": "bfdd3d6f624ef4ee929f321010f55c25661efa212384aa6973a3a1e9d818f75b"
+  }
+}

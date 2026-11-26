@@ -143,3 +143,18 @@ class RecyclebinListing extends AdminController {
         return [$condition, $quoted, $store, $cast, $list, $markup];
     }
 }
+
+
+function readNumericRecordIds($database, array $userIds) {
+    $values = implode(',', array_map('intval', $userIds));
+    $query = sprintf('SELECT name FROM records WHERE id IN (%s)', $values);
+    // ok: php.parameter-sql-text
+    return $database->query($query);
+}
+
+function readTrimmedRecordIds($database, array $userIds) {
+    $values = implode(',', array_map('trim', $userIds));
+    $query = sprintf('SELECT name FROM records WHERE id IN (%s)', $values);
+    // ruleid: php.parameter-sql-text
+    return $database->query($query);
+}

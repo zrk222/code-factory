@@ -1,0 +1,52 @@
+class ProviderTrustFixture {
+    Object check(java.net.URL address, String user, String password) {
+        // ruleid: java.disabled-hostname-verification
+        Object permissive = new com.vmware.vim25.mo.ServiceInstance(address, user, password, true);
+        // ok: java.disabled-hostname-verification
+        return new com.vmware.vim25.mo.ServiceInstance(address, user, password, false);
+    }
+}
+
+class ScriptEvaluatorFixture {
+    private static javax.script.ScriptEngine interpreter;
+
+    public static Object evaluate(String expression, javax.script.Bindings bindings)
+            throws javax.script.ScriptException {
+        return interpreter.eval(expression, bindings);
+    }
+
+    public static void configure() {
+        // ruleid: java.request-command-injection
+        interpreter = new javax.script.ScriptEngineManager().getEngineByName("Nashorn");
+    }
+}
+
+class FixedScriptEvaluatorFixture {
+    private static javax.script.ScriptEngine interpreter;
+
+    public static Object evaluate(String expression, javax.script.Bindings bindings)
+            throws javax.script.ScriptException {
+        return interpreter.eval(expression, bindings);
+    }
+
+    public static void configure() {
+        org.openjdk.nashorn.api.scripting.NashornScriptEngineFactory factory =
+            new org.openjdk.nashorn.api.scripting.NashornScriptEngineFactory();
+        // ok: java.request-command-injection
+        interpreter = factory.getScriptEngine("--no-java");
+    }
+}
+
+class ConstantScriptFixture {
+    private static javax.script.ScriptEngine interpreter;
+
+    public static Object evaluate(String unused, javax.script.Bindings bindings)
+            throws javax.script.ScriptException {
+        return interpreter.eval("true", bindings);
+    }
+
+    public static void configure() {
+        // ok: java.request-command-injection
+        interpreter = new javax.script.ScriptEngineManager().getEngineByName("Nashorn");
+    }
+}

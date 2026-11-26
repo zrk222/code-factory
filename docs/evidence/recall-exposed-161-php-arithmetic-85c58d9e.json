@@ -1,0 +1,287 @@
+{
+  "schema": "factory.recall-exposed-php-arithmetic.v1",
+  "scope": "Registered exposed retention and adjudicated exact alert replay",
+  "prior_commit": "8ffd1642bf85bfba7ffcc88186515b88a1295500",
+  "prior_rules_sha256": "e7d2d4c059d348b88fd9b7a0606767cef7c024ea430c9c229cf3a5ab9240b606",
+  "rules_sha256": "85c58d9e00a5cb20df62345f3a64a97de89b3f823f5c0bd656c18dcf1396736d",
+  "manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+  "manifest_cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "engine": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "engine_args": [
+    "--timeout=15",
+    "--jobs=1"
+  ],
+  "case_workers": 2,
+  "reused_score_checkpoints": 0,
+  "qualification": {
+    "schema": "factory.registered-recall-retention.v1",
+    "reference_sha256": "0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf",
+    "candidate_score_sha256": "6e5e9e20b40cb10bd34d4d6ee1c80f73041797ef44b262dbfda3593a136fecd3",
+    "candidate_rules_sha256": "85c58d9e00a5cb20df62345f3a64a97de89b3f823f5c0bd656c18dcf1396736d",
+    "decision": "ACCEPT",
+    "summary": {
+      "registered_cases": 161,
+      "verified_bindings": 161,
+      "reference_hunk_hits": 39,
+      "retained_hunk_hits": 39,
+      "candidate_outcomes": {
+        "hit": 55,
+        "miss": 101,
+        "timeout": 0,
+        "unknown": 2,
+        "error": 0,
+        "coverage_incomplete": 3
+      },
+      "reference_fixed_side_residual_alerts": 17,
+      "candidate_fixed_side_residual_alerts": 17,
+      "candidate_hunk_hits": 55
+    },
+    "lost": [],
+    "gained": [
+      "GHSA-23fx-92m6-4f2g",
+      "GHSA-2jh5-g5ch-43q5",
+      "GHSA-2pm6-9fhx-vvg3",
+      "GHSA-68wg-qv6r-j4vp",
+      "GHSA-6m7c-xfhp-p9fh",
+      "GHSA-6qjf-g333-pv38",
+      "GHSA-72qq-p3r5-f7wq",
+      "GHSA-85gf-wr67-f83w",
+      "GHSA-8gqp-hr9g-pg62",
+      "GHSA-gjqq-6r35-w3r8",
+      "GHSA-jjgq-jq8g-24w4",
+      "GHSA-jppv-gw3r-w3q8",
+      "GHSA-mc7w-4cjf-c973",
+      "GHSA-mxg3-432p-mr72",
+      "GHSA-vj9x-w7ch-f46p",
+      "GHSA-vq7p-f4fv-rr5x"
+    ],
+    "new_unresolved": [],
+    "failures": [],
+    "verified_capture_cases": 160
+  },
+  "retained_previous_hits": 55,
+  "target": 70,
+  "remaining_unique_hits": 15,
+  "paired_controls": {
+    "sha256": "31a4d032146653909b729e3f89fce37aeb652c2730d8e75d84b9c4024f3a9965",
+    "complete": 10,
+    "expected": 18,
+    "before": 28,
+    "after": 28,
+    "inherited_marked_increase_vs_39_hit_reference": 1,
+    "repositories": [
+      {
+        "repo": "apache_commons-compress",
+        "source_tree": {
+          "sha256": "c1914653b30e4d820508b4608a3750fcb21571e431a78215eafacd998e365ec0",
+          "entries": 1172
+        },
+        "scope_sha256": "422c9b6c75631175654d339f992337635f242645530d65243b4a3a92c1cfbd0e",
+        "before": 0,
+        "after": 0
+      },
+      {
+        "repo": "caddyserver_caddy",
+        "source_tree": {
+          "sha256": "28cdd464c184c650045f4e5288ba48d361cfa608c0cc4565407422368e90b15e",
+          "entries": 780
+        },
+        "scope_sha256": "aec019b091afd771dea3596faf02e72a005cc281f0f7bdeaba2db0394dc53d3e",
+        "before": 1,
+        "after": 1
+      },
+      {
+        "repo": "cthackers_adm-zip",
+        "source_tree": {
+          "sha256": "4d5bcf94f4aefff069a7b1525be474bf10bad26523ee5acb8964cdd59f1c4937",
+          "entries": 82
+        },
+        "scope_sha256": "6a09676745036fe6c33e35a3a778218f50cb34a4d8d122685aa47f3fa43bf7e2",
+        "before": 0,
+        "after": 0
+      },
+      {
+        "repo": "expressjs_express",
+        "source_tree": {
+          "sha256": "52ebaac07e67d2caa455849aa1851e1ba8ab8ff438b784378c7e8a73e79ccb90",
+          "entries": 216
+        },
+        "scope_sha256": "a2e2bb41e2ffac85a0a0ca8f72fe722586022eb7d8c1fd647ca0a47fa42b29a7",
+        "before": 4,
+        "after": 4
+      },
+      {
+        "repo": "jekyll_jekyll",
+        "source_tree": {
+          "sha256": "fb8903e34041560ea0afaaf42da1329bde93af493c3bb7bfc7214e00dc44bec0",
+          "entries": 806
+        },
+        "scope_sha256": "fe4d8e2ab1757e91603a29dba4f1e060399bbcbdc958f12b146ef86bfc430046",
+        "before": 0,
+        "after": 0
+      },
+      {
+        "repo": "jquery_jquery",
+        "source_tree": {
+          "sha256": "b5adf837963f086c837b59a9480c89f986ef726baae6d5c8e2a0ee96a0c9efca",
+          "entries": 351
+        },
+        "scope_sha256": "90a8a5fa33c059295aadf72c4664ac37540cb438bc21b6309326064cb4f3c048",
+        "before": 15,
+        "after": 15
+      },
+      {
+        "repo": "markedjs_marked",
+        "source_tree": {
+          "sha256": "3311f469e7f80073a15b6b7368fc3d6319d204008e518488a1e976849d3dc0b5",
+          "entries": 706
+        },
+        "scope_sha256": "77a218ff8c14c69ae698d41b3801ff40eaa0011d2187d72276fccec07cff1de6",
+        "before": 3,
+        "after": 3
+      },
+      {
+        "repo": "phpbb_phpbb",
+        "source_tree": {
+          "sha256": "3d1b297fdb96266015fa28bd18630aa49c694fd243812761dbd89522a5b6224e",
+          "entries": 3014
+        },
+        "scope_sha256": "673ec0bbd2358dc16838550ea0e68ccffbb31083c78b2f6155f80da0337df6e2",
+        "before": 5,
+        "after": 5
+      },
+      {
+        "repo": "spring-projects_spring-petclinic",
+        "source_tree": {
+          "sha256": "b1667ed7ea72a6adfe159b6a0ca550d8b5c4be0c83bfe9eed926dcb8c756430f",
+          "entries": 132
+        },
+        "scope_sha256": "50b0244df4bb108dcc9797a0d18a1522435396f1613866173435843fc2e0ec06",
+        "before": 0,
+        "after": 0
+      },
+      {
+        "repo": "ZJONSSON_node-unzipper",
+        "source_tree": {
+          "sha256": "70741b358922f1df5fe1352e002db30d1893cb535fa978dd014bc719437caf5a",
+          "entries": 111
+        },
+        "scope_sha256": "0004a3b4fe23450b2862dd4c2e3ffcc792dd3543e82e50053e002f80796f04f7",
+        "before": 0,
+        "after": 0
+      }
+    ]
+  },
+  "review_replay": {
+    "before": 259,
+    "after": 258,
+    "labels_before": {
+      "FP": 41,
+      "TP": 18,
+      "UNCLEAR": 3
+    },
+    "labels_after": {
+      "FP": 40,
+      "TP": 18,
+      "UNCLEAR": 3
+    },
+    "added": [],
+    "removed": [
+      {
+        "case": "GHSA-jjgq-jq8g-24w4",
+        "path": "htdocs/don/card.php",
+        "line": 680,
+        "rule": "php.request-html-injection",
+        "span": [
+          10,
+          0,
+          129
+        ],
+        "source_sha256": "a5a614684d03953300bcadf01e4aa9ff6c4b2060a8a7b4929a1858c8762d835c",
+        "label": "FP"
+      }
+    ],
+    "evidence_sha256": "e372e5393e87cf82f13403ea1da33de0f15e1d825aeb9121cb912897bd57386c",
+    "original_adjudication_sha256": "861e8a5a508090934383d32d6aed6a7c04633dfa80070f97ac603594fa590ff5",
+    "changed_original_labels": 0,
+    "total_original_review_rows": 208
+  },
+  "legacy_fixture_verification": {
+    "annotation_count": 291,
+    "candidate_findings": 291,
+    "safe_line": 241,
+    "mixed_line": 243,
+    "safe_alert_before": true,
+    "safe_alert_after": false,
+    "mixed_markup_reported": true,
+    "fixture_manifest_sha256": "958cc9e615d9b147bb22e0f080bc339f965aa289002f99c0ffcd7ee6c58c64d7",
+    "before_sarif_sha256": "0ee06f4702a137c86cc70d75959b581a1742aaafbdb424834be63ce0c4d615ec",
+    "after_sarif_sha256": "7c304fd90c7f0dd6d9fc417adf700f3ebc1130bfa11797c15b189541159ea7ca"
+  },
+  "mutation_controls_passed": 22,
+  "runtime": {
+    "seconds": 219.7503083,
+    "outcomes": {
+      "hit": 55,
+      "miss": 101,
+      "timeout": 0,
+      "unknown": 2,
+      "error": 0,
+      "coverage_incomplete": 3
+    },
+    "fixed": 17
+  },
+  "outstanding": {
+    "paired_remaining_controls": 8,
+    "blinded_candidate_precision": "NOT_RUN",
+    "held_out_q2": "SEALED"
+  },
+  "additional_exposed_php_sql_replay": {
+    "case": "GHSA-6pvm-2vjj-rx4w",
+    "manifest_sha256": "23ff0cca82496bc04fa9b73f34d9697bea499d360913f1741b9683de4f1a437a",
+    "adjudication_sha256": "861e8a5a508090934383d32d6aed6a7c04633dfa80070f97ac603594fa590ff5",
+    "scored_in_registered_161": false,
+    "filename": "phpmyfaq/src/phpMyFAQ/Chat.php",
+    "line": 403,
+    "span": [
+      56,
+      0,
+      62
+    ],
+    "removed_alert_source_sha256": "d3bb835dce2777e4472c28ff345ab7c4ee9c025ef741d4b98604cf8a7cc0da0c",
+    "label": "FP",
+    "removed_exact_alerts": 1,
+    "added_exact_alerts": 0,
+    "hunk_finding_retained": [
+      [
+        "php.parameter-sql-text",
+        "phpmyfaq/src/phpMyFAQ/Chat.php",
+        311
+      ]
+    ],
+    "fixed_side_residual_alerts": 1,
+    "exact_revisions": {
+      "old": "ba729961c1ad1ff86d15bc623863387238d3f149",
+      "fixed": "bd4b08b012234ccfcff07bfe6518062475b29e0a"
+    },
+    "comparison": [
+      {
+        "rules_sha256": "e07f6514e86d12835ba13ef17f998718ca465e9d9c96d34df99047be6e009c0f",
+        "score_sha256": "58015b855ef628e4162b3fa24d6f62327ee9d0284f89652eee895f0d88a68ef9",
+        "replay_alerts_sha256": "bfa1f43ce347e8fd925495c718679f45824bd10cefa7422d73050955fb2bcf31",
+        "outcome": "hit"
+      },
+      {
+        "rules_sha256": "85c58d9e00a5cb20df62345f3a64a97de89b3f823f5c0bd656c18dcf1396736d",
+        "score_sha256": "3f4c3b6ea4c1d6b51d97056817c5db77b10abdf9b4ba02e7d19b98b062b910b5",
+        "replay_alerts_sha256": "442ae1c5002e9fc32dbf751266144639047f138bdb8fbc3c2db635f38829e69a",
+        "outcome": "hit"
+      }
+    ]
+  }
+}
