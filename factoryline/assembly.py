@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from .contract import MODULES, Meter, ensure_layout, Receipt
+from .contract import LAYOUT, MODULES, Meter, ensure_layout, Receipt
 from .protocol import ASSEMBLY_STAGES, ASSEMBLY_STAGE_KEYS
 from .protocol import receipt_stage as _receipt_stage
 from .meter import MeterLog, StageTiming, stopwatch
@@ -706,6 +706,39 @@ def _assembly_agent_contract(root: Path, report: dict, activity: LiveActivity) -
     return True
 
 
+def _bootstrap_step(
+    root: Path,
+    feature: str,
+    args: list[str],
+    release_binding: dict[str, str],
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Run one SpecLine bootstrap command and record its receipt and report row."""
+    stage = args[0]
+    activity.stage_started("specline", stage)
+    with stopwatch() as sw:
+        ok, out = _run_cli(
+            MODULES["specline"]["cli"], args, root, heartbeat=activity.heartbeat
+        )
+    Receipt(
+        module="specline",
+        stage=stage,
+        feature=feature,
+        ok=ok,
+        inputs=dict(release_binding),
+        outputs={"log_tail": out[-2000:]},
+    ).write(root)
+    status = "ok" if ok else "failed"
+    report["stages"].append(
+        {"module": "specline", "stage": stage, "status": status, "wall_ms": sw.wall_ms}
+    )
+    activity.stage_finished("specline", stage, status, wall_ms=sw.wall_ms)
+    if not ok:
+        report["halted_at"] = f"specline:{stage}"
+    return ok
+
+
 def _assembly_spec_bootstrap(
     root: Path,
     feature: str,
@@ -715,40 +748,17 @@ def _assembly_spec_bootstrap(
     report: dict,
     activity: LiveActivity,
 ) -> bool:
-    """Create a missing spec and pause for its author before the build chain."""
+    """Create a missing spec (and SpecLine's context files) and pause for its author."""
     spec_path = root / "specs" / f"{feature}.md"
     if dry_run or spec_path.exists() or not installed["specline"].installed:
         return False
-    activity.stage_started("specline", "new")
-    with stopwatch() as sw:
-        ok, out = _run_cli(
-            MODULES["specline"]["cli"],
-            ["new", feature],
-            root,
-            heartbeat=activity.heartbeat,
-        )
-    Receipt(
-        module="specline",
-        stage="new",
-        feature=feature,
-        ok=ok,
-        inputs=dict(release_binding),
-        outputs={"log_tail": out[-2000:]},
-    ).write(root)
-    report["stages"].append(
-        {
-            "module": "specline",
-            "stage": "new",
-            "status": "ok" if ok else "failed",
-            "wall_ms": sw.wall_ms,
-        }
-    )
-    activity.stage_finished(
-        "specline", "new", "ok" if ok else "failed", wall_ms=sw.wall_ms
-    )
-    if not ok:
-        report["halted_at"] = "specline:new"
-    else:
+    steps = [["new", feature]]
+    if not (root / "context" / "PROGRESS.md").is_file():
+        steps.insert(0, ["init"])
+    if all(
+        _bootstrap_step(root, feature, args, release_binding, report, activity)
+        for args in steps
+    ):
         report["paused_at"] = "author_spec"
         report["next_command"] = (
             f"edit specs/{feature}.md and plans/{feature}.md, then rerun factory assemble {feature}"
@@ -941,6 +951,85 @@ def _forge_architect_state(root: Path, feature: str) -> str | None:
         return None
 
 
+# How many leading ForgeLine assembly stages a Forge state already proves. verify-tests, smoke and ship
+# are idempotent in ForgeLine and always run; only the non-repeatable stages are skipped.
+_FORGE_SKIPPABLE = ("architect", "review", "arch-gate")
+_FORGE_STATE_PROVES = {
+    "scaffolded": 1, "filled": 1, "reviewed": 2, "arch_gated": 3,
+    "tests_verified": 3, "smoked": 3, "shipped": 3,
+}
+_FORGE_FAILED_GATE_PROVES = {"fill": 1, "review": 1, "arch_gate": 2}
+
+
+def _forge_stages_proven(root: Path, feature: str) -> tuple[str | None, int]:
+    """Forge state and the count of skippable stages it proves (a blocked run proves those before its failure)."""
+    try:
+        run = json.loads((root / ".forge" / feature / "state.json").read_text(encoding="utf-8"))
+        state = run.get("state")
+        if state == "blocked":
+            gate = (run.get("history") or [{}])[-1].get("failed_gate")
+            return state, _FORGE_FAILED_GATE_PROVES.get(gate, 3 if gate else 0)
+        return state, _FORGE_STATE_PROVES.get(state, 0)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None, 0
+
+
+def _prior_passing_receipt(root: Path, feature: str, module: str, stage: str) -> str | None:
+    """The newest passing FactoryLine receipt for one stage, as a workspace-relative path."""
+    directory = root / LAYOUT["receipts"]
+    newest: tuple[str, str] | None = None
+    for path in directory.glob(f"{module}-{feature}-{stage}-*.json"):
+        try:
+            receipt = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if receipt.get("ok") is True and receipt.get("stage") == stage and receipt.get("feature") == feature:
+            key = (str(receipt.get("ts", "")), path.relative_to(root).as_posix())
+            newest = max(newest or key, key)
+    return newest[1] if newest else None
+
+
+def forge_stage_skippable(root: Path, feature: str, stage: _AssemblyStage) -> tuple[bool, str | None, str | None]:
+    """Whether the Forge run is already past this stage: (skip, forge state, prior passing receipt).
+
+    A release-contract-required stage is skippable only when a prior passing receipt for it exists. Skipped
+    stages are left out of the run's declared sequence, so whole-run evidence still needs a complete run."""
+    if stage.module != "forgeline" or stage.name not in _FORGE_SKIPPABLE:
+        return False, None, None
+    state, proven = _forge_stages_proven(root, feature)
+    if _FORGE_SKIPPABLE.index(stage.name) >= proven:
+        return False, state, None
+    prior = _prior_passing_receipt(root, feature, stage.module, stage.name)
+    return not (stage.required and prior is None), state, prior
+
+
+def _assembly_forge_satisfied(
+    root: Path,
+    feature: str,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Skip a ForgeLine stage the Forge run is already past instead of re-issuing an illegal transition."""
+    skip, state, prior = forge_stage_skippable(root, feature, stage)
+    if dry_run or not skip:
+        return False
+    report["stages"].append(
+        {
+            "module": stage.module,
+            "stage": stage.name,
+            "status": "skipped",
+            "reason": "forge_state_satisfied",
+            "marker": "FORGE_STAGE_ALREADY_SATISFIED",
+            "forge_state": state,
+            "prior_receipt": prior,
+        }
+    )
+    activity.stage_finished(stage.module, stage.name, "skipped")
+    return True
+
+
 def _assembly_forge_architect(
     root: Path,
     feature: str,
@@ -954,11 +1043,12 @@ def _assembly_forge_architect(
     if dry_run or stage.module != "forgeline" or stage.name != "architect":
         return False
     ssat = _ssat_contract(root, feature)
+    ssat_arg = ssat.relative_to(root).as_posix()
     state = _forge_architect_state(root, feature)
     if not ssat.exists():
         report["paused_at"] = "architecture_contract"
         report["next_command"] = (
-            f"write specs/{feature}.ssat.yaml, then run forge expand {feature}"
+            f"write {ssat_arg}, then run forge expand {feature} --root ."
         )
         activity.stage_finished(stage.module, stage.name, "skipped")
         return True
@@ -984,11 +1074,11 @@ def _assembly_forge_architect(
         )
         activity.stage_finished(stage.module, "expand", "ok" if ok else "failed")
         report["paused_at"] = "architecture_approval"
-        report["next_command"] = f"forge gate architected {feature}"
+        report["next_command"] = f"forge gate architected {feature} {ssat_arg} --root ."
         return True
     if state == "expanded":
         report["paused_at"] = "architecture_approval"
-        report["next_command"] = f"forge gate architected {feature}"
+        report["next_command"] = f"forge gate architected {feature} {ssat_arg} --root ."
         activity.stage_finished(stage.module, stage.name, "skipped")
         return True
     return False
@@ -1023,8 +1113,9 @@ def _assembly_forge_review(
         return True
     if state == "scaffolded":
         report["paused_at"] = "implementation_fill"
+        ssat_arg = _ssat_contract(root, feature).relative_to(root).as_posix()
         report["next_command"] = (
-            f"implement the scaffold, then run forge fill {feature} {feature}.ssat.yaml"
+            f"implement the scaffold, then run forge fill {feature} {ssat_arg} --root ."
         )
         activity.stage_finished(stage.module, stage.name, "skipped")
         return True
@@ -1296,6 +1387,8 @@ def _assembly_stage_halts(
     availability = _assembly_availability_action(root, feature, stage, report, activity)
     if availability is not None:
         return availability == "halt"
+    if _assembly_forge_satisfied(root, feature, dry_run, stage, report, activity):
+        return False
     if _assembly_forge_architect(
         root, feature, dry_run, stage, release_binding, report, activity
     ):

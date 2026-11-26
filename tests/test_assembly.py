@@ -1776,3 +1776,118 @@ def test_mission_ship_handoff_preserves_release_supersession(run):
     )
     outcome.unlink()
     assert not _mission_ship_evidence(root, feature, trace)
+
+
+def _installed(monkeypatch, names=("specline", "forgeline", "hsf", "prestige")):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "factoryline.assembly.detect",
+        lambda: [SimpleNamespace(name=name, installed=True, cli=name) for name in names],
+    )
+
+
+_FORGE_CHAIN = [
+    ("forgeline", ["architect", "{f}", "{f}.ssat.yaml"]),
+    ("forgeline", ["review", "{f}", "{f}.ssat.yaml"]),
+    ("forgeline", ["arch-gate", "{f}", "{f}.ssat.yaml"]),
+    ("forgeline", ["verify-tests", "{f}", "{f}.ssat.yaml"]),
+]
+
+
+@pytest.mark.parametrize(
+    "state, history, skipped",
+    [
+        ("scaffolded", [], ["architect"]),
+        ("filled", [], ["architect"]),
+        ("reviewed", [], ["architect", "review"]),
+        ("arch_gated", [], ["architect", "review", "arch-gate"]),
+        ("tests_verified", [], ["architect", "review", "arch-gate"]),
+        ("shipped", [], ["architect", "review", "arch-gate"]),
+        ("blocked", [{"state": "blocked", "failed_gate": "review"}], ["architect"]),
+        ("blocked", [{"state": "blocked", "failed_gate": "verify_tests"}], ["architect", "review", "arch-gate"]),
+        ("blocked", [{"state": "blocked", "note": "unknown"}], []),
+    ],
+)
+def test_assembly_skips_forge_stages_the_run_is_already_past(tmp_path, monkeypatch, state, history, skipped):
+    from factoryline.assembly import _forge_stages_proven
+
+    _installed(monkeypatch)
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "f.md").write_text("# f\n", encoding="utf-8")
+    (tmp_path / "specs" / "f.ssat.yaml").write_text("name: f\n", encoding="utf-8")
+    forge = tmp_path / ".forge" / "f"
+    forge.mkdir(parents=True)
+    (forge / "state.json").write_text(json.dumps({"state": state, "history": history}), encoding="utf-8")
+    ran = []
+    monkeypatch.setattr(
+        "factoryline.assembly.run_cli_detailed",
+        lambda _cli, args, *_a, **_k: ran.append(args[0]) or _detailed_result(""),
+    )
+    report = assemble(tmp_path, "f", chain=_FORGE_CHAIN)
+    rows = {row["stage"]: row for row in report["stages"]}
+    assert [name for name, row in rows.items() if row.get("reason") == "forge_state_satisfied"] == skipped
+    assert all(rows[name]["marker"] == "FORGE_STAGE_ALREADY_SATISFIED" for name in skipped)
+    if state != "scaffolded":
+        assert ran == [name for name in ("architect", "review", "arch-gate", "verify-tests") if name not in skipped]
+    assert _forge_stages_proven(tmp_path, "f")[0] == state
+
+
+def test_required_forge_stage_is_not_skipped_without_a_prior_passing_receipt(tmp_path, monkeypatch):
+    from factoryline.assembly import _prior_passing_receipt
+
+    _installed(monkeypatch)
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "f.md").write_text("# f\n", encoding="utf-8")
+    (tmp_path / "specs" / "f.ssat.yaml").write_text("name: f\n", encoding="utf-8")
+    forge = tmp_path / ".forge" / "f"
+    forge.mkdir(parents=True)
+    (forge / "state.json").write_text('{"state": "reviewed", "history": []}', encoding="utf-8")
+    contract = tmp_path / ".factory/release-contracts/f.json"
+    contract.parent.mkdir(parents=True)
+    contract.write_text(json.dumps({"required_stages": ["forgeline:review"]}), encoding="utf-8")
+    ran = []
+    monkeypatch.setattr(
+        "factoryline.assembly.run_cli_detailed",
+        lambda _cli, args, *_a, **_k: ran.append(args[0]) or _detailed_result(""),
+    )
+    assemble(tmp_path, "f", chain=_FORGE_CHAIN[:2])
+    assert ran == ["review"]
+    assert _prior_passing_receipt(tmp_path, "f", "forgeline", "review") is not None  # the run above passed
+    ran.clear()
+    report = assemble(tmp_path, "f", chain=_FORGE_CHAIN[:2])
+    assert ran == [] and report["stages"][1]["prior_receipt"].startswith("receipts/forgeline-f-review-")
+
+
+def test_bootstrap_runs_specline_init_when_context_is_missing(tmp_path, monkeypatch):
+    _installed(monkeypatch)
+    calls = []
+
+    def fake(_cli, args, cwd, **_kwargs):
+        calls.append(list(args))
+        if args[0] == "init":
+            (cwd / "context").mkdir()
+            (cwd / "context" / "PROGRESS.md").write_text("# Progress\n", encoding="utf-8")
+        return True, ""
+
+    monkeypatch.setattr("factoryline.assembly.run_cli", fake)
+    report = assemble(tmp_path, "f")
+    assert calls == [["init"], ["new", "f"]] and report["paused_at"] == "author_spec"
+    calls.clear()
+    assemble(tmp_path, "g")
+    assert calls == [["new", "g"]]
+
+
+@pytest.mark.parametrize("state", [None, "expanded", "scaffolded"])
+def test_pause_hints_name_the_ssat_forge_reads(tmp_path, monkeypatch, state):
+    _installed(monkeypatch)
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "f.md").write_text("# f\n", encoding="utf-8")
+    (tmp_path / "specs" / "f.ssat.yaml").write_text("name: f\n", encoding="utf-8")
+    if state:
+        forge = tmp_path / ".forge" / "f"
+        forge.mkdir(parents=True)
+        (forge / "state.json").write_text(json.dumps({"state": state, "history": []}), encoding="utf-8")
+    monkeypatch.setattr("factoryline.assembly.run_cli", lambda *_a, **_k: (True, ""))
+    report = assemble(tmp_path, "f", chain=_FORGE_CHAIN[:2])
+    assert "specs/f.ssat.yaml --root ." in report["next_command"]

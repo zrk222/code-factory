@@ -831,7 +831,11 @@ def _assembly_scope_requirements(root, feature):
 def _begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
     """Declare required and applicable native stages before assembly runs them."""
 
+    from .assembly import forge_stage_skippable
+
     def applies(stage):
+        if forge_stage_skippable(root, feature, stage)[0]:
+            return False  # assembly skips it; it is not part of this run's declared sequence
         if stage.required or stage.module in BASE_REQUIRED_MODULES:
             return True
         if stage.module == "prestige":
