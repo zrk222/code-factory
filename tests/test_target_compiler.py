@@ -539,3 +539,28 @@ def test_ssat_yaml_scopes_every_invariant_to_every_function():
     assert all([scope["symbol"] for scope in invariant["scopes"]] == ["run", "stop"]
                for invariant in document["invariants"])
     assert "&id" not in ssat_yaml("svc", [module], [NO_EVAL, NO_SECRET])
+
+
+def test_mobile_workflow_prints_a_runnable_appforge_init(tmp_path: Path, monkeypatch, capsys):
+    import os
+    import re
+    import shlex
+    import subprocess
+
+    output = tmp_path / "mobile"
+    create_target_from_prompt(
+        "Build a receipt review workspace with explicit approval boundaries.",
+        target="mobile", out_dir=output, name="review-mobile", purpose="developer",
+    )
+    workflow = (output / "docs" / "TARGET_WORKFLOW.md").read_text(encoding="utf-8")
+    line = re.search(r"^factory (appforge init .+)$", workflow, flags=re.M).group(1)
+    app = json.loads((output / "mobile" / "app.json").read_text(encoding="utf-8"))["expo"]
+    assert app["ios"]["bundleIdentifier"] in line and app["version"] in line
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@e"}
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "target"]):
+        subprocess.run(["git", *args], cwd=output, check=True, env=env)
+    monkeypatch.chdir(output)
+    assert main(shlex.split(line)) == 0, capsys.readouterr()
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["source_commit_derived"] is True and receipt["candidate"]["build_number"] == "1"

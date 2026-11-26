@@ -182,6 +182,35 @@ def _drop_forge_state(root: Path, name: str) -> None:
                 directory.rmdir()
 
 
+MOBILE_VERSION = "0.1.0"
+MOBILE_BUILD = "1"
+
+
+def _display_name(name: str) -> str:
+    return name.replace("-", " ").title()
+
+
+def _bundle_identifier(name: str) -> str:
+    """A placeholder reverse-DNS id derived from the target name; replace com.example before release."""
+    return "com.example." + ("".join(ch for ch in name.lower() if ch.isalnum()) or "app")
+
+
+def _store_delivery_section(name: str, manifest: dict[str, Any]) -> str:
+    """A-CON-1: the AppForge start for a mobile target, pre-filled from mobile/app.json and the manifest."""
+    purpose = str(manifest["intent"].get("purpose") or "the intended users").replace('"', "'")
+    return f"""
+## Store delivery (AppForge)
+
+Commit the target to git first (AppForge records the exact build commit), then start the iOS evidence chain.
+Values come from `mobile/app.json`; replace `com.example` and the mission wording with the real ones:
+
+```bash
+factory appforge init --root . --out-dir .factory/appforge/init-{MOBILE_BUILD} --app-name "{_display_name(name)}" --bundle-identifier {_bundle_identifier(name)} --version {MOBILE_VERSION} --build-number {MOBILE_BUILD} --audience "{purpose}" --primary-job "Use {_display_name(name)}" --desired-emotion "confident" --json
+factory appforge next --root .
+```
+"""
+
+
 def _common_docs(name: str, target: str, manifest: dict[str, Any]) -> str:
     profile = manifest["deployment"]["profile"]
     prerequisites = "\n".join(f"- {item}" for item in profile["prerequisites"])
@@ -232,7 +261,7 @@ Prerequisites:
 Approval boundary: **{profile["approval"]}**. This route is guidance only;
 `external_effects_authorized` remains `false` until a separate human approval
 grants the exact credentials, spend, and external actions required by the route.
-"""
+""" + (_store_delivery_section(name, manifest) if target == "mobile" else "")
 
 
 def _coverage(name: str, requirements: list[tuple[str, str]]) -> dict[str, Any]:
@@ -800,11 +829,12 @@ def _scaffold_mobile(root: Path, name: str, purpose: str, text: str) -> list[str
         root / "mobile" / "app.json",
         {
             "expo": {
-                "name": name.replace("-", " ").title(),
+                "name": _display_name(name),
                 "slug": name,
-                "version": "0.1.0",
+                "version": MOBILE_VERSION,
                 "orientation": "portrait",
                 "userInterfaceStyle": "automatic",
+                "ios": {"bundleIdentifier": _bundle_identifier(name), "buildNumber": MOBILE_BUILD},
             }
         },
     )
