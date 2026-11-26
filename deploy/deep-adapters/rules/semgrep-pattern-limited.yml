@@ -3632,8 +3632,8 @@ rules:
     pattern-sources:
       - patterns:
           - pattern-inside: function $F(..., $P, ...) { ... }
-          - pattern: $P
           - metavariable-regex: {metavariable: $P, regex: '^\$(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|expression|condition|q|raw|rawsql|table|column|columns|grammar|builder|config|options|connection)$)\w+$'}
+          - focus-metavariable: $P
     pattern-sanitizers:
       - patterns:
           - pattern: $OBJ->$M(...)
@@ -3713,15 +3713,11 @@ rules:
       # left out: they assemble already-quoted pieces by design.
       - patterns:
           - pattern: $LIT . $X
-          - metavariable-pattern:
+          # Check a single quoted literal without reparsing every concatenation operand.
+          - metavariable-regex:
               metavariable: $LIT
-              patterns:
-                - pattern: '"..."'
-                # One regex over the whole literal, delimiters included (two
-                # pattern-regex terms would intersect their match ranges): SQL text
-                # whose content ends inside a value: = ', LIKE \'%, IN (, \', or a
-                # lone backtick opening a quoted identifier ('`' . $column).
-                - pattern-regex: '(?is)\A[''"]`[''"]\z|\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?[''\"%]).*?(=\s*|like\s*|in\s*\(\s*|\\''%?|"%?|''%?|`)[''"]\z'
+              regex: >-
+                (?s)\A(?=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\z)(?:(?is)\A['"]`['"]\z|\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?['\"%]).*?(=\s*|like\s*|in\s*\(\s*|\\'%?|"%?|'%?|`)['"]\z)
           - pattern-not-inside:
               patterns:
                 - pattern: class $C extends $B { ... }
@@ -3762,8 +3758,8 @@ rules:
               - pattern-inside: func $F(..., $P $T, ...) $R { ... }
               - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) { ... }
               - pattern-inside: func ($RV $RT) $F(..., $P $T, ...) $R { ... }
-          - pattern: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|ctx|tx|db)$)\w+$'}
+          - focus-metavariable: $P
     pattern-sanitizers:
       - pattern: strconv.Itoa(...)
       - pattern: strconv.FormatInt(...)
