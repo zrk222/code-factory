@@ -203,7 +203,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.php.request-unsafe-deserialization': 5,
   'opt.factory.rules.python.archive-path-traversal': 4,
   'opt.factory.rules.python.disabled-tls-verification': 4,
-  'opt.factory.rules.python.parameter-path-join-without-containment': 5,
+  'opt.factory.rules.python.parameter-path-join-without-containment': 6,
   'opt.factory.rules.python.parameter-shell-command': 7,
   'opt.factory.rules.python.parameter-sql-text': 2,
   'opt.factory.rules.python.request-command-injection': 2,
@@ -287,7 +287,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 291;
+const REVIEWED_FINDINGS = 292;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
