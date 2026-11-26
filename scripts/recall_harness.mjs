@@ -44,7 +44,7 @@ export const FAMILIES = Object.freeze({
 });
 export const LANGUAGES = Object.freeze({
   PyPI: ['py'], npm: ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts'], Packagist: ['php'],
-  Go: ['go'], Maven: ['java'], RubyGems: ['rb'],
+  Go: ['go'], Maven: ['java'], RubyGems: ['rb'], NuGet: ['cs'], 'crates.io': ['rs'],
 });
 
 // Secondary, pre-registered scope: every file type the production semgrep lane
@@ -1055,6 +1055,35 @@ async function probeCoverage(dev, opts) {
 
 const duplicateAdvisory = ghsa => 'Duplicate advisory ID across paired recall cohorts: ' + ghsa;
 
+const registeredFamilies = row => familiesFor(row.cwes ?? []);
+
+function familyObservation(row, family) {
+  const outcome = measuredOutcome(row);
+  if (!['hit', 'miss'].includes(outcome)) return 'unresolved';
+  if (outcome === 'hit') {
+    if (row.matched_hunk_families?.includes(family)) return 'hit';
+    if (!row.matched_hunk_families?.length) return 'unresolved';
+  }
+  const old = row.file_coverage?.old;
+  return old?.some(file => file.submitted) && !coverageGaps(old).length ? 'miss' : 'unresolved';
+}
+
+function measureFamilies(old, row, families, transitions) {
+  for (const family of families) {
+    const counts = () => ({ hit: 0, miss: 0, unresolved: 0 });
+    const entry = transitions[family] ??= {
+      paired_cases: 0, before: counts(), after: counts(), gained: [], lost: [], unresolved: [],
+    };
+    const before = familyObservation(old, family), after = familyObservation(row, family);
+    entry.paired_cases++;
+    entry.before[before]++;
+    entry.after[after]++;
+    if (before === 'miss' && after === 'hit') entry.gained.push(row.ghsa);
+    if (before === 'hit' && after === 'miss') entry.lost.push(row.ghsa);
+    if (before === 'unresolved' || after === 'unresolved') entry.unresolved.push(row.ghsa);
+  }
+}
+
 function measureCaseChange(old, row, pair, changes) {
   const { gained, newErrors, newCoverageGaps, failures, seenAdvisories } = changes;
   if (seenAdvisories.has(row.ghsa)) {
@@ -1066,6 +1095,12 @@ function measureCaseChange(old, row, pair, changes) {
     failures.push('Baseline and candidate source byte fingerprints differ for ' + row.ghsa);
     return;
   }
+  const families = registeredFamilies(row);
+  if (JSON.stringify(registeredFamilies(old)) !== JSON.stringify(families)) {
+    failures.push('Baseline and candidate registered families differ for ' + row.ghsa);
+    return;
+  }
+  measureFamilies(old, row, families, changes.familyTransitions);
   const previous = measuredOutcome(old), current = measuredOutcome(row);
   if (previous === 'hit' && current !== 'hit') recordLostHit(changes, pair, old, row);
   if (previous === 'miss' && current === 'hit') gained.push(row.ghsa);
@@ -1099,7 +1134,9 @@ function measureDevPair({ before, after }, changes) {
 
 export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1, lossPolicy = null }) {
   const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [], lostFpOnly = [], rawLost = [];
-  const changes = { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost, seenAdvisories: new Set() };
+  const familyTransitions = {};
+  const changes = { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost,
+    familyTransitions, seenAdvisories: new Set() };
   for (const pair of dev) measureDevPair(pair, changes);
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
   const residualAfter = dev.reduce((n, pair) => n + pair.after.summary.fix_side_residual_alerts, 0);
@@ -1122,6 +1159,7 @@ export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance 
     ...(lossPolicy ? { lost_fp_only: lostFpOnly, raw_lost_baseline_hits: rawLost,
       adjudicated_loss_basis: lossPolicy.receipt } : {}),
     new_coverage_gaps: newCoverageGaps,
+    family_transitions: familyTransitions,
     residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
     control_increase: controlIncrease, max_control_increase: maxControlIncrease };
 }
@@ -1140,11 +1178,14 @@ function pairedCaseEvidence({ before, after }) {
   return after.cases.map(row => {
     const previous = baseline.get(row.ghsa);
     const rawLoss = previous && measuredOutcome(previous) === 'hit' && measuredOutcome(row) !== 'hit';
+    const baselineFamilies = previous?.matched_hunk_families ?? [];
+    const familyLoss = baselineFamilies.some(family => familyObservation(row, family) === 'miss');
     return { ghsa: row.ghsa, fix: row.fix, before: previous?.outcome ?? previous?.status ?? null,
       after: row.outcome ?? row.status, hunk_findings: row.hunk_findings ?? [],
       ...(row.hunk_spans ? { hunk_spans: row.hunk_spans } : {}),
-      ...(rawLoss ? { baseline_hunk_findings: previous.hunk_findings ?? [],
+      ...(rawLoss || familyLoss ? { baseline_hunk_findings: previous.hunk_findings ?? [],
         ...(previous.hunk_spans ? { baseline_hunk_spans: previous.hunk_spans } : {}) } : {}),
+      registered_families: registeredFamilies(row), baseline_matched_hunk_families: baselineFamilies,
       matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
       retried_serially: Boolean(row.retried_serially) };
   });

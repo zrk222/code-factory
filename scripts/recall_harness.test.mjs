@@ -158,6 +158,37 @@ test('gate rejects lost hits, more residuals and control growth', () => {
   assert.deepEqual([noisy.decision, noisy.control_increase], ['REJECT', 6]);
 });
 
+test('family transitions distinguish a lost family within a retained hit from incomplete coverage', () => {
+  const cwes = ['CWE-22', 'CWE-89'];
+  const source = { path: 'sample.py', submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' };
+  const complete = { old: [source], fixed: [] };
+  const partial = { ...complete, old: [{ ...source, state: 'partial', reason: 'engine_timeout' }] };
+  const row = (ghsa, matches, file_coverage = complete) => ({
+    ghsa, cwes, file_coverage, outcome: matches.length ? 'hit' : 'miss', hunk_hit: !!matches.length,
+    matched_hunk_families: matches,
+  });
+  const result = cases => ({ cases, summary: { fix_side_residual_alerts: 0, hunk_hits: 2 } });
+  const before = result([row('A', ['path', 'sql']), row('B', ['path', 'sql']), row('C', [])]);
+  const after = result([row('A', ['sql']), row('B', ['sql'], partial), row('C', ['path'])]);
+  const comparison = gate({ dev: [{ before, after }], controls: [] });
+  assert.deepEqual(comparison.lost_baseline_hits, []);
+  assert.deepEqual(comparison.family_transitions.path, {
+    paired_cases: 3, before: { hit: 2, miss: 1, unresolved: 0 },
+    after: { hit: 1, miss: 1, unresolved: 1 },
+    gained: ['C'], lost: ['A'], unresolved: ['B'],
+  });
+  assert.deepEqual(comparison.family_transitions.sql, {
+    paired_cases: 3, before: { hit: 2, miss: 1, unresolved: 0 },
+    after: { hit: 2, miss: 1, unresolved: 0 },
+    gained: [], lost: [], unresolved: [],
+  });
+  assert.deepEqual(comparison.new_coverage_gaps, ['B']);
+  after.cases[0] = { ...after.cases[0], cwes: ['CWE-89'] };
+  const drift = gate({ dev: [{ before, after }], controls: [] });
+  assert.match(drift.failures[0], /registered families differ for A/);
+  assert.deepEqual(drift.family_transitions.path.lost, []);
+});
+
 test('gate rejects dropped, added and duplicate case IDs and scores reordered cases by ID', () => {
   const result = cases => ({ cases, scope: 'ecosystem', summary: { fix_side_residual_alerts: 0, hunk_hits: 1 } });
   const a = { ghsa: 'A', hunk_hit: true }, b = { ghsa: 'B', hunk_hit: false };
@@ -1593,6 +1624,8 @@ test('parse warnings stay diagnostics; timeouts and failed scans make a case inc
 test('scannable scope widens file types; the primary scope stays the ecosystem language', async () => {
   const { scopeExtensions, SCANNABLE_EXTENSIONS } = await import('./recall_harness.mjs');
   assert.deepEqual(scopeExtensions('PyPI'), ['py']);
+  assert.deepEqual(scopeExtensions('NuGet'), ['cs']);
+  assert.deepEqual(scopeExtensions('crates.io'), ['rs']);
   assert.equal(scopeExtensions('PyPI', 'scannable'), SCANNABLE_EXTENSIONS);
   assert.ok(SCANNABLE_EXTENSIONS.includes('ts') && SCANNABLE_EXTENSIONS.includes('rs') && !SCANNABLE_EXTENSIONS.includes('svelte'));
 });

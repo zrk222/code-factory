@@ -244,6 +244,12 @@ for lost baseline hits. Use `--adjudicated-losses` for the baseline and
 The checkpoint plan requires the exact score digest, span and source hash for
 each reviewed alert. A candidate coverage gap still blocks qualification.
 
+The paired `family_transitions` records gains and losses for each registered
+family, including changes within a case that retains its overall hit. Absent
+family hits count as misses only with complete old-side coverage and available
+attribution. Unresolved pairs stay visible. This report uses rule attribution
+and does not change the case-level qualification gate.
+
 A held-out manifest is scored once per ruleset; any later scoring of it is a
 development run and is reported as such.
 
