@@ -907,9 +907,12 @@ test('evaluation refuses a manifest changed during the paired scan', () => feede
   assert.equal(existsSync(output), false);
 }));
 
-test('changed prepared source, diff and inventory bytes cannot yield a measured case', () => feederFixture(async fixture => {
+test('same-size source rewrites and changed diff or inventory bytes cannot yield a measured case', () => feederFixture(async fixture => {
   const { source, manifest, baseline, diffPath, inventoryPath, opts, old, diff } = fixture;
-  writeFileSync(source, Buffer.from('print("before")\n'));
+  const rewritten = Buffer.from('print("bEfore")\r\n');
+  assert.equal(rewritten.length, old.length);
+  assert.notDeepEqual(rewritten, old);
+  writeFileSync(source, rewritten);
   const sourceDrift = await scoreManifest(manifest, baseline, opts);
   assert.equal(sourceDrift.summary.scored, 0);
   assert.match(sourceDrift.cases[0].scan_sides.old.detail, /source byte fingerprints differ/);
