@@ -19,7 +19,11 @@ const FORMAT = 'factory.recall-codeql-pairs.v1';
 const PLAN_BUNDLE = 'factory.recall-codeql-pairs.v2';
 const COHORT_BUNDLE = 'factory.recall-codeql-cohort.v1';
 const extractionDiagnostics = new Map([
-  ['npm', id => id === 'factory/js/diagnostics/parsed-source-files'],
+  ['Go', 'go/diagnostics/successfully-extracted-files'],
+  ['Maven', 'java/diagnostics/successfully-extracted-files'],
+  ['npm', 'factory/js/diagnostics/parsed-source-files'],
+  ['PyPI', 'py/diagnostics/successfully-extracted-files'],
+  ['RubyGems', 'rb/diagnostics/successfully-extracted-files'],
 ]);
 const digest = /^[0-9a-f]{64}$/;
 const revision = /^[0-9a-f]{40}$/;
@@ -188,14 +192,13 @@ function captureFingerprints(capture, revision, policy, packets, findings, flows
     traced_findings: locations.filter(row => row.trace.length).length };
 }
 
-function nativeExtractionCoverage(invocations, packetPaths, resolvePath,
-  isExtractionNote = id => id.endsWith('/diagnostics/successfully-extracted-files')) {
+function nativeExtractionCoverage(invocations, packetPaths, resolvePath, extractionId) {
   const extracted = new Set();
   const parseFailed = new Set();
   for (const invocation of invocations) {
     for (const note of invocation.toolExecutionNotifications ?? []) {
       const id = note.descriptor?.id ?? '';
-      const paths = isExtractionNote(id) ? extracted
+      const paths = id === extractionId ? extracted
         : /(?:parse|syntax)[_-]?(?:error|failure)/i.test(id) ? parseFailed : null;
       if (!paths) continue;
       for (const entry of note.locations ?? []) {
@@ -214,7 +217,7 @@ function nativeExtractionCoverage(invocations, packetPaths, resolvePath,
     missing, complete: !missing.length && !parseFailed.size };
 }
 
-function nativeCapture(root, capture, side, input, engineVersion, policy, isExtractionNote) {
+function nativeCapture(root, capture, side, input, engineVersion, policy, extractionId) {
   const observed = json(artifact(root, capture?.observation));
   requireProof(observed.case === input.ghsa && observed.side === side && observed.revision === input.revisions[side],
     'Native case or revision differs for ' + side);
@@ -259,7 +262,7 @@ function nativeCapture(root, capture, side, input, engineVersion, policy, isExtr
     roots.unshift(archiveRoot);
   }
   const resolvePath = location => nativeArtifactPath(location, run, packetPaths, roots);
-  const coverage = nativeExtractionCoverage(run.invocations, packetPaths, resolvePath, isExtractionNote);
+  const coverage = nativeExtractionCoverage(run.invocations, packetPaths, resolvePath, extractionId);
   const findings = sarifFindings(report, packetPaths, id => id, resolvePath);
   requireProof(findings.length === run.results.length
     && findings.every(finding => finding.path && Number.isSafeInteger(finding.line) && finding.line > 0),
@@ -414,9 +417,9 @@ function scorePreparedPair(row, context) {
     requireProof(policy.queries[0].families.some(family => families.includes(family)),
       'CodeQL query family differs for ' + row.advisory);
   }
-  const isExtractionNote = extractionDiagnostics.get(registered.ecosystem);
-  const old = nativeCapture(root, row.old, 'old', input, engineVersion, policy, isExtractionNote);
-  const fixed = nativeCapture(root, row.fixed, 'fixed', input, engineVersion, policy, isExtractionNote);
+  const extractionId = extractionDiagnostics.get(registered.ecosystem);
+  const old = nativeCapture(root, row.old, 'old', input, engineVersion, policy, extractionId);
+  const fixed = nativeCapture(root, row.fixed, 'fixed', input, engineVersion, policy, extractionId);
   archives.push(old.archive, fixed.archive);
 
   const editedLines = {};
