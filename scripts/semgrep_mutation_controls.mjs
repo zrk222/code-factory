@@ -189,7 +189,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.parameter-sql-text': 3,
   'opt.factory.rules.javascript.request-command-injection': 4,
   'opt.factory.rules.javascript.request-html-injection': 12,
-  'opt.factory.rules.javascript.request-path-traversal': 18,
+  'opt.factory.rules.javascript.request-path-traversal': 17,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
@@ -233,7 +233,7 @@ export const typescriptExtensionEndpoints = Object.freeze([
   ['parameter-sql-text', 233, [[21, 65], [56, 63]]], ['parameter-path-join-without-containment', 247],
   ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
   ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
-  ['request-path-traversal', 305], ['request-path-traversal', 312], ['request-path-traversal', 314],
+  ['request-path-traversal', 305], ['request-path-traversal', 312],
   ['parameter-path-join-without-containment', 328], ['parameter-sql-text', 343],
   ['parameter-shell-command', 358], ['parameter-shell-command', 360],
   ['request-path-traversal', 379], ['request-path-traversal', 381],
@@ -278,9 +278,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 257 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 256 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 257;
+const REVIEWED_FINDINGS = 256;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

@@ -633,6 +633,8 @@ rules:
               regex: ^(is_?[Vv]alid|[Vv]alidate|has|includes)[A-Za-z0-9_]*$
           - focus-metavariable: $X
       - pattern: path.basename(...)
+    # Existence and metadata probes (exists, stat, access) neither read nor change file
+    # content; each vulnerable read or write the probe guards is reported on its own.
     pattern-sinks:
       - patterns:
           - pattern: fs.readFile($PATH, ...)
@@ -654,7 +656,7 @@ rules:
               regex: ^(fs\w*|\w*Fs|fse|fsp|fsPromises|promises|fs\.promises)$
           - metavariable-regex:
               metavariable: $CALL
-              regex: ^(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
+              regex: ^(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync)$
           - focus-metavariable: $PATH
       # The same calls through a receiver bound to an fs module, under any name.
       - patterns:
@@ -674,7 +676,7 @@ rules:
           - pattern: $FS.$CALL($PATH, ...)
           - metavariable-regex:
               metavariable: $CALL
-              regex: ^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|stat|statSync|lstat|lstatSync|existsSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync|access|accessSync)$
+              regex: ^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|open|openSync|readdir|readdirSync|unlink|unlinkSync|rm|rmSync|rename|renameSync|copyFile|copyFileSync|copy|move|outputFile|remove|mkdir|mkdirSync)$
           - focus-metavariable: $PATH
       # Joining request text under a base directory is the traversal itself.
       - patterns:
