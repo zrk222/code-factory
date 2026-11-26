@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, linkSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { hunkAdjudicationIdentity, hunkIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -11,6 +11,7 @@ import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindin
   publishPreparedCase, checkpointable, controlGapDelta, controlIssue } from './recall_harness.mjs';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 import { compileScannerPathPolicy, engineTargetIgnores } from './recall_coverage.mjs';
+import { replayRegisteredCaptures } from './verify_registered_recall.mjs';
 
 test('scanner path policy requires exclusion by every applicable YAML rule regardless of key order', () => {
   const inline = '  - id: inline\n    languages: [go]\n    paths:\n      exclude: ["**/*.pb.go"]\n';
@@ -299,6 +300,14 @@ test('paired reports expose fixed-side span replacements even at equal counts', 
   assert.deepEqual(compare({ ...record, fix_side_residual_spans: undefined }).fixed_side_span_delta, {
     compared_cases: 0, added: [], removed: [], unresolved_advisories: ['A'],
   });
+  const failed = { ...record, fix_side_residual: [], fix_side_residual_spans: undefined };
+  for (const fixed of [{ failed_exit: true }, { blocking_parse_errors: 1 }, { timeouts: 1 }]) {
+    assert.deepEqual(compare({ ...failed, scan_sides: { fixed } }).fixed_side_span_delta, {
+      compared_cases: 0, added: [], removed: [], unresolved_advisories: ['A'],
+    });
+  }
+  assert.equal(compare({ ...failed, scan_sides: { old: { failed_exit: true } } })
+    .fixed_side_span_delta.removed[0].count, 2);
 });
 
 test('family transitions distinguish a lost family within a retained hit from incomplete coverage', () => {
@@ -968,8 +977,15 @@ test('fixed review recomputes exact same-line residual spans from pinned packets
   const [row] = score.cases;
   const expected = [[1, 0, 4], [6, 0, 9]];
   assert.deepEqual(row.fix_side_residual_spans, expected);
-  const run = (rules = baseline) => spawnSync(process.execPath, [script, 'review-alerts', '--score', saved,
-    '--score-sha256', sha256(readFileSync(saved)), '--workdir', workdir, '--out', output,
+  const inputs = JSON.parse(readFileSync(manifest, 'utf8'));
+  const replay = () => replayRegisteredCaptures(score, workdir, inputs, readFileSync(baseline, 'utf8'));
+  assert.deepEqual(replay(), { verified_capture_cases: 1, replayed_case_scores: 1, invalid: [], unreproduced: [] });
+  const oldCoverage = row.file_coverage.old[0].state;
+  row.file_coverage.old[0].state = 'unreported';
+  assert.deepEqual(replay().unreproduced, [row.ghsa]);
+  row.file_coverage.old[0].state = oldCoverage;
+  const run = (rules = baseline, destination = output) => spawnSync(process.execPath, [script, 'review-alerts', '--score', saved,
+    '--score-sha256', sha256(readFileSync(saved)), '--workdir', workdir, '--out', destination,
     '--side', 'fixed', '--rules', rules], { encoding: 'utf8' });
   const exported = run();
   assert.equal(exported.status, 0, exported.stderr);
@@ -979,16 +995,28 @@ test('fixed review recomputes exact same-line residual spans from pinned packets
   assert.ok(records.every(alert => alert.side === 'fixed' && alert.on_fix_hunk
     && alert.source_sha256 === row.source_packets.fixed[0].sha256));
   rmSync(output);
+  const pinnedRules = readFileSync(baseline);
+  const rulesAlias = join(root, 'rules-alias.yml');
+  linkSync(baseline, rulesAlias);
+  for (const destination of [baseline, rulesAlias]) {
+    const guarded = run(baseline, destination);
+    assert.notEqual(guarded.status, 0, guarded.stderr);
+    assert.match(guarded.stderr, /output is the ruleset/);
+    assert.deepEqual(readFileSync(baseline), pinnedRules);
+  }
 
   row.fix_side_residual_spans[1] = [7, 0, 9];
+  assert.deepEqual(replay().unreproduced, [row.ghsa]);
   writeFileSync(saved, JSON.stringify(score));
   assert.match(run().stderr, /positions or spans differ/);
   writeFileSync(saved, pinned);
   const wrong = join(root, 'wrong.yml');
   writeFileSync(wrong, '# different rules\n');
   assert.match(run(wrong).stderr, /Review rules digest differs/);
+  row.fix_side_residual_spans[1] = expected[1];
   const diff = join(workdir, row.captures.fixed.source_root, '..', 'diff.patch');
   writeFileSync(diff, ' ', { flag: 'a' });
+  assert.deepEqual(replay().unreproduced, [row.ghsa]);
   assert.match(run().stderr, /Review diff digest differs/);
   assert.equal(existsSync(output), false);
 }));

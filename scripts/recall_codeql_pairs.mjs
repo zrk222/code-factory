@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { caseDigest, familiesFor, outcomeOf, parseHunks, reviewCapturePath, sarifFindings, scopeExtensions,
   scoreCase, sha256, validateRecallManifest } from './recall_harness.mjs';
-import { completeFixedCoverage } from './recall_coverage.mjs';
+import { completeFixedCoverage, sarifPath } from './recall_coverage.mjs';
 import { inputFingerprint } from './verify_registered_recall.mjs';
 
 const FORMAT = 'factory.recall-codeql-pairs.v1';
@@ -99,6 +99,35 @@ for item in json.load(sys.stdin):
                         raise ValueError("Source archive packet bytes differ for " + item["side"] + ": " + packet["path"])
 `;
 
+function nativeSourcePath(location, run, packetPaths) {
+  const uri = location?.uri;
+  requireProof(typeof uri === 'string' && uri.length > 0, 'Native artifact URI is missing');
+  const path = uri.replace(/^file:\/\/(?=\/)/, '');
+  requireProof(!/^[a-z][a-z\d+.-]*:/i.test(path), 'Untrusted native source URI');
+  if (location.uriBaseId !== undefined) {
+    const base = run.originalUriBaseIds?.[location.uriBaseId];
+    const implicitRoot = location.uriBaseId === '%SRCROOT%' && base === undefined;
+    requireProof(implicitRoot || (base && ['/src', '/src/', 'file:///src', 'file:///src/'].includes(base.uri)
+      && base.uriBaseId === undefined), 'Untrusted native source base');
+  }
+  requireProof(!path.startsWith('/') || path.startsWith('/src/'), 'Untrusted native source root');
+  const relative = path.replace(/^\/src\//, '');
+  const resolved = sarifPath(uri.startsWith('file://') ? 'file://' + relative : relative, packetPaths);
+  requireProof(relativeEntry(resolved), 'Invalid native source path');
+  return resolved;
+}
+
+function nativeArtifactPath(location, run, packetPaths) {
+  if (location?.index === undefined) return nativeSourcePath(location, run, packetPaths);
+  const index = location.index;
+  requireProof(Number.isSafeInteger(index) && index >= 0 && index < (run.artifacts?.length ?? 0),
+    'Native artifact index is absent');
+  const indexed = nativeSourcePath(run.artifacts[index]?.location, run, packetPaths);
+  requireProof(location.uri === undefined || nativeSourcePath(location, run, packetPaths) === indexed,
+    'Native inline and indexed artifacts disagree');
+  return indexed;
+}
+
 function nativeCapture(root, capture, side, input, engineVersion, policy) {
   const observed = json(artifact(root, capture?.observation));
   requireProof(observed.case === input.ghsa && observed.side === side && observed.revision === input.revisions[side],
@@ -133,7 +162,8 @@ function nativeCapture(root, capture, side, input, engineVersion, policy) {
     requireProof(JSON.stringify(query.families) === JSON.stringify(familiesFromTags(tags)),
       'CodeQL family metadata differs for ' + side);
   }
-  const findings = sarifFindings(report, new Set(packets.map(p => p.path)), id => id);
+  const packetPaths = new Set(packets.map(p => p.path));
+  const findings = sarifFindings(report, packetPaths, id => id, (location, run) => nativeArtifactPath(location, run, packetPaths));
   requireProof(findings.length === run.results.length
     && findings.every(finding => finding.path && Number.isSafeInteger(finding.line) && finding.line > 0),
     'Native alert location is missing for ' + side);

@@ -79,6 +79,41 @@ test('paired CodeQL scoring requires both revisions and verifies actual source a
   assert.throws(() => run(withPair({ old: capture('old', undefined, false) })), /Native alert location is missing/);
 });
 
+test('CodeQL uses the same source-root resolution for indexed endpoints and trace steps', t => {
+  const { root, value, json, run } = stagedPair(t);
+  const pair = value.cases[0];
+  const raw = JSON.parse(readFileSync(join(root, pair.old.sarif.path), 'utf8'));
+  const observation = JSON.parse(readFileSync(join(root, pair.old.observation.path), 'utf8'));
+  const native = raw.runs[0];
+  native.originalUriBaseIds = { '%SRCROOT%': { uri: 'file:///src/' } };
+  native.artifacts = [{ location: { uri: 'file:///src/sample.py' } }];
+  const result = native.results[0];
+  const physical = result.locations[0].physicalLocation;
+  physical.artifactLocation = { index: 0 };
+  const review = () => {
+    const sarif = json('locations.sarif', raw);
+    const observed = json('locations.json', { ...observation, native_sha256: sarif.sha256 });
+    return run({ ...value, cases: [{ ...pair, old: { ...pair.old, sarif, observation: observed } }] }).cases[0];
+  };
+  assert.equal(review().hunk_hit, true);
+  physical.artifactLocation = { uri: 'sample.py', uriBaseId: '%SRCROOT%', index: 0 };
+  physical.region.startLine = 4;
+  result.codeFlows = [{ threadFlows: [{ locations: [{ location: { physicalLocation: {
+    artifactLocation: { index: 0 }, region: { startLine: 1 },
+  } } }] }] }];
+  const traced = review();
+  assert.equal(traced.hunk_hit, false);
+  assert.equal(traced.trace_hit, true);
+  physical.artifactLocation.uri = 'other.py';
+  assert.throws(review, /inline and indexed artifacts disagree/);
+  physical.artifactLocation = { index: 1 };
+  assert.throws(review, /artifact index is absent/);
+  physical.artifactLocation = { uri: 'file:///other/sample.py' };
+  assert.throws(review, /Untrusted native source root/);
+  physical.artifactLocation = { uri: 'file:///src/%2e%2e/sample.py' };
+  assert.throws(review, /Invalid native source path/);
+});
+
 test('native and pattern hits join only on identical evidence and are counted once', t => {
   const { root, row, value, binding, json, run } = stagedPair(t);
   const base = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false, hunk_findings: [],

@@ -135,7 +135,12 @@ function trustedWorkflowProgram() {
   assert.match(sdkJob, /^    needs: \[plan-worker-targets, selector-controls\]\r?$/m);
   assert.match(sdkJob, /^    if: needs\.plan-worker-targets\.outputs\.sdk == 'true'\r?$/m);
   assert.doesNotMatch(sdkJob, /node --test/);
-  assert.equal(workflow.match(/node --test scripts\/select_worker_targets\.test\.mjs scripts\/verify_worker_cves\.test\.mjs scripts\/verify_osv_worker\.test\.mjs scripts\/semgrep_mutation_controls\.test\.mjs/g)?.length, 1);
+  const controls = workflow.split('  selector-controls:')[1].split(/\r?\n  [\w-]+:/)[0];
+  const suites = controls.match(/node --test(?:\s+scripts\/[\w.-]+\.test\.mjs)+/g);
+  assert.equal(suites?.length, 1);
+  const paths = suites[0].split(/\s+/).slice(2);
+  for (const name of ['select_worker_targets', 'verify_worker_cves', 'verify_osv_worker', 'semgrep_mutation_controls',
+    'recall_harness', 'recall_codeql_pairs']) assert.ok(paths.includes(`scripts/${name}.test.mjs`));
   return program.replace(/^          /gm, '');
 }
 

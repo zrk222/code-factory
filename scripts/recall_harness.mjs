@@ -291,10 +291,11 @@ function regionSpan({ startLine, startColumn, endLine, endColumn }) {
   return [startColumn ?? null, lineOffset, endColumn ?? null];
 }
 
-export function sarifFindings(sarif, packetPaths, normalizeRuleId = id => id.split('.').slice(-2).join('.')) {
+export function sarifFindings(sarif, packetPaths, normalizeRuleId = id => id.split('.').slice(-2).join('.'),
+  resolveArtifact = artifact => sarifPath(artifact.uri, packetPaths)) {
   const out = [];
-  const clean = loc => sarifPath(loc.artifactLocation.uri, packetPaths);
   for (const run of sarif.runs ?? []) {
+    const clean = loc => resolveArtifact(loc.artifactLocation, run);
     for (const result of run.results ?? []) {
       const location = result.locations?.[0]?.physicalLocation;
       if (!location) continue;
@@ -817,6 +818,12 @@ async function observeSide(context, source, report, expected) {
   }
 }
 
+function classifyCaseScore(result, old, fixed) {
+  const status = old.length ? 'scored' : fixed.length ? 'no_old_side_source' : 'no_in_language_source_change';
+  const outcome = outcomeOf({ ...result, status });
+  return { status: ['error', 'timeout', 'coverage_incomplete'].includes(outcome) ? 'incomplete' : status, outcome };
+}
+
 async function scoreOne(context, row) {
   const prepared = await prepareCase(context.workdir, row, context.scope);
   if (prepared.status !== 'ready') return { status: prepared.status };
@@ -829,14 +836,12 @@ async function scoreOne(context, row) {
     newFindings: fixed.findings, rules: context.ruleMap });
   const coverage = fileCoverage(prepared.changes, { packets: prepared.source_packets,
     scans: { old, fixed }, extensions: scopeExtensions(row.ecosystem, context.scope), isTestPath });
-  const status = oldPackets.length ? 'scored' : fixedPackets.length ? 'no_old_side_source' : 'no_in_language_source_change';
-  const rowResult = { status, families, changed_files: Object.keys(prepared.hunks).sort(),
+  const rowResult = { families, changed_files: Object.keys(prepared.hunks).sort(),
     revisions: prepared.revisions, source_packets: prepared.source_packets, diff_sha256: prepared.diff_sha256,
     changed_files_sha256: prepared.changed_files_sha256, file_coverage: coverage,
     scan_notes: old.diagnostics, scan_sides: { old: old.diagnostics, fixed: fixed.diagnostics },
     captures: { old: old.capture ?? null, fixed: fixed.capture ?? null }, ...result };
-  const outcome = outcomeOf(rowResult);
-  return { ...rowResult, status: ['error', 'timeout', 'coverage_incomplete'].includes(outcome) ? 'incomplete' : status, outcome };
+  return { ...rowResult, ...classifyCaseScore(rowResult, oldPackets, fixedPackets) };
 }
 
 async function pool(items, jobs, worker) {
@@ -989,31 +994,38 @@ export function scorerSha256() {
 
 // A saved row is reusable only while the captures and source packets it cites
 // are still present in this work directory with the same bytes.
-function checkpointCaptureIntact(root, capture, notes, packets, checkedSources) {
+function checkpointCaptureIntact(root, capture, notes, packets, checkedSources, retained) {
   if (!capture) return packets.length === 0;
   if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
     || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
   if (capture.target_inventory?.sha256 !== notes?.target_inventory_sha256) return false;
-  const artifacts = [capture.sarif, capture.native_report, capture.target_inventory].filter(Boolean);
-  if (!artifacts.every(artifact => sha256(readFileSync(reviewCapturePath(root, artifact.path))) === artifact.sha256)) return false;
+  for (const kind of ['sarif', 'native_report', 'target_inventory']) {
+    const artifact = capture[kind];
+    if (!artifact) continue;
+    const raw = readFileSync(reviewCapturePath(root, artifact.path));
+    if (sha256(raw) !== artifact.sha256) return false;
+    if (retained) retained[kind] = raw;
+  }
   const source = reviewCapturePath(root, capture.source_root);
   if (!checkedSources.has(source)) {
     verifyPreparedBytes(source, packets);
     checkedSources.add(source);
   }
+  if (retained) retained.source = source;
   return true;
 }
 
-export function checkpointArtifactsIntact(workdir, row) {
+export function checkpointArtifactsIntact(workdir, row, retained) {
   try {
     const root = realpathSync(workdir);
-    const attempts = [[row.captures, row.scan_sides]];
+    const attempts = [[row.captures, row.scan_sides, retained]];
     if (row.retried_serially) attempts.push([row.initial_captures, row.initial_scan_sides]);
     for (const side of ['old', 'fixed']) {
       const packets = row.source_packets?.[side] ?? [];
       const checkedSources = new Set();
-      for (const [captures, diagnostics] of attempts) {
-        if (!checkpointCaptureIntact(root, captures?.[side], diagnostics?.[side], packets, checkedSources)) return false;
+      for (const [captures, diagnostics, reports] of attempts) {
+        const captured = reports ? (reports[side] = {}) : null;
+        if (!checkpointCaptureIntact(root, captures?.[side], diagnostics?.[side], packets, checkedSources, captured)) return false;
       }
     }
     return true;
@@ -1278,7 +1290,8 @@ function measureFamilies(old, row, families, transitions) {
 function fixedSpanFindings(row) {
   const findings = row.fix_side_residual, spans = row.fix_side_residual_spans;
   const packets = row.source_packets?.fixed;
-  if (!Array.isArray(findings) || !completeFixedCoverage(row.file_coverage?.fixed, packets)) return null;
+  if (scanIssue(row.scan_sides?.fixed) || !Array.isArray(findings)
+    || !completeFixedCoverage(row.file_coverage?.fixed, packets)) return null;
   if (!findings.length) return [];
   if (!hunkAdjudicationIdentity({ hunk_findings: findings, hunk_spans: spans }, true)) return null;
   const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
@@ -2339,6 +2352,15 @@ export function reviewCapturePath(root, name) {
   return target;
 }
 
+function capturedFindings(report, packets) {
+  const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
+  const sarif = JSON.parse(utf8(report));
+  if (!Array.isArray(sarif?.runs) || !sarif.runs.length) throw new Error('Review SARIF has no run');
+  const findings = sarifFindings(sarif, new Set(hashes.keys()));
+  if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
+  return { hashes, findings, diagnostics: scanNotes(sarif) };
+}
+
 function reviewFindings(root, row, side) {
   const capture = row.captures?.[side];
   const notes = row.scan_sides?.[side];
@@ -2348,14 +2370,63 @@ function reviewFindings(root, row, side) {
   const source = reviewCapturePath(root, capture.source_root);
   const packets = row.source_packets[side];
   verifyPreparedBytes(source, packets);
-  const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
   const report = readFileSync(reviewCapturePath(root, capture.sarif.path));
   if (sha256(report) !== capture.sarif.sha256 || capture.sarif.sha256 !== notes.report_sha256) {
     throw new Error('Review SARIF digest differs from score capture');
   }
-  const findings = sarifFindings(JSON.parse(utf8(report)), new Set(hashes.keys()));
-  if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
-  return { source, hashes, findings };
+  return { source, ...capturedFindings(report, packets) };
+}
+
+function replayCaseSide(row, side, retained, preparedSource, pathPolicy) {
+  const notes = row.scan_sides?.[side];
+  if (!preparedSource && !retained.source && notes == null) {
+    return { findings: [], submitted: false };
+  }
+  if (!notes || notes.failed_exit !== false || ![0, 1].includes(notes.exit_code) || scanIssue(notes)
+    || !retained.sarif || retained.source !== realpathSync(preparedSource)) {
+    throw new Error('Replay has no successful capture of the prepared source');
+  }
+  const { hashes, findings, diagnostics } = capturedFindings(retained.sarif, row.source_packets[side]);
+  const coverage = retained.native_report ? engineCoverage(JSON.parse(utf8(retained.native_report))) : null;
+  diagnostics.timeouts = Math.max(diagnostics.timeouts, coverage?.timeouts ?? 0);
+  if (Object.entries(diagnostics).some(([key, value]) => value !== notes[key])) {
+    throw new Error('Scan diagnostics differ from retained reports');
+  }
+  if (pathPolicy) {
+    const unresolved = uncoveredPolicyPaths(hashes.keys(), Object.assign(findings, { coverage, notes }));
+    if (unresolved.length) {
+      const ignored = retained.target_inventory && engineTargetIgnores(utf8(retained.target_inventory), retained.source);
+      coverage.policyExclusions = new Map(unresolved.flatMap(path => pathPolicy(path) ? [[path, 'rule_path_exclusions']]
+        : ignored?.(path) ? [[path, 'engine_target_ignore']] : []));
+    }
+  }
+  return { findings, coverage, submitted: true, verified: true };
+}
+
+export function replayCaseScore(root, input, row, retained, rules, scope, pathPolicy = null) {
+  const key = caseDigest([input]);
+  const cache = scope === 'scannable' ? 'cases-v4-scannable' : 'cases-v4';
+  const recordPath = reviewCapturePath(root, join(cache, key, 'case.json'));
+  const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+  const prepared = bindPreparedCase(dirname(recordPath), record, key, input, scope);
+  if (prepared.status !== 'ready') throw new Error('Prepared case is unavailable for replay');
+  const bindings = ['revisions', 'source_packets', 'diff_sha256', 'changed_files_sha256'];
+  if (Object.keys(input).some(field => caseDigest([input[field]]) !== caseDigest([row[field]]))
+    || bindings.some(field => caseDigest([prepared[field]]) !== caseDigest([row[field]]))) {
+    throw new Error('Replay inputs differ from the manifest or prepared case');
+  }
+  const old = replayCaseSide(row, 'old', retained.old, prepared.old, pathPolicy);
+  const fixed = replayCaseSide(row, 'fixed', retained.fixed, prepared.new, pathPolicy);
+  const families = familiesFor(input.cwes);
+  const file_coverage = fileCoverage(prepared.changes, { packets: prepared.source_packets,
+    scans: { old, fixed }, extensions: scopeExtensions(input.ecosystem, scope), isTestPath });
+  const scored = scoreCase({ families, hunks: prepared.hunks, editedLines: prepared.editedLines,
+    oldFindings: old.findings, newFindings: fixed.findings, rules });
+  const classification = classifyCaseScore({ ...scored, file_coverage,
+    scan_sides: { old: row.scan_sides?.old, fixed: row.scan_sides?.fixed } },
+  prepared.source_packets.old, prepared.source_packets.fixed);
+  return { ...scored, hunk_spans: scored.hunk_spans, fix_side_residual_spans: scored.fix_side_residual_spans,
+    ...classification, families, file_coverage, changed_files: Object.keys(prepared.hunks).sort() };
 }
 
 function oldReviewAlerts(root, row, rulesSha256) {
@@ -2410,14 +2481,21 @@ function fixedReviewAlerts(root, row, rulesSha256, rules, scope) {
 }
 
 // The export never replaces its pinned score receipt or a retained capture it reads.
-export function assertReviewOutput(out, score, workRoot) {
+export function assertReviewOutput(out, score, workRoot, rules) {
   if (typeof out !== 'string' || !out) throw new Error('Review export requires --out');
   const parent = realpathSync(dirname(resolve(out)));
   const target = join(parent, basename(resolve(out)));
   const real = existsSync(target) ? realpathSync(target) : target;
-  if (real === realpathSync(resolve(score))) throw new Error('Review export output is the score receipt');
-  const inside = relative(workRoot, real);
-  if (!inside.startsWith('..') && !isAbsolute(inside)) throw new Error('Review export output is inside the capture workdir');
+  const output = existsSync(real) ? statSync(real, { bigint: true }) : null;
+  for (const [input, label] of [[score, 'score receipt'], [rules, 'ruleset']]) {
+    if (!input) continue;
+    const canonical = realpathSync(resolve(input));
+    const identity = statSync(canonical, { bigint: true });
+    if (real === canonical || (output && identity.ino !== 0n && output.dev === identity.dev && output.ino === identity.ino)) {
+      throw new Error('Review export output is the ' + label);
+    }
+  }
+  if (insideControl(workRoot, real)) throw new Error('Review export output is inside the capture workdir');
 }
 
 function reviewAlerts(opts) {
@@ -2429,12 +2507,12 @@ function reviewAlerts(opts) {
     throw new Error('Review export requires a pinned standalone score receipt');
   }
   const root = realpathSync(resolve(opts.workdir ?? '.factory/recall-work'));
-  assertReviewOutput(opts.out, opts.score, root);
   const side = opts.side ?? 'old';
   if (!['old', 'fixed'].includes(side)) throw new Error('Review --side must be old or fixed');
+  if (side === 'fixed' && typeof opts.rules !== 'string') throw new Error('Fixed-side review requires --rules');
+  assertReviewOutput(opts.out, opts.score, root, side === 'fixed' ? opts.rules : undefined);
   let rules;
   if (side === 'fixed') {
-    if (typeof opts.rules !== 'string') throw new Error('Fixed-side review requires --rules');
     const ruleBytes = readFileSync(opts.rules);
     if (sha256(ruleBytes) !== saved.ruleset_sha256) throw new Error('Review rules digest differs from score capture');
     rules = ruleFamilies(utf8(ruleBytes));
