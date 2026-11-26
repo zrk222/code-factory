@@ -2477,7 +2477,8 @@ def _alerts(tmp_path: Path) -> Path:
 def test_blind_packet_samples_each_rule_without_order_bias(tmp_path):
     rules = tmp_path / "review-rules.yml"
     rules.write_text(REVIEW_RULES + "  - id: fixture.unmapped\n", encoding="utf-8")
-    cwes = _gain["rule_cwes"](rules)
+    _, review_rules = _gain["load_review_rules"](rules)
+    cwes = _gain["rule_cwes"](review_rules)
     assert cwes == {
         "fixture.unmapped": [],
         "javascript.parameter-shell-command": ["CWE-78"],
@@ -2537,6 +2538,53 @@ def test_blind_packet_and_ledger_distinguish_exact_alert_spans(tmp_path):
     assert all(
         "rule" not in item and "on_fix_hunk" not in item for item in packet["items"]
     )
+
+
+@pytest.mark.parametrize("mismatch", [None, "source", "ruleset"])
+def test_review_packet_binds_context_and_rules_from_single_reads(
+    tmp_path, monkeypatch, mismatch
+):
+    alerts = _alerts(tmp_path)
+    row = _gain["read_json"](alerts)[0]
+    source = Path(row["root"]) / row["path"]
+    source_sha = _gain["digest"](source.read_bytes())
+    row["source_sha256"] = "0" * 64 if mismatch == "source" else source_sha
+    rules = tmp_path / "rules.yml"
+    rules.write_text(REVIEW_RULES, encoding="utf-8")
+    rules_sha = _gain["digest"](rules.read_bytes())
+    row["rules_sha256"] = "0" * 64 if mismatch == "ruleset" else rules_sha
+    alerts.write_text(json.dumps([row]), encoding="utf-8")
+    args = argparse.Namespace(
+        alerts=alerts,
+        rules=rules,
+        cohort="owned",
+        seed=7,
+        per_rule=1,
+        out=tmp_path / "packet.json",
+        key=tmp_path / "key.json",
+    )
+    reads = {source: 0, rules: 0}
+    original_open = Path.open
+
+    def tracked_open(path, mode="r", *positional, **named):
+        if path in reads:
+            reads[path] += 1
+        return original_open(path, mode, *positional, **named)
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+    if mismatch:
+        with pytest.raises(ValueError, match=f"review {mismatch} digest mismatch"):
+            _gain["build_packet"](args)
+        assert not args.out.exists() and not args.key.exists()
+        return
+
+    _gain["build_packet"](args)
+    packet = _gain["read_json"](args.out)
+    key = _gain["read_json"](args.key)["key"][packet["items"][0]["item"]]
+    assert reads == {source: 1, rules: 1}
+    assert packet["rules_sha256"] == rules_sha
+    assert key["source_sha256"] == source_sha
+    assert "    3> line 3" in packet["items"][0]["context"]
 
 
 def test_packet_is_blinded_deduplicated_and_sealed(tmp_path):

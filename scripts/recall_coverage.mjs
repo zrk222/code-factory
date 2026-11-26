@@ -40,7 +40,9 @@ export function engineCoverage(report) {
   const problems = new Map();
   for (const error of report.errors ?? []) {
     const path = scannerPath(error.path ?? error.spans?.[0]?.file);
-    if (path) problems.set(path, /pars|syntax/i.test(String(error.type)) ? 'parse' : 'engine_error');
+    if (path && problems.get(path) !== 'engine_error') {
+      problems.set(path, /pars|syntax/i.test(String(error.type)) ? 'parse' : 'engine_error');
+    }
   }
   return { scanned, skipped, problems };
 }
@@ -80,9 +82,13 @@ export function fileCoverage(changes, { packets, scans, extensions, isTestPath }
   })]));
 }
 
-export function coverageGaps(files = []) {
+export function coverageGapEntries(files = []) {
   return files.filter(file => !['absent', 'excluded'].includes(file.state)
-    && (file.state !== 'reported_scanned' || file.reason === 'sarif_finding')).map(file => file.path);
+    && (file.state !== 'reported_scanned' || file.reason === 'sarif_finding'));
+}
+
+export function coverageGaps(files) {
+  return coverageGapEntries(files).map(file => file.path);
 }
 
 export function summarizeCoverage(rows) {
