@@ -7,7 +7,7 @@ import test from 'node:test';
 import { caseDigest, sha256, sortKeys } from './recall_harness.mjs';
 import { scoreCodeqlPairs } from './recall_codeql_pairs.mjs';
 
-function stagedPair(t) {
+function stagedPair(t, archivePrefix = 'src') {
   const root = mkdtempSync(join(tmpdir(), 'cf-codeql-pair-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const write = (path, bytes) => {
@@ -35,7 +35,8 @@ function stagedPair(t) {
   const id = 'test/fixture.scope.detail';
   const query = write('query.ql', '/**\n * @id ' + id + '\n * @tags external/cwe/cwe-089\n */\n');
   const zip = spawnSync(process.env.CF_RECALL_PYTHON ?? 'python', ['-I', '-c',
-    'import json, sys, zipfile\nfor side, text in json.load(sys.stdin).items():\n with zipfile.ZipFile(side + ".zip", "w") as archive: archive.writestr("src/sample.py", text)'],
+    'import json, sys, zipfile\nfor side, text in json.load(sys.stdin).items():\n with zipfile.ZipFile(side + ".zip", "w") as archive: archive.writestr(sys.argv[1] + "/sample.py", text)',
+    archivePrefix],
   { cwd: root, input: JSON.stringify(source), encoding: 'utf8', windowsHide: true });
   assert.equal(zip.status, 0, zip.stderr ?? zip.error?.message);
   const capture = (side, invocations = [{ executionSuccessful: true }], located = true) => {
@@ -47,7 +48,7 @@ function stagedPair(t) {
     const observation = json(side + '.json', { case: row.ghsa, side, query: id, revision: revisions[side],
       query_sha256: query.sha256, native_sha256: sarif.sha256, reported_alerts: results.length });
     const path = side + '.zip';
-    return { sarif, observation, archive: { path, sha256: sha256(readFileSync(join(root, path))) }, archive_prefix: 'src' };
+    return { sarif, observation, archive: { path, sha256: sha256(readFileSync(join(root, path))) }, archive_prefix: archivePrefix };
   };
   const value = { schema: 'factory.recall-codeql-pairs.v1', engine_version: '2.27.1', manifest, reference,
     cases: [{ advisory: row.ghsa, prepared, query, query_id: id, old: capture('old'), fixed: capture('fixed') }] };
@@ -80,7 +81,7 @@ test('paired CodeQL scoring requires both revisions and verifies actual source a
 });
 
 test('CodeQL uses the same source-root resolution for indexed endpoints and trace steps', t => {
-  const { root, value, json, run } = stagedPair(t);
+  const { root, value, json, run } = stagedPair(t, 'D_/workspace archive/src');
   const pair = value.cases[0];
   const raw = JSON.parse(readFileSync(join(root, pair.old.sarif.path), 'utf8'));
   const observation = JSON.parse(readFileSync(join(root, pair.old.observation.path), 'utf8'));
@@ -96,6 +97,11 @@ test('CodeQL uses the same source-root resolution for indexed endpoints and trac
     return run({ ...value, cases: [{ ...pair, old: { ...pair.old, sarif, observation: observed } }] }).cases[0];
   };
   assert.equal(review().hunk_hit, true);
+  native.originalUriBaseIds['%SRCROOT%'].uri = 'file:///D:/workspace%20archive/src/';
+  native.artifacts[0].location.uri = 'file:///D:/workspace%20archive/src/sample.py';
+  assert.equal(review().hunk_hit, true);
+  physical.artifactLocation = { uri: 'd:\\workspace archive\\src\\sample.py', index: 0 };
+  assert.equal(review().hunk_hit, true);
   physical.artifactLocation = { uri: 'sample.py', uriBaseId: '%SRCROOT%', index: 0 };
   physical.region.startLine = 4;
   result.codeFlows = [{ threadFlows: [{ locations: [{ location: { physicalLocation: {
@@ -110,7 +116,11 @@ test('CodeQL uses the same source-root resolution for indexed endpoints and trac
   assert.throws(review, /artifact index is absent/);
   physical.artifactLocation = { uri: 'file:///other/sample.py' };
   assert.throws(review, /Untrusted native source root/);
+  physical.artifactLocation = { uri: 'file:///D:/workspace%20archive/src-sibling/sample.py' };
+  assert.throws(review, /Untrusted native source root/);
   physical.artifactLocation = { uri: 'file:///src/%2e%2e/sample.py' };
+  assert.throws(review, /Invalid native source path/);
+  physical.artifactLocation = { uri: 'file:///src/sub%5Csample.py' };
   assert.throws(review, /Invalid native source path/);
 });
 
