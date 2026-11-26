@@ -922,7 +922,7 @@ test('an empty successful scanner result needs old-side coverage to count as a m
   assert.equal(verdict.decision, 'REJECT');
 
   const checkpoint = join(root, 'checkpoint.json');
-  writeFileSync(checkpoint, JSON.stringify({ schema: 'factory.recall-evaluation.v1', gained: [feederRow.ghsa], dev: [{
+  writeFileSync(checkpoint, JSON.stringify({ schema: 'factory.recall-evaluation.v1', engine: { executable_sha256: sha256(readFileSync(process.execPath)) }, gained: [feederRow.ghsa], dev: [{
     manifest_cases_sha256: before.manifest_cases_sha256, after_evidence: { cases: before.cases },
     cases: [{ ghsa: feederRow.ghsa, before: 'miss', after: 'hit' }],
   }] }));
@@ -2070,4 +2070,13 @@ test('assertReviewOutput refuses the score receipt, its aliases and the capture 
   assert.throws(() => assertReviewOutput(join(work, 'alerts.json'), score, realpathSync(work)), /capture workdir/);
   assertReviewOutput(join(root, 'alerts.json'), score, realpathSync(work));
   assert.equal(readFileSync(score, 'utf8'), '{}');
+});
+
+test('assertPinnedRetention requires the bound engine on every retention checkpoint', async () => {
+  const { assertPinnedRetention } = await import('./recall_harness.mjs');
+  const pin = 'a'.repeat(64);
+  const receipt = engine => Buffer.from(JSON.stringify({ schema: 'factory.recall-evaluation.v1', ...(engine ? { engine } : {}) }));
+  assert.throws(() => assertPinnedRetention(receipt(null), pin), /not engine-pinned/);
+  assert.throws(() => assertPinnedRetention(receipt({ executable_sha256: 'b'.repeat(64) }), pin), /engine differs/);
+  assertPinnedRetention(receipt({ executable_sha256: pin }), pin);
 });
