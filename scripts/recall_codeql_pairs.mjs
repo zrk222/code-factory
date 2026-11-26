@@ -21,7 +21,7 @@ const relativeEntry = path => typeof path === 'string' && !path.includes('\\')
   && path.split('/').every(part => part && part !== '.' && part !== '..');
 const json = bytes => JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, ''));
 const familiesFromTags = tags => familiesFor(tags.flatMap(tag => {
-  const match = /^external\/cwe\/cwe-(\d+)$/.exec(tag);
+  const match = tag.match(/^external\/cwe\/cwe-(\d+)$/);
   return match ? ['CWE-' + Number(match[1])] : [];
 }));
 
@@ -42,7 +42,7 @@ function artifact(root, pin) {
 
 function queryBinding(root, id, pin) {
   const header = artifact(root, pin).toString('utf8').split('*/', 1)[0];
-  requireProof(typeof id === 'string' && id.length > 0 && /^\s*\*\s+@id\s+(\S+)/m.exec(header)?.[1] === id,
+  requireProof(typeof id === 'string' && id.length > 0 && header.match(/^\s*\*\s+@id\s+(\S+)/m)?.[1] === id,
     'Query source ID differs for ' + id);
   return { id, sha256: pin.sha256, families: familiesFromTags(header.match(/external\/cwe\/cwe-\d+/g) ?? []) };
 }
@@ -237,12 +237,7 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
     eligible_native_additions: additions, combined_hunk_hits: hunkHits + additions, cases: dispositions };
 }
 
-export function scoreCodeqlPairs(bundlePath, patternPin = null) {
-  const bytes = readFileSync(bundlePath);
-  const root = realpathSync(dirname(bundlePath));
-  const bundle = json(bytes);
-  requireProof([FORMAT, PLAN_BUNDLE].includes(bundle.schema) && typeof bundle.engine_version === 'string'
-    && Array.isArray(bundle.cases) && bundle.cases.length > 0, 'Invalid paired CodeQL bundle');
+function readPairRegistry(root, bundle) {
   const manifest = json(artifact(root, bundle.manifest));
   const manifestDigest = validateRecallManifest(manifest);
   const reference = json(artifact(root, bundle.reference));
@@ -256,59 +251,62 @@ export function scoreCodeqlPairs(bundlePath, patternPin = null) {
     && reference.candidate?.registered === cases.size
     && reference.candidate.hunk_hits === reference.cases.filter(row => row.after === 'hit').length,
     'Reference case inventory or hit count differs');
-  requireProof(new Set(bundle.cases.map(row => row.advisory)).size === bundle.cases.length,
-    'Duplicate CodeQL advisory pair');
-  const policies = bundle.schema === PLAN_BUNDLE ? registeredPolicies(root, bundle, manifest) : null;
+  return { manifest, manifestDigest, reference, cases, referenceCases };
+}
 
-  const archives = [];
-  const observations = bundle.cases.map(row => {
-    const registered = cases.get(row.advisory);
-    const before = referenceCases.get(row.advisory);
-    requireProof(registered && before, 'CodeQL advisory is absent from the registered cohort');
-    const prepared = json(artifact(root, row.prepared));
-    requireProof(prepared.status === 'ready' && prepared.case_sha256 === caseDigest([registered])
-      && prepared.revisions?.fixed === registered.fix && revision.test(prepared.revisions.old),
-      'Prepared case revision or registry differs for ' + row.advisory);
-    const input = { ghsa: row.advisory, revisions: prepared.revisions, source_packets: prepared.source_packets,
-      diff_sha256: prepared.diff_sha256, changed_files_sha256: prepared.changed_files_sha256 };
-    requireProof(inputFingerprint(input) === before.input_sha256,
-      'Prepared case bytes differ from the reference for ' + row.advisory);
+function scorePreparedPair(row, { root, cases, referenceCases, policies, engineVersion, archives }) {
+  const registered = cases.get(row.advisory);
+  const before = referenceCases.get(row.advisory);
+  requireProof(registered && before, 'CodeQL advisory is absent from the registered cohort');
+  const prepared = json(artifact(root, row.prepared));
+  requireProof(prepared.status === 'ready' && prepared.case_sha256 === caseDigest([registered])
+    && prepared.revisions?.fixed === registered.fix && revision.test(prepared.revisions.old),
+    'Prepared case revision or registry differs for ' + row.advisory);
+  const input = { ghsa: row.advisory, revisions: prepared.revisions, source_packets: prepared.source_packets,
+    diff_sha256: prepared.diff_sha256, changed_files_sha256: prepared.changed_files_sha256 };
+  requireProof(inputFingerprint(input) === before.input_sha256,
+    'Prepared case bytes differ from the reference for ' + row.advisory);
 
-    const families = familiesFor(registered.cwes);
-    const policy = policies ? policies.get(registered.ecosystem) : { queries: [queryBinding(root, row.query_id, row.query)] };
-    requireProof(policy, 'No registered CodeQL ecosystem policy for ' + row.advisory);
-    if (!policies) {
-      requireProof(policy.queries[0].families.some(family => families.includes(family)),
-        'CodeQL query family differs for ' + row.advisory);
-    }
-    const old = nativeCapture(root, row.old, 'old', input, bundle.engine_version, policy);
-    const fixed = nativeCapture(root, row.fixed, 'fixed', input, bundle.engine_version, policy);
-    archives.push(old.archive, fixed.archive);
+  const families = familiesFor(registered.cwes);
+  const policy = policies ? policies.get(registered.ecosystem) : { queries: [queryBinding(root, row.query_id, row.query)] };
+  requireProof(policy, 'No registered CodeQL ecosystem policy for ' + row.advisory);
+  if (!policies) {
+    requireProof(policy.queries[0].families.some(family => families.includes(family)),
+      'CodeQL query family differs for ' + row.advisory);
+  }
+  const old = nativeCapture(root, row.old, 'old', input, engineVersion, policy);
+  const fixed = nativeCapture(root, row.fixed, 'fixed', input, engineVersion, policy);
+  archives.push(old.archive, fixed.archive);
 
-    const preparedDir = dirname(row.prepared.path);
-    const patch = artifact(root, { path: join(preparedDir, 'diff.patch'), sha256: input.diff_sha256 });
-    artifact(root, { path: join(preparedDir, 'changes.z'), sha256: input.changed_files_sha256 });
-    const editedLines = {};
-    const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(registered.ecosystem), editedLines);
-    const score = scoreCase({ families, hunks, editedLines, oldFindings: old.findings, newFindings: fixed.findings,
-      rules: Object.fromEntries(policy.queries.map(query => [query.id, query.families])) });
-    return { advisory: row.advisory, reference: before.after, input_sha256: before.input_sha256,
-      ...(policies ? { queries_sha256: policy.queriesSha256 } : { query_id: row.query_id }), hunk_hit: score.hunk_hit,
-      trace_hit: score.trace_hit, matched_hunk_families: score.matched_hunk_families,
-      hunk_matches: score.hunk_findings, fixed_hunk_matches: score.fix_side_residual,
-      deleted_line_hit: score.edited_lines.deleted_line_hit, fixed_hunk_residuals: score.fix_side_residual.length,
-      native_alerts: { old: old.findings.length, fixed: fixed.findings.length },
-      packets: { old: old.archive.packets.length, fixed: fixed.archive.packets.length } };
-  });
+  const preparedDir = dirname(row.prepared.path);
+  const patch = artifact(root, { path: join(preparedDir, 'diff.patch'), sha256: input.diff_sha256 });
+  artifact(root, { path: join(preparedDir, 'changes.z'), sha256: input.changed_files_sha256 });
+  const editedLines = {};
+  const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(registered.ecosystem), editedLines);
+  const score = scoreCase({ families, hunks, editedLines, oldFindings: old.findings, newFindings: fixed.findings,
+    rules: Object.fromEntries(policy.queries.map(query => [query.id, query.families])) });
+  return { advisory: row.advisory, reference: before.after, input_sha256: before.input_sha256,
+    ...(policies ? { queries_sha256: policy.queriesSha256 } : { query_id: row.query_id }), hunk_hit: score.hunk_hit,
+    trace_hit: score.trace_hit, matched_hunk_families: score.matched_hunk_families,
+    hunk_matches: score.hunk_findings, fixed_hunk_matches: score.fix_side_residual,
+    deleted_line_hit: score.edited_lines.deleted_line_hit, fixed_hunk_residuals: score.fix_side_residual.length,
+    native_alerts: { old: old.findings.length, fixed: fixed.findings.length },
+    packets: { old: old.archive.packets.length, fixed: fixed.archive.packets.length } };
+}
+
+function verifySourceArchives(archives) {
   const verified = spawnSync(process.env.CF_RECALL_PYTHON ?? 'python', ['-I', '-c', archiveVerifier],
     { input: JSON.stringify(archives), encoding: 'utf8', windowsHide: true });
   if (verified.error) throw verified.error;
   requireProof(verified.status === 0, 'Source archive verification failed: ' + verified.stderr.trim());
+}
+
+function scheduledCoverage(plan, policies, manifest, observations) {
   const cohortCoverage = {};
   if (policies) {
     const observed = new Set(observations.map(row => row.advisory));
     const eligible = manifest.cases.filter(row => policies.has(row.ecosystem));
-    cohortCoverage.plan_sha256 = bundle.plan.sha256;
+    cohortCoverage.plan_sha256 = plan.sha256;
     cohortCoverage.planned_cases = eligible.length;
     cohortCoverage.unobserved_advisories = eligible.filter(row => !observed.has(row.ghsa)).map(row => row.ghsa);
     cohortCoverage.unsupported_advisories = manifest.cases.filter(row => !policies.has(row.ecosystem)).map(row => row.ghsa);
@@ -317,6 +315,25 @@ export function scoreCodeqlPairs(bundlePath, patternPin = null) {
       return unsupported.length ? [{ advisory: row.ghsa, families: unsupported }] : [];
     });
   }
+  return cohortCoverage;
+}
+
+export function scoreCodeqlPairs(bundlePath, patternPin = null) {
+  const bytes = readFileSync(bundlePath);
+  const root = realpathSync(dirname(bundlePath));
+  const bundle = json(bytes);
+  requireProof([FORMAT, PLAN_BUNDLE].includes(bundle.schema) && typeof bundle.engine_version === 'string'
+    && Array.isArray(bundle.cases) && bundle.cases.length > 0, 'Invalid paired CodeQL bundle');
+  const { manifest, manifestDigest, reference, cases, referenceCases } = readPairRegistry(root, bundle);
+  requireProof(new Set(bundle.cases.map(row => row.advisory)).size === bundle.cases.length,
+    'Duplicate CodeQL advisory pair');
+  const policies = bundle.schema === PLAN_BUNDLE ? registeredPolicies(root, bundle, manifest) : null;
+
+  const archives = [];
+  const observations = bundle.cases.map(row => scorePreparedPair(row, { root, cases, referenceCases,
+    policies, engineVersion: bundle.engine_version, archives }));
+  verifySourceArchives(archives);
+  const cohortCoverage = scheduledCoverage(bundle.plan, policies, manifest, observations);
   const patternJoin = patternPin && joinPatternScore(patternPin, bundle.manifest.sha256, manifestDigest, cases, referenceCases, observations);
   return { schema: 'factory.recall-codeql-pair-score.v1', scope: policies ? 'registered-codeql-plan' : 'supplemental',
     input_sha256: sha256(bytes), ...cohortCoverage, ...(patternJoin ? { pattern_join: patternJoin } : {}),

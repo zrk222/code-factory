@@ -2502,21 +2502,24 @@ function fixedReviewAlerts(root, row, rulesSha256, rules, scope) {
   });
 }
 
-// The export never replaces its pinned score receipt or a retained capture it reads.
+function requireDistinctOutput(real, output, input, label) {
+  if (!input) return;
+  const canonical = realpathSync(resolve(input));
+  const identity = statSync(canonical, { bigint: true });
+  if (real === canonical || (output && identity.ino !== 0n && output.dev === identity.dev && output.ino === identity.ino)) {
+    throw new Error('Review export output is the ' + label);
+  }
+}
+
+// The export never replaces its pinned score, ruleset or retained captures.
 export function assertReviewOutput(out, score, workRoot, rules) {
   if (typeof out !== 'string' || !out) throw new Error('Review export requires --out');
   const parent = realpathSync(dirname(resolve(out)));
   const target = join(parent, basename(resolve(out)));
   const real = existsSync(target) ? realpathSync(target) : target;
   const output = existsSync(real) ? statSync(real, { bigint: true }) : null;
-  for (const [input, label] of [[score, 'score receipt'], [rules, 'ruleset']]) {
-    if (!input) continue;
-    const canonical = realpathSync(resolve(input));
-    const identity = statSync(canonical, { bigint: true });
-    if (real === canonical || (output && identity.ino !== 0n && output.dev === identity.dev && output.ino === identity.ino)) {
-      throw new Error('Review export output is the ' + label);
-    }
-  }
+  requireDistinctOutput(real, output, score, 'score receipt');
+  requireDistinctOutput(real, output, rules, 'ruleset');
   if (insideControl(workRoot, real)) throw new Error('Review export output is inside the capture workdir');
 }
 

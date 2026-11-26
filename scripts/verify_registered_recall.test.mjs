@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { sha256, sortKeys } from './recall_harness.mjs';
-import { verifyRegisteredRecall } from './verify_registered_recall.mjs';
+import { inputFingerprint, verifyRegisteredRecall } from './verify_registered_recall.mjs';
 
 const rulesHash = 'a'.repeat(64);
 const pins = {
@@ -49,6 +49,14 @@ function fixture() {
   };
   return { reference, candidate };
 }
+
+test('inputFingerprint binds the exact source packets to the registered digest', () => {
+  const { reference, candidate } = fixture();
+  const [row] = candidate.cases;
+  assert.equal(inputFingerprint(row), reference.cases[0].input_sha256);
+  assert.notEqual(inputFingerprint({ ...row, source_packets: { old: [], fixed: [] } }),
+    reference.cases[0].input_sha256);
+});
 
 test('retains all reference hits with every input fingerprint verified', () => {
   const { reference, candidate } = fixture();

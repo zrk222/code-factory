@@ -8,10 +8,27 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
-  publishPreparedCase, checkpointable, controlGapDelta, controlIssue, writeCheckpoint } from './recall_harness.mjs';
+  publishPreparedCase, checkpointable, controlGapDelta, controlIssue, writeCheckpoint, reviewCapturePath,
+  replayCaseScore } from './recall_harness.mjs';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
-import { compileScannerPathPolicy, engineTargetIgnores } from './recall_coverage.mjs';
+import { compileScannerPathPolicy, completeFixedCoverage, engineTargetIgnores, readRuleMetadata } from './recall_coverage.mjs';
 import { replayRegisteredCaptures } from './verify_registered_recall.mjs';
+
+test('readRuleMetadata reads byte-pinned YAML and rejects duplicate rule IDs', () => {
+  const rule = '  - metadata: {cwe: [CWE-79]}\n    languages: [javascript]\n    id: fixture\n';
+  assert.deepEqual(readRuleMetadata(Buffer.from('rules:\n' + rule)),
+    [{ id: 'fixture', cwes: ['CWE-79'], languages: ['javascript'], excludes: [] }]);
+  assert.equal(readRuleMetadata('rules:\n' + rule + rule), null);
+});
+
+test('completeFixedCoverage requires unique reports of the exact scanned packets', () => {
+  const packet = { path: 'file.js', bytes: 5, sha256: sha256('value') };
+  const report = { ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' };
+  assert.equal(completeFixedCoverage([report], [packet]), true);
+  assert.equal(completeFixedCoverage([report, report], [packet]), false);
+  assert.equal(completeFixedCoverage([{ ...report, bytes: 6 }], [packet]), false);
+  assert.equal(completeFixedCoverage([{ ...report, reason: 'sarif_finding' }], [packet]), false);
+});
 
 test('scanner path policy requires exclusion by every applicable YAML rule regardless of key order', () => {
   const inline = '  - id: inline\n    languages: [go]\n    paths:\n      exclude: ["**/*.pb.go"]\n';
@@ -961,7 +978,7 @@ test('review-alerts exports pinned old-side reports with distinct spans on one l
   assert.equal(existsSync(output), false);
 }));
 
-test('fixed review recomputes exact same-line residual spans from pinned packets, rules and diff', () => feederFixture(fixture => {
+test('replayCaseScore and fixed review recompute exact same-line residual spans from pinned packets, rules and diff', () => feederFixture(fixture => {
   const { root, workdir, manifest, profile, baseline } = fixture;
   const scanner = join(root, 'scanner.mjs');
   const stub = readFileSync(scanner, 'utf8');
@@ -978,6 +995,11 @@ test('fixed review recomputes exact same-line residual spans from pinned packets
   const expected = [[1, 0, 4], [6, 0, 9]];
   assert.deepEqual(row.fix_side_residual_spans, expected);
   const inputs = JSON.parse(readFileSync(manifest, 'utf8'));
+  const retained = {};
+  assert.equal(checkpointArtifactsIntact(workdir, row, retained), true);
+  const recomputed = replayCaseScore(realpathSync(workdir), inputs.cases[0], row, retained,
+    ruleFamilies(readFileSync(baseline, 'utf8')), score.scope);
+  assert.deepEqual(recomputed.fix_side_residual_spans, expected);
   const replay = () => replayRegisteredCaptures(score, workdir, inputs, readFileSync(baseline, 'utf8'));
   assert.deepEqual(replay(), { verified_capture_cases: 1, replayed_case_scores: 1, invalid: [], unreproduced: [] });
   const oldCoverage = row.file_coverage.old[0].state;
@@ -2230,4 +2252,19 @@ test('assertReviewOutput refuses the score receipt, its aliases and the capture 
   assert.throws(() => assertReviewOutput(join(work, 'alerts.json'), score, realpathSync(work)), /capture workdir/);
   assertReviewOutput(join(root, 'alerts.json'), score, realpathSync(work));
   assert.equal(readFileSync(score, 'utf8'), '{}');
+});
+
+test('reviewCapturePath verifies that both literal and resolved files stay within the capture root', t => {
+  const root = mkdtempSync(join(tmpdir(), 'review-capture-path-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const work = join(root, 'work');
+  mkdirSync(work);
+  const capture = join(work, 'capture.json');
+  const outside = join(root, 'outside.json');
+  writeFileSync(capture, '{}');
+  writeFileSync(outside, '{}');
+  symlinkSync(outside, join(work, 'alias.json'));
+  assert.equal(reviewCapturePath(realpathSync(work), 'capture.json'), realpathSync(capture));
+  assert.throws(() => reviewCapturePath(realpathSync(work), '../outside.json'), /leaves the work directory/);
+  assert.throws(() => reviewCapturePath(realpathSync(work), 'alias.json'), /leaves the work directory/);
 });
