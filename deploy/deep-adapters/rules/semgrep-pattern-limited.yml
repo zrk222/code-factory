@@ -1717,6 +1717,15 @@ rules:
               - pattern-not: $T.extract(..., filter=$F, ...)
               - pattern-not: $T.extractall(..., members=$M, ...)
       - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $T.extractall(...)
+                  - pattern: $T.extract(...)
+              - metavariable-pattern:
+                  metavariable: $T
+                  pattern-either:
+                    - pattern: tarfile.open(...)
+                    - pattern: tarfile.TarFile(...)
           - pattern-inside: |
               $T = tarfile.open(...)
               ...
@@ -1762,7 +1771,7 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-22"]
-      scope: tarfile.open/TarFile handles, assigned or in a with-block, extracted without filter= or explicit members.
+      scope: tarfile.open/TarFile handles, direct, assigned or in a with-block, extracted without filter= or explicit members.
   - id: go.archive-path-traversal
     message: An archive entry name reaches a filesystem write; reject absolute and parent-relative names and enforce containment under the destination.
     severity: WARNING
@@ -3551,16 +3560,21 @@ rules:
       cwe: ["CWE-78"]
       scope: Function parameters to the text of an sh -c style exec.Command in the same function.
   - id: ruby.parameter-shell-command
-    message: A method parameter is interpolated into a shell command string; pass separate arguments to system or Open3 instead.
+    message: A method parameter reaches a shell command or an API that can start a process. Use separate arguments or an explicit file API.
     severity: INFO
     languages: [ruby]
     mode: taint
     pattern-sources:
       - patterns:
-          - pattern-inside: |
-              def $F(..., $P, ...)
-                ...
-              end
+          - pattern-either:
+              - pattern-inside: |
+                  def $F(..., $P, ...)
+                    ...
+                  end
+              - pattern-inside: |
+                  def self.$F(..., $P, ...)
+                    ...
+                  end
           - pattern: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|cmd|cmds|command|commands|cmdline|script|args|argv)$)\w+$'}
     pattern-sanitizers:
@@ -3584,6 +3598,9 @@ rules:
               patterns:
                 - pattern-not: '[...]'
           - focus-metavariable: $CMD
+      - patterns:
+          - pattern: Kernel.open($PATH, ...)
+          - focus-metavariable: $PATH
       - pattern: '`...#{$X}...`'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
