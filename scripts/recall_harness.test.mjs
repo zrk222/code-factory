@@ -688,6 +688,14 @@ async function feederFixture(run, row = feederRow) {
       "const old = basename(process.cwd()) === 'old';",
       "const control = basename(process.cwd()) === 'control';",
       "const ruleText = readFileSync(rules, 'utf8');",
+      "const ignore = process.argv.find(arg => arg.startsWith('--semgrepignore-filename='));",
+      "const plannedIgnores = ignore && !ruleText.includes('# plan-ignore-asymmetric') ?",
+      "  readFileSync(ignore.split('=')[1], 'utf8').trim().split('\\n').map(path => path.slice(1)) : [];",
+      "if (ruleText.includes('# assert-control-plan')) {",
+      "  const planned = ignore && process.argv.includes('./unreported.py') && process.argv.includes('--timeout=31');",
+      "  if (Boolean(planned) !== control || process.argv.at(-1) !== '.') throw Error('Invalid control plan argv');",
+      "  if (control && basename(report).includes('-retry') && !process.argv.includes('--jobs=1')) throw Error('Unbounded retry');",
+      "}",
       "if (old && ruleText.includes('# rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
       "const driftMarker = dirname(rules) + '/group-drift';",
       "if (old && ruleText.includes('# group-drift ' + basename(dirname(process.cwd()))) && !existsSync(driftMarker)) {",
@@ -706,6 +714,9 @@ async function feederFixture(run, row = feederRow) {
       "}",
       "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
+      "if (control && existsSync(dirname(rules) + '/change-registered-peer')) {",
+      "  writeFileSync(dirname(rules) + '/registered-peer/sample.py', 'VALUE = 2\\n');",
+      "}",
       "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
       "if (control && ruleText.includes('# require-parallel-controls')) {",
       "  const arm = basename(report).startsWith('before') ? 'before' : 'after';",
@@ -737,14 +748,15 @@ async function feederFixture(run, row = feederRow) {
       "if (control && ruleText.includes('# control-missing-path')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'missing.py' }, region: { startLine: 1 } } }] });",
       "if (control && ruleText.includes('# reviewed-control')) results.push({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn: 1 } } }] });",
       "const issues = incomplete ? [{ descriptor: { id: 'ParseError' }, level: 'error' }] : [];",
-      "if (devTimeout || controlTimeout) issues.push({ descriptor: { id: 'Timeout' }, level: 'warning' });",
-      "const defaultIgnored = files.filter(path => path === 'ignored.py' || (path === 'candidate-only.py' && ruleText.includes('# candidate-default-ignore')));",
+      "const planRetry = control && ruleText.includes('# assert-control-plan') && !basename(report).includes('-retry');",
+      "if (devTimeout || controlTimeout || planRetry) issues.push({ descriptor: { id: 'Timeout' }, level: 'warning' });",
+      "const defaultIgnored = files.filter(path => plannedIgnores.includes(path) || path === 'ignored.py' || (path === 'candidate-only.py' && ruleText.includes('# candidate-default-ignore')));",
       "const sizeLimit = Number(process.argv.find(arg => arg.startsWith('--max-target-bytes='))?.split('=')[1] ?? 1000000);",
       "const oversized = files.filter(path => path.startsWith('large-') && statSync(path).size > sizeLimit);",
       "const skipped = [...defaultIgnored.map(path => ({ path, reason: 'semgrepignore_patterns_match' })), ...[...(files.includes('skipped.py') ? ['skipped.py'] : []), ...oversized].map(path => ({ path, reason: 'exceeded_size_limit' }))];",
       "const nativeErrors = [...(files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : []), ...(disputedParse ? [{ type: 'Syntax error', path: 'sample.py' }] : [])];",
       "if (nativeTimeout) nativeErrors.push({ type: 'Timeout', path: 'sample.py' });",
-      "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'unreported.py' && !skipped.some(item => item.path === path)), skipped }, errors: nativeErrors }));",
+      "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => (path !== 'unreported.py' || process.argv.includes('./unreported.py')) && !skipped.some(item => item.path === path)), skipped }, errors: nativeErrors }));",
       "writeFileSync(report, JSON.stringify({ runs: [{ results, invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: issues }] }] }));",
       "process.exitCode = incomplete ? 2 : 0;",
     ].join('\n'));
@@ -1434,6 +1446,67 @@ test('declared control directories are excluded and unrelated missing paths rema
   ]);
 }));
 
+test('registered control options preserve per-repo scope and retry and fail closed on drift', () => feederFixture(fixture => {
+  const { root, workdir, profile, manifest, baseline, candidate } = fixture;
+  const control = join(root, 'control'), unaffected = join(root, 'unaffected');
+  const out = join(root, 'planned.json'), plan = join(root, 'control-plan.json');
+  const names = ['omitted.py', 'sample.py', 'unreported.py'];
+  const body = 'print("benign")\n';
+  for (const dir of [control, unaffected]) mkdirSync(dir);
+  for (const name of names) writeFileSync(join(control, name), body);
+  writeFileSync(join(unaffected, 'sample.py'), body);
+  const rules = readFileSync(baseline, 'utf8') + '# assert-control-plan\n';
+  writeFileSync(baseline, rules);
+  writeFileSync(candidate, rules);
+  const entry = { directory: control, source_sha256: caseDigest(names.map(path => ({ path, sha256: sha256(body) }))),
+    targets: ['unreported.py'], exclude_paths: ['omitted.py'], timeout_seconds: 31 };
+  const sharedIgnore = join(workdir, `control-${sha256('/omitted.py\n')}.ignore`);
+  writeFileSync(sharedIgnore, '# stale shared file');
+  const save = (controls = [entry]) => writeFileSync(plan, JSON.stringify({ schema: 'factory.recall-control-plan.v1',
+    baseline_sha256: sha256(readFileSync(baseline)), candidate_sha256: sha256(readFileSync(candidate)),
+    profile_sha256: sha256(readFileSync(profile)), controls }));
+  const run = (command = 'controls') => {
+    const rulesArgs = command === 'controls' ? ['--rules', baseline, '--rules', candidate]
+      : ['--baseline', baseline, '--candidate', candidate, '--manifest', manifest, '--jobs', '1'];
+    return spawnSync(process.execPath, ['scripts/recall_harness.mjs', command, ...rulesArgs, '--profile', profile,
+      '--workdir', workdir, '--opengrep', process.execPath, '--dir', control, '--dir', unaffected,
+      '--control-timeout', '15', '--control-plan', plan, '--checkpoint-dir', join(root, 'checkpoints'), '--out', out],
+    { encoding: 'utf8', timeout: 20000 });
+  };
+  save();
+  const first = run();
+  assert.equal(first.status, 0, first.stderr + first.stdout);
+  assert.equal(readFileSync(sharedIgnore, 'utf8'), '# stale shared file');
+  const receipt = JSON.parse(readFileSync(out, 'utf8'));
+  assert.equal(receipt.control_plan_sha256, sha256(readFileSync(plan)));
+  const [planned, ordinary] = receipt.deltas;
+  assert.equal(planned.original_expected, 3);
+  assert.deepEqual(planned.retry_extra_args, ['--jobs=1']);
+  for (const arm of Object.values(planned.scan_sides)) {
+    assert.deepEqual(arm.control_coverage, { complete: true, expected: 2, reported: 2, gaps: [],
+      excluded: [{ path: 'omitted.py', reason: 'shared_semgrepignore_patterns_match' }] });
+  }
+  assert.equal(ordinary.control_plan_entry, undefined);
+  assert.equal(ordinary.scan_sides.before.control_coverage.reported, 1);
+  assert.equal(run().status, 0);
+  assert.equal(JSON.parse(readFileSync(out, 'utf8')).deltas[0].resumed_from_checkpoint, true);
+  const evaluated = run('evaluate');
+  assert.equal(evaluated.status, 0, evaluated.stderr + evaluated.stdout);
+  assert.equal(JSON.parse(readFileSync(out, 'utf8')).control_plan_sha256, receipt.control_plan_sha256);
+  writeFileSync(candidate, rules + '# plan-ignore-asymmetric\n');
+  save();
+  assert.equal(run().status, 2);
+  const bad = JSON.parse(readFileSync(out, 'utf8')).deltas[0];
+  assert.deepEqual(bad.scan_sides.after.control_coverage.unapplied_exclusions, ['omitted.py']);
+  save([{ ...entry, targets: ['../outside.py'] }]);
+  assert.match(run().stderr, /distinct exact relative files/);
+  save([{ ...entry, directory: join(root, 'unknown') }]);
+  assert.match(run().stderr, /unrequested/);
+  save();
+  writeFileSync(join(control, 'sample.py'), body + '# drift');
+  assert.match(run().stderr, /source fingerprint differs/);
+}));
+
 test('paired controls record only shared scanner ignores and keep candidate skips visible', () => feederFixture(fixture => {
   const { root, workdir, profile, baseline, candidate } = fixture;
   const control = join(root, 'control'), output = join(root, 'control-scope.json');
@@ -1544,6 +1617,44 @@ test('control checkpoints resume only while the final and retry reports still ma
   rmSync(join(workdir, firstReport));
   assert.equal(run().resumed_from_checkpoint, undefined);
   assert.equal(run().resumed_from_checkpoint, true);
+}));
+
+test('registered control checkpoints reject checkout drift during an earlier scan', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline, candidate } = fixture;
+  const first = join(root, 'control'), later = join(root, 'registered-peer');
+  const checkpoint = join(root, 'checkpoints'), plan = join(root, 'control-plan.json');
+  const original = 'VALUE = 1\n';
+  for (const dir of [first, later]) {
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'sample.py'), original);
+  }
+  writeFileSync(candidate, readFileSync(baseline));
+  const digest = path => sha256(readFileSync(path));
+  writeFileSync(plan, JSON.stringify({ schema: 'factory.recall-control-plan.v1',
+    baseline_sha256: digest(baseline), candidate_sha256: digest(candidate), profile_sha256: digest(profile),
+    controls: [first, later].map(directory => ({ directory,
+      source_sha256: caseDigest([{ path: 'sample.py', sha256: sha256(original) }]) })) }));
+  const run = out => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls',
+    '--rules', baseline, '--rules', candidate, '--profile', profile, '--workdir', workdir,
+    '--opengrep', process.execPath, '--dir', first, '--dir', later,
+    '--control-plan', plan, '--checkpoint-dir', checkpoint, '--out', out], { encoding: 'utf8', timeout: 30000 });
+  const seeded = run(join(root, 'seeded.json'));
+  assert.equal(seeded.status, 0, seeded.stderr);
+  const warm = join(root, 'warm.json');
+  assert.equal(run(warm).status, 0);
+  assert.ok(JSON.parse(readFileSync(warm, 'utf8')).deltas.every(delta => delta.resumed_from_checkpoint));
+  const records = readdirSync(checkpoint).map(name => join(checkpoint, name));
+  assert.equal(records.length, 2);
+  const firstCheckpoint = records.find(path => JSON.parse(readFileSync(path, 'utf8')).inputs.dir === first);
+  assert.ok(firstCheckpoint);
+  rmSync(firstCheckpoint);
+  writeFileSync(join(root, 'change-registered-peer'), '');
+  const rejected = join(root, 'rejected.json');
+  const stale = run(rejected);
+  assert.equal(readFileSync(join(later, 'sample.py'), 'utf8'), 'VALUE = 2\n');
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.stderr, /Registered control source fingerprint differs/);
+  assert.equal(existsSync(rejected), false);
 }));
 
 test('standalone controls bind the scanner and reject rules changed during scanning', () => feederFixture(fixture => {

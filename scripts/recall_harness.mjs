@@ -7,11 +7,11 @@
 //   score    --manifest manifest.json --rules ruleset.yml --out results.json
 //            [--opengrep BIN] [--profile profile.json] [--workdir DIR] [--jobs 6] [--extra-arg ARG]...
 //   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... [--control-timeout SECONDS]
-//            [--parallel-controls WORKERS_PER_ARM] --out deltas.json
+//            [--parallel-controls WORKERS_PER_ARM] [--control-plan plan.json] --out deltas.json
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
 //            [--max-control-increase N] [--extra-arg ARG]... [--candidate-extra-arg ARG]... --out verdict.json
 //            [--probe-coverage true] [--control-exclude DIRECTORY]... [--control-timeout SECONDS]
-//            [--parallel-controls WORKERS_PER_ARM]
+//            [--parallel-controls WORKERS_PER_ARM] [--control-plan plan.json]
 //            [--adjudicated-losses plan.json] [--checkpoint-dir DIR]
 //            [--retain-gains-from verdict.json [--gain-adjudicated-losses plan.json]]
 //            [--labels labels.json] [--require-reviewed-controls true]
@@ -1505,6 +1505,11 @@ async function evaluate(input) {
   }
   opts.opengrep = engine.path;
   const rules = evaluationRules(opts);
+  const controlPlan = loadControlPlan(opts, profile, rules);
+  const scanControls = () => controlDeltas_({ ...opts,
+    rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }, engine, controlSettings, controlPlan);
+  // Validate registered repositories before spending time on the development arms.
+  const registeredControls = controlPlan ? await scanControls() : null;
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
   const candidateOpts = { ...opts, 'extra-arg': [].concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []) };
   if (opts['probe-coverage'] !== undefined && !['true', 'false'].includes(opts['probe-coverage'])) {
@@ -1521,16 +1526,17 @@ async function evaluate(input) {
     const after = await scoreArm(manifest, opts.candidate, candidateOpts, rules.candidate_sha256);
     dev.push({ manifest: manifest.path, before, after });
   }
-  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts,
-    rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }, engine, controlSettings) : [];
+  const controlDeltas = registeredControls ?? (opts.dir ? await scanControls() : []);
   const parserProbe = opts['probe-coverage'] === 'true' ? await probeCoverage(dev, opts) : null;
   await verifyBoundEngine(engine, 'evaluation');
   verifyEvaluationManifests(manifests);
   verifyEvaluationRules(opts, rules);
+  verifyControlPlan(controlPlan);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease, lossPolicy });
   if (checkpoint) applyGainRetention(verdict, checkpoint, dev, gainPolicy);
   const settings = { ...rules, ...controlSettings, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
     extra_args: [].concat(opts['extra-arg'] ?? []), candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []),
+    ...(controlPlan ? { control_plan_sha256: controlPlan.digest } : {}),
     ...(excludedDirs.length ? { control_excluded_directories: excludedDirs } : {}) };
   const population = reviewPopulation(settings, controlDeltas);
   const requireReviewed = reviewOption === 'true';
@@ -1704,10 +1710,13 @@ async function controlObservation(context, directory, report, source) {
 
 function pairedControlScope(source, sides) {
   const exclusions = new Map(source.excluded);
+  const targets = new Set(source.plan?.targets);
+  const registered = new Set(source.plan?.exclude_paths);
   if (sides.every(({ coverage, sourceInvalid, notes }) => coverage && !sourceInvalid
       && controlPathEvidence(notes) && !notes.blocking_parse_errors && !notes.other)) {
     const reported = new Set(sides.flatMap(side => side.findings.map(finding => finding.path)));
     for (const path of source.eligible) {
+      if (targets.has(path) || (registered.size && !registered.has(path))) continue;
       const agreed = sides.every(({ coverage }) => coverage.skipped.get(path) === 'semgrepignore_patterns_match'
         && !coverage.scanned.has(path) && !coverage.problems.has(path));
       if (agreed && !reported.has(path)) exclusions.set(path, 'shared_semgrepignore_patterns_match');
@@ -1715,7 +1724,9 @@ function pairedControlScope(source, sides) {
   }
   const eligible = source.eligible.filter(path => !exclusions.has(path));
   const excluded = [...exclusions].map(([path, reason]) => ({ path, reason })).sort(byPath);
-  return { eligible, excluded, sha256: caseDigest([{ source_sha256: source.evidence.sha256, eligible, excluded }]) };
+  const unapplied = [...registered].filter(path => !exclusions.has(path));
+  return { eligible, excluded, unapplied,
+    sha256: caseDigest([{ source_sha256: source.evidence.sha256, eligible, excluded }]) };
 }
 
 function controlPathEvidence(notes) {
@@ -1740,6 +1751,10 @@ export function controlGapDelta(scanSides) {
 function recordControlCoverage(side, scope) {
   if (!side.notes) return;
   const coverage = controlScanCoverage(scope.eligible, side.coverage);
+  if (scope.unapplied.length) {
+    coverage.complete = false;
+    coverage.unapplied_exclusions = scope.unapplied;
+  }
   if (scope.excluded.length) coverage.excluded = scope.excluded;
   side.notes.control_coverage = coverage;
   if (!coverage.complete && !scanIssue(side.notes)) {
@@ -1793,6 +1808,60 @@ function controlExcludedDirectories(opts) {
     throw new Error('--control-exclude requires a single directory name');
   }
   return excludedDirs;
+}
+
+function controlPlanPaths(value = []) {
+  if (!Array.isArray(value) || new Set(value).size !== value.length || value.some(path =>
+    typeof path !== 'string' || !path.split('/').every(part =>
+      /^[\w.-]+$/.test(part) && !['.', '..', '.git'].includes(part)))) {
+    throw new Error('Control plan paths must be distinct exact relative files');
+  }
+  return [...value].sort();
+}
+
+function loadControlPlan(opts, profile, rules) {
+  const path = opts['control-plan'];
+  if (path === undefined) return null;
+  if (typeof path !== 'string' || !path || !opts.dir || profile.engine !== 'semgrep') {
+    throw new Error('--control-plan requires one plan and OpenGrep controls');
+  }
+  const bytes = readFileSync(path), plan = JSON.parse(utf8(bytes));
+  const { schema, baseline_sha256, candidate_sha256, profile_sha256, controls, ...unknown } = plan ?? {};
+  if (schema !== 'factory.recall-control-plan.v1' || Object.keys(unknown).length ||
+      baseline_sha256 !== rules.baseline_sha256 || candidate_sha256 !== rules.candidate_sha256 ||
+      profile_sha256 !== sha256(opts.profileBytes) || !Array.isArray(controls) || !controls.length) {
+    throw new Error('Control plan schema or scanner input hashes differ');
+  }
+  const directories = new Set([].concat(opts.dir).map(dir => resolve(dir)));
+  const entries = new Map();
+  for (const value of controls) {
+    const { directory, source_sha256, targets, exclude_paths, timeout_seconds, ...rest } = value ?? {};
+    const dir = typeof directory === 'string' && directory ? resolve(directory) : null;
+    if (!directories.has(dir) || entries.has(dir) || !/^[a-f0-9]{64}$/.test(source_sha256) ||
+        Object.keys(rest).length) throw new Error('Control plan entry is invalid, duplicated or unrequested');
+    const entry = { source_sha256, targets: controlPlanPaths(targets), exclude_paths: controlPlanPaths(exclude_paths) };
+    if (entry.targets.some(target => entry.exclude_paths.includes(target))) {
+      throw new Error('Control plan cannot target and exclude the same file');
+    }
+    if (entry.exclude_paths.length && profile.commands[0].argv
+      .concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? [])
+      .some(arg => /^--semgrepignore-filename(?:=|$)/.test(arg))) {
+      throw new Error('Control plan exclusions conflict with a scanner ignore file override');
+    }
+    if (timeout_seconds !== undefined) {
+      if (!Number.isSafeInteger(timeout_seconds)) throw new Error('Control plan timeout must be a whole number');
+      entry.timeout_seconds = controlTimeoutSettings({ ...opts, 'control-timeout': String(timeout_seconds) },
+        profile).control_timeout_seconds;
+    }
+    entries.set(dir, entry);
+  }
+  return { path, digest: sha256(bytes), entries };
+}
+
+function verifyControlPlan(plan) {
+  if (plan && sha256(readFileSync(plan.path)) !== plan.digest) {
+    throw new RecallInputDrift('Control plan bytes changed during scanning');
+  }
 }
 
 function controlTimeoutSettings(opts, profile) {
@@ -1856,24 +1925,36 @@ async function controlCheckpointIntact(root, delta) {
   } catch { return false; }
 }
 
-async function controlDeltas_(opts, engine, controlSettings) {
+async function controlDeltas_(opts, engine, controlSettings, plan = null) {
   const [before, after] = [].concat(opts.rules);
   const excludedDirs = controlExcludedDirectories(opts);
   // A directory-only ignore pattern covers all depths and preserves files with the same name.
   const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/`]);
   const { control_timeout_seconds, control_parallel_workers_per_arm } = controlSettings;
-  const timeoutArgs = control_timeout_seconds === undefined ? [] : [`--timeout=${control_timeout_seconds}`];
   const parallel = control_parallel_workers_per_arm !== undefined;
   const firstPass = parallel ? [`--jobs=${control_parallel_workers_per_arm}`] : [];
   const rules = opts.ruleFingerprints;
   const base = { profile: JSON.parse(utf8(opts.profileBytes)),
-    bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], timeoutArgs, exclusionArgs),
+    bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], exclusionArgs),
     rules: resolve(before), rulesSha256: rules.baseline_sha256 };
   const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
     rules: resolve(after), rulesSha256: rules.candidate_sha256 };
   const checkpointProfile = sha256(Buffer.from(JSON.stringify(base.profile)));
   const deltas = [];
   const workdir = resolve(opts.workdir ?? '.factory/recall-work');
+  const registered = new Map();
+  for (const [dir, entry] of plan?.entries ?? []) {
+    const source = await controlSource(realpathSync(dir), excludedDirs);
+    if (source.evidence.sha256 !== entry.source_sha256) {
+      throw new RecallInputDrift(`Registered control source fingerprint differs: ${dir}`);
+    }
+    const eligible = new Set(source.eligible);
+    if ([...entry.targets, ...entry.exclude_paths].some(path => !eligible.has(path))) {
+      throw new Error(`Control plan refers to an ineligible source file: ${dir}`);
+    }
+    registered.set(dir, { ...source, plan: entry });
+  }
+  verifyControlPlan(plan);
   let scanRoot;
   for (const dir of [].concat(opts.dir)) {
     try {
@@ -1882,32 +1963,64 @@ async function controlDeltas_(opts, engine, controlSettings) {
       mkdirSync(workdir, { recursive: true });
       const reportsRoot = realpathSync(workdir);
       if (insideControl(directory, reportsRoot)) throw new Error('Control scan reports must be outside the source tree');
-      const source = await controlSource(directory, excludedDirs);
+      const source = registered.get(resolve(dir)) ?? await controlSource(directory, excludedDirs);
       const maxTargetBytes = controlTargetBytes(directory, source, base, candidate);
-      const targetArgs = maxTargetBytes ? [`--max-target-bytes=${maxTargetBytes}`] : [];
-      const effectiveBase = { ...base, extra: [...base.extra, ...targetArgs] };
-      const effectiveCandidate = { ...candidate, extra: [...candidate.extra, ...targetArgs] };
+      const repoArgs = [];
+      if (maxTargetBytes) repoArgs.push(`--max-target-bytes=${maxTargetBytes}`);
+      const timeout = source.plan?.timeout_seconds ?? control_timeout_seconds;
+      if (timeout !== undefined) repoArgs.push(`--timeout=${timeout}`);
+      const ignoreContents = source.plan?.exclude_paths.map(path => `/${path}\n`).join('');
+      const ignoreDigest = ignoreContents ? sha256(ignoreContents) : null;
+      let ignoreFile;
+      repoArgs.push(...(source.plan?.targets ?? []).map(path => `./${path}`));
+      const verifyInputs = () => {
+        verifyControlPlan(plan);
+        if (ignoreFile && sha256(readFileSync(ignoreFile)) !== ignoreDigest) {
+          throw new RecallInputDrift('Registered control ignore bytes changed during scanning');
+        }
+      };
+      verifyInputs();
+      const scope = source.plan ? { control_plan_entry: source.plan, original_expected: source.eligible.length,
+        ...(ignoreDigest ? { control_ignore_sha256: ignoreDigest } : {}) } : {};
+      const effectiveBase = { ...base, extra: [...base.extra, ...repoArgs] };
+      const effectiveCandidate = { ...candidate, extra: [...candidate.extra, ...repoArgs] };
       const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v3',
         scorer_sha256: scorerSha256(), dir,
         source_tree: source.evidence, excluded: excludedDirs, ...rules, ...controlSettings,
+        ...(plan ? { control_plan_sha256: plan.digest } : {}), ...scope,
         profile_sha256: checkpointProfile,
         engine_sha256: engine.receipt.executable_sha256, extra: effectiveBase.extra,
         candidate_extra: effectiveCandidate.extra } : null;
       const savedDelta = checkpointInputs && readCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs);
       if (savedDelta && await controlCheckpointIntact(reportsRoot, savedDelta)) {
+        if (source.plan && (await controlSource(directory, excludedDirs)).evidence.sha256 !== source.evidence.sha256) {
+          throw new RecallInputDrift(`Registered control source fingerprint differs: ${directory}`);
+        }
+        verifyInputs();
         deltas.push({ ...savedDelta, resumed_from_checkpoint: true });
         continue;
       }
       scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
+      if (ignoreContents) {
+        // The checkpoint binds the bytes. Each native scan uses a private path.
+        ignoreFile = join(mkdtempSync(join(scanRoot, 'scope-')), 'registered.ignore');
+        writeFileSync(ignoreFile, ignoreContents, { flag: 'wx', mode: 0o600 });
+        for (const arm of [effectiveBase, effectiveCandidate]) {
+          arm.extra = [...arm.extra, `--semgrepignore-filename=${ignoreFile}`];
+        }
+        verifyInputs();
+      }
       const context = { base: effectiveBase, candidate: effectiveCandidate, directory, source,
         workdir: reportsRoot, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
       let attempt = await controlPair(context, '', firstPass, parallel);
-      const sizing = maxTargetBytes ? { max_target_bytes: maxTargetBytes } : {};
+      verifyInputs();
+      const sizing = { ...scope, ...(maxTargetBytes ? { max_target_bytes: maxTargetBytes } : {}) };
       let recovery = sizing;
       if (attempt.issues.includes('timeout') && !attempt.issues.includes('error')) {
-        const extra = controlRetryArgs(base.profile, base.extra, candidate.extra);
+        const extra = controlRetryArgs(base.profile, effectiveBase.extra, effectiveCandidate.extra);
         recovery = { ...sizing, initial_scan_sides: attempt.scan_sides, retry_extra_args: extra };
         attempt = await controlPair(context, '-retry', extra);
+        verifyInputs();
       }
       const { old, now, scan_sides, issues, control_scope_sha256 } = attempt;
       if (issues.some(Boolean) || Object.values(scan_sides).some(side => !side?.control_coverage?.complete)) {
@@ -2174,13 +2287,16 @@ async function controls(opts) {
   const controlSettings = { ...controlTimeoutSettings(opts, profile), ...parallelControlSettings(opts, profile) };
   const settings = { ...opts, baseline: before, candidate: after, profileBytes };
   const rules = evaluationRules(settings);
+  const plan = loadControlPlan(settings, profile, rules);
   const engine = await bindRecallEngine(profile, opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
-  const deltas = await controlDeltas_({ ...settings, ruleFingerprints: rules }, engine, controlSettings);
+  const deltas = await controlDeltas_({ ...settings, ruleFingerprints: rules }, engine, controlSettings, plan);
   await verifyBoundEngine(engine, 'control scoring');
   verifyEvaluationRules(settings, rules);
+  verifyControlPlan(plan);
   writeFileSync(opts.out, `${JSON.stringify({ schema: 'factory.recall-controls.v1', before_sha256: rules.baseline_sha256,
     after_sha256: rules.candidate_sha256, profile_sha256: sha256(profileBytes), engine: engine.receipt,
-    ...controlSettings, control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
+    ...controlSettings, ...(plan ? { control_plan_sha256: plan.digest } : {}),
+    control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
   for (const delta of deltas) console.log(delta.dir, delta.before, '->', delta.after, delta.error ?? '');
   if (deltas.some(delta => delta.error)) process.exitCode = 2;
 }
