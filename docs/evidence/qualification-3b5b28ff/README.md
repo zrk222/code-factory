@@ -15,3 +15,9 @@
 - pdf.js: `external/dist` plus the generated jbig2 fallback, 4 files, with a 30 s timeout.
 - rubygems: `lib/bundler/vendor`, 92 files.
 - mastodon: generated annual-report model and migrations, 4 files. These were covered only on the candidate arm, which raised 0 alerts in them.
+
+**Path-policy rebind (g4wm).** `loss-plan-sepoct-pathpolicy.json` → `self-816bbef3-sepoct-pathpolicy.json`: 816bbef3 against itself on 1e7a58f7 with `--scanner-path-policy true`, using the same engine (d6a68a84), profile (8ec08b71) and engine args as the full replay. The adjudication file is unchanged. With the policy, the 3,005,868-byte `.yarn/releases/yarn-4.14.1.cjs` is an `engine_target_ignore` exclusion on both arms, so the candidate g4wm row is a complete miss. The existing gate then records it as `lost_fp_only`, and `raw_lost_baseline_hits` keeps the strict loss.
+- `recall-evaluation-8cd65488-pathpolicy.json`: ACCEPT for candidate 8cd65488 with the policy on both arms. 53 gains, retention 36/37 with p849 FP-only, all 18 controls complete at −4.
+- `recall-evaluation-8cd65488-pathpolicy-run1.json`: first attempt, REJECT on four load-induced parse/timeout gaps, kept for the record.
+- `control-plan-8cd65488.json`: the 1c60974c plan with only the candidate hash re-pinned.
+- Summary: `../recall-g4wm-pathpolicy-rebind-8cd65488.json`.

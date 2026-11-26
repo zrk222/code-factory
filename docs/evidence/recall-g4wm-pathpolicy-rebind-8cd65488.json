@@ -1,0 +1,200 @@
+{
+ "schema": "factory.recall-g4wm-path-policy-rebind.v1",
+ "request": "PR #415 comment 2026-11-26T11:41Z: rerun the full spent comparison with the #417 path-policy probe on both arms and rebind the g4wm loss plan so the existing complete-miss gate can clear the span-reviewed FP-only loss",
+ "harness_commit": "c335d420 (merge of origin/main 3b610fb0 + #417 port 9acfdbaf..2c5ba14a)",
+ "harness_sha256": {
+  "scripts/recall_harness.mjs": "76314af33ec3434c0f4d0e1f2473b1e8e34130c400fcaa1f6bfe3c6ac518196c",
+  "scripts/recall_coverage.mjs": "431f26f4646be156b78cee2c46aae8e1cb27d4f6585fd9a0bae2a624c050c314",
+  "scripts/recall_losses.mjs": "b5a622969c6f44c1aa267f0780f5083d18e033316e0e0155a9266093349809d8"
+ },
+ "gate_logic_changed": false,
+ "engine": {
+  "executable": "opengrep_linux_x86",
+  "executable_sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+  "version": "2.1.0"
+ },
+ "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+ "baseline_ruleset_sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747",
+ "candidate_ruleset_sha256": "8cd65488012bd40f8659dffeac515274cfb9df09a224b638b9ff42d569975186",
+ "flags": {
+  "scanner_path_policy": "true on both arms (opengrep-2.1.0-target-inventory-v1)",
+  "engine_args": [],
+  "candidate_extra_args": [],
+  "case_workers": 6,
+  "probe_coverage": true,
+  "control_timeout_seconds": 15,
+  "control_excluded_directories": [
+   "build",
+   "test"
+  ],
+  "max_control_increase": 0
+ },
+ "manifests": [
+  {
+   "cases_sha256": "e9d0fe78171165310fa634699652f3bfd013bad559593c9b4790ea67ba1f476f",
+   "manifest_sha256": "ee78b2bfba66da484a6559ecc65df99744c88bef30fdc635c9a1128ed285ad0e"
+  },
+  {
+   "cases_sha256": "a5ab90d8801fd2901061e02eec540a46d4e6d6595514ec09e886e44820ee6411",
+   "manifest_sha256": "5f931af30e845c558f2e9b3b2c0adae2be669f043d17508da68dfda7621b5e18"
+  },
+  {
+   "cases_sha256": "22933eec13576d716128dfc4e43daa7654517e5a06861377276f298ec8de40df",
+   "manifest_sha256": "9e76ef10cd0a0ebaaf61275921e1559c37b76f9b8e9ef623d83885dd184e59c5"
+  },
+  {
+   "cases_sha256": "c646fc9a4d5c5cca53f18911affc8d59fb782c4d7f4b833136a76cf4d48df107",
+   "manifest_sha256": "06c35c101c0a3cbd7bf9afb04b038c0ec1a0ed8dc7bf092d5689252db7114e5b"
+  },
+  {
+   "cases_sha256": "1e7a58f7e64140d42f0c136aa186abbee018b245557fc2f16652ddcb5a0d0daf",
+   "manifest_sha256": "d8a5f3bcad3d1f310ccb0e9482a1dd8e16d18e9f4543c9bbe6cd043e15e92a73",
+   "role": "spent Sep-Oct cohort holding g4wm"
+  }
+ ],
+ "loss_plan_rebind": {
+  "plan": {
+   "path": "qualification-3b5b28ff/loss-plan-sepoct-pathpolicy.json",
+   "sha256": "3981de560f40b4ba69e503d5d5dfbbb97cc7bbfe700ae6537cb0a459e83ba96a"
+  },
+  "score": {
+   "path": "qualification-3b5b28ff/self-816bbef3-sepoct-pathpolicy.json",
+   "sha256": "8c7d99b268f2498ccedf10ae2cf290c4b2ea8123059395b3c5cf84f7fab007e5",
+   "what": "816bbef3 scored against itself on 1e7a58f7 with the same engine, profile, engine args and --scanner-path-policy true as the full replay"
+  },
+  "adjudication": {
+   "path": "qualification-3b5b28ff/span-adjudicated-losses-sepoct.json",
+   "sha256": "958a04c6be2e08ea7ef6af6227781ff6b6190c26014adc58f7a640e099e1e2b3",
+   "changed": false
+  },
+  "replaces": {
+   "path": "qualification-3b5b28ff/loss-plan-sepoct.json",
+   "score_sha256": "43bd88bfbbfd0f13a7c1620af88a5af15ace9472878eb90c9e176aa4d3f43f83",
+   "kept": true
+  },
+  "bound_fp_only_cases": [
+   "GHSA-g4wm-2vf7-vfgr",
+   "GHSA-3753-m2x2-q623"
+  ]
+ },
+ "g4wm_target_policy": {
+  "excluded_packet": {
+   "path": ".yarn/releases/yarn-4.14.1.cjs",
+   "bytes": 3005868,
+   "sha256": "5c7a0c5ea1c5b690df603c8e16b3742f87169b814d56bb5e63881145e8a84033",
+   "state": "excluded",
+   "reason": "scanner_path_policy",
+   "policy": "engine_target_ignore"
+  },
+  "old_side_target_inventory_sha256": {
+   "baseline": "6025c4884c881b76496f9ac233b1ba169b65da0099d1cdf852abbef1d65602f4",
+   "candidate": "6025c4884c881b76496f9ac233b1ba169b65da0099d1cdf852abbef1d65602f4"
+  },
+  "baseline": {
+   "outcome": "hit",
+   "hunk_spans": [
+    [
+     9,
+     0,
+     35
+    ],
+    [
+     9,
+     0,
+     41
+    ],
+    [
+     12,
+     0,
+     38
+    ],
+    [
+     12,
+     0,
+     44
+    ]
+   ],
+   "matches_reviewed_fp_spans": 4
+  },
+  "candidate": {
+   "outcome": "miss",
+   "status": "scored",
+   "timeouts": 0,
+   "fixed_side_alerts": 0
+  },
+  "prior_without_policy": "candidate coverage_incomplete (old-side unreported:absent_from_engine_paths on the Yarn packet) in recall-evaluation-1c60974c-final.json"
+ },
+ "raw_strict_loss": {
+  "raw_lost_baseline_hits": [
+   "GHSA-g4wm-2vf7-vfgr",
+   "GHSA-3753-m2x2-q623"
+  ],
+  "lost_baseline_hits": [],
+  "lost_fp_only": [
+   "GHSA-g4wm-2vf7-vfgr",
+   "GHSA-3753-m2x2-q623"
+  ],
+  "review_independence": "UNESTABLISHED (AI span reviewers, unanimous FP)"
+ },
+ "runs": [
+  {
+   "receipt": "qualification-3b5b28ff/recall-evaluation-8cd65488-pathpolicy-run1.json",
+   "sha256": "0d586e6ace6f56551540f185702d6ae32563bd25b06edd4a91275cbae6303053",
+   "decision": "REJECT",
+   "failures": [
+    "new engine coverage gaps: GHSA-53g2-mvcc-q9x3, GHSA-2rc4-7jc6-qffh, GHSA-gvg7-pp82-cff3, GHSA-cv3r-c5h8-f4g5"
+   ],
+   "lost_baseline_hits": [],
+   "lost_fp_only": [
+    "GHSA-g4wm-2vf7-vfgr",
+    "GHSA-3753-m2x2-q623"
+   ],
+   "note": "Three candidate-arm JS/TS parse partials (trix.js, c3.js, index.ts) and one fixed-side Go engine timeout (server/mock/datastore_mock.go) on a 2-CPU host at 6 case workers. Idle single-file scans of the three JS/TS files with 816bbef3, 1c60974c and 8cd65488 report zero engine errors. Incomplete cases are not checkpointed, so the identical command re-observed only them."
+  },
+  {
+   "receipt": "qualification-3b5b28ff/recall-evaluation-8cd65488-pathpolicy.json",
+   "sha256": "18db94b2afd4a2155a87215d5ab1df7ea1b06591338b8e9962f87a77e6f0e26e",
+   "decision": "ACCEPT",
+   "failures": [],
+   "gained": 53,
+   "lost_baseline_hits": [],
+   "lost_fp_only": [
+    "GHSA-g4wm-2vf7-vfgr",
+    "GHSA-3753-m2x2-q623"
+   ],
+   "gain_retention": {
+    "required": 37,
+    "retained": 36,
+    "lost": [],
+    "lost_fp_only": [
+     "GHSA-p849-8hwh-84j9"
+    ],
+    "checkpoint_sha256": "92508dde409175bd2b92a3f39cd051ef29f96b0d02c61d91db954713cde79d78"
+   },
+   "controls": {
+    "repositories": 18,
+    "complete": 18,
+    "alerts_before": 35,
+    "alerts_after": 31,
+    "increase": -4,
+    "control_plan_sha256": "18af77871de3ff3e4339d64ec4e4e0c9fe87a60ca9e5c68190b3ad42e7273369"
+   },
+   "new_errors": [],
+   "new_coverage_gaps": [],
+   "residual": [
+    51,
+    77
+   ],
+   "precision_evidence": "31 emitted alerts unreviewed",
+   "re_observed_cases": {
+    "GHSA-53g2-mvcc-q9x3": "miss->miss",
+    "GHSA-2rc4-7jc6-qffh": "miss->miss",
+    "GHSA-gvg7-pp82-cff3": "miss->miss",
+    "GHSA-cv3r-c5h8-f4g5": "miss->miss"
+   }
+  }
+ ],
+ "control_plan": "control-plan-8cd65488.json is control-plan-1c60974c.json with candidate_sha256 re-pinned to 8cd65488; exclusions, targets and timeouts unchanged",
+ "candidate_status": "8cd65488 is the branch head ruleset after the origin/main merge. It is not the frozen Q2 candidate; detector work from the task-2 agent lands after this.",
+ "scope": "Development-only, on spent cohorts. No held-out (Q2) data read, scanned or used."
+}
