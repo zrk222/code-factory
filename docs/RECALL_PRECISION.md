@@ -234,9 +234,28 @@ Held-out numbers are produced by one committed tool instead of scratch scripts.
 | Command | What it does |
 |---|---|
 | `freeze` | Selects cases from advisory metadata only. It excludes every earlier advisory ID and every earlier fix commit found under `docs/evidence`, keeps one case per fix commit and at most `--per-repo` per repository, and records a case digest. |
-| `score` | Runs the production profile argv (`deploy/deep-adapters/profiles/semgrep-pattern-limited.json`) with only the binary, ruleset and I/O paths substituted. It reports strict hunk recall (primary), trace overlap (an alert whose source or dataflow step is on a changed line; diagnostic only), file recall, fix-side residuals, and outcomes split into hit, miss, engine timeout, unknown and error. Alerts in changed files are reported as a review budget. |
+| `score` | Runs the production profile argv (`deploy/deep-adapters/profiles/semgrep-pattern-limited.json`) with only the binary, ruleset and I/O paths substituted. It reports strict hunk recall (primary), trace overlap (an alert endpoint or dataflow step within the old hunk; diagnostic only), file recall, fix-side residuals, and outcomes split into hit, miss, engine timeout, unknown and error. Alerts in changed files are reported as a review budget. |
 | `evaluate` | The gate for one candidate ruleset against a baseline: every dev manifest plus benign control repositories. It rejects lost baseline hits, new engine errors or timeouts, more fix-side residuals, control growth beyond `--max-control-increase`, and, with `--labels`, labeled false positives that return or labeled true positives that disappear. A flag on trial (for example `--taint-intrafile`) can apply to the candidate only. |
 | `observe` | Adds new control alerts to a label file (`TP`, `FP`, `UNCLEAR`, or pending). Labels are keyed by rule, repository, path and snippet digest, so line shifts do not orphan them. |
+
+Each arm reports an edited-line diagnostic from the verified unified diff. It
+counts old alert anchors on lines removed by the patch and fixed-side residual
+anchors on lines it adds. It also gives context-only counts and the number of
+scored cases with usable diff bodies. Paired case rows record both arms when the
+case was scored and its edited lines could be verified. The primary hunk score
+and qualification gate continue to use the registered five lines of diff context.
+
+Evaluation receipts record the control alert limit and the original alert spans
+for lost baseline hits. Use `--adjudicated-losses` for the baseline and
+`--gain-adjudicated-losses` for a separate `--retain-gains-from` checkpoint.
+The checkpoint plan requires the exact score digest, span and source hash for
+each reviewed alert. A candidate coverage gap still blocks qualification.
+
+The paired `family_transitions` records gains and losses for each registered
+family, including changes within a case that retains its overall hit. Absent
+family hits count as misses only with complete old-side coverage and available
+attribution. Unresolved pairs stay visible. This report uses rule attribution
+and does not change the case-level qualification gate.
 
 A held-out manifest is scored once per ruleset; any later scoring of it is a
 development run and is reported as such.
