@@ -785,21 +785,39 @@ def verify_recall(record: dict) -> dict:
 
 def _cache_path(cache: Path, case: dict, item: dict) -> Path:
     _recall_case_name(case)
-    from factoryline.deep_audit_io import relative_path
 
     if not isinstance(item["parent"], str) or not _SHA1.fullmatch(item["parent"]):
         raise ValueError("invalid source parent")
 
-    relative = relative_path(f"{case['ghsa']}/{item['parent'][:12]}/{item['path']}")
-    return _recall_contained(cache, relative)
+    return _recall_contained(cache, f"{case['ghsa']}/{item['parent'][:12]}/{item['path']}")
+
+
+def _filesystem_relative(value) -> Path:
+    """A relative filesystem path: any legal Git filename, never absolute or upward.
+
+    Unlike the wire-protocol validator, '#' and other punctuation are kept as literal
+    filename characters; escaping the root, drive prefixes and encoded dots or
+    separators are refused.
+    """
+    if not isinstance(value, str) or not value or "\x00" in value or "\\" in value:
+        raise ValueError("invalid relative path")
+    parts = value.split("/")
+    if value.startswith("/") or any(
+        part in ("", ".", "..") or re.match(r"^[A-Za-z]:", part) for part in parts
+    ):
+        raise ValueError("invalid relative path")
+    # Percent-encoded dots and separators are refused, as a consumer that decodes
+    # them would see a different path; other '%' and '#' characters stay literal.
+    if re.search(r"%(?:2e|2f|5c)", value, re.IGNORECASE):
+        raise ValueError("encoded path separators forbidden")
+    return Path(*parts)
 
 
 def _recall_contained(root, relative):
-    from factoryline.deep_audit_io import relative_path
     import stat
 
     root = Path(root).absolute()
-    target = root / relative_path(relative)
+    target = root / _filesystem_relative(relative)
     for path in [
         *root.parents,
         root,
@@ -1990,10 +2008,14 @@ def weakness(cwes: list[str]) -> str:
     return ", ".join(sorted(found)) or "unspecified"
 
 
-def rule_cwes(rules_path: Path) -> dict[str, list[str]]:
+def load_review_rules(rules_path: Path) -> tuple[bytes, list[dict]]:
     import yaml  # PyYAML ships with the factory extra.
 
-    rules = yaml.safe_load(rules_path.read_text(encoding="utf-8"))["rules"]
+    raw = _recall_read(rules_path)
+    return raw, yaml.safe_load(raw)["rules"]
+
+
+def rule_cwes(rules: list[dict]) -> dict[str, list[str]]:
     return {rule["id"]: list(rule.get("metadata", {}).get("cwe", [])) for rule in rules}
 
 
@@ -2004,8 +2026,8 @@ def item_id(alert: dict) -> str:
     return digest(raw.encode())[:12]
 
 
-def context(root: Path, path: str, line: int, radius: int = 5) -> str:
-    source = (root / path).read_text(encoding="utf-8", errors="replace").splitlines()
+def context(raw: bytes, line: int, radius: int = 5) -> str:
+    source = raw.decode("utf-8", errors="replace").splitlines()
     first, last = max(0, line - 1 - radius), min(len(source), line + radius)
     return "\n".join(
         f"{index + 1:5}{'>' if index + 1 == line else ' '} {source[index]}"
@@ -2054,23 +2076,30 @@ def rule_revision(rule: dict) -> str:
 
 
 def rule_revisions(rules_path: Path) -> dict[str, str]:
-    import yaml  # PyYAML ships with the factory extra.
-
-    rules = yaml.safe_load(rules_path.read_text(encoding="utf-8"))["rules"]
+    _, rules = load_review_rules(rules_path)
     return {rule["id"]: rule_revision(rule) for rule in rules}
 
 
 def build_packet(args) -> None:
-    cwes = rule_cwes(Path(args.rules))
-    revisions = rule_revisions(Path(args.rules))
+    rules_raw, rules = load_review_rules(Path(args.rules))
+    rules_sha256 = digest(rules_raw)
+    cwes = rule_cwes(rules)
+    revisions = {rule["id"]: rule_revision(rule) for rule in rules}
     unique = {}
     for alert in read_json(Path(args.alerts)):
+        expected_rules = alert.get("rules_sha256")
+        if expected_rules is not None and expected_rules != rules_sha256:
+            raise ValueError("review ruleset digest mismatch")
         unique.setdefault(item_id(alert), alert)
     chosen = stratified(list(unique.values()), args.per_rule, args.seed)
     items, key = [], {}
     for alert in chosen:
         identity = item_id(alert)
-        source = Path(alert["root"]) / alert["path"]
+        source = _recall_read(_recall_contained(Path(alert["root"]), alert["path"]))
+        source_sha256 = digest(source)
+        expected_sha256 = alert.get("source_sha256")
+        if expected_sha256 is not None and expected_sha256 != source_sha256:
+            raise ValueError("review source digest mismatch")
         items.append(
             {
                 "item": identity,
@@ -2079,13 +2108,13 @@ def build_packet(args) -> None:
                 "line": alert["line"],
                 **({"span": alert["span"]} if alert.get("span") is not None else {}),
                 "claimed_weakness": weakness(cwes.get(alert["rule"], [])),
-                "context": context(Path(alert["root"]), alert["path"], alert["line"]),
+                "context": context(source, alert["line"]),
             }
         )
         key[identity] = {
             "rule": alert["rule"],
             "rule_revision": revisions.get(alert["rule"]),
-            "source_sha256": digest(source.read_bytes()),
+            "source_sha256": source_sha256,
             "span": alert.get("span"),
             "on_fix_hunk": bool(alert.get("on_fix_hunk")),
         }
@@ -2094,7 +2123,7 @@ def build_packet(args) -> None:
         "cohort": args.cohort,
         "seed": args.seed,
         "per_rule_cap": args.per_rule,
-        "rules_sha256": digest(Path(args.rules).read_bytes()),
+        "rules_sha256": rules_sha256,
         "instructions": INSTRUCTIONS,
         "items": items,
     }

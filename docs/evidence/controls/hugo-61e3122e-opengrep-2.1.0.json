@@ -1,0 +1,134 @@
+{
+  "schema": "factory.recall-parser-control.v1",
+  "scope": "One original Hugo control file on Windows. This is a parser coverage canary.",
+  "source": {
+    "revision": "61e3122e370bb0aac204d90c4a69d3c936a8709c",
+    "tree": "7478d35a8deb12d79ae05c68f44560cec6ad1f57",
+    "path": "internal/warpc/js/renderkatex.bundle.js",
+    "sha256": "68cd41dcc6536e55e453a294104997b51a2f2bdf024602e44be6335beb45fb22"
+  },
+  "rules": {
+    "revision": "cf47a43c1c4221c2426e186af98c710daf66926d",
+    "sha256": "29e86f9e5ef64825c7d72d36489ede1b9e99a06a209b24385e9941d9a56ca4e5"
+  },
+  "candidate_release": {
+    "tag": "v2.1.0",
+    "url": "https://github.com/opengrep/opengrep/releases/tag/v2.1.0",
+    "windows_archive_sha256": "de250811f7209619e4fdafff55e5f13cb24a70c9cb0ea86435c2c92393ea04ab"
+  },
+  "scan_flags": [
+    "--disable-version-check",
+    "--no-git-ignore",
+    "--disable-nosem",
+    "--dataflow-traces",
+    "--verbose",
+    "--no-rewrite-rule-ids",
+    "--jobs=1",
+    "--timeout=15"
+  ],
+  "unchanged_source_verified": true,
+  "coverage_recovered": true,
+  "arms": [
+    {
+      "version": "2.0.0",
+      "executable_sha256": "3c9d000363cfe48df8ea153f3023cbe05fb848cb1d31fbc2858c0eed1361ea25",
+      "duration_ms": 13504,
+      "scanned": [
+        "renderkatex.bundle.js"
+      ],
+      "errors": [
+        {
+          "type": [
+            "PartialParsing",
+            [
+              {
+                "path": "renderkatex.bundle.js",
+                "start": {
+                  "line": 254,
+                  "col": 4524,
+                  "offset": 0
+                },
+                "end": {
+                  "line": 254,
+                  "col": 4529,
+                  "offset": 5
+                }
+              },
+              {
+                "path": "renderkatex.bundle.js",
+                "start": {
+                  "line": 254,
+                  "col": 28833,
+                  "offset": 0
+                },
+                "end": {
+                  "line": 254,
+                  "col": 28838,
+                  "offset": 5
+                }
+              },
+              {
+                "path": "renderkatex.bundle.js",
+                "start": {
+                  "line": 254,
+                  "col": 38289,
+                  "offset": 0
+                },
+                "end": {
+                  "line": 254,
+                  "col": 38295,
+                  "offset": 6
+                }
+              },
+              {
+                "path": "renderkatex.bundle.js",
+                "start": {
+                  "line": 254,
+                  "col": 38325,
+                  "offset": 0
+                },
+                "end": {
+                  "line": 254,
+                  "col": 38329,
+                  "offset": 4
+                }
+              },
+              {
+                "path": "renderkatex.bundle.js",
+                "start": {
+                  "line": 254,
+                  "col": 61299,
+                  "offset": 0
+                },
+                "end": {
+                  "line": 254,
+                  "col": 61305,
+                  "offset": 6
+                }
+              }
+            ]
+          ],
+          "code": 3,
+          "path": "renderkatex.bundle.js"
+        }
+      ],
+      "skipped": 1,
+      "alerts": [],
+      "native_report_sha256": "c5810a5e8b37a3388a656b847bc2b9cdf462bdced41876fe67c59b5249c6f25c",
+      "sarif_sha256": "bd13907667a3625e698b81a4b442fecce7c394d71cb01b64b10be8296a3bda9e"
+    },
+    {
+      "version": "2.1.0",
+      "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+      "duration_ms": 12935,
+      "scanned": [
+        "renderkatex.bundle.js"
+      ],
+      "errors": [],
+      "skipped": 0,
+      "alerts": [],
+      "native_report_sha256": "c62443555553ab4a606f225bf986363bbcc4b9cee4dfb99309f9f4823537c6c5",
+      "sarif_sha256": "cac103ee3e4e7ca44bc5ab534e77639890da88921a8c292f9f8537605d81a039"
+    }
+  ]
+}

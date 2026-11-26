@@ -10,6 +10,23 @@ scan scope, ecosystem, and denominator visible. A configured language worker
 shows availability. Claims about detection accuracy need measured evidence
 for that lane and ecosystem.
 
+For a control that repeatedly finishes only after the bounded timeout retry,
+pass `--control-timeout 15` to the OpenGrep `controls` or `evaluate` command.
+Both control arms use that budget from their first scan. Advisory scans keep
+their configured budget, and the receipt records the control timeout.
+
+## Parser coverage
+
+Score only the original pinned source bytes. Equal length and stable character
+positions do not preserve program behavior. Keep parser failures visible in the
+coverage evidence and evaluate a parser upgrade against the same source, rules,
+and scan settings.
+
+OpenGrep 2.1.0 scanned the original Hugo KaTeX bundle without errors or skips.
+OpenGrep 2.0.0 reported five partial-parse locations on those same bytes. This
+[parser canary](evidence/controls/hugo-61e3122e-opengrep-2.1.0.json) covers one
+file. Engine adoption requires paired development and control qualification.
+
 ## Signer and execution evidence
 
 The precision scorer accepts an optional provenance bundle for a frozen

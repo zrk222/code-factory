@@ -176,19 +176,20 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.tls-peer-not-verified': 2,
   'opt.factory.rules.java.archive-path-traversal': 3,
   'opt.factory.rules.java.disabled-hostname-verification': 4,
-  'opt.factory.rules.java.parameter-sql-text': 5,
+  'opt.factory.rules.java.parameter-sql-text': 7,
   'opt.factory.rules.java.request-command-injection': 3,
   'opt.factory.rules.java.request-html-injection': 1,
   'opt.factory.rules.java.request-path-traversal': 1,
   'opt.factory.rules.java.request-sql-injection': 3,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
-  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 1,
+  'opt.factory.rules.javascript.dom-innerhtml-from-variable': 2,
   'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
-  'opt.factory.rules.javascript.parameter-shell-command': 6,
-  'opt.factory.rules.javascript.parameter-sql-text': 2,
+  'opt.factory.rules.javascript.html-template-unescaped-interpolation': 4,
+  'opt.factory.rules.javascript.parameter-shell-command': 7,
+  'opt.factory.rules.javascript.parameter-sql-text': 3,
   'opt.factory.rules.javascript.request-command-injection': 4,
   'opt.factory.rules.javascript.request-html-injection': 12,
-  'opt.factory.rules.javascript.request-path-traversal': 18,
+  'opt.factory.rules.javascript.request-path-traversal': 17,
   'opt.factory.rules.javascript.request-sql-injection': 3,
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
@@ -228,10 +229,11 @@ export const fixedReviewedFindingCounts = Object.freeze({
 export const typescriptExtensionEndpoints = Object.freeze([
   ['archive-path-traversal', 165], ['archive-path-traversal', 185], ['archive-path-traversal', 194],
   // The direct sink and interpolation are separate native spans on these lines.
-  ['parameter-shell-command', 207, [[19, 78], [28, 41]]], ['parameter-shell-command', 217],
-  ['parameter-sql-text', 233, [[21, 65], [56, 63]]], ['parameter-path-join-without-containment', 247],
+  ['parameter-shell-command', 207], ['parameter-shell-command', 217],
+  ['parameter-sql-text', 233], ['parameter-path-join-without-containment', 247],
+  ['html-template-unescaped-interpolation', 261], ['html-template-unescaped-interpolation', 271],
   ['dom-innerhtml-from-variable', 281], ['tls-reject-unauthorized-disabled', 290],
-  ['request-path-traversal', 305], ['request-path-traversal', 312], ['request-path-traversal', 314],
+  ['request-path-traversal', 305], ['request-path-traversal', 312],
   ['parameter-path-join-without-containment', 328], ['parameter-sql-text', 343],
   ['parameter-shell-command', 358], ['parameter-shell-command', 360],
   ['request-path-traversal', 379], ['request-path-traversal', 381],
@@ -259,6 +261,16 @@ export function javascriptControlManifest() {
   return [...combined,
     { rule, path: 'typescript-shell-wrapper.ts', line: 7 },
     { rule, path: 'typescript-shell-binding.ts', line: 5 },
+    { rule: 'opt.factory.rules.javascript.html-template-unescaped-interpolation',
+      path: 'typescript-html-escaped-local.ts', line: 10 },
+    { rule: 'opt.factory.rules.javascript.html-template-unescaped-interpolation',
+      path: 'typescript-html-escaped-local.ts', line: 15 },
+    { rule: 'opt.factory.rules.javascript.parameter-sql-text',
+      path: 'typescript-html-escaped-local.ts', line: 35 },
+    { rule: 'opt.factory.rules.javascript.dom-innerhtml-from-variable',
+      path: 'typescript-html-escaped-local.ts', line: 51 },
+    { rule: 'opt.factory.rules.javascript.parameter-shell-command',
+      path: 'typescript-html-escaped-local.ts', line: 56 },
   ];
 }
 
@@ -270,9 +282,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 63 rules (under the 64-rule deep-audit bound) and 252 annotated findings.
-const REVIEWED_RULES = 63;
-const REVIEWED_FINDINGS = 252;
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 260 annotated findings.
+const REVIEWED_RULES = 64;
+const REVIEWED_FINDINGS = 260;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -332,6 +344,7 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'tsx-shell-wrapper-controls.txt', 'typescript-shell-wrapper.ts'],
   ['ts', 'tsx-shell-binding-controls.txt', 'typescript-shell-binding.ts'],
   ['ts', 'tsx-shell-helper-controls.txt', 'typescript-shell-helper.ts'],
+  ['ts', 'tsx-html-escaped-local-controls.txt', 'typescript-html-escaped-local.ts'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['php', 'php-archive-output-controls.php'], ['php', 'php-parameter-sink-controls.php'],
