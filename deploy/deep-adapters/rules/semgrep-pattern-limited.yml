@@ -4234,69 +4234,222 @@ rules:
                   ...
                 ...
       - metavariable-regex: {metavariable: $SINK, regex: '^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$'}
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            $C.relative_to(...)
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            $C.is_relative_to(...)
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            os.path.commonpath(...)
-            ...
-      # Joined value resolved and compared, with a raise, before use.
-      - pattern-not-inside: |
-          $V = $J
-          ...
-          if <... Path($V).resolve() ...>:
-            ...
-            raise ...
-          ...
-      - pattern-not-inside: |
-          $V = $J
-          ...
-          if <... os.path.realpath($V) ...>:
-            ...
-            raise ...
-          ...
-      - pattern-not-inside: |
-          $V = $J
-          ...
-          if <... os.path.abspath($V) ...>:
-            ...
-            raise ...
-          ...
-      - pattern-not-inside: |
-          $V = $J
-          ...
-          if <... $V.resolve() ...>:
-            ...
-            raise ...
-          ...
-      # A prefix check only contains the path when the prefix ends in a separator;
-      # startswith(abspath(root)) alone also accepts root-evil/.
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            <... $S.startswith(<... os.sep ...>) ...>
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            <... $S.startswith($R + "/") ...>
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            <... os.sep ...>
-            ...
-            <... $S.startswith(...) ...>
-            ...
+      # Containment clears the join only through a guard that decides the use:
+      # the joined value is assigned and the next statement compares that same
+      # value, normalized, with the join's own base (as written or normalized),
+      # on a branch that raises, returns or skips the iteration, and the value is
+      # not reassigned afterwards. Named helpers, discarded or handled
+      # results, checks of another path or root, inverted branches and checks
+      # elsewhere in the function do not clear the join.
+      - pattern-not-inside:
+          patterns:
+            - pattern-either:
+                - patterns:
+                    - pattern-inside: |
+                        $V = $E
+                        if $COND:
+                          $...BEFORE
+                          $EXIT
+                    - metavariable-regex: {metavariable: $EXIT, regex: '^(raise|return|continue)\b'}
+                    - metavariable-pattern:
+                        metavariable: $E
+                        patterns:
+                          - pattern-either:
+                              - pattern: os.path.join($B, ..., $Q, ...)
+                              - pattern: $B / $Q
+                              - pattern: Path($B, ..., $Q, ...)
+                              - pattern: pathlib.Path($B, ..., $Q, ...)
+                          - metavariable-pattern:
+                              metavariable: $COND
+                              patterns:
+                                - pattern-either:
+                                    - pattern: not $NV.is_relative_to($B)
+                                    - pattern: not $NV.is_relative_to($B.resolve())
+                                    - pattern: not $NV.is_relative_to(Path($B).resolve())
+                                    - pattern: not $NV.is_relative_to(pathlib.Path($B).resolve())
+                                    - pattern: $B not in $NV.parents
+                                    - pattern: not $B in $NV.parents
+                                    - pattern: $B.resolve() not in $NV.parents
+                                    - pattern: not $B.resolve() in $NV.parents
+                                    - pattern: Path($B).resolve() not in $NV.parents
+                                    - pattern: not Path($B).resolve() in $NV.parents
+                                    - pattern: $NV.parent != $B
+                                    - pattern: $NV.parent != $B.resolve()
+                                    - pattern: $NV.parent != Path($B).resolve()
+                                    - pattern: os.path.commonpath([$B, $NV]) != $B
+                                    - pattern: os.path.commonpath([$NV, $B]) != $B
+                                    - pattern: os.path.commonpath(($B, $NV)) != $B
+                                    - pattern: os.path.commonpath(($NV, $B)) != $B
+                                    - pattern: os.path.commonpath([os.path.realpath($B), $NV]) != os.path.realpath($B)
+                                    - pattern: os.path.commonpath([$NV, os.path.realpath($B)]) != os.path.realpath($B)
+                                    - pattern: os.path.commonpath((os.path.realpath($B), $NV)) != os.path.realpath($B)
+                                    - pattern: os.path.commonpath(($NV, os.path.realpath($B))) != os.path.realpath($B)
+                                    - pattern: os.path.commonpath([os.path.abspath($B), $NV]) != os.path.abspath($B)
+                                    - pattern: os.path.commonpath([$NV, os.path.abspath($B)]) != os.path.abspath($B)
+                                    - pattern: os.path.commonpath((os.path.abspath($B), $NV)) != os.path.abspath($B)
+                                    - pattern: os.path.commonpath(($NV, os.path.abspath($B))) != os.path.abspath($B)
+                                    - pattern: not $NV.startswith($B + os.sep)
+                                    - pattern: not $NV.startswith(os.path.join($B, ""))
+                                    - pattern: not $NV.startswith(os.path.realpath($B) + os.sep)
+                                    - pattern: not $NV.startswith(os.path.join(os.path.realpath($B), ""))
+                                    - pattern: not $NV.startswith(os.path.abspath($B) + os.sep)
+                                    - pattern: not $NV.startswith(os.path.join(os.path.abspath($B), ""))
+                                # A conjunct does not decide the branch.
+                                - pattern-not-inside: $L and $R
+                                - metavariable-pattern:
+                                    metavariable: $NV
+                                    pattern-either:
+                                      - pattern: $V.resolve(...)
+                                      - pattern: Path($V).resolve(...)
+                                      - pattern: pathlib.Path($V).resolve(...)
+                                      - pattern: os.path.realpath($V)
+                                      - pattern: os.path.abspath($V)
+                                      - pattern: os.path.normpath($V)
+                                      # The value itself, when it was normalized as assigned.
+                                      - patterns:
+                                          - pattern: $V
+                                          - metavariable-comparison: {comparison: str($NV) == str($V)}
+                                          - metavariable-pattern:
+                                              metavariable: $E
+                                              patterns:
+                                                - pattern-either:
+                                                    - pattern: $X.resolve(...)
+                                                    - pattern: os.path.realpath(...)
+                                                    - pattern: os.path.abspath(...)
+                                                    - pattern: os.path.normpath(...)
+                                                - pattern-not-inside: os.path.join(...)
+                                                - pattern-not-inside: $LHS / $RHS
+                # Path.relative_to raises ValueError outside the root: as a statement,
+                # or in a try whose handler raises or returns.
+                - patterns:
+                    - pattern-inside: |
+                        $V = $E
+                        $STMT
+                    # The very next statement is the call itself, not a block holding it.
+                    - metavariable-regex: {metavariable: $STMT, regex: '^(?!(?:try|if|elif|with|for|while|def|class|return|lambda)\b)[^\n]*\.relative_to\('}
+                    - pattern-either:
+                        - pattern-inside: |
+                            $V = $E
+                            $NV.relative_to($B)
+                        - pattern-inside: |
+                            $V = $E
+                            $NV.relative_to($B.resolve())
+                        - pattern-inside: |
+                            $V = $E
+                            $NV.relative_to(Path($B).resolve())
+                    - metavariable-pattern:
+                        metavariable: $E
+                        patterns:
+                          - pattern-either:
+                              - pattern: os.path.join($B, ..., $Q, ...)
+                              - pattern: $B / $Q
+                              - pattern: Path($B, ..., $Q, ...)
+                              - pattern: pathlib.Path($B, ..., $Q, ...)
+                          - metavariable-pattern:
+                              metavariable: $NV
+                              pattern-either:
+                                - pattern: $V.resolve(...)
+                                - pattern: Path($V).resolve(...)
+                                - pattern: pathlib.Path($V).resolve(...)
+                                - pattern: os.path.realpath($V)
+                                - pattern: os.path.abspath($V)
+                                - pattern: os.path.normpath($V)
+                                # The value itself, when it was normalized as assigned.
+                                - patterns:
+                                    - pattern: $V
+                                    - metavariable-comparison: {comparison: str($NV) == str($V)}
+                                    - metavariable-pattern:
+                                        metavariable: $E
+                                        patterns:
+                                          - pattern-either:
+                                              - pattern: $X.resolve(...)
+                                              - pattern: os.path.realpath(...)
+                                              - pattern: os.path.abspath(...)
+                                              - pattern: os.path.normpath(...)
+                                          - pattern-not-inside: os.path.join(...)
+                                          - pattern-not-inside: $LHS / $RHS
+                - patterns:
+                    - pattern-either:
+                        - pattern-inside: |
+                            $V = $E
+                            try:
+                              $NV.relative_to($B)
+                            except $EXC:
+                              $...BEFORE
+                              $EXIT
+                        - pattern-inside: |
+                            $V = $E
+                            try:
+                              $NV.relative_to($B)
+                            except $EXC as $ERR:
+                              $...BEFORE
+                              $EXIT
+                        - pattern-inside: |
+                            $V = $E
+                            try:
+                              $NV.relative_to($B.resolve())
+                            except $EXC:
+                              $...BEFORE
+                              $EXIT
+                        - pattern-inside: |
+                            $V = $E
+                            try:
+                              $NV.relative_to($B.resolve())
+                            except $EXC as $ERR:
+                              $...BEFORE
+                              $EXIT
+                        - pattern-inside: |
+                            $V = $E
+                            try:
+                              $NV.relative_to(Path($B).resolve())
+                            except $EXC:
+                              $...BEFORE
+                              $EXIT
+                        - pattern-inside: |
+                            $V = $E
+                            try:
+                              $NV.relative_to(Path($B).resolve())
+                            except $EXC as $ERR:
+                              $...BEFORE
+                              $EXIT
+                    - metavariable-regex: {metavariable: $EXIT, regex: '^(raise|return)\b'}
+                    - metavariable-pattern:
+                        metavariable: $E
+                        patterns:
+                          - pattern-either:
+                              - pattern: os.path.join($B, ..., $Q, ...)
+                              - pattern: $B / $Q
+                              - pattern: Path($B, ..., $Q, ...)
+                              - pattern: pathlib.Path($B, ..., $Q, ...)
+                          - metavariable-pattern:
+                              metavariable: $NV
+                              pattern-either:
+                                - pattern: $V.resolve(...)
+                                - pattern: Path($V).resolve(...)
+                                - pattern: pathlib.Path($V).resolve(...)
+                                - pattern: os.path.realpath($V)
+                                - pattern: os.path.abspath($V)
+                                - pattern: os.path.normpath($V)
+                                # The value itself, when it was normalized as assigned.
+                                - patterns:
+                                    - pattern: $V
+                                    - metavariable-comparison: {comparison: str($NV) == str($V)}
+                                    - metavariable-pattern:
+                                        metavariable: $E
+                                        patterns:
+                                          - pattern-either:
+                                              - pattern: $X.resolve(...)
+                                              - pattern: os.path.realpath(...)
+                                              - pattern: os.path.abspath(...)
+                                              - pattern: os.path.normpath(...)
+                                          - pattern-not-inside: os.path.join(...)
+                                          - pattern-not-inside: $LHS / $RHS
+            - pattern: $V = $E
+            # Reassigned after the guard: the later use no longer sees the checked value.
+            - pattern-not-inside: |
+                $V = $E
+                ...
+                $V = $OTHER
       - pattern-not-inside: |
           def $F(...):
             ...
@@ -4306,47 +4459,6 @@ rules:
           def $F(...):
             ...
             $V = secure_filename($P)
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            $CHECK($P, ...)
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... os.path.commonpath(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... os.path.commonprefix(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $C.is_relative_to(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $C.relative_to(...) ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $X in $Y.parents ...>:
-              ...
-            ...
-      - pattern-not-inside: |
-          def $F(...):
-            ...
-            if <... $X not in $Y.parents ...>:
-              ...
             ...
       - pattern-not-inside: |
           def $F(...):
@@ -4366,10 +4478,6 @@ rules:
             if <... ".." in $P ...>:
               ...
             ...
-      - pattern-not-inside:
-          patterns:
-            - pattern: $H(...)
-            - metavariable-regex: {metavariable: $H, regex: '(?i)^(\w+\.)*_?\w*(rooted|contain|confine|within|inside|safe_join|safejoin|ensure_under|under_root)\w*$'}
       - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|keyid|uuid|pk)$)'}
       - pattern-not: os.path.join($BASE, ..., os.path.basename($P), ...)
       - pattern-not: os.path.join($BASE, ..., secure_filename($P), ...)

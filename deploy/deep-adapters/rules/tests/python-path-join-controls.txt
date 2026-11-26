@@ -52,6 +52,164 @@ def _rooted(root, path):
 
 
 def parent_of(workspace, source, path):
-    # ok: python.parameter-path-join-without-containment
+    # A named helper is not a guard the rule can see.
+    # ruleid: python.parameter-path-join-without-containment
     parent_file = _rooted(workspace, (source.parent / path).resolve())
     return parent_file.read_text()
+
+
+def parent_of_enforced(workspace, source, path):
+    # ok: python.parameter-path-join-without-containment
+    parent_file = (source.parent / path).resolve()
+    if not parent_file.is_relative_to(source.parent.resolve()):
+        raise ValueError(path)
+    return parent_file.read_text()
+
+
+def load_enforced(root_dir, filename):
+    root = Path(root_dir).resolve()
+    # ok: python.parameter-path-join-without-containment
+    target = (root / filename).resolve()
+    if not target.is_relative_to(root):
+        raise ValueError(filename)
+    return target.read_text()
+
+
+def load_enforced_handler(root_dir, filename):
+    root = Path(root_dir).resolve()
+    # ok: python.parameter-path-join-without-containment
+    target = (root / filename).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as error:
+        raise PermissionError(filename) from error
+    return target.read_bytes()
+
+
+def load_discarded(root_dir, filename):
+    root = Path(root_dir).resolve()
+    # ruleid: python.parameter-path-join-without-containment
+    target = (root / filename).resolve()
+    target.is_relative_to(root)
+    return target.read_text()
+
+
+def load_handled(root_dir, filename):
+    root = Path(root_dir).resolve()
+    # ruleid: python.parameter-path-join-without-containment
+    target = (root / filename).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        log(filename)
+    return target.read_text()
+
+
+def load_unrelated_path(root_dir, filename, other):
+    root = Path(root_dir).resolve()
+    # ruleid: python.parameter-path-join-without-containment
+    target = (root / filename).resolve()
+    if not Path(other).resolve().is_relative_to(root):
+        raise ValueError(other)
+    return target.read_text()
+
+
+def include_unrelated_root(cache_dir, source_dir, relpath):
+    # ruleid: python.parameter-path-join-without-containment
+    dest = os.path.realpath(os.path.join(source_dir, relpath))
+    if os.path.commonpath([cache_dir, dest]) != cache_dir:
+        raise ValueError(relpath)
+    with open(dest, "rb") as f:
+        return f.read()
+
+
+def load_inverted(root_dir, filename):
+    root = Path(root_dir).resolve()
+    # ruleid: python.parameter-path-join-without-containment
+    target = (root / filename).resolve()
+    if target.is_relative_to(root):
+        raise ValueError(filename)
+    return target.read_text()
+
+
+def include_inverted(source_dir, relpath):
+    # ruleid: python.parameter-path-join-without-containment
+    dest = os.path.realpath(os.path.join(source_dir, relpath))
+    if os.path.commonpath([source_dir, dest]) == source_dir:
+        raise ValueError(relpath)
+    with open(dest, "rb") as f:
+        return f.read()
+
+
+def load_logged(root_dir, filename):
+    root = Path(root_dir).resolve()
+    # ruleid: python.parameter-path-join-without-containment
+    target = (root / filename).resolve()
+    if not target.is_relative_to(root):
+        if strict:
+            raise ValueError(filename)
+        log(filename)
+    return target.read_text()
+
+
+def load_unnormalized(root_dir, filename):
+    root = Path(root_dir).resolve()
+    # ruleid: python.parameter-path-join-without-containment
+    target = root / filename
+    if not target.is_relative_to(root):
+        raise ValueError(filename)
+    return target.read_text()
+
+
+def load_checked_after_use(root_dir, filename):
+    root = Path(root_dir).resolve()
+    # ruleid: python.parameter-path-join-without-containment
+    target = (root / filename).resolve()
+    data = target.read_text()
+    if not target.is_relative_to(root):
+        raise ValueError(filename)
+    return data
+
+
+def load_reassigned(root_dir, filename):
+    root = Path(root_dir).resolve()
+    # ruleid: python.parameter-path-join-without-containment
+    target = (root / filename).resolve()
+    if not target.is_relative_to(root):
+        raise ValueError(filename)
+    # ruleid: python.parameter-path-join-without-containment
+    target = root / filename
+    return target.read_text()
+
+
+def save_all(out_dir, pages):
+    for page_name, body in pages.items():
+        # ok: python.parameter-path-join-without-containment
+        target = os.path.abspath(os.path.join(out_dir, page_name))
+        if not target.startswith(os.path.abspath(out_dir) + os.sep):
+            continue
+        with open(target, "w") as handle:
+            handle.write(body)
+
+
+def dump_page(destination, path, content):
+    # ok: python.parameter-path-join-without-containment
+    path = (Path(destination) / path.lstrip("/")).resolve()
+    if not Path(destination) in path.parents:
+        raise ValueError(path)
+    with open(path, "wb") as handle:
+        handle.write(content)
+
+
+def write_sample(path, filename, payload):
+    base_path = os.path.realpath(path)
+    # Known gap: a stored result through a second normalized name is a real
+    # guard, but the rule only sees a guard in the statement after the join.
+    # ruleid: python.parameter-path-join-without-containment
+    sample = os.path.join(base_path, filename)
+    resolved_sample = os.path.realpath(sample)
+    contained = os.path.commonpath((base_path, resolved_sample)) == base_path
+    if not contained:
+        raise ValueError(filename)
+    with open(sample, "w") as handle:
+        handle.write(payload)
