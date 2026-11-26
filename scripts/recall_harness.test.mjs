@@ -8,7 +8,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
-  publishPreparedCase, checkpointable, controlGapDelta } from './recall_harness.mjs';
+  publishPreparedCase, checkpointable, controlGapDelta, controlIssue } from './recall_harness.mjs';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
@@ -79,6 +79,24 @@ test('edited lines distinguish deleted anchors and fixed-side context without ch
   const broad = parseHunks(diff.split('\\ No newline')[0].replace('+b3\n', ''), ['py'], truncated);
   assert.equal(broad['app/files.py'].old.length, 3);
   assert.deepEqual(truncated, {});
+});
+
+test('empty Git hunk context counts while a final line separator cannot fill a truncated hunk', () => {
+  const diff = 'diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@\n-before\n+after\n';
+  const valid = {}, truncated = {};
+  parseHunks(diff + '\n', ['py'], valid);
+  assert.deepEqual([...valid.deleted.get('a.py')], [1]);
+  assert.deepEqual([...valid.added.get('a.py')], [1]);
+  parseHunks(diff, ['py'], truncated);
+  assert.deepEqual(truncated, {});
+});
+
+test('paired control recovery separates a watchdog kill from unrelated scan failures', () => {
+  const notes = { failed_exit: true, other: 1, timeouts: 1, watchdog_timeout: true };
+  assert.equal(controlIssue({ notes }), 'timeout');
+  assert.equal(controlIssue({ sourceInvalid: true, notes }), 'error');
+  assert.equal(controlIssue({ notes: { ...notes, watchdog_timeout: false } }), 'error');
+  assert.equal(controlIssue({ notes: { failed_exit: false, timeouts: 1 } }), 'timeout');
 });
 
 test('rule families read both inline and block CWE lists', () => {

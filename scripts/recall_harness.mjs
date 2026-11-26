@@ -112,7 +112,7 @@ function markEdit(lines, path, line) {
 
 function readEditLine(cursor, line) {
   if (line === '\\ No newline at end of file') return true;
-  const lanes = editLanes[line[0]];
+  const lanes = editLanes[line[0] ?? ' '];
   if (!lanes || lanes.some(side => cursor[side].remaining === 0)) return false;
   for (const side of lanes) {
     const position = cursor[side];
@@ -153,7 +153,7 @@ export function parseHunks(diff, extensions, editedLines = null) {
   let oldPath = null, newPath = null;
   let inHunks = false;
   const keep = path => path && extensions.some(ext => path.endsWith(`.${ext}`)) && !isTestPath(path);
-  for (const line of diff.split('\n')) {
+  for (const line of diff.replace(/\n$/, '').split('\n')) {
     if (edits?.consume(line)) continue;
     if (line.startsWith('diff --git ')) { oldPath = newPath = null; inHunks = false; continue; }
     if (!inHunks && line.startsWith('--- ')) { oldPath = diffPath(line, 'a/'); continue; }
@@ -546,6 +546,7 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
   const run = await runProcess(argv[0], argv.slice(1), { cwd: source,
     env: { HOME: process.env.HOME ?? '/tmp', PYTHONIOENCODING: 'utf-8', LANG: 'C.UTF-8' } });
   const execution = { failed_exit: ![0, 1].includes(run.status), exit_code: run.status,
+    ...(run.timedOut ? { watchdog_timeout: true } : {}),
     timeouts: Number(Boolean(run.timedOut)), duration_ms: Math.round(performance.now() - started) };
   const coverage = coveragePath && readCoverage(coveragePath, execution);
   execution.timeouts = Math.max(execution.timeouts, coverage?.timeouts ?? 0);
@@ -1732,8 +1733,14 @@ async function controlPair({ base, candidate, directory, reports, source, workdi
   const scope = pairedControlScope(source, [old, now]);
   for (const side of [old, now]) recordControlCoverage(side, scope);
   const scan_sides = { before: old.notes, after: now.notes };
-  const issues = [old, now].map(side => side.sourceInvalid || hasScanError(side.notes) ? 'error' : scanIssue(side.notes));
+  const issues = [old, now].map(controlIssue);
   return { old: old.findings, now: now.findings, scan_sides, issues, control_scope_sha256: scope.sha256 };
+}
+
+export function controlIssue({ sourceInvalid, notes }) {
+  if (sourceInvalid) return 'error';
+  if (notes?.watchdog_timeout) return 'timeout';
+  return hasScanError(notes) ? 'error' : scanIssue(notes);
 }
 
 function controlFindingIndex(findings) {
