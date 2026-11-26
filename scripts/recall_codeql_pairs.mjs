@@ -185,6 +185,31 @@ function captureFingerprints(capture, revision, policy, packets, findings, flows
     traced_findings: locations.filter(row => row.trace.length).length };
 }
 
+function nativeExtractionCoverage(invocations, packetPaths, resolvePath) {
+  const extracted = new Set();
+  const parseFailed = new Set();
+  for (const invocation of invocations) {
+    for (const note of invocation.toolExecutionNotifications ?? []) {
+      const id = note.descriptor?.id ?? '';
+      const paths = id.endsWith('/diagnostics/successfully-extracted-files') ? extracted
+        : /(?:parse|syntax)[_-]?(?:error|failure)/i.test(id) ? parseFailed : null;
+      if (!paths) continue;
+      for (const entry of note.locations ?? []) {
+        const location = entry.physicalLocation?.artifactLocation;
+        if (!location) continue;
+        // A whole-repo extraction can also report files outside the bound packets.
+        let path;
+        try { path = resolvePath(location); } catch { continue; }
+        if (packetPaths.has(path)) paths.add(path);
+      }
+    }
+  }
+  const expected = [...packetPaths].sort();
+  const missing = expected.filter(path => !extracted.has(path));
+  return { expected, extracted: [...extracted].sort(), parse_failed: [...parseFailed].sort(),
+    missing, complete: !missing.length && !parseFailed.size };
+}
+
 function nativeCapture(root, capture, side, input, engineVersion, policy) {
   const observed = json(artifact(root, capture?.observation));
   requireProof(observed.case === input.ghsa && observed.side === side && observed.revision === input.revisions[side],
@@ -230,6 +255,7 @@ function nativeCapture(root, capture, side, input, engineVersion, policy) {
     roots.unshift(archiveRoot);
   }
   const resolvePath = location => nativeArtifactPath(location, run, packetPaths, roots);
+  const coverage = nativeExtractionCoverage(run.invocations, packetPaths, resolvePath);
   const findings = sarifFindings(report, packetPaths, id => id, resolvePath);
   requireProof(findings.length === run.results.length
     && findings.every(finding => finding.path && Number.isSafeInteger(finding.line) && finding.line > 0),
@@ -237,20 +263,24 @@ function nativeCapture(root, capture, side, input, engineVersion, policy) {
   const flows = traceFlows(run.results, resolvePath);
   const references = [...new Set([...findings.map(row => row.path),
     ...flows.flat(3).map(step => step.path).filter(Boolean)])].sort();
-  return { findings, flows, fingerprints: captureFingerprints(capture, input.revisions[side], policy, packets, findings, flows),
+  return { findings, flows, coverage,
+    fingerprints: { ...captureFingerprints(capture, input.revisions[side], policy, packets, findings, flows),
+      extraction_coverage_sha256: caseDigest([coverage]) },
     archive: { archive: boundPath(root, capture.archive), sha256: capture.archive.sha256,
       prefix: capture.archive_prefix, packets, references, side: input.ghsa + '/' + side } };
 }
 
-function nativeDisposition(native, pattern, outcome) {
+function nativeDisposition(native, pattern, outcome, extractionComplete) {
   if (!native.hunk_hit) return 'native_miss';
   if (outcome === 'hit') return 'overlap';
   if (outcome !== 'miss') return 'pattern_unresolved';
   if (native.fixed_hunk_residuals || pattern.fix_side_residual.length) return 'fixed_side_residual';
   if (Object.values(native.fingerprints).some(side => side.trace_source_states.missing
     || side.trace_source_states.ambiguous || side.invalid_trace_steps)) return 'native_trace_source_unresolved';
-  return completeFixedCoverage(pattern.file_coverage?.fixed, pattern.source_packets?.fixed)
-    ? 'eligible' : 'fixed_coverage_unresolved';
+  if (!completeFixedCoverage(pattern.file_coverage?.fixed, pattern.source_packets?.fixed)) {
+    return 'fixed_coverage_unresolved';
+  }
+  return extractionComplete ? 'eligible' : 'native_extraction_unresolved';
 }
 
 function searchedFileHit(row, outcome) {
@@ -296,9 +326,10 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
     'Pattern hit count differs');
   const dispositions = observations.map(native => {
     const row = pattern.get(native.advisory), outcome = outcomes.get(native.advisory);
+    const extractionComplete = native.native_coverage.old.complete && native.native_coverage.fixed.complete;
     return { advisory: native.advisory, input_sha256: native.input_sha256, pattern_outcome: outcome,
       pattern_file_hit: searchedFileHit(row, outcome), native_hunk_hit: native.hunk_hit, native_file_hit: native.file_hit,
-      disposition: nativeDisposition(native, row, outcome) };
+      native_extraction_complete: extractionComplete, disposition: nativeDisposition(native, row, outcome, extractionComplete) };
   });
   const additions = dispositions.filter(row => row.disposition === 'eligible').length;
   const newHunkHits = dispositions.filter(row => row.native_hunk_hit && row.pattern_outcome !== 'hit').length;
@@ -306,6 +337,7 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
   return { scope: 'supplemental paired comparison', pattern_score_sha256: pin.sha256,
     pattern_hunk_hits: hunkHits, pattern_file_hits: fileHits,
     verified_pattern_cases: pattern.size, verified_native_pairs: dispositions.length,
+    native_extraction_complete_pairs: dispositions.filter(row => row.native_extraction_complete).length,
     observed_union_hunk_hits: hunkHits + newHunkHits, observed_union_file_hits: fileHits + newFileHits,
     eligible_native_additions: additions, combined_hunk_hits: hunkHits + additions, cases: dispositions };
 }
@@ -396,6 +428,7 @@ function scorePreparedPair(row, context) {
     cross_file_trace_matches: crossFileTraceMatches(old, fixed, hunks, families, rules),
     deleted_line_hit: score.edited_lines.deleted_line_hit, fixed_hunk_residuals: score.fix_side_residual.length,
     native_alerts: { old: old.findings.length, fixed: fixed.findings.length },
+    native_coverage: { old: old.coverage, fixed: fixed.coverage },
     fingerprints: { old: old.fingerprints, fixed: fixed.fingerprints },
     packets: { old: old.archive.packets.length, fixed: fixed.archive.packets.length } };
 }

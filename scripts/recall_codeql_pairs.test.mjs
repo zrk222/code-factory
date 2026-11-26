@@ -39,7 +39,10 @@ function stagedPair(t, archivePrefix = 'src') {
     archivePrefix],
   { cwd: root, input: JSON.stringify(source), encoding: 'utf8', windowsHide: true });
   assert.equal(zip.status, 0, zip.stderr ?? zip.error?.message);
-  const capture = (side, invocations = [{ executionSuccessful: true }], located = true,
+  const capture = (side, invocations = [{ executionSuccessful: true, toolExecutionNotifications: [{
+    descriptor: { id: 'py/diagnostics/successfully-extracted-files' }, level: 'none',
+    locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' } } }],
+  }] }], located = true,
     regions = side === 'old' ? [{ startLine: 1 }] : []) => {
     const results = regions.map(region => ({ ruleId: id, locations: located ? [
       { physicalLocation: { artifactLocation: { uri: 'sample.py' }, region } },
@@ -209,7 +212,7 @@ test('cross-file evidence requires one ordered, archive-verified thread to the r
 });
 
 test('native and pattern hits join only on identical evidence and are counted once', t => {
-  const { root, row, value, binding, json, run } = stagedPair(t);
+  const { root, row, value, binding, capture, json, run } = stagedPair(t);
   const base = { ...row, ...binding, status: 'scored', outcome: 'miss', hunk_hit: false, file_hit: false, hunk_findings: [],
     file_coverage: { fixed: binding.source_packets.fixed.map(packet => ({
       ...packet, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths',
@@ -227,6 +230,7 @@ test('native and pattern hits join only on identical evidence and are counted on
   const joined = (candidate, bundle = value) => run(bundle, score(candidate)).pattern_join;
   const detected = joined(base);
   assert.equal(detected.eligible_native_additions, 1);
+  assert.equal(detected.native_extraction_complete_pairs, 1);
   assert.equal(detected.observed_union_hunk_hits, 1);
   assert.equal(detected.observed_union_file_hits, 1);
   const found = joined({ ...base, outcome: 'hit', hunk_hit: true, file_hit: true,
@@ -246,6 +250,21 @@ test('native and pattern hits join only on identical evidence and are counted on
   assert.throws(() => run(value, score(base, { file_hits: 1 })), /Pattern hit count differs/);
 
   const pair = value.cases[0];
+  const note = (id, uri = 'sample.py') => ({ descriptor: { id },
+    locations: [{ physicalLocation: { artifactLocation: { uri } } }] });
+  for (const notifications of [
+    [note('py/baseline/expected-extracted-files')],
+    [note('py/diagnostics/successfully-extracted-files', 'other.py')],
+    [note('py/diagnostics/successfully-extracted-files'), note('py/extractor/parse-error')],
+  ]) {
+    const fixed = capture('fixed', [{ executionSuccessful: true, toolExecutionNotifications: notifications }]);
+    const observed = joined(base, { ...value, cases: [{ ...pair, fixed }] });
+    assert.equal(observed.cases[0].disposition, 'native_extraction_unresolved');
+    assert.equal(observed.native_extraction_complete_pairs, 0);
+    assert.equal(observed.observed_union_hunk_hits, 1);
+    assert.equal(observed.combined_hunk_hits, 0);
+  }
+  capture('fixed');
   const nativeReport = JSON.parse(readFileSync(join(root, pair.old.sarif.path), 'utf8'));
   nativeReport.runs[0].results[0].locations[0].physicalLocation.region.startLine = 4;
   const sarif = json('file-only.sarif', nativeReport);
