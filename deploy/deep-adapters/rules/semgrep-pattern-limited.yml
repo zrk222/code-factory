@@ -4319,6 +4319,30 @@ rules:
                                                     - pattern: os.path.normpath(...)
                                                 - pattern-not-inside: os.path.join(...)
                                                 - pattern-not-inside: $LHS / $RHS
+                - patterns:
+                    - pattern-either:
+                        - pattern-inside: |
+                            $B = os.path.realpath($ROOT)
+                            $V = os.path.join($B, ..., $Q, ...)
+                            $NV = os.path.realpath($V)
+                            $OK = os.path.commonpath(($B, $NV)) == $B
+                            if $CHECK:
+                              raise ...
+                        - pattern-inside: |
+                            $B = os.path.realpath($ROOT)
+                            $V = os.path.join($B, ..., $Q, ...)
+                            $NV = os.path.realpath($V)
+                            try:
+                              $OK = os.path.commonpath(($B, $NV)) == $B
+                            except ValueError:
+                              $OK = False
+                            if $CHECK:
+                              raise ...
+                    - metavariable-pattern:
+                        metavariable: $CHECK
+                        pattern-either:
+                          - pattern: not $OK
+                          - pattern: not $OK or os.path.islink($V)
                 # Path.relative_to raises ValueError outside the root: as a statement,
                 # or in a try whose handler raises or returns.
                 - patterns:

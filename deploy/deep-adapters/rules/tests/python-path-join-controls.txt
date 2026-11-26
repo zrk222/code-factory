@@ -203,13 +203,26 @@ def dump_page(destination, path, content):
 
 def write_sample(path, filename, payload):
     base_path = os.path.realpath(path)
-    # Known gap: a stored result through a second normalized name is a real
-    # guard, but the rule only sees a guard in the statement after the join.
-    # ruleid: python.parameter-path-join-without-containment
+    # ok: python.parameter-path-join-without-containment
     sample = os.path.join(base_path, filename)
     resolved_sample = os.path.realpath(sample)
     contained = os.path.commonpath((base_path, resolved_sample)) == base_path
     if not contained:
         raise ValueError(filename)
     with open(sample, "w") as handle:
+        handle.write(payload)
+
+
+def write_checked(root_dir, filename, payload):
+    root = os.path.realpath(root_dir)
+    # ok: python.parameter-path-join-without-containment
+    target = os.path.join(root, filename)
+    resolved = os.path.realpath(target)
+    try:
+        inside = os.path.commonpath((root, resolved)) == root
+    except ValueError:
+        inside = False
+    if not inside or os.path.islink(target):
+        raise ValueError(filename)
+    with open(target, 'w') as handle:
         handle.write(payload)
