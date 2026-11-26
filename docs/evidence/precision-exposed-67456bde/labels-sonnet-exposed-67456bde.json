@@ -1,0 +1,1049 @@
+{
+ "reviewer": "claude-sonnet-5.5",
+ "effort": "high",
+ "conditions": "packet + blinded context supplement only (context.json, 70a93a92)",
+ "packet_sha256": "354929bdf9b4a355da62e3d1cbc91871ad940df8958887a8712a3f942b970f54",
+ "note": "Substitute second arm (Codex arm not yet available): four fresh Claude Sonnet 5.5 agents at high effort labeled disjoint quarters (0-51, 52-103, 104-155, 156-207), reading only the packet and the supplement.",
+ "labels": [
+  {
+   "item": "8e34467e78e9",
+   "verdict": "FP",
+   "reason": "The id interpolated into the RegExp is a developer-supplied createCssContext option, not attacker or user data, and it is a regex rather than emitted HTML."
+  },
+  {
+   "item": "be590f0b67ea",
+   "verdict": "TP",
+   "reason": "groupname is interpolated into a shell command run through exec with only double quotes and no validation, so a crafted name injects commands via this tool."
+  },
+  {
+   "item": "1bfbf815101b",
+   "verdict": "UNCLEAR",
+   "reason": "The css URL is concatenated into the href unescaped and GEN_URL_RE allows quotes, but the shown code does not decide whether the value comes from attacker-reachable input or only from operator-written rules."
+  },
+  {
+   "item": "8ecccfa47db4",
+   "verdict": "TP",
+   "reason": "Checkpoint name is placed into a filesystem path as an unvalidated string, so '../' sequences escape the checkpoints directory when a caller exposes the name."
+  },
+  {
+   "item": "863f46beadc6",
+   "verdict": "TP",
+   "reason": "input_path comes straight from module params and is opened with Image.open with no base-directory restriction, allowing arbitrary file read."
+  },
+  {
+   "item": "04a136cad8ee",
+   "verdict": "TP",
+   "reason": "output_path comes from module params and the directory is created and written without any containment, enabling arbitrary location writes."
+  },
+  {
+   "item": "edfa319cc9b9",
+   "verdict": "TP",
+   "reason": "The srcSchema and targetSchema values are only SQL-quote escaped and then placed into a double-quoted shell command run by exec, so shell metacharacters from a crafted backup or schema name are not neutralised."
+  },
+  {
+   "item": "f71189b35e7d",
+   "verdict": "UNCLEAR",
+   "reason": "The LDAP-sourced value is printed unescaped into an attribute, but whether an attacker can control that directory attribute is not shown."
+  },
+  {
+   "item": "ab254a94ce79",
+   "verdict": "FP",
+   "reason": "price() formats a numeric donation amount, so no attacker-controlled markup reaches the output."
+  },
+  {
+   "item": "b5a475a02570",
+   "verdict": "TP",
+   "reason": "The donation firstname is stored user-supplied data printed into the page without dol_escape_htmltag, giving stored XSS."
+  },
+  {
+   "item": "26f7fc63859e",
+   "verdict": "TP",
+   "reason": "input_path is taken from params and opened with Image.open without path restriction, allowing arbitrary file read."
+  },
+  {
+   "item": "59ed03a9e4d8",
+   "verdict": "TP",
+   "reason": "path is interpolated into an exec'd icacls command with only quotes and no validation, so a crafted path injects commands."
+  },
+  {
+   "item": "7bc1d5ede5a5",
+   "verdict": "TP",
+   "reason": "username is interpolated into an exec'd shell command with only double quotes and no validation, enabling command injection."
+  },
+  {
+   "item": "fadfe3afcddd",
+   "verdict": "TP",
+   "reason": "$_SERVER[\"PHP_SELF\"] is echoed unescaped into an href, which is a classic path-info reflected XSS."
+  },
+  {
+   "item": "a29843127af8",
+   "verdict": "UNCLEAR",
+   "reason": "The printed HTML comes from a document-listing helper and the only visibly tainted input is PHP_SELF inside urlsource, so whether the helper escapes it is not shown."
+  },
+  {
+   "item": "9ebec1776bbc",
+   "verdict": "FP",
+   "reason": "attributionText and link are constants built by n8n and not user data, and mailOptions.html is the sender's own content."
+  },
+  {
+   "item": "11f23bcd0cd8",
+   "verdict": "TP",
+   "reason": "The checkpoint name is used unvalidated in a path and unlinked, so '../' lets a caller delete .json files outside the checkpoints directory."
+  },
+  {
+   "item": "8ee79fbaa242",
+   "verdict": "TP",
+   "reason": "input_path from module params is opened by Image.open with no path restriction, allowing arbitrary file read."
+  },
+  {
+   "item": "95f903da5ec9",
+   "verdict": "TP",
+   "reason": "output_path from params has its directory created and is written without containment, allowing arbitrary location writes."
+  },
+  {
+   "item": "2f3cd24d20c0",
+   "verdict": "FP",
+   "reason": "The interpolated values are the integer object id, class id and a class-definition container key, while language and field name are quoted or identifier-quoted, so no user input reaches the query unsanitised."
+  },
+  {
+   "item": "32e804de2adc",
+   "verdict": "FP",
+   "reason": "The value is passed through dol_escape_htmltag before being printed into the attribute."
+  },
+  {
+   "item": "aa545448ab61",
+   "verdict": "FP",
+   "reason": "This adapter is an explicit opt-in option for ignoring SSL verification with a documented warning, not an unintended weakness."
+  },
+  {
+   "item": "d018adb1fb23",
+   "verdict": "TP",
+   "reason": "table_name is concatenated straight into a DESCRIBE statement with no quoting or whitelist shown, and it derives from the WebDAV request path."
+  },
+  {
+   "item": "be9f6a73e24e",
+   "verdict": "TP",
+   "reason": "$_SERVER[\"PHP_SELF\"] is echoed unescaped into a form action, which is path-info reflected XSS."
+  },
+  {
+   "item": "15e3ff46bf26",
+   "verdict": "FP",
+   "reason": "The value is already-rendered slot HTML and the name comes from slot keys, so this is the framework's normal slot wrapper and not an injection of untrusted data."
+  },
+  {
+   "item": "69629160bb38",
+   "verdict": "FP",
+   "reason": "Only integer ids from loaded contact objects are concatenated, so there is no attacker-controlled string."
+  },
+  {
+   "item": "f26318e2becd",
+   "verdict": "FP",
+   "reason": "This adapter is an explicit opt-in option for ignoring SSL verification with a documented warning, not an unintended weakness."
+  },
+  {
+   "item": "aefc95460065",
+   "verdict": "TP",
+   "reason": "output_path from params has its directory created and is written without containment, allowing arbitrary location writes."
+  },
+  {
+   "item": "d445c7d3c718",
+   "verdict": "TP",
+   "reason": "output_path from params has its directory created and written without any base-directory restriction."
+  },
+  {
+   "item": "72ca226e3e9a",
+   "verdict": "FP",
+   "reason": "The importer is admin-only and Ghost posts allow raw HTML by design, so an uploaded import file is not an unprivileged attacker vector."
+  },
+  {
+   "item": "116ced3f5b7a",
+   "verdict": "TP",
+   "reason": "serviceName is interpolated unquoted into an exec'd systemctl command with no validation, allowing shell injection."
+  },
+  {
+   "item": "97489d7e0492",
+   "verdict": "FP",
+   "reason": "The rid is escaped and quoted and the entity is a configuration or integer value, so the query has no unsanitised user string."
+  },
+  {
+   "item": "5fa7ced4561d",
+   "verdict": "FP",
+   "reason": "The regex is built from a fixed internal map of highlight.js class names and no user data, and it is not HTML output."
+  },
+  {
+   "item": "ffab17dc5f81",
+   "verdict": "TP",
+   "reason": "input_path from params is opened with Image.open with no path restriction, allowing arbitrary file read."
+  },
+  {
+   "item": "0047cf5ecdf9",
+   "verdict": "TP",
+   "reason": "serviceName is interpolated unquoted into an exec'd docker command with no validation, allowing shell injection."
+  },
+  {
+   "item": "9593f952a125",
+   "verdict": "FP",
+   "reason": "The interpolated language string and icon markup come from editor configuration and bundled icons, not from user-controlled data."
+  },
+  {
+   "item": "0fdb1033ef22",
+   "verdict": "TP",
+   "reason": "file_path is joined to project_root with Path and opened with no containment check, so absolute paths or '..' read arbitrary files via the MCP tool."
+  },
+  {
+   "item": "6436e34ac372",
+   "verdict": "FP",
+   "reason": "The column goes through protectIdentifiers and the value is typed int, so the query is not injectable here."
+  },
+  {
+   "item": "408293fa2e5d",
+   "verdict": "TP",
+   "reason": "serviceName is interpolated unquoted into an exec'd docker command with no validation, allowing shell injection."
+  },
+  {
+   "item": "447533ab1329",
+   "verdict": "FP",
+   "reason": "This is a dev-only console.error message string and not HTML rendered to a user."
+  },
+  {
+   "item": "3e0007d2f667",
+   "verdict": "TP",
+   "reason": "icon_name comes from the uploaded APK's manifest and is joined onto app_dir with no containment check, allowing traversal outside the app directory."
+  },
+  {
+   "item": "e90713e3f0d9",
+   "verdict": "TP",
+   "reason": "$_SERVER['PHP_SELF'] is echoed unescaped into an href, which is path-info reflected XSS."
+  },
+  {
+   "item": "e6e1fc760915",
+   "verdict": "FP",
+   "reason": "startNum is a number computed from a counter and the class is the fixed value 'number', so no attacker string is emitted."
+  },
+  {
+   "item": "1d39a1f583d4",
+   "verdict": "FP",
+   "reason": "The reflected req.url comes only through a dev or preview 404 page, and browsers percent-encode quotes and angle brackets in the URL, so it is not realistically exploitable."
+  },
+  {
+   "item": "9154cb41862e",
+   "verdict": "FP",
+   "reason": "This is a dev-only console.error message string and not HTML rendered to a user."
+  },
+  {
+   "item": "c587306e1515",
+   "verdict": "FP",
+   "reason": "startNum is a number computed from a counter and the class is the fixed value 'number', so no attacker string is emitted."
+  },
+  {
+   "item": "2c5c57ff42b0",
+   "verdict": "TP",
+   "reason": "$group and $entity are concatenated into DELETE and INSERT statements without casting despite the int docblock, so a raw request value would inject SQL."
+  },
+  {
+   "item": "d509faa7feab",
+   "verdict": "FP",
+   "reason": "The order, content type and amount come from configuration, and the order is normalised and the amount cast to int, so no request data is shown reaching the query."
+  },
+  {
+   "item": "64b0b968e16b",
+   "verdict": "TP",
+   "reason": "The session name is used unvalidated in a file path, so '../' sequences write outside the sessions directory."
+  },
+  {
+   "item": "8005930a3b15",
+   "verdict": "FP",
+   "reason": "The URL contains the configured base and a component id plus URLSearchParams-encoded encrypted values, so no attacker markup reaches the attribute."
+  },
+  {
+   "item": "bff7eb50cade",
+   "verdict": "FP",
+   "reason": "Only the fk_soc integer from a loaded member object is concatenated, so there is no attacker-controlled string."
+  },
+  {
+   "item": "c97c9593d18a",
+   "verdict": "TP",
+   "reason": "The session name is used unvalidated in a path and unlinked, so '../' sequences delete .json files outside the sessions directory."
+  },
+  {
+   "item": "265755a58b76",
+   "verdict": "TP",
+   "reason": "The zip/town value is taken from $_POST['zipcode'] and passed to select_ziptown, whose input value is not shown escaped (unlike the neighbouring fields that use dol_escape_htmltag), so a crafted POST reflects markup."
+  },
+  {
+   "item": "7cf3df6acccb",
+   "verdict": "TP",
+   "reason": "The img src and alt attribute values come from the clipped page's DOM and are concatenated into an HTML string without attribute escaping, so a hostile page can break out of the attribute."
+  },
+  {
+   "item": "557d76ff5344",
+   "verdict": "FP",
+   "reason": "The query is built with sprintf using %d integer placeholders and the table prefix only, so no attacker string reaches the SQL."
+  },
+  {
+   "item": "b8cd40a4c59b",
+   "verdict": "FP",
+   "reason": "The interpolated values are the class id and object id (integers) and a quoteIdentifier-escaped field name, so there is no attacker-controlled SQL fragment."
+  },
+  {
+   "item": "402c4717eff3",
+   "verdict": "FP",
+   "reason": "This is an admin-run Revue import of the owner's own export where raw HTML (e.g. item.description) is intentionally passed through, so it does not cross an attacker trust boundary."
+  },
+  {
+   "item": "edfdf6e58058",
+   "verdict": "FP",
+   "reason": "table_name comes from the WebDAV path but get_resource_inst calls exists() first (noted in the surrounding code), which checks it against the table list before DESCRIBE is reached, and this is only a sample provider."
+  },
+  {
+   "item": "44138652c091",
+   "verdict": "FP",
+   "reason": "hostId is a crypto.randomUUID and islandContent is built internally (script content is serialised with stringifyForScript), so no attacker-controlled text reaches the script tag raw."
+  },
+  {
+   "item": "6f93ef01b3ab",
+   "verdict": "UNCLEAR",
+   "reason": "The shell command interpolates srcSchema/targetSchema unquoted into a shell string, but whether those values come from an attacker-influenced backup/metadata or only trusted config is not shown."
+  },
+  {
+   "item": "e3e5d6aa017e",
+   "verdict": "FP",
+   "reason": "The query uses quoteIdentifier and quote() for the string parts and integer ids and context keys otherwise, so no attacker input reaches it unescaped."
+  },
+  {
+   "item": "8e9d9a75f009",
+   "verdict": "TP",
+   "reason": "filepath is built from tree-entry paths of the checked-out repository with no check for '..' segments, so a malicious repo can make fs.rm/write operate outside the work directory."
+  },
+  {
+   "item": "cff637afe7bd",
+   "verdict": "FP",
+   "reason": "The id list is built from array_map('intval', ...) and the prefix is internal, so the IN clause cannot carry injected SQL."
+  },
+  {
+   "item": "a2730b53cfa5",
+   "verdict": "TP",
+   "reason": "The checkpoint name is joined into a file path as f'{name}.json' with no sanitisation, so a name containing ../ writes a JSON file outside the checkpoints directory."
+  },
+  {
+   "item": "e699301854f9",
+   "verdict": "FP",
+   "reason": "The query concatenates only $this->id (loaded from the DB row) and $conf->entity, which are not attacker-supplied strings."
+  },
+  {
+   "item": "4d813df0e243",
+   "verdict": "UNCLEAR",
+   "reason": "$rowid is concatenated into a quoted SQL literal without escaping, but whether any caller passes request-controlled data (rather than DB ids) is not visible."
+  },
+  {
+   "item": "39c31836b53a",
+   "verdict": "FP",
+   "reason": "country_code comes from the loaded third-party/company objects (DB-derived country code), not from direct request input."
+  },
+  {
+   "item": "70df1de56846",
+   "verdict": "TP",
+   "reason": "The form action echoes $_SERVER['PHP_SELF'] unescaped, which is attacker-controllable via path info and allows reflected XSS."
+  },
+  {
+   "item": "1ca443bbf865",
+   "verdict": "FP",
+   "reason": "The output is dol_print_date of an object date, which is a formatted timestamp and not attacker-controlled HTML."
+  },
+  {
+   "item": "ea8ffefbcc62",
+   "verdict": "FP",
+   "reason": "The DELETE uses $this->id, $nid from the DB and an integer entity, with user-facing parts escaped earlier, so there is no injectable input."
+  },
+  {
+   "item": "c81e5918cd39",
+   "verdict": "UNCLEAR",
+   "reason": "The Wi-Fi SSID (attacker-controllable by a nearby AP) is run through util.sanitizeString before the netsh shell call, but whether that sanitiser strips quotes and shell metacharacters is not shown."
+  },
+  {
+   "item": "77061e4d20b6",
+   "verdict": "FP",
+   "reason": "country_code comes from the loaded third-party/company objects (DB-derived country code), not from direct request input."
+  },
+  {
+   "item": "fea8ff126fa8",
+   "verdict": "FP",
+   "reason": "$filter is an internal caller-supplied condition string for the user tree and no request-controlled path to it is shown."
+  },
+  {
+   "item": "c7624fdd7b86",
+   "verdict": "TP",
+   "reason": "The user-supplied filter field name is concatenated inside backticks into the SQL condition with no escaping or whitelist, so a backtick in it breaks out of the identifier."
+  },
+  {
+   "item": "7f9811a3b175",
+   "verdict": "UNCLEAR",
+   "reason": "The visible message parts are escaped with dol_escape_htmltag, but the earlier DB-error portion of $out that is also printed is not shown, so exploitability cannot be decided."
+  },
+  {
+   "item": "84f156dda918",
+   "verdict": "TP",
+   "reason": "The process name is interpolated into a wmic shell command line with no validation, so a quote and shell metacharacters in an MCP tool argument allow command injection."
+  },
+  {
+   "item": "269c25092427",
+   "verdict": "TP",
+   "reason": "file.path comes from the PR's file list (attacker-chosen filenames) and is interpolated into a shell command inside single quotes, so a filename with a quote or metacharacters injects commands."
+  },
+  {
+   "item": "eef25fa2f939",
+   "verdict": "TP",
+   "reason": "keyName is joined onto the temp dir with path.join without stripping '../', so a crafted S3 key writes the downloaded object outside the temp directory."
+  },
+  {
+   "item": "58f0efe72caf",
+   "verdict": "FP",
+   "reason": "The key string is only built into a development-mode console.error message, not into rendered HTML."
+  },
+  {
+   "item": "0c2b369b6b25",
+   "verdict": "FP",
+   "reason": "This is a generic legacy read_yaml helper with no shown caller passing attacker-controlled file_name, so no reachable traversal is demonstrated."
+  },
+  {
+   "item": "b8848b8544fa",
+   "verdict": "FP",
+   "reason": "getNomUrl outputs a generated donation reference link, not attacker-controlled raw HTML."
+  },
+  {
+   "item": "567cf8187ccb",
+   "verdict": "FP",
+   "reason": "The plaintext grpc scheme is an explicit operator configuration choice marked not for production and not attacker-influenceable."
+  },
+  {
+   "item": "9ace743e40b5",
+   "verdict": "FP",
+   "reason": "bundle_id is validated with strict_package_check before it is used in the flow-file path."
+  },
+  {
+   "item": "59a1814ecb3d",
+   "verdict": "FP",
+   "reason": "seller->country_code comes from the loaded company object (DB-derived), not directly from request input."
+  },
+  {
+   "item": "8e5709d8ef3d",
+   "verdict": "TP",
+   "reason": "taskName is placed inside a double-quoted schtasks shell command with no validation, allowing quote-breaking command injection from tool input."
+  },
+  {
+   "item": "da999f336c54",
+   "verdict": "FP",
+   "reason": "The cookie value is only passed as the checked flag of checkbox() and is not echoed into the HTML."
+  },
+  {
+   "item": "3dbe5324ca54",
+   "verdict": "FP",
+   "reason": "The query is built with sprintf using %d integer placeholders and the table prefix only, so no attacker string reaches the SQL."
+  },
+  {
+   "item": "9bb6f12d09ba",
+   "verdict": "TP",
+   "reason": "Span style values from the untrusted ODT are formatted into the style attribute without escaping (spanStyleToCss, like the sibling rowStyleToCss, shows no escaping), allowing attribute breakout."
+  },
+  {
+   "item": "d506bef2e14c",
+   "verdict": "FP",
+   "reason": "The string is a development-only console warning message, not HTML output."
+  },
+  {
+   "item": "79bc7b9ee097",
+   "verdict": "TP",
+   "reason": "The confirm-form URL is built from unescaped $_SERVER['PHP_SELF'], which can carry attacker markup via path info into the printed form."
+  },
+  {
+   "item": "e6c8b3e668bc",
+   "verdict": "FP",
+   "reason": "listTypeName is derived from the list attribute via a restrictive [a-z]+ pattern, so it cannot contain quotes or markup."
+  },
+  {
+   "item": "f9c2c982f6a0",
+   "verdict": "FP",
+   "reason": "The hash is taken from git log output of the repository (a hex commit id), not from attacker-chosen free text."
+  },
+  {
+   "item": "780943d09b47",
+   "verdict": "TP",
+   "reason": "sessionId comes from the query string and is joined into a path, so a value like x/../../dir/file lets the request read arbitrary .jsonl files outside the hooks directory."
+  },
+  {
+   "item": "6f80d130dceb",
+   "verdict": "FP",
+   "reason": "LibStatut returns a status label/picto built from a numeric status, not attacker-controlled HTML."
+  },
+  {
+   "item": "d0fcfd4b5724",
+   "verdict": "TP",
+   "reason": "The session name is joined into a path as f'{name}.json' without sanitisation, so ../ in the name deletes a .json file outside the sessions directory."
+  },
+  {
+   "item": "959b53e305e5",
+   "verdict": "TP",
+   "reason": "groupname is interpolated into a double-quoted net localgroup command with no validation, allowing command injection via tool input."
+  },
+  {
+   "item": "2c15b7e6cc24",
+   "verdict": "FP",
+   "reason": "contentType['slug'] comes from the site's content-type configuration, not from request input."
+  },
+  {
+   "item": "ff07029f80c8",
+   "verdict": "FP",
+   "reason": "The project link is built from stored project fields with tooltip content escaped, so no raw attacker HTML is printed."
+  },
+  {
+   "item": "9a1d1b693a06",
+   "verdict": "TP",
+   "reason": "serviceName is interpolated unquoted into a systemctl shell command with no validation, allowing command injection via tool input."
+  },
+  {
+   "item": "ea47312ed217",
+   "verdict": "FP",
+   "reason": "All the interpolated link parts are escaped with h() or are static bold() fragments, so no attacker input is output raw."
+  },
+  {
+   "item": "407ef1436540",
+   "verdict": "FP",
+   "reason": "The key string is only built into a development-mode console.error message, not into rendered HTML."
+  },
+  {
+   "item": "da9f1fb16d3b",
+   "verdict": "FP",
+   "reason": "The script src comes from the operator's own proxy rule configuration, and injecting scripts is the tool's intended function."
+  },
+  {
+   "item": "965176f9e73e",
+   "verdict": "TP",
+   "reason": "filePath (a repository file name that can contain quotes or $() ) is placed in a double-quoted shell command for git diff, so a crafted filename can execute commands."
+  },
+  {
+   "item": "4c5c5942a992",
+   "verdict": "TP",
+   "reason": "output_path comes from workflow params and is passed to os.makedirs/save with only a presence-style validation shown, so it can write to arbitrary locations."
+  },
+  {
+   "item": "22237ed0638c",
+   "verdict": "TP",
+   "reason": "The array key $i from user-controlled $_GET['where'] is interpolated unescaped into the name attribute string passed to select_input, giving reflected attribute-injection XSS."
+  },
+  {
+   "item": "d5a9e1353b92",
+   "verdict": "FP",
+   "reason": "The interpolated values are the configured content-type slug, an int amount and an order string passed through fixOrder(), none of which is directly user-controlled."
+  },
+  {
+   "item": "9f5b9d074e1a",
+   "verdict": "TP",
+   "reason": "The 'code' part of a user-supplied VAT rate string is extracted by regex and concatenated into the SQL inside quotes with no escaping."
+  },
+  {
+   "item": "01cf523da2a4",
+   "verdict": "FP",
+   "reason": "The $group and $entity values are documented ints supplied by internal callers (GETPOST int) and are not shown to be reachable with raw strings."
+  },
+  {
+   "item": "e4c090b25be5",
+   "verdict": "TP",
+   "reason": "req.query.sessionId is interpolated into a file name passed to path.join, so '../' segments allow reading arbitrary .jsonl files outside the data directory."
+  },
+  {
+   "item": "bdcca0cb099f",
+   "verdict": "FP",
+   "reason": "$i is a server-side integer counter and the selected value is rendered by select_input, so no attacker-controlled unescaped text reaches the attribute string."
+  },
+  {
+   "item": "9d025778d311",
+   "verdict": "TP",
+   "reason": "serviceName from the tool options is interpolated unquoted into a shell command executed via exec for the docker stop case with no validation."
+  },
+  {
+   "item": "4208333a5e35",
+   "verdict": "FP",
+   "reason": "Disabling TLS verification is an explicit opt-in configuration (ssl_verify=false) in an adapter documented as insecure, not an attacker-reachable flaw."
+  },
+  {
+   "item": "99cafb7c97a1",
+   "verdict": "TP",
+   "reason": "Chat template names from a loaded tokenizer's dict are joined into a file path in save_pretrained without sanitization, allowing '../' to write outside the target directory."
+  },
+  {
+   "item": "9eca1fb0e881",
+   "verdict": "TP",
+   "reason": "The sessionId query parameter is used in the file name passed to path.join without validation, so traversal reads arbitrary .jsonl files."
+  },
+  {
+   "item": "9894126eadbb",
+   "verdict": "FP",
+   "reason": "The email href/text is escaped via escapeAngles (including quotes) or entity-encoded, so the matched address cannot break out of the attribute."
+  },
+  {
+   "item": "2f1d22aa4b74",
+   "verdict": "FP",
+   "reason": "The $ldap_lastname value comes from the LDAP directory during admin-initiated import rather than from a request parameter, making a realistic exploit path weak."
+  },
+  {
+   "item": "37c465ad3ef6",
+   "verdict": "FP",
+   "reason": "The hash is taken from git's own log output (hex commit IDs) rather than from user-supplied input."
+  },
+  {
+   "item": "3aaaa996f41c",
+   "verdict": "TP",
+   "reason": "The startswith root check lacks a path separator and the later unquote() of the already-normalized path lets encoded '../' escape the root, so the join on user path is exploitable."
+  },
+  {
+   "item": "dbc7680a17f9",
+   "verdict": "TP",
+   "reason": "The code part of a user-supplied VAT rate string is concatenated into the query inside quotes without escaping."
+  },
+  {
+   "item": "905dc781eda3",
+   "verdict": "FP",
+   "reason": "The resolved path is checked with is_path_inside against the base directory before serving, which blocks traversal."
+  },
+  {
+   "item": "1cbd086d9208",
+   "verdict": "FP",
+   "reason": "This is a legacy internal helper with root and file_name supplied by the library's own code, with no shown untrusted input path."
+  },
+  {
+   "item": "0e3ae08287e5",
+   "verdict": "TP",
+   "reason": "The target branch string is interpolated unquoted into a shell command run via execSync with no sanitization, and tool options or branch names can carry shell metacharacters."
+  },
+  {
+   "item": "1fe46a9570dd",
+   "verdict": "FP",
+   "reason": "The interpolated start value is passed through Number() and checked with isFinite, so only a numeric value can be emitted into the attribute."
+  },
+  {
+   "item": "bc13d9963c04",
+   "verdict": "TP",
+   "reason": "The rid is passed through escape() but concatenated unquoted into the SQL (and $entity is unescaped), so numeric-context injection is possible."
+  },
+  {
+   "item": "c8ffb25221c7",
+   "verdict": "TP",
+   "reason": "The path option is placed in double quotes in an exec'd shell command, so a quote or command substitution in the path allows command injection."
+  },
+  {
+   "item": "6daad23ffe18",
+   "verdict": "FP",
+   "reason": "The $ldap_mail value comes from the LDAP directory in an admin-driven create-from-LDAP flow, not from a direct request parameter, so a realistic attack path is weak."
+  },
+  {
+   "item": "748f1d1d90f4",
+   "verdict": "TP",
+   "reason": "The itemUuid resource id from API requests is joined to the storage path without validation, so '../' can read arbitrary files."
+  },
+  {
+   "item": "626f75bd1ac5",
+   "verdict": "FP",
+   "reason": "The interpolated lang strings are developer-supplied language pack constants, not user-controlled input."
+  },
+  {
+   "item": "eb88e309fa3c",
+   "verdict": "TP",
+   "reason": "The username option is placed in double quotes in an exec'd shell command with no sanitization, permitting injection."
+  },
+  {
+   "item": "9ef2e299c069",
+   "verdict": "FP",
+   "reason": "The column name index is an integer counter and the selected column value is rendered through select_input, so no attacker-controlled attribute text is shown."
+  },
+  {
+   "item": "6770ef535742",
+   "verdict": "FP",
+   "reason": "Only integer userId values are formatted with %d into the query."
+  },
+  {
+   "item": "ae08e65f9ac3",
+   "verdict": "TP",
+   "reason": "The username is placed in double quotes in an exec'd shell command (and grep pattern) with no sanitization, so command injection is possible."
+  },
+  {
+   "item": "dda9e20536d4",
+   "verdict": "TP",
+   "reason": "The username is placed in double quotes in an exec'd sudo command with no validation, permitting shell injection."
+  },
+  {
+   "item": "9d9520e00b2e",
+   "verdict": "FP",
+   "reason": "Only static markup is concatenated; the note id is escaped and bodyHtml comes from renderers that escape their content."
+  },
+  {
+   "item": "8a1c6f8f69dc",
+   "verdict": "FP",
+   "reason": "The status value is an int set by internal callers with constants and $this->id is an object id, with no shown raw-input path."
+  },
+  {
+   "item": "ed131b76f7a1",
+   "verdict": "TP",
+   "reason": "The checkpoint name is formatted into a file path and the file is unlinked without sanitizing '../' or separators."
+  },
+  {
+   "item": "d47ed6dcd53e",
+   "verdict": "FP",
+   "reason": "bundle_id is validated by strict_package_check before it is used to build the path."
+  },
+  {
+   "item": "18ef2cef1a35",
+   "verdict": "TP",
+   "reason": "The input_path param is opened directly with no root restriction or traversal check shown, allowing arbitrary file reads through the image module."
+  },
+  {
+   "item": "41ff079e7a73",
+   "verdict": "FP",
+   "reason": "The interface name used in the command is sanitized (ifaceSanitized) before being concatenated."
+  },
+  {
+   "item": "4a991470fbaa",
+   "verdict": "UNCLEAR",
+   "reason": "showOptionals output depends on extrafield rendering code that is not shown, so whether request values are echoed unescaped cannot be determined."
+  },
+  {
+   "item": "7aeeada44fb5",
+   "verdict": "TP",
+   "reason": "The username is placed in double quotes in an exec'd shell command with no sanitization, permitting injection."
+  },
+  {
+   "item": "7d003c2f9dc6",
+   "verdict": "TP",
+   "reason": "The branch name is interpolated unquoted into a shell command via execSync, and branch names or option values can contain shell metacharacters."
+  },
+  {
+   "item": "b4224d621e1e",
+   "verdict": "FP",
+   "reason": "Disabling hostname checking is part of the explicit opt-in insecure SSL-ignore adapter and is not attacker-reachable."
+  },
+  {
+   "item": "6d42b5b1876b",
+   "verdict": "TP",
+   "reason": "S3 object keys from the bucket listing are joined to the temp dir with path.join without sanitization, so keys with '../' write files outside it."
+  },
+  {
+   "item": "daad7fd96bae",
+   "verdict": "TP",
+   "reason": "icon_file comes from the analyzed APK's manifest and is joined to app_dir with no traversal check before being read and overwritten."
+  },
+  {
+   "item": "0f2b3be2427b",
+   "verdict": "TP",
+   "reason": "The only check is a '..' substring test, so absolute paths still let the caller write to arbitrary locations."
+  },
+  {
+   "item": "84952d1fa1d8",
+   "verdict": "TP",
+   "reason": "Source/target options and file names are interpolated into a shell command run via execSync, and the double quotes around the file are breakable."
+  },
+  {
+   "item": "ddd1da22580c",
+   "verdict": "FP",
+   "reason": "Only the numeric limit parameter is interpolated at this line, with no string input reaching the command."
+  },
+  {
+   "item": "8c57a0c4e8a6",
+   "verdict": "FP",
+   "reason": "The interpolated $admin and entity values come from internal callers and getEntity(), not from request input."
+  },
+  {
+   "item": "c19425cdd0d3",
+   "verdict": "FP",
+   "reason": "The $id is a documented int id passed by callers that obtain it via GETPOST int, with no shown raw-input path."
+  },
+  {
+   "item": "894186d0173e",
+   "verdict": "FP",
+   "reason": "The file contents are returned as a JSON response with an application/json content type, so there is no HTML context for XSS."
+  },
+  {
+   "item": "9f0e293a4f90",
+   "verdict": "FP",
+   "reason": "The imported Revue export is admin-supplied content that already carries raw HTML by design, so this is not an attacker-reachable injection point."
+  },
+  {
+   "item": "bfe7a697bf3d",
+   "verdict": "FP",
+   "reason": "The $ldap_mobile value comes from the LDAP directory in an admin-driven create-from-LDAP flow, not from a direct request parameter, so a realistic attack path is weak."
+  },
+  {
+   "item": "c450917e248b",
+   "verdict": "TP",
+   "reason": "The serviceName option is interpolated into a shell command run via exec with no validation, giving command injection."
+  },
+  {
+   "item": "d31600eac605",
+   "verdict": "FP",
+   "reason": "The $ldap_mail value comes from the LDAP directory in an admin-driven create-from-LDAP flow, not from a direct request parameter, so a realistic attack path is weak."
+  },
+  {
+   "item": "31ca3c3b7ea4",
+   "verdict": "TP",
+   "reason": "$_SERVER['PHP_SELF'] is placed unescaped into the href attribute, enabling reflected XSS through path info."
+  },
+  {
+   "item": "92638e4c690c",
+   "verdict": "FP",
+   "reason": "All interpolated values are cast with %d integers and the table prefix is a configuration value, so no attacker string reaches the query."
+  },
+  {
+   "item": "112dcb21c044",
+   "verdict": "UNCLEAR",
+   "reason": "The ref parameter is interpolated into a shell command, but the only visible caller passes the literal 'HEAD' and other callers are not shown."
+  },
+  {
+   "item": "7d7105d0099b",
+   "verdict": "TP",
+   "reason": "checkpoint_id is joined into a path with no sanitization, so '../' sequences let a caller delete arbitrary .json files outside the checkpoints directory."
+  },
+  {
+   "item": "bb34760d41fc",
+   "verdict": "TP",
+   "reason": "filePath, which can come from repository file names or tool input, is placed inside double quotes in an execSync command, so $(...) or a quote allows command injection."
+  },
+  {
+   "item": "522539c51703",
+   "verdict": "FP",
+   "reason": "The slot name and content are developer-authored Astro template values and already-rendered slot HTML, not attacker-controlled raw input."
+  },
+  {
+   "item": "b9b5bd6e3d78",
+   "verdict": "TP",
+   "reason": "$rid is only passed through escape() and then used unquoted in 'id=...', which does not stop SQL injection in a numeric context and the where clause is later executed."
+  },
+  {
+   "item": "efe3b50ac18e",
+   "verdict": "FP",
+   "reason": "price() formats a numeric amount computed from DB values, so it cannot carry attacker markup."
+  },
+  {
+   "item": "545a59ce22e8",
+   "verdict": "FP",
+   "reason": "price() outputs a formatted numeric amount, not attacker-controlled HTML."
+  },
+  {
+   "item": "a3644c356e0c",
+   "verdict": "FP",
+   "reason": "The string only goes to a dev-mode console.error message and is never emitted as HTML."
+  },
+  {
+   "item": "05b5cc7f1aae",
+   "verdict": "TP",
+   "reason": "The confirm dialog is built from the unescaped $_SERVER['PHP_SELF'] (and the user login) and printed into HTML, allowing reflected XSS via path info."
+  },
+  {
+   "item": "da7544295cc8",
+   "verdict": "FP",
+   "reason": "Both interpolated values are %d integers and the prefix is configuration, so there is no injectable string."
+  },
+  {
+   "item": "9daa4333dfb3",
+   "verdict": "FP",
+   "reason": "The href is run through URL normalization with attribute escaping and safeMode neutralizes dangerous schemes, so attribute breakout is not shown."
+  },
+  {
+   "item": "e00b8ffe5785",
+   "verdict": "FP",
+   "reason": "select_country builds options from dictionary data with the selected value compared as an id, not echoed raw."
+  },
+  {
+   "item": "bf212a821829",
+   "verdict": "TP",
+   "reason": "localFolderPath is interpolated into a shell rm -rf command inside double quotes, so a file name containing $() or a quote (for example one from a remote listing) injects commands."
+  },
+  {
+   "item": "f79501900c5f",
+   "verdict": "TP",
+   "reason": "When no TLS config is supplied the grpcs client sets InsecureSkipVerify, which disables certificate verification and allows man-in-the-middle."
+  },
+  {
+   "item": "798739302c48",
+   "verdict": "TP",
+   "reason": "item.url from the imported JSON is interpolated unescaped into an href attribute, allowing attribute breakout or javascript: XSS in the generated post HTML."
+  },
+  {
+   "item": "1a60c6fc77a5",
+   "verdict": "TP",
+   "reason": "The link is built from the unescaped $_SERVER['PHP_SELF'], which can be manipulated through path info to inject into the href attribute."
+  },
+  {
+   "item": "b6e31235bd0d",
+   "verdict": "TP",
+   "reason": "The branch name is placed unquoted into an execSync shell command, and git branch names can contain shell metacharacters such as $() or ;."
+  },
+  {
+   "item": "dfa3d950b0c1",
+   "verdict": "FP",
+   "reason": "The search term is escaped by the DB layer and placed inside quotes, and the other values are %d integers, so the query is not injectable."
+  },
+  {
+   "item": "886f97867dcf",
+   "verdict": "FP",
+   "reason": "The value printed is the numeric object id loaded from the DB by an integer id, so it cannot carry markup."
+  },
+  {
+   "item": "860c9643c5ce",
+   "verdict": "FP",
+   "reason": "This is the generic query-builder executor of internally rendered SQL with escaped values and protected identifiers, with no direct unvalidated input shown."
+  },
+  {
+   "item": "856dde61206d",
+   "verdict": "FP",
+   "reason": "The src is URL-normalized and escaped, safeMode gates dangerous schemes, and alt is tag-stripped rendered text, so no unescaped attacker-controlled injection is shown."
+  },
+  {
+   "item": "39312718e81a",
+   "verdict": "TP",
+   "reason": "taskName comes from tool input and is interpolated into a schtasks command string run through execAsync with no sanitization."
+  },
+  {
+   "item": "71d7c7e8bce1",
+   "verdict": "FP",
+   "reason": "The key is only formatted into a dev-mode console.error message and is not output as HTML."
+  },
+  {
+   "item": "fccf1398e772",
+   "verdict": "FP",
+   "reason": "md5_hash is validated by the form before use and the file path is separately checked with is_safe_path, so this base path construction is not exploitable."
+  },
+  {
+   "item": "7491d652bf0e",
+   "verdict": "FP",
+   "reason": "country_code comes from the thirdparty's dictionary-backed country lookup rather than free user input at this point."
+  },
+  {
+   "item": "1859066a20e8",
+   "verdict": "FP",
+   "reason": "The column is passed through protectIdentifiers and the value is typed int, so the SQL cannot be injected."
+  },
+  {
+   "item": "92c0dccf7dc0",
+   "verdict": "FP",
+   "reason": "The firstname value is wrapped with dol_escape_htmltag before being printed in the attribute."
+  },
+  {
+   "item": "1ea24838e5ef",
+   "verdict": "FP",
+   "reason": "The file path is validated by is_safe_path against the source directory and the hash by the form before open, so traversal is blocked."
+  },
+  {
+   "item": "736dcc264880",
+   "verdict": "FP",
+   "reason": "The key is only formatted into a dev-mode console.error message and is not output as HTML."
+  },
+  {
+   "item": "23b175c5a0b2",
+   "verdict": "TP",
+   "reason": "serviceName from tool options is interpolated unsanitized into a shell command (sudo systemctl enable, sc config, docker update) run with execAsync."
+  },
+  {
+   "item": "704a137065c8",
+   "verdict": "TP",
+   "reason": "The href attribute parsed from user-supplied chart text is concatenated into an onclick handler string without escaping, so a quote breaks out into script."
+  },
+  {
+   "item": "eab57ef19005",
+   "verdict": "TP",
+   "reason": "The confirm dialog is built with the unescaped $_SERVER['PHP_SELF'] printed into the form action, allowing reflected XSS through path info."
+  },
+  {
+   "item": "0c950c8a135d",
+   "verdict": "TP",
+   "reason": "serviceName is interpolated unsanitized into the shell command executed by execAsync."
+  },
+  {
+   "item": "cecde6b571bb",
+   "verdict": "FP",
+   "reason": "sessionId is joined into a 'session-log-<id>.jsonl' file name, so traversal would need a directory with a 'session-log-' prefix and the read is limited to .jsonl files, which is not realistically exploitable."
+  },
+  {
+   "item": "9850439a8373",
+   "verdict": "TP",
+   "reason": "The output path parameter is used for open(..., 'wb') and makedirs with no validation, allowing arbitrary file write to attacker-chosen locations."
+  },
+  {
+   "item": "4acf18d38b1d",
+   "verdict": "FP",
+   "reason": "$ldap_phone comes from the LDAP directory (admin-controlled and only with LDAP enabled), not from request input shown here."
+  },
+  {
+   "item": "0dc0d6ee6538",
+   "verdict": "FP",
+   "reason": "The description and name are passed through escapeHtml before being placed in the span, so no raw injection occurs."
+  },
+  {
+   "item": "58f5174b8e3b",
+   "verdict": "TP",
+   "reason": "from and to paths are interpolated into a shell cp command in double quotes, so file names with $() or quotes inject commands."
+  },
+  {
+   "item": "8a891467318c",
+   "verdict": "FP",
+   "reason": "The address is wrapped with dol_escape_htmltag before output."
+  },
+  {
+   "item": "13c795b0c1e5",
+   "verdict": "TP",
+   "reason": "formconfirm is given the unescaped $_SERVER['PHP_SELF'] which is reflected into the page, allowing XSS via path info."
+  },
+  {
+   "item": "e9eb558d0274",
+   "verdict": "FP",
+   "reason": "The column is protected with protectIdentifiers and the value is an int, so the SQL is not injectable."
+  },
+  {
+   "item": "1c77fd7884cc",
+   "verdict": "FP",
+   "reason": "This branch only runs when listTypeName is the literal 'indent', so the interpolated class value is a constant."
+  },
+  {
+   "item": "baac06766b90",
+   "verdict": "FP",
+   "reason": "The nonce comes from the developer-supplied ssrContext during static site generation, not from a request."
+  },
+  {
+   "item": "1986404e851a",
+   "verdict": "FP",
+   "reason": "The interface name is passed through sanitizeShellString before being used in the command."
+  },
+  {
+   "item": "a84259a71984",
+   "verdict": "TP",
+   "reason": "branchName and folderPath are interpolated into execSync shell commands with no escaping, allowing command injection through crafted names."
+  },
+  {
+   "item": "dea62e4c9e3e",
+   "verdict": "TP",
+   "reason": "serviceName is interpolated unquoted into a docker inspect command run via execAsync with no sanitization."
+  },
+  {
+   "item": "9fb1dfd9fa61",
+   "verdict": "TP",
+   "reason": "The filter field name from request-supplied field filters is concatenated into the SQL as a backtick-quoted identifier with no whitelist, enabling SQL injection."
+  },
+  {
+   "item": "d3d27f8a15d3",
+   "verdict": "TP",
+   "reason": "The filter column key from the request is concatenated into the SQL as an identifier and bind name with no validation, enabling SQL injection."
+  },
+  {
+   "item": "74eaa726883a",
+   "verdict": "FP",
+   "reason": "The key is only formatted into a dev-mode console.error message and is not output as HTML."
+  },
+  {
+   "item": "5515079d6a16",
+   "verdict": "FP",
+   "reason": "The start value is converted with Number and checked as a finite positive number and listTypeName is the literal 'number', so nothing injectable is emitted."
+  },
+  {
+   "item": "a824ea59599e",
+   "verdict": "FP",
+   "reason": "The output is a formatted date string from dol_print_date, not raw attacker data."
+  }
+ ]
+}

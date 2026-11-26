@@ -38,9 +38,10 @@
     "otherwise": "Report the numbers without an improvement claim. Losses are reported by advisory ID either way."
   },
   "precision": {
-    "sample": "Candidate alerts in Q2 changed files; fixed seed 20261127; cap 40 per rule; blinded packet with the same instructions and context supplement as the exposed review.",
+    "sample": "Candidate alerts in Q2 changed files; fixed seed 20261127; cap 40 per rule; blinded packet with the exposed-review instructions.",
     "review": "Two independent reviewer arms at matched effort and a Fable 5.2 judge on disagreements; per-family precision with Wilson 95% intervals.",
-    "key_custody": "The packet key and each arm's labels are withheld from the other arm and the judge until all labels are in."
+    "key_custody": "The packet key and each arm's labels are withheld from the other arm and the judge until all labels are in.",
+    "context": "v2 supplement (context_supplement_v2.py, sha256 ba2ec5e36eef0ddd3ff08c13d444fb643bb5023bd1df72b660de6f737a9a651c; its exact bytes are committed with the opening commit or ported into scripts/verify_precision_gain.py beforehand with identical output): +/-40 lines and file header, plus, from the repository at the old-side commit, the enclosing function, definitions of helpers called near the marked line, and non-test call sites of the enclosing function. On the 39 exposed items the two arms disputed with v1 context, fresh arms with v2 context agreed on 20."
   },
   "preconditions": [
     "Paired exposed qualification ACCEPT on the candidate digest: zero lost hits (or each loss span-adjudicated), zero benign-control increase, all controls complete.",
