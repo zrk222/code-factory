@@ -1,0 +1,20 @@
+{
+ "schema": "factory.recall-engine-equivalence.v1",
+ "claim": "Two OpenGrep 2.1.0 executables give identical per-case outcomes on the registered 161-case exposed cohort.",
+ "manifest_cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
+ "a": {
+  "engine_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+  "receipt": "codex/fresh-pr412-8f9462e0:docs/evidence/recall-restore-39-exposed-161.json",
+  "rules_sha256": "7e89cf63c9193d4af9f3089a7e5bec6b2fa7711dcda32b5bda4b836e861eee0d",
+  "hits": 39
+ },
+ "b": {
+  "engine_sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+  "receipt": "recall-evaluation-eed93d96-exposed161-opengrep210.json",
+  "receipt_sha256": "8b84852da107622da296d210b38961109e4315c05d7bff3c4e872eed795d1db9",
+  "rules_sha256": "eed93d963720bb9c6ac2075529f6fc0d31de2ac6b1caf1cf573b20346f645f1f",
+  "hits": 39
+ },
+ "per_case_outcome_differences": 0,
+ "note": "Rules differ by digest (7e89cf63 vs eed93d96) but score the same 39 hits; outcomes were compared case by case over all 161 advisories."
+}
