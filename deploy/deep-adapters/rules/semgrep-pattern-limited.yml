@@ -3647,6 +3647,13 @@ rules:
       - patterns:
           - pattern: $OBJ->$M(...)
           - metavariable-regex: {metavariable: $M, regex: '^(?i:compile|wrap|quote|escape|sanitize|grammar)\w*$'}
+      # PHP arithmetic yields a number whatever its operands were.
+      - pattern: $A * $B
+      - pattern: $A - $B
+      - pattern: $A / $B
+      - pattern: $A % $B
+      - pattern: count(...)
+      - pattern: time()
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -3709,6 +3716,11 @@ rules:
                 - metavariable-regex:
                     metavariable: $C
                     regex: (?i).*(Grammar|Builder|Compiler|Dialect|Platform).*
+          # The body of a quoting or escaping helper wraps its argument by design.
+          - pattern-not-inside:
+              patterns:
+                - pattern: function $QF(...) { ... }
+                - metavariable-regex: {metavariable: $QF, regex: '(?i).*(quote|escape).*'}
           - focus-metavariable: $X
       - patterns:
           - pattern: sprintf($FMT, ..., $X, ...)
@@ -3833,7 +3845,7 @@ rules:
               - pattern-inside: |
                   class $C { ... async $M(..., $P, ...) { ... } ... }
           - pattern: $P
-          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex)$)\w+$'}
+          - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex|app|application|server|router|plugin|logger)$)\w+$'}
     pattern-sanitizers:
       - pattern: parseInt(...)
       - pattern: Number(...)
@@ -3931,6 +3943,9 @@ rules:
           - pattern-either:
               - pattern: '"$SQL" + $X'
               - pattern: '$A + "$SQL" + $X'
+          # Literal gate for OpenGrep's prefilter (the taint source has none): without it every
+          # Java file is fully parsed. The match spans the literal and its concatenated operand.
+          - pattern-regex: '(?i)"[^"\n]*\b(?:select|insert|update|delete|create|merge|where|order|group|having|values|and|or|set|from|into)\b[^"\n]*"\s*\+\s*[\w$.]+(?:\((?:[^()\n]|\([^()\n]*\))*\))?'
           - metavariable-regex:
               metavariable: $SQL
               regex: '(?is)^\s*(?:select\b.*\bfrom\b|insert\s+into\b|update\s+\S+\s+set\b|delete\s+from\b|create\s+(?:temp\w*\s+)?table\b|merge\s+into\b)|.*?\b(?:where|and|or)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?\s*$|\s*(?:where|order\s+by|group\s+by|having)\b|.*?\b(?:where|and|or|set)\s+[\w.]+\s*(?:=|<>|!=|<=|>=|<|>|like|in)\s*\(?\s*''?%s|.*?\bvalues\s*\([^)]*%s'
@@ -3939,6 +3954,8 @@ rules:
           - pattern-either:
               - pattern: 'String.format("$SQL", ...)'
               - pattern: '"$SQL".formatted(...)'
+          # Gate on the call itself: a bare "format" literal also matches words like "information".
+          - pattern-regex: '(?s)(?:\bString\s*\.\s*format\s*\(|"\s*\.\s*formatted\s*\().*?\)\s*;'
           # Only string placeholders carry text; %d and the like format numbers.
           - metavariable-regex: {metavariable: $SQL, regex: '(?s).*%s'}
           - metavariable-regex:
@@ -4510,7 +4527,7 @@ rules:
               patterns:
                 - pattern-not: $ESC(...)
                 - pattern-not: $O.$ESC(...)
-          - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex)\s*\})[A-Za-z_$][\w$]*[.\[][\w$.\[\]'"]*\s*\}"
+          - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})[A-Za-z_$][\w$]*[.\[][\w$.\[\]'"]*\s*\}"
       # A plain local is reported unless it was assigned from an escaper.
       - patterns:
           - pattern: '`...${$X}...`'
@@ -4519,7 +4536,7 @@ rules:
               patterns:
                 - pattern-not: $ESC(...)
                 - pattern-not: $O.$ESC(...)
-          - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex)\s*\})(?P<VALUE>[A-Za-z_$][\w$]*)\s*\}"
+          - pattern-regex: <(?:[A-Za-z][\w-]*|\$\{[^}]+\})[^<>`]*?\s[\w:-]+\s*=\s*"\$\{\s*(?![A-Z_][A-Z0-9_]*\s*\})(?!(?:width|height|x|y|x1|x2|y1|y2|rx|ry|cx|cy|r|dx|dy|size|opacity|index|count|level|zIndex|\w*(?:Width|Height))\s*\})(?P<VALUE>[A-Za-z_$][\w$]*)\s*\}"
           - metavariable-comparison:
               comparison: str($X) == str($VALUE)
           - pattern-not-inside: |
@@ -4586,7 +4603,7 @@ rules:
       cwe: ["CWE-79"]
       scope: Template strings whose markup interpolates a plain identifier or member access into a double-quoted attribute; escaper calls, locals assigned from an escaper and UPPER_CASE constants are excluded.
     paths:
-      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/examples/**", "**/scripts/**", "**/build/**", "**/dist/**", "**/gulpfile*", "**/node_modules/**", "**/*.min.js"]
+      exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/examples/**", "**/docs/**", "**/scripts/**", "**/build/**", "**/dist/**", "**/gulpfile*", "**/node_modules/**", "**/*.min.js"]
   - id: javascript.dom-innerhtml-from-variable
     message: A non-literal value is assigned to innerHTML or outerHTML; use textContent, or sanitize the markup first.
     severity: INFO
@@ -4607,7 +4624,11 @@ rules:
             - pattern-not: sanitize(...)
             - pattern-not: $ESC(...)
       # A static placeholder on a class or namespace (AST.emptyHTML) is not data.
-      - metavariable-regex: {metavariable: $V, regex: '^(?![A-Z]\w*\.\w*(?i:empty|blank|none|default)\w*$)'}
+      # Empty placeholders, UPPER_CASE template constants and values already named as
+      # sanitized or purified are not raw markup.
+      - metavariable-regex: {metavariable: $V, regex: '^(?![A-Z]\w*\.\w*(?i:empty|blank|none|default)\w*$)(?![A-Z_][A-Z0-9_]*$)(?!(?i:\w*(?:sanitiz|purif)\w*|empty\w*)$)'}
+      # Appending a literal to an element's own markup re-parses what is already there.
+      - pattern-not: $E.innerHTML = $E.innerHTML + $X
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
