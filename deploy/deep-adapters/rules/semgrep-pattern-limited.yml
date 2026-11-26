@@ -4339,8 +4339,9 @@ rules:
                   class $C { ... $M(..., $P, ...) { ... } ... }
               - pattern-inside: |
                   class $C { ... async $M(..., $P, ...) { ... } ... }
-          - pattern: $P
+          - focus-metavariable: $P
           - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|sql|query|stmt|statement|clause|where|fragment|expr|condition|q|raw|db|conn|client|knex|app|application|server|router|plugin|logger)$)\w+$'}
+        exact: true
     pattern-sanitizers:
       - pattern: parseInt(...)
       - pattern: Number(...)
