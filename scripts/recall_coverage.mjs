@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { extname, isAbsolute, posix, relative, resolve } from 'node:path';
 
 export const PARSER_LANGUAGE = Object.freeze({ c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
@@ -60,35 +61,74 @@ export function engineCoverage(report) {
   return { scanned, skipped, problems, timeouts };
 }
 
-function ruleLanguages(block) {
-  const inline = block.match(/^    languages:[ \t]*\[([a-z, \t]+)\][ \t]*$/m);
-  if (inline) return inline[1].split(',').map(value => value.trim());
-  const lines = block.match(/^    languages:[ \t]*\n((?:    - [a-z]+[ \t]*(?:\n|$))+)/m);
-  return lines ? [...lines[1].matchAll(/^    - ([a-z]+)[ \t]*$/gm)].map(match => match[1]) : null;
-}
+// Read only rule identity, attribution, and scope from the YAML document.
+const ruleMetadataProgram = String.raw`
+import json, sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(3)
 
-function ruleExcludes(block) {
-  const section = block.match(/^    paths:[ \t]*\n((?: {6}[^\n]*\n?)+)/m);
-  if (!section) return [];
-  const match = section[1].match(/^      exclude:[ \t]*(\[[^\n]+\])[ \t]*$/m);
-  if (!match) {
-    const expanded = section[1].match(/^      exclude:[ \t]*\n((?:      - [^\n]+\n?)+)/m);
-    return expanded ? [...expanded[1].matchAll(/^      - ['"](\*\*\/[\w.*\/-]+)['"][ \t]*$/gm)].map(value => value[1]) : [];
+def value(node, kind, tag):
+    if not isinstance(node, kind) or node.tag != "tag:yaml.org,2002:" + tag:
+        raise ValueError("Unsupported rule scope")
+    return node.value
+
+def mapping(node):
+    pairs = value(node, yaml.MappingNode, "map")
+    fields = {value(key, yaml.ScalarNode, "str"): val for key, val in pairs}
+    if len(fields) != len(pairs):
+        raise ValueError("Duplicate YAML scope field")
+    return fields
+
+def strings(node):
+    return [value(item, yaml.ScalarNode, "str") for item in value(node, yaml.SequenceNode, "seq")]
+
+doc = mapping(yaml.compose(sys.stdin.buffer, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)))
+records, seen = [], set()
+for item in value(doc["rules"], yaml.SequenceNode, "seq"):
+    rule = mapping(item)
+    name = value(rule["id"], yaml.ScalarNode, "str")
+    if not name or name in seen:
+        raise ValueError("Invalid or duplicate rule id")
+    seen.add(name)
+    paths = mapping(rule["paths"]) if "paths" in rule else {}
+    meta = mapping(rule["metadata"]) if "metadata" in rule else {}
+    cwe = meta.get("cwe")
+    if cwe is None:
+        cwes = []
+    elif isinstance(cwe, yaml.ScalarNode):
+        cwes = [value(cwe, yaml.ScalarNode, "str")]
+    else:
+        cwes = strings(cwe)
+    records.append(dict(id=name, cwes=cwes,
+        languages=strings(rule["languages"]) if "languages" in rule else [],
+        excludes=strings(paths["exclude"]) if "exclude" in paths else []))
+print(json.dumps(records))
+`;
+
+export function readRuleMetadata(rules) {
+  const python = process.env.CF_RECALL_PYTHON;
+  const read = (command, options = []) => spawnSync(command, [...options, '-I', '-c', ruleMetadataProgram], {
+    input: rules, encoding: 'utf8', windowsHide: true, timeout: 7000, maxBuffer: 2 * 1024 * 1024,
+  });
+  let parsed = read(python ?? 'python');
+  if (!python && process.platform === 'win32' && (parsed.status === 3 || parsed.error?.code === 'ENOENT')) {
+    parsed = read('py', ['-3']);
   }
+  if (parsed.status !== 0) return null;
   try {
-    const values = JSON.parse(match[1]);
-    // Treat only anchored repository globs used by the reviewed rules as proof.
-    return values.filter(value => typeof value === 'string' && /^\*\*\/[\w.*\/-]+$/.test(value));
-  } catch {
-    return [];
-  }
+    const rules = JSON.parse(parsed.stdout);
+    return Array.isArray(rules) ? rules : null;
+  } catch { return null; }
 }
 
 export function compileScannerPathPolicy(rules) {
-  const blocks = rules.replace(/\r\n/g, '\n').split(/^  - id:[ \t]+[^\n]+$/m).slice(1);
-  const byLanguage = Map.groupBy(blocks.flatMap(block => {
-    const languages = ruleLanguages(block);
-    return (languages?.length ? languages : ['generic']).map(language => ({ language, excludes: ruleExcludes(block) }));
+  const scopes = typeof rules === 'string' || Buffer.isBuffer(rules) ? readRuleMetadata(rules) : rules;
+  if (!scopes || scopes.some(({ languages }) => !languages.length)) return () => false;
+  const byLanguage = Map.groupBy(scopes.flatMap(({ languages, excludes: patterns }) => {
+    const excludes = patterns.filter(glob => /^\*\*\/[\w.*\/-]+$/.test(glob));
+    return languages.map(language => ({ language, excludes }));
   }), rule => rule.language);
   const known = new Set(Object.values(PARSER_LANGUAGE));
   if ([...byLanguage.keys()].some(language => !known.has(language))) return () => false;
@@ -162,6 +202,17 @@ export function coverageGapEntries(files = []) {
 
 export function coverageGaps(files) {
   return coverageGapEntries(files).map(file => file.path);
+}
+
+export function completeFixedCoverage(files, packets) {
+  if (!Array.isArray(files) || !Array.isArray(packets)
+    || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
+  const byPath = new Map(files.map(file => [file.path, file]));
+  return byPath.size === files.length && packets.every(packet => {
+    const file = byPath.get(packet?.path);
+    return file?.submitted === true && file.state === 'reported_scanned'
+      && file.sha256 === packet.sha256 && file.bytes === packet.bytes;
+  });
 }
 
 export function summarizeCoverage(rows) {
