@@ -1015,6 +1015,28 @@ rules:
           - pattern-either:
               - pattern: $CONFIG.set_verify_hostname($VERIFY)
               - pattern: $CONFIG.verify_hostname($VERIFY)
+          - pattern-either:
+              - pattern-inside: |
+                  fn $F(..., $CONFIG: boring::ssl::ConnectConfiguration, ...) { ... }
+              - pattern-inside: |
+                  fn $F(..., mut $CONFIG: boring::ssl::ConnectConfiguration, ...) { ... }
+              - patterns:
+                  - pattern-inside: |
+                      $CONFIG.set_verify_hostname($VERIFY);
+                      ...
+                      let $STREAM = $CONNECT;
+                  - metavariable-pattern:
+                      metavariable: $CONNECT
+                      patterns:
+                        - pattern: $PROVIDER::connect($CONFIG, ...)
+                        - metavariable-regex:
+                            metavariable: $PROVIDER
+                            regex: '^tokio[0-9]*_boring$'
+              - patterns:
+                  - pattern: $CONNECTOR.configure().map_err($ERROR)?.verify_hostname($VERIFY).connect(...)
+                  - pattern-inside: |
+                      use boring::ssl::$TYPE;
+                      ...
           - metavariable-regex:
               metavariable: $VERIFY
               regex: '^(?:\*\s*)?(?:[A-Za-z_]\w*\.)*(?:accept|allow)_invalid_hostnames$'
