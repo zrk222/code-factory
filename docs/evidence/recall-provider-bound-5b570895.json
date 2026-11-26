@@ -1,0 +1,46 @@
+{
+  "schema": "factory.registered-recall-retention.v1",
+  "reference_sha256": "0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf",
+  "candidate_score_sha256": "ba115c9c5d870fb72bf2d2c42b556434bd673e9efe3c6837e54df4a15a076368",
+  "candidate_rules_sha256": "5b570895afe8bb6a28cb8fa1260def3910c91575123b46f6ac77e39472440991",
+  "decision": "ACCEPT",
+  "summary": {
+    "registered_cases": 161,
+    "verified_bindings": 161,
+    "reference_hunk_hits": 39,
+    "retained_hunk_hits": 39,
+    "candidate_outcomes": {
+      "hit": 39,
+      "miss": 117,
+      "timeout": 0,
+      "unknown": 2,
+      "error": 0,
+      "coverage_incomplete": 3
+    },
+    "reference_fixed_side_residual_alerts": 17,
+    "candidate_fixed_side_residual_alerts": 17,
+    "candidate_hunk_hits": 39
+  },
+  "lost": [],
+  "gained": [],
+  "new_unresolved": [],
+  "failures": [],
+  "candidate_commit": "c15af2ae18133310759c63b39e486d36da64b65f",
+  "source_cache": "Verified warm prepared inputs; zero reused score checkpoints",
+  "windows_legacy_annotated_rule_checks": 64,
+  "annotated_findings": 272,
+  "linux_worker_projection": {
+    "state": "PASS",
+    "scenario": "Replayed the actual Linux worker SARIF through the updated production verifier projection",
+    "recorded_hosted_state": "BLOCKED",
+    "raw_total": 272,
+    "old_selected": 85,
+    "new_selected": 92,
+    "expected": 92,
+    "standalone_reports": [
+      "csharp-sql-builder.cs",
+      "rust-boring-hostname.rs"
+    ]
+  },
+  "linux_worker_attempt": "https://github.com/zrk222/code-factory/actions/runs/45787666837/job/139798594590"
+}
