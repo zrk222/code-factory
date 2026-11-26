@@ -72,6 +72,33 @@ class QuotedIdentifierStore {
         // ruleid: php.parameter-sql-text
         return $db->executeQuery($sql);
     }
+
+    // Backtick quotes cover only the operand between them, not later operands of the chain.
+    public function indexes($db, string $table, array $indices) {
+        foreach ($indices as $key => $columnList) {
+            // ok: php.parameter-sql-text
+            $db->executeQuery('ALTER TABLE `' . $table . '` DROP INDEX `' . $key . '`;');
+            // ruleid: php.parameter-sql-text
+            $db->executeQuery('ALTER TABLE `' . $table . '` ADD INDEX `' . $key . '` (' . $columnList . ');');
+            // ruleid: php.parameter-sql-text
+            $db->executeQuery('ALTER TABLE `' . $key . '` ADD INDEX (' . $columnList . ') `' . $key . '`');
+        }
+    }
+
+    public function mappedColumns($db, array $fields, array $ids) {
+        $quoted = implode(', ', array_map(fn (string $f) => $db->quoteIdentifier($f), $fields));
+        // ok: php.parameter-sql-text
+        $db->executeQuery('CREATE INDEX i ON items (' . $quoted . ')');
+        $callable = implode(', ', array_map([$db, 'quoteIdentifier'], $fields));
+        // ok: php.parameter-sql-text
+        $db->executeQuery('CREATE INDEX j ON items (' . $callable . ')');
+        $numbers = implode(',', array_map('intval', $ids));
+        // ok: php.parameter-sql-text
+        $db->executeQuery('CREATE INDEX k ON items (' . $numbers . ')');
+        $trimmed = implode(', ', array_map(fn ($f) => trim($f), $fields));
+        // ruleid: php.parameter-sql-text
+        $db->executeQuery('CREATE INDEX l ON items (' . $trimmed . ')');
+    }
 }
 
 class AdodbStyleDriver extends ADOConnection {

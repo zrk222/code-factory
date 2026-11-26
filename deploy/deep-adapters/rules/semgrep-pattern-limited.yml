@@ -4013,6 +4013,16 @@ rules:
               metavariable: $FN
               regex: ^(?i:\w*escape\w*|\w*quote\w*|addslashes)$
       - pattern: intval(...)
+      # Every element mapped through a quoting helper or an integer cast.
+      - patterns:
+          - pattern-either:
+              - pattern: array_map(fn ($MV) => $MO->$MQ($MV), ...)
+              - pattern: array_map(function ($MV) { return $MO->$MQ($MV); }, ...)
+          - metavariable-regex: {metavariable: $MQ, regex: '^(?i:\w*quote\w*|\w*escape\w*|qstr)$'}
+      - patterns:
+          - pattern: array_map([$MO, $MQS], ...)
+          - metavariable-regex: {metavariable: $MQS, regex: '^[''"](?i:\w*quote\w*|\w*escape\w*|qstr)[''"]$'}
+      - pattern: array_map('intval', ...)
       - pattern: (int) $V
       - pattern: (float) $V
       - pattern: $DB->quote(...)
@@ -4035,11 +4045,10 @@ rules:
       - pattern: time()
       # A backtick-quoted identifier interpolated in SQL text ("FROM `$table`", "`{$this->column}`").
       - pattern-regex: '`(?:\{\$[^{}`"\n]+\}|\$\w+(?:->\w+)*)`'
-      - patterns:
-          - pattern: $QL . $QX . $QR
-          - metavariable-regex: {metavariable: $QL, regex: '(?s)\A[''"].*`[''"]\z'}
-          - metavariable-regex: {metavariable: $QR, regex: '\A[''"]`'}
-          - focus-metavariable: $QX
+      # A backtick-quoted identifier concatenated into SQL text ('... `' . $table . '` ...').
+      # A regex range rather than $L . $X . $R: concatenation chains are matched
+      # associatively, so a metavariable there can span later operands of the chain.
+      - pattern-regex: '`[''"]\s*\.\s*\$\w+(?:->\w+)*\s*\.\s*[''"]`'
     pattern-sinks:
       - requires: PARAM
         patterns:
