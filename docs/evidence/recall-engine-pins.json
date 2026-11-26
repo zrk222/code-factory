@@ -155,6 +155,18 @@
    "schema": "factory.recall-evaluation.v1",
    "engine_sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
    "status": "pinned"
+  },
+  {
+   "receipt": "qualification-3b5b28ff/recall-evaluation-b2a2800f-pathpolicy.json",
+   "schema": "factory.recall-evaluation.v1",
+   "engine_sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+   "status": "pinned"
+  },
+  {
+   "receipt": "qualification-3b5b28ff/recall-evaluation-b2a2800f-pathpolicy-run1.json",
+   "schema": "factory.recall-evaluation.v1",
+   "engine_sha256": "d6a68a84c01a3d8ee933f60847decf1b4d0fd7791a26833b32b95922baf28974",
+   "status": "pinned"
   }
  ]
 }

@@ -21,3 +21,4 @@
 - `recall-evaluation-8cd65488-pathpolicy-run1.json`: first attempt, REJECT on four load-induced parse/timeout gaps, kept for the record.
 - `control-plan-8cd65488.json`: the 1c60974c plan with only the candidate hash re-pinned.
 - Summary: `../recall-g4wm-pathpolicy-rebind-8cd65488.json`.
+- `recall-evaluation-b2a2800f-pathpolicy.json`: the same replay for the frozen candidate b2a2800f with `control-plan-b2a2800f.json`. ACCEPT: 54 gains, retention 36/37 with p849 FP-only, controls −4, g4wm and 3753 FP-only. `…-run1.json` is a REJECT on one load-induced trix.js parse partial in a miss-only case, kept for the record.

@@ -195,6 +195,79 @@
   }
  ],
  "control_plan": "control-plan-8cd65488.json is control-plan-1c60974c.json with candidate_sha256 re-pinned to 8cd65488; exclusions, targets and timeouts unchanged",
- "candidate_status": "8cd65488 is the branch head ruleset after the origin/main merge. It is not the frozen Q2 candidate; detector work from the task-2 agent lands after this.",
- "scope": "Development-only, on spent cohorts. No held-out (Q2) data read, scanned or used."
+ "candidate_status": "8cd65488 was the post-merge head; b2a2800f (frozen) is replayed under frozen_candidate_replay.",
+ "scope": "Development-only, on spent cohorts. No held-out (Q2) data read, scanned or used.",
+ "frozen_candidate_replay": {
+  "candidate_ruleset_sha256": "b2a2800f3b71300f7752ee404bc1c16d6752cf54c6e31219f2174d853dbdf1d6",
+  "branch_commit": "1b41fd05 (rules from df86fb79; profile hash bound in 1b41fd05)",
+  "harness_sha256_unchanged": true,
+  "same_inputs_as_above_except": [
+   "candidate rules",
+   "control plan candidate_sha256"
+  ],
+  "control_plan": {
+   "path": "qualification-3b5b28ff/control-plan-b2a2800f.json",
+   "sha256": "b76faf96b3bd7146b8be7787986cceec6937269962f012ff4a6019666784a70a"
+  },
+  "loss_plan_sha256": "3981de560f40b4ba69e503d5d5dfbbb97cc7bbfe700ae6537cb0a459e83ba96a",
+  "baseline_arms": "reused from checkpoints only where the harness matched every input fingerprint",
+  "runs": [
+   {
+    "receipt": "qualification-3b5b28ff/recall-evaluation-b2a2800f-pathpolicy-run1.json",
+    "sha256": "d80a572cca00dcb22d7d2a7c807d79a7ac247561d4fb84bd61bc7bd97bd04db1",
+    "decision": "REJECT",
+    "failures": [
+     "new engine coverage gaps: GHSA-53g2-mvcc-q9x3"
+    ],
+    "lost_baseline_hits": [],
+    "note": "Candidate-arm partial:parse on app/assets/javascripts/trix.js (both sides) in a miss-only case; the baseline arm timed out under load and was retried serially to a clean miss. Idle whole-source scans of both sides, twice each, with 816bbef3 and b2a2800f report zero engine errors."
+   },
+   {
+    "receipt": "qualification-3b5b28ff/recall-evaluation-b2a2800f-pathpolicy.json",
+    "sha256": "eddb16d04a425307a5d762645c6e0eaf8075c28c53a17699f5d5f538b45b8817",
+    "decision": "ACCEPT",
+    "failures": [],
+    "gained": 54,
+    "lost_baseline_hits": [],
+    "lost_fp_only": [
+     "GHSA-g4wm-2vf7-vfgr",
+     "GHSA-3753-m2x2-q623"
+    ],
+    "raw_lost_baseline_hits": [
+     "GHSA-g4wm-2vf7-vfgr",
+     "GHSA-3753-m2x2-q623"
+    ],
+    "gain_retention": {
+     "required": 37,
+     "retained": 36,
+     "lost": [],
+     "lost_fp_only": [
+      "GHSA-p849-8hwh-84j9"
+     ]
+    },
+    "controls": {
+     "repositories": 18,
+     "alerts_before": 35,
+     "alerts_after": 31,
+     "increase": -4
+    },
+    "new_errors": [],
+    "new_coverage_gaps": [],
+    "residual": [
+     51,
+     83
+    ],
+    "vs_8cd65488": {
+     "gained_added": [
+      "GHSA-23fx-92m6-4f2g"
+     ],
+     "gained_removed": [],
+     "fixed_side_residual": "77 -> 83"
+    },
+    "re_observed_cases": {
+     "GHSA-53g2-mvcc-q9x3": "miss->miss"
+    }
+   }
+  ]
+ }
 }
