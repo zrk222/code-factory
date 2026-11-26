@@ -132,10 +132,10 @@ def test_compatibility_uses_cli_reported_version_when_distribution_is_external(
 @pytest.mark.parametrize(
     ("module", "help_text", "missing"),
     [
-        ("specline", "{strict,verify-validators,challenge,gate}", ("tasks",)),
+        ("specline", "{strict,verify-validators,challenge,gate,evidence}", ("tasks",)),
         (
             "forgeline",
-            "{architect,review,arch-gate,verify-tests-ts,smoke,ship,gate,fill,challenge}",
+            "{architect,review,arch-gate,verify-tests-ts,smoke,ship,gate,fill,challenge,handoff}",
             ("verify-tests",),
         ),
     ],

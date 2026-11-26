@@ -32,8 +32,13 @@ ASSEMBLY_STAGES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("forgeline", ("smoke", "{f}")),
     ("prestige", ("score", "smoke/{f}.ui", "--json", "--strict")),
     ("hsf", ("compile", "specs/{f}.yaml")),
+    ("specline", ("evidence", "{f}")),
     ("forgeline", ("ship", "{f}")),
 )
+
+# Stages that run only when their inputs are declared; they are never part of the base requirement.
+CONDITIONAL_STAGE_KEYS = frozenset({("specline", "evidence")})
+DECISION_HANDOFF_ARGS = ("handoff", "{f}", "specs/{f}.md", "--compile")
 
 
 def receipt_stage(module: str, args: list[str] | tuple[str, ...]) -> str:
@@ -56,7 +61,7 @@ BASE_REQUIRED_MODULES = ("specline", "forgeline")
 
 REQUIRED_COMMANDS = {
     "specline": {"challenge"},
-    "forgeline": {"gate", "fill", "challenge"},
+    "forgeline": {"gate", "fill", "challenge", "handoff"},
     "hsf": {"compile", "goldens", "challenge"},
     "prestige": {
         "audit",

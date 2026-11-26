@@ -1891,3 +1891,149 @@ def test_pause_hints_name_the_ssat_forge_reads(tmp_path, monkeypatch, state):
     monkeypatch.setattr("factoryline.assembly.run_cli", lambda *_a, **_k: (True, ""))
     report = assemble(tmp_path, "f", chain=_FORGE_CHAIN[:2])
     assert "specs/f.ssat.yaml --root ." in report["next_command"]
+
+
+_TABLE_SPEC = """# Spec: f
+## Decision logic (factory candidates)
+| # | if | then |
+|---|----|------|
+| 1 | urgent == true | APPROVED: Page now |
+| 2 | else | DENIED: Later |
+"""
+
+
+def test_stage_list_has_conditional_evidence_before_ship():
+    from factoryline.protocol import ASSEMBLY_STAGES, CONDITIONAL_STAGE_KEYS, REQUIRED_COMMANDS
+    from factoryline.verification import BASE_REQUIRED
+
+    assert len(set(ASSEMBLY_STAGE_KEYS)) == len(ASSEMBLY_STAGE_KEYS)
+    assert ASSEMBLY_STAGE_KEYS[-2:] == (("specline", "evidence"), ("forgeline", "ship"))
+    assert ASSEMBLY_STAGES[-1][1][0] == "ship"
+    assert ("specline", "evidence") in CONDITIONAL_STAGE_KEYS
+    assert "evidence" not in BASE_REQUIRED["specline"]
+    assert "handoff" in REQUIRED_COMMANDS["forgeline"]
+
+
+def test_decision_source_prefers_legacy_spec_then_table(tmp_path):
+    from factoryline.assembly import decision_source
+
+    specs = tmp_path / "specs"
+    specs.mkdir()
+    assert decision_source(tmp_path, "f") is None
+    (specs / "f.md").write_text("# Spec\n## Decision logic\n| # | if | then |\n|---|----|------|\n", encoding="utf-8")
+    assert decision_source(tmp_path, "f") is None
+    (specs / "f.md").write_text(_TABLE_SPEC, encoding="utf-8")
+    assert decision_source(tmp_path, "f") == "decision_table"
+    (specs / "f.yaml").write_text("workflow_spec: f\n", encoding="utf-8")
+    assert decision_source(tmp_path, "f") == "hsf_spec"
+
+
+def _decision_workspace(tmp_path, monkeypatch, probe_state, **probe):
+    _installed(monkeypatch)
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "f.md").write_text(_TABLE_SPEC, encoding="utf-8")
+    probes, executed = [], []
+    monkeypatch.setattr(
+        "factoryline.assembly.run_cli",
+        lambda _cli, args, *_a, **_k: probes.append(list(args))
+        or (True, json.dumps({"state": probe_state, **probe})),
+    )
+    monkeypatch.setattr(
+        "factoryline.assembly.run_cli_detailed",
+        lambda cli, args, *_a, **_k: executed.append((cli, list(args))) or _detailed_result('{"state": "compiled"}'),
+    )
+    report = assemble(tmp_path, "f", chain=[("hsf", ["compile", "specs/{f}.yaml"])])
+    return report, probes, executed
+
+
+def test_decision_table_without_goldens_pauses(tmp_path, monkeypatch):
+    goldens = tmp_path.resolve() / "goldens" / "f_decisions" / "cases.jsonl"
+    report, probes, executed = _decision_workspace(tmp_path, monkeypatch, "needs_goldens", goldens=str(goldens))
+    assert probes == [["handoff", "f", "specs/f.md", "--root", "."]] and executed == []
+    assert report["paused_at"] == "decision_goldens"
+    assert "goldens/f_decisions/cases.jsonl" in report["next_command"]
+
+
+def test_decision_table_with_goldens_compiles_under_the_hsf_stage_id(tmp_path, monkeypatch):
+    report, _, executed = _decision_workspace(tmp_path, monkeypatch, "ready_to_compile")
+    assert executed == [("forge", ["handoff", "f", "specs/f.md", "--compile"])]
+    assert report["stages"][-1]["module"] == "hsf" and report["stages"][-1]["stage"] == "compile"
+    assert list((tmp_path / "receipts").glob("hsf-f-compile-*.json"))
+
+
+def test_blocked_handoff_fails_the_stage(tmp_path, monkeypatch):
+    report, _, executed = _decision_workspace(
+        tmp_path, monkeypatch, "blocked", error={"code": "E_HANDOFF_EXPR", "message": "rule #1"}
+    )
+    assert executed == [] and report["halted_at"] == "hsf:compile"
+    assert report["stages"][-1]["marker"] == "E_HANDOFF_EXPR"
+
+
+def test_legacy_hsf_spec_still_compiles_directly(tmp_path, monkeypatch):
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "f.yaml").write_text("workflow_spec: f\n", encoding="utf-8")
+    _installed(monkeypatch)
+    executed = []
+    monkeypatch.setattr(
+        "factoryline.assembly.run_cli_detailed",
+        lambda cli, args, *_a, **_k: executed.append((cli, list(args))) or _detailed_result(""),
+    )
+    (tmp_path / "specs" / "f.md").write_text("# f\n", encoding="utf-8")
+    assemble(tmp_path, "f", chain=[("hsf", ["compile", "specs/{f}.yaml"])])
+    assert executed == [("hsf", ["compile", "specs/f.yaml"])]
+
+
+@pytest.mark.parametrize("declared", ["none", "contract_file", "release_contract"])
+def test_evidence_stage_runs_only_when_declared(tmp_path, monkeypatch, declared):
+    _installed(monkeypatch)
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "specs" / "f.md").write_text("# f\n", encoding="utf-8")
+    if declared == "contract_file":
+        (tmp_path / ".factory").mkdir()
+        (tmp_path / ".factory" / "workflow-audit-contract.json").write_text("{}", encoding="utf-8")
+    if declared == "release_contract":
+        contract = tmp_path / ".factory/release-contracts/f.json"
+        contract.parent.mkdir(parents=True)
+        contract.write_text(json.dumps({"required_stages": ["specline:evidence"]}), encoding="utf-8")
+    executed = []
+    monkeypatch.setattr(
+        "factoryline.assembly.run_cli_detailed",
+        lambda cli, args, *_a, **_k: executed.append(list(args)) or _detailed_result(""),
+    )
+    report = assemble(tmp_path, "f", chain=[("specline", ["evidence", "{f}"])])
+    row = report["stages"][-1]
+    if declared == "none":
+        assert executed == [] and row["marker"] == "SPECLINE_EVIDENCE_NOT_APPLICABLE"
+    elif declared == "contract_file":
+        assert executed == [["evidence", "f"]] and row["status"] == "ok"
+    else:
+        assert executed == [] and report["halted_at"] == "specline:evidence"
+        assert row["marker"] == "ACCEPTANCE_EVIDENCE_REQUIRED_MISSING"
+
+
+def test_decision_table_makes_compile_and_evidence_contract_makes_evidence_required(tmp_path):
+    from factoryline.verification import _required_stages
+
+    (tmp_path / "specs").mkdir()
+    assert "hsf" not in _required_stages(tmp_path, "f", [])
+    (tmp_path / "specs" / "f.md").write_text(_TABLE_SPEC, encoding="utf-8")
+    assert _required_stages(tmp_path, "f", [])["hsf"] == {"compile"}
+    assert "evidence" not in _required_stages(tmp_path, "f", [])["specline"]
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "workflow-audit-contract.json").write_text("{}", encoding="utf-8")
+    assert "evidence" in _required_stages(tmp_path, "f", [])["specline"]
+
+
+def test_forge_stage_skippable_reports_state_and_prior_receipt(tmp_path):
+    from types import SimpleNamespace
+
+    from factoryline.assembly import forge_stage_skippable
+
+    forge = tmp_path / ".forge" / "f"
+    forge.mkdir(parents=True)
+    (forge / "state.json").write_text('{"state": "reviewed", "history": []}', encoding="utf-8")
+    stage = SimpleNamespace(module="forgeline", name="review", required=False)
+    assert forge_stage_skippable(tmp_path, "f", stage) == (True, "reviewed", None)
+    assert forge_stage_skippable(tmp_path, "f", SimpleNamespace(module="forgeline", name="arch-gate", required=False)) == (False, "reviewed", None)
+    assert forge_stage_skippable(tmp_path, "f", SimpleNamespace(module="forgeline", name="smoke", required=False)) == (False, None, None)
+    assert forge_stage_skippable(tmp_path, "f", SimpleNamespace(module="forgeline", name="review", required=True))[0] is False

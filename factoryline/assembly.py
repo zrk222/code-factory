@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .contract import LAYOUT, MODULES, Meter, ensure_layout, Receipt
-from .protocol import ASSEMBLY_STAGES, ASSEMBLY_STAGE_KEYS
+from .protocol import ASSEMBLY_STAGES, ASSEMBLY_STAGE_KEYS, DECISION_HANDOFF_ARGS
 from .protocol import receipt_stage as _receipt_stage
 from .meter import MeterLog, StageTiming, stopwatch
 from .attribution import Attribution
@@ -292,6 +292,21 @@ def _ssat_contract(root: Path, feature: str) -> Path:
         if path.is_file():
             return path
     return root / "specs" / f"{feature}.ssat.yaml"
+
+
+_DECISION_ROW = re.compile(r"^\|\s*\d+\s*\|[^|\n]+\|[^|\n]+\|\s*$", re.M)
+
+
+def decision_source(root: Path, feature: str) -> str | None:
+    """Where the feature's decision logic lives: a legacy HSF spec, or a SpecLine decision table, or nowhere."""
+    if (root / "specs" / f"{feature}.yaml").is_file():
+        return "hsf_spec"
+    try:
+        text = (root / "specs" / f"{feature}.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    section = text.split("## Decision logic", 1)[1] if "## Decision logic" in text else ""
+    return "decision_table" if _DECISION_ROW.search(section.split("\n## ", 1)[0]) else None
 
 
 MAX_RECEIPT_BYTES = 1_048_576
@@ -826,6 +841,10 @@ def _plan_assembly_stage(
         args[2] = str(_ssat_contract(root, feature).relative_to(root))
     name = _receipt_stage(module, args)
     stage_id = f"{module}:{name}"
+    if stage_id == "hsf:compile" and decision_source(root, feature) == "decision_table":
+        # The table compiles through ForgeLine's pinned hand-off; the receipt keeps the hsf:compile id.
+        cli = MODULES["forgeline"]["cli"]
+        args = [arg.replace("{f}", feature) for arg in DECISION_HANDOFF_ARGS]
     return _AssemblyStage(
         module,
         cli,
@@ -883,8 +902,9 @@ def _assembly_scope_blocked(
         return True
     if (
         stage.module == "hsf"
+        and stage.name == "compile"
         and stage.required
-        and not (root / f"specs/{feature}.yaml").exists()
+        and decision_source(root, feature) is None
     ):
         _assembly_stage_failure(
             stage,
@@ -1122,6 +1142,53 @@ def _assembly_forge_review(
     return False
 
 
+def _skip_stage(stage: _AssemblyStage, report: dict, activity: LiveActivity, reason: str, marker: str | None = None) -> str:
+    row = {"module": stage.module, "stage": stage.name, "status": "skipped", "reason": reason}
+    if marker:
+        row["marker"] = marker
+    report["stages"].append(row)
+    activity.stage_finished(stage.module, stage.name, "skipped")
+    return "skip"
+
+
+def _handoff_probe(root: Path, feature: str, activity: LiveActivity) -> dict:
+    """Export (without compiling) to learn whether goldens exist; ForgeLine pins the bytes either way."""
+    ok, out = _run_cli(
+        MODULES["forgeline"]["cli"],
+        ["handoff", feature, f"specs/{feature}.md", "--root", "."],
+        root,
+        heartbeat=activity.heartbeat,
+    )
+    payload = next((item for item in _output_objects(out) if "state" in item), None)  # outermost object first
+    return payload or {"state": "blocked", "error": {"message": out[-500:]}}
+
+
+def _decision_handoff_action(
+    root: Path, feature: str, stage: _AssemblyStage, report: dict, activity: LiveActivity
+) -> str | None:
+    """Skip a table-less handoff, pause for goldens, fail a blocked export, or let compile run."""
+    probe = _handoff_probe(root, feature, activity)
+    state = probe.get("state")
+    if state == "ready_to_compile":
+        return None
+    if state == "no_decisions" and not stage.required:
+        return _skip_stage(stage, report, activity, "no_decision_table", "HSF_DECISIONS_NOT_DECLARED")
+    if state == "needs_goldens":
+        goldens = os.path.relpath(str(probe.get("goldens") or f"goldens/{feature}_decisions/cases.jsonl"), root.resolve())
+        report["paused_at"] = "decision_goldens"
+        report["next_command"] = (
+            f"review golden cases into {Path(goldens).as_posix()} (one JSON object per line), "
+            f"then rerun factory assemble {feature}"
+        )
+        activity.stage_finished(stage.module, stage.name, "skipped")
+        return "halt"
+    error = probe.get("error") or {}
+    _assembly_stage_failure(
+        stage, report, activity, str(error.get("message") or state), str(error.get("code") or "DECISION_HANDOFF_BLOCKED")
+    )
+    return "halt"
+
+
 def _assembly_hsf_action(
     root: Path,
     feature: str,
@@ -1130,11 +1197,14 @@ def _assembly_hsf_action(
     report: dict,
     activity: LiveActivity,
 ) -> str | None:
-    """Skip an undeclared decision spec or fail a required compile stage."""
+    """Route the decision stage: legacy HSF spec as before, SpecLine table through forge handoff, else skip."""
     if dry_run or stage.module != "hsf" or stage.name != "compile":
         return None
-    if (root / f"specs/{feature}.yaml").exists():
+    source = decision_source(root, feature)
+    if source == "hsf_spec":
         return None
+    if source == "decision_table":
+        return _decision_handoff_action(root, feature, stage, report, activity)
     if stage.required:
         _assembly_stage_failure(
             stage,
@@ -1144,16 +1214,27 @@ def _assembly_hsf_action(
             "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING",
         )
         return "halt"
-    report["stages"].append(
-        {
-            "module": stage.module,
-            "stage": stage.name,
-            "status": "skipped",
-            "reason": "no deterministic decision spec",
-        }
-    )
-    activity.stage_finished(stage.module, stage.name, "skipped")
-    return "skip"
+    return _skip_stage(stage, report, activity, "no deterministic decision spec")
+
+
+def _assembly_evidence_action(
+    root: Path,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> str | None:
+    """Run SpecLine evidence only when the acceptance contract is declared (or a release contract needs it)."""
+    if dry_run or (stage.module, stage.name) != ("specline", "evidence"):
+        return None
+    if (root / ".factory" / "workflow-audit-contract.json").is_file():
+        return None
+    if stage.required:
+        _assembly_stage_failure(
+            stage, report, activity, "acceptance_contract_missing", "ACCEPTANCE_EVIDENCE_REQUIRED_MISSING"
+        )
+        return "halt"
+    return _skip_stage(stage, report, activity, "acceptance_evidence_not_declared", "SPECLINE_EVIDENCE_NOT_APPLICABLE")
 
 
 def _assembly_dry_run(
@@ -1395,9 +1476,12 @@ def _assembly_stage_halts(
         return True
     if _assembly_forge_review(root, feature, dry_run, stage, report, activity):
         return True
-    hsf_action = _assembly_hsf_action(root, feature, dry_run, stage, report, activity)
-    if hsf_action is not None:
-        return hsf_action == "halt"
+    for action in (
+        _assembly_hsf_action(root, feature, dry_run, stage, report, activity),
+        _assembly_evidence_action(root, dry_run, stage, report, activity),
+    ):
+        if action is not None:
+            return action == "halt"
     if dry_run:
         _assembly_dry_run(stage, report, activity)
         return False

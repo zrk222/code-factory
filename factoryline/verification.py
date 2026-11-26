@@ -18,7 +18,7 @@ from typing import Any
 
 from .assembly import rollup_receipts
 from .contract import Receipt
-from .protocol import ASSEMBLY_STAGE_KEYS, BASE_REQUIRED_MODULES
+from .protocol import ASSEMBLY_STAGE_KEYS, BASE_REQUIRED_MODULES, CONDITIONAL_STAGE_KEYS
 
 
 LABELS = {
@@ -28,7 +28,11 @@ LABELS = {
     "prestige": "DESIGN",
 }
 BASE_REQUIRED = {
-    owner: frozenset(stage for module, stage in ASSEMBLY_STAGE_KEYS if module == owner)
+    owner: frozenset(
+        stage
+        for module, stage in ASSEMBLY_STAGE_KEYS
+        if module == owner and (module, stage) not in CONDITIONAL_STAGE_KEYS
+    )
     for owner in BASE_REQUIRED_MODULES
 }
 
@@ -62,10 +66,20 @@ def _declares_ui(
 def _declares_hsf(
     root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]
 ) -> bool:
+    from .assembly import decision_source
+
     return (
-        (root / "specs" / f"{feature}.yaml").is_file()
-        or any(row["module"] == "hsf" for row in rows)
+        decision_source(root, feature) is not None
+        or any(row["module"] == "hsf" and row["stage"] == "compile" for row in rows)
         or "hsf:compile" in declared
+    )
+
+
+def _declares_evidence(root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]) -> bool:
+    return (
+        (root / ".factory" / "workflow-audit-contract.json").is_file()
+        or any(row["module"] == "specline" and row["stage"] == "evidence" for row in rows)
+        or "specline:evidence" in declared
     )
 
 
@@ -81,6 +95,8 @@ def _required_stages(
         required["prestige"] = frozenset({"score"})
     if _declares_hsf(root, feature, rows, declared):
         required["hsf"] = frozenset({"compile"})
+    if _declares_evidence(root, feature, rows, declared):
+        required["specline"] = required["specline"] | {"evidence"}
     return required
 
 
@@ -831,17 +847,21 @@ def _assembly_scope_requirements(root, feature):
 def _begin_assembly_sequence(root, feature, run_id, stages, report) -> bool:
     """Declare required and applicable native stages before assembly runs them."""
 
-    from .assembly import forge_stage_skippable
+    from .assembly import decision_source, forge_stage_skippable
 
     def applies(stage):
         if forge_stage_skippable(root, feature, stage)[0]:
             return False  # assembly skips it; it is not part of this run's declared sequence
-        if stage.required or stage.module in BASE_REQUIRED_MODULES:
+        if stage.required:
+            return True
+        if (stage.module, stage.name) in CONDITIONAL_STAGE_KEYS:
+            return stage.present and (root / ".factory" / "workflow-audit-contract.json").is_file()
+        if stage.module in BASE_REQUIRED_MODULES:
             return True
         if stage.module == "prestige":
             return stage.present and (root / "smoke" / f"{feature}.ui").is_file()
         if stage.module == "hsf" and stage.name == "compile":
-            return stage.present and (root / "specs" / f"{feature}.yaml").is_file()
+            return stage.present and decision_source(root, feature) is not None
         return stage.present
 
     planned = [stage.stage_id for stage in stages if applies(stage)]
