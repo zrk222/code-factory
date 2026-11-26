@@ -3899,6 +3899,24 @@ rules:
       - patterns:
           - pattern: '`...${$X}...`'
           - pattern-not-inside: '$TAG`...`'
+          # A template passed straight to a recognized driver call is reported once, as
+          # that call's query argument, by the first sink.
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern: '$DB.query(`...`, ...)'
+                    - pattern: '$DB.execute(`...`, ...)'
+                    - pattern: '$DB.raw(`...`, ...)'
+                    - pattern: '$DB.$queryRawUnsafe(`...`, ...)'
+                    - pattern: '$DB.$executeRawUnsafe(`...`, ...)'
+                    - pattern: '$DB.all(`...`, ...)'
+                    - pattern: '$DB.get(`...`, ...)'
+                    - pattern: '$DB.run(`...`, ...)'
+                    - pattern: '$DB.exec(`...`)'
+                    - pattern: '$DB.prepare(`...`)'
+                - metavariable-regex:
+                    metavariable: $DB
+                    regex: '(?i)(^|\.)(db|database|conn|connection|client|pool|knex|sequelize|prisma|tx|trx|sql|pg|mysql|sqlite|\w*(db|conn|pool|client))$'
           - pattern-regex: '(?i)(?<![\w$\].)>])`\s*\(?\s*(?:select\s[^`]*?\bfrom\b|insert\s+into\b|update\s+[^\s`]+\s+set\b|delete\s+from\b|with\s+(?:recursive\s+)?\w+\s*(?:\([^)`]*\))?\s+as\s*\()[^`]*`'
           - focus-metavariable: $X
     paths:
