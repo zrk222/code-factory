@@ -80,3 +80,49 @@ def restore_filtered(archive, dest):
     with tarfile.open(archive) as tf:
         # ok: python.tarfile-extractall-without-filter
         tf.extractall(dest, filter="data")
+
+
+def _members_prefix_only(tar, base):
+    result = []
+    for member in tar:
+        abs_base = os.path.abspath(base)
+        abs_member = os.path.abspath(os.path.join(base, member.name))
+        if not abs_member.startswith(abs_base):
+            raise RuntimeError(member.name)
+        result.append(member)
+    return result
+
+
+def _members_with_sep(tar, base):
+    result = []
+    for member in tar:
+        abs_base = os.path.abspath(base) + os.sep
+        abs_member = os.path.abspath(os.path.join(base, member.name))
+        if not abs_member.startswith(abs_base):
+            raise RuntimeError(member.name)
+        result.append(member)
+    return result
+
+
+def _members_inline_sep(tar, base):
+    result = []
+    for member in tar:
+        abs_member = os.path.abspath(os.path.join(base, member.name))
+        if not abs_member.startswith(os.path.abspath(base) + os.sep):
+            raise RuntimeError(member.name)
+        result.append(member)
+    return result
+
+
+def restore_prefix_filtered(archive, dest):
+    with tarfile.open(archive) as tf:
+        # ruleid: python.tarfile-extractall-without-filter
+        tf.extractall(dest, members=_members_prefix_only(tf, dest))
+
+
+def restore_sep_filtered(archive, dest):
+    with tarfile.open(archive) as tf:
+        # ok: python.tarfile-extractall-without-filter
+        tf.extractall(dest, members=_members_with_sep(tf, dest))
+        # ok: python.tarfile-extractall-without-filter
+        tf.extractall(dest, members=_members_inline_sep(tf, dest))

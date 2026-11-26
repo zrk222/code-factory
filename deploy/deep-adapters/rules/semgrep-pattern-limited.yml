@@ -1892,6 +1892,33 @@ rules:
               - pattern-not: $T.extractall(..., filter=$F, ...)
               - pattern-not: $T.extract(..., filter=$F, ...)
               - pattern-not: $T.extractall(..., members=$M, ...)
+          # A members= filter defined in the module whose only containment test is a
+          # prefix check without a separator ("/base-evil" starts with "/base").
+          - patterns:
+              - pattern: $T.extractall(..., members=$MF(...), ...)
+              - pattern-not: $T.extractall(..., filter=$F, ...)
+              - pattern-inside: |
+                  def $MF(...):
+                    ...
+                    if not $ABS.startswith($PREFIX):
+                      ...
+                    ...
+                  ...
+              - metavariable-regex:
+                  metavariable: $PREFIX
+                  regex: '^(?!.*\bos\.sep\b)(?!.*\+\s*[''"]/[''"])(?!.*os\.path\.join\(.*,\s*(?:""|''''|[''"]/[''"])\s*\)).*$'
+              - pattern-not-inside: |
+                  def $MF(...):
+                    ...
+                    $PREFIX = <... os.sep ...>
+                    ...
+                  ...
+              - pattern-not-inside: |
+                  def $MF(...):
+                    ...
+                    $PREFIX = os.path.join(..., "")
+                    ...
+                  ...
       - pattern-either:
           - patterns:
               - pattern-either:
@@ -4398,8 +4425,21 @@ rules:
           - pattern: $BASE / $P.rstrip(...)
           - pattern: $BASE / $P
           - pattern: $BASE / f"...{$P}..."
+          # A parameter concatenated with a prefix or suffix, or sliced or indexed.
+          - pattern: $BASE / ($A + $P)
+          - pattern: $BASE / ($P + $A)
+          - pattern: $BASE / $P[$I]
+          - pattern: $BASE / $P[$S:]
+          - pattern: $BASE / $P[:$E]
+          - pattern: $BASE / $P[$S:$E]
+          - pattern: os.path.join($BASE, ..., $A + $P, ...)
+          - pattern: os.path.join($BASE, ..., $P + $A, ...)
+          - pattern: os.path.join($BASE, ..., $P[$I], ...)
+          - pattern: os.path.join($BASE, ..., $P[$S:], ...)
+          - pattern: os.path.join($BASE, ..., $P[:$E], ...)
+          - pattern: os.path.join($BASE, ..., $P[$S:$E], ...)
           - pattern: Path($BASE, ..., $P, ...)
-      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|filename|path|relpath|rel_path|subpath|sub_path|key|id|slug|target|dest|destination|member|entry|recipe|template|page|doc|document|resource|asset|upload|attachment)\w*$'}
+      - metavariable-regex: {metavariable: $P, regex: '^(?i)\w*(name|file|filename|path|relpath|rel_path|subpath|sub_path|key|id|token|uri|slug|target|dest|destination|member|entry|recipe|template|page|doc|document|resource|asset|upload|attachment)\w*$'}
       - metavariable-regex: {metavariable: $P, regex: '^(?!(?i:req|request|r|ctx|c|context|w|writer|response|res|resp|\w*(base|root|dir|directory|folder|home|cwd|prefix)\w*)$)'}
       - metavariable-pattern:
           metavariable: $BASE
@@ -4407,18 +4447,34 @@ rules:
             - pattern-not: $P
             - pattern-not: '"..."'
       - pattern-either:
-          - pattern-inside: |
-              def $F(...):
-                ...
-                $SINK(...)
-                ...
-          - pattern-inside: |
-              def $F(...):
-                ...
-                with $SINK(...) as $FH:
-                  ...
-                ...
-      - metavariable-regex: {metavariable: $SINK, regex: '^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$'}
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      def $F(...):
+                        ...
+                        $SINK(...)
+                        ...
+                  - pattern-inside: |
+                      def $F(...):
+                        ...
+                        with $SINK(...) as $FH:
+                          ...
+                        ...
+              - metavariable-regex: {metavariable: $SINK, regex: '^(open|io\.open|os\.remove|os\.unlink|os\.makedirs|os\.rename|os\.replace|shutil\.\w+|send_file|send_from_directory|FileResponse|os\.listdir|os\.scandir|\w+\.(read_text|read_bytes|write_text|write_bytes|open|unlink|mkdir|rmdir|rename|iterdir))$'}
+          # A path-building helper (_make_file_path, cache_path) returns the joined
+          # path itself for its callers to open.
+          - patterns:
+              - pattern-inside: |
+                  def $F(...):
+                    ...
+              - pattern-either:
+                  - pattern-inside: return $BASE / $RHS
+                  - pattern-inside: return os.path.join($BASE, ...)
+                  - pattern-inside: return Path($BASE, ...)
+              - metavariable-regex: {metavariable: $F, regex: '^(?i)_*\w*(path|file)\w*$'}
+              # Only a base the helper owns (an attribute or a module constant): a join
+              # utility given its base by the caller leaves containment to that caller.
+              - metavariable-regex: {metavariable: $BASE, regex: '^(?:(?:self|cls)\.\w+(?:\.\w+)*|[A-Z][A-Z0-9_]*)$'}
       # Containment clears the join only through a guard that decides the use:
       # the joined value is assigned and the next statement compares that same
       # value, normalized, with the join's own base (as written or normalized),

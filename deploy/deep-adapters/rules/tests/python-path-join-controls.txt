@@ -226,3 +226,43 @@ def write_checked(root_dir, filename, payload):
         raise ValueError(filename)
     with open(target, 'w') as handle:
         handle.write(payload)
+
+
+class SessionFiles:
+    def __init__(self, base_dir):
+        self.base_dir = base_dir
+        self.prefix = "session"
+
+    def _make_file_path(self, token):
+        # ruleid: python.parameter-path-join-without-containment
+        return self.base_dir / (self.prefix + token)
+
+    def _make_checked_path(self, token):
+        # ok: python.parameter-path-join-without-containment
+        file_path = (self.base_dir / (self.prefix + token)).resolve()
+        if not file_path.is_relative_to(self.base_dir.resolve()):
+            raise ValueError(token)
+        return file_path
+
+
+def read_suffixed(base, name):
+    # ruleid: python.parameter-path-join-without-containment
+    with open(os.path.join(base, name + ".json")) as f:
+        return f.read()
+
+
+def read_sliced(root, uri):
+    # ruleid: python.parameter-path-join-without-containment
+    target = root / uri[len("local://"):]
+    return target.read_text()
+
+
+def first_entry(root, entry_names):
+    # ruleid: python.parameter-path-join-without-containment
+    target = root / entry_names[0]
+    return target.read_text()
+
+
+def describe(base, name):
+    # ok: python.parameter-path-join-without-containment
+    return str(base / ("preview-" + name))
