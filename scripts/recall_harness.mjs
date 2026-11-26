@@ -66,7 +66,7 @@ export function familiesFor(cwes) {
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export const caseDigest = cases => sha256(JSON.stringify(cases.map(sortKeys)));
 
-function sortKeys(value) {
+export function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.keys(value).sort().map(key => [key, sortKeys(value[key])]));
