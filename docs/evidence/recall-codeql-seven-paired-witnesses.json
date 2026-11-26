@@ -240,5 +240,59 @@
   "benign_controls": "not_run",
   "scorer_commit": "f88cb129eadc91a691a9181a81c20e6d2da37325",
   "reference_receipt_commit": "123622f6058427a1f7468463e9c4685b540ed6ee",
-  "local_scores_sha256": "13fc0694e56523ce2ae3761965ce02a55d37f807f2543fb1739ce1e0f86c1471"
+  "local_scores_sha256": "13fc0694e56523ce2ae3761965ce02a55d37f807f2543fb1739ce1e0f86c1471",
+  "durable_import": {
+    "commit": "20ab76b7b97afbe2d21ea4fa36dad7b781671886",
+    "command": "node scripts/recall_codeql_pairs.mjs BUNDLE OUTPUT",
+    "scope": "Local replay of previously captured old and fixed CodeQL data",
+    "imported_archives": 14,
+    "reference_hunk_hits": 39,
+    "native_readback_sha256": "8c58b31833d62fb472fbf3ee48bce618c0e91351bf886ec8563cbfbae50bea90",
+    "workflow_receipt_sha256": "4b86e5d508826d6a0d62a1e4c64a396718fafba5a2aea292ccc664bad8e05905",
+    "harness_tests_passed": 64,
+    "intake_regression_passed": true
+  },
+  "git_preparation_benchmark": {
+    "schema": "factory.recall-git-materialization-benchmark.v1",
+    "scope": "Local alternating replay on already fetched Git objects",
+    "scorer_source_sha256": "d78dec78ad09c04ca9498e59a63ba75cb11cd2d096e07a66be9b876aee09685b",
+    "commit_ids": [
+      "084c9291aa5becfcb5418fce2b83d61def995824",
+      "1b70f9b673259360b6a2339c4bd97db9ea6e552f"
+    ],
+    "paths_sha256": "1c79710a2ab4c142e9bd13a11bfbb4385c7df188883c16cd36880b049ed5c9ed",
+    "node": "v22.23.4",
+    "git": "git version 2.51.2.windows.1",
+    "pairs": [
+      {
+        "pair": 1,
+        "order": "per-blob-first",
+        "batch_ms": 124.9980999999998,
+        "per_blob_ms": 5427.1821,
+        "packets": 64,
+        "bytes": 258108,
+        "byte_identical": true
+      },
+      {
+        "pair": 2,
+        "order": "batch-first",
+        "batch_ms": 138.3805000000002,
+        "per_blob_ms": 5247.1046,
+        "packets": 64,
+        "bytes": 258108,
+        "byte_identical": true
+      },
+      {
+        "pair": 3,
+        "order": "per-blob-first",
+        "batch_ms": 111.18579999999929,
+        "per_blob_ms": 4925.600200000001,
+        "packets": 64,
+        "bytes": 258108,
+        "byte_identical": true
+      }
+    ],
+    "median_batch_ms": 124.9980999999998,
+    "median_per_blob_ms": 5247.1046
+  }
 }
