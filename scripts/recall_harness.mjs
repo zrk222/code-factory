@@ -1636,7 +1636,8 @@ async function controlCheckpointIntact(root, delta) {
 async function controlDeltas_(opts, engine, { control_timeout_seconds }) {
   const [before, after] = [].concat(opts.rules);
   const excludedDirs = controlExcludedDirectories(opts);
-  const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/**`, '--exclude', `**/${path}/**`]);
+  // A directory-only ignore pattern covers all depths and preserves files with the same name.
+  const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/`]);
   const timeoutArgs = control_timeout_seconds === undefined ? [] : [`--timeout=${control_timeout_seconds}`];
   const rules = opts.ruleFingerprints;
   const base = { profile: JSON.parse(utf8(opts.profileBytes)),

@@ -579,6 +579,10 @@ async function feederFixture(run, row = feederRow) {
       "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
       "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
+      "if (control && ruleText.includes('# assert-directory-excludes')) {",
+      "  const exclusions = process.argv.flatMap((arg, index) => arg === '--exclude' ? [process.argv[index + 1]] : []);",
+      "  if (JSON.stringify(exclusions) !== JSON.stringify(['build/', 'fixture.py/', 'test/'])) throw Error('Wrong scanner directory exclusions');",
+      "}",
       "const incomplete = !old && ruleText.includes('# incomplete');",
       "const devTimeout = old && (ruleText.includes('# persistent-case-timeout') || (ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial'));",
       "const recoveredControl = process.argv.includes('--timeout=15') && process.argv.includes('--jobs=1');",
@@ -1152,19 +1156,22 @@ test('declared control directories are excluded and unrelated missing paths rema
   const control = join(root, 'control'), output = join(root, 'controls.json');
   const run = () => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls', '--rules', baseline,
     '--rules', baseline, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
-    '--dir', control, '--out', output, '--control-exclude', 'test', '--control-exclude', 'build'],
+    '--dir', control, '--out', output, '--control-exclude', 'test', '--control-exclude', 'build',
+    '--control-exclude', 'fixture.py'],
   { encoding: 'utf8', timeout: 20000 });
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# assert-directory-excludes\n');
   for (const dir of ['build', 'test']) {
     mkdirSync(join(control, dir), { recursive: true });
     writeFileSync(join(control, dir, 'sample.py'), '# owned excluded control');
   }
   writeFileSync(join(control, 'sample.py'), '# owned in-scope control');
+  writeFileSync(join(control, 'fixture.py'), '# a file of the same name is still eligible');
   const success = run();
   assert.equal(success.status, 0, success.stderr);
   const receipt = JSON.parse(readFileSync(output, 'utf8'));
-  assert.deepEqual(receipt.control_excluded_directories, ['build', 'test']);
+  assert.deepEqual(receipt.control_excluded_directories, ['build', 'fixture.py', 'test']);
   for (const side of Object.values(receipt.deltas[0].scan_sides)) {
-    assert.equal(side.control_coverage.expected, 1);
+    assert.equal(side.control_coverage.expected, 2);
     assert.deepEqual(side.control_coverage.excluded.map(item => item.path), ['build/sample.py', 'test/sample.py']);
   }
   writeFileSync(join(control, 'unreported.py'), '# missing coverage outside exclusions');
