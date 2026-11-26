@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"github.com/huandu/go-sqlbuilder"
+	"gorm.io/gorm/clause"
 	"os/exec"
 	"path/filepath"
 
@@ -41,6 +43,8 @@ func (p *EventsPersister) Events(filter *EventsFilter) {
 	finder := p.DB.Model(&Event{})
 	// ruleid: go.parameter-sql-text
 	finder = finder.Order(filter.SortOn)
+	// ok: go.parameter-sql-text
+	finder = finder.Order(clause.OrderByColumn{Column: clause.Column{Name: filter.SortOn}})
 	// ok: go.parameter-sql-text
 	finder = finder.Order("created_at desc")
 	// ok: go.parameter-sql-text
@@ -165,4 +169,28 @@ func logFile(path string) error {
 func statusIn(dir string) error {
 	// ok: go.parameter-shell-command
 	return exec.Command("git", "-C", dir, "status").Run()
+}
+
+
+type sqlProjectionSettings struct { column string }
+
+func (s sqlProjectionSettings) rawProjection() (string, []interface{}) {
+	builder := sqlbuilder.NewSelectBuilder()
+	// ruleid: go.parameter-sql-text
+	builder.Select(fmt.Sprintf("TRIM('%s')", sqlbuilder.Escape(s.column)))
+	return builder.Build()
+}
+
+func (s sqlProjectionSettings) boundProjection() (string, []interface{}) {
+	builder := sqlbuilder.NewSelectBuilder()
+	// ok: go.parameter-sql-text
+	builder.Select(fmt.Sprintf("TRIM(%s)", builder.Var(s.column)))
+	return builder.Build()
+}
+
+func constantProjection() (string, []interface{}) {
+	builder := sqlbuilder.NewSelectBuilder()
+	// ok: go.parameter-sql-text
+	builder.Select(fmt.Sprintf("TRIM('%s')", sqlbuilder.Escape("fixed")))
+	return builder.Build()
 }

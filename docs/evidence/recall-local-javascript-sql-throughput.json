@@ -1,0 +1,42 @@
+{
+  "schema": "factory.recall-local-javascript-sql-throughput.v1",
+  "baseline_rules_sha256": "ee319f151e87fb44621e6190ca826b3d47058baf947bce02db323ebbc4539d42",
+  "candidate_rules_sha256": "be3caa6df591c18d90fcb55d248efd2a69139fe07a02c34161fef9aa195c0163",
+  "engine": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "observed_exposed_cases": 161,
+  "case_inputs_and_strict_hunk_spans_unchanged": true,
+  "fixed_side_spans_unchanged": true,
+  "legacy_native_fixture_findings_unchanged": 294,
+  "ordinary_paired_controls": 17,
+  "ordinary_paired_controls_exact_alert_count": 39,
+  "pdfjs": {
+    "source_tree": {
+      "sha256": "a054c4d3cd1ea43460dc58bed82f13f39de4448584b5d6ceb1124bf3e0a1e834",
+      "entries": 2754
+    },
+    "declared_path_exclusions": 6,
+    "budget_30_seconds": {
+      "before_files": 378,
+      "after_files": 379,
+      "before_timeouts": 1,
+      "after_timeouts": 0
+    },
+    "budget_60_seconds": {
+      "files_each": 379,
+      "timeouts_each": 0,
+      "unchanged_alerts": 1
+    }
+  },
+  "receipt_sha256": {
+    "javascript-sql-formal-score": "77a2a5335d37809fca057c393089af2648dff80f86e7f79410768780f616806c",
+    "javascript-sql-18-controls": "afcfab37f45d3a553c6c6cc94fae995ac5b39e3d9c351c00e8bad7feb285f7a0",
+    "javascript-sql-pdf-60-controls": "e1f40629372823e23d26e5aa1532f9623cb30a60f695aad6e9ef4b590c639678",
+    "javascript-sql-formal-native-parity": "6405951e76bdd17e344adbf3bccd14cbd2b2c40da467c552008ecb6c7d6710d7"
+  },
+  "scope": "Local OpenGrep comparisons with pinned benign snapshots and unchanged explicit scope. The 60-second run is a diagnostic on both arms."
+}

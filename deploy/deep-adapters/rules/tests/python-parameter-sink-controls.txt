@@ -126,3 +126,10 @@ def restore_sep_filtered(archive, dest):
         tf.extractall(dest, members=_members_with_sep(tf, dest))
         # ok: python.tarfile-extractall-without-filter
         tf.extractall(dest, members=_members_inline_sep(tf, dest))
+
+
+def use_query_builder(conn, table, user):
+    # ok: python.parameter-sql-text
+    conn.execute(select(table).where(table.c.user == user))
+    # ok: python.parameter-sql-text
+    conn.execute(insert(table).values(user=user))

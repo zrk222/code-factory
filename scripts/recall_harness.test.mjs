@@ -850,6 +850,35 @@ async function feederFixture(run, row = feederRow) {
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
+test('live scoring and replay require rule proof for generic engine skips', () => feederFixture(async fixture => {
+  const { root, workdir, manifest, profile, baseline, opts } = fixture;
+  const scanner = join(root, 'scanner.mjs');
+  const stub = readFileSync(scanner, 'utf8');
+  const marker = 'const nativeErrors =';
+  assert.ok(stub.includes(marker));
+  writeFileSync(scanner, stub.replace(marker, `skipped.push({ path: 'sample.py', reason: ruleText.includes('# size') ? 'exceeded_size_limit' : 'always_skipped' });\n${marker}`));
+  writeFileSync(profile, JSON.stringify({ ...JSON.parse(readFileSync(profile, 'utf8')), tool_version: '2.1.0' }));
+  const input = JSON.parse(readFileSync(manifest, 'utf8')).cases[0];
+  for (const [ruleExcludes, sizeSkip, outcome] of [
+    [true, false, 'miss'], [false, false, 'coverage_incomplete'], [true, true, 'coverage_incomplete'],
+  ]) {
+    const rules = 'rules:\n  - id: fixture.review\n    languages: [python]\n    metadata: {cwe: [CWE-79]}\n# clean-miss\n'
+      + (ruleExcludes ? '    paths: {exclude: ["**/*.py"]}\n' : '') + (sizeSkip ? '# size\n' : '');
+    writeFileSync(baseline, rules);
+    const scored = await scoreManifest(manifest, baseline, { ...opts, 'scanner-path-policy': 'true' });
+    const row = scored.cases[0];
+    assert.equal(row.outcome, outcome);
+    assert.equal(row.file_coverage.old[0].reason, outcome === 'miss' ? 'scanner_path_policy'
+      : sizeSkip ? 'exceeded_size_limit' : 'always_skipped');
+    const retained = {};
+    assert.equal(checkpointArtifactsIntact(workdir, row, retained), true);
+    const replayed = replayCaseScore(realpathSync(workdir), input, row, retained, ruleFamilies(rules),
+      scored.scope, compileScannerPathPolicy(rules));
+    assert.equal(replayed.outcome, outcome);
+    assert.deepEqual(replayed.file_coverage, row.file_coverage);
+  }
+}));
+
 test('score rejects invalid options before reading a manifest or invoking the engine', () => {
   const args = ['scripts/recall_harness.mjs', 'score', '--manifest', 'absent-fixture.json',
     '--rules', 'absent-rules.yml', '--out', 'unused-score.json'];

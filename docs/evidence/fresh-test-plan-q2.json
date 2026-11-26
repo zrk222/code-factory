@@ -1,0 +1,106 @@
+{
+  "schema": "factory.recall-heldout-plan.v1",
+  "registered_at": "2026-11-26T12:13:03.312378+00:00",
+  "cohort": {
+    "file": "q2.json",
+    "sha256": "28063dd52a9552ef46429fa732d127a69d659dc9851d9c30021641105e4bf73f",
+    "source": "docs/evidence/heldout-recall-manifest-20261125-q2.json",
+    "freeze_commit": "2b08e25fb65e189a5f71173cda00ab99bfda219c",
+    "cases_sha256": "d2d39fd5ee4de3195b8c28c98eb569590167194d326abcdf0b465be830d36e8d",
+    "registered": 282,
+    "exclusions": {
+      "prior_ids": 556,
+      "prior_fix_commits": 1288
+    },
+    "exposure_crosscheck": "Zero advisory ID and fix SHA overlap with the later registered 161 cases. Original freeze exclusions remain in force."
+  },
+  "candidate": {
+    "file": "candidate.yml",
+    "sha256": "ee319f151e87fb44621e6190ca826b3d47058baf947bce02db323ebbc4539d42",
+    "commit": "1e77f9c800f0efe816b4411ae9b6cb8c914e333d",
+    "exposed_evidence": "docs/evidence/recall-exposed-161-csharp-projection-ee319f15.json"
+  },
+  "baseline": {
+    "file": "baseline.yml",
+    "sha256": "816bbef307dee1dd35df44232328ea17501a9c442026b170e613d09ded4e0747"
+  },
+  "harness": {
+    "commit": "52eb74dcd53b3531eab7d54aafb491c2e9616b2d",
+    "files": [
+      {
+        "file": "scripts/recall_harness.mjs",
+        "sha256": "a4e4ddd458d74eeb68bfa9ecaeb68d5ecc040888941da2c52b039ee7e42769b2"
+      },
+      {
+        "file": "scripts/recall_coverage.mjs",
+        "sha256": "431f26f4646be156b78cee2c46aae8e1cb27d4f6585fd9a0bae2a624c050c314"
+      },
+      {
+        "file": "scripts/recall_losses.mjs",
+        "sha256": "b5a622969c6f44c1aa267f0780f5083d18e033316e0e0155a9266093349809d8"
+      }
+    ]
+  },
+  "analyses": [
+    {
+      "id": "primary",
+      "engine": "OpenGrep 2.1.0 Windows x64",
+      "engine_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+      "profile": {
+        "file": "primary-profile.json",
+        "sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6"
+      },
+      "scanner_path_policy": true
+    },
+    {
+      "id": "legacy",
+      "engine": "OpenGrep 1.15.0 Windows x64",
+      "engine_sha256": "3f54f4f5c4cb6d10a513c0e7b1c15d40e45a4363d141d141480f7e9c82dd49c6",
+      "profile": {
+        "file": "legacy-profile.json",
+        "sha256": "16b921e37dbbddd709ede7f480c9ec934b0fd3b686ff29cb250930e07bbe42cd"
+      },
+      "scanner_path_policy": false
+    }
+  ],
+  "settings": {
+    "scope": "ecosystem",
+    "case_workers": 4,
+    "engine_args": [
+      "--timeout=15",
+      "--jobs=1"
+    ],
+    "fresh_evaluation_count": 1,
+    "retry": "Checkpoint-bound identical inputs only. Serial retry for timeouts per the harness. Keep unknown/error/incomplete rows in the denominator."
+  },
+  "metrics": {
+    "primary": "Strict CWE-family hunk recall on old-side git diff -U5 lines in in-language non-test changed files, out of 282 registered advisories.",
+    "include": [
+      "Wilson 95% intervals on the registered denominator",
+      "per-ecosystem and per-family rates",
+      "paired gains and losses",
+      "fixed-side residuals",
+      "coverage gaps",
+      "timeouts",
+      "unfetchable and unknown counts"
+    ],
+    "separate": "The whole-repository flagged-anywhere metric requires both full-tree arms and all 18 control densities. Report as pending until those observations exist."
+  },
+  "control_protocol": {
+    "panel": "18 historical byte-pinned controls from the #415 locus manifest",
+    "locator_evidence_sha256": "3d503c72e1ecfbe6f84a5a5d2a5f22d0555475afe5a9d8c636d6e3ab2bc9103e",
+    "directory_test_policy": [
+      "build",
+      "test"
+    ],
+    "maximum_net_alert_increase": 0,
+    "exact_exclusions": "All declared paths remain fingerprinted and dispositions compared across arms.",
+    "scope": "Separate qualification. A candidate can be measured on the fresh cohort while release qualification is pending."
+  },
+  "review_protocol": {
+    "state": "pending",
+    "sample": "Candidate primary hunk alerts, deduplicated by exact source/rule/span and capped at 25 per rule, stable seed 20261126.",
+    "review": "Matched fresh high-effort Claude and Codex reviewers use the same blinded context. Fable adjudicates disagreements. Keep the key and fix diffs sealed until labels are complete."
+  },
+  "isolation": "Freeze this plan and both rule digests before opening any Q2 source. Report the first completed result regardless of direction. Retire this cohort from fresh evaluation if it informs later tuning."
+}

@@ -24,6 +24,8 @@ factoryline/deep_audit.py text eol=lf
 factoryline/data/protocol_publications.json text eol=lf
 docs/evidence/*-exposed-*.json text eol=lf
 docs/evidence/precision-adjudicated-*.json text eol=lf
+# Nested review packets and verdicts are checked against their committed SHA-256 digests.
+docs/evidence/precision-exposed-*/**/*.json text eol=lf
 docs/evidence/rule-confidence.json text eol=lf
 docs/evidence/review-parts-*/part-*.json text eol=lf
 docs/evidence/recall-evaluation-*.json text eol=lf

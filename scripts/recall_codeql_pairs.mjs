@@ -3,6 +3,8 @@
 // A v1 bundle pins the query for each targeted case. A v2 bundle pins a
 // separate plan that assigns one query inventory to each supported ecosystem.
 // Each old/fixed capture pins observation JSON, SARIF and the CodeQL source ZIP.
+// A v2 row may reuse a verified capture from another advisory in the same plan.
+// A cohort bundle joins pinned, advisory-disjoint pair bundles from one registry.
 // Artifact paths are relative to the bundle, and archive prefixes identify source roots.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -15,6 +17,7 @@ import { inputFingerprint } from './verify_registered_recall.mjs';
 
 const FORMAT = 'factory.recall-codeql-pairs.v1';
 const PLAN_BUNDLE = 'factory.recall-codeql-pairs.v2';
+const COHORT_BUNDLE = 'factory.recall-codeql-cohort.v1';
 const digest = /^[0-9a-f]{64}$/;
 const revision = /^[0-9a-f]{40}$/;
 const relativeEntry = path => typeof path === 'string' && !path.includes('\\')
@@ -34,10 +37,14 @@ function boundPath(root, pin) {
   return reviewCapturePath(root, pin.path);
 }
 
-function artifact(root, pin) {
-  const bytes = readFileSync(boundPath(root, pin));
+function readPinnedArtifact(path, pin) {
+  const bytes = readFileSync(path);
   requireProof(sha256(bytes) === pin.sha256, 'Artifact fingerprint differs for ' + pin.path);
   return bytes;
+}
+
+function artifact(root, pin) {
+  return readPinnedArtifact(boundPath(root, pin), pin);
 }
 
 function queryBinding(root, id, pin) {
@@ -82,6 +89,7 @@ def digest_of(content):
         digest.update(chunk)
     return digest.hexdigest()
 
+bindings = {}
 for item in json.load(sys.stdin):
     with open(item["archive"], "rb") as content:
         if digest_of(content) != item["sha256"]:
@@ -89,6 +97,7 @@ for item in json.load(sys.stdin):
         content.seek(0)
         with zipfile.ZipFile(content) as archive:
             entries = Counter(entry.filename for entry in archive.infolist())
+            verified = {}
             for packet in item["packets"]:
                 name = item["prefix"] + "/" + packet["path"] if item["prefix"] else packet["path"]
                 if entries[name] != 1:
@@ -97,6 +106,20 @@ for item in json.load(sys.stdin):
                 with archive.open(entry) as data:
                     if entry.file_size != packet["bytes"] or digest_of(data) != packet["sha256"]:
                         raise ValueError("Source archive packet bytes differ for " + item["side"] + ": " + packet["path"])
+                verified[packet["path"]] = {"state": "packet_verified", "sha256": packet["sha256"]}
+            side_bindings = []
+            for path in item["references"]:
+                name = item["prefix"] + "/" + path if item["prefix"] else path
+                if path in verified:
+                    binding = verified[path]
+                elif entries[name] == 1 and not archive.getinfo(name).is_dir():
+                    with archive.open(name) as data:
+                        binding = {"state": "archive_verified", "sha256": digest_of(data)}
+                else:
+                    binding = {"state": "ambiguous" if entries[name] > 1 else "missing"}
+                side_bindings.append({"path": path, **binding})
+            bindings[item["side"]] = side_bindings
+print(json.dumps(bindings, separators=(",", ":")))
 `;
 
 function nativeUriPath(uri) {
@@ -138,6 +161,30 @@ function nativeArtifactPath(location, run, packetPaths, roots) {
   return indexed;
 }
 
+function traceFlows(results, resolvePath) {
+  return results.map(result => (result.codeFlows ?? []).map(flow =>
+    (flow.threadFlows ?? []).map(thread => (thread.locations ?? []).map(step => {
+      const location = step.location?.physicalLocation;
+      if (!location?.artifactLocation) return { state: 'nonphysical' };
+      const path = resolvePath(location.artifactLocation);
+      const line = location.region?.startLine;
+      return Number.isSafeInteger(line) && line > 0 ? { path, line } : { path, state: 'invalid_line' };
+    }))));
+}
+
+function captureFingerprints(capture, revision, policy, packets, findings, flows) {
+  const locations = findings.map(({ rule, path, line, span, trace }) =>
+    ({ rule, path, line, span: span ?? null, trace: trace ?? [] }));
+  const steps = flows.flat(3);
+  return { revision, query_sha256: policy.queriesSha256 ?? policy.queries[0].sha256,
+    packet_list_sha256: caseDigest(packets), observation_sha256: capture.observation.sha256,
+    sarif_sha256: capture.sarif.sha256, archive_sha256: capture.archive.sha256,
+    location_trace_sha256: caseDigest(locations), flow_trace_sha256: caseDigest(flows),
+    trace_steps: steps.length, nonphysical_trace_steps: steps.filter(step => step.state === 'nonphysical').length,
+    invalid_trace_steps: steps.filter(step => step.state === 'invalid_line').length,
+    traced_findings: locations.filter(row => row.trace.length).length };
+}
+
 function nativeCapture(root, capture, side, input, engineVersion, policy) {
   const observed = json(artifact(root, capture?.observation));
   requireProof(observed.case === input.ghsa && observed.side === side && observed.revision === input.revisions[side],
@@ -162,6 +209,9 @@ function nativeCapture(root, capture, side, input, engineVersion, policy) {
     && Array.isArray(run.results) && Array.isArray(run.invocations) && run.invocations.length > 0
     && run.invocations.every(call => call.executionSuccessful === true
       && !call.toolExecutionNotifications?.some(note => note.level === 'error')), 'Unqualified CodeQL report for ' + side);
+  requireProof(!run.invocations.some(call => call.toolExecutionNotifications?.some(note =>
+    note.descriptor?.id === 'java/autobuilder/buildless/classpath-from-tool-failed')),
+    'Unqualified CodeQL Java classpath for ' + side);
   const descriptors = new Map((driver.rules ?? []).map(rule => [rule.id, rule]));
   requireProof(descriptors.size === policy.queries.length && descriptors.size === driver.rules?.length
     && run.results.every(result => descriptors.has(result.ruleId)) && run.results.length === observed.reported_alerts,
@@ -179,14 +229,17 @@ function nativeCapture(root, capture, side, input, engineVersion, policy) {
     const archiveRoot = '/' + capture.archive_prefix.replace(/^([a-z])_\//i, (_, drive) => drive.toUpperCase() + ':/');
     roots.unshift(archiveRoot);
   }
-  const findings = sarifFindings(report, packetPaths, id => id,
-    (location, run) => nativeArtifactPath(location, run, packetPaths, roots));
+  const resolvePath = location => nativeArtifactPath(location, run, packetPaths, roots);
+  const findings = sarifFindings(report, packetPaths, id => id, resolvePath);
   requireProof(findings.length === run.results.length
     && findings.every(finding => finding.path && Number.isSafeInteger(finding.line) && finding.line > 0),
     'Native alert location is missing for ' + side);
-  return { findings,
+  const flows = traceFlows(run.results, resolvePath);
+  const references = [...new Set([...findings.map(row => row.path),
+    ...flows.flat(3).map(step => step.path).filter(Boolean)])].sort();
+  return { findings, flows, fingerprints: captureFingerprints(capture, input.revisions[side], policy, packets, findings, flows),
     archive: { archive: boundPath(root, capture.archive), sha256: capture.archive.sha256,
-      prefix: capture.archive_prefix, packets, side: input.ghsa + '/' + side } };
+      prefix: capture.archive_prefix, packets, references, side: input.ghsa + '/' + side } };
 }
 
 function nativeDisposition(native, pattern, outcome) {
@@ -194,8 +247,23 @@ function nativeDisposition(native, pattern, outcome) {
   if (outcome === 'hit') return 'overlap';
   if (outcome !== 'miss') return 'pattern_unresolved';
   if (native.fixed_hunk_residuals || pattern.fix_side_residual.length) return 'fixed_side_residual';
+  if (Object.values(native.fingerprints).some(side => side.trace_source_states.missing
+    || side.trace_source_states.ambiguous || side.invalid_trace_steps)) return 'native_trace_source_unresolved';
   return completeFixedCoverage(pattern.file_coverage?.fixed, pattern.source_packets?.fixed)
     ? 'eligible' : 'fixed_coverage_unresolved';
+}
+
+function searchedFileHit(row, outcome) {
+  return ['hit', 'miss'].includes(outcome) && row.file_hit;
+}
+
+function verifiedPatternOutcome(row) {
+  const outcome = outcomeOf(row);
+  requireProof(row.outcome === outcome && Array.isArray(row.fix_side_residual)
+    && typeof row.file_hit === 'boolean', 'Pattern outcome evidence differs for ' + row.ghsa);
+  requireProof(outcome !== 'hit' || (row.hunk_findings?.length > 0 && row.file_hit),
+    'Pattern hunk evidence differs for ' + row.ghsa);
+  return outcome;
 }
 
 function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, observations) {
@@ -218,22 +286,27 @@ function joinPatternScore(pin, manifestSha, casesSha, cases, referenceCases, obs
     requireProof(caseDigest([metadata]) === caseDigest([registered])
       && inputFingerprint(row) === referenceCases.get(row.ghsa).input_sha256,
     'Pattern case input differs from registered evidence for ' + row.ghsa);
-    const outcome = outcomeOf(row);
-    requireProof(row.outcome === outcome && Array.isArray(row.fix_side_residual)
-      && (outcome !== 'hit' || row.hunk_findings?.length > 0), 'Pattern outcome evidence differs for ' + row.ghsa);
+    const outcome = verifiedPatternOutcome(row);
     pattern.set(row.ghsa, row);
     outcomes.set(row.ghsa, outcome);
   }
   const hunkHits = [...outcomes.values()].filter(outcome => outcome === 'hit').length;
-  requireProof(score.summary.hunk_hits === hunkHits, 'Pattern hit count differs');
+  const fileHits = [...pattern].filter(([id, row]) => searchedFileHit(row, outcomes.get(id))).length;
+  requireProof(score.summary.hunk_hits === hunkHits && score.summary.file_hits === fileHits,
+    'Pattern hit count differs');
   const dispositions = observations.map(native => {
     const row = pattern.get(native.advisory), outcome = outcomes.get(native.advisory);
     return { advisory: native.advisory, input_sha256: native.input_sha256, pattern_outcome: outcome,
+      pattern_file_hit: searchedFileHit(row, outcome), native_hunk_hit: native.hunk_hit, native_file_hit: native.file_hit,
       disposition: nativeDisposition(native, row, outcome) };
   });
   const additions = dispositions.filter(row => row.disposition === 'eligible').length;
-  return { scope: 'supplemental paired comparison', pattern_score_sha256: pin.sha256, pattern_hunk_hits: hunkHits,
+  const newHunkHits = dispositions.filter(row => row.native_hunk_hit && row.pattern_outcome !== 'hit').length;
+  const newFileHits = dispositions.filter(row => row.native_file_hit && !row.pattern_file_hit).length;
+  return { scope: 'supplemental paired comparison', pattern_score_sha256: pin.sha256,
+    pattern_hunk_hits: hunkHits, pattern_file_hits: fileHits,
     verified_pattern_cases: pattern.size, verified_native_pairs: dispositions.length,
+    observed_union_hunk_hits: hunkHits + newHunkHits, observed_union_file_hits: fileHits + newFileHits,
     eligible_native_additions: additions, combined_hunk_hits: hunkHits + additions, cases: dispositions };
 }
 
@@ -254,7 +327,30 @@ function readPairRegistry(root, bundle) {
   return { manifest, manifestDigest, reference, cases, referenceCases };
 }
 
-function scorePreparedPair(row, { root, cases, referenceCases, policies, engineVersion, archives }) {
+function crossFileTraceMatches(old, fixed, hunks, families, rules) {
+  const sinkKey = ({ rule, path }) => JSON.stringify([rule, path]);
+  const fixedSinks = new Set(fixed.findings.map(sinkKey));
+  const matches = [];
+  for (const [index, finding] of old.findings.entries()) {
+    const { rule, path, line } = finding;
+    if (Object.hasOwn(hunks, path) || !rules[rule]?.some(family => families.includes(family))) continue;
+    for (const thread of old.flows[index].flat()) {
+      const steps = thread.filter(step => step.state !== 'nonphysical');
+      const sink = steps.at(-1);
+      if (sink?.path !== path || sink.line !== line || steps.some(step => step.state)) continue;
+      const anchor = steps.slice(0, -1).find(step => Object.hasOwn(hunks, step.path)
+        && hunks[step.path].old.includes(step.line));
+      if (anchor) {
+        matches.push({ rule, sink: { path, line }, anchor,
+          source_paths: [...new Set(steps.map(step => step.path))].sort(),
+          fixed_sink_residual: fixedSinks.has(sinkKey(finding)) });
+      }
+    }
+  }
+  return matches;
+}
+
+function verifiedPairInput(row, { root, cases, referenceCases }) {
   const registered = cases.get(row.advisory);
   const before = referenceCases.get(row.advisory);
   requireProof(registered && before, 'CodeQL advisory is absent from the registered cohort');
@@ -266,7 +362,15 @@ function scorePreparedPair(row, { root, cases, referenceCases, policies, engineV
     diff_sha256: prepared.diff_sha256, changed_files_sha256: prepared.changed_files_sha256 };
   requireProof(inputFingerprint(input) === before.input_sha256,
     'Prepared case bytes differ from the reference for ' + row.advisory);
+  const preparedDir = dirname(row.prepared.path);
+  const patch = artifact(root, { path: join(preparedDir, 'diff.patch'), sha256: input.diff_sha256 });
+  artifact(root, { path: join(preparedDir, 'changes.z'), sha256: input.changed_files_sha256 });
+  return { registered, before, input, patch };
+}
 
+function scorePreparedPair(row, context) {
+  const { root, policies, engineVersion, archives } = context;
+  const { registered, before, input, patch } = verifiedPairInput(row, context);
   const families = familiesFor(registered.cwes);
   const policy = policies ? policies.get(registered.ecosystem) : { queries: [queryBinding(root, row.query_id, row.query)] };
   requireProof(policy, 'No registered CodeQL ecosystem policy for ' + row.advisory);
@@ -278,27 +382,61 @@ function scorePreparedPair(row, { root, cases, referenceCases, policies, engineV
   const fixed = nativeCapture(root, row.fixed, 'fixed', input, engineVersion, policy);
   archives.push(old.archive, fixed.archive);
 
-  const preparedDir = dirname(row.prepared.path);
-  const patch = artifact(root, { path: join(preparedDir, 'diff.patch'), sha256: input.diff_sha256 });
-  artifact(root, { path: join(preparedDir, 'changes.z'), sha256: input.changed_files_sha256 });
   const editedLines = {};
   const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(registered.ecosystem), editedLines);
-  const score = scoreCase({ families, hunks, editedLines, oldFindings: old.findings, newFindings: fixed.findings,
-    rules: Object.fromEntries(policy.queries.map(query => [query.id, query.families])) });
+  const rules = Object.fromEntries(policy.queries.map(query => [query.id, query.families]));
+  const score = scoreCase({ families, hunks, editedLines, oldFindings: old.findings, newFindings: fixed.findings, rules });
   return { advisory: row.advisory, reference: before.after, input_sha256: before.input_sha256,
     ...(policies ? { queries_sha256: policy.queriesSha256 } : { query_id: row.query_id }), hunk_hit: score.hunk_hit,
+    file_hit: score.file_hit,
     trace_hit: score.trace_hit, matched_hunk_families: score.matched_hunk_families,
     hunk_matches: score.hunk_findings, fixed_hunk_matches: score.fix_side_residual,
+    ...(score.hunk_spans ? { hunk_spans: score.hunk_spans } : {}),
+    ...(score.fix_side_residual_spans ? { fix_side_residual_spans: score.fix_side_residual_spans } : {}),
+    cross_file_trace_matches: crossFileTraceMatches(old, fixed, hunks, families, rules),
     deleted_line_hit: score.edited_lines.deleted_line_hit, fixed_hunk_residuals: score.fix_side_residual.length,
     native_alerts: { old: old.findings.length, fixed: fixed.findings.length },
+    fingerprints: { old: old.fingerprints, fixed: fixed.fingerprints },
     packets: { old: old.archive.packets.length, fixed: fixed.archive.packets.length } };
+}
+
+function reuseCapture(row, captured, context) {
+  const source = captured.get(row.capture_reused_from);
+  requireProof(context.policies && source && !Object.hasOwn(row, 'old') && !Object.hasOwn(row, 'fixed'),
+    'Capture reuse requires a directly captured pair in the same registered plan');
+  const { registered, before, input } = verifiedPairInput(row, context);
+  const original = context.cases.get(source.advisory);
+  requireProof(registered.repository === original.repository && registered.ecosystem === original.ecosystem
+    && caseDigest(familiesFor(registered.cwes)) === caseDigest(familiesFor(original.cwes)),
+  'Capture reuse repository, ecosystem or scored families differ for ' + row.advisory);
+  requireProof(inputFingerprint({ ...input, ghsa: source.advisory }) === source.input_sha256,
+    'Capture reuse source inputs differ for ' + row.advisory);
+  return { ...source, advisory: row.advisory, reference: before.after, input_sha256: before.input_sha256,
+    capture_reused_from: source.advisory };
 }
 
 function verifySourceArchives(archives) {
   const verified = spawnSync(process.env.CF_RECALL_PYTHON ?? 'python', ['-I', '-c', archiveVerifier],
-    { input: JSON.stringify(archives), encoding: 'utf8', windowsHide: true });
+    { input: JSON.stringify(archives), encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 });
   if (verified.error) throw verified.error;
   requireProof(verified.status === 0, 'Source archive verification failed: ' + verified.stderr.trim());
+  return json(Buffer.from(verified.stdout, 'utf8'));
+}
+
+function bindTraceSources(observations, bindings) {
+  for (const row of observations) {
+    for (const side of ['old', 'fixed']) {
+      const sources = bindings[row.advisory + '/' + side];
+      requireProof(Array.isArray(sources), 'Missing trace-source verification for ' + row.advisory + '/' + side);
+      const states = {};
+      for (const source of sources) states[source.state] = (states[source.state] ?? 0) + 1;
+      Object.assign(row.fingerprints[side], { trace_sources_sha256: caseDigest(sources), trace_source_states: states });
+    }
+    const oldSources = new Map(bindings[row.advisory + '/old'].map(source => [source.path, source.state]));
+    row.cross_file_trace_matches = row.cross_file_trace_matches.filter(match =>
+      oldSources.get(match.anchor.path) === 'packet_verified' && match.source_paths.every(path =>
+        ['packet_verified', 'archive_verified'].includes(oldSources.get(path))));
+  }
 }
 
 function scheduledCoverage(plan, policies, manifest, observations) {
@@ -318,30 +456,74 @@ function scheduledCoverage(plan, policies, manifest, observations) {
   return cohortCoverage;
 }
 
-export function scoreCodeqlPairs(bundlePath, patternPin = null) {
-  const bytes = readFileSync(bundlePath);
-  const root = realpathSync(dirname(bundlePath));
-  const bundle = json(bytes);
+function verifyPairBundle(root, bundle) {
   requireProof([FORMAT, PLAN_BUNDLE].includes(bundle.schema) && typeof bundle.engine_version === 'string'
     && Array.isArray(bundle.cases) && bundle.cases.length > 0, 'Invalid paired CodeQL bundle');
-  const { manifest, manifestDigest, reference, cases, referenceCases } = readPairRegistry(root, bundle);
+  const registry = readPairRegistry(root, bundle);
+  const { manifest, cases, referenceCases } = registry;
   requireProof(new Set(bundle.cases.map(row => row.advisory)).size === bundle.cases.length,
     'Duplicate CodeQL advisory pair');
   const policies = bundle.schema === PLAN_BUNDLE ? registeredPolicies(root, bundle, manifest) : null;
 
   const archives = [];
-  const observations = bundle.cases.map(row => scorePreparedPair(row, { root, cases, referenceCases,
-    policies, engineVersion: bundle.engine_version, archives }));
-  verifySourceArchives(archives);
-  const cohortCoverage = scheduledCoverage(bundle.plan, policies, manifest, observations);
+  const context = { root, cases, referenceCases, policies, engineVersion: bundle.engine_version, archives };
+  const captured = new Map(bundle.cases.filter(row => !Object.hasOwn(row, 'capture_reused_from'))
+    .map(row => [row.advisory, scorePreparedPair(row, context)]));
+  bindTraceSources(captured.values(), verifySourceArchives(archives));
+  const observations = bundle.cases.map(row => captured.get(row.advisory) ?? reuseCapture(row, captured, context));
+  return { registry, observations, scope: policies ? 'registered-codeql-plan' : 'supplemental',
+    coverage: scheduledCoverage(bundle.plan, policies, manifest, observations) };
+}
+
+function summarizeVerifiedPairs(bundle, registry, observations, patternPin) {
+  const { manifestDigest, reference, cases, referenceCases } = registry;
   const patternJoin = patternPin && joinPatternScore(patternPin, bundle.manifest.sha256, manifestDigest, cases, referenceCases, observations);
-  return { schema: 'factory.recall-codeql-pair-score.v1', scope: policies ? 'registered-codeql-plan' : 'supplemental',
-    input_sha256: sha256(bytes), ...cohortCoverage, ...(patternJoin ? { pattern_join: patternJoin } : {}),
+  const reused = observations.filter(row => Object.hasOwn(row, 'capture_reused_from')).length;
+  return { ...(patternJoin ? { pattern_join: patternJoin } : {}),
     reference_sha256: bundle.reference.sha256, registered_cases: cases.size, reference_hunk_hits: reference.candidate.hunk_hits,
-    scored_pairs: observations.length, strict_hunk_hits: observations.filter(row => row.hunk_hit).length,
+    scored_pairs: observations.length, captured_pairs: observations.length - reused, reused_capture_pairs: reused,
+    strict_hunk_hits: observations.filter(row => row.hunk_hit).length,
+    changed_file_hits: observations.filter(row => row.file_hit).length,
+    cross_file_trace_hits: observations.filter(row => row.cross_file_trace_matches.length > 0).length,
     strict_hits_on_reference_misses: observations.filter(row => row.reference === 'miss' && row.hunk_hit).length,
     deleted_line_hits: observations.filter(row => row.deleted_line_hit).length,
     fixed_hunk_residuals: observations.reduce((sum, row) => sum + row.fixed_hunk_residuals, 0), cases: observations };
+}
+
+function scoreCohortBundle(root, bytes, bundle, patternPin) {
+  requireProof(Array.isArray(bundle.bundles) && bundle.bundles.length > 0
+    && new Set(bundle.bundles.map(pin => pin?.sha256)).size === bundle.bundles.length, 'Missing or duplicate cohort bundle pins');
+  const lanes = bundle.bundles.map(pin => {
+    const path = boundPath(root, pin);
+    return { pin, input: json(readPinnedArtifact(path, pin)), root: dirname(path) };
+  });
+  const first = lanes[0].input;
+  requireProof(lanes.every(({ input }) => input.manifest?.sha256 === first.manifest?.sha256
+    && input.reference?.sha256 === first.reference?.sha256 && input.engine_version === first.engine_version),
+  'Cohort bundles use different registry, reference or engine pins');
+
+  const verified = lanes.map(lane => verifyPairBundle(lane.root, lane.input));
+  const observations = verified.flatMap(({ observations }, index) =>
+    observations.map(row => ({ ...row, native_bundle_sha256: lanes[index].pin.sha256 })));
+  const covered = new Set(observations.map(row => row.advisory));
+  requireProof(covered.size === observations.length, 'Duplicate CodeQL advisory across cohort bundles');
+  const { registry } = verified[0];
+  return { schema: 'factory.recall-codeql-cohort-score.v1', scope: 'verified paired native cohort',
+    input_sha256: sha256(bytes), manifest_sha256: first.manifest.sha256, engine_version: first.engine_version,
+    bundles: verified.map((lane, index) => ({ ...lanes[index].pin, scope: lane.scope,
+      scored_pairs: lane.observations.length, ...lane.coverage })),
+    unscored_advisories: [...registry.cases.keys()].filter(id => !covered.has(id)),
+    ...summarizeVerifiedPairs(first, registry, observations, patternPin) };
+}
+
+export function scoreCodeqlPairs(bundlePath, patternPin = null) {
+  const bytes = readFileSync(bundlePath);
+  const root = realpathSync(dirname(bundlePath));
+  const bundle = json(bytes);
+  if (bundle.schema === COHORT_BUNDLE) return scoreCohortBundle(root, bytes, bundle, patternPin);
+  const { registry, observations, scope, coverage } = verifyPairBundle(root, bundle);
+  return { schema: 'factory.recall-codeql-pair-score.v1', scope, input_sha256: sha256(bytes), ...coverage,
+    ...summarizeVerifiedPairs(bundle, registry, observations, patternPin) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

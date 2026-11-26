@@ -743,17 +743,22 @@ function reportReferences(context, report, diagnostics) {
     } : {}) };
 }
 
-function uncoveredPolicyPaths(paths, findings) {
+function uncoveredPolicyPaths(paths, findings, pathPolicy) {
   const { coverage, notes } = findings;
   if (!coverage || notes.failed_exit !== false || notes.timeouts || notes.other || notes.blocking_parse_errors) return [];
   const reported = new Set(findings.map(finding => finding.path));
-  return [...paths].filter(path => !reported.has(path) && !coverage.scanned.has(path) && !coverage.problems.has(path)
-    && (!coverage.skipped.has(path) || coverage.skipped.get(path) === 'semgrepignore_patterns_match'));
+  return [...paths].filter(path => {
+    if (reported.has(path) || coverage.scanned.has(path) || coverage.problems.has(path)) return false;
+    const skip = coverage.skipped.get(path);
+    // A generic engine skip needs independent proof from the applicable rules.
+    return !coverage.skipped.has(path) || skip === 'semgrepignore_patterns_match'
+      || (skip === 'always_skipped' && pathPolicy(path));
+  });
 }
 
 async function observePathPolicy(context, source, report, paths, findings) {
   if (!context.pathPolicy) return;
-  const unresolved = uncoveredPolicyPaths(paths, findings);
+  const unresolved = uncoveredPolicyPaths(paths, findings, context.pathPolicy);
   if (!unresolved.length) return;
   const { coverage, notes } = findings;
   const policy = new Map(unresolved.filter(context.pathPolicy).map(path => [path, 'rule_path_exclusions']));
@@ -2423,7 +2428,7 @@ function replayCaseSide(row, side, retained, preparedSource, pathPolicy) {
     throw new Error('Scan diagnostics differ from retained reports');
   }
   if (pathPolicy) {
-    const unresolved = uncoveredPolicyPaths(hashes.keys(), Object.assign(findings, { coverage, notes }));
+    const unresolved = uncoveredPolicyPaths(hashes.keys(), Object.assign(findings, { coverage, notes }), pathPolicy);
     if (unresolved.length) {
       const ignored = retained.target_inventory && engineTargetIgnores(utf8(retained.target_inventory), retained.source);
       coverage.policyExclusions = new Map(unresolved.flatMap(path => pathPolicy(path) ? [[path, 'rule_path_exclusions']]

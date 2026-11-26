@@ -197,15 +197,15 @@ generalize. They should not be cited as a recall improvement beyond 11.3% of the
 registered 124 (12.7% of the 110 with known outcomes).
 This manifest is now spent: any later scoring of it is a development run.
 
-## Q2 2026 held-out set, frozen 25 Nov (sealed)
+## Q2 2026 held-out cohort, frozen 25 Nov
 
 [282 advisories](evidence/heldout-recall-manifest-20261125-q2.json) published
 2026-04-01..2026-06-30, frozen from GitHub advisory-database metadata only
 (candidate metadata sha256 `6b45382a…c7e7`), before any further rule change,
 excluding every advisory and fix commit in `docs/evidence` and in the exposed
 development manifests (556 IDs, 1,288 fix commits). Composition: npm 69,
-PyPI 68, Go 61, Packagist 49, Maven 33, RubyGems 2. It is to be scored once,
-by the agreed candidate, with the registered 282-case denominator.
+PyPI 68, Go 61, Packagist 49, Maven 33, RubyGems 2. The first run used the [preregistered plan](evidence/fresh-test-plan-q2.json)
+with the 282-case denominator. Its receipt is retained for internal comparison.
 
 ## Advisory-level recall, pre-registered 25 Nov (not yet computed)
 

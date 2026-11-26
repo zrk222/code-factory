@@ -28,3 +28,10 @@ class DevServer
     not_found
   end
 end
+
+class LocalCachePath
+  def path_for(filename)
+    # ok: ruby.request-path-traversal
+    File.join("cache", filename)
+  end
+end
