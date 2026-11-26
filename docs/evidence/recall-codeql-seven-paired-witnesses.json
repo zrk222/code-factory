@@ -294,5 +294,93 @@
     ],
     "median_batch_ms": 124.9980999999998,
     "median_per_blob_ms": 5247.1046
+  },
+  "local_defensive_controls": {
+    "scope": "Three repository synthetic positive/benign pairs evaluated with the pinned Windows CodeQL bundle. This is scoped fixture evidence.",
+    "plan_sha256": "c9c148183913d8cdc1c5f1b7cf6e7f6c63159908700437856b0818e2ae0d7dad",
+    "receipt_sha256": "96f2f23aab73d72369fbf6657161c4515b013e47f53d6a1170a3ea5d85959827",
+    "positive_cross_file_controls_passed": 3,
+    "benign_controls_with_zero_alerts": 3,
+    "verified_source_files_across_scans": 14,
+    "scans": [
+      {
+        "language": "python",
+        "arm": "pattern-fixture",
+        "alerts": {
+          "py/sql-injection": 1,
+          "py/tarslip": 0
+        },
+        "matched_files": 2,
+        "cross_file_flow_observed": true,
+        "sarif_sha256": "d38d20c604c52cb9623291eb3058a19bc52f9cd6e5d3c1c7bcdf564095f138c3",
+        "seconds": 38.0484213999589
+      },
+      {
+        "language": "javascript",
+        "arm": "benign-fixture",
+        "alerts": {
+          "js/command-line-injection": 0,
+          "js/indirect-command-line-injection": 0,
+          "js/path-injection": 0,
+          "js/incomplete-sanitization": 0
+        },
+        "matched_files": 2,
+        "cross_file_flow_observed": false,
+        "sarif_sha256": "c5b49402257a66297e80bbdd61480c290c1e6c901df221af583aee55ceb7cc70",
+        "seconds": 55.02544530003797
+      },
+      {
+        "language": "javascript",
+        "arm": "pattern-fixture",
+        "alerts": {
+          "js/command-line-injection": 1,
+          "js/indirect-command-line-injection": 0,
+          "js/path-injection": 0,
+          "js/incomplete-sanitization": 0
+        },
+        "matched_files": 2,
+        "cross_file_flow_observed": true,
+        "sarif_sha256": "4ea05cc8c663fc8b45c27261557e4801bd4c773295644a6b844454b4ca6cee21",
+        "seconds": 55.400439999997616
+      },
+      {
+        "language": "python",
+        "arm": "benign-fixture",
+        "alerts": {
+          "py/sql-injection": 0,
+          "py/tarslip": 0
+        },
+        "matched_files": 2,
+        "cross_file_flow_observed": false,
+        "sarif_sha256": "b5c21864fc05cc107503d8118c98de1f3bbb358d14ada9e54f62ae6a585dccb5",
+        "seconds": 38.47662890003994
+      },
+      {
+        "language": "ruby",
+        "arm": "benign-fixture",
+        "alerts": {
+          "rb/command-line-injection": 0,
+          "rb/non-constant-kernel-open": 0,
+          "rb/sql-injection": 0
+        },
+        "matched_files": 3,
+        "cross_file_flow_observed": false,
+        "sarif_sha256": "09a1935dddc9f105e5d79cb44114883461aff62e9804d82273ee6d8d64c4ebed",
+        "seconds": 32.24743309995392
+      },
+      {
+        "language": "ruby",
+        "arm": "pattern-fixture",
+        "alerts": {
+          "rb/command-line-injection": 1,
+          "rb/non-constant-kernel-open": 0,
+          "rb/sql-injection": 0
+        },
+        "matched_files": 3,
+        "cross_file_flow_observed": true,
+        "sarif_sha256": "00bf65ad3a205999bdafbdc1a028298e3691ce7640188cf3a3eecb6cbb106238",
+        "seconds": 32.92909630003851
+      }
+    ]
   }
 }
