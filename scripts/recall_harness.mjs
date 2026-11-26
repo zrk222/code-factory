@@ -6,10 +6,10 @@
 //            [--exclude-dir docs/evidence] [--per-repo 3] [--per-ecosystem N]
 //   score    --manifest manifest.json --rules ruleset.yml --out results.json
 //            [--opengrep BIN] [--profile profile.json] [--workdir DIR] [--jobs 6] [--extra-arg ARG]...
-//   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... --out deltas.json
+//   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... [--control-timeout SECONDS] --out deltas.json
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
 //            [--max-control-increase N] [--extra-arg ARG]... [--candidate-extra-arg ARG]... --out verdict.json
-//            [--probe-coverage true] [--control-exclude DIRECTORY]...
+//            [--probe-coverage true] [--control-exclude DIRECTORY]... [--control-timeout SECONDS]
 //            [--adjudicated-losses plan.json] [--checkpoint-dir DIR]
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
@@ -1298,6 +1298,8 @@ function verifyEvaluationManifests(manifests) {
 async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
+  const profile = JSON.parse(utf8(opts.profileBytes));
+  const controlSettings = controlTimeoutSettings(opts, profile);
   const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
   const excludedDirs = controlExcludedDirectories(opts);
   const labels = suppliedLabels(opts);
@@ -1306,8 +1308,7 @@ async function evaluate(input) {
     throw new Error('--require-reviewed-controls accepts true');
   }
   const manifests = readEvaluationManifests(opts.manifest);
-  const engine = await bindRecallEngine(JSON.parse(utf8(opts.profileBytes)),
-    opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  const engine = await bindRecallEngine(profile, opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
   const lossPolicy = opts['adjudicated-losses']
     ? loadAdjudicatedLosses(opts['adjudicated-losses'], engine.receipt.executable_sha256) : null;
   opts.opengrep = engine.path;
@@ -1328,14 +1329,15 @@ async function evaluate(input) {
     const after = await scoreArm(manifest, opts.candidate, candidateOpts, rules.candidate_sha256);
     dev.push({ manifest: manifest.path, before, after });
   }
-  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }, engine) : [];
+  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts,
+    rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }, engine, controlSettings) : [];
   const parserProbe = opts['probe-coverage'] === 'true' ? await probeCoverage(dev, opts) : null;
   await verifyBoundEngine(engine, 'evaluation');
   verifyEvaluationManifests(manifests);
   verifyEvaluationRules(opts, rules);
   const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0), lossPolicy });
   if (checkpoint) applyGainRetention(verdict, checkpoint, dev, lossPolicy);
-  const settings = { ...rules, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
+  const settings = { ...rules, ...controlSettings, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
     extra_args: [].concat(opts['extra-arg'] ?? []), candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []),
     ...(excludedDirs.length ? { control_excluded_directories: excludedDirs } : {}) };
   const population = reviewPopulation(settings, controlDeltas);
@@ -1359,6 +1361,7 @@ async function evaluate(input) {
 }
 
 const CONTROL_TIMEOUT_RETRY_SECONDS = 15;
+const OPENGREP_TIMEOUT_FLAG = /^--(?:timeout(?:=|$)|dynamic-timeout|allow-rule-timeout-control)/;
 const OPENGREP_DEFAULT_TARGET_BYTES = 1_000_000;
 const CONTROL_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
 const CONTROL_HASH_BATCH_SIZE = 16;
@@ -1379,7 +1382,7 @@ function controlRetryArgs(profile, baselineArgs, candidateArgs) {
   if (profile.engine !== 'semgrep') return [];
   const argv = [...profile.commands[0].argv, ...baselineArgs, ...candidateArgs];
   const retry = [];
-  if (!argv.some(arg => /^--(?:timeout(?:=|$)|dynamic-timeout|allow-rule-timeout-control)/.test(arg))) {
+  if (!argv.some(arg => OPENGREP_TIMEOUT_FLAG.test(arg))) {
     retry.push(`--timeout=${CONTROL_TIMEOUT_RETRY_SECONDS}`);
   }
   // Retry under a single worker to keep the existing per-rule budget usable under load.
@@ -1584,6 +1587,22 @@ function controlExcludedDirectories(opts) {
   return excludedDirs;
 }
 
+function controlTimeoutSettings(opts, profile) {
+  if (!('control-timeout' in opts)) return {};
+  const value = opts['control-timeout'];
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || Number(value) > CONTROL_TIMEOUT_RETRY_SECONDS) {
+    throw new Error(`--control-timeout requires a single integer from 1 to ${CONTROL_TIMEOUT_RETRY_SECONDS}`);
+  }
+  if (!opts.dir || profile.engine !== 'semgrep') {
+    throw new Error('--control-timeout requires OpenGrep controls');
+  }
+  const argv = profile.commands[0].argv.concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []);
+  if (argv.some(arg => OPENGREP_TIMEOUT_FLAG.test(arg))) {
+    throw new Error('--control-timeout conflicts with an existing scanner timeout flag');
+  }
+  return { control_timeout_seconds: Number(value) };
+}
+
 async function retainedReportMatches(root, reference, expected, required) {
   if (!expected) return !required && !reference;
   if (reference?.sha256 !== expected || typeof reference.path !== 'string' || isAbsolute(reference.path)) return false;
@@ -1614,13 +1633,14 @@ async function controlCheckpointIntact(root, delta) {
   } catch { return false; }
 }
 
-async function controlDeltas_(opts, engine) {
+async function controlDeltas_(opts, engine, { control_timeout_seconds }) {
   const [before, after] = [].concat(opts.rules);
   const excludedDirs = controlExcludedDirectories(opts);
   const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/**`, '--exclude', `**/${path}/**`]);
+  const timeoutArgs = control_timeout_seconds === undefined ? [] : [`--timeout=${control_timeout_seconds}`];
   const rules = opts.ruleFingerprints;
   const base = { profile: JSON.parse(utf8(opts.profileBytes)),
-    bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], exclusionArgs),
+    bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], timeoutArgs, exclusionArgs),
     rules: resolve(before), rulesSha256: rules.baseline_sha256 };
   const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
     rules: resolve(after), rulesSha256: rules.candidate_sha256 };
@@ -1911,15 +1931,17 @@ function reviewAlerts(opts) {
 async function controls(opts) {
   const [before, after] = [].concat(opts.rules);
   const profileBytes = readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
+  const profile = JSON.parse(utf8(profileBytes));
+  const controlSettings = controlTimeoutSettings(opts, profile);
   const settings = { ...opts, baseline: before, candidate: after, profileBytes };
   const rules = evaluationRules(settings);
-  const engine = await bindRecallEngine(JSON.parse(utf8(profileBytes)), opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
-  const deltas = await controlDeltas_({ ...settings, ruleFingerprints: rules }, engine);
+  const engine = await bindRecallEngine(profile, opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  const deltas = await controlDeltas_({ ...settings, ruleFingerprints: rules }, engine, controlSettings);
   await verifyBoundEngine(engine, 'control scoring');
   verifyEvaluationRules(settings, rules);
   writeFileSync(opts.out, `${JSON.stringify({ schema: 'factory.recall-controls.v1', before_sha256: rules.baseline_sha256,
     after_sha256: rules.candidate_sha256, profile_sha256: sha256(profileBytes), engine: engine.receipt,
-    control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
+    ...controlSettings, control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
   for (const delta of deltas) console.log(delta.dir, delta.before, '->', delta.after, delta.error ?? '');
   if (deltas.some(delta => delta.error)) process.exitCode = 2;
 }

@@ -582,7 +582,9 @@ async function feederFixture(run, row = feederRow) {
       "const incomplete = !old && ruleText.includes('# incomplete');",
       "const devTimeout = old && (ruleText.includes('# persistent-case-timeout') || (ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial'));",
       "const recoveredControl = process.argv.includes('--timeout=15') && process.argv.includes('--jobs=1');",
-      "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !recoveredControl));",
+      "const boundedControl = process.argv.includes('--timeout=15');",
+      "if (!control && boundedControl && ruleText.includes('# control-first-pass')) throw Error('Control timeout leaked to development scan');",
+      "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !recoveredControl) || (ruleText.includes('# control-first-pass') && !boundedControl));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
       "const disputedParse = ruleText.includes(old ? '# candidate-parse' : '# fixed-parse');",
       "const results = old && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
@@ -828,6 +830,49 @@ test('evaluation retries both control arms once with a bounded timeout and one s
     assert.equal(persistent.result.decision, 'REJECT');
     assert.equal(persistent.result.controls[0].scan_sides.before.timeouts, 1);
     assert.equal(persistent.result.controls[0].scan_sides.after.timeouts, 1);
+  }));
+
+test('an explicit first-pass timeout covers both control arms and leaves development scans unchanged', () =>
+  feederFixture(({ root, workdir, manifest, profile, baseline, candidate }) => {
+    const control = join(root, 'control');
+    mkdirSync(control);
+    writeFileSync(join(control, 'sample.py'), '# benign input\n');
+    const rules = readFileSync(baseline, 'utf8') + '# control-first-pass\n';
+    writeFileSync(baseline, rules);
+    writeFileSync(candidate, rules);
+    const output = join(root, 'bounded-control.json');
+    const run = (command, args, ...extra) => spawnSync(process.execPath, [
+      'scripts/recall_harness.mjs', command, ...args, '--profile', profile, '--workdir', workdir,
+      '--opengrep', process.execPath, '--dir', control, '--out', output, ...extra,
+    ], { encoding: 'utf8' });
+    const evaluation = ['--manifest', manifest, '--baseline', baseline, '--candidate', candidate];
+    const result = run('evaluate', evaluation, '--control-timeout', '15');
+    assert.equal(result.status, 0, result.stderr);
+    const receipt = JSON.parse(readFileSync(output, 'utf8'));
+    assert.equal(receipt.control_timeout_seconds, 15);
+    assert.equal(receipt.dev[0].after.hunk_hits, 1);
+    assert.deepEqual(receipt.extra_args, []);
+    assert.equal(receipt.controls[0].initial_scan_sides, undefined);
+    for (const side of Object.values(receipt.controls[0].scan_sides)) {
+      assert.equal(side.timeouts, 0);
+      assert.equal(side.control_coverage.complete, true);
+    }
+    const standalone = run('controls', ['--rules', baseline, '--rules', candidate], '--control-timeout', '15');
+    assert.equal(standalone.status, 0, standalone.stderr);
+    const controlReceipt = JSON.parse(readFileSync(output, 'utf8'));
+    assert.equal(controlReceipt.control_timeout_seconds, 15);
+    assert.equal(controlReceipt.deltas[0].initial_scan_sides, undefined);
+    rmSync(output);
+    for (const extra of [
+      ['--control-timeout', '16'],
+      ['--control-timeout', '15', '--candidate-extra-arg', '--timeout=5'],
+      ['--control-timeout', '15', '--control-timeout', '5'],
+    ]) {
+      const invalid = run('evaluate', evaluation, ...extra);
+      assert.equal(invalid.status, 1);
+      assert.match(invalid.stderr, /--control-timeout/);
+      assert.equal(existsSync(output), false);
+    }
   }));
 
 test('evaluation rejects overlapping manifests before resolving the scanner', () => feederFixture(fixture => {
