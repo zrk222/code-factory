@@ -1,0 +1,871 @@
+{
+  "schema": "factory.recall-exposed-independent-readback.v1",
+  "scope": "registered exposed retention only",
+  "candidate_commit": "f45961228e1c8540644e334ce026a60b9e030704",
+  "candidate_pr": 415,
+  "shipping_profile_sha256": "df293700adf7b2f580b3099d076278db037004476af6563d16d9809b32c18fbb",
+  "engine": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "engine_args": [
+    "--timeout=15",
+    "--jobs=1"
+  ],
+  "case_workers": 2,
+  "manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+  "cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
+  "resumed_cases": 0,
+  "reference_and_gate": {
+    "schema": "factory.registered-recall-retention.v1",
+    "reference_sha256": "0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf",
+    "candidate_score_sha256": "969777b6fb1efde90ea43a97a61e09c4fc944dd627c4a8805d82a30eca5ef6f2",
+    "candidate_rules_sha256": "3b5b28ff6076d90ca91ca44d320b5f5b11e414140be071578abb3e303102299b",
+    "decision": "ACCEPT",
+    "summary": {
+      "registered_cases": 161,
+      "verified_bindings": 161,
+      "reference_hunk_hits": 39,
+      "retained_hunk_hits": 39,
+      "candidate_outcomes": {
+        "hit": 39,
+        "miss": 117,
+        "timeout": 0,
+        "unknown": 2,
+        "error": 0,
+        "coverage_incomplete": 3
+      },
+      "reference_fixed_side_residual_alerts": 17,
+      "candidate_fixed_side_residual_alerts": 17,
+      "candidate_hunk_hits": 39
+    },
+    "lost": [],
+    "gained": [],
+    "new_unresolved": [],
+    "failures": [],
+    "verified_capture_cases": 160
+  },
+  "local_gate_receipt_sha256": "410d734a1936c521064df75e5267f7e88077558177ea4a1922b9cf47cc44cf5c",
+  "hunk_recall_summary": {
+    "hits": 39,
+    "cases": 161,
+    "wilson95": [
+      18.3,
+      31.4
+    ]
+  },
+  "cases": [
+    {
+      "advisory": "GHSA-2223-f22x-24cq",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-23fx-92m6-4f2g",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-25gv-mvm7-5h3h",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-2fmj-p74r-3wjm",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-2jh5-g5ch-43q5",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-2pm6-9fhx-vvg3",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-2rc4-7jc6-qffh",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-2x7r-93ww-cxrq",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-38jw-g2qx-4286",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-3hcm-ggvf-rch5",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-3p24-9x7v-7789",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-3p6w-gv5g-xjw9",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-3xgr-h5hq-7299",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-4574-qv3w-fcmg",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-463c-jhp2-4mm7",
+      "outcome": "hit",
+      "fixed_side_alerts": 1
+    },
+    {
+      "advisory": "GHSA-465w-gg5p-85c9",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-4h97-wpxp-3757",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-4m7p-55jm-3vwv",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-4pj9-g833-qx53",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-4x28-j85r-668q",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-4xf2-7qfv-mgfx",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-527r-mfmj-prqf",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-5j9f-5wmp-7f8h",
+      "outcome": "hit",
+      "fixed_side_alerts": 1
+    },
+    {
+      "advisory": "GHSA-5jpj-293f-rhvj",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-5m9f-rphj-c435",
+      "outcome": "hit",
+      "fixed_side_alerts": 2
+    },
+    {
+      "advisory": "GHSA-5mq7-rwhj-4fh9",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-5xpp-75jx-m839",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-63q7-h895-m982",
+      "outcome": "coverage_incomplete",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-68wg-qv6r-j4vp",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-69p3-xp37-f692",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-6g56-v9qg-jp92",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-6gm7-j668-w6h9",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-6j63-35hj-vmcg",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-6m7c-xfhp-p9fh",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-6m8w-jc87-6cr7",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-6qjf-g333-pv38",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-6vmq-24h2-pj7j",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-6w89-c65w-jx2c",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-6xxq-j39w-g3f6",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-72c7-4g63-hpw5",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-72qq-p3r5-f7wq",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-7359-3c6r-hfc2",
+      "outcome": "hit",
+      "fixed_side_alerts": 1
+    },
+    {
+      "advisory": "GHSA-73wf-9vmv-5pv9",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-74hp-mggr-hv58",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-76wq-xw4h-f8wj",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-784x-7w88-w564",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-79qw-g77v-2vfh",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-7cj7-rcw6-p68v",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-7hxc-f267-h5q7",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-7vxr-6cxg-j3x8",
+      "outcome": "hit",
+      "fixed_side_alerts": 1
+    },
+    {
+      "advisory": "GHSA-7wqf-h36w-47mc",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-85gf-wr67-f83w",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-8832-4mm5-x2r6",
+      "outcome": "hit",
+      "fixed_side_alerts": 2
+    },
+    {
+      "advisory": "GHSA-8gqp-hr9g-pg62",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-8grg-q944-cch5",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-8qvf-mr4w-9x2c",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-97jv-2hp6-3frj",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-9mh6-g99m-ppcw",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-c5r5-7pfh-6qg6",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-cgfv-jrfp-2r7v",
+      "outcome": "hit",
+      "fixed_side_alerts": 4
+    },
+    {
+      "advisory": "GHSA-cpv4-ggrr-7j9v",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-cxwf-qc32-375f",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-f3f2-mcxc-pwjx",
+      "outcome": "hit",
+      "fixed_side_alerts": 2
+    },
+    {
+      "advisory": "GHSA-f6wf-28g6-769x",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-f7w7-6pjc-wwm6",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-ff6c-w6qf-7xqc",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-ff98-w8hj-qrxf",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-fg4q-ccq8-3r5q",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-fhff-qmm8-h2fp",
+      "outcome": "hit",
+      "fixed_side_alerts": 1
+    },
+    {
+      "advisory": "GHSA-fr3h-cpq2-9496",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-fwj4-6wgp-mpxm",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-g23g-mw97-65c8",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-g72f-jw3w-mgh7",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-gjqq-6r35-w3r8",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-gpfj-4j6g-c4w9",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-gprp-h92g-gc2h",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-gr4j-r575-g665",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-gvg7-pp82-cff3",
+      "outcome": "coverage_incomplete",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-h36j-8vv3-cj52",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-h4h6-vccr-44h2",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-h6r4-xvw6-jc5h",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-h7cm-jvpp-69xf",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-hc5w-gxxr-w8x8",
+      "outcome": "coverage_incomplete",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-hj4w-hm2g-p6w5",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-hq7p-j377-6v63",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-hr8g-6v94-x4m9",
+      "outcome": "unknown",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-hw6x-2qwv-rxr7",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-hwcc-4cv8-cf3h",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-j3f9-p6hm-5w6q",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-j456-xh4h-cpf2",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-j6cv-98jx-mrwr",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-j7g8-3qqg-8cvm",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-j7wh-x834-p3r7",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-jccv-3h4x-35mv",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-jj27-h5hq-8x99",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-jj45-24rw-v6jw",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-jjgq-jq8g-24w4",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-jmm9-2p29-vh2w",
+      "outcome": "hit",
+      "fixed_side_alerts": 1
+    },
+    {
+      "advisory": "GHSA-jppv-gw3r-w3q8",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-jqmf-mx4f-hfr6",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-jwhr-h7pc-3974",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-m3hq-3qj8-c5fm",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-m445-w3xr-vp2f",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-m462-mqw4-2c8m",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-m734-r4g6-34f9",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mc7w-4cjf-c973",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mf2p-h6hf-fcwm",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mggc-4xg6-vcxf",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mhwp-qhpc-h3jm",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mj4x-vf5c-5xg8",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mmcv-fvq8-r9x3",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mq84-hjqx-cwf2",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mrq8-fv7v-hhjg",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mrww-27vc-gghv",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mw36-7c6c-q4q2",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-mxg3-432p-mr72",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-p6w9-r443-r752",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-p77r-c6m3-gj2r",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-p9qm-p942-q3w5",
+      "outcome": "hit",
+      "fixed_side_alerts": 1
+    },
+    {
+      "advisory": "GHSA-pj84-qjm3-77mg",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-pmw4-jgxx-pcq9",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-pxrr-hq57-q35p",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-q27f-v3r6-9v77",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-q296-9j5x-fxf4",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-q433-mp6c-8v4f",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-q7m5-3jmv-vm48",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-q9mp-79cp-9g8j",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-qcpp-8x79-hhp3",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-qqh2-wvmv-h72m",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-qrg7-hfx7-95c5",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-r7j3-vvh2-xrpj",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-r8g5-cgf2-4m4m",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-rc6v-5rmx-w5mv",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-rfx3-98h7-v3xp",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-rjjv-87mx-6x3h",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-rmjr-87wv-gf87",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-rp2v-v467-q9vq",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-rqw2-ghq9-44m7",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-v222-6mr4-qj29",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-v253-rj99-jwpq",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-v529-vhwc-wfc5",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-v74c-qc46-9gg9",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-vf2r-cxg9-p7rf",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-vj3g-5px3-gr46",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-vj9x-w7ch-f46p",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-vmw2-qwm8-x84c",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-vp4f-wxgw-7x8x",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-vq7p-f4fv-rr5x",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-w2pm-r78h-4m7v",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-w5ff-2mjc-4phc",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-wc3v-3457-c8cm",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-wm65-ph3w-587c",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-wqmh-qccw-pqwf",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-wrvw-254r-wpmv",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-x3wm-hffr-chwm",
+      "outcome": "unknown",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-x485-rhg3-cqr4",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-x67c-8pwr-m8g3",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-x843-g5mx-g377",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-x9vc-6hfv-hg8c",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-xf96-32q2-9rw2",
+      "outcome": "hit",
+      "fixed_side_alerts": 0
+    },
+    {
+      "advisory": "GHSA-xr9m-gphc-9p63",
+      "outcome": "miss",
+      "fixed_side_alerts": 0
+    }
+  ],
+  "stages": {
+    "full_18_control_qualification": "NOT_RUN",
+    "blinded_precision": "NOT_RUN",
+    "q2": "SEALED"
+  }
+}
