@@ -1,9 +1,20 @@
-# Recall and precision: where Code Factory stands (24 Nov 2026)
+# Code Factory recall and precision
 
-This page records every recall and precision number measured in the
-23–24 Nov work, how each was measured, and how far it can be trusted.
-None of these numbers is a held-out release claim. The last section says
-what a claim would need.
+## Latest frozen held-out recall
+
+**28/282 (9.9%) strict hunk recall** on the 282 registered Q2 2026 advisories.
+The score uses the #418 C#-enhanced candidate with OpenGrep 2.1.0.
+The plan was committed before the first scan. Each unknown, timeout, error
+and incomplete case remains in the registered denominator.
+
+| Engine | Pinned baseline | Pinned candidate | Candidate Wilson 95% |
+| --- | ---: | ---: | ---: |
+| OpenGrep 2.1.0 Windows x64 | Pending | 28/282 (9.9%) | 7.0%–14.0% |
+
+[Frozen run plan](evidence/fresh-test-plan-q2.json) · [Verified score receipt](evidence/heldout-recall-2026-q2.json)
+
+The historical 10/83 measurement used an earlier cohort and scanner.
+The Q2 receipt records paired outcomes and remaining coverage gaps. Blinded precision and full-repository recall are pending.
 
 ## Detection rule
 
@@ -197,15 +208,14 @@ generalize. They should not be cited as a recall improvement beyond 11.3% of the
 registered 124 (12.7% of the 110 with known outcomes).
 This manifest is now spent: any later scoring of it is a development run.
 
-## Q2 2026 held-out set, frozen 25 Nov (sealed)
+## Q2 2026 held-out cohort, frozen 25 Nov
 
 [282 advisories](evidence/heldout-recall-manifest-20261125-q2.json) published
 2026-04-01..2026-06-30, frozen from GitHub advisory-database metadata only
 (candidate metadata sha256 `6b45382a…c7e7`), before any further rule change,
 excluding every advisory and fix commit in `docs/evidence` and in the exposed
 development manifests (556 IDs, 1,288 fix commits). Composition: npm 69,
-PyPI 68, Go 61, Packagist 49, Maven 33, RubyGems 2. It is to be scored once,
-by the agreed candidate, with the registered 282-case denominator.
+PyPI 68, Go 61, Packagist 49, Maven 33, RubyGems 2. The registered denominator is 282. The first result is recorded above.
 
 ## Advisory-level recall, pre-registered 25 Nov (not yet computed)
 

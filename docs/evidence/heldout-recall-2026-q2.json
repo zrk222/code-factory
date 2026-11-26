@@ -1,0 +1,105 @@
+{
+  "schema": "factory.heldout-pattern-recall-summary.v1",
+  "plan_commit": "1dec7f03e6455733365247a96ed828a69564dc6b",
+  "plan_sha256": "6f72d98ff3dbee465b6f152bd49c4363f2c74a46527685ec7ffb3572cc019424",
+  "cohort_manifest_sha256": "28063dd52a9552ef46429fa732d127a69d659dc9851d9c30021641105e4bf73f",
+  "cohort_cases_sha256": "d2d39fd5ee4de3195b8c28c98eb569590167194d326abcdf0b465be830d36e8d",
+  "scope": "Strict CWE-family hunk recall on old-side git diff -U5 lines in in-language non-test changed files, out of 282 registered advisories.",
+  "analyses": {
+    "primary": {
+      "engine": "OpenGrep 2.1.0 Windows x64",
+      "candidate": {
+        "raw_score_sha256": "fa863e080084ccdc5f5b8c0fede2a9ba5e32bf18d9818d1072de8ce61f6dde85",
+        "rules_sha256": "ee319f151e87fb44621e6190ca826b3d47058baf947bce02db323ebbc4539d42",
+        "started_utc": "2026-11-26T12:14:05.4163080Z",
+        "finished_utc": "2026-11-26T12:24:29.5396551Z",
+        "registered": 282,
+        "scored": 261,
+        "hunk_hits": 28,
+        "hunk_recall_wilson95_registered": [
+          0.069592,
+          0.13976
+        ],
+        "outcomes": {
+          "miss": 233,
+          "hit": 28,
+          "unknown": 21
+        },
+        "fixed_side_residual_alerts": 47,
+        "edited_line_diagnostics": {
+          "scored": 261,
+          "deleted_line_hits": 17,
+          "context_only_hunk_hits": 11,
+          "added_line_residual_alerts": 20,
+          "context_only_residual_alerts": 27
+        },
+        "by_ecosystem": {
+          "Maven": {
+            "registered": 33,
+            "hunk_hits": 0
+          },
+          "PyPI": {
+            "registered": 68,
+            "hunk_hits": 10
+          },
+          "Go": {
+            "registered": 61,
+            "hunk_hits": 7
+          },
+          "npm": {
+            "registered": 69,
+            "hunk_hits": 9
+          },
+          "Packagist": {
+            "registered": 49,
+            "hunk_hits": 2
+          },
+          "RubyGems": {
+            "registered": 2,
+            "hunk_hits": 0
+          }
+        },
+        "by_family_scored": {
+          "sql": {
+            "hits": 2,
+            "scored": 17
+          },
+          "code": {
+            "hits": 0,
+            "scored": 29
+          },
+          "path": {
+            "hits": 13,
+            "scored": 93
+          },
+          "xss": {
+            "hits": 3,
+            "scored": 71
+          },
+          "cmd": {
+            "hits": 5,
+            "scored": 25
+          },
+          "deser": {
+            "hits": 5,
+            "scored": 18
+          },
+          "tls": {
+            "hits": 0,
+            "scored": 10
+          },
+          "incl": {
+            "hits": 0,
+            "scored": 2
+          }
+        }
+      }
+    }
+  },
+  "pending": [
+    "Candidate hunk-alert blinded precision",
+    "Full-tree flagged-anywhere and 18-control density",
+    "primary baseline score",
+    "legacy candidate score"
+  ]
+}
