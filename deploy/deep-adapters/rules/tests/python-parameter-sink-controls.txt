@@ -54,6 +54,21 @@ def run_sql(cursor, sql):
     cursor.execute(sql)
 
 
+def find_by_column(cursor, table, column, value):
+    # ok: python.parameter-sql-text
+    cursor.execute(f'SELECT * FROM "{table}" WHERE `{column}` = %s', (value,))
+
+
+def find_by_escaped_column(cursor, schema, column, value):
+    # ok: python.parameter-sql-text
+    cursor.execute(f"SELECT * FROM \"{schema}\".items WHERE \"{column}\" = %s", (value,))
+
+
+def find_by_quoted_value(cursor, table, value):
+    # ruleid: python.parameter-sql-text
+    cursor.execute(f'SELECT * FROM "{table}" WHERE name = "{value}"')
+
+
 def restore(archive, dest):
     with tarfile.open(archive) as tf:
         for member in tf.getmembers():

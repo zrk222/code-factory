@@ -47,3 +47,29 @@ class ReactionStore {
         return $store->delete('reactions', ['user' => $user]);
     }
 }
+
+class QuotedIdentifierStore {
+    public function byField($db, string $entity, string $field, $id) {
+        // ok: php.parameter-sql-text
+        return $db->query("SELECT * FROM `$entity` WHERE `{$field}` = ?", [$id]);
+    }
+
+    public function byFieldConcat($db, string $field, $id) {
+        // ok: php.parameter-sql-text
+        $sql = 'SELECT * FROM items WHERE `' . $field . '` = ?';
+        // ok: php.parameter-sql-text
+        return $db->executeQuery($sql, [$id]);
+    }
+
+    public function byValue($db, string $entity, string $name) {
+        // ruleid: php.parameter-sql-text
+        return $db->query("SELECT * FROM `$entity` WHERE name = '$name'");
+    }
+
+    public function byValueConcat($db, string $name) {
+        // ruleid: php.parameter-sql-text
+        $sql = 'SELECT * FROM items WHERE `name` = \'' . $name . '\'';
+        // ruleid: php.parameter-sql-text
+        return $db->executeQuery($sql);
+    }
+}

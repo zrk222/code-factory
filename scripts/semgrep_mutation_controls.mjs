@@ -183,10 +183,10 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.java.request-sql-injection': 3,
   'opt.factory.rules.javascript.archive-path-traversal': 3,
   'opt.factory.rules.javascript.dom-innerhtml-from-variable': 2,
-  'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
   'opt.factory.rules.javascript.html-template-unescaped-interpolation': 4,
+  'opt.factory.rules.javascript.parameter-path-join-without-containment': 3,
   'opt.factory.rules.javascript.parameter-shell-command': 7,
-  'opt.factory.rules.javascript.parameter-sql-text': 3,
+  'opt.factory.rules.javascript.parameter-sql-text': 8,
   'opt.factory.rules.javascript.request-command-injection': 4,
   'opt.factory.rules.javascript.request-html-injection': 12,
   'opt.factory.rules.javascript.request-path-traversal': 17,
@@ -194,7 +194,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
   'opt.factory.rules.php.parameter-shell-command': 1,
-  'opt.factory.rules.php.parameter-sql-text': 3,
+  'opt.factory.rules.php.parameter-sql-text': 6,
   'opt.factory.rules.php.request-command-injection': 13,
   'opt.factory.rules.php.request-file-inclusion': 2,
   'opt.factory.rules.php.request-html-injection': 1,
@@ -203,9 +203,9 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.php.request-unsafe-deserialization': 4,
   'opt.factory.rules.python.archive-path-traversal': 4,
   'opt.factory.rules.python.disabled-tls-verification': 4,
-  'opt.factory.rules.python.parameter-path-join-without-containment': 17,
+  'opt.factory.rules.python.parameter-path-join-without-containment': 16,
   'opt.factory.rules.python.parameter-shell-command': 7,
-  'opt.factory.rules.python.parameter-sql-text': 2,
+  'opt.factory.rules.python.parameter-sql-text': 3,
   'opt.factory.rules.python.request-command-injection': 2,
   'opt.factory.rules.python.request-html-injection': 1,
   'opt.factory.rules.python.request-path-traversal': 29,
@@ -216,7 +216,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.ruby.archive-path-traversal': 2,
   'opt.factory.rules.ruby.disabled-tls-verification': 6,
   'opt.factory.rules.ruby.parameter-shell-command': 5,
-  'opt.factory.rules.ruby.parameter-sql-text': 4,
+  'opt.factory.rules.ruby.parameter-sql-text': 5,
   'opt.factory.rules.ruby.request-command-injection': 3,
   'opt.factory.rules.ruby.request-html-injection': 1,
   'opt.factory.rules.ruby.request-path-traversal': 4,
@@ -271,6 +271,9 @@ export function javascriptControlManifest() {
       path: 'typescript-html-escaped-local.ts', line: 51 },
     { rule: 'opt.factory.rules.javascript.parameter-shell-command',
       path: 'typescript-html-escaped-local.ts', line: 56 },
+    // Values stay reported; quoted identifiers and placeholder lists do not.
+    ...[42, 47, 49, 55, 60].map(line => ({ rule: 'opt.factory.rules.javascript.parameter-sql-text',
+      path: 'typescript-sql-identifier.ts', line })),
   ];
 }
 
@@ -284,7 +287,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 293;
+const REVIEWED_FINDINGS = 302;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -346,6 +349,7 @@ export const extensionControlFiles = Object.freeze([
   ['ts', 'tsx-shell-binding-controls.txt', 'typescript-shell-binding.ts'],
   ['ts', 'tsx-shell-helper-controls.txt', 'typescript-shell-helper.ts'],
   ['ts', 'tsx-html-escaped-local-controls.txt', 'typescript-html-escaped-local.ts'],
+  ['ts', 'tsx-sql-identifier-controls.txt', 'typescript-sql-identifier.ts'],
   ['rb', 'ruby-archive-output-controls.txt'], ['rb', 'ruby-parameter-sink-controls.txt'],
   ['rb', 'ruby-path-param-controls.txt'], ['rb', 'ruby-sql-text-controls.txt'],
   ['cs', 'csharp-sql-builder-controls.txt', 'csharp-sql-builder.cs'],

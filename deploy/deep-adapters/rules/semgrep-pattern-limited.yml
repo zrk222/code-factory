@@ -3765,6 +3765,10 @@ rules:
       - pattern: $X.quote_ident(...)
       - pattern: $X.escape_string(...)
       - pattern: $X.literal(...)
+      # A quoted SQL identifier in an f-string (FROM "{table}", `{column}`): a double quote
+      # after a keyword, name, '.', ',' or '(' (never a comparison or LIKE), or a backtick.
+      - pattern-regex: '(?i)(?:\b(?!i?like\b)[a-z_]\w*|[.,(])\s*\\?"\{[^{}"\\\n]*\}\\?"'
+      - pattern-regex: '`\{[^{}`\n]*\}`'
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -3839,6 +3843,13 @@ rules:
       - pattern: $A % $B
       - pattern: count(...)
       - pattern: time()
+      # A backtick-quoted identifier interpolated in SQL text ("FROM `$table`", "`{$this->column}`").
+      - pattern-regex: '`(?:\{\$[^{}`"\n]+\}|\$\w+(?:->\w+)*)`'
+      - patterns:
+          - pattern: $QL . $QX . $QR
+          - metavariable-regex: {metavariable: $QL, regex: '(?s)\A[''"].*`[''"]\z'}
+          - metavariable-regex: {metavariable: $QR, regex: '\A[''"]`'}
+          - focus-metavariable: $QX
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -3887,10 +3898,11 @@ rules:
       - patterns:
           - pattern: $LIT . $X
           # Check a single quoted literal without reparsing every concatenation operand.
+          # A literal ending in a backtick opens a quoted identifier, not a value.
           - metavariable-regex:
               metavariable: $LIT
               regex: >-
-                (?s)\A(?=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\z)(?:(?is)\A['"]`['"]\z|\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?['\"%]).*?(=\s*|like\s*|in\s*\(\s*|\\'%?|"%?|'%?|`)['"]\z)
+                (?s)\A(?=(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\z)(?:(?is)\A.*?\b(select\s[\s\S]*\sfrom|insert\s+into|update\s+\S+\s+set|delete\s+from|(where|and|or)\s+[\w.`]+\s*(=|<>|!=|<|>|like|in)|[\w.`]+\s+like\s+\\?['\"%]).*?(=\s*|like\s*|in\s*\(\s*|\\'%?|"%?|'%?)['"]\z)
           - pattern-not-inside:
               patterns:
                 - pattern: class $C extends $B { ... }
@@ -4035,6 +4047,28 @@ rules:
       - pattern: $DB.escapeId(...)
       - pattern: mysql.escape(...)
       - pattern: format(...)
+      # Identifier quoting and escaping helpers (escapeIdentifier, quoteIdent, format.ident).
+      - patterns:
+          - pattern-either:
+              - pattern: $QF(...)
+              - pattern: $QO.$QF(...)
+          - metavariable-regex: {metavariable: $QF, regex: '(?i)^(?:\w*(?:escape|quote)\w*|ident)$'}
+      # A double-quoted SQL identifier ("${table}", "${schema}"."${column}"): the quote
+      # follows a keyword, name, '.', ',' or '(', never a comparison or LIKE.
+      - pattern-regex: '(?i)(?:\b(?!i?like\b)[a-z_]\w*|[.,(])\s*"\$\{[^{}`"\n]*\}"'
+      - patterns:
+          - pattern: $QL + $QX + $QR
+          - metavariable-regex: {metavariable: $QL, regex: '(?is)\A[''"].*(?:\b(?!i?like\b)[a-z_]\w*|[.,(])\s*"[''"]\z'}
+          - metavariable-regex: {metavariable: $QR, regex: '\A[''"]"'}
+          - focus-metavariable: $QX
+      # Positional or named placeholders ($${n}, @${name}) and placeholder lists.
+      - pattern-regex: '[$@]\$\{[^{}`\n]*\}'
+      - patterns:
+          - pattern: $QP.join(...)
+          - metavariable-regex: {metavariable: $QP, regex: '(?i)^\w*placeholders?$'}
+      - patterns:
+          - pattern: $QA.map((...) => $QT)
+          - metavariable-regex: {metavariable: $QT, regex: '\A(?:([''"`])[(), ]*\?[?(), ]*\1|`[$@]\$\{[^`]*\}`|[''"][$@][''"]\s*\+[^,]*)\z'}
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -4113,10 +4147,11 @@ rules:
     languages: [ruby]
     patterns:
       - pattern-either:
-          # SQL text in a double-quoted literal with an interpolation that is not adapter quoting.
-          - pattern-regex: '"(?:[^"\\\n]|\\.)*?(?<![\w.])(?:(?i:select\s[^"\n]*?\bfrom|insert\s+into|update\s+[\w.`]+\s+set|delete\s+from)|WHERE|LIMIT|OFFSET|ORDER\s+BY|GROUP\s+BY|HAVING|AND|OR)\b(?:[^"\\\n]|\\.)*?#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name|connection\.quote\w*)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
+          # SQL text in a double-quoted literal with an interpolation that is not adapter quoting
+          # or a quoted identifier (`#{column}`, \"#{table}\").
+          - pattern-regex: '"(?:[^"\\\n]|\\.)*?(?<![\w.])(?:(?i:select\s[^"\n]*?\bfrom|insert\s+into|update\s+[\w.`]+\s+set|delete\s+from)|WHERE|LIMIT|OFFSET|ORDER\s+BY|GROUP\s+BY|HAVING|AND|OR)\b(?:[^"\\\n]|\\.)*?(?<!`)(?<!\\")#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name|connection\.quote\w*)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
           # ActiveRecord query methods given an interpolated string.
-          - pattern-regex: '\.(?:where|order|reorder|group|having|joins|select|pluck|from|find_by_sql|lock|count_by_sql)\(\s*(?:Arel\.sql\(\s*)?"[^"\n]*#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
+          - pattern-regex: '\.(?:where|order|reorder|group|having|joins|select|pluck|from|find_by_sql|lock|count_by_sql)\(\s*(?:Arel\.sql\(\s*)?"[^"\n]*(?<!`)(?<!\\")#\{(?!\s*(?:[\w:]+\.)*(?:quote\w*|quoted_\w+|sanitize\w*|table_name|quote_table_name|quote_column_name)\b)(?![^}\n]*\.(?:to_[if]|to_sql|id)\s*\})[^}\n]*\}'
       - pattern-not-regex: '(?m)^[ \t]*#(?!\{).*$'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py", "**/db/migrate/**", "**/db/post_migrate/**"]
