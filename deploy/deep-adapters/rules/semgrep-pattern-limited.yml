@@ -4322,6 +4322,22 @@ rules:
               - pattern: $QF(...)
               - pattern: $QO.$QF(...)
           - metavariable-regex: {metavariable: $QF, regex: '(?i)^(?:\w*(?:escape|quote)\w*|ident)$'}
+      # A local alias of such a helper (const q = qi.quoteIdentifier.bind(qi);
+      # const q = (name) => qi.quoteIdentifier(name)), called in the same function.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $QA = $QO.$QF.bind(...);
+                  ...
+              - pattern-inside: |
+                  $QA = $QO.$QF;
+                  ...
+              - pattern-inside: |
+                  $QA = ($QN) => $QO.$QF($QN);
+                  ...
+          - pattern: $QA(...)
+          - metavariable-regex: {metavariable: $QA, regex: '^[A-Za-z_$][\w$]*$'}
+          - metavariable-regex: {metavariable: $QF, regex: '(?i)^(?:\w*(?:escape|quote)\w*|ident)$'}
       # A double-quoted SQL identifier ("${table}", "${schema}"."${column}"): the quote
       # follows a keyword, name, '.', ',' or '(', never a comparison or LIKE.
       - pattern-regex: '(?i)(?:\b(?!i?like\b)[a-z_]\w*|[.,(])\s*"\$\{[^{}`"\n]*\}"'
