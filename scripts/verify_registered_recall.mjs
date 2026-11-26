@@ -48,12 +48,12 @@ function candidateOutcome(row) {
   return outcome;
 }
 
-function inputFingerprint({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256 }) {
+export function inputFingerprint({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256 }) {
   // The published receipt hashes the advisory and its source bindings as one object.
   return sha256(JSON.stringify(sortKeys({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256 })));
 }
 
-function completeFixedCoverage(files, packets) {
+export function completeFixedCoverage(files, packets) {
   if (!Array.isArray(files) || !Array.isArray(packets)
     || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
   const byPath = new Map(files.map(file => [file.path, file]));

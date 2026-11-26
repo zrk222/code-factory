@@ -291,7 +291,7 @@ function regionSpan({ startLine, startColumn, endLine, endColumn }) {
   return [startColumn ?? null, lineOffset, endColumn ?? null];
 }
 
-export function sarifFindings(sarif, packetPaths) {
+export function sarifFindings(sarif, packetPaths, normalizeRuleId = id => id.split('.').slice(-2).join('.')) {
   const out = [];
   const clean = loc => sarifPath(loc.artifactLocation.uri, packetPaths);
   for (const run of sarif.runs ?? []) {
@@ -302,7 +302,7 @@ export function sarifFindings(sarif, packetPaths) {
         .flatMap(thread => thread.locations ?? []).map(step => step.location?.physicalLocation)
         .filter(step => step?.artifactLocation && step.region).map(step => [clean(step), step.region.startLine]);
       const span = regionSpan(location.region);
-      out.push({ rule: result.ruleId.split('.').slice(-2).join('.'), path: clean(location),
+      out.push({ rule: normalizeRuleId(result.ruleId), path: clean(location),
         line: location.region.startLine, ...(span ? { span } : {}), trace });
     }
   }
@@ -2294,7 +2294,7 @@ async function observe(opts) {
   console.log(`${queued.labels.length} labels, ${queued.labels.filter(label => !label.verdict).length} pending`);
 }
 
-function reviewCapturePath(root, name) {
+export function reviewCapturePath(root, name) {
   if (typeof name !== 'string' || isAbsolute(name) || !insideControl(root, resolve(root, name))) {
     throw new Error('Review capture path leaves the work directory');
   }
