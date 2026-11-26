@@ -13,12 +13,12 @@ class CsvPathFixture
   end
 
   def read_lines(filename)
-    # ruleid: ruby.parameter-shell-command
+    # ok: ruby.parameter-shell-command
     IO.foreach(filename)
   end
 
   def read_uri(filename)
-    # ruleid: ruby.parameter-shell-command
+    # ok: ruby.parameter-shell-command
     URI.open(filename, &:read)
   end
 

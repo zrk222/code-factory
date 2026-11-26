@@ -1,0 +1,188 @@
+{
+  "schema": "factory.recall-fixed-side-retention.v1",
+  "scope": "registered exposed replay",
+  "engine": {
+    "executable": "opengrep.exe",
+    "executable_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+    "version": "2.1.0"
+  },
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "engine_args": [
+    "--timeout=15",
+    "--jobs=1"
+  ],
+  "harness_workers": 2,
+  "cohort_manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+  "cohort_cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
+  "speed_candidate_rules_sha256": "651996a05d2aa4a498b69effc2112e04d7c465be15ab7fc2551dd8cb4f36b5cf",
+  "score_sha256": "75fdced89272187b1dc4c6a32833d9dc92ca8efb949358b33717c8053d4b4a20",
+  "qualification": {
+    "schema": "factory.registered-recall-retention.v1",
+    "reference_sha256": "0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf",
+    "candidate_score_sha256": "75fdced89272187b1dc4c6a32833d9dc92ca8efb949358b33717c8053d4b4a20",
+    "candidate_rules_sha256": "84e998960d7cf196eb074f023a95a384facc3b7128ad7abb4fbaaccab9231b86",
+    "decision": "ACCEPT",
+    "summary": {
+      "registered_cases": 161,
+      "verified_bindings": 161,
+      "reference_hunk_hits": 39,
+      "retained_hunk_hits": 39,
+      "candidate_outcomes": {
+        "hit": 51,
+        "miss": 105,
+        "timeout": 0,
+        "unknown": 2,
+        "error": 0,
+        "coverage_incomplete": 3
+      },
+      "reference_fixed_side_residual_alerts": 17,
+      "candidate_fixed_side_residual_alerts": 17,
+      "candidate_hunk_hits": 51
+    },
+    "lost": [],
+    "gained": [
+      "GHSA-23fx-92m6-4f2g",
+      "GHSA-2jh5-g5ch-43q5",
+      "GHSA-6m7c-xfhp-p9fh",
+      "GHSA-6qjf-g333-pv38",
+      "GHSA-85gf-wr67-f83w",
+      "GHSA-gjqq-6r35-w3r8",
+      "GHSA-jjgq-jq8g-24w4",
+      "GHSA-jppv-gw3r-w3q8",
+      "GHSA-mc7w-4cjf-c973",
+      "GHSA-mxg3-432p-mr72",
+      "GHSA-vj9x-w7ch-f46p",
+      "GHSA-vq7p-f4fv-rr5x"
+    ],
+    "new_unresolved": [],
+    "failures": [],
+    "verified_capture_cases": 160
+  },
+  "matcher_probes_withheld": [
+    "GHSA-6g56-v9qg-jp92",
+    "GHSA-v222-6mr4-qj29"
+  ],
+  "earlier_candidate_added_fixed_spans": [
+    {
+      "case": "GHSA-6g56-v9qg-jp92",
+      "rule": "go.parameter-shell-command",
+      "path": "executors/sshexec/device.go",
+      "line": 36,
+      "span": [
+        73,
+        0,
+        79
+      ],
+      "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217"
+    },
+    {
+      "case": "GHSA-6g56-v9qg-jp92",
+      "rule": "go.parameter-shell-command",
+      "path": "executors/sshexec/device.go",
+      "line": 37,
+      "span": [
+        33,
+        0,
+        47
+      ],
+      "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217"
+    },
+    {
+      "case": "GHSA-6g56-v9qg-jp92",
+      "rule": "go.parameter-shell-command",
+      "path": "executors/sshexec/device.go",
+      "line": 37,
+      "span": [
+        49,
+        0,
+        55
+      ],
+      "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217"
+    },
+    {
+      "case": "GHSA-6g56-v9qg-jp92",
+      "rule": "go.parameter-shell-command",
+      "path": "executors/sshexec/device.go",
+      "line": 67,
+      "span": [
+        30,
+        0,
+        44
+      ],
+      "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217"
+    },
+    {
+      "case": "GHSA-6g56-v9qg-jp92",
+      "rule": "go.parameter-shell-command",
+      "path": "executors/sshexec/device.go",
+      "line": 68,
+      "span": [
+        32,
+        0,
+        38
+      ],
+      "source_sha256": "9a90e4286591a5c5d90d857654830187559a01a1ab2013a1135df8a760e21217"
+    },
+    {
+      "case": "GHSA-v222-6mr4-qj29",
+      "rule": "ruby.parameter-shell-command",
+      "path": "lib/asciidoctor/include_ext/include_processor.rb",
+      "line": 117,
+      "span": [
+        20,
+        0,
+        24
+      ],
+      "source_sha256": "743dd76246e5a94a69759eaba9107414e76ede4bce785a0a20d5d2055f8e7ec3"
+    },
+    {
+      "case": "GHSA-v222-6mr4-qj29",
+      "rule": "ruby.parameter-shell-command",
+      "path": "lib/asciidoctor/include_ext/include_processor.rb",
+      "line": 119,
+      "span": [
+        18,
+        0,
+        22
+      ],
+      "source_sha256": "743dd76246e5a94a69759eaba9107414e76ede4bce785a0a20d5d2055f8e7ec3"
+    }
+  ],
+  "fixed_span_labels": "NOT_ADJUDICATED",
+  "paired_benign_control": {
+    "scope": "single pinned jQuery control",
+    "before": 15,
+    "after": 15,
+    "source_tree": {
+      "sha256": "b5adf837963f086c837b59a9480c89f986ef726baae6d5c8e2a0ee96a0c9efca",
+      "entries": 351
+    },
+    "capture_sha256": "55b2f59f18bda7c85512c5385f6995d1ae9a71a99832f9e20426d466a991d94f"
+  },
+  "fixtures": {
+    "legacy_native_findings": 285,
+    "legacy_sarif_sha256": "aaec126b78d6c688e868787f3571ac979ace6c9378d4a7d4ad278b2b74b801e2",
+    "harness_tests": 66,
+    "harness_tests_sha256": "2261ce0bb86ae11e7ae489f13d3e08957781ba937664a02d5770097d66401e75",
+    "mutation_tests": 22,
+    "mutation_tests_sha256": "12bee9cd973e36917679f624b60fb8f10daa685786a27cb1171e7fc191bc8ff9"
+  },
+  "prior_53_candidate_runtime_scope": "exposed only",
+  "runtime": {
+    "outcomes": {
+      "hit": 51,
+      "miss": 105,
+      "timeout": 0,
+      "unknown": 2,
+      "error": 0,
+      "coverage_incomplete": 3
+    },
+    "fixed": 17,
+    "seconds": 169.6837592
+  },
+  "remaining": {
+    "full_18_control_qualification": "NOT_RUN",
+    "blinded_precision": "NOT_RUN",
+    "held_out_q2": "SEALED"
+  }
+}

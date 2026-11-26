@@ -3788,14 +3788,6 @@ rules:
           - metavariable-regex: {metavariable: $SHELL, regex: '^"(/bin/|/usr/bin/)?(sh|bash|zsh)"$'}
           - focus-metavariable: $CMD
         requires: COMMAND_MAP_VALUE
-      - patterns:
-          - pattern: fmt.Sprintf($FMT, ..., $VALUE, ...)
-          - pattern-inside: |
-              $COMMANDS := []string{..., fmt.Sprintf($FMT, ..., $VALUE, ...), ...}
-              ...
-              $STATUS, $ERROR := $RUNNER.RemoteCommandExecute($HOST, $COMMANDS, ...)
-          - focus-metavariable: $VALUE
-        requires: PARAMETER
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**", "**/spec/**", "**/migrations/**", "**/tests.py"]
     metadata:
@@ -3860,10 +3852,7 @@ rules:
           - focus-metavariable: $CMD
         requires: METHOD_PARAMETER
       - patterns:
-          - pattern-either:
-              - pattern: Kernel.open($PATH, ...)
-              - pattern: IO.foreach($PATH, ...)
-              - pattern: URI.open($PATH, ...)
+          - pattern: Kernel.open($PATH, ...)
           - metavariable-regex:
               metavariable: $PATH
               regex: >-

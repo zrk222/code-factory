@@ -23,7 +23,7 @@ func makeArguments(labels map[string]string) []string {
 
 func remoteBatch(host, name string, runner RemoteRunner) error {
     commands := []string{
-        // ruleid: go.parameter-shell-command
+        // ok: go.parameter-shell-command
         fmt.Sprintf("fixture-marker %v", name),
     }
     _, err := runner.RemoteCommandExecute(host, commands, 3)

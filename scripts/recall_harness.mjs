@@ -16,7 +16,7 @@
 //            [--retain-gains-from verdict.json [--gain-adjudicated-losses plan.json]]
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
-//   review-alerts --score result.json --score-sha256 HEX --workdir DIR --out alerts.json
+//   review-alerts --score result.json --score-sha256 HEX --workdir DIR --out alerts.json [--side old|fixed]
 //   compare  before.json after.json
 //
 // Scoring runs the production profile argv (deploy/deep-adapters/profiles),
@@ -2182,45 +2182,73 @@ function reviewCapturePath(root, name) {
   return target;
 }
 
-function oldReviewAlerts(root, row, rulesSha256) {
-  const capture = row.captures?.old;
-  const notes = row.scan_sides?.old;
+function readReviewCapture(root, row, side) {
+  const capture = row.captures?.[side];
+  const notes = row.scan_sides?.[side];
   if (!notes || notes.failed_exit !== false || ![0, 1].includes(notes.exit_code) || scanIssue(notes) || !capture?.sarif) {
-    throw new Error('Review score has no successful old-side capture');
+    throw new Error('Review score has no successful ' + side + '-side capture');
   }
   const source = reviewCapturePath(root, capture.source_root);
-  const packets = row.source_packets.old;
+  const packets = row.source_packets[side];
   verifyPreparedBytes(source, packets);
   const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
   const report = readFileSync(reviewCapturePath(root, capture.sarif.path));
   if (sha256(report) !== capture.sarif.sha256 || capture.sarif.sha256 !== notes.report_sha256) {
     throw new Error('Review SARIF digest differs from score capture');
   }
-  const changed = new Set(row.changed_files);
   const findings = sarifFindings(JSON.parse(utf8(report)), new Set(hashes.keys()));
   if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
-  const selected = findings.filter(finding => changed.has(finding.path));
+  return { source, hashes, findings };
+}
+
+function reviewAlert(row, { source, hashes }, rulesSha256, { rule, path, line, span }, onFixHunk) {
+  return { case: row.ghsa, root: source, path, line, rule, ...(span ? { span } : {}),
+    source_sha256: hashes.get(path), rules_sha256: rulesSha256, on_fix_hunk: onFixHunk };
+}
+
+function reviewCounts(keys) {
+  const counts = new Map();
+  for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+  return counts;
+}
+
+function oldReviewAlerts(root, row, rulesSha256) {
+  const capture = readReviewCapture(root, row, 'old');
+  const changed = new Set(row.changed_files);
+  const selected = capture.findings.filter(finding => changed.has(finding.path));
   if (selected.length !== row.alerts_in_changed_files || (row.hunk_spans && row.hunk_spans.length !== row.hunk_findings.length)) {
     throw new Error('Review findings differ from score capture');
   }
-  const counts = new Map();
   const actual = new Map();
   const identity = (location, span) => JSON.stringify(row.hunk_spans ? [...location, span ?? null] : location);
-  for (const [index, location] of row.hunk_findings.entries()) {
-    const key = identity(location, row.hunk_spans?.[index]);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  const alerts = selected.map(({ rule, path, line, span }) => {
+  const counts = reviewCounts(row.hunk_findings.map((location, index) => identity(location, row.hunk_spans?.[index])));
+  const alerts = selected.map(finding => {
+    const { rule, path, line, span } = finding;
     const key = identity([rule, path, line], span);
-    const on_fix_hunk = counts.has(key);
-    if (on_fix_hunk) actual.set(key, (actual.get(key) ?? 0) + 1);
-    return { case: row.ghsa, root: source, path, line, rule, ...(span ? { span } : {}),
-      source_sha256: hashes.get(path), rules_sha256: rulesSha256, on_fix_hunk };
+    const onFixHunk = counts.has(key);
+    if (onFixHunk) actual.set(key, (actual.get(key) ?? 0) + 1);
+    return reviewAlert(row, capture, rulesSha256, finding, onFixHunk);
   });
   if ([...counts].some(([key, expected]) => actual.get(key) !== expected)) {
     throw new Error('Review hunk positions differ from score capture');
   }
   return alerts;
+}
+
+function fixedReviewAlerts(root, row, rulesSha256) {
+  if (!Array.isArray(row.fix_side_residual)) throw new Error('Review score has no fixed-side residual ledger');
+  if (!row.fix_side_residual.length) return [];
+  const capture = readReviewCapture(root, row, 'fixed');
+  const identity = ({ rule, path, line }) => JSON.stringify([rule, path, line]);
+  const expected = reviewCounts(row.fix_side_residual.map(location => JSON.stringify(location)));
+  const matched = capture.findings.filter(finding => expected.has(identity(finding)));
+  const observed = reviewCounts(matched.map(identity));
+  if ([...expected].some(([key, count]) => observed.get(key) !== count)) {
+    throw new Error('Review fixed-side residuals differ from score capture');
+  }
+  return matched.map(finding => ({
+    ...reviewAlert(row, capture, rulesSha256, finding, true), side: 'fixed',
+  }));
 }
 
 // The export never replaces its pinned score receipt or a retained capture it reads.
@@ -2235,6 +2263,8 @@ export function assertReviewOutput(out, score, workRoot) {
 }
 
 function reviewAlerts(opts) {
+  const side = opts.side ?? 'old';
+  if (!['old', 'fixed'].includes(side)) throw new Error('Review side must be old or fixed');
   const bytes = readFileSync(opts.score);
   if (sha256(bytes) !== opts['score-sha256']) throw new Error('Review score digest mismatch');
   const saved = JSON.parse(utf8(bytes));
@@ -2245,7 +2275,8 @@ function reviewAlerts(opts) {
   const root = realpathSync(resolve(opts.workdir ?? '.factory/recall-work'));
   assertReviewOutput(opts.out, opts.score, root);
   const cases = saved.cases.filter(scoredCase);
-  const alerts = cases.flatMap(row => oldReviewAlerts(root, row, saved.ruleset_sha256));
+  const collect = side === 'fixed' ? fixedReviewAlerts : oldReviewAlerts;
+  const alerts = cases.flatMap(row => collect(root, row, saved.ruleset_sha256));
   writeFileSync(opts.out, `${JSON.stringify(alerts, null, 1)}\n`);
   console.log(JSON.stringify({ alerts: alerts.length, scored_cases: cases.length, omitted_cases: saved.cases.length - cases.length }));
 }

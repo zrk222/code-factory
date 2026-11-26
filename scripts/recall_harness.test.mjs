@@ -730,7 +730,7 @@ async function feederFixture(run, row = feederRow) {
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
       "const disputedParse = ruleText.includes(old ? '# candidate-parse' : '# fixed-parse');",
       "const nativeTimeout = old && ruleText.includes('# native-timeout-only');",
-      "const results = old && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
+      "const results = (old || ruleText.includes('# fixed-review-spans')) && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
       "if (results.length && ruleText.includes('# hunk-spans')) {",
       "  const span = (startColumn, endColumn) => ({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn, endColumn } } }] });",
       "  results.splice(0, 1, span(1, 4), span(6, 9));",
@@ -866,6 +866,41 @@ test('review-alerts exports pinned old-side reports with distinct spans on one l
   rmSync(output);
   assert.match(run('0'.repeat(64)).stderr, /Review score digest mismatch/);
   const report = join(workdir, JSON.parse(raw).cases[0].captures.old.sarif.path);
+  writeFileSync(report, ' ', { flag: 'a' });
+  assert.match(run().stderr, /Review SARIF digest differs/);
+  assert.equal(existsSync(output), false);
+}));
+
+test('review-alerts preserves both fixed residual spans and rejects inconsistent evidence', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline } = fixture;
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# hunk-spans\n# fixed-review-spans\n');
+  const saved = join(root, 'fixed-score.json');
+  const output = join(root, 'fixed-review.json');
+  const script = 'scripts/recall_harness.mjs';
+  const score = spawnSync(process.execPath, [script, 'score', '--manifest', manifest,
+    '--rules', baseline, '--profile', profile, '--opengrep', process.execPath, '--workdir', workdir, '--out', saved],
+  { encoding: 'utf8' });
+  assert.equal(score.status, 0, score.stderr);
+  const raw = readFileSync(saved);
+  const receipt = JSON.parse(raw);
+  const row = receipt.cases[0];
+  assert.equal(row.fix_side_residual.length, 2);
+  const run = (pin = sha256(raw)) => spawnSync(process.execPath, [script, 'review-alerts', '--score', saved,
+    '--score-sha256', pin, '--workdir', workdir, '--side', 'fixed', '--out', output], { encoding: 'utf8' });
+  const exported = run();
+  assert.equal(exported.status, 0, exported.stderr);
+  const records = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(records.map(({ span }) => span), [[1, 0, 4], [6, 0, 9]]);
+  assert.ok(records.every(alert => alert.side === 'fixed' && alert.on_fix_hunk
+    && alert.source_sha256 === row.source_packets.fixed[0].sha256));
+
+  rmSync(output);
+  row.fix_side_residual.pop();
+  const changed = Buffer.from(JSON.stringify(receipt));
+  writeFileSync(saved, changed);
+  assert.match(run(sha256(changed)).stderr, /Review fixed-side residuals differ/);
+  writeFileSync(saved, raw);
+  const report = join(workdir, row.captures.fixed.sarif.path);
   writeFileSync(report, ' ', { flag: 'a' });
   assert.match(run().stderr, /Review SARIF digest differs/);
   assert.equal(existsSync(output), false);
