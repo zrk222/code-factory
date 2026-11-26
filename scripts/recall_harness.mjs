@@ -36,7 +36,7 @@ import { basename, delimiter, dirname, extname, isAbsolute, join, relative, reso
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
-import { compileScannerPathPolicy, engineTargetIgnores, PARSER_LANGUAGE } from './recall_coverage.mjs';
+import { compileScannerPathPolicy, engineTargetIgnores, PARSER_LANGUAGE, readRuleMetadata } from './recall_coverage.mjs';
 import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
 export const FAMILIES = Object.freeze({
@@ -171,17 +171,19 @@ export function parseHunks(diff, extensions, editedLines = null) {
   return files;
 }
 
-// Rule id -> scored families, read from the ruleset without a YAML dependency.
+function requireRuleMetadata(rules) {
+  const records = readRuleMetadata(rules);
+  if (!records?.length) throw new Error('Recall requires parseable YAML rules with unique ids. Check the rules and Code Factory Python runtime.');
+  return records;
+}
+
+function familiesByRule(records) {
+  return Object.fromEntries(records.map(({ id, cwes }) => [id,
+    familiesFor(cwes.map(cwe => cwe.replace(/[-\s"']/g, '').replace(/^CWE/, 'CWE-')))]));
+}
+
 export function ruleFamilies(rulesText) {
-  const out = {};
-  for (const block of rulesText.split(/\n  - id: /).slice(1)) {
-    const id = block.split('\n', 1)[0].trim();
-    const inline = block.match(/\n\s+cwe:\s*\[([^\]]*)\]/);
-    const listed = block.match(/\n(\s+)cwe:\s*\n((?:\1\s*- .*\n?)+)/);
-    const cwes = inline ? inline[1].split(',') : listed ? listed[2].split('\n') : [];
-    out[id] = familiesFor(cwes.map(item => item.replace(/[-\s"']/g, '').replace(/^CWE/, 'CWE-')).filter(Boolean));
-  }
-  return out;
+  return familiesByRule(requireRuleMetadata(rulesText));
 }
 
 // Earlier advisory IDs and earlier repository@fix pairs from every manifest
@@ -917,24 +919,25 @@ function freeze(opts) {
 
 function scoringContext(opts, rulesPath) {
   const rulesBytes = readFileSync(rulesPath);
+  const records = requireRuleMetadata(rulesBytes);
   // evaluate() reads the profile once so a working-tree edit during a long
   // paired run cannot give the two sides different profiles.
   const profileBytes = opts.profileBytes ?? readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
   const profile = JSON.parse(utf8(profileBytes));
   return { profile, profileSha256: sha256(profileBytes),
-    pathPolicy: optionalScannerPolicy(opts, profile, rulesBytes),
+    pathPolicy: optionalScannerPolicy(opts, profile, records),
     bin: opts.opengrep ?? process.env.OPENGREP ?? 'opengrep', rules: resolve(rulesPath),
-    rulesSha256: sha256(rulesBytes), ruleMap: ruleFamilies(utf8(rulesBytes)),
+    rulesSha256: sha256(rulesBytes), ruleMap: familiesByRule(records),
     extra: [].concat(opts['extra-arg'] ?? []), workdir: resolve(opts.workdir ?? '.factory/recall-work'),
     scope: opts.scope === 'scannable' ? 'scannable' : 'ecosystem' };
 }
 
-function optionalScannerPolicy(opts, profile, rulesBytes) {
+function optionalScannerPolicy(opts, profile, records) {
   if (opts['scanner-path-policy'] !== 'true') return null;
   if (profile.engine !== 'semgrep' || profile.tool_version !== '2.1.0') {
     throw new Error('Scanner path evidence requires the verified OpenGrep 2.1.0 target inventory');
   }
-  return compileScannerPathPolicy(utf8(rulesBytes));
+  return compileScannerPathPolicy(records);
 }
 
 // Restartable qualification: a completed scored case (or control pair) is

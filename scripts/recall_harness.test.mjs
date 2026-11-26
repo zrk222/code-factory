@@ -133,22 +133,26 @@ test('paired control recovery separates a watchdog kill from unrelated scan fail
   assert.equal(controlIssue({ notes: { failed_exit: false, timeouts: 1 } }), 'timeout');
 });
 
-test('rule families read both inline and block CWE lists', () => {
+test('rule families bind YAML metadata independent of key order and reject ambiguous rules', () => {
   const rules = `rules:
   - id: python.request-path-traversal
     metadata:
       cwe: ["CWE-22"]
-  - id: ruby.request-path-traversal
+  - languages: [ruby]
     metadata:
       cwe:
       - CWE-22
       - CWE-73
+    id: ruby.request-path-traversal
   - id: c.unsafe-gets
     metadata:
-      cwe: ["CWE-242"]
+      cwe: CWE-242
 `;
   assert.deepEqual(ruleFamilies(rules), { 'python.request-path-traversal': ['path'],
     'ruby.request-path-traversal': ['path'], 'c.unsafe-gets': [] });
+  const reordered = rules.replace('id: ruby.request-path-traversal', 'id: python.request-path-traversal');
+  assert.throws(() => ruleFamilies(reordered), /unique ids/);
+  assert.throws(() => ruleFamilies(rules + '  - id: malformed\n    metadata: [CWE-89]\n'), /parseable YAML/);
   const shipped = ruleFamilies(readFileSync('deploy/deep-adapters/rules/semgrep-pattern-limited.yml', 'utf8'));
   const shippedRuleCount = Object.keys(shipped).length;
   assert.ok(shippedRuleCount > 0 && shippedRuleCount <= 64, `shipped rules must stay within the 64-rule ceiling (${shippedRuleCount})`);
