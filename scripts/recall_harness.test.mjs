@@ -303,7 +303,7 @@ test('line-only adjudication cannot waive two alerts on the same line', () => {
 });
 
 test('coverage gaps never count as misses and regressions fail on either revision', () => {
-  const clean = { path: 'sample.py', state: 'reported_scanned', reason: 'engine_scan_paths' };
+  const clean = { path: 'sample.py', sha256: sha256('fixture'), state: 'reported_scanned', reason: 'engine_scan_paths' };
   const base = { ghsa: 'A', status: 'scored', hunk_hit: false, fix_side_residual: [],
     families: ['path'], ecosystem: 'PyPI', file_coverage: { old: [clean], fixed: [clean] } };
   const incomplete = { ...base, file_coverage: { ...base.file_coverage,
@@ -323,6 +323,16 @@ test('coverage gaps never count as misses and regressions fail on either revisio
     fixed: [{ ...clean, state: 'partial', reason: 'parse' }] } };
   assert.equal(result(partialFixed).summary.hunk_hits, 1);
   assert.equal(compare(hit, partialFixed).decision, 'REJECT');
+  assert.equal(compare(partialFixed, partialFixed).decision, 'ACCEPT');
+  const failedFixed = { ...partialFixed, file_coverage: { ...partialFixed.file_coverage,
+    fixed: [{ ...clean, state: 'partial', reason: 'engine_error' }] },
+  parser_probe: { fixed: { confirmed_limits: [clean.path] } } };
+  assert.deepEqual(compare(partialFixed, failedFixed).new_coverage_gaps, ['A']);
+  assert.deepEqual(compare(hit, failedFixed).new_coverage_gaps, ['A']);
+  const probe = { path: clean.path, state: 'parse_limited', sha256: sha256('different source') };
+  const probed = sha256 => ({ ...partialFixed, parser_probe: { fixed: { observations: [{ ...probe, sha256 }] } } });
+  assert.deepEqual(compare(hit, probed(probe.sha256)).new_coverage_gaps, ['A']);
+  assert.deepEqual(compare(hit, probed(clean.sha256)).new_coverage_gaps, []);
 });
 
 test('outcomes separate hits, misses, engine timeouts, unknowns and errors', async () => {
@@ -423,6 +433,11 @@ test('changedFiles and engineCoverage distinguish source loss from analysis fail
   assert.throws(() => engineCoverage({ paths: {} }), /Missing engine scan paths/);
   const coverage = engineCoverage({ paths: { scanned: ['./app.py'] },
     errors: [{ type: 'Syntax error', spans: [{ file: './app.py' }] }] });
+  const pathError = { type: 'Timeout', path: './app.py' };
+  const parseError = { type: 'Syntax error', path: './app.py' };
+  for (const errors of [[pathError, parseError], [parseError, pathError]]) {
+    assert.equal(engineCoverage({ paths: { scanned: ['./app.py'] }, errors }).problems.get('app.py'), 'engine_error');
+  }
   const packet = { path: 'app.py', bytes: 2, sha256: sha256('ok') };
   const scan = { submitted: true, verified: true, coverage, findings: [] };
   const file_coverage = fileCoverage(changes, { packets: { old: [packet], fixed: [packet] },
@@ -537,7 +552,17 @@ async function feederFixture(run, row = feederRow) {
     writeFileSync(scanner, [
       "import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';",
       "import { basename, dirname } from 'node:path';",
-      "if (process.argv.includes('--dump-ast')) { if (process.env.FIXTURE_PARSER_LIMIT === 'true') { console.error('node type: ERROR'); process.exit(3); } process.exit(0); }",
+      "if (process.argv.includes('--dump-ast')) {",
+      "  const mode = process.env.FIXTURE_PARSER_LIMIT;",
+      "  if (mode === 'partial') { console.error('node type: ERROR'); process.exit(3); }",
+      "  if (mode === 'fatal' || mode === 'wrong-file') {",
+      "    const target = mode === 'fatal' ? process.argv.at(-1) : 'unrelated.py';",
+      "    console.error('[00.13][ERROR]: Error: exception Parsing_error.Syntax_error (' + target + ':1:0)');",
+      "    process.exit(2);",
+      "  }",
+      "  if (mode === 'io') { console.error('cannot open source for parsing'); process.exit(2); }",
+      "  process.exit(0);",
+      "}",
       "const rules = process.argv[process.argv.indexOf('--config') + 1];",
       "const report = process.argv[process.argv.indexOf('--sarif-output') + 1];",
       "const coverageArgs = process.argv.indexOf('--json-output');",
@@ -554,11 +579,18 @@ async function feederFixture(run, row = feederRow) {
       "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
       "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
+      "if (control && ruleText.includes('# assert-directory-excludes')) {",
+      "  const exclusions = process.argv.flatMap((arg, index) => arg === '--exclude' ? [process.argv[index + 1]] : []);",
+      "  if (JSON.stringify(exclusions) !== JSON.stringify(['build/', 'fixture.py/', 'test/'])) throw Error('Wrong scanner directory exclusions');",
+      "}",
       "const incomplete = !old && ruleText.includes('# incomplete');",
-      "const devTimeout = old && ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial';",
-      "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !process.argv.includes('--timeout=15')));",
+      "const devTimeout = old && (ruleText.includes('# persistent-case-timeout') || (ruleText.includes('# retry') && basename(dirname(dirname(report))) !== 'serial'));",
+      "const recoveredControl = process.argv.includes('--timeout=15') && process.argv.includes('--jobs=1');",
+      "const boundedControl = process.argv.includes('--timeout=15');",
+      "if (!control && boundedControl && ruleText.includes('# control-first-pass')) throw Error('Control timeout leaked to development scan');",
+      "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !recoveredControl) || (ruleText.includes('# control-first-pass') && !boundedControl));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
-      "const disputedParse = old && ruleText.includes('# candidate-parse');",
+      "const disputedParse = ruleText.includes(old ? '# candidate-parse' : '# fixed-parse');",
       "const results = old && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
       "if (results.length && ruleText.includes('# hunk-spans')) {",
       "  const span = (startColumn, endColumn) => ({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn, endColumn } } }] });",
@@ -657,6 +689,42 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
   assert.match(gate({ dev: [{ before, after: drifted }], controls: [] }).failures[0], /source byte fingerprints differ/);
 }));
 
+test('review-alerts exports pinned old-side reports with distinct spans on one line', () => feederFixture(fixture => {
+  const { root, workdir, manifest, profile, baseline, old } = fixture;
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# hunk-spans\n# candidate-parse\n');
+  const saved = join(root, 'score.json');
+  const output = join(root, 'review-alerts.json');
+  const script = 'scripts/recall_harness.mjs';
+  const scored = spawnSync(process.execPath, [script, 'score', '--manifest', manifest,
+    '--rules', baseline, '--profile', profile, '--opengrep', process.execPath, '--workdir', workdir, '--out', saved], { encoding: 'utf8' });
+  assert.equal(scored.status, 0, scored.stderr);
+  const raw = readFileSync(saved);
+  assert.equal(JSON.parse(raw).cases[0].file_coverage.old[0].state, 'partial');
+  const digest = sha256(raw);
+  const run = (pin = digest) => spawnSync(process.execPath, [script, 'review-alerts', '--score', saved,
+    '--score-sha256', pin, '--workdir', workdir, '--out', output], { encoding: 'utf8' });
+  const exported = run();
+  assert.equal(exported.status, 0, exported.stderr);
+  assert.deepEqual(JSON.parse(exported.stdout), { alerts: 2, scored_cases: 1, omitted_cases: 0 });
+  const records = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(records.map(({ span }) => span), [[1, 0, 4], [6, 0, 9]]);
+  for (const alert of records) {
+    assert.equal(alert.case, feederRow.ghsa);
+    assert.equal(alert.path, 'sample.py');
+    assert.equal(alert.rule, 'fixture.review');
+    assert.equal(alert.source_sha256, sha256(old));
+    assert.equal(alert.rules_sha256, sha256(readFileSync(baseline)));
+    assert.equal(alert.on_fix_hunk, true);
+  }
+
+  rmSync(output);
+  assert.match(run('0'.repeat(64)).stderr, /Review score digest mismatch/);
+  const report = join(workdir, JSON.parse(raw).cases[0].captures.old.sarif.path);
+  writeFileSync(report, ' ', { flag: 'a' });
+  assert.match(run().stderr, /Review SARIF digest differs/);
+  assert.equal(existsSync(output), false);
+}));
+
 test('evaluation refuses a missing or mismatched engine and ruleset drift without writing a new receipt', () =>
   feederFixture(({ root, workdir, manifest, baseline, candidate, profile }) => {
     const output = join(root, 'unqualified.json');
@@ -714,7 +782,7 @@ test('an empty successful scanner result needs old-side coverage to count as a m
   assert.match(replay.failures[0], /lost 1 checkpoint hit/);
 }));
 
-test('evaluation retries both control arms once with a bounded timeout and records both attempts', () =>
+test('evaluation retries both control arms once with a bounded timeout and one scanner worker', () =>
   feederFixture(({ root, workdir, manifest, profile, baseline, candidate }) => {
     const control = join(root, 'control');
     mkdirSync(control);
@@ -735,13 +803,30 @@ test('evaluation retries both control arms once with a bounded timeout and recor
     const [delta] = recovered.result.controls;
     assert.equal(delta.initial_scan_sides.after.timeouts, 1);
     assert.equal(delta.initial_scan_sides.before.timeouts, 0);
-    assert.deepEqual(delta.retry_extra_args, ['--timeout=15']);
+    assert.deepEqual(delta.retry_extra_args, ['--timeout=15', '--jobs=1']);
     assert.equal(delta.scan_sides.before.timeouts, 0);
     assert.equal(delta.scan_sides.after.timeouts, 0);
     assert.ok(delta.scan_sides.after.duration_ms >= 0);
     const explicit = evaluate('--extra-arg', '--timeout=5');
     assert.equal(explicit.status, 2);
-    assert.deepEqual(explicit.result.controls[0].retry_extra_args, []);
+    assert.deepEqual(explicit.result.controls[0].retry_extra_args, ['--jobs=1']);
+    const explicitWorkers = evaluate('--extra-arg', '--jobs=3');
+    assert.equal(explicitWorkers.status, 2);
+    assert.deepEqual(explicitWorkers.result.controls[0].retry_extra_args, ['--timeout=15']);
+    writeFileSync(join(control, 'partial.py'), '# benign parser fixture\n');
+    const mixed = evaluate();
+    assert.equal(mixed.status, 2);
+    const [mixedDelta] = mixed.result.controls;
+    assert.equal(mixedDelta.initial_scan_sides?.after.timeouts, 1);
+    assert.equal(mixedDelta.scan_sides.after.timeouts, 0);
+    assert.equal(mixedDelta.scan_sides.before.other, 0);
+    assert.deepEqual(mixedDelta.coverage_gap_delta.shared, [{ path: 'partial.py', reason: 'parse' }]);
+    writeFileSync(candidate, rules + '# incomplete\n# control-timeout\n');
+    const fatal = evaluate();
+    assert.equal(fatal.status, 2);
+    assert.equal(fatal.result.controls[0].initial_scan_sides, undefined);
+    assert.equal(fatal.result.controls[0].scan_sides.after.failed_exit, true);
+    assert.equal(fatal.result.controls[0].scan_sides.after.timeouts, 1);
     writeFileSync(baseline, rules + '# persistent-timeout\n');
     writeFileSync(candidate, rules + '# persistent-timeout\n');
     const persistent = evaluate();
@@ -749,6 +834,49 @@ test('evaluation retries both control arms once with a bounded timeout and recor
     assert.equal(persistent.result.decision, 'REJECT');
     assert.equal(persistent.result.controls[0].scan_sides.before.timeouts, 1);
     assert.equal(persistent.result.controls[0].scan_sides.after.timeouts, 1);
+  }));
+
+test('an explicit first-pass timeout covers both control arms and leaves development scans unchanged', () =>
+  feederFixture(({ root, workdir, manifest, profile, baseline, candidate }) => {
+    const control = join(root, 'control');
+    mkdirSync(control);
+    writeFileSync(join(control, 'sample.py'), '# benign input\n');
+    const rules = readFileSync(baseline, 'utf8') + '# control-first-pass\n';
+    writeFileSync(baseline, rules);
+    writeFileSync(candidate, rules);
+    const output = join(root, 'bounded-control.json');
+    const run = (command, args, ...extra) => spawnSync(process.execPath, [
+      'scripts/recall_harness.mjs', command, ...args, '--profile', profile, '--workdir', workdir,
+      '--opengrep', process.execPath, '--dir', control, '--out', output, ...extra,
+    ], { encoding: 'utf8' });
+    const evaluation = ['--manifest', manifest, '--baseline', baseline, '--candidate', candidate];
+    const result = run('evaluate', evaluation, '--control-timeout', '15');
+    assert.equal(result.status, 0, result.stderr);
+    const receipt = JSON.parse(readFileSync(output, 'utf8'));
+    assert.equal(receipt.control_timeout_seconds, 15);
+    assert.equal(receipt.dev[0].after.hunk_hits, 1);
+    assert.deepEqual(receipt.extra_args, []);
+    assert.equal(receipt.controls[0].initial_scan_sides, undefined);
+    for (const side of Object.values(receipt.controls[0].scan_sides)) {
+      assert.equal(side.timeouts, 0);
+      assert.equal(side.control_coverage.complete, true);
+    }
+    const standalone = run('controls', ['--rules', baseline, '--rules', candidate], '--control-timeout', '15');
+    assert.equal(standalone.status, 0, standalone.stderr);
+    const controlReceipt = JSON.parse(readFileSync(output, 'utf8'));
+    assert.equal(controlReceipt.control_timeout_seconds, 15);
+    assert.equal(controlReceipt.deltas[0].initial_scan_sides, undefined);
+    rmSync(output);
+    for (const extra of [
+      ['--control-timeout', '16'],
+      ['--control-timeout', '15', '--candidate-extra-arg', '--timeout=5'],
+      ['--control-timeout', '15', '--control-timeout', '5'],
+    ]) {
+      const invalid = run('evaluate', evaluation, ...extra);
+      assert.equal(invalid.status, 1);
+      assert.match(invalid.stderr, /--control-timeout/);
+      assert.equal(existsSync(output), false);
+    }
   }));
 
 test('evaluation rejects overlapping manifests before resolving the scanner', () => feederFixture(fixture => {
@@ -964,11 +1092,13 @@ test('a fixed parser probe classifies only reproduced engine limits', () => feed
   const { root, workdir, manifest, profile, baseline, candidate } = fixture;
   writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# candidate-parse\n');
   const output = join(root, 'probe-evaluation.json');
-  for (const reproduced of [false, true]) {
+  for (const [mode, state] of [['parsed', 'parsed'], ['partial', 'parse_limited'],
+    ['fatal', 'syntax_error'], ['io', 'unresolved'], ['wrong-file', 'unresolved']]) {
+    const reproduced = state === 'parse_limited';
     const run = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'evaluate', '--baseline', baseline,
       '--candidate', candidate, '--manifest', manifest, '--profile', profile, '--workdir', workdir,
       '--opengrep', process.execPath, '--out', output, '--probe-coverage', 'true'],
-    { encoding: 'utf8', timeout: 20000, env: { ...process.env, FIXTURE_PARSER_LIMIT: String(reproduced) } });
+    { encoding: 'utf8', timeout: 20000, env: { ...process.env, FIXTURE_PARSER_LIMIT: mode } });
     assert.ok(existsSync(output), run.stderr);
     const verdict = JSON.parse(readFileSync(output, 'utf8'));
     assert.equal(verdict.decision, reproduced ? 'ACCEPT' : 'REJECT');
@@ -977,7 +1107,7 @@ test('a fixed parser probe classifies only reproduced engine limits', () => feed
     assert.deepEqual(evidence.parser_probe.old.confirmed_limits, reproduced ? ['sample.py'] : []);
     assert.equal(evidence.file_coverage.old[0].state, 'partial');
     const observation = evidence.parser_probe.old.observations[0];
-    assert.equal(observation.state, reproduced ? 'parse_limited' : 'parsed');
+    assert.equal(observation.state, state, mode);
     assert.equal(observation.sha256, evidence.source_packets.old[0].sha256);
   }
 }));
@@ -1026,19 +1156,22 @@ test('declared control directories are excluded and unrelated missing paths rema
   const control = join(root, 'control'), output = join(root, 'controls.json');
   const run = () => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls', '--rules', baseline,
     '--rules', baseline, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
-    '--dir', control, '--out', output, '--control-exclude', 'test', '--control-exclude', 'build'],
+    '--dir', control, '--out', output, '--control-exclude', 'test', '--control-exclude', 'build',
+    '--control-exclude', 'fixture.py'],
   { encoding: 'utf8', timeout: 20000 });
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# assert-directory-excludes\n');
   for (const dir of ['build', 'test']) {
     mkdirSync(join(control, dir), { recursive: true });
     writeFileSync(join(control, dir, 'sample.py'), '# owned excluded control');
   }
   writeFileSync(join(control, 'sample.py'), '# owned in-scope control');
+  writeFileSync(join(control, 'fixture.py'), '# a file of the same name is still eligible');
   const success = run();
   assert.equal(success.status, 0, success.stderr);
   const receipt = JSON.parse(readFileSync(output, 'utf8'));
-  assert.deepEqual(receipt.control_excluded_directories, ['build', 'test']);
+  assert.deepEqual(receipt.control_excluded_directories, ['build', 'fixture.py', 'test']);
   for (const side of Object.values(receipt.deltas[0].scan_sides)) {
-    assert.equal(side.control_coverage.expected, 1);
+    assert.equal(side.control_coverage.expected, 2);
     assert.deepEqual(side.control_coverage.excluded.map(item => item.path), ['build/sample.py', 'test/sample.py']);
   }
   writeFileSync(join(control, 'unreported.py'), '# missing coverage outside exclusions');
@@ -1080,6 +1213,24 @@ test('paired controls record only shared scanner ignores and keep candidate skip
     { path: 'candidate-only.py', reason: 'semgrepignore_patterns_match' },
   ]);
   assert.deepEqual(rejected.scan_sides.after.control_coverage.excluded, exclusions);
+  assert.deepEqual(rejected.coverage_gap_delta, { state: 'COMPARED', shared: [], baseline_only: [],
+    candidate_only: [{ path: 'candidate-only.py', reason: 'semgrepignore_patterns_match' }] });
+
+  writeFileSync(join(control, 'partial.py'), '# owned parser control\n');
+  assert.equal(run(baseline).status, 2);
+  const { deltas: [shared] } = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(shared.coverage_gap_delta, { state: 'COMPARED',
+    shared: [{ path: 'partial.py', reason: 'parse' }], baseline_only: [], candidate_only: [] });
+
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# persistent-timeout\n');
+  assert.equal(run(baseline).status, 2);
+  const { deltas: [timeout] } = JSON.parse(readFileSync(output, 'utf8'));
+  assert.equal(timeout.scan_sides.before.timeouts, 1);
+  assert.equal(timeout.scan_sides.after.timeouts, 1);
+  for (const side of Object.values(timeout.scan_sides)) {
+    assert.deepEqual(side.control_coverage.excluded, exclusions);
+    assert.deepEqual(side.control_coverage.gaps, [{ path: 'partial.py', reason: 'parse' }]);
+  }
 }));
 
 test('controls scan bounded larger files on both arms and preserve explicit size limits', () => feederFixture(fixture => {
@@ -1235,6 +1386,8 @@ test('case publication retries transient Windows locks and preserves a competing
 
 test('local Git source bytes survive preparation, scanning, and the reported packet inventory', () =>
   feederFixture(async ({ root, workdir, manifest, baseline, profile }) => {
+    const scanWorkdir = process.platform === 'win32'
+      ? join(root, 'w'.repeat(Math.max(1, 170 - root.length - 1))) : workdir;
     const repository = join(root, 'local-repo');
     mkdirSync(repository);
     const git = (...args) => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8' }).trim();
@@ -1271,18 +1424,19 @@ test('local Git source bytes survive preparation, scanning, and the reported pac
     const out = join(root, 'score.json');
     const override = 'url.' + pathToFileURL(repository).href + '.insteadOf';
     const result = spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'score', '--manifest', manifest,
-      '--rules', baseline, '--profile', profile, '--workdir', workdir, '--opengrep', process.execPath,
+      '--rules', baseline, '--profile', profile, '--workdir', scanWorkdir, '--opengrep', process.execPath,
       '--jobs', '1', '--out', out], { encoding: 'utf8', timeout: 20000, env: { ...process.env,
         GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: override,
         GIT_CONFIG_VALUE_0: 'https://github.com/example/label-demo.git', GIT_ALLOW_PROTOCOL: 'file' } });
     assert.equal(result.status, 0, result.stderr);
     const scored = JSON.parse(readFileSync(out, 'utf8'));
     const captured = scored.cases[0];
-    const directory = join(workdir, 'cases-v4', caseDigest([current]));
+    const directory = join(scanWorkdir, 'cases-v4', caseDigest([current]));
     assert.equal(captured.status, 'scored', captured.detail);
     assert.equal(scored.summary.scored, 1);
     assert.equal(scored.summary.hunk_hits, 1);
     assert.deepEqual(captured.revisions, { old: parent, fixed: fix });
+    if (process.platform === 'win32') assert.equal(captured.scan_sides.old.windows_source_alias, true);
     assert.deepEqual(readFileSync(join(directory, 'old', 'sample.py')), beforeBytes);
     assert.deepEqual(readFileSync(join(directory, 'new', 'sample.py')), afterBytes);
     assert.deepEqual(readFileSync(join(directory, 'old', 'long file.py')), longBefore);
@@ -1347,14 +1501,31 @@ test('a resumed score reuses only exactly matching completed cases', () => feede
   const changed = await scoreManifest(manifest, revised, resumable);
   assert.deepEqual(changed.resumed_cases, []);
   assert.equal(changed.summary.hunk_hits, 0);
-  // A timed-out case is never kept, so a resumed run rescans it.
   const timeouts = join(root, 'retry.yml');
   writeFileSync(timeouts, readFileSync(baseline, 'utf8') + '# retry\n');
   const before = readdirSync(checkpointDir).length;
-  const interruptedByTimeout = await scoreManifest(manifest, timeouts, { ...resumable, jobs: 1 });
-  assert.ok(interruptedByTimeout.cases[0].retried_serially);
-  // Even when the serial retry then finishes, the timed-out pass is not checkpointed.
-  assert.equal(readdirSync(checkpointDir).length, before);
+  const retrySettings = { ...resumable, jobs: 1 };
+  const recovered = await scoreManifest(manifest, timeouts, retrySettings);
+  const [recoveredCase] = recovered.cases;
+  assert.equal(recoveredCase.retried_serially, true);
+  assert.equal(recoveredCase.outcome, 'hit');
+  assert.equal(recoveredCase.initial_scan_sides.old.timeouts, 1);
+  assert.equal(readdirSync(checkpointDir).length, before + 1);
+  const resumedRetry = await scoreManifest(manifest, timeouts, retrySettings);
+  assert.deepEqual(resumedRetry.resumed_cases, [feederRow.ghsa]);
+  assert.deepEqual(resumedRetry.cases, recovered.cases);
+  assert.deepEqual(readdirSync(join(fixture.workdir, resumedRetry.scan_directory)), []);
+  const initialReport = join(fixture.workdir, recoveredCase.initial_captures.old.native_report.path);
+  writeFileSync(initialReport, '{}');
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, recoveredCase), false);
+  const reacquired = await scoreManifest(manifest, timeouts, retrySettings);
+  assert.deepEqual(reacquired.resumed_cases, []);
+  assert.notEqual(reacquired.cases[0].initial_captures.old.native_report.path,
+    recoveredCase.initial_captures.old.native_report.path);
+  writeFileSync(timeouts, readFileSync(baseline, 'utf8') + '# persistent-case-timeout\n');
+  const persistent = await scoreManifest(manifest, timeouts, retrySettings);
+  assert.equal(persistent.cases[0].outcome, 'timeout');
+  assert.equal(readdirSync(checkpointDir).length, before + 1);
 }));
 
 test('checkpoint records are bound to their full input fingerprint', async () => {
@@ -1442,6 +1613,16 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   assert.equal(existsSync(checkpointDir) ? readdirSync(checkpointDir).length : 0, 0);
   const again = await scoreManifest(manifest, candidate, resumable);
   assert.deepEqual(again.resumed_cases, []);
+  // A strict hit remains reportable even when one revision has a coverage gap.
+  for (const [side, marker] of [['old', '# candidate-parse'], ['fixed', '# fixed-parse']]) {
+    writeFileSync(candidate, readFileSync(baseline, 'utf8') + marker + '\n');
+    const partial = await scoreManifest(manifest, candidate, resumable);
+    assert.equal(partial.cases[0].outcome, 'hit');
+    assert.equal(partial.cases[0].file_coverage[side][0].state, 'partial');
+    assert.equal(existsSync(checkpointDir) ? readdirSync(checkpointDir).length : 0, 0, side);
+    const partialReplay = await scoreManifest(manifest, candidate, resumable);
+    assert.deepEqual(partialReplay.resumed_cases, []);
+  }
   // A completed case resumes only while the SARIF it cites is intact.
   const fresh = await scoreManifest(manifest, baseline, resumable);
   assert.equal(readdirSync(checkpointDir).length, 1);
@@ -1455,6 +1636,7 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   const { checkpointable, scorerSha256 } = await import('./recall_harness.mjs');
   assert.equal(checkpointable({ status: 'unfetchable', outcome: 'unknown' }), false);
   assert.equal(checkpointable({ status: 'incomplete', outcome: 'coverage_incomplete' }), false);
-  assert.equal(checkpointable({ status: 'scored', outcome: 'miss' }), true);
+  assert.equal(checkpointable({ status: 'scored', outcome: 'miss' }), false);
+  assert.equal(checkpointable(fresh.cases[0]), true);
   assert.match(scorerSha256(), /^[a-f0-9]{64}$/);
 }));

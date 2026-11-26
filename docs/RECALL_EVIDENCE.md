@@ -10,6 +10,11 @@ scan scope, ecosystem, and denominator visible. A configured language worker
 shows availability. Claims about detection accuracy need measured evidence
 for that lane and ecosystem.
 
+For a control that repeatedly finishes only after the bounded timeout retry,
+pass `--control-timeout 15` to the OpenGrep `controls` or `evaluate` command.
+Both control arms use that budget from their first scan. Advisory scans keep
+their configured budget, and the receipt records the control timeout.
+
 ## Signer and execution evidence
 
 The precision scorer accepts an optional provenance bundle for a frozen
