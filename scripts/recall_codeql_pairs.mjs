@@ -391,6 +391,8 @@ function scorePreparedPair(row, context) {
     file_hit: score.file_hit,
     trace_hit: score.trace_hit, matched_hunk_families: score.matched_hunk_families,
     hunk_matches: score.hunk_findings, fixed_hunk_matches: score.fix_side_residual,
+    ...(score.hunk_spans ? { hunk_spans: score.hunk_spans } : {}),
+    ...(score.fix_side_residual_spans ? { fix_side_residual_spans: score.fix_side_residual_spans } : {}),
     cross_file_trace_matches: crossFileTraceMatches(old, fixed, hunks, families, rules),
     deleted_line_hit: score.edited_lines.deleted_line_hit, fixed_hunk_residuals: score.fix_side_residual.length,
     native_alerts: { old: old.findings.length, fixed: fixed.findings.length },

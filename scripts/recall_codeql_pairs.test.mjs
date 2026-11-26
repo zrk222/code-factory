@@ -39,10 +39,11 @@ function stagedPair(t, archivePrefix = 'src') {
     archivePrefix],
   { cwd: root, input: JSON.stringify(source), encoding: 'utf8', windowsHide: true });
   assert.equal(zip.status, 0, zip.stderr ?? zip.error?.message);
-  const capture = (side, invocations = [{ executionSuccessful: true }], located = true) => {
-    const results = side === 'old' ? [{ ruleId: id, locations: located ? [
-      { physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } },
-    ] : [] }] : [];
+  const capture = (side, invocations = [{ executionSuccessful: true }], located = true,
+    regions = side === 'old' ? [{ startLine: 1 }] : []) => {
+    const results = regions.map(region => ({ ruleId: id, locations: located ? [
+      { physicalLocation: { artifactLocation: { uri: 'sample.py' }, region } },
+    ] : [] }));
     const sarif = json(side + '.sarif', { version: '2.1.0', runs: [{ tool: { driver: { name: 'CodeQL',
       semanticVersion: '2.27.1', rules: [{ id, properties: { tags: ['external/cwe/cwe-089'] } }] } }, results, invocations }] });
     const observation = json(side + '.json', { case: row.ghsa, side, query: id, revision: revisions[side],
@@ -67,6 +68,7 @@ test('paired CodeQL scoring requires both revisions and verifies actual source a
   assert.equal(receipt.fixed_hunk_residuals, 0);
   assert.equal(receipt.cases[0].input_sha256, inputSha256);
   assert.deepEqual(receipt.cases[0].hunk_matches, [['test/fixture.scope.detail', 'sample.py', 1]]);
+  assert.equal(Object.hasOwn(receipt.cases[0], 'hunk_spans'), false);
   const pair = value.cases[0];
   const withPair = changed => ({ ...value, cases: [{ ...pair, ...changed }] });
   assert.throws(() => run(withPair({ old: pair.fixed })), /Native case or revision differs/);
@@ -78,6 +80,22 @@ test('paired CodeQL scoring requires both revisions and verifies actual source a
   assert.throws(() => run(withPair({ old: capture('old', [{ executionSuccessful: true,
     toolExecutionNotifications: [{ level: 'error' }] }]) })), /Unqualified CodeQL report/);
   assert.throws(() => run(withPair({ old: capture('old', undefined, false) })), /Native alert location is missing/);
+});
+
+test('native receipts keep old and fixed finding spans aligned with same-line matches', t => {
+  const { value, capture, run } = stagedPair(t);
+  const [pair] = value.cases;
+  const left = { startLine: 1, startColumn: 1, endColumn: 4 };
+  const right = { startLine: 1, startColumn: 7, endColumn: 9 };
+  const unbounded = { startLine: 1 };
+  const old = capture('old', undefined, true, [left, unbounded, right]);
+  const fixed = capture('fixed', undefined, true, [right, left]);
+  const [result] = run({ ...value, cases: [{ ...pair, old, fixed }] }).cases;
+  const match = ['test/fixture.scope.detail', 'sample.py', 1];
+  assert.deepEqual(result.hunk_matches, [match, match, match]);
+  assert.deepEqual(result.hunk_spans, [[1, 0, 4], null, [7, 0, 9]]);
+  assert.deepEqual(result.fixed_hunk_matches, [match, match]);
+  assert.deepEqual(result.fix_side_residual_spans, [[7, 0, 9], [1, 0, 4]]);
 });
 
 test('CodeQL Java scoring requires complete classpath resolution on both revisions', t => {
