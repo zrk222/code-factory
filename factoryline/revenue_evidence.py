@@ -25,13 +25,27 @@ from . import canonical_json_compat_bytes as _canonical  # noqa: F401 - module e
 from . import compat_sha as _sha
 
 
+# Inputs the evidence kit writes for a person to fill in; they are never stage receipts.
+KIT_INPUT_NAMES = frozenset({
+    "release-candidate.json", "app-review-evidence.json", "store-media-evidence.json", "quality-evidence.json",
+    "device-reality-journeys.json", "device-reality-evidence.json",
+})
+
+
+def is_receipt_candidate(path: Path) -> bool:
+    """Exclude templates, contracts and kit inputs so status does not call its own scaffolding stale."""
+    return path.name not in KIT_INPUT_NAMES and not path.name.endswith(("-template.json", "-contract.json"))
+
+
 def receipt_paths(
     root: Path, pattern: str, inventory: tuple[Path, ...] | None = None
 ) -> Iterable[Path]:
     """Discover AppForge receipts or reuse a snapshot from the current inspection."""
     if inventory is None:
-        return (root / ".factory" / "appforge").rglob(pattern)
-    return (path for path in inventory if path.match(pattern))
+        found: Iterable[Path] = (root / ".factory" / "appforge").rglob(pattern)
+    else:
+        found = (path for path in inventory if path.match(pattern))
+    return (path for path in found if is_receipt_candidate(path))
 
 
 def read_receipt(root: Path, path: Path) -> dict[str, Any]:

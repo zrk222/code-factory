@@ -2309,6 +2309,7 @@ _DIRECT_ROUTES = {
 _DIRECT_ROUTES.update(
     {
         "commercial": ("cli_enterprise", "run_commercial"),
+        "appforge": ("cli_revenue", "run"),
         "evidence-audit": ("cli_quality", "run_evidence"),
         "quality-harness": ("cli_quality", "run_quality"),
     }

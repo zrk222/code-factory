@@ -155,3 +155,107 @@ def test_repeated_compile_skips_replacing_identical_artifacts(
 
     assert repeated["receipt_sha256"] == result["receipt_sha256"]
     assert {path: path.read_bytes() for path in paths} == original
+
+
+def _cli(*argv):
+    from factoryline.cli import main
+
+    return main(list(argv))
+
+
+def _af_workspace(tmp_path: Path, monkeypatch, *, kit: bool = True, build: str = "42") -> Path:
+    monkeypatch.chdir(tmp_path)
+    out = f".factory/appforge/init-{build}"
+    assert _cli("revenue", "appforge-init", "--root", ".", "--out-dir", out, "--app-name", "A",
+                "--bundle-identifier", "com.e.a", "--version", "1.0", "--build-number", build,
+                "--source-commit", "a" * 40, "--audience", "x", "--primary-job", "y", "--desired-emotion", "z",
+                "--json") == 0
+    assert _cli("revenue", "appforge-design", "--root", ".", "--brief", f"{out}/appforge-design-brief.json",
+                "--out-dir", ".factory/appforge/design", "--json") == 0
+    if kit:
+        assert _cli("revenue", "evidence-kit", "--root", ".", "--candidate", f"{out}/release-candidate.json",
+                    "--design-input", f"{out}/user-design-input.md", "--out-dir", f".factory/appforge/evidence-{build}",
+                    "--json") == 0
+    return tmp_path
+
+
+def test_appforge_next_walks_the_chain(tmp_path: Path, monkeypatch, capsys) -> None:
+    from factoryline.appforge_design import appforge_next
+
+    assert appforge_next(tmp_path)["stage"] == "init"
+    assert appforge_next(tmp_path)["human_required"] is True
+    _af_workspace(tmp_path, monkeypatch, kit=False)
+    capsys.readouterr()
+    step = appforge_next(tmp_path)
+    assert step["stage"] == "evidence-kit"
+    assert "--candidate" in step["argv"] and ".factory/appforge/init-42/release-candidate.json" in step["argv"]
+    assert _cli(*step["argv"][1:]) == 0  # the printed command runs as-is
+    capsys.readouterr()
+    step = appforge_next(tmp_path)
+    assert step["stage"] == "native-surface" and step["inputs_missing"] == ["--contract", "--evidence"]
+
+
+def test_appforge_next_reports_a_blocked_stage_and_all_done(tmp_path: Path, monkeypatch) -> None:
+    import factoryline.appforge_design as design
+
+    statuses = {name: {"current_count": 1, "latest": {"ok": True, "marker": "OK"}} for name, *_ in design._NEXT_CHAIN}
+    statuses["quality_audit"] = {"current_count": 1, "latest": {"ok": False, "marker": "QUALITY_BLOCKED",
+                                                                 "findings": [{"detail": "contrast below 4.5"}]}}
+    monkeypatch.setattr(design, "appforge_design_projection", lambda _root: {**statuses["design"], **statuses})
+    monkeypatch.setattr(design, "_receipt_only_status", lambda _w, _p: statuses["store_media"])
+    step = design.appforge_next(tmp_path)
+    assert step["stage"] == "quality-audit" and step["state"] == "blocked" and "contrast below 4.5" in step["why"]
+    statuses["quality_audit"] = {"current_count": 1, "latest": {"ok": True, "marker": "OK"}}
+    assert design.appforge_next(tmp_path)["stage"] == "complete"
+
+
+def test_new_build_number_marks_downstream_receipts_stale(tmp_path: Path, monkeypatch, capsys) -> None:
+    from factoryline.appforge_design import appforge_next
+
+    _af_workspace(tmp_path, monkeypatch)
+    assert appforge_next(tmp_path)["stale_for_candidate"] == []
+    _cli("revenue", "appforge-init", "--root", ".", "--out-dir", ".factory/appforge/init-43", "--app-name", "A",
+         "--bundle-identifier", "com.e.a", "--version", "1.0", "--build-number", "43", "--source-commit", "a" * 40,
+         "--audience", "x", "--primary-job", "y", "--desired-emotion", "z", "--json")
+    capsys.readouterr()
+    assert "evidence-kit" in appforge_next(tmp_path)["stale_for_candidate"]
+
+
+def test_status_after_kit_has_no_stale_lines_and_a_next_line(tmp_path: Path, monkeypatch, capsys) -> None:
+    _af_workspace(tmp_path, monkeypatch)
+    capsys.readouterr()
+    assert _cli("revenue", "appforge-status", "--root", ".") == 0
+    text = capsys.readouterr().out
+    assert "Stale or invalid" not in text and "needs evidence review" not in text
+    assert sum(line.startswith("next: ") for line in text.splitlines()) == 1
+    assert _cli("revenue", "appforge-status", "--root", ".", "--brief", "--json") == 0
+    assert len(capsys.readouterr().out.splitlines()) < 40
+
+
+def test_appforge_group_matches_revenue_spelling_and_status_writes_nothing(tmp_path: Path, monkeypatch, capsys):
+    _af_workspace(tmp_path, monkeypatch)
+    capsys.readouterr()
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert _cli("appforge", "status", "--root", ".", "--json") == 0
+    short = capsys.readouterr().out
+    assert _cli("revenue", "appforge-status", "--root", ".", "--json") == 0
+    assert capsys.readouterr().out == short
+    assert _cli("appforge", "next", "--root", ".", "--json") == 0
+    assert json.loads(capsys.readouterr().out)["marker"] == "APPFORGE_NEXT_READ_ONLY"
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+def test_stage_inputs_default_to_the_producers_outputs() -> None:
+    import argparse
+
+    from factoryline.cli_revenue import APPFORGE_SHORT_NAMES, _STAGE_INPUT_DEFAULTS, add_parser
+
+    parser = argparse.ArgumentParser(prog="factory")
+    add_parser(parser.add_subparsers(dest="cmd"))
+    args = parser.parse_args(["revenue", "submission-assurance", "--contract", "c.json", "--saas-proof", "s.json"])
+    assert args.app_review == ".factory/appforge/app-review.json" and args.quality_audit.endswith("quality-audit.json")
+    explicit = parser.parse_args(["revenue", "submission-assurance", "--contract", "c", "--saas-proof", "s",
+                                  "--app-review", "mine.json"])
+    assert explicit.app_review == "mine.json"
+    assert parser.parse_args(["appforge", "kit", "--candidate", "c", "--design-input", "d", "--out-dir", "o"]).revenue_cmd == "evidence-kit"
+    assert set(APPFORGE_SHORT_NAMES.values()) >= {command for command, _ in _STAGE_INPUT_DEFAULTS}

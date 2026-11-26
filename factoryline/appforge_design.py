@@ -214,8 +214,40 @@ def _stage_status_lines(label: str, status: dict[str, Any]) -> Iterator[str]:
         yield f"{label} has no local receipts"
 
 
+def appforge_status_brief(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """The compact status: one row per stage that has receipts, plus the next command."""
+    stages = {}
+    for name in _STAGES:
+        status = payload if name == "design" else payload.get(name, {})
+        latest = status.get("latest") or {}
+        if status.get("current_count") or status.get("invalid_count"):
+            stages[name.replace("_", "-")] = {"marker": latest.get("marker"), "ok": _stage_state(status) == "done",
+                                              "path": latest.get("path")}
+    step = appforge_next(root)
+    return {"schema": "factory.appforge.status-brief.v1", "marker": "APPFORGE_DESIGN_READ_ONLY", "stages": stages,
+            "next": {key: step[key] for key in ("stage", "argv", "inputs_missing", "human_required")}}
+
+
+def _next_line(payload: dict[str, Any]) -> Iterator[str]:
+    step = payload if "argv" in payload else payload.get("next")
+    if not isinstance(step, dict):
+        return
+    if step.get("argv"):
+        missing = step.get("inputs_missing") or []
+        yield "next: " + " ".join(step["argv"]) + (f"  (also supply: {' '.join(missing)})" if missing else "")
+    elif step.get("stage") == "complete":
+        yield "next: every AppForge stage has a current receipt"
+
+
 def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
     """Render evidence status without treating an inspection as a readiness gate."""
+    if payload.get("schema") in {"factory.appforge.next.v1", "factory.appforge.status-brief.v1"}:
+        for name, row in (payload.get("stages") or {}).items():
+            yield f"{name}  {row['marker']}  {row['path']}"
+        if payload.get("stage") and payload.get("why"):
+            yield f"{payload['stage']}: {payload['why']}"
+        yield from _next_line(payload)
+        return
     stage = payload.get("stage")
     if stage is not None:
         yield from _stage_status_lines(stage, payload["status"])
@@ -231,6 +263,7 @@ def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
             yield from _repair_messages((status.get("latest") or {}).get("findings"))
     if not found:
         yield "No local AppForge receipts. Start with factory revenue appforge-init --help."
+    yield from _next_line(payload)
 
 
 def _validated_brief(brief: dict[str, Any]) -> set[str]:
@@ -408,3 +441,140 @@ def compile_appforge_design(
         "claim_boundary": contract["claim_boundary"],
     }
     return _seal(workspace, destination / "appforge-design-receipt.json", receipt)
+
+
+# Ordered AppForge chain for `factory appforge next`. Flag sources: "init:<artifact>" and "kit:<artifact>" come
+# from the latest init / evidence-kit receipt; "out:<path>" is the producing stage's default --out; None means a
+# person must supply it. human=True marks stages that need observed evidence, not just a command.
+_O = ".factory/appforge/"
+_NEXT_CHAIN: tuple[tuple[str, str, dict[str, str | None], bool], ...] = (
+    ("init", "appforge-init", {"--out-dir": None, "--app-name": None, "--bundle-identifier": None,
+                                "--version": None, "--build-number": None, "--audience": None,
+                                "--primary-job": None, "--desired-emotion": None}, True),
+    ("design", "appforge-design", {"--brief": "init:design_brief", "--out-dir": f"out:{_O}design"}, False),
+    ("evidence_kit", "evidence-kit", {"--candidate": "init:candidate", "--design-input": "init:user_design_input",
+                                      "--out-dir": f"out:{_O}evidence"}, False),
+    ("native_surface", "appforge-native-surface", {"--candidate": "kit:candidate", "--contract": None,
+                                                   "--evidence": None}, True),
+    ("surface_matrix", "appforge-surface-matrix", {"--candidate": "kit:candidate",
+                                                   "--native-surface": f"out:{_O}native-surface.json"}, False),
+    ("app_review", "app-review-gate", {"--contract": "kit:app_review_contract",
+                                       "--evidence": "kit:app_review_evidence"}, True),
+    ("store_media", "store-media-gate", {"--contract": "kit:store_media_contract",
+                                         "--evidence": "kit:store_media_evidence"}, True),
+    ("storefront_story", "appforge-storefront-story", {"--candidate": "kit:candidate",
+                                                       "--store-media": f"out:{_O}store-media.json",
+                                                       "--contract": None, "--evidence": None}, True),
+    ("fastlane_capture", "appforge-fastlane-capture", {"--candidate": "kit:candidate",
+                                                       "--surface-matrix": f"out:{_O}surface-matrix.json",
+                                                       "--storefront-story": f"out:{_O}storefront-story.json",
+                                                       "--contract": None}, True),
+    ("submission_integrity", "appforge-submission-integrity", {"--candidate": "kit:candidate",
+                                                               "--contract": None}, True),
+    ("quality_audit", "quality-audit", {"--contract": "kit:quality_contract",
+                                        "--evidence": "kit:quality_evidence"}, True),
+    ("oracle_authority", "appforge-oracle", {"--authority": "kit:oracle_authority"}, True),
+    ("eas_preflight", "appforge-eas", {"--candidate": "kit:candidate", "--eas-json": None,
+                                       "--build-profile": None, "--submit-profile": None}, False),
+    ("submission_assurance", "submission-assurance", {"--contract": "kit:assurance_contract",
+                                                      "--app-review": f"out:{_O}app-review.json",
+                                                      "--store-media": f"out:{_O}store-media.json",
+                                                      "--saas-proof": None,
+                                                      "--quality-audit": f"out:{_O}quality-audit.json"}, True),
+    ("release_rehearsal", "appforge-rehearse", {"--candidate": "kit:candidate",
+                                                "--submission-assurance": f"out:{_O}submission-assurance.json",
+                                                "--profile": None}, False),
+)
+_RECEIPT_ONLY = {"evidence_kit": "appforge-evidence-kit-receipt.json", "store_media": "store-media*.json"}
+
+
+def _sealed_receipt(workspace: Path, path: Path) -> dict[str, Any] | None:
+    try:
+        value = read_receipt(workspace, path)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    seal = value.pop("receipt_sha256", None)
+    return value if seal in (canonical_sha(value), compat_sha(value)) and seal is not None else None
+
+
+def _receipt_only_status(workspace: Path, pattern: str) -> dict[str, Any]:
+    current = [(path, value) for path in sorted(receipt_paths(workspace, pattern))[:100]
+               if (value := _sealed_receipt(workspace, path)) is not None]
+    if not current:
+        return {"current_count": 0}
+    path, value = current[-1]
+    latest = {"path": path.relative_to(workspace).as_posix(), "ok": value.get("ok"), "marker": value.get("marker"),
+              "artifacts": value.get("artifacts"), "candidate": value.get("candidate"), "findings": value.get("findings")}
+    return {"current_count": len(current), "latest": latest}
+
+
+def _stage_state(status: dict[str, Any]) -> str:
+    latest = status.get("latest") or {}
+    if not status.get("current_count"):
+        return "missing"
+    if latest.get("ok") is False or "BLOCKED" in str(latest.get("marker", "")):
+        return "blocked"
+    return "done"
+
+
+def _flag_value(source: str | None, artifacts: dict[str, dict[str, Any]]) -> str | None:
+    if source is None:
+        return None
+    kind, _, value = source.partition(":")
+    if kind == "out":
+        return value
+    path = (artifacts.get(kind) or {}).get(value)
+    return path if isinstance(path, str) else None
+
+
+def _next_argv(command: str, flags: dict[str, str | None], artifacts: dict[str, dict[str, Any]]):
+    argv, missing = ["factory", "revenue", command, "--root", "."], []
+    for flag, source in flags.items():
+        value = _flag_value(source, artifacts)
+        if value is None:
+            missing.append(flag)
+        else:
+            argv += [flag, value]
+    return argv + ["--json"], missing
+
+
+def _candidate_drift(statuses: dict[str, dict[str, Any]], current: object) -> list[str]:
+    """Stages whose latest receipt binds a different release candidate than the newest one."""
+    stale = []
+    for name, status in statuses.items():
+        bound = (status.get("latest") or {}).get("candidate")
+        if isinstance(bound, dict) and isinstance(current, dict) and bound != current:
+            stale.append(name.replace("_", "-"))
+    return stale
+
+
+def appforge_next(root: Path) -> dict[str, Any]:
+    """The first AppForge stage without a current valid receipt, and the command that produces it. Runs nothing."""
+    workspace = Path(root).resolve()
+    projection = appforge_design_projection(workspace)
+    statuses = {name: (projection if name == "design" else
+                       _receipt_only_status(workspace, _RECEIPT_ONLY[name]) if name in _RECEIPT_ONLY else
+                       projection.get(name, {}))
+                for name, *_ in _NEXT_CHAIN}
+    init_latest = statuses["init"].get("latest") or {}
+    init_artifacts = {}
+    if init_latest.get("path"):
+        receipt = _sealed_receipt(workspace, workspace / init_latest["path"])
+        init_artifacts = (receipt or {}).get("artifacts") or {}
+    artifacts = {"init": init_artifacts,
+                 "kit": (statuses["evidence_kit"].get("latest") or {}).get("artifacts") or {}}
+    result: dict[str, Any] = {"schema": "factory.appforge.next.v1", "marker": "APPFORGE_NEXT_READ_ONLY",
+                              "stale_for_candidate": _candidate_drift(statuses, init_latest.get("candidate")),
+                              "authority": "none", "runs_nothing": True}
+    for name, command, flags, human in _NEXT_CHAIN:
+        state = _stage_state(statuses[name])
+        if state == "done":
+            continue
+        argv, missing = _next_argv(command, flags, artifacts)
+        why = ("latest receipt is blocked: " + "; ".join(_repair_messages((statuses[name].get("latest") or {})
+                                                                          .get("findings")))[:500]
+               if state == "blocked" else "no current valid receipt")
+        return result | {"stage": name.replace("_", "-"), "state": state, "why": why, "argv": argv,
+                         "inputs_missing": missing, "human_required": human or bool(missing)}
+    return result | {"stage": "complete", "state": "done", "why": "every stage has a current valid receipt",
+                     "argv": None, "inputs_missing": [], "human_required": False}

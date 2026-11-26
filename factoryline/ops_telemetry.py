@@ -293,6 +293,11 @@ def is_read_only_command(argv: Iterable[str]) -> bool:
         ("agent", "route-audit"),
         ("workspace", "inspect"),
         ("runtime-audit", "mutation-diff"),
+        ("revenue", "appforge-status"),
+        ("revenue", "appforge-next"),
+        ("revenue", "memory-query"),
+        ("appforge", "status"),
+        ("appforge", "next"),
     }
 
 
