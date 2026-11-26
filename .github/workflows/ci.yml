@@ -300,7 +300,7 @@ jobs:
           $status = $LASTEXITCODE
           RecordElapsed 'Source preparation and scoring with any serial retry'
           if ($status -ne 0) { exit $status }
-          node scripts/verify_registered_recall.mjs $reference $score $rules (Join-Path $root receipt.json)
+          node scripts/verify_registered_recall.mjs $reference $score $rules (Join-Path $root receipt.json) (Join-Path $root work)
           $status = $LASTEXITCODE
           RecordElapsed 'Retention verification'
           exit $status

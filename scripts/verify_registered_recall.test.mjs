@@ -18,6 +18,8 @@ const pins = {
 const engineSha256 = 'fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a';
 const alphabet = '23456789cfghjmpqrvwx';
 const findings = [['fixture', 'fixture.js', 1]];
+const fixedPacket = { path: 'fixture.js', bytes: 9, sha256: '2'.repeat(64) };
+const fixedCoverage = { ...fixedPacket, submitted: true, state: 'reported_scanned', reason: 'engine_scan_paths' };
 
 function fixture() {
   const cases = Array.from({ length: 161 }, (_, index) => {
@@ -25,10 +27,10 @@ function fixture() {
     return {
       ghsa: `GHSA-2222-2222-22${alphabet[Math.floor(index / alphabet.length)]}${alphabet[index % alphabet.length]}`,
       ecosystem: 'npm', fix: 'f'.repeat(40), revisions: { old: 'e'.repeat(40), fixed: 'f'.repeat(40) },
-      diff_sha256: 'd'.repeat(64), source_packets: { old: [], fixed: [] }, changed_files_sha256: 'c'.repeat(64),
+      diff_sha256: 'd'.repeat(64), source_packets: { old: [], fixed: [fixedPacket] }, changed_files_sha256: 'c'.repeat(64),
       status: index === 160 ? 'no_old_side_source' : 'scored',
       outcome: index === 160 ? 'unknown' : hunkHit ? 'hit' : 'miss',
-      hunk_hit: hunkHit, hunk_findings: hunkHit ? findings : [], fix_side_residual: [], file_coverage: { old: [], fixed: [] },
+      hunk_hit: hunkHit, hunk_findings: hunkHit ? findings : [], fix_side_residual: [], file_coverage: { old: [], fixed: [{ ...fixedCoverage }] },
     };
   });
   const reference = {
@@ -115,11 +117,13 @@ test('rejects scored cases with missing or incomplete fixed-side coverage', () =
   candidate.cases[1].file_coverage.fixed = [
     { path: 'fixture.js', state: 'unreported', reason: 'absent_from_engine_paths' },
   ];
+  candidate.cases[2].file_coverage.fixed = [];
+  candidate.cases[3].file_coverage.fixed[0].bytes++;
   const result = verifyRegisteredRecall(reference, candidate, rulesHash);
   assert.equal(result.decision, 'REJECT');
   assert.equal(result.summary.retained_hunk_hits, 39);
   assert.deepEqual(result.failures, [{ code: 'FIXED_SIDE_COVERAGE_INCOMPLETE',
-    advisory_ids: candidate.cases.slice(0, 2).map(row => row.ghsa) }]);
+    advisory_ids: candidate.cases.slice(0, 4).map(row => row.ghsa) }]);
 });
 
 test('rejects unresolved cases and extra fixed-side residuals', () => {
@@ -147,7 +151,7 @@ test('CLI writes a rejected receipt when the reference bytes are unauthenticated
   writeFileSync(paths[1], JSON.stringify(candidate));
   writeFileSync(paths[2], 'fixture');
   const script = fileURLToPath(new URL('./verify_registered_recall.mjs', import.meta.url));
-  const result = spawnSync(process.execPath, [script, ...paths]);
+  const result = spawnSync(process.execPath, [script, ...paths, dir]);
   const receipt = JSON.parse(readFileSync(paths[3]));
   assert.equal(result.status, 2);
   assert.equal(receipt.decision, 'REJECT');

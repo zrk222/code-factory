@@ -4,7 +4,7 @@ import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { coverageGaps } from './recall_coverage.mjs';
-import { caseDigest, outcomeOf, sha256, sortKeys } from './recall_harness.mjs';
+import { caseDigest, checkpointArtifactsIntact, outcomeOf, sha256, sortKeys } from './recall_harness.mjs';
 
 const referenceSha256 = '0e77620476c68c5de799c7b95e357667ad3bd48a9f16fd1c2cdfc6e575b8dcaf';
 const engineSha256 = 'fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a';
@@ -53,8 +53,15 @@ function inputFingerprint({ ghsa, revisions, source_packets, diff_sha256, change
   return sha256(JSON.stringify(sortKeys({ ghsa, revisions, source_packets, diff_sha256, changed_files_sha256 })));
 }
 
-function completeFixedCoverage(files) {
-  return Array.isArray(files) && files.every(file => typeof file?.path === 'string') && !coverageGaps(files).length;
+function completeFixedCoverage(files, packets) {
+  if (!Array.isArray(files) || !Array.isArray(packets)
+    || files.some(file => typeof file?.path !== 'string') || coverageGaps(files).length) return false;
+  const byPath = new Map(files.map(file => [file.path, file]));
+  return byPath.size === files.length && packets.every(packet => {
+    const file = byPath.get(packet?.path);
+    return file?.submitted === true && file.state === 'reported_scanned'
+      && file.sha256 === packet.sha256 && file.bytes === packet.bytes;
+  });
 }
 
 function readCandidateCases(cases, failures) {
@@ -92,7 +99,7 @@ function compareCases(reference, candidate, summary, failures) {
     summary.candidate_outcomes[outcome]++;
     if (scored(outcome)) {
       summary.candidate_fixed_side_residual_alerts += current.fix_side_residual.length;
-      if (!completeFixedCoverage(current.file_coverage?.fixed)) fixedGaps.push(id);
+      if (!completeFixedCoverage(current.file_coverage?.fixed, current.source_packets?.fixed)) fixedGaps.push(id);
     }
     if (row.after === 'hit' && outcome !== 'hit') lost.push(id);
     if (row.after === 'hit' && outcome === 'hit') summary.retained_hunk_hits++;
@@ -148,7 +155,15 @@ export function verifyRegisteredRecall(reference, candidate, candidateRulesSha25
   return { decision: failures.length ? 'REJECT' : 'ACCEPT', summary, ...changes, failures };
 }
 
-function evidenceFrom(paths) {
+function captureLedger(candidate, captureRoot) {
+  const cases = Array.isArray(candidate?.cases) ? candidate.cases : [];
+  const rows = cases.filter(row => row?.source_packets?.old?.length || row?.source_packets?.fixed?.length);
+  const invalid = rows.filter(row => !checkpointArtifactsIntact(captureRoot, row));
+  return { verified_capture_cases: rows.length - invalid.length,
+    invalid: invalid.map(row => row.ghsa).sort() };
+}
+
+function evidenceFrom(paths, captureRoot) {
   const evidence = { schema: receiptSchema };
   try {
     const [referenceBytes, candidateBytes, rulesBytes] = paths.map(path => readFileSync(path));
@@ -158,8 +173,11 @@ function evidenceFrom(paths) {
     if (evidence.reference_sha256 !== referenceSha256) {
       return { ...evidence, decision: 'REJECT', failures: [{ code: 'REFERENCE_BYTES_MISMATCH' }] };
     }
-    return { ...evidence, ...verifyRegisteredRecall(JSON.parse(referenceBytes), JSON.parse(candidateBytes),
-      evidence.candidate_rules_sha256) };
+    const candidate = JSON.parse(candidateBytes);
+    const result = verifyRegisteredRecall(JSON.parse(referenceBytes), candidate, evidence.candidate_rules_sha256);
+    const { verified_capture_cases, invalid } = captureLedger(candidate, captureRoot);
+    if (invalid.length) result.failures.push({ code: 'CASE_CAPTURE_INTEGRITY_FAILED', advisory_ids: invalid });
+    return { ...evidence, ...result, decision: result.failures.length ? 'REJECT' : 'ACCEPT', verified_capture_cases };
   } catch {
     return { ...evidence, decision: 'REJECT', failures: [{ code: 'UNREADABLE_OR_INVALID_EVIDENCE' }] };
   }
@@ -171,13 +189,13 @@ function normalizedPath(path) {
 }
 
 function main(args) {
-  const [reference, candidate, rules, receipt] = args;
+  const [reference, candidate, rules, receipt, captureRoot] = args;
   const sources = [reference, candidate, rules];
-  if (args.length !== 4 || sources.some(path => normalizedPath(path) === normalizedPath(receipt))) {
-    console.error('Usage: verify_registered_recall.mjs REFERENCE_JSON CANDIDATE_SCORE_JSON CANDIDATE_RULES_YML RECEIPT_JSON');
+  if (args.length !== 5 || sources.some(path => normalizedPath(path) === normalizedPath(receipt))) {
+    console.error('Usage: verify_registered_recall.mjs REFERENCE_JSON CANDIDATE_SCORE_JSON CANDIDATE_RULES_YML RECEIPT_JSON CAPTURES_DIR');
     return 2;
   }
-  const evidence = evidenceFrom(sources);
+  const evidence = evidenceFrom(sources, captureRoot);
   try { writeFileSync(receipt, `${JSON.stringify(evidence, null, 2)}\n`); }
   catch { console.error('Unable to write the registered recall receipt.'); return 2; }
   console.log(`${evidence.decision} registered recall retention`);
