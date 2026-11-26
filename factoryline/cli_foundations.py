@@ -109,6 +109,7 @@ def cli_command(name: str) -> str:
     """Prefer the launcher's script directory over an ambient PATH lookup."""
     script_dirs = [
         Path(sys.argv[0]).resolve().parent,
+        Path(sys.executable).parent,  # a venv's bin/, even when its python is a symlink out of the venv
         Path(sys.executable).resolve().parent,
     ]
     for scripts in dict.fromkeys(script_dirs):

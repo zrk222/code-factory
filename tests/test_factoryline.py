@@ -121,7 +121,7 @@ def test_compatibility_uses_cli_reported_version_when_distribution_is_external(
     check = compatibility(
         "specline",
         MODULES["specline"],
-        "strict verify-validators challenge gate tasks",
+        "strict verify-validators challenge gate tasks evidence",
         reported_version=MINIMUM_VERSIONS["specline"],
     )
 
@@ -2278,3 +2278,80 @@ def test_coded_error_bases_keep_folded_exception_contracts(
     error = getattr(fl, base)("E_X", "why")
     assert isinstance(error, parent) and str(error) == text and error.code == "E_X"
     assert (getattr(error, "message", None) == "why") is message_attr
+
+
+def test_companion_minimums_have_one_source():
+    import re
+    import tomllib
+
+    from factoryline.protocol import MINIMUM_VERSIONS, version_tuple
+
+    root = Path(__file__).resolve().parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    packages = {meta["pip"]: name for name, meta in MODULES.items() if name in MINIMUM_VERSIONS}
+    pins = {}
+    for requirement in project["optional-dependencies"]["factory"]:
+        package, version = re.split(r"[=><~!]=", requirement, maxsplit=1)
+        pins[packages[package.strip()]] = version.strip()
+    assert set(pins) == set(MINIMUM_VERSIONS)
+    assert all(version_tuple(pins[name]) >= version_tuple(minimum) for name, minimum in MINIMUM_VERSIONS.items())
+    topology = json.loads((root / "factory.topology.json").read_text(encoding="utf-8"))
+    assert {brick["id"]: brick["minimum"] for brick in topology["bricks"]} == MINIMUM_VERSIONS
+
+
+def test_published_vocabulary_covers_factoryline():
+    from importlib import resources
+
+    from factoryline.attribution import FailureClass
+
+    vocabulary = json.loads(resources.files("factoryline").joinpath("data/protocol.json").read_text(encoding="utf-8"))
+    assert {item.value for item in FailureClass} <= set(vocabulary["failure_classes"])
+    assert vocabulary["failure_classes"] == sorted(set(vocabulary["failure_classes"]))
+    assert "version" in vocabulary["provenance_fields"] and "factory.provenance.v1" in vocabulary["provenance_schemas"]
+
+
+def test_doctor_install_hints_are_shell_safe(monkeypatch):
+    from types import SimpleNamespace
+
+    import factoryline.protocol as protocol
+    from factoryline.cli import doctor_install_hints
+
+    monkeypatch.setattr(protocol, "package_version", lambda package: "9.9.9")
+    hints = doctor_install_hints([SimpleNamespace(package="code-factory-4-design", minimum="0.7.4")])
+    assert hints[0] == 'python -m pip install "factoryline-code-factory[factory]==9.9.9"'
+    assert hints[1] == 'python -m pip install --upgrade "code-factory-4-design>=0.7.4"'
+    assert all(hint.count('"') == 2 for hint in hints)
+
+
+def test_cli_command_prefers_the_venv_bin_over_the_resolved_interpreter(tmp_path, monkeypatch):
+    from factoryline import cli_foundations
+
+    real = tmp_path / "base" / "bin"
+    venv = tmp_path / "venv" / "bin"
+    real.mkdir(parents=True)
+    venv.mkdir(parents=True)
+    (real / "python3").write_text("", encoding="utf-8")
+    (venv / "python3").symlink_to(real / "python3")
+    (venv / "forge").write_text("", encoding="utf-8")
+    (real / "forge").write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli_foundations.sys, "executable", str(venv / "python3"))
+    monkeypatch.setattr(cli_foundations.sys, "argv", [str(tmp_path / "elsewhere" / "python")])
+    assert cli_foundations.cli_command("forge") == str(venv / "forge")
+
+
+def test_doctor_flags_a_binary_reporting_a_different_build(monkeypatch):
+    from types import SimpleNamespace
+
+    import factoryline.protocol as protocol
+    from factoryline import cli
+
+    monkeypatch.setattr(cli, "_run_cli_bounded", lambda *_a, **_k: {"ok": True, "stdout": b"", "stderr": b""})
+    monkeypatch.setattr(
+        cli, "_workflow_canary", lambda _m: {"ok": True, "provenance": {"version": "0.10.8+local.x"}}
+    )
+    monkeypatch.setattr(protocol, "package_version", lambda _p: "0.10.8")
+    monkeypatch.setattr(cli, "_doctor_binary", lambda cli_name: f"/usr/local/bin/{cli_name}")
+    check, workflow = cli._doctor_module_check(SimpleNamespace(name="forgeline", cli="forge", installed=True))
+    assert workflow["version_mismatch"] is True and workflow["binary"] == "/usr/local/bin/forge"
+    monkeypatch.setattr(protocol, "package_version", lambda _p: "0.10.8+local.x")
+    assert cli._doctor_module_check(SimpleNamespace(name="forgeline", cli="forge", installed=True))[1]["version_mismatch"] is False
