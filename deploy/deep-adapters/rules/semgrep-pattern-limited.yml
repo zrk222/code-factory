@@ -1015,6 +1015,33 @@ rules:
           - pattern-either:
               - pattern: $CONFIG.set_verify_hostname($VERIFY)
               - pattern: $CONFIG.verify_hostname($VERIFY)
+          - pattern-either:
+              - pattern-inside: |
+                  fn $F(..., $CONFIG: boring::ssl::ConnectConfiguration, ...) { ... }
+              - pattern-inside: |
+                  fn $F(..., mut $CONFIG: boring::ssl::ConnectConfiguration, ...) { ... }
+              # The unqualified SSL ConnectConfiguration type has the same positive verify flag.
+              - pattern-inside: |
+                  fn $F(..., $CONFIG: ConnectConfiguration, ...) { ... }
+              - pattern-inside: |
+                  fn $F(..., mut $CONFIG: ConnectConfiguration, ...) { ... }
+              - patterns:
+                  - pattern-inside: |
+                      $CONFIG.set_verify_hostname($VERIFY);
+                      ...
+                      let $STREAM = $CONNECT;
+                  - metavariable-pattern:
+                      metavariable: $CONNECT
+                      patterns:
+                        - pattern: $PROVIDER::connect($CONFIG, ...)
+                        - metavariable-regex:
+                            metavariable: $PROVIDER
+                            regex: '^tokio[0-9]*_boring$'
+              - patterns:
+                  - pattern: $CONNECTOR.configure().map_err($ERROR)?.verify_hostname($VERIFY).connect(...)
+                  - pattern-inside: |
+                      use boring::ssl::$TYPE;
+                      ...
           - metavariable-regex:
               metavariable: $VERIFY
               regex: '^(?:\*\s*)?(?:[A-Za-z_]\w*\.)*(?:accept|allow)_invalid_hostnames$'
@@ -1099,15 +1126,28 @@ rules:
           - pattern-either:
               - pattern: $OPTS[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
               - pattern: $OPTS["verify_ssl"] = OpenSSL::SSL::VERIFY_NONE
-          - pattern-not-inside:
+          - pattern-not:
               patterns:
-                - pattern-inside: |
-                    if $OPTIN
-                      ...
-                    end
+                - pattern-either:
+                    - pattern: |
+                        if $OPTIN
+                          ...
+                          $ASSIGN
+                          ...
+                        end
+                    - pattern: |
+                        if $OPTIN
+                          ...
+                          $ASSIGN
+                          ...
+                        else
+                          ...
+                        end
                 - metavariable-regex:
                     metavariable: $OPTIN
-                    regex: '(?i).*(insecure|skip[-_]?tls[-_]?verify|allow[-_]?invalid|dev[-_]?mode).*'
+                    regex: >-
+                      (?x)\A\s*(?:(?:\w+\.)*(?:insecure|skip_tls_verify|allow_invalid)\??|\w+\[\s*(?::|["'])(?:insecure|skip_tls_verify|allow_invalid|insecure-skip-tls-verify)["']?\s*\])(?:\s*==\s*true)?\s*\z
+                - focus-metavariable: $ASSIGN
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1449,22 +1489,33 @@ rules:
         label: REQUEST_INPUT
         exact: true
       - patterns:
-          - pattern: |
-              $BUILDER.Append($PREFIX);
-              $BUILDER.Append($VALUE);
-              $BUILDER.Append("'");
+          - pattern-inside: |
+              public void $METHOD(..., $TYPE $INPUT, ...) {
+                ...
+              }
           - pattern-inside: |
               public void $METHOD(..., ICommandBuilder $BUILDER, ...) {
                 ...
               }
-          - metavariable-regex:
-              metavariable: $PREFIX
-              regex: '(?is)^.*\b(select|insert|update|delete)\b.*'
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: >-
-                (?s)^(?!\s*[@$]?"|.*\.Replace\(\s*"'"[ \t]*,[ \t]*"''"\s*\)).+
-          - focus-metavariable: $VALUE
+          - focus-metavariable: $INPUT
+        label: SQL_BUILDER_VALUE
+        exact: true
+      - patterns:
+          - pattern-inside: |
+              class $CLASS {
+                ...
+                public $CLASS(..., $TYPE $INPUT, ...) {
+                  ...
+                  $FIELD = $INPUT;
+                  ...
+                }
+                ...
+              }
+          - pattern-inside: |
+              public void $METHOD(..., ICommandBuilder $BUILDER, ...) {
+                ...
+              }
+          - pattern: $FIELD
         label: SQL_BUILDER_VALUE
         exact: true
       - patterns:
@@ -1489,9 +1540,23 @@ rules:
           - focus-metavariable: $VALUE
         requires: REQUEST_INPUT
       - patterns:
-          - pattern: $BUILDER.Append($VALUE)
+          - pattern: |
+              $BUILDER.Append($PREFIX);
+              $BUILDER.Append($VALUE);
+              $BUILDER.Append("'");
+          - pattern-inside: |
+              public void $METHOD(..., ICommandBuilder $BUILDER, ...) {
+                ...
+              }
+          - metavariable-regex:
+              metavariable: $PREFIX
+              regex: '(?is)^.*\b(select|insert|update|delete)\b.*'
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: >-
+                (?s)\A(?!\s*\w+\s*\.\s*Replace\(\s*"'"\s*,\s*"''"\s*\)\s*\z).+
           - focus-metavariable: $VALUE
-        requires: SQL_BUILDER_VALUE
+        requires: SQL_BUILDER_VALUE or REQUEST_INPUT
       - patterns:
           - pattern: return $VALUE;
           - focus-metavariable: $VALUE
@@ -3664,6 +3729,10 @@ rules:
           - focus-metavariable: $CMD
       - patterns:
           - pattern: Kernel.open($PATH, ...)
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: >-
+                (?s)\A(?!\s*(?:::)?File\s*\.\s*join\s*\(\s*(?:'[^|'\\][^'\\]*'|"[^|"\\#][^"\\#]*")\s*,).+
           - focus-metavariable: $PATH
       - pattern: '`...#{$X}...`'
     paths:

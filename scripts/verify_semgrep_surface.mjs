@@ -407,8 +407,10 @@ try {
   }
   const enabledControls = verifyNativeControlFindings(enabledReport,
     fixtureManifest.filter(item => !annotated.includes(manifestKey(item))));
-  const polyglotExpected = fixtureManifest.filter(item => Object.keys(polyglotControls).includes(item.path.split('.').at(-1))).map(manifestKey).sort();
-  const polyglotObserved = disabledKeys.filter(key => Object.keys(polyglotControls).some(extension => key.includes(`|semgrep-pattern-limited.${extension}|`)));
+  const polyglotFixtures = fixtureManifest.filter(item => Object.hasOwn(polyglotControls, item.path.split('.').at(-1)));
+  const polyglotPaths = new Set(polyglotFixtures.map(item => item.path));
+  const polyglotExpected = polyglotFixtures.map(manifestKey).sort();
+  const polyglotObserved = disabledKeys.filter(key => polyglotPaths.has(key.split('|')[1]));
   if (JSON.stringify(polyglotObserved) !== JSON.stringify(polyglotExpected)) throw new Error('Polyglot exact native findings differ');
   receipt.polyglot_controls = { state: 'PASS', expected: polyglotExpected, scope: 'Pattern-limited candidates; synthetic controls, no precision or interprocedural claim.' };
   const sourceHashes = Object.fromEntries(readdirSync(temp).filter(name => !name.endsWith('.yml'))

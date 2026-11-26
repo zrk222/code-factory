@@ -66,7 +66,7 @@ export function familiesFor(cwes) {
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export const caseDigest = cases => sha256(JSON.stringify(cases.map(sortKeys)));
 
-function sortKeys(value) {
+export function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.keys(value).sort().map(key => [key, sortKeys(value[key])]));
@@ -624,12 +624,14 @@ function bindPreparedCase(directory, record, key, row, scope) {
 }
 
 async function prepareChanges(repo, dir, parent, fix, extensions) {
-  const inventory = await gitBytes(repo, 'diff', '--name-status', '--no-renames', '-z', parent, fix, '--');
+  const [inventory, diff] = await Promise.all([
+    gitBytes(repo, 'diff', '--name-status', '--no-renames', '-z', parent, fix, '--'),
+    gitBytes(repo, '-c', 'core.quotePath=false', 'diff', '-U5', parent, fix, '--',
+      ...extensions.map(ext => '*.' + ext)),
+  ]);
   if (inventory.status !== 0) throw new Error('Prepared changed-file inventory could not be read');
   const changes = changedFiles(inventory.stdout);
   const additions = new Set(changes.filter(row => row.status === 'A').map(row => row.path));
-  const diff = await gitBytes(repo, '-c', 'core.quotePath=false', 'diff', '-U5', parent, fix, '--',
-    ...extensions.map(ext => '*.' + ext));
   if (diff.status !== 0) throw new Error('Prepared case diff could not be read');
   const hunks = parseHunks(diff.stdout.toString('utf8'), extensions);
   const oldPaths = Object.keys(hunks).filter(path => !additions.has(path));
@@ -825,6 +827,39 @@ function options(argv) {
   return out;
 }
 
+
+const scoreOptions = new Set(['manifest', 'rules', 'out', 'opengrep', 'profile', 'workdir', 'jobs',
+  'extra-arg', 'checkpoint-dir', 'scope']);
+
+function scoreWorkers(opts) {
+  const jobs = Number(opts.jobs ?? 6);
+  if (Array.isArray(opts.jobs) || !Number.isSafeInteger(jobs) || jobs < 1) {
+    throw new Error('--jobs must be one positive integer');
+  }
+  return jobs;
+}
+
+function verifyScoreOptions(opts) {
+  if (opts._.length) throw new Error('Unexpected positional arguments for score');
+  if (Object.hasOwn(opts, 'workers')) throw new Error('Unknown score option --workers; use --jobs');
+  for (const [key, value] of Object.entries(opts)) {
+    if (key === '_') continue;
+    if (!scoreOptions.has(key)) throw new Error('Unknown score option --' + key);
+    const values = key === 'extra-arg' ? [].concat(value) : [value];
+    if (values.some(arg => typeof arg !== 'string' || !arg
+      || (key !== 'extra-arg' && arg.startsWith('--')))) {
+      throw new Error('Expected a value for --' + key + ' (repeat only --extra-arg)');
+    }
+  }
+  for (const key of ['manifest', 'rules', 'out']) {
+    if (!opts[key]) throw new Error('Score requires --' + key);
+  }
+  if (opts.scope && !['ecosystem', 'scannable'].includes(opts.scope)) {
+    throw new Error('--scope must be ecosystem or scannable');
+  }
+  scoreWorkers(opts);
+}
+
 function freeze(opts) {
   const candidateBytes = readFileSync(opts.candidates);
   const candidates = JSON.parse(utf8(candidateBytes));
@@ -960,6 +995,7 @@ export async function scoreManifest(manifestPath, rulesPath, opts = {}, context 
 }
 
 async function scorePreparedManifest(manifest, opts, context) {
+  const jobs = scoreWorkers(opts);
   const checkpoints = opts['checkpoint-dir'] ? resolve(opts['checkpoint-dir']) : null;
   const engine = context.engine ?? (checkpoints ? await bindRecallEngine(context.profile, context.bin) : null);
   if (engine) context.bin = engine.path;
@@ -978,10 +1014,10 @@ async function scorePreparedManifest(manifest, opts, context) {
     }
   };
   const resumed = [];
-  const checkpointInputs = row => ({ schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
+  const checkpointInputs = row => ({ schema: 'factory.recall-case-checkpoint.v3', scorer_sha256: scorerSha256(),
     manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
     profile_sha256: context.profileSha256, engine_sha256: engine.receipt.executable_sha256,
-    engine_args: context.extra, scope: context.scope });
+    engine_args: context.extra, scope: context.scope, case_workers: jobs });
   const checkpointed = async (row, staged) => {
     const inputs = checkpointInputs(row);
     const saved = readCheckpoint(checkpoints, inputs);
@@ -993,7 +1029,6 @@ async function scorePreparedManifest(manifest, opts, context) {
     if (checkpointable(result)) staged.push({ inputs, result });
     return result;
   };
-  const jobs = Number(opts.jobs ?? 6);
   const rows = [];
   if (checkpoints) {
     const staged = [];
@@ -1019,7 +1054,7 @@ async function scorePreparedManifest(manifest, opts, context) {
     rows.push(...await pool(manifest.cases, jobs, row => one(row)));
   }
   // Engine timeouts depend on machine load; repeat those cases one at a time
-  // so a timeout is only recorded when it happens on an otherwise idle engine.
+  // A retry keeps the same scanner settings and runs without peer cases.
   let retried = false;
   for (let index = 0; index < rows.length; index++) {
     if (rows[index].outcome !== 'timeout') continue;
@@ -1038,7 +1073,7 @@ async function scorePreparedManifest(manifest, opts, context) {
   if (!checkpoints || retried) await verifyPins('case scoring');
   return { schema: 'factory.recall-result.v1', manifest: manifest.path, manifest_cases_sha256: manifest.casesSha256,
     manifest_sha256: manifest.sha256, ruleset_sha256: context.rulesSha256, profile_sha256: context.profileSha256,
-    scope: context.scope, engine_args: context.extra,
+    scope: context.scope, engine_args: context.extra, case_workers: jobs,
     scan_directory: basename(context.scanRoot),
     ...(checkpoints ? { resumed_cases: resumed.sort() } : {}),
     argv: profileArgv(context.profile, { bin: context.bin, rules: '{rules}', report: '{report}', source: '{source}', extra: context.extra }),
@@ -1046,11 +1081,14 @@ async function scorePreparedManifest(manifest, opts, context) {
 }
 
 async function score(opts) {
+  verifyScoreOptions(opts);
+  const manifest = readScoringManifest(opts.manifest);
   const context = scoringContext(opts, opts.rules);
   const engine = await bindRecallEngine(context.profile, context.bin);
   context.engine = engine;
-  const out = await scoreManifest(opts.manifest, opts.rules, opts, context);
+  const out = await scorePreparedManifest(manifest, opts, context);
   await verifyBoundEngine(engine, 'scoring');
+  verifyEvaluationManifests([manifest], 'Score');
   writeFileSync(opts.out, `${JSON.stringify({ ...out, engine: engine.receipt }, null, 1)}\n`);
   console.log(JSON.stringify(out.summary, null, 1));
 }
@@ -1474,13 +1512,14 @@ function readEvaluationManifests(paths) {
   });
 }
 
-function verifyEvaluationManifests(manifests) {
+function verifyEvaluationManifests(manifests, mode = 'Evaluation') {
   for (const { path, sha256: expected } of manifests) {
-    if (sha256(readFileSync(path)) !== expected) throw new Error('Evaluation manifest bytes changed during scoring');
+    if (sha256(readFileSync(path)) !== expected) throw new Error(mode + ' manifest bytes changed during scoring');
   }
 }
 
 async function evaluate(input) {
+  scoreWorkers(input);
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
   const profile = JSON.parse(utf8(opts.profileBytes));

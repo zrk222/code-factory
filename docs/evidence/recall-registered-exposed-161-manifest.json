@@ -1,0 +1,1478 @@
+{
+  "schema": "factory.exposed-advisory-recall-manifest.v1",
+  "exposure": "Previously exposed development replay",
+  "evidence": {
+    "path": "C:\\Users\\rkatz\\Documents\\Codex\\2026-11-22\\open-code-factory-repo-that-is\\work\\cf-distinct-loss-evidence\\docs\\evidence\\advisory-recall-factory-20261121.json",
+    "sha256": "9589e1d70365c9aedf95f5adb4760b346fdee1ed1d2f3130cfdb6220b81383c8",
+    "original_study_registration_sha256": "3d368b11f8d8ccbd36bef37642a2045dfa0d174d80edcbd1c33d0700a51fff41"
+  },
+  "protocol": "One registered first fix per original advisory. Compare on exactly the same manifest. Ecosystem-language scope and old-side fix hunk with a matching CWE-family finding.",
+  "previous_qualification": {
+    "path": "C:\\Users\\rkatz\\Documents\\Codex\\2026-11-22\\open-code-factory-repo-that-is\\work\\cf-next-measured-run\\.factory\\qualification-1f0\\receipt.json",
+    "sha256": "25cf20f9325e4974e7a5161d5b87146b827dccb90688365f81986fc4d710fb05",
+    "registered": 150,
+    "prior_projection_cases_sha256": "c646fc9a4d5c5cca53f18911affc8d59fb782c4d7f4b833136a76cf4d48df107",
+    "this_projection_cases_sha256": "c646fc9a4d5c5cca53f18911affc8d59fb782c4d7f4b833136a76cf4d48df107",
+    "membership_and_first_fix_in_identical_order": true,
+    "added_by_original_membership": {
+      "NuGet": 9,
+      "crates.io": 2
+    }
+  },
+  "counts": {
+    "registered": 161,
+    "unique_advisories": 161
+  },
+  "cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
+  "cases": [
+    {
+      "ghsa": "GHSA-2223-f22x-24cq",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "wintercms/storm",
+      "fix": "fd673f4f32140c97c68b1ed705764b819747fbdf"
+    },
+    {
+      "ghsa": "GHSA-23fx-92m6-4f2g",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "pretalx/pretalx",
+      "fix": "60722c43cf975f319e94102e6bff320723776890"
+    },
+    {
+      "ghsa": "GHSA-25gv-mvm7-5h3h",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "jeecgboot/jeecg-boot",
+      "fix": "51e2227bfe54f5d67b09411ee9a336750164e73d"
+    },
+    {
+      "ghsa": "GHSA-2fmj-p74r-3wjm",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-502"
+      ],
+      "repository": "pontedilana/php-weasyprint",
+      "fix": "d1aa487722b5a3cab9b222b85fdb5608a5a550c3"
+    },
+    {
+      "ghsa": "GHSA-2jh5-g5ch-43q5",
+      "ecosystem": "NuGet",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "Bluegrams/YoutubeDLSharp",
+      "fix": "b6051372bd5af30f95f73de47d9bc71c3a07de0f"
+    },
+    {
+      "ghsa": "GHSA-2pm6-9fhx-vvg3",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-502"
+      ],
+      "repository": "CPS-IT/mailqueue",
+      "fix": "0f7a1376bbbd8c7658030d02e51c10a85b1dfdf7"
+    },
+    {
+      "ghsa": "GHSA-2rc4-7jc6-qffh",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "fleetdm/fleet",
+      "fix": "3ff8119ab8f794806a4cc82e21f760c123d92966"
+    },
+    {
+      "ghsa": "GHSA-2x7r-93ww-cxrq",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "wintercms/winter",
+      "fix": "5bc9257fe2bc47d8b786a1b1bf96bafad23d8ddd"
+    },
+    {
+      "ghsa": "GHSA-38jw-g2qx-4286",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "kubevirt/kubevirt",
+      "fix": "231dc69723f331dc02f65a31ab4c3d6869f40d6a"
+    },
+    {
+      "ghsa": "GHSA-3hcm-ggvf-rch5",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "openclaw/openclaw",
+      "fix": "d1ecb46076145deb188abcba8f0699709ea17198"
+    },
+    {
+      "ghsa": "GHSA-3p24-9x7v-7789",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "NationalSecurityAgency/emissary",
+      "fix": "1faf33f2494c0128f250d7d2e8f2da99bbd32ae8"
+    },
+    {
+      "ghsa": "GHSA-3p6w-gv5g-xjw9",
+      "ecosystem": "crates.io",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "mongodb/mongo-rust-driver",
+      "fix": "21ed6aeeea386628621b36a6af2a1a248cc87dcf"
+    },
+    {
+      "ghsa": "GHSA-3xgr-h5hq-7299",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "opensearch-project/data-prepper",
+      "fix": "b82ea0640d98d9f4c742622325faeeb6248ee135"
+    },
+    {
+      "ghsa": "GHSA-4574-qv3w-fcmg",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-502"
+      ],
+      "repository": "Codeception/Codeception",
+      "fix": "802a108057d250ee563120eaa5365a519afc0a71"
+    },
+    {
+      "ghsa": "GHSA-463c-jhp2-4mm7",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "nitsan-technologies/ns_backup",
+      "fix": "67b8102a19e8e516dc4228f5c42f9e4fba5046cb"
+    },
+    {
+      "ghsa": "GHSA-465w-gg5p-85c9",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "kiali/kiali",
+      "fix": "93f5cd0b6698e8fe8772afb8f35816f6c086aef1"
+    },
+    {
+      "ghsa": "GHSA-4h97-wpxp-3757",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "langchain-ai/langgraph",
+      "fix": "bc9d45b476101e441cb1cc602dea03eb29232de4"
+    },
+    {
+      "ghsa": "GHSA-4m7p-55jm-3vwv",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "jenkinsci/workflow-cps-plugin",
+      "fix": "f7ae7b75a457976853539bff1db52373b85fdb85"
+    },
+    {
+      "ghsa": "GHSA-4pj9-g833-qx53",
+      "ecosystem": "crates.io",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "lettre/lettre",
+      "fix": "f5efffc88360dbdbfcef80f465e42d5bce68ca35"
+    },
+    {
+      "ghsa": "GHSA-4x28-j85r-668q",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "forkcms/forkcms",
+      "fix": "a9986b86c53de0582248b39605660fbba0c21a29"
+    },
+    {
+      "ghsa": "GHSA-4xf2-7qfv-mgfx",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "einpraegsam/ipandlanguageredirect",
+      "fix": "d80eb99e739a09984ad0ea94b12380236346ae42"
+    },
+    {
+      "ghsa": "GHSA-527r-mfmj-prqf",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "Katello/katello",
+      "fix": "5645ed4365980a34e30a9c57fe0793dff729e8e4"
+    },
+    {
+      "ghsa": "GHSA-5j9f-5wmp-7f8h",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "jenkinsci/vmanager-plugin",
+      "fix": "639aa135ab57d9e23c5bedeb0a5e9518eb0f486e"
+    },
+    {
+      "ghsa": "GHSA-5jpj-293f-rhvj",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "kubeedge/kubeedge",
+      "fix": "552af457a4c7ce80ea1678ab5889f475b36ea103"
+    },
+    {
+      "ghsa": "GHSA-5m9f-rphj-c435",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "rabbitmq/rabbitmq-java-client",
+      "fix": "1e7deb2e6020c9793a81385a53ea378ec63b9339"
+    },
+    {
+      "ghsa": "GHSA-5mq7-rwhj-4fh9",
+      "ecosystem": "NuGet",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "SteeltoeOSS/Steeltoe",
+      "fix": "b626ef3d60aaf19c68eeeed5ee81045406c8c6d0"
+    },
+    {
+      "ghsa": "GHSA-5xpp-75jx-m839",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "sebhildebrandt/systeminformation",
+      "fix": "bbfddde48672d0ee124fefdb3cb4442fd9dd4f03"
+    },
+    {
+      "ghsa": "GHSA-63q7-h895-m982",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "cure53/DOMPurify",
+      "fix": "02724b8eb048dd219d6725b05c3000936f11d62d"
+    },
+    {
+      "ghsa": "GHSA-68wg-qv6r-j4vp",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "usmanhalalit/pixie",
+      "fix": "9bd991021abbcbfb19347a07dca8b7e518b8abc9"
+    },
+    {
+      "ghsa": "GHSA-69p3-xp37-f692",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "ManageIQ/kubeclient",
+      "fix": "109ea71de5a8881748f03ebbe103b49f0f1c7887"
+    },
+    {
+      "ghsa": "GHSA-6g56-v9qg-jp92",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "heketi/heketi",
+      "fix": "787bae461b23003a4daa4d1d639016a754cf6b00"
+    },
+    {
+      "ghsa": "GHSA-6gm7-j668-w6h9",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "pimcore/pimcore",
+      "fix": "a697830359df06246acca502ee2455614de68017"
+    },
+    {
+      "ghsa": "GHSA-6j63-35hj-vmcg",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "nedap/mysql-binuuid-rails",
+      "fix": "9ae920951b46ff0163b16c55d744e89acb1036d4"
+    },
+    {
+      "ghsa": "GHSA-6m7c-xfhp-p9fh",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "baptisteArno/typebot.io",
+      "fix": "474ecbf46bc47a75265bada2599f12b2179de375"
+    },
+    {
+      "ghsa": "GHSA-6m8w-jc87-6cr7",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "open-policy-agent/opa",
+      "fix": "ad2063247a14711882f18c387a511fc8094aa79c"
+    },
+    {
+      "ghsa": "GHSA-6qjf-g333-pv38",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "Shopify/job-iteration",
+      "fix": "1a7adfdd041105a5e45e774cadc6b973a292ba55"
+    },
+    {
+      "ghsa": "GHSA-6vmq-24h2-pj7j",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "sooperset/mcp-atlassian",
+      "fix": "b041733473f95119dd539542a43c280737a8e460"
+    },
+    {
+      "ghsa": "GHSA-6w89-c65w-jx2c",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "jeecgboot/jeecg-boot",
+      "fix": "0fc374de4745eac52620eeb8caf6a7b76127529a"
+    },
+    {
+      "ghsa": "GHSA-6xxq-j39w-g3f6",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "puppetlabs/puppet",
+      "fix": "0d6d29933e613fe177e9235415919a5428db67bc"
+    },
+    {
+      "ghsa": "GHSA-72c7-4g63-hpw5",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "in-toto/go-witness",
+      "fix": "04ff20b600e28ce8fd1aa287534dd383a1cfefb9"
+    },
+    {
+      "ghsa": "GHSA-72qq-p3r5-f7wq",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "a2ui-project/a2ui",
+      "fix": "71573078c4168b2dc166bb847c3a85715dadc675"
+    },
+    {
+      "ghsa": "GHSA-7359-3c6r-hfc2",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "oauth-xx/oauth-ruby",
+      "fix": "eb5b00a91d4ef0899082fdba929c34ccad6d4ccb"
+    },
+    {
+      "ghsa": "GHSA-73wf-9vmv-5pv9",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "nicolargo/glances",
+      "fix": "ea4cf2f54f0d961e24aa0b24fff9584bab39db93"
+    },
+    {
+      "ghsa": "GHSA-74hp-mggr-hv58",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "sonirico/mcp-shell",
+      "fix": "f31377fce6ec31114e5a4398c0e5270552bce09f"
+    },
+    {
+      "ghsa": "GHSA-76wq-xw4h-f8wj",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "rails/rails",
+      "fix": "62f81f4d6b3ee40e9887ffd92ab14714bad93f18"
+    },
+    {
+      "ghsa": "GHSA-784x-7w88-w564",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "jeecgboot/jeecg-boot",
+      "fix": "dd7bf104e7ed59142909567ecd004335c3442ec5"
+    },
+    {
+      "ghsa": "GHSA-79qw-g77v-2vfh",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "inspektor-gadget/inspektor-gadget",
+      "fix": "7c83ad84ff7a68565655253e2cf1c5d2da695c1a"
+    },
+    {
+      "ghsa": "GHSA-7cj7-rcw6-p68v",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "spring-projects/spring-ai",
+      "fix": "3a46c7dd00e4adc17a132b9438149bde94da244f"
+    },
+    {
+      "ghsa": "GHSA-7hxc-f267-h5q7",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "craftcms/cms",
+      "fix": "a8425b6c707335e42c35ee2aaf03af50ea4a494d"
+    },
+    {
+      "ghsa": "GHSA-7vxr-6cxg-j3x8",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "wconrad/ftpd",
+      "fix": "828064f1a0ab69b2642c59cab8292a67bb44182c"
+    },
+    {
+      "ghsa": "GHSA-7wqf-h36w-47mc",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "apache/airflow",
+      "fix": "1d4fd5c6eacab0b88f8660f9d780174434393f1a"
+    },
+    {
+      "ghsa": "GHSA-85gf-wr67-f83w",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "prodigasistemas/curupira",
+      "fix": "93a9a77896bb66c949acb8e64bceafc74bc8c271"
+    },
+    {
+      "ghsa": "GHSA-8832-4mm5-x2r6",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "shardlab/discordrb",
+      "fix": "91e13043ffa89227c3fcdc3408f06da237d28c95"
+    },
+    {
+      "ghsa": "GHSA-8gqp-hr9g-pg62",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "conductor-oss/conductor",
+      "fix": "e9816501df1e364a3d39d7fe37d6e167c40eaa1b"
+    },
+    {
+      "ghsa": "GHSA-8grg-q944-cch5",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "hibernate/hibernate-orm",
+      "fix": "3f3c1ab50604ab9ba99e25d2016fb85f3ba9dcd4"
+    },
+    {
+      "ghsa": "GHSA-8qvf-mr4w-9x2c",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "mesop-dev/mesop",
+      "fix": "c6b382f363b73ac32c402a2db3aadc7784f66a5b"
+    },
+    {
+      "ghsa": "GHSA-97jv-2hp6-3frj",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "Dolibarr/dolibarr",
+      "fix": "2b088a73c121a52e006c0d76ea4da7ffeb7b4f4a"
+    },
+    {
+      "ghsa": "GHSA-9mh6-g99m-ppcw",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "auth0/auth0-PHP",
+      "fix": "9026da58f5c381cd4cb5932de829eff6eacbb65c"
+    },
+    {
+      "ghsa": "GHSA-c5r5-7pfh-6qg6",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "inukshuk/bibtex-ruby",
+      "fix": "14406f4460f4e1ecabd25ca94f809b3ea7c5fb11"
+    },
+    {
+      "ghsa": "GHSA-cgfv-jrfp-2r7v",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "openremote/openremote",
+      "fix": "02ac83074b81617add814b2a72d459abdf374147"
+    },
+    {
+      "ghsa": "GHSA-cpv4-ggrr-7j9v",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-502"
+      ],
+      "repository": "RasaHQ/rasa",
+      "fix": "2bb1d779d4f4acaf70b6dfa35dd1899dccbb1ae6"
+    },
+    {
+      "ghsa": "GHSA-cxwf-qc32-375f",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "decidim-ice/decidim-module-decidim_awesome",
+      "fix": "84374037d34a3ac80dc18406834169c65869f11b"
+    },
+    {
+      "ghsa": "GHSA-f3f2-mcxc-pwjx",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "n8n-io/n8n",
+      "fix": "f73fae6fe7fc34907bba102648a9997186aa4385"
+    },
+    {
+      "ghsa": "GHSA-f6wf-28g6-769x",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "smarty-php/smarty",
+      "fix": "99c048ce7a590c519b79fbd38ad0143a08183a1f"
+    },
+    {
+      "ghsa": "GHSA-f7w7-6pjc-wwm6",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "apache/tomcat",
+      "fix": "14e4efd925da58b9fa63f20969fb7349b8a9c30d"
+    },
+    {
+      "ghsa": "GHSA-ff6c-w6qf-7xqc",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "premailer/css_parser",
+      "fix": "35e689c904225add78e0c488cf04bad052666449"
+    },
+    {
+      "ghsa": "GHSA-ff98-w8hj-qrxf",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "openclaw/openclaw",
+      "fix": "2e421f32dfc589c02706265fd3c3137ffc06c4b1"
+    },
+    {
+      "ghsa": "GHSA-fg4q-ccq8-3r5q",
+      "ecosystem": "NuGet",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "nhibernate/nhibernate-core",
+      "fix": "b4a69d1a5ff5744312478d70308329af496e4ba9"
+    },
+    {
+      "ghsa": "GHSA-fhff-qmm8-h2fp",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "mlflow/mlflow",
+      "fix": "3bf6d81ac4d38654c8ff012dbd0c3e9f17e7e346"
+    },
+    {
+      "ghsa": "GHSA-fr3h-cpq2-9496",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "SpamScope/mail-parser",
+      "fix": "3d6cb7a51f2ad7ea57e529121dbd5d56f29fefe8"
+    },
+    {
+      "ghsa": "GHSA-fwj4-6wgp-mpxm",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "Katello/katello",
+      "fix": "a0a793b08d4f0a897ee985d79a687ad043f99e57"
+    },
+    {
+      "ghsa": "GHSA-g23g-mw97-65c8",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "IBAX-io/go-ibax",
+      "fix": "b0183d8e550836dc50282ee74ff421ee41b25a37"
+    },
+    {
+      "ghsa": "GHSA-g72f-jw3w-mgh7",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "naorsabag/openhop",
+      "fix": "c8190fbefa3a50e7b0c16c001d2e05b0e920cfb4"
+    },
+    {
+      "ghsa": "GHSA-gjqq-6r35-w3r8",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "getarcaneapp/arcane",
+      "fix": "5a9c2f92e11f86f8997da8c672844468f930b7e4"
+    },
+    {
+      "ghsa": "GHSA-gpfj-4j6g-c4w9",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "github/paste-markdown",
+      "fix": "32b7ea3f29ae8f256f9d19768387be42678ddf30"
+    },
+    {
+      "ghsa": "GHSA-gprp-h92g-gc2h",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "xwiki/xwiki-platform",
+      "fix": "743ebf8696ffa55161ed2c5ecf26b09f69e6bcf1"
+    },
+    {
+      "ghsa": "GHSA-gr4j-r575-g665",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "highcharts/highcharts",
+      "fix": "55c39dd55f12ce8dfab84f8ec13ad81423bee9f5"
+    },
+    {
+      "ghsa": "GHSA-gvg7-pp82-cff3",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "c3js/c3",
+      "fix": "de3864650300488a63d0541620e9828b00e94b42"
+    },
+    {
+      "ghsa": "GHSA-h36j-8vv3-cj52",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "onnx/onnx",
+      "fix": "1b70f9b673259360b6a2339c4bd97db9ea6e552f"
+    },
+    {
+      "ghsa": "GHSA-h4h6-vccr-44h2",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "uptrace/bun",
+      "fix": "8067a8f13f8d22fb57b76d6800f7aefc12b044cd"
+    },
+    {
+      "ghsa": "GHSA-h6r4-xvw6-jc5h",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "nocodb/nocodb",
+      "fix": "7f58ce3726dfec71537d8b80474a0f95a48a1574"
+    },
+    {
+      "ghsa": "GHSA-h7cm-jvpp-69xf",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "meshery/meshery",
+      "fix": "b55f6064d0c6a965aee38f30281f99da7dc4420c"
+    },
+    {
+      "ghsa": "GHSA-hc5w-gxxr-w8x8",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "BishopFox/sliver",
+      "fix": "0deaee625d14c6f05f63c86e5c3b7ae623a1138f"
+    },
+    {
+      "ghsa": "GHSA-hj4w-hm2g-p6w5",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-502"
+      ],
+      "repository": "vllm-project/vllm",
+      "fix": "a5450f11c95847cf51a17207af9a3ca5ab569b2c"
+    },
+    {
+      "ghsa": "GHSA-hq7p-j377-6v63",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "rails/rails",
+      "fix": "d7aba06953f9fa789c411676b941d20df8ef73de"
+    },
+    {
+      "ghsa": "GHSA-hr8g-6v94-x4m9",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "bcgit/bc-java",
+      "fix": "ccf93ca736b89250ff4ce079a5aa56f5cbf0ebbd"
+    },
+    {
+      "ghsa": "GHSA-hw6x-2qwv-rxr7",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "jenkinsci/git-client-plugin",
+      "fix": "899123fa2eb9dd2c37137aae630c47c6be6b4b02"
+    },
+    {
+      "ghsa": "GHSA-hwcc-4cv8-cf3h",
+      "ecosystem": "NuGet",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "snowflakedb/snowflake-connector-net",
+      "fix": "49cb77ddd6e18c110eca35aa580e89d73c46cc33"
+    },
+    {
+      "ghsa": "GHSA-j3f9-p6hm-5w6q",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-98"
+      ],
+      "repository": "briannesbitt/Carbon",
+      "fix": "129700ed449b1f02d70272d2ac802357c8c30c58"
+    },
+    {
+      "ghsa": "GHSA-j456-xh4h-cpf2",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "nltk/nltk",
+      "fix": "6a17606293fe9d3ea1006f99dd3fed2e2b25d519"
+    },
+    {
+      "ghsa": "GHSA-j6cv-98jx-mrwr",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "laowantong/mocodo",
+      "fix": "f9368df28518b6c4a92fd207c260f1978ec34d6e"
+    },
+    {
+      "ghsa": "GHSA-j7g8-3qqg-8cvm",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "top-think/thinkphp",
+      "fix": "9748cb80d2f24c89218f358ca2f5ab88ee33396f"
+    },
+    {
+      "ghsa": "GHSA-j7wh-x834-p3r7",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "siyuan-note/siyuan",
+      "fix": "d5e2d0bce0dffef5f61bd8066954bc2d41181fc5"
+    },
+    {
+      "ghsa": "GHSA-jccv-3h4x-35mv",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "Codiad/Codiad",
+      "fix": "ca5089eeba42d16ce3a7f86be628ac7750780111"
+    },
+    {
+      "ghsa": "GHSA-jj27-h5hq-8x99",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "angular/angular",
+      "fix": "417a4071a776464d549509ed3aec121dbd2fda5e"
+    },
+    {
+      "ghsa": "GHSA-jj45-24rw-v6jw",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "totaljs/framework4",
+      "fix": "e2cea690c3fe4453e94da896a69f832511f65179"
+    },
+    {
+      "ghsa": "GHSA-jjgq-jq8g-24w4",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "Dolibarr/dolibarr",
+      "fix": "33e2179b65331d9d9179b59d746817c5be1fecdb"
+    },
+    {
+      "ghsa": "GHSA-jmm9-2p29-vh2w",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "rails/rails",
+      "fix": "354da43ab0a10b3b7b3f9cb0619aa562c3be8474"
+    },
+    {
+      "ghsa": "GHSA-jppv-gw3r-w3q8",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "ruby/rake",
+      "fix": "5b8f8fc41a5d7d7d6a5d767e48464c60884d3aee"
+    },
+    {
+      "ghsa": "GHSA-jqmf-mx4f-hfr6",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "HKUDS/Vibe-Trading",
+      "fix": "9454d4a27a763b80e1d6eb5763b86c88e9e4e714"
+    },
+    {
+      "ghsa": "GHSA-jwhr-h7pc-3974",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "jenkinsci/bitbucket-push-and-pull-request-plugin",
+      "fix": "5a0ae2155692beab48c6a0578a3eff22304a2014"
+    },
+    {
+      "ghsa": "GHSA-m3hq-3qj8-c5fm",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "fog/fog-kubevirt",
+      "fix": "8371e9ded99f9ec3e74caf2f283836109763e450"
+    },
+    {
+      "ghsa": "GHSA-m445-w3xr-vp2f",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "charmbracelet/soft-serve",
+      "fix": "4daebdd422a6ba8c04162d023f8be355a8fe3184"
+    },
+    {
+      "ghsa": "GHSA-m462-mqw4-2c8m",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "mattermost/mattermost",
+      "fix": "222bce0c5c1abb2f58c3a6de1fe8c5d3accffb21"
+    },
+    {
+      "ghsa": "GHSA-m734-r4g6-34f9",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "strongloop/loopback-connector-mongodb",
+      "fix": "ee24cd08b8ccc32711264831c71b1da628df357b"
+    },
+    {
+      "ghsa": "GHSA-mc7w-4cjf-c973",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "peterbraden/node-opencv",
+      "fix": "81a4b8620188e89f7e4fc985f3c89b58d4bcc86b"
+    },
+    {
+      "ghsa": "GHSA-mf2p-h6hf-fcwm",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "tinymce/tinymce",
+      "fix": "bd1ab5ef024c648c3f9c0b409e54a6c227c7d8a2"
+    },
+    {
+      "ghsa": "GHSA-mggc-4xg6-vcxf",
+      "ecosystem": "NuGet",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "sshnet/SSH.NET",
+      "fix": "c66b9f8fb06c12e71761e58a577b1e796026310f"
+    },
+    {
+      "ghsa": "GHSA-mhwp-qhpc-h3jm",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "rails/rails",
+      "fix": "1f2192e46d78ee0ba2b06373f2c24caf8440ff5b"
+    },
+    {
+      "ghsa": "GHSA-mj4x-vf5c-5xg8",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "oscal-compass/compliance-trestle",
+      "fix": "5c65c5926fe7ca908b9c1d281f904e7d97ba8310"
+    },
+    {
+      "ghsa": "GHSA-mmcv-fvq8-r9x3",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-502"
+      ],
+      "repository": "symfony/symfony",
+      "fix": "3e64d36cbdc34acaa82e0e6318112cd2eacb6fec"
+    },
+    {
+      "ghsa": "GHSA-mq84-hjqx-cwf2",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-502"
+      ],
+      "repository": "keras-team/keras",
+      "fix": "61ac8c1e51862c471dee7b49029c356f55531487"
+    },
+    {
+      "ghsa": "GHSA-mrq8-fv7v-hhjg",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "sooperset/mcp-atlassian",
+      "fix": "b041733473f95119dd539542a43c280737a8e460"
+    },
+    {
+      "ghsa": "GHSA-mrww-27vc-gghv",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "jackc/pgproto3",
+      "fix": "945c2126f6db8f3bea7eeebe307c01fe92bca007"
+    },
+    {
+      "ghsa": "GHSA-mw36-7c6c-q4q2",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "x-stream/xstream",
+      "fix": "0fec095d534126931c99fd38e9c6d41f5c685c1a"
+    },
+    {
+      "ghsa": "GHSA-mxg3-432p-mr72",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "patrickhener/goshs",
+      "fix": "8f409cb08aacc6e94704334e8b1fb2cd50f5dd98"
+    },
+    {
+      "ghsa": "GHSA-p6w9-r443-r752",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "shopware/core",
+      "fix": "63c05615694790f5790a04ef889f42b764fa53c9"
+    },
+    {
+      "ghsa": "GHSA-p77r-c6m3-gj2r",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "jaredhanson/oauth2orize-fprm",
+      "fix": "2bf9faee787eb004abbdfb6f4cc2fb06653defd5"
+    },
+    {
+      "ghsa": "GHSA-p9qm-p942-q3w5",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "xwiki/xwiki-platform",
+      "fix": "7313dc9b533c70f14b7672379c8b3b63d1fd8f51"
+    },
+    {
+      "ghsa": "GHSA-pj84-qjm3-77mg",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "jenkinsci/workflow-multibranch-plugin",
+      "fix": "71c3f0a6ccdb2ba43f43686826b0d62160df85e8"
+    },
+    {
+      "ghsa": "GHSA-pmw4-jgxx-pcq9",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "autovance/ftp-srv",
+      "fix": "457b859450a37cba10ff3c431eb4aa67771122e3"
+    },
+    {
+      "ghsa": "GHSA-pxrr-hq57-q35p",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "dynaconf/dynaconf",
+      "fix": "2fbb45ee36b8c0caa5b924fe19f3c1a5e8603fa7"
+    },
+    {
+      "ghsa": "GHSA-q27f-v3r6-9v77",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "igrigorik/em-http-request",
+      "fix": "e5fa144f8d21050dd1fc15a4dc8aa34ac6f30602"
+    },
+    {
+      "ghsa": "GHSA-q296-9j5x-fxf4",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "jenkinsci/hpe-application-automation-tools-plugin",
+      "fix": "b286378aa22bc48ed77d259200cb6863a532c2df"
+    },
+    {
+      "ghsa": "GHSA-q433-mp6c-8v4f",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "StacklokLabs/sqlite-mcp",
+      "fix": "1da5a6582a4f9d90c778db5687ddcd0c39d2c1ec"
+    },
+    {
+      "ghsa": "GHSA-q7m5-3jmv-vm48",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "MervinPraison/PraisonAI",
+      "fix": "1620b49f36945d8cc8ee5635b906c960df5097a0"
+    },
+    {
+      "ghsa": "GHSA-q9mp-79cp-9g8j",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "containous/traefik",
+      "fix": "2b353971696717e980521b0e4baa1eba66c8d2bf"
+    },
+    {
+      "ghsa": "GHSA-qcpp-8x79-hhp3",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "nicolargo/glances",
+      "fix": "9c280eae5419da680827024b60f6265956e31994"
+    },
+    {
+      "ghsa": "GHSA-qqh2-wvmv-h72m",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "OpenRefine/OpenRefine",
+      "fix": "2de1439f5be63d9d0e89bbacbd24fa28c8c3e29d"
+    },
+    {
+      "ghsa": "GHSA-qrg7-hfx7-95c5",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "rancher/wrangler",
+      "fix": "12397eec50155cb2d24aa70bdf9e90c5f3b9a727"
+    },
+    {
+      "ghsa": "GHSA-r7j3-vvh2-xrpj",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "minimagick/minimagick",
+      "fix": "4cd5081e58810d3394d27a67219e8e4e0445d851"
+    },
+    {
+      "ghsa": "GHSA-r8g5-cgf2-4m4m",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-502"
+      ],
+      "repository": "mmaitre314/picklescan",
+      "fix": "70c1c6c31beb6baaf52c8db1b6c3c0e84a6f9dab"
+    },
+    {
+      "ghsa": "GHSA-rc6v-5rmx-w5mv",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "arnika-project/arnika",
+      "fix": "efbd980d8b636cb59f60f2d6ece1b80a9cf36535"
+    },
+    {
+      "ghsa": "GHSA-rfx3-98h7-v3xp",
+      "ecosystem": "NuGet",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "JasperFx/marten",
+      "fix": "61882d0424854cb48703f08bdb246894ac576bed"
+    },
+    {
+      "ghsa": "GHSA-rjjv-87mx-6x3h",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "sveltejs/kit",
+      "fix": "d338d4635a7fd947ba5112df6ee632c4a0979438"
+    },
+    {
+      "ghsa": "GHSA-rmjr-87wv-gf87",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "mwilliamson/mammoth.js",
+      "fix": "c54aaeb43a7941317c1f3c119ffa92090f988820"
+    },
+    {
+      "ghsa": "GHSA-rp2v-v467-q9vq",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "DataDog/guarddog",
+      "fix": "98af5c8c1e9c15fa888c900252e76116b0ec25d1"
+    },
+    {
+      "ghsa": "GHSA-rqw2-ghq9-44m7",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "django/django",
+      "fix": "479415ce5249bcdebeb6570c72df2a87f45a7bbf"
+    },
+    {
+      "ghsa": "GHSA-v222-6mr4-qj29",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "jirutka/asciidoctor-include-ext",
+      "fix": "c7ea001a597c7033575342c51483dab7b87ae155"
+    },
+    {
+      "ghsa": "GHSA-v253-rj99-jwpq",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "pnpm/pnpm",
+      "fix": "17432ad5bbed5c2e77255ca6d56a1449bbcfd943"
+    },
+    {
+      "ghsa": "GHSA-v529-vhwc-wfc5",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "OpenC3/cosmos",
+      "fix": "9ba60c09c8836a37a2e4ea67ab35fe403e041415"
+    },
+    {
+      "ghsa": "GHSA-v74c-qc46-9gg9",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "apache/submarine",
+      "fix": "4e68894a1c54d763ac2697ea1ac993793da4107c"
+    },
+    {
+      "ghsa": "GHSA-vf2r-cxg9-p7rf",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "ADOdb/ADOdb",
+      "fix": "5b8bd52cdcffefb4ecded1b399c98cfa516afe03"
+    },
+    {
+      "ghsa": "GHSA-vj3g-5px3-gr46",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "openclaw/openclaw",
+      "fix": "c821099157a9767d4df208c6b12f214946507871"
+    },
+    {
+      "ghsa": "GHSA-vj9x-w7ch-f46p",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "pimcore/pimcore",
+      "fix": "66281c12479dc01a06258d8533eaddfb1770d5bd"
+    },
+    {
+      "ghsa": "GHSA-vmw2-qwm8-x84c",
+      "ecosystem": "NuGet",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "JasperFx/marten",
+      "fix": "626249656829860b9c55895b5b6046b61a2a695f"
+    },
+    {
+      "ghsa": "GHSA-vp4f-wxgw-7x8x",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "decentraland/single-sign-on-client",
+      "fix": "bd20ea9533d0cda30809d929db85b1b76cef855a"
+    },
+    {
+      "ghsa": "GHSA-vq7p-f4fv-rr5x",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-295"
+      ],
+      "repository": "jenkinsci/vsphere-cloud-plugin",
+      "fix": "f0fb143af340c7529dd9e50f5514334756019356"
+    },
+    {
+      "ghsa": "GHSA-w2pm-r78h-4m7v",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "laravel/framework",
+      "fix": "44c3feb604944599ad1c782a9942981c3991fa31"
+    },
+    {
+      "ghsa": "GHSA-w5ff-2mjc-4phc",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "WWBN/AVideo",
+      "fix": "67d932eb05e1bc9b36796f73ff4f9fb47590598b"
+    },
+    {
+      "ghsa": "GHSA-wc3v-3457-c8cm",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "openmeterio/openmeter",
+      "fix": "6ce29e743165890c10346f4c71d5bf79f1ecaf6f"
+    },
+    {
+      "ghsa": "GHSA-wm65-ph3w-587c",
+      "ecosystem": "npm",
+      "cwes": [
+        "CWE-79"
+      ],
+      "repository": "quasarframework/quasar-ui-qmarkdown",
+      "fix": "b61dff84851c45369cf931db5bd93db177c657f6"
+    },
+    {
+      "ghsa": "GHSA-wqmh-qccw-pqwf",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "mlflow/mlflow",
+      "fix": "31ff9e56f5038d61ec75344518912945f60dffec"
+    },
+    {
+      "ghsa": "GHSA-wrvw-254r-wpmv",
+      "ecosystem": "NuGet",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "alastairlundy/CliInvoke",
+      "fix": "1e98582f02eb43e345e5b97b8dd6ff9443806685"
+    },
+    {
+      "ghsa": "GHSA-x3wm-hffr-chwm",
+      "ecosystem": "Maven",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "aws/amazon-redshift-jdbc-driver",
+      "fix": "0d354a5f26ca23f7cac4e800e3b8734220230319"
+    },
+    {
+      "ghsa": "GHSA-x485-rhg3-cqr4",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-78"
+      ],
+      "repository": "spree/spree",
+      "fix": "0a9a360c590829d8a377ceae0cf997bbbbcc2df4"
+    },
+    {
+      "ghsa": "GHSA-x67c-8pwr-m8g3",
+      "ecosystem": "Go",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "siyuan-note/siyuan",
+      "fix": "0a176345e02a0d19bdc7762e50e0b92002087d20"
+    },
+    {
+      "ghsa": "GHSA-x843-g5mx-g377",
+      "ecosystem": "PyPI",
+      "cwes": [
+        "CWE-502"
+      ],
+      "repository": "mmaitre314/picklescan",
+      "fix": "70c1c6c31beb6baaf52c8db1b6c3c0e84a6f9dab"
+    },
+    {
+      "ghsa": "GHSA-x9vc-6hfv-hg8c",
+      "ecosystem": "NuGet",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "npgsql/npgsql",
+      "fix": "091655eed0c84e502ab424950c930339d17c1928"
+    },
+    {
+      "ghsa": "GHSA-xf96-32q2-9rw2",
+      "ecosystem": "RubyGems",
+      "cwes": [
+        "CWE-89"
+      ],
+      "repository": "rails/rails",
+      "fix": "ef0ea782b1f5cf7b08e74ea3002a16c708f66645"
+    },
+    {
+      "ghsa": "GHSA-xr9m-gphc-9p63",
+      "ecosystem": "Packagist",
+      "cwes": [
+        "CWE-22"
+      ],
+      "repository": "grokability/snipe-it",
+      "fix": "abc4363e8393b29a5566b8c50144426af72bbc97"
+    }
+  ]
+}

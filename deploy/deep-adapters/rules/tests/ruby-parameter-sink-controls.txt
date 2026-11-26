@@ -14,6 +14,58 @@ class PluginModel
     # ok: ruby.parameter-shell-command
     system(cmd)
   end
+
+  def open_name(name)
+    # ruleid: ruby.parameter-shell-command
+    Kernel.open(name)
+  end
+
+  def open_asset(name)
+    # ok: ruby.parameter-shell-command
+    Kernel.open(File.join("assets", name))
+  end
+
+  def open_below(directory, name)
+    # ruleid: ruby.parameter-shell-command
+    Kernel.open(File.join(directory, name))
+  end
+
+  def explicit_opt_in(opts, args)
+    if args.insecure
+      # ok: ruby.disabled-tls-verification
+      opts[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
+    end
+  end
+
+  def inverted_opt_in(opts, args)
+    if !args.insecure
+      # ruleid: ruby.disabled-tls-verification
+      opts[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
+    end
+  end
+
+  def named_option(opts)
+    if opts[:skip_tls_verify]
+      # ok: ruby.disabled-tls-verification
+      opts[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
+    end
+  end
+
+  def distinct_option(opts)
+    if opts["INSECURE"]
+      # ruleid: ruby.disabled-tls-verification
+      opts[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
+    end
+  end
+
+  def alternative_branch(opts, args)
+    if args.insecure
+      configure_ok(opts)
+    else
+      # ruleid: ruby.disabled-tls-verification
+      opts[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
+    end
+  end
 end
 
 def open_explicit_path(path)
