@@ -56,3 +56,14 @@ class CvtModel
     redis.exists?("subscribed:timeline:#{account}")
   end
 end
+
+class FinderController < ApplicationController
+  def lookup
+    # ruleid: ruby.request-sql-injection
+    @user = User.find_by(params[:user])
+    # ok: ruby.request-sql-injection
+    @user = User.find_by(email: params[:user][:email])
+    # ruleid: ruby.request-sql-injection
+    @account = Account.find_or_create_by!(params[:account])
+  end
+end

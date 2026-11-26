@@ -167,11 +167,11 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.go.disabled-tls-verification': 1,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
   'opt.factory.rules.go.parameter-shell-command': 1,
-  'opt.factory.rules.go.parameter-sql-text': 4,
+  'opt.factory.rules.go.parameter-sql-text': 6,
   'opt.factory.rules.go.request-command-injection': 3,
   'opt.factory.rules.go.request-html-injection': 2,
   'opt.factory.rules.go.request-path-traversal': 1,
-  'opt.factory.rules.go.request-sql-injection': 4,
+  'opt.factory.rules.go.request-sql-injection': 6,
   'opt.factory.rules.go.tls-client-cert-requested-not-verified': 1,
   'opt.factory.rules.go.tls-peer-not-verified': 2,
   'opt.factory.rules.java.archive-path-traversal': 3,
@@ -194,12 +194,12 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.javascript.tls-reject-unauthorized-disabled': 1,
   'opt.factory.rules.php.archive-path-traversal': 3,
   'opt.factory.rules.php.parameter-shell-command': 1,
-  'opt.factory.rules.php.parameter-sql-text': 6,
+  'opt.factory.rules.php.parameter-sql-text': 8,
   'opt.factory.rules.php.request-command-injection': 13,
   'opt.factory.rules.php.request-file-inclusion': 2,
   'opt.factory.rules.php.request-html-injection': 1,
   'opt.factory.rules.php.request-path-traversal': 12,
-  'opt.factory.rules.php.request-sql-injection': 15,
+  'opt.factory.rules.php.request-sql-injection': 17,
   'opt.factory.rules.php.request-unsafe-deserialization': 4,
   'opt.factory.rules.python.archive-path-traversal': 4,
   'opt.factory.rules.python.disabled-tls-verification': 4,
@@ -220,7 +220,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.ruby.request-command-injection': 3,
   'opt.factory.rules.ruby.request-html-injection': 1,
   'opt.factory.rules.ruby.request-path-traversal': 4,
-  'opt.factory.rules.ruby.request-sql-injection': 4,
+  'opt.factory.rules.ruby.request-sql-injection': 6,
   'opt.factory.rules.rust.reqwest-disabled-tls-verification': 6,
   'opt.factory.rules.swift.trust-exceptions': 3,
 });
@@ -287,7 +287,7 @@ export function verifyJavascriptControlMatrix(manifest) {
 
 // Reviewed totals bind the enabled rule set and exact annotated finding count.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 302;
+const REVIEWED_FINDINGS = 312;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
