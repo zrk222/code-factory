@@ -981,34 +981,44 @@ rules:
       cwe: ["CWE-295"]
       scope: "Pattern-limited explicit API/configuration candidate; no interprocedural or precision guarantee."
   - id: rust.reqwest-disabled-tls-verification
-    message: "Explicit unsafe API or trust configuration candidate; review context and use validated safe alternatives."
+    message: "TLS certificate verification is disabled or a hostname verification flag has inverted polarity."
     severity: INFO
     languages: [rust]
-    patterns:
-      # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
-      - pattern-not-inside:
-          patterns:
-            - pattern-inside: |
-                if $OPTIN { ... }
-            - metavariable-regex:
-                metavariable: $OPTIN
-                regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
-      - pattern: "reqwest::Client::builder().danger_accept_invalid_certs(true)"
-      # Report only clients whose traffic carries credentials, session or user identity.
-      - pattern-either:
-          - pattern-inside: |
-              fn $FUNCTION(...) { $...BODY }
-          - pattern-inside: |
-              fn $FUNCTION(...) -> $RESULT { $...BODY }
-          - pattern-inside: |
-              async fn $FUNCTION(...) { $...BODY }
-          - pattern-inside: |
-              async fn $FUNCTION(...) -> $RESULT { $...BODY }
-      - metavariable-pattern:
-          metavariable: $...BODY
-          language: generic
-          patterns:
-            - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\w*user_?id\b|\bidentity\b|\bsession\w*|\baccount_?id\b)
+    pattern-either:
+      - patterns:
+          # An explicit operator opt-in (if args.insecure / cfg.Insecure) is a deliberate choice.
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    if $OPTIN { ... }
+                - metavariable-regex:
+                    metavariable: $OPTIN
+                    regex: (?i).*(insecure|skip_?verify|no_?verify|allow_?invalid|self_?signed|dev_?mode|unsafe_?tls).*
+          - pattern: "reqwest::Client::builder().danger_accept_invalid_certs(true)"
+          # Report only clients whose traffic carries credentials, session or user identity.
+          - pattern-either:
+              - pattern-inside: |
+                  fn $FUNCTION(...) { $...BODY }
+              - pattern-inside: |
+                  fn $FUNCTION(...) -> $RESULT { $...BODY }
+              - pattern-inside: |
+                  async fn $FUNCTION(...) { $...BODY }
+              - pattern-inside: |
+                  async fn $FUNCTION(...) -> $RESULT { $...BODY }
+          - metavariable-pattern:
+              metavariable: $...BODY
+              language: generic
+              patterns:
+                - pattern-regex: (?i)(authorization|bearer|\w*token\b|\w*secret\b|\bpassword\b|\bpwd\b|api[_-]?key|cookie|credential|\w*user_?id\b|\bidentity\b|\bsession\w*|\baccount_?id\b)
+      # BoringSSL verification setters take a positive verify flag.
+      - patterns:
+          - pattern-either:
+              - pattern: $CONFIG.set_verify_hostname($VERIFY)
+              - pattern: $CONFIG.verify_hostname($VERIFY)
+          - metavariable-regex:
+              metavariable: $VERIFY
+              regex: '^(?:\*\s*)?(?:[A-Za-z_]\w*\.)*(?:accept|allow)_invalid_hostnames$'
+          - focus-metavariable: $VERIFY
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1085,6 +1095,19 @@ rules:
       - pattern: "$F(..., ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE, ...)"
       - pattern: "{..., verify_mode: OpenSSL::SSL::VERIFY_NONE, ...}"
       - pattern: "$F(..., ssl: {..., verify: false, ...}, ...)"
+      - patterns:
+          - pattern-either:
+              - pattern: $OPTS[:verify_ssl] = OpenSSL::SSL::VERIFY_NONE
+              - pattern: $OPTS["verify_ssl"] = OpenSSL::SSL::VERIFY_NONE
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    if $OPTIN
+                      ...
+                    end
+                - metavariable-regex:
+                    metavariable: $OPTIN
+                    regex: '(?i).*(insecure|skip[-_]?tls[-_]?verify|allow[-_]?invalid|dev[-_]?mode).*'
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:

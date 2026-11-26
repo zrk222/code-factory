@@ -214,14 +214,14 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.python.unsafe-deserialization': 2,
   'opt.factory.rules.python.unsafe-deserialization-unscoped': 6,
   'opt.factory.rules.ruby.archive-path-traversal': 2,
-  'opt.factory.rules.ruby.disabled-tls-verification': 2,
+  'opt.factory.rules.ruby.disabled-tls-verification': 3,
   'opt.factory.rules.ruby.parameter-shell-command': 1,
   'opt.factory.rules.ruby.parameter-sql-text': 4,
   'opt.factory.rules.ruby.request-command-injection': 3,
   'opt.factory.rules.ruby.request-html-injection': 1,
   'opt.factory.rules.ruby.request-path-traversal': 4,
   'opt.factory.rules.ruby.request-sql-injection': 4,
-  'opt.factory.rules.rust.reqwest-disabled-tls-verification': 1,
+  'opt.factory.rules.rust.reqwest-disabled-tls-verification': 3,
   'opt.factory.rules.swift.trust-exceptions': 3,
 });
 // Fixed reviewed sink lines of the rule-family controls appended to the .ts
@@ -278,9 +278,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 256 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 259 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 256;
+const REVIEWED_FINDINGS = 259;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();

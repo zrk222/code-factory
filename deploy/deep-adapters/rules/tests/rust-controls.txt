@@ -10,3 +10,18 @@ async fn health_probe(host: &str) -> bool {
     let client = reqwest::Client::builder().danger_accept_invalid_certs(true).build().unwrap();
     client.get(format!("https://{}/", host)).send().await.is_ok()
 }
+
+fn hostname_controls(mut config: ConnectConfiguration, accept_invalid_hostnames: bool, allow_invalid_hostnames: &bool, verify_peer: bool) {
+    // ruleid: rust.reqwest-disabled-tls-verification
+    config.set_verify_hostname(accept_invalid_hostnames);
+    // ok: rust.reqwest-disabled-tls-verification
+    config.set_verify_hostname(!accept_invalid_hostnames);
+    // ruleid: rust.reqwest-disabled-tls-verification
+    let _ = config.verify_hostname(*allow_invalid_hostnames);
+    // ok: rust.reqwest-disabled-tls-verification
+    let _ = config.verify_hostname(!*allow_invalid_hostnames);
+    // ok: rust.reqwest-disabled-tls-verification
+    config.set_verify_hostname(verify_peer);
+    // ok: rust.reqwest-disabled-tls-verification
+    config.set_verify_hostname(true);
+}
