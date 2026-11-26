@@ -478,6 +478,7 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
   const execution = { failed_exit: ![0, 1].includes(run.status), exit_code: run.status,
     timeouts: Number(Boolean(run.timedOut)), duration_ms: Math.round(performance.now() - started) };
   const coverage = coveragePath && readCoverage(coveragePath, execution);
+  execution.timeouts = Math.max(execution.timeouts, coverage?.timeouts ?? 0);
   if (!existsSync(report)) {
     throw Object.assign(new Error('Scan produced no SARIF report'), {
       diagnostics: execution,

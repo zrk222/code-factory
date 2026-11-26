@@ -435,8 +435,11 @@ test('changedFiles and engineCoverage distinguish source loss from analysis fail
     errors: [{ type: 'Syntax error', spans: [{ file: './app.py' }] }] });
   const pathError = { type: 'Timeout', path: './app.py' };
   const parseError = { type: 'Syntax error', path: './app.py' };
-  for (const errors of [[pathError, parseError], [parseError, pathError]]) {
-    assert.equal(engineCoverage({ paths: { scanned: ['./app.py'] }, errors }).problems.get('app.py'), 'engine_error');
+  const internalError = { type: 'Fatal error', path: './app.py' };
+  for (const errors of [[pathError, parseError, internalError], [internalError, parseError, pathError]]) {
+    const native = engineCoverage({ paths: { scanned: ['./app.py'] }, errors });
+    assert.equal(native.problems.get('app.py'), 'engine_timeout');
+    assert.equal(native.timeouts, 1);
   }
   const packet = { path: 'app.py', bytes: 2, sha256: sha256('ok') };
   const scan = { submitted: true, verified: true, coverage, findings: [] };
@@ -600,6 +603,7 @@ async function feederFixture(run, row = feederRow) {
       "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !recoveredControl) || (ruleText.includes('# control-first-pass') && !boundedControl));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
       "const disputedParse = ruleText.includes(old ? '# candidate-parse' : '# fixed-parse');",
+      "const nativeTimeout = old && ruleText.includes('# native-timeout-only');",
       "const results = old && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
       "if (results.length && ruleText.includes('# hunk-spans')) {",
       "  const span = (startColumn, endColumn) => ({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn, endColumn } } }] });",
@@ -613,7 +617,9 @@ async function feederFixture(run, row = feederRow) {
       "const sizeLimit = Number(process.argv.find(arg => arg.startsWith('--max-target-bytes='))?.split('=')[1] ?? 1000000);",
       "const oversized = files.filter(path => path.startsWith('large-') && statSync(path).size > sizeLimit);",
       "const skipped = [...defaultIgnored.map(path => ({ path, reason: 'semgrepignore_patterns_match' })), ...[...(files.includes('skipped.py') ? ['skipped.py'] : []), ...oversized].map(path => ({ path, reason: 'exceeded_size_limit' }))];",
-      "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'unreported.py' && !skipped.some(item => item.path === path)), skipped }, errors: [...(files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : []), ...(disputedParse ? [{ type: 'Syntax error', path: 'sample.py' }] : [])] }));",
+      "const nativeErrors = [...(files.includes('partial.py') ? [{ type: 'Syntax error', path: 'partial.py' }] : []), ...(disputedParse ? [{ type: 'Syntax error', path: 'sample.py' }] : [])];",
+      "if (nativeTimeout) nativeErrors.push({ type: 'Timeout', path: 'sample.py' });",
+      "if (coverageArgs >= 0 && !missingCoverage) writeFileSync(process.argv[coverageArgs + 1], JSON.stringify({ paths: { scanned: files.filter(path => path !== 'unreported.py' && !skipped.some(item => item.path === path)), skipped }, errors: nativeErrors }));",
       "writeFileSync(report, JSON.stringify({ runs: [{ results, invocations: [{ executionSuccessful: !incomplete, toolExecutionNotifications: issues }] }] }));",
       "process.exitCode = incomplete ? 2 : 0;",
     ].join('\n'));
@@ -1143,6 +1149,20 @@ test('a successful serial retry keeps the original timed-out report fingerprint'
       assert.equal(sha256(readFileSync(join(workdir, report.path))), report.sha256);
     }
   }
+}));
+
+test('native-only timeouts veto hits and trigger serial retry despite a zero scanner exit', () => feederFixture(async fixture => {
+  const { manifest, baseline, candidate, opts } = fixture;
+  writeFileSync(candidate, readFileSync(baseline, 'utf8') + '# native-timeout-only\n');
+  const result = await scoreManifest(manifest, candidate, opts);
+  const row = result.cases[0];
+  assert.equal(row.scan_sides.old.exit_code, 0);
+  assert.equal(row.scan_sides.old.timeouts, 1);
+  assert.equal(row.file_coverage.old[0].state, 'partial');
+  assert.equal(row.file_coverage.old[0].reason, 'engine_timeout');
+  assert.equal(row.retried_serially, true);
+  assert.equal(row.outcome, 'timeout');
+  assert.equal(result.summary.hunk_hits, 0);
 }));
 
 test('a fixed parser probe classifies only reproduced engine limits', () => feederFixture(fixture => {
