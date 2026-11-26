@@ -784,9 +784,12 @@ export function writeCheckpoint(root, inputs, result) {
 // Only a finished, fully covered outcome is kept: scored hits and misses, and
 // cases whose fix changes no in-language source. Incomplete coverage,
 // unfetchable or parentless cases, timeouts and errors are always rescanned.
-const CHECKPOINT_STATUSES = new Set(['scored', 'no_old_side_source', 'no_in_language_source_change']);
-export const checkpointable = row => CHECKPOINT_STATUSES.has(row.status)
-  && (row.status === 'scored' ? ['hit', 'miss'].includes(row.outcome) : row.outcome === 'unknown');
+const EMPTY_CASE_STATUSES = new Set(['no_old_side_source', 'no_in_language_source_change']);
+const scoredCase = row => row.status === 'scored' && ['hit', 'miss'].includes(row.outcome);
+export const checkpointable = row => (scoredCase(row)
+  || (EMPTY_CASE_STATUSES.has(row.status) && row.outcome === 'unknown'))
+  && ['old', 'fixed'].every(side => Array.isArray(row.file_coverage?.[side])
+    && !coverageGaps(row.file_coverage[side]).length);
 
 // The scorer's own code is part of every checkpoint key.
 let scorerFingerprint;
@@ -1879,7 +1882,7 @@ function reviewAlerts(opts) {
     throw new Error('Review export requires a pinned standalone score receipt');
   }
   const root = realpathSync(resolve(opts.workdir ?? '.factory/recall-work'));
-  const cases = saved.cases.filter(row => row.status === 'scored' && checkpointable(row));
+  const cases = saved.cases.filter(scoredCase);
   const alerts = cases.flatMap(row => oldReviewAlerts(root, row, saved.ruleset_sha256));
   writeFileSync(opts.out, `${JSON.stringify(alerts, null, 1)}\n`);
   console.log(JSON.stringify({ alerts: alerts.length, scored_cases: cases.length, omitted_cases: saved.cases.length - cases.length }));

@@ -584,7 +584,7 @@ async function feederFixture(run, row = feederRow) {
       "const recoveredControl = process.argv.includes('--timeout=15') && process.argv.includes('--jobs=1');",
       "const controlTimeout = control && (ruleText.includes('# persistent-timeout') || (ruleText.includes('# control-timeout') && !recoveredControl));",
       "const missingCoverage = old && ruleText.includes('# missing-coverage');",
-      "const disputedParse = old && ruleText.includes('# candidate-parse');",
+      "const disputedParse = ruleText.includes(old ? '# candidate-parse' : '# fixed-parse');",
       "const results = old && !missingCoverage && !ruleText.includes('# clean-miss') ? [{ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1 } } }] }] : [];",
       "if (results.length && ruleText.includes('# hunk-spans')) {",
       "  const span = (startColumn, endColumn) => ({ ruleId: 'fixture.review', locations: [{ physicalLocation: { artifactLocation: { uri: 'sample.py' }, region: { startLine: 1, startColumn, endColumn } } }] });",
@@ -685,7 +685,7 @@ test('score and evaluation carry exact bytes and fixed-side diagnostics', () => 
 
 test('review-alerts exports pinned old-side reports with distinct spans on one line', () => feederFixture(fixture => {
   const { root, workdir, manifest, profile, baseline, old } = fixture;
-  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# hunk-spans\n');
+  writeFileSync(baseline, readFileSync(baseline, 'utf8') + '# hunk-spans\n# candidate-parse\n');
   const saved = join(root, 'score.json');
   const output = join(root, 'review-alerts.json');
   const script = 'scripts/recall_harness.mjs';
@@ -693,6 +693,7 @@ test('review-alerts exports pinned old-side reports with distinct spans on one l
     '--rules', baseline, '--profile', profile, '--opengrep', process.execPath, '--workdir', workdir, '--out', saved], { encoding: 'utf8' });
   assert.equal(scored.status, 0, scored.stderr);
   const raw = readFileSync(saved);
+  assert.equal(JSON.parse(raw).cases[0].file_coverage.old[0].state, 'partial');
   const digest = sha256(raw);
   const run = (pin = digest) => spawnSync(process.execPath, [script, 'review-alerts', '--score', saved,
     '--score-sha256', pin, '--workdir', workdir, '--out', output], { encoding: 'utf8' });
@@ -1543,6 +1544,16 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   assert.equal(existsSync(checkpointDir) ? readdirSync(checkpointDir).length : 0, 0);
   const again = await scoreManifest(manifest, candidate, resumable);
   assert.deepEqual(again.resumed_cases, []);
+  // A strict hit remains reportable even when one revision has a coverage gap.
+  for (const [side, marker] of [['old', '# candidate-parse'], ['fixed', '# fixed-parse']]) {
+    writeFileSync(candidate, readFileSync(baseline, 'utf8') + marker + '\n');
+    const partial = await scoreManifest(manifest, candidate, resumable);
+    assert.equal(partial.cases[0].outcome, 'hit');
+    assert.equal(partial.cases[0].file_coverage[side][0].state, 'partial');
+    assert.equal(existsSync(checkpointDir) ? readdirSync(checkpointDir).length : 0, 0, side);
+    const partialReplay = await scoreManifest(manifest, candidate, resumable);
+    assert.deepEqual(partialReplay.resumed_cases, []);
+  }
   // A completed case resumes only while the SARIF it cites is intact.
   const fresh = await scoreManifest(manifest, baseline, resumable);
   assert.equal(readdirSync(checkpointDir).length, 1);
@@ -1556,6 +1567,7 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   const { checkpointable, scorerSha256 } = await import('./recall_harness.mjs');
   assert.equal(checkpointable({ status: 'unfetchable', outcome: 'unknown' }), false);
   assert.equal(checkpointable({ status: 'incomplete', outcome: 'coverage_incomplete' }), false);
-  assert.equal(checkpointable({ status: 'scored', outcome: 'miss' }), true);
+  assert.equal(checkpointable({ status: 'scored', outcome: 'miss' }), false);
+  assert.equal(checkpointable(fresh.cases[0]), true);
   assert.match(scorerSha256(), /^[a-f0-9]{64}$/);
 }));
