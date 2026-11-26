@@ -1939,14 +1939,9 @@ async function controlDeltas_(opts, engine, controlSettings, plan = null) {
       if (maxTargetBytes) repoArgs.push(`--max-target-bytes=${maxTargetBytes}`);
       const timeout = source.plan?.timeout_seconds ?? control_timeout_seconds;
       if (timeout !== undefined) repoArgs.push(`--timeout=${timeout}`);
-      let ignoreFile, ignoreDigest;
-      if (source.plan?.exclude_paths.length) {
-        const ignoreContents = source.plan.exclude_paths.map(path => `/${path}\n`).join('');
-        ignoreDigest = sha256(ignoreContents);
-        ignoreFile = join(reportsRoot, `control-${ignoreDigest}.ignore`);
-        if (!existsSync(ignoreFile)) writeFileSync(ignoreFile, ignoreContents, { flag: 'wx' });
-        repoArgs.push(`--semgrepignore-filename=${ignoreFile}`);
-      }
+      const ignoreContents = source.plan?.exclude_paths.map(path => `/${path}\n`).join('');
+      const ignoreDigest = ignoreContents ? sha256(ignoreContents) : null;
+      let ignoreFile;
       repoArgs.push(...(source.plan?.targets ?? []).map(path => `./${path}`));
       const verifyInputs = () => {
         verifyControlPlan(plan);
@@ -1973,6 +1968,15 @@ async function controlDeltas_(opts, engine, controlSettings, plan = null) {
         continue;
       }
       scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
+      if (ignoreContents) {
+        // The checkpoint binds the bytes. Each native scan uses a private path.
+        ignoreFile = join(mkdtempSync(join(scanRoot, 'scope-')), 'registered.ignore');
+        writeFileSync(ignoreFile, ignoreContents, { flag: 'wx', mode: 0o600 });
+        for (const arm of [effectiveBase, effectiveCandidate]) {
+          arm.extra = [...arm.extra, `--semgrepignore-filename=${ignoreFile}`];
+        }
+        verifyInputs();
+      }
       const context = { base: effectiveBase, candidate: effectiveCandidate, directory, source,
         workdir: reportsRoot, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
       let attempt = await controlPair(context, '', firstPass, parallel);

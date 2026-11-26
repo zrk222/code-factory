@@ -1447,6 +1447,8 @@ test('registered control options preserve per-repo scope and retry and fail clos
   writeFileSync(candidate, rules);
   const entry = { directory: control, source_sha256: caseDigest(names.map(path => ({ path, sha256: sha256(body) }))),
     targets: ['unreported.py'], exclude_paths: ['omitted.py'], timeout_seconds: 31 };
+  const sharedIgnore = join(workdir, `control-${sha256('/omitted.py\n')}.ignore`);
+  writeFileSync(sharedIgnore, '# stale shared file');
   const save = (controls = [entry]) => writeFileSync(plan, JSON.stringify({ schema: 'factory.recall-control-plan.v1',
     baseline_sha256: sha256(readFileSync(baseline)), candidate_sha256: sha256(readFileSync(candidate)),
     profile_sha256: sha256(readFileSync(profile)), controls }));
@@ -1461,6 +1463,7 @@ test('registered control options preserve per-repo scope and retry and fail clos
   save();
   const first = run();
   assert.equal(first.status, 0, first.stderr + first.stdout);
+  assert.equal(readFileSync(sharedIgnore, 'utf8'), '# stale shared file');
   const receipt = JSON.parse(readFileSync(out, 'utf8'));
   assert.equal(receipt.control_plan_sha256, sha256(readFileSync(plan)));
   const [planned, ordinary] = receipt.deltas;
