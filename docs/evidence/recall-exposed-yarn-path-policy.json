@@ -110,9 +110,8 @@
     }
   ],
   "historical_controls": {
-    "verified_source_trees": 17,
-    "total": 18,
-    "open_control": "ctl-mastodon"
+    "verified_source_trees": 18,
+    "total": 18
   },
   "declared_control_scope": {
     "directory_exclusions": [
@@ -120,7 +119,7 @@
       "test"
     ],
     "listed_exact_exclusions": 105,
-    "exact_exclusions_with_verified_source": 101,
+    "exact_exclusions_with_verified_source": 105,
     "source_locator_sha256": "3d503c72e1ecfbe6f84a5a5d2a5f22d0555475afe5a9d8c636d6e3ab2bc9103e",
     "local_plan_sha256": "e89da9f1f7a226175541277201b0311069b3a23dd0695718cbf2aea63cf32fc0",
     "repository_exclusions": [
@@ -340,11 +339,11 @@
           "db/migrate/20260805130216_fix_generated_annual_reports_foreign_key.rb"
         ],
         "declared_timeout_seconds": null,
-        "staged_source_verified": false
+        "staged_source_verified": true
       }
     ],
-    "verified_exclusion_file_sha256": "8899b61b681a6566cce64a2583e9b53f9310272949d50b1b724607d3b2e548df",
-    "verified_exclusion_file_bindings": 101,
+    "verified_exclusion_file_sha256": "5376b43cceec40535a286f8a757d1171e6a71564c0a825eee2a03bdea6614aa4",
+    "verified_exclusion_file_bindings": 105,
     "observed_explicit_exclusions": [
       {
         "control": "jquery_jquery",
@@ -373,8 +372,38 @@
         "observed_reasons": [
           "shared_rule_path_exclusions"
         ]
+      },
+      {
+        "control": "ctl-mastodon",
+        "exact_paths_applied_to_both_arms": 4,
+        "observed_reasons": [
+          "shared_semgrepignore_patterns_match"
+        ]
       }
-    ]
+    ],
+    "mastodon_file_bindings": [
+      {
+        "path": "app/models/generated_annual_report.rb",
+        "sha256": "1e41944c85c583e2f504e1ad85c44bfe54795a86a6a7f576690c7a9546ea897e",
+        "bytes": 966
+      },
+      {
+        "path": "db/migrate/20240111033014_create_generated_annual_reports.rb",
+        "sha256": "c90ee2322fa0babf15f3986cd1d4531236a61b76c9c64c231816d9d66f9508ac",
+        "bytes": 490
+      },
+      {
+        "path": "db/migrate/20251202140424_add_share_key_to_generated_annual_reports.rb",
+        "sha256": "272780b08e836975bebf3dc2991a60ca4a3822b5040bca79289d64a733c2ada8",
+        "bytes": 189
+      },
+      {
+        "path": "db/migrate/20260805130216_fix_generated_annual_reports_foreign_key.rb",
+        "sha256": "ed00bb7aad0a8131f9b22bd40a8f56d1d0d02e464fb61d4e459d0bae36860bbd",
+        "bytes": 569
+      }
+    ],
+    "mastodon_file_bindings_sha256": "b520a7645badfb547df7b718d5a21482ec5906832eb2b964f4eb6ada7bae3247"
   },
   "paired_control_replay": {
     "complete": 16,
@@ -428,6 +457,27 @@
         }
       ]
     }
+  },
+  "mastodon_serial_replay": {
+    "complete": true,
+    "verified_source_tree": {
+      "sha256": "315535cad6a69097fda41d82bc92e0955011f8de68d7638defa16bf2298a21da",
+      "entries": 3412
+    },
+    "eligible_each_arm": 2083,
+    "before": 0,
+    "after": 0,
+    "receipt_sha256": "66de667907337f80f4245c0aba62ccbae9d1a6285001d66573b0ab553c258bc6",
+    "plan_sha256": "ace9e00c9744185b5fbed47ed9a7103dc49ec451b475f697ff3b90ea7e6c31b1"
+  },
+  "combined_completed_controls": {
+    "complete": 17,
+    "expected": 18,
+    "before": 39,
+    "after": 39,
+    "unresolved": [
+      "mozilla_pdf.js"
+    ]
   },
   "integrated_checkpoint_policy": {
     "main_commit": "9acfdbaf4a8813f3afa888880bd6274ab7dc5aec",
