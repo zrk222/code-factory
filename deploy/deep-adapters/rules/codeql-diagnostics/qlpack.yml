@@ -1,0 +1,5 @@
+name: factory/recall-diagnostics
+version: 0.0.1
+extractor: javascript
+dependencies:
+  codeql/javascript-all: 2.10.2

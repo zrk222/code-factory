@@ -41,16 +41,21 @@ export function sarifPath(uri, packetPaths) {
   return literal;
 }
 
-export function engineCoverage(report) {
-  if (!Array.isArray(report?.paths?.scanned)) throw new Error('Missing engine scan paths');
-  const scanned = new Set(report.paths.scanned.map(path => scannerPath(path)).filter(Boolean));
+function engineSkippedPaths(entries) {
   const skipped = new Map();
-  for (const entry of report.paths.skipped ?? []) {
+  for (const entry of entries) {
     const path = scannerPath(entry.path);
     if (!path) continue;
     const reason = skipped.has(path) && skipped.get(path) !== entry.reason ? null : entry.reason;
     skipped.set(path, reason);
   }
+  return skipped;
+}
+
+export function engineCoverage(report) {
+  if (!Array.isArray(report?.paths?.scanned)) throw new Error('Missing engine scan paths');
+  const scanned = new Set(report.paths.scanned.map(path => scannerPath(path)).filter(Boolean));
+  const skipped = engineSkippedPaths(report.paths.skipped ?? []);
   const problems = new Map();
   const priority = { parse: 1, engine_error: 2, engine_timeout: 3 };
   let timeouts = 0;
