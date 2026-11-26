@@ -51,3 +51,11 @@ function greet() {
     // ok: php.request-html-injection
     echo "<h1>Hello " . htmlspecialchars($name, ENT_QUOTES) . "</h1>";
 }
+
+function show_balance() {
+    $balance = $_POST['total'] - $_POST['paid'];
+    // ok: php.request-html-injection
+    echo '<b>' . $balance . '</b>';
+    // ruleid: php.request-html-injection
+    echo '<b>' . $balance . $_POST['label'] . '</b>';
+}

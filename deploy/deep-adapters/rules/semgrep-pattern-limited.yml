@@ -3385,6 +3385,14 @@ rules:
       - pattern: e(...)
       - pattern: filter_var(...)
       - pattern: json_encode(...)
+      # Only the numeric result is safe to place in markup.
+      - patterns:
+          - pattern-either:
+              - pattern: $A * $B
+              - pattern: $A - $B
+              - pattern: $A / $B
+              - pattern: $A % $B
+        exact: true
     pattern-sinks:
       - patterns:
           - pattern-either:
