@@ -6,13 +6,17 @@
 //            [--exclude-dir docs/evidence] [--per-repo 3] [--per-ecosystem N]
 //   score    --manifest manifest.json --rules ruleset.yml --out results.json
 //            [--opengrep BIN] [--profile profile.json] [--workdir DIR] [--jobs 6] [--extra-arg ARG]...
-//   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... --out deltas.json
+//   controls --rules old.yml --rules new.yml --dir DIR [--dir DIR]... [--control-timeout SECONDS]
+//            [--parallel-controls WORKERS_PER_ARM] --out deltas.json
 //   evaluate --baseline base.yml --candidate new.yml --manifest dev.json [--manifest ...] [--dir CONTROL]...
 //            [--max-control-increase N] [--extra-arg ARG]... [--candidate-extra-arg ARG]... --out verdict.json
-//            [--probe-coverage true] [--control-exclude DIRECTORY]...
+//            [--probe-coverage true] [--control-exclude DIRECTORY]... [--control-timeout SECONDS]
+//            [--parallel-controls WORKERS_PER_ARM]
 //            [--adjudicated-losses plan.json] [--checkpoint-dir DIR]
+//            [--retain-gains-from verdict.json [--gain-adjudicated-losses plan.json]]
 //            [--labels labels.json] [--require-reviewed-controls true]
 //   observe  --controls deltas.json --labels labels.json   (queue emitted control alerts for review)
+//   review-alerts --score result.json --score-sha256 HEX --workdir DIR --out alerts.json
 //   compare  before.json after.json
 //
 // Scoring runs the production profile argv (deploy/deep-adapters/profiles),
@@ -24,11 +28,12 @@
 // a precision proxy.
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, readdirSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { availableParallelism, tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { changedFiles, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
+import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, summarizeCoverage } from './recall_coverage.mjs';
 import { hunkAdjudicationIdentity, loadAdjudicatedLosses } from './recall_losses.mjs';
 
 export const FAMILIES = Object.freeze({
@@ -39,7 +44,7 @@ export const FAMILIES = Object.freeze({
 });
 export const LANGUAGES = Object.freeze({
   PyPI: ['py'], npm: ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts'], Packagist: ['php'],
-  Go: ['go'], Maven: ['java'], RubyGems: ['rb'],
+  Go: ['go'], Maven: ['java'], RubyGems: ['rb'], NuGet: ['cs'], 'crates.io': ['rs'],
 });
 
 // Secondary, pre-registered scope: every file type the production semgrep lane
@@ -96,13 +101,60 @@ function diffPath(header, prefix) {
   return path.startsWith(prefix) ? path.slice(prefix.length) : null;
 }
 
+const editLanes = { '-': ['old'], '+': ['fixed'], ' ': ['old', 'fixed'] };
+const hunkHasLines = cursor => Boolean(cursor?.old.remaining || cursor?.fixed.remaining);
+
+function markEdit(lines, path, line) {
+  if (!path) return;
+  if (!lines.has(path)) lines.set(path, new Set());
+  lines.get(path).add(line);
+}
+
+function readEditLine(cursor, line) {
+  if (line === '\\ No newline at end of file') return true;
+  const lanes = editLanes[line[0] ?? ' '];
+  if (!lanes || lanes.some(side => cursor[side].remaining === 0)) return false;
+  for (const side of lanes) {
+    const position = cursor[side];
+    if (lanes.length === 1) markEdit(position.edits, position.path, position.line);
+    position.line++;
+    position.remaining--;
+  }
+  return true;
+}
+
+function editRecorder() {
+  const deleted = new Map(), added = new Map();
+  let cursor = null, valid = true;
+  return {
+    start(match, oldPath, newPath) {
+      const [oldStart, oldCount, newStart, newCount] = [match[1], match[2] ?? '1', match[3], match[4] ?? '1'].map(Number);
+      cursor = {
+        old: { path: oldPath, line: oldStart, remaining: oldCount, edits: deleted },
+        fixed: { path: newPath, line: newStart, remaining: newCount, edits: added },
+      };
+    },
+    consume(line) {
+      if (!hunkHasLines(cursor)) return false;
+      if (readEditLine(cursor, line)) return true;
+      cursor = null;
+      valid = false;
+      return false;
+    },
+    finish(editedLines) {
+      if (valid && !hunkHasLines(cursor)) Object.assign(editedLines, { deleted, added });
+    },
+  };
+}
+
 // Old- and new-side line sets of every in-language, non-test file in a -U5 diff.
-export function parseHunks(diff, extensions) {
-  const files = {};
+export function parseHunks(diff, extensions, editedLines = null) {
+  const files = {}, edits = editedLines ? editRecorder() : null;
   let oldPath = null, newPath = null;
   let inHunks = false;
   const keep = path => path && extensions.some(ext => path.endsWith(`.${ext}`)) && !isTestPath(path);
-  for (const line of diff.split('\n')) {
+  for (const line of diff.replace(/\n$/, '').split('\n')) {
+    if (edits?.consume(line)) continue;
     if (line.startsWith('diff --git ')) { oldPath = newPath = null; inHunks = false; continue; }
     if (!inHunks && line.startsWith('--- ')) { oldPath = diffPath(line, 'a/'); continue; }
     if (!inHunks && line.startsWith('+++ ')) { newPath = diffPath(line, 'b/'); continue; }
@@ -110,7 +162,9 @@ export function parseHunks(diff, extensions) {
     if (!match) continue;
     inHunks = true;
     appendHunk(files, match, oldPath, newPath, keep);
+    edits?.start(match, oldPath, newPath);
   }
+  edits?.finish(editedLines);
   return files;
 }
 
@@ -251,29 +305,38 @@ export function sarifFindings(sarif, packetPaths) {
 }
 
 // Hunk/file hit and fix-side residuals for one case.
-export function scoreCase({ families, hunks, oldFindings, newFindings, rules }) {
+export function scoreCase({ families, hunks, editedLines, oldFindings, newFindings, rules }) {
   const wanted = new Set(families);
   const relevant = finding => (rules[finding.rule] ?? []).some(family => wanted.has(family));
   const changedFindings = oldFindings.filter(f => Object.hasOwn(hunks, f.path));
   const oldHits = changedFindings.filter(relevant);
   const hunkHits = oldHits.filter(f => hunks[f.path]?.old.includes(f.line));
   const matchedFamilies = [...new Set(hunkHits.flatMap(f => rules[f.rule].filter(family => wanted.has(family))))].sort();
-  // Secondary, pre-registered: the alert's source or any dataflow step is on a changed line.
+  // Secondary, pre-registered: the alert endpoint or a dataflow step overlaps the old hunk.
   const traceHits = oldHits.filter(f => [[f.path, f.line], ...(f.trace ?? [])]
     .some(([path, line]) => hunks[path]?.old.includes(line)));
   const residual = newFindings.filter(relevant).filter(f => Object.values(hunks)
     .some(entry => entry.new_path === f.path && entry.new.includes(f.line)));
   const hunkSpans = hunkHits.map(f => f.span ?? null);
+  const editedLineEvidence = editedLines?.deleted && {
+    deleted_line_hit: hunkHits.some(f => editedLines.deleted.get(f.path)?.has(f.line)),
+    added_line_residuals: residual.filter(f => editedLines.added.get(f.path)?.has(f.line)).map(f => [f.rule, f.path, f.line]),
+  };
   return { hunk_hit: hunkHits.length > 0, trace_hit: traceHits.length > 0, file_hit: oldHits.length > 0,
     hunk_findings: hunkHits.map(f => [f.rule, f.path, f.line]),
     ...(hunkSpans.some(Boolean) ? { hunk_spans: hunkSpans } : {}), matched_hunk_families: matchedFamilies,
     alerts_in_changed_files: changedFindings.length, family_alerts_in_changed_files: oldHits.length,
-    fix_side_residual: residual.map(f => [f.rule, f.path, f.line]) };
+    fix_side_residual: residual.map(f => [f.rule, f.path, f.line]),
+    ...(editedLineEvidence ? { edited_lines: editedLineEvidence } : {}) };
+}
+
+function hasScanError(notes) {
+  return notes?.blocking_parse_errors > 0 || notes?.other > 0 || notes?.failed_exit === true;
 }
 
 function scanIssue(notes) {
   if (notes?.timeouts > 0) return 'timeout';
-  if (notes?.blocking_parse_errors > 0 || notes?.other > 0 || notes?.failed_exit) return 'error';
+  if (hasScanError(notes)) return 'error';
   return null;
 }
 
@@ -302,6 +365,16 @@ export function summarize(rows) {
     return out;
   };
   const hits = scored.filter(row => row.hunk_hit).length;
+  const localized = scored.filter(row => row.edited_lines);
+  const localization = localized.reduce((totals, row) => {
+    const { deleted_line_hit: hit, added_line_residuals: residuals } = row.edited_lines;
+    totals.deleted_line_hits += Number(hit);
+    totals.context_only_hunk_hits += Number(row.hunk_hit && !hit);
+    totals.added_line_residual_alerts += residuals.length;
+    totals.context_only_residual_alerts += row.fix_side_residual.length - residuals.length;
+    return totals;
+  }, { scored: localized.length, deleted_line_hits: 0, context_only_hunk_hits: 0,
+    added_line_residual_alerts: 0, context_only_residual_alerts: 0 });
   const fileHits = scored.filter(row => row.file_hit).length;
   const alerts = rows.reduce((n, row) => n + (row.alerts_in_changed_files ?? 0), 0);
   const scoredAlerts = scored.reduce((n, row) => n + (row.alerts_in_changed_files ?? 0), 0);
@@ -309,6 +382,7 @@ export function summarize(rows) {
     cases: rows.length, scored: scored.length, file_coverage: summarizeCoverage(rows),
     status: rows.reduce((acc, row) => ({ ...acc, [row.status]: (acc[row.status] ?? 0) + 1 }), {}),
     hunk_hits: hits, hunk_recall_wilson95: wilson(hits, scored.length),
+    ...(localized.length ? { edited_lines: localization } : {}),
     hunk_hits_over_registered_cases: { hits, cases: rows.length, wilson95: wilson(hits, rows.length) },
     trace_hits: scored.filter(row => row.trace_hit).length,
     trace_recall_wilson95: wilson(scored.filter(row => row.trace_hit).length, scored.length),
@@ -332,7 +406,9 @@ export function summarize(rows) {
 }
 
 // Async child processes so --jobs really runs cases side by side.
-function runProcess(command, args, { cwd, env, timeout = 1800000, bytes = false, discardStdout = false } = {}) {
+const SCAN_PROCESS_TIMEOUT_MS = 30 * 60_000;
+
+function runProcess(command, args, { cwd, env, timeout = SCAN_PROCESS_TIMEOUT_MS, bytes = false, discardStdout = false } = {}) {
   return new Promise(done => {
     const child = spawn(command, args, { cwd, env: { ...process.env, ...env },
       ...(discardStdout ? { stdio: ['ignore', 'ignore', 'pipe'] } : {}) });
@@ -385,8 +461,10 @@ async function readBatchBlob(stream, path) {
   return raw;
 }
 
-async function materialize(repo, revision, paths, target) {
-  if (!paths.length) return [];
+async function materialize(repo, sources) {
+  const requests = sources.flatMap(({ revision, paths }) => paths.map(path => revision + ':' + path + '\0'));
+  const packets = sources.map(() => []);
+  if (!requests.length) return packets;
   // NUL-delimited requests preserve arbitrary Git paths. Read one blob at a time.
   const child = spawn('git', ['-C', repo, 'cat-file', '--batch=%(objecttype) %(objectsize)', '-z'],
     { stdio: ['pipe', 'pipe', 'ignore'] });
@@ -396,21 +474,24 @@ async function materialize(repo, revision, paths, target) {
   });
   const timer = setTimeout(() => child.kill('SIGKILL'), 900000);
   child.stdin.on('error', () => {}); // Child failure is checked via the stream and exit code.
-  child.stdin.end(paths.map(path => revision + ':' + path + '\0').join(''));
+  child.stdin.end(requests.join(''));
   const stream = { reader: child.stdout[Symbol.asyncIterator](), pending: Buffer.alloc(0) };
-  const packets = [];
   try {
-    for (const path of paths) {
-      const raw = await readBatchBlob(stream, path);
-      const location = join(target, path);
-      mkdirSync(dirname(location), { recursive: true });
-      writeFileSync(location, raw);
-      packets.push(packet(path, raw));
+    for (const [index, { paths, target }] of sources.entries()) {
+      if (!paths.length) continue;
+      timer.refresh();
+      for (const path of paths) {
+        const raw = await readBatchBlob(stream, path);
+        const location = join(target, path);
+        mkdirSync(dirname(location), { recursive: true });
+        writeFileSync(location, raw);
+        packets[index].push(packet(path, raw));
+      }
     }
     if (stream.pending.length || !(await stream.reader.next()).done || await status !== 0) {
       throw new Error('Unexpected Git response while preparing source blobs');
     }
-    return packets.sort(byPath);
+    return packets.map(side => side.sort(byPath));
   } finally {
     clearTimeout(timer);
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
@@ -465,8 +546,10 @@ export async function scan(context, source, report = `${source}.sarif`, collectC
   const run = await runProcess(argv[0], argv.slice(1), { cwd: source,
     env: { HOME: process.env.HOME ?? '/tmp', PYTHONIOENCODING: 'utf-8', LANG: 'C.UTF-8' } });
   const execution = { failed_exit: ![0, 1].includes(run.status), exit_code: run.status,
+    ...(run.timedOut ? { watchdog_timeout: true } : {}),
     timeouts: Number(Boolean(run.timedOut)), duration_ms: Math.round(performance.now() - started) };
   const coverage = coveragePath && readCoverage(coveragePath, execution);
+  execution.timeouts = Math.max(execution.timeouts, coverage?.timeouts ?? 0);
   if (!existsSync(report)) {
     throw Object.assign(new Error('Scan produced no SARIF report'), {
       diagnostics: execution,
@@ -533,8 +616,9 @@ function bindPreparedCase(directory, record, key, row, scope) {
   }
   const patch = readFileSync(join(directory, 'diff.patch'));
   if (sha256(patch) !== record.diff_sha256) throw new Error('Prepared diff byte fingerprint differs');
-  return { ...record, changes: readPreparedInventory(directory, record.changed_files_sha256),
-    hunks: parseHunks(patch.toString('utf8'), scopeExtensions(row.ecosystem, scope)),
+  const editedLines = {};
+  const hunks = parseHunks(patch.toString('utf8'), scopeExtensions(row.ecosystem, scope), editedLines);
+  return { ...record, changes: readPreparedInventory(directory, record.changed_files_sha256), hunks, editedLines,
     old: record.source_packets.old.length ? join(directory, 'old') : null,
     new: record.source_packets.fixed.length ? join(directory, 'new') : null };
 }
@@ -548,26 +632,45 @@ async function prepareChanges(repo, dir, parent, fix, extensions) {
     ...extensions.map(ext => '*.' + ext));
   if (diff.status !== 0) throw new Error('Prepared case diff could not be read');
   const hunks = parseHunks(diff.stdout.toString('utf8'), extensions);
-  const old = await materialize(repo, parent, Object.keys(hunks).filter(path => !additions.has(path)), join(dir, 'old'));
+  const oldPaths = Object.keys(hunks).filter(path => !additions.has(path));
   const fixedPaths = [...new Set(Object.values(hunks).map(entry => entry.new_path).filter(Boolean))];
-  const fixed = await materialize(repo, fix, fixedPaths, join(dir, 'new'));
+  const [old, fixed] = await materialize(repo, [
+    { revision: parent, paths: oldPaths, target: join(dir, 'old') },
+    { revision: fix, paths: fixedPaths, target: join(dir, 'new') },
+  ]);
   writeFileSync(join(dir, 'changes.z'), inventory.stdout);
   writeFileSync(join(dir, 'diff.patch'), diff.stdout);
   return { status: 'ready', revisions: { old: parent, fixed: fix },
     changed_files_sha256: sha256(inventory.stdout), diff_sha256: sha256(diff.stdout), source_packets: { old, fixed } };
 }
 
+let revisionCloneSupport;
+const gitSupportsRevisionClone = () => revisionCloneSupport ??= runProcess('git', ['clone', '-h'], { timeout: 30000 })
+  .then(({ stdout, stderr }) => /--(?:\[no-\])?revision(?:\s|=)/.test(`${stdout}\n${stderr}`));
+
 async function buildPreparedCase(dir, row, scope) {
   const repo = join(dir, 'repo');
-  mkdirSync(repo, { recursive: true });
-  await git(repo, 'init', '-q');
-  await git(repo, 'remote', 'add', 'origin', `https://github.com/${row.repository}.git`);
-  if ((await git(repo, 'fetch', '-q', '--filter=blob:none', '--depth=2', 'origin', row.fix)).status !== 0) return { status: 'unfetchable' };
-  const fix = (await git(repo, 'rev-parse', 'FETCH_HEAD')).stdout.trim();
-  if (fix !== row.fix) throw new Error('Fetched case revision differs from the manifest');
-  const parent = (await git(repo, 'rev-parse', `${fix}^`)).stdout.trim();
+  const url = `https://github.com/${row.repository}.git`;
+  const clone = await gitSupportsRevisionClone();
+  const transport = ['--filter=blob:none', '--depth=2'];
+  const fetched = clone
+    ? await git(dir, 'clone', '-q', '--bare', '--no-tags', ...transport, '--revision', row.fix, url, repo)
+    : await fetchRevision(repo, url, row.fix, transport);
+  if (fetched.status !== 0) return { status: 'unfetchable' };
+  const revision = await git(repo, 'rev-list', '--parents', '--max-count=1', clone ? 'HEAD' : 'FETCH_HEAD');
+  const [fix, parent] = revision.stdout.trim().split(/\s+/);
+  if (revision.status !== 0 || fix !== row.fix) throw new Error('Fetched case revision differs from the manifest');
   if (!parent) return { status: 'no_parent' };
   return prepareChanges(repo, dir, parent, fix, scopeExtensions(row.ecosystem, scope));
+}
+
+async function fetchRevision(repo, url, fix, transport) {
+  mkdirSync(repo, { recursive: true });
+  const initialized = await git(repo, 'init', '-q');
+  if (initialized.status !== 0) return initialized;
+  const remote = await git(repo, 'remote', 'add', 'origin', url);
+  if (remote.status !== 0) return remote;
+  return git(repo, 'fetch', '-q', ...transport, 'origin', fix);
 }
 
 export async function publishPreparedCase(staging, directory, { rename = renameSync, platform = process.platform } = {}) {
@@ -592,7 +695,8 @@ async function prepareCase(workdir, row, scope = 'ecosystem') {
   if (existsSync(record)) return read();
 
   mkdirSync(cache, { recursive: true });
-  const staging = mkdtempSync(join(cache, key + '-'));
+  // Keep Git pack paths short on Windows and publish the staging directory by rename.
+  const staging = mkdtempSync(join(workdir, 'c-'));
   try {
     const data = await buildPreparedCase(staging, row, scope);
     if (data.status === 'unfetchable') return data;
@@ -625,6 +729,22 @@ function captureReference(context, source, report, diagnostics) {
   return { source_root: relative(context.workdir, source).split(sep).join('/'), ...reportReferences(context, report, diagnostics) };
 }
 
+async function withOpenGrepSource(profile, source, paths, run) {
+  const exceedsWindowsLimit = root => [...paths].some(path => join(root, path).length >= 260);
+  if (process.platform !== 'win32' || profile.engine !== 'semgrep' || !exceedsWindowsLimit(source)) return run(source);
+  // OpenGrep's native scanner may silently drop findings when it cannot open long paths.
+  const root = mkdtempSync(join(tmpdir(), 'cf-scan-'));
+  const alias = join(root, basename(source));
+  try {
+    if (exceedsWindowsLimit(alias)) throw new Error('OpenGrep input path exceeds the Windows limit under the temporary directory');
+    symlinkSync(source, alias, 'junction');
+    return await run(alias);
+  } finally {
+    rmSync(alias, { force: true });
+    rmdirSync(root);
+  }
+}
+
 async function observeSide(context, source, report, expected) {
   if (!source) return { findings: [], diagnostics: null, submitted: false };
   let diagnostics;
@@ -634,7 +754,11 @@ async function observeSide(context, source, report, expected) {
     verifyRulesBytes(context);
     submitted = true;
     const packetPaths = new Set(expected.map(row => row.path));
-    const findings = await scan({ ...context, packetPaths }, source, report, true);
+    const findings = await withOpenGrepSource(context.profile, source, packetPaths, async scanSource => {
+      const result = await scan({ ...context, packetPaths }, scanSource, report, true);
+      if (scanSource !== source) result.notes.windows_source_alias = true;
+      return result;
+    });
     diagnostics = findings.notes;
     verifyRulesBytes(context);
     verifyPreparedBytes(source, expected);
@@ -655,7 +779,7 @@ async function scoreOne(context, row) {
   const old = await observeSide(context, prepared.old, join(reports, 'old.sarif'), oldPackets);
   const fixed = await observeSide(context, prepared.new, join(reports, 'new.sarif'), fixedPackets);
   const families = familiesFor(row.cwes);
-  const result = scoreCase({ families, hunks: prepared.hunks, oldFindings: old.findings,
+  const result = scoreCase({ families, hunks: prepared.hunks, editedLines: prepared.editedLines, oldFindings: old.findings,
     newFindings: fixed.findings, rules: context.ruleMap });
   const coverage = fileCoverage(prepared.changes, { packets: prepared.source_packets,
     scans: { old, fixed }, extensions: scopeExtensions(row.ecosystem, context.scope), isTestPath });
@@ -757,9 +881,13 @@ export function writeCheckpoint(root, inputs, result) {
 // Only a finished, fully covered outcome is kept: scored hits and misses, and
 // cases whose fix changes no in-language source. Incomplete coverage,
 // unfetchable or parentless cases, timeouts and errors are always rescanned.
-const CHECKPOINT_STATUSES = new Set(['scored', 'no_old_side_source', 'no_in_language_source_change']);
-export const checkpointable = row => CHECKPOINT_STATUSES.has(row.status)
-  && (row.status === 'scored' ? ['hit', 'miss'].includes(row.outcome) : row.outcome === 'unknown');
+const EMPTY_CASE_STATUSES = new Set(['no_old_side_source', 'no_in_language_source_change']);
+const scoredCase = row => row.status === 'scored' && ['hit', 'miss'].includes(row.outcome);
+export function checkpointable(row) {
+  return (scoredCase(row) || (EMPTY_CASE_STATUSES.has(row.status) && row.outcome === 'unknown'))
+    && ['old', 'fixed'].every(side => Array.isArray(row.file_coverage?.[side])
+      && !coverageGaps(row.file_coverage[side]).length);
+}
 
 // The scorer's own code is part of every checkpoint key.
 let scorerFingerprint;
@@ -771,16 +899,31 @@ export function scorerSha256() {
 
 // A saved row is reusable only while the captures and source packets it cites
 // are still present in this work directory with the same bytes.
+function checkpointCaptureIntact(root, capture, notes, packets, checkedSources) {
+  if (!capture) return packets.length === 0;
+  if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
+    || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
+  const artifacts = [capture.sarif, capture.native_report].filter(Boolean);
+  if (!artifacts.every(artifact => sha256(readFileSync(reviewCapturePath(root, artifact.path))) === artifact.sha256)) return false;
+  const source = reviewCapturePath(root, capture.source_root);
+  if (!checkedSources.has(source)) {
+    verifyPreparedBytes(source, packets);
+    checkedSources.add(source);
+  }
+  return true;
+}
+
 export function checkpointArtifactsIntact(workdir, row) {
   try {
+    const root = realpathSync(workdir);
+    const attempts = [[row.captures, row.scan_sides]];
+    if (row.retried_serially) attempts.push([row.initial_captures, row.initial_scan_sides]);
     for (const side of ['old', 'fixed']) {
-      const capture = row.captures?.[side];
       const packets = row.source_packets?.[side] ?? [];
-      if (!capture) { if (packets.length) return false; continue; }
-      for (const artifact of [capture.sarif, capture.native_report].filter(Boolean)) {
-        if (sha256(readFileSync(resolve(workdir, artifact.path))) !== artifact.sha256) return false;
+      const checkedSources = new Set();
+      for (const [captures, diagnostics] of attempts) {
+        if (!checkpointCaptureIntact(root, captures?.[side], diagnostics?.[side], packets, checkedSources)) return false;
       }
-      verifyPreparedBytes(resolve(workdir, capture.source_root), packets);
     }
     return true;
   } catch { return false; }
@@ -815,11 +958,12 @@ async function scorePreparedManifest(manifest, opts, context) {
     }
   };
   const resumed = [];
+  const checkpointInputs = row => ({ schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
+    manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
+    profile_sha256: context.profileSha256, engine_sha256: engine.receipt.executable_sha256,
+    engine_args: context.extra, scope: context.scope });
   const checkpointed = async (row, staged) => {
-    const inputs = { schema: 'factory.recall-case-checkpoint.v2', scorer_sha256: scorerSha256(),
-      manifest_cases_sha256: manifest.casesSha256, case_sha256: caseDigest([row]), ruleset_sha256: context.rulesSha256,
-      profile_sha256: context.profileSha256, engine_sha256: engine.receipt.executable_sha256,
-      engine_args: context.extra, scope: context.scope };
+    const inputs = checkpointInputs(row);
     const saved = readCheckpoint(checkpoints, inputs);
     if (saved && checkpointable(saved) && checkpointArtifactsIntact(context.workdir, saved)) {
       resumed.push(row.ghsa);
@@ -852,8 +996,14 @@ async function scorePreparedManifest(manifest, opts, context) {
     retried = true;
     const initial = rows[index];
     const serial = { ...context, scanRoot: join(context.scanRoot, 'serial') };
-    rows[index] = { ...(await one(manifest.cases[index], serial)), retried_serially: true,
+    const row = manifest.cases[index];
+    const recovered = { ...(await one(row, serial)), retried_serially: true,
       initial_scan_sides: initial.scan_sides, initial_captures: initial.captures };
+    rows[index] = recovered;
+    if (checkpoints && checkpointable(recovered) && checkpointArtifactsIntact(context.workdir, recovered)) {
+      await verifyPins('serial case checkpoint');
+      writeCheckpoint(checkpoints, checkpointInputs(row), recovered);
+    }
   }
   if (!checkpoints || retried) await verifyPins('case scoring');
   return { schema: 'factory.recall-result.v1', manifest: manifest.path, manifest_cases_sha256: manifest.casesSha256,
@@ -915,12 +1065,10 @@ function recordLostHit(changes, pair, old, row) {
   changes.rawLost.push(row.ghsa);
 }
 
-function hasNewCoverageGaps(old, row) {
-  return Object.entries(old.file_coverage ?? {}).some(([side, files]) => {
-    const previous = new Set(coverageGaps(files));
-    const confirmedLimits = new Set(row.parser_probe?.[side]?.confirmed_limits);
-    return coverageGaps(row.file_coverage?.[side]).some(path => !previous.has(path) && !confirmedLimits.has(path));
-  });
+function newCoverageEntries(before, after, side) {
+  const key = ({ path, state, reason }) => JSON.stringify([path, state, reason]);
+  const previous = new Set(coverageGapEntries(before.file_coverage?.[side]).map(key));
+  return coverageGapEntries(after.file_coverage?.[side]).filter(file => !previous.has(key(file)));
 }
 
 const PARSER_LANGUAGE = { c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
@@ -928,10 +1076,26 @@ const PARSER_LANGUAGE = { c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp',
   php: 'php', py: 'python', pyi: 'python', rb: 'ruby', rs: 'rust', swift: 'swift',
   ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript' };
 
-function newParsePaths(before, after, side) {
-  const known = new Set(coverageGaps(before.file_coverage?.[side]));
-  return (after.file_coverage?.[side] ?? []).filter(file => file.state === 'partial' && file.reason === 'parse' && !known.has(file.path))
-    .map(file => file.path);
+const isParserGap = file => file.state === 'partial' && file.reason === 'parse';
+
+function hasNewCoverageGaps(before, after) {
+  return ['old', 'fixed'].some(side => {
+    const observations = after.parser_probe?.[side]?.observations ?? [];
+    return newCoverageEntries(before, after, side).some(file => !isParserGap(file) ||
+      !file.sha256 || !observations.some(item => item.state === 'parse_limited'
+        && item.path === file.path && item.sha256 === file.sha256));
+  });
+}
+
+function parserProbeState(run, target) {
+  if (run.timedOut) return 'unresolved';
+  if (run.status === 0) return 'parsed';
+  if (run.status === 3 && /node type: ERROR|(?:syntax|parse) error|PartialParsing/i.test(run.stderr)) return 'parse_limited';
+  // A fatal syntax diagnostic can mean broken source, so it cannot clear a coverage regression.
+  const fatalSyntax = `Error: exception Parsing_error.Syntax_error (${target}:`;
+  if (run.status === 2 && run.stderr.split('\n').some(line =>
+    line.replace(/^\[[\d.]+\]\[ERROR\]: /, '').startsWith(fatalSyntax))) return 'syntax_error';
+  return 'unresolved';
 }
 
 async function probeCoverage(dev, opts) {
@@ -945,24 +1109,26 @@ async function probeCoverage(dev, opts) {
       const old = baseline.get(row.ghsa);
       if (!old || caseInputFingerprint(old) !== caseInputFingerprint(row)) return;
       for (const side of ['old', 'fixed']) {
-        const paths = newParsePaths(old, row, side);
+        const paths = newCoverageEntries(old, row, side).filter(isParserGap).map(file => file.path);
         if (!paths.length || !row.captures?.[side]) continue;
         const source = resolve(workdir, row.captures[side].source_root);
         const packets = row.source_packets[side];
         const packetsByPath = new Map(packets.map(packet => [packet.path, packet]));
         verifyPreparedBytes(source, packets);
         const observations = [];
-        for (const path of paths) {
-          const language = PARSER_LANGUAGE[extname(path).slice(1).toLowerCase()];
-          const packet = packetsByPath.get(path);
-          if (!language || !packet) continue;
-          const run = await runProcess(opts.opengrep, [...prefix, '--lang', language, join(source, path)],
-            { cwd: source, timeout: 60000, discardStdout: true });
-          const partial = run.status === 3 && /node type: ERROR|(?:syntax|parse) error|PartialParsing/i.test(run.stderr);
-          observations.push({ path, language, sha256: packet.sha256,
-            exit_code: run.status, timed_out: run.timedOut, diagnostic_sha256: sha256(run.stderr),
-            state: run.timedOut ? 'unresolved' : partial ? 'parse_limited' : run.status === 0 ? 'parsed' : 'unresolved' });
-        }
+        await withOpenGrepSource(profile, source, paths, async scanSource => {
+          for (const path of paths) {
+            const language = PARSER_LANGUAGE[extname(path).slice(1).toLowerCase()];
+            const packet = packetsByPath.get(path);
+            if (!language || !packet) continue;
+            const target = join(scanSource, path);
+            const run = await runProcess(opts.opengrep, [...prefix, '--lang', language, target],
+              { cwd: scanSource, timeout: 60000, discardStdout: true });
+            observations.push({ path, language, sha256: packet.sha256,
+              exit_code: run.status, timed_out: run.timedOut, diagnostic_sha256: sha256(run.stderr),
+              state: parserProbeState(run, target) });
+          }
+        });
         verifyPreparedBytes(source, packets);
         row.parser_probe ??= {};
         row.parser_probe[side] = { disputed_paths: paths, observations,
@@ -975,6 +1141,35 @@ async function probeCoverage(dev, opts) {
 
 const duplicateAdvisory = ghsa => 'Duplicate advisory ID across paired recall cohorts: ' + ghsa;
 
+const registeredFamilies = row => familiesFor(row.cwes ?? []);
+
+function familyObservation(row, family) {
+  const outcome = measuredOutcome(row);
+  if (!['hit', 'miss'].includes(outcome)) return 'unresolved';
+  if (outcome === 'hit') {
+    if (row.matched_hunk_families?.includes(family)) return 'hit';
+    if (!row.matched_hunk_families?.length) return 'unresolved';
+  }
+  const old = row.file_coverage?.old;
+  return old?.some(file => file.submitted) && !coverageGaps(old).length ? 'miss' : 'unresolved';
+}
+
+function measureFamilies(old, row, families, transitions) {
+  for (const family of families) {
+    const counts = () => ({ hit: 0, miss: 0, unresolved: 0 });
+    const entry = transitions[family] ??= {
+      paired_cases: 0, before: counts(), after: counts(), gained: [], lost: [], unresolved: [],
+    };
+    const before = familyObservation(old, family), after = familyObservation(row, family);
+    entry.paired_cases++;
+    entry.before[before]++;
+    entry.after[after]++;
+    if (before === 'miss' && after === 'hit') entry.gained.push(row.ghsa);
+    if (before === 'hit' && after === 'miss') entry.lost.push(row.ghsa);
+    if (before === 'unresolved' || after === 'unresolved') entry.unresolved.push(row.ghsa);
+  }
+}
+
 function measureCaseChange(old, row, pair, changes) {
   const { gained, newErrors, newCoverageGaps, failures, seenAdvisories } = changes;
   if (seenAdvisories.has(row.ghsa)) {
@@ -986,6 +1181,12 @@ function measureCaseChange(old, row, pair, changes) {
     failures.push('Baseline and candidate source byte fingerprints differ for ' + row.ghsa);
     return;
   }
+  const families = registeredFamilies(row);
+  if (JSON.stringify(registeredFamilies(old)) !== JSON.stringify(families)) {
+    failures.push('Baseline and candidate registered families differ for ' + row.ghsa);
+    return;
+  }
+  measureFamilies(old, row, families, changes.familyTransitions);
   const previous = measuredOutcome(old), current = measuredOutcome(row);
   if (previous === 'hit' && current !== 'hit') recordLostHit(changes, pair, old, row);
   if (previous === 'miss' && current === 'hit') gained.push(row.ghsa);
@@ -1019,7 +1220,9 @@ function measureDevPair({ before, after }, changes) {
 
 export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance = 0.1, lossPolicy = null }) {
   const lost = [], gained = [], newErrors = [], newCoverageGaps = [], failures = [], lostFpOnly = [], rawLost = [];
-  const changes = { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost, seenAdvisories: new Set() };
+  const familyTransitions = {};
+  const changes = { lost, gained, newErrors, newCoverageGaps, failures, lossPolicy, lostFpOnly, rawLost,
+    familyTransitions, seenAdvisories: new Set() };
   for (const pair of dev) measureDevPair(pair, changes);
   const residualBefore = dev.reduce((n, pair) => n + pair.before.summary.fix_side_residual_alerts, 0);
   const residualAfter = dev.reduce((n, pair) => n + pair.after.summary.fix_side_residual_alerts, 0);
@@ -1042,8 +1245,9 @@ export function gate({ dev, controls, maxControlIncrease = 0, residualTolerance 
     ...(lossPolicy ? { lost_fp_only: lostFpOnly, raw_lost_baseline_hits: rawLost,
       adjudicated_loss_basis: lossPolicy.receipt } : {}),
     new_coverage_gaps: newCoverageGaps,
+    family_transitions: familyTransitions,
     residual: [residualBefore, residualAfter], residual_per_hit: [rateBefore, rateAfter].map(x => Math.round(x * 100) / 100),
-    control_increase: controlIncrease };
+    control_increase: controlIncrease, max_control_increase: maxControlIncrease };
 }
 
 function evaluationEvidence(result) {
@@ -1059,10 +1263,18 @@ function pairedCaseEvidence({ before, after }) {
   const baseline = indexCases(before.cases);
   return after.cases.map(row => {
     const previous = baseline.get(row.ghsa);
+    const rawLoss = previous && measuredOutcome(previous) === 'hit' && measuredOutcome(row) !== 'hit';
+    const baselineFamilies = previous?.matched_hunk_families ?? [];
+    const familyLoss = baselineFamilies.some(family => familyObservation(row, family) === 'miss');
     return { ghsa: row.ghsa, fix: row.fix, before: previous?.outcome ?? previous?.status ?? null,
       after: row.outcome ?? row.status, hunk_findings: row.hunk_findings ?? [],
       ...(row.hunk_spans ? { hunk_spans: row.hunk_spans } : {}),
+      ...(rawLoss || familyLoss ? { baseline_hunk_findings: previous.hunk_findings ?? [],
+        ...(previous.hunk_spans ? { baseline_hunk_spans: previous.hunk_spans } : {}) } : {}),
+      registered_families: registeredFamilies(row), baseline_matched_hunk_families: baselineFamilies,
       matched_hunk_families: row.matched_hunk_families ?? [], fix_side_residual: row.fix_side_residual ?? [],
+      ...(previous?.edited_lines && scoredCase(previous) ? { before_edited_lines: previous.edited_lines } : {}),
+      ...(scoredCase(row) && row.edited_lines ? { after_edited_lines: row.edited_lines } : {}),
       retried_serially: Boolean(row.retried_serially) };
   });
 }
@@ -1163,9 +1375,11 @@ export function gainRetention(reference, pairs, lossPolicy = null) {
 }
 
 function applyGainRetention(verdict, bytes, pairs, lossPolicy) {
-  const compatible = lossPolicy?.receipt.score_sha256 === sha256(bytes) ? lossPolicy : null;
+  const checkpointSha256 = sha256(bytes);
+  const compatible = lossPolicy?.receipt.score_sha256 === checkpointSha256 ? lossPolicy : null;
   const retention = gainRetention(JSON.parse(utf8(bytes)), pairs, compatible);
-  verdict.gain_retention = { checkpoint_sha256: sha256(bytes), ...retention };
+  verdict.gain_retention = { checkpoint_sha256: checkpointSha256, ...retention,
+    ...(compatible ? { adjudicated_loss_basis: compatible.receipt } : {}) };
   if (retention.lost.length) verdict.failures.push(`lost ${retention.lost.length} checkpoint hit(s): ${retention.lost.join(', ')}`);
 }
 
@@ -1232,7 +1446,18 @@ function verifyEvaluationManifests(manifests) {
 async function evaluate(input) {
   const opts = { ...input, profileBytes: input.profileBytes
     ?? readFileSync(input.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json') };
+  const profile = JSON.parse(utf8(opts.profileBytes));
+  const controlSettings = { ...controlTimeoutSettings(opts, profile), ...parallelControlSettings(opts, profile) };
   const checkpoint = opts['retain-gains-from'] ? readFileSync(opts['retain-gains-from']) : null;
+  const gainPlan = opts['gain-adjudicated-losses'];
+  if ('gain-adjudicated-losses' in opts && (!checkpoint || typeof gainPlan !== 'string' || !gainPlan)) {
+    throw new Error('--gain-adjudicated-losses requires one plan and --retain-gains-from');
+  }
+  const controlLimit = 'max-control-increase' in opts ? opts['max-control-increase'] : '0';
+  const maxControlIncrease = Number(controlLimit);
+  if (typeof controlLimit !== 'string' || !/^-?\d+$/.test(controlLimit) || !Number.isSafeInteger(maxControlIncrease)) {
+    throw new Error('--max-control-increase requires one safe integer');
+  }
   const excludedDirs = controlExcludedDirectories(opts);
   const labels = suppliedLabels(opts);
   const reviewOption = opts['require-reviewed-controls'];
@@ -1240,10 +1465,14 @@ async function evaluate(input) {
     throw new Error('--require-reviewed-controls accepts true');
   }
   const manifests = readEvaluationManifests(opts.manifest);
-  const engine = await bindRecallEngine(JSON.parse(utf8(opts.profileBytes)),
-    opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  const engine = await bindRecallEngine(profile, opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
   const lossPolicy = opts['adjudicated-losses']
     ? loadAdjudicatedLosses(opts['adjudicated-losses'], engine.receipt.executable_sha256) : null;
+  const gainPolicy = gainPlan
+    ? loadAdjudicatedLosses(gainPlan, engine.receipt.executable_sha256, { requireBoundSpans: true }) : lossPolicy;
+  if (gainPlan && gainPolicy.receipt.score_sha256 !== sha256(checkpoint)) {
+    throw new Error('Gain adjudication must reference the exact retention checkpoint');
+  }
   opts.opengrep = engine.path;
   const rules = evaluationRules(opts);
   // A flag under test (for example --taint-intrafile) applies to the candidate only.
@@ -1262,14 +1491,15 @@ async function evaluate(input) {
     const after = await scoreArm(manifest, opts.candidate, candidateOpts, rules.candidate_sha256);
     dev.push({ manifest: manifest.path, before, after });
   }
-  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts, rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }, engine) : [];
+  const controlDeltas = opts.dir ? await controlDeltas_({ ...opts,
+    rules: [opts.baseline, opts.candidate], ruleFingerprints: rules }, engine, controlSettings) : [];
   const parserProbe = opts['probe-coverage'] === 'true' ? await probeCoverage(dev, opts) : null;
   await verifyBoundEngine(engine, 'evaluation');
   verifyEvaluationManifests(manifests);
   verifyEvaluationRules(opts, rules);
-  const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease: Number(opts['max-control-increase'] ?? 0), lossPolicy });
-  if (checkpoint) applyGainRetention(verdict, checkpoint, dev, lossPolicy);
-  const settings = { ...rules, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
+  const verdict = gate({ dev, controls: controlDeltas, maxControlIncrease, lossPolicy });
+  if (checkpoint) applyGainRetention(verdict, checkpoint, dev, gainPolicy);
+  const settings = { ...rules, ...controlSettings, engine: engine.receipt, profile_sha256: sha256(opts.profileBytes),
     extra_args: [].concat(opts['extra-arg'] ?? []), candidate_extra_args: [].concat(opts['candidate-extra-arg'] ?? []),
     ...(excludedDirs.length ? { control_excluded_directories: excludedDirs } : {}) };
   const population = reviewPopulation(settings, controlDeltas);
@@ -1293,6 +1523,8 @@ async function evaluate(input) {
 }
 
 const CONTROL_TIMEOUT_RETRY_SECONDS = 15;
+const OPENGREP_TIMEOUT_FLAG = /^--(?:timeout(?:=|$)|dynamic-timeout|allow-rule-timeout-control)/;
+const OPENGREP_WORKER_FLAG = /^(?:--jobs(?:=|$)|-j(?:=|\d|$))/;
 const OPENGREP_DEFAULT_TARGET_BYTES = 1_000_000;
 const CONTROL_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
 const CONTROL_HASH_BATCH_SIZE = 16;
@@ -1310,9 +1542,15 @@ function controlTargetBytes(directory, source, base, candidate) {
 }
 
 function controlRetryArgs(profile, baselineArgs, candidateArgs) {
-  const hasTimeoutOverride = [...profile.commands[0].argv, ...baselineArgs, ...candidateArgs]
-    .some(arg => /^--(?:timeout(?:=|$)|dynamic-timeout|allow-rule-timeout-control)/.test(arg));
-  return profile.engine === 'semgrep' && !hasTimeoutOverride ? [`--timeout=${CONTROL_TIMEOUT_RETRY_SECONDS}`] : [];
+  if (profile.engine !== 'semgrep') return [];
+  const argv = [...profile.commands[0].argv, ...baselineArgs, ...candidateArgs];
+  const retry = [];
+  if (!argv.some(arg => OPENGREP_TIMEOUT_FLAG.test(arg))) {
+    retry.push(`--timeout=${CONTROL_TIMEOUT_RETRY_SECONDS}`);
+  }
+  // Retry under a single worker to keep the existing per-rule budget usable under load.
+  if (!argv.some(arg => OPENGREP_WORKER_FLAG.test(arg))) retry.push('--jobs=1');
+  return retry;
 }
 
 function insideControl(root, path) {
@@ -1436,7 +1674,8 @@ async function controlObservation(context, directory, report, source) {
 
 function pairedControlScope(source, sides) {
   const exclusions = new Map(source.excluded);
-  if (sides.every(side => side.coverage && !side.sourceInvalid && !scanIssue(side.notes))) {
+  if (sides.every(({ coverage, sourceInvalid, notes }) => coverage && !sourceInvalid
+      && controlPathEvidence(notes) && !notes.blocking_parse_errors && !notes.other)) {
     const reported = new Set(sides.flatMap(side => side.findings.map(finding => finding.path)));
     for (const path of source.eligible) {
       const agreed = sides.every(({ coverage }) => coverage.skipped.get(path) === 'semgrepignore_patterns_match'
@@ -1449,26 +1688,59 @@ function pairedControlScope(source, sides) {
   return { eligible, excluded, sha256: caseDigest([{ source_sha256: source.evidence.sha256, eligible, excluded }]) };
 }
 
+function controlPathEvidence(notes) {
+  return notes?.failed_exit === false && !notes.source_error && notes.coverage_report_sha256
+    && notes.reports?.native_report?.sha256 === notes.coverage_report_sha256;
+}
+
+export function controlGapDelta(scanSides) {
+  const { before, after } = scanSides;
+  if (![before, after].every(side => controlPathEvidence(side) && Array.isArray(side.control_coverage?.gaps))) {
+    return { state: 'UNCOMPARABLE' };
+  }
+  const old = before.control_coverage.gaps;
+  const now = after.control_coverage.gaps;
+  const key = ({ path, reason }) => JSON.stringify([path, reason]);
+  const oldKeys = new Set(old.map(key));
+  const nowKeys = new Set(now.map(key));
+  return { state: 'COMPARED', shared: old.filter(gap => nowKeys.has(key(gap))),
+    baseline_only: old.filter(gap => !nowKeys.has(key(gap))), candidate_only: now.filter(gap => !oldKeys.has(key(gap))) };
+}
+
 function recordControlCoverage(side, scope) {
   if (!side.notes) return;
   const coverage = controlScanCoverage(scope.eligible, side.coverage);
   if (scope.excluded.length) coverage.excluded = scope.excluded;
   side.notes.control_coverage = coverage;
   if (!coverage.complete && !scanIssue(side.notes)) {
-    side.notes.other = 1;
     side.notes.detail = 'Control scan must cover every eligible source file';
   }
 }
 
-async function controlPair({ base, candidate, directory, reports, source, workdir }, suffix, retryArgs = []) {
-  const old = await controlObservation({ ...base, workdir, extra: [...base.extra, ...retryArgs] }, directory, `${reports}/before${suffix}.sarif`, source);
-  const now = old.sourceInvalid ? { findings: [], notes: null }
-    : await controlObservation({ ...candidate, workdir, extra: [...candidate.extra, ...retryArgs] }, directory, `${reports}/after${suffix}.sarif`, source);
+async function controlPair({ base, candidate, directory, reports, source, workdir }, suffix, scanArgs = [], parallel = false) {
+  const observeArm = (settings, arm) => controlObservation({ ...settings, workdir, extra: [...settings.extra, ...scanArgs] },
+    directory, `${reports}/${arm}${suffix}.sarif`, source);
+  let old, now;
+  if (parallel) {
+    const observations = await Promise.allSettled([observeArm(base, 'before'), observeArm(candidate, 'after')]);
+    const failed = observations.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
+    [old, now] = observations.map(result => result.value);
+  } else {
+    old = await observeArm(base, 'before');
+    now = old.sourceInvalid ? { findings: [], notes: null } : await observeArm(candidate, 'after');
+  }
   const scope = pairedControlScope(source, [old, now]);
   for (const side of [old, now]) recordControlCoverage(side, scope);
   const scan_sides = { before: old.notes, after: now.notes };
-  const issues = [old, now].map(side => side.sourceInvalid ? 'error' : scanIssue(side.notes));
+  const issues = [old, now].map(controlIssue);
   return { old: old.findings, now: now.findings, scan_sides, issues, control_scope_sha256: scope.sha256 };
+}
+
+export function controlIssue({ sourceInvalid, notes }) {
+  if (sourceInvalid) return 'error';
+  if (notes?.watchdog_timeout) return 'timeout';
+  return hasScanError(notes) ? 'error' : scanIssue(notes);
 }
 
 function controlFindingIndex(findings) {
@@ -1491,6 +1763,37 @@ function controlExcludedDirectories(opts) {
     throw new Error('--control-exclude requires a single directory name');
   }
   return excludedDirs;
+}
+
+function controlTimeoutSettings(opts, profile) {
+  if (!('control-timeout' in opts)) return {};
+  const value = opts['control-timeout'];
+  const processLimitSeconds = SCAN_PROCESS_TIMEOUT_MS / 1000;
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || Number(value) >= processLimitSeconds) {
+    throw new Error(`--control-timeout requires positive whole seconds below the ${processLimitSeconds}-second scan deadline`);
+  }
+  if (!opts.dir || profile.engine !== 'semgrep') {
+    throw new Error('--control-timeout requires OpenGrep controls');
+  }
+  const argv = profile.commands[0].argv.concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []);
+  if (argv.some(arg => OPENGREP_TIMEOUT_FLAG.test(arg))) {
+    throw new Error('--control-timeout conflicts with an existing scanner timeout flag');
+  }
+  return { control_timeout_seconds: Number(value) };
+}
+
+function parallelControlSettings(opts, profile) {
+  if (!('parallel-controls' in opts)) return {};
+  const value = opts['parallel-controls'];
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || Number(value) * 2 > availableParallelism()) {
+    throw new Error('--parallel-controls requires a positive worker count per arm within the available CPU budget');
+  }
+  if (!opts.dir || profile.engine !== 'semgrep') throw new Error('--parallel-controls requires OpenGrep controls');
+  const argv = profile.commands[0].argv.concat(opts['extra-arg'] ?? [], opts['candidate-extra-arg'] ?? []);
+  if (argv.some(arg => OPENGREP_WORKER_FLAG.test(arg))) {
+    throw new Error('--parallel-controls conflicts with an existing scanner worker flag');
+  }
+  return { control_parallel_workers_per_arm: Number(value) };
 }
 
 async function retainedReportMatches(root, reference, expected, required) {
@@ -1523,13 +1826,18 @@ async function controlCheckpointIntact(root, delta) {
   } catch { return false; }
 }
 
-async function controlDeltas_(opts, engine) {
+async function controlDeltas_(opts, engine, controlSettings) {
   const [before, after] = [].concat(opts.rules);
   const excludedDirs = controlExcludedDirectories(opts);
-  const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/**`, '--exclude', `**/${path}/**`]);
+  // A directory-only ignore pattern covers all depths and preserves files with the same name.
+  const exclusionArgs = excludedDirs.flatMap(path => ['--exclude', `${path}/`]);
+  const { control_timeout_seconds, control_parallel_workers_per_arm } = controlSettings;
+  const timeoutArgs = control_timeout_seconds === undefined ? [] : [`--timeout=${control_timeout_seconds}`];
+  const parallel = control_parallel_workers_per_arm !== undefined;
+  const firstPass = parallel ? [`--jobs=${control_parallel_workers_per_arm}`] : [];
   const rules = opts.ruleFingerprints;
   const base = { profile: JSON.parse(utf8(opts.profileBytes)),
-    bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], exclusionArgs),
+    bin: engine.path, extra: [].concat(opts['extra-arg'] ?? [], timeoutArgs, exclusionArgs),
     rules: resolve(before), rulesSha256: rules.baseline_sha256 };
   const candidate = { ...base, extra: [...base.extra, ...[].concat(opts['candidate-extra-arg'] ?? [])],
     rules: resolve(after), rulesSha256: rules.candidate_sha256 };
@@ -1551,7 +1859,7 @@ async function controlDeltas_(opts, engine) {
       const effectiveCandidate = { ...candidate, extra: [...candidate.extra, ...targetArgs] };
       const checkpointInputs = opts['checkpoint-dir'] ? { schema: 'factory.recall-control-checkpoint.v3',
         scorer_sha256: scorerSha256(), dir,
-        source_tree: source.evidence, excluded: excludedDirs, ...rules,
+        source_tree: source.evidence, excluded: excludedDirs, ...rules, ...controlSettings,
         profile_sha256: checkpointProfile,
         engine_sha256: engine.receipt.executable_sha256, extra: effectiveBase.extra,
         candidate_extra: effectiveCandidate.extra } : null;
@@ -1563,7 +1871,7 @@ async function controlDeltas_(opts, engine) {
       scanRoot ??= mkdtempSync(join(reportsRoot, 'controls-'));
       const context = { base: effectiveBase, candidate: effectiveCandidate, directory, source,
         workdir: reportsRoot, reports: join(scanRoot, sha256(directory).slice(0, 16)) };
-      let attempt = await controlPair(context, '');
+      let attempt = await controlPair(context, '', firstPass, parallel);
       const sizing = maxTargetBytes ? { max_target_bytes: maxTargetBytes } : {};
       let recovery = sizing;
       if (attempt.issues.includes('timeout') && !attempt.issues.includes('error')) {
@@ -1572,8 +1880,9 @@ async function controlDeltas_(opts, engine) {
         attempt = await controlPair(context, '-retry', extra);
       }
       const { old, now, scan_sides, issues, control_scope_sha256 } = attempt;
-      if (issues.some(Boolean)) {
-        deltas.push({ dir, error: 'Control scan incomplete', source_tree: source.evidence, scan_sides, control_scope_sha256, ...recovery });
+      if (issues.some(Boolean) || Object.values(scan_sides).some(side => !side?.control_coverage?.complete)) {
+        deltas.push({ dir, error: 'Control scan incomplete', source_tree: source.evidence, scan_sides,
+          control_scope_sha256, coverage_gap_delta: controlGapDelta(scan_sides), ...recovery });
         continue;
       }
       const { added, removed } = controlFindingDeltas(old, now);
@@ -1751,18 +2060,85 @@ async function observe(opts) {
   console.log(`${queued.labels.length} labels, ${queued.labels.filter(label => !label.verdict).length} pending`);
 }
 
+function reviewCapturePath(root, name) {
+  if (typeof name !== 'string' || isAbsolute(name) || !insideControl(root, resolve(root, name))) {
+    throw new Error('Review capture path leaves the work directory');
+  }
+  const target = realpathSync(resolve(root, name));
+  if (!insideControl(root, target)) throw new Error('Review capture path leaves the work directory');
+  return target;
+}
+
+function oldReviewAlerts(root, row, rulesSha256) {
+  const capture = row.captures?.old;
+  const notes = row.scan_sides?.old;
+  if (!notes || notes.failed_exit !== false || ![0, 1].includes(notes.exit_code) || scanIssue(notes) || !capture?.sarif) {
+    throw new Error('Review score has no successful old-side capture');
+  }
+  const source = reviewCapturePath(root, capture.source_root);
+  const packets = row.source_packets.old;
+  verifyPreparedBytes(source, packets);
+  const hashes = new Map(packets.map(packet => [packet.path, packet.sha256]));
+  const report = readFileSync(reviewCapturePath(root, capture.sarif.path));
+  if (sha256(report) !== capture.sarif.sha256 || capture.sarif.sha256 !== notes.report_sha256) {
+    throw new Error('Review SARIF digest differs from score capture');
+  }
+  const changed = new Set(row.changed_files);
+  const findings = sarifFindings(JSON.parse(utf8(report)), new Set(hashes.keys()));
+  if (findings.some(finding => !hashes.has(finding.path))) throw new Error('Review finding has no source packet');
+  const selected = findings.filter(finding => changed.has(finding.path));
+  if (selected.length !== row.alerts_in_changed_files || (row.hunk_spans && row.hunk_spans.length !== row.hunk_findings.length)) {
+    throw new Error('Review findings differ from score capture');
+  }
+  const counts = new Map();
+  const actual = new Map();
+  const identity = (location, span) => JSON.stringify(row.hunk_spans ? [...location, span ?? null] : location);
+  for (const [index, location] of row.hunk_findings.entries()) {
+    const key = identity(location, row.hunk_spans?.[index]);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const alerts = selected.map(({ rule, path, line, span }) => {
+    const key = identity([rule, path, line], span);
+    const on_fix_hunk = counts.has(key);
+    if (on_fix_hunk) actual.set(key, (actual.get(key) ?? 0) + 1);
+    return { case: row.ghsa, root: source, path, line, rule, ...(span ? { span } : {}),
+      source_sha256: hashes.get(path), rules_sha256: rulesSha256, on_fix_hunk };
+  });
+  if ([...counts].some(([key, expected]) => actual.get(key) !== expected)) {
+    throw new Error('Review hunk positions differ from score capture');
+  }
+  return alerts;
+}
+
+function reviewAlerts(opts) {
+  const bytes = readFileSync(opts.score);
+  if (sha256(bytes) !== opts['score-sha256']) throw new Error('Review score digest mismatch');
+  const saved = JSON.parse(utf8(bytes));
+  if (saved.schema !== 'factory.recall-result.v1' || !Array.isArray(saved.cases)
+      || !/^[a-f0-9]{64}$/.test(saved.ruleset_sha256) || !/^[a-f0-9]{64}$/.test(saved.engine?.executable_sha256)) {
+    throw new Error('Review export requires a pinned standalone score receipt');
+  }
+  const root = realpathSync(resolve(opts.workdir ?? '.factory/recall-work'));
+  const cases = saved.cases.filter(scoredCase);
+  const alerts = cases.flatMap(row => oldReviewAlerts(root, row, saved.ruleset_sha256));
+  writeFileSync(opts.out, `${JSON.stringify(alerts, null, 1)}\n`);
+  console.log(JSON.stringify({ alerts: alerts.length, scored_cases: cases.length, omitted_cases: saved.cases.length - cases.length }));
+}
+
 async function controls(opts) {
   const [before, after] = [].concat(opts.rules);
   const profileBytes = readFileSync(opts.profile ?? 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json');
+  const profile = JSON.parse(utf8(profileBytes));
+  const controlSettings = { ...controlTimeoutSettings(opts, profile), ...parallelControlSettings(opts, profile) };
   const settings = { ...opts, baseline: before, candidate: after, profileBytes };
   const rules = evaluationRules(settings);
-  const engine = await bindRecallEngine(JSON.parse(utf8(profileBytes)), opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
-  const deltas = await controlDeltas_({ ...settings, ruleFingerprints: rules }, engine);
+  const engine = await bindRecallEngine(profile, opts.opengrep ?? process.env.OPENGREP ?? 'opengrep');
+  const deltas = await controlDeltas_({ ...settings, ruleFingerprints: rules }, engine, controlSettings);
   await verifyBoundEngine(engine, 'control scoring');
   verifyEvaluationRules(settings, rules);
   writeFileSync(opts.out, `${JSON.stringify({ schema: 'factory.recall-controls.v1', before_sha256: rules.baseline_sha256,
     after_sha256: rules.candidate_sha256, profile_sha256: sha256(profileBytes), engine: engine.receipt,
-    control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
+    ...controlSettings, control_excluded_directories: controlExcludedDirectories(opts), deltas }, null, 1)}\n`);
   for (const delta of deltas) console.log(delta.dir, delta.before, '->', delta.after, delta.error ?? '');
   if (deltas.some(delta => delta.error)) process.exitCode = 2;
 }
@@ -1788,6 +2164,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   else if (command === 'controls') await controls(opts);
   else if (command === 'evaluate') await evaluate(opts);
   else if (command === 'observe') await observe(opts);
+  else if (command === 'review-alerts') reviewAlerts(opts);
   else if (command === 'compare') compare(opts._);
   else { console.error('usage: recall_harness.mjs freeze|score|evaluate|controls|observe|compare ...'); process.exit(2); }
 }
