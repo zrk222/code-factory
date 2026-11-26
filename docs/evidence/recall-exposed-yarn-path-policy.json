@@ -344,6 +344,127 @@
       }
     ],
     "verified_exclusion_file_sha256": "8899b61b681a6566cce64a2583e9b53f9310272949d50b1b724607d3b2e548df",
-    "verified_exclusion_file_bindings": 101
+    "verified_exclusion_file_bindings": 101,
+    "observed_explicit_exclusions": [
+      {
+        "control": "jquery_jquery",
+        "exact_paths_applied_to_both_arms": 2,
+        "observed_reasons": [
+          "shared_engine_target_ignore"
+        ]
+      },
+      {
+        "control": "laravel_framework",
+        "exact_paths_applied_to_both_arms": 1,
+        "observed_reasons": [
+          "shared_engine_target_ignore"
+        ]
+      },
+      {
+        "control": "mozilla_pdf.js",
+        "exact_paths_applied_to_both_arms": 6,
+        "observed_reasons": [
+          "shared_semgrepignore_patterns_match"
+        ]
+      },
+      {
+        "control": "rubygems_rubygems",
+        "exact_paths_applied_to_both_arms": 92,
+        "observed_reasons": [
+          "shared_rule_path_exclusions"
+        ]
+      }
+    ]
+  },
+  "paired_control_replay": {
+    "complete": 16,
+    "expected": 18,
+    "before": 39,
+    "after": 39,
+    "receipt_sha256": "9e653ddaaad538b9699a94de4e2a16f84b4139f115c12afef7f539cb23167507",
+    "staged_trees": 17,
+    "parallel_workers": 2,
+    "unresolved": [
+      {
+        "control": "mozilla_pdf.js",
+        "reason": "Control scan incomplete",
+        "gaps": {
+          "before": [],
+          "after": [
+            {
+              "path": "external/openjpeg/openjpeg_nowasm_fallback.js",
+              "reason": "engine_timeout"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "pdf_serial_replay": {
+    "complete": false,
+    "receipt_sha256": "72ffd47107c8003803ad4a971ff56a8a04d5549476089d8ee0b603319cf0297b",
+    "before": null,
+    "after": null,
+    "paired_workers": 1,
+    "gaps": {
+      "before": [
+        {
+          "path": "external/hellbox/hellbox_nowasm_fallback.js",
+          "reason": "engine_timeout"
+        },
+        {
+          "path": "external/openjpeg/openjpeg_nowasm_fallback.js",
+          "reason": "engine_timeout"
+        }
+      ],
+      "after": [
+        {
+          "path": "external/hellbox/hellbox_nowasm_fallback.js",
+          "reason": "engine_timeout"
+        },
+        {
+          "path": "external/openjpeg/openjpeg_nowasm_fallback.js",
+          "reason": "engine_timeout"
+        }
+      ]
+    }
+  },
+  "integrated_checkpoint_policy": {
+    "main_commit": "9acfdbaf4a8813f3afa888880bd6274ab7dc5aec",
+    "scorer_sha256": "a4e4ddd458d74eeb68bfa9ecaeb68d5ecc040888941da2c52b039ee7e42769b2",
+    "results": [
+      {
+        "label": "first",
+        "outcome": "miss",
+        "resumed": 0,
+        "workers": 1,
+        "scope": "opengrep-2.1.0-target-inventory-v1",
+        "score_sha256": "241b335213701facd0a93be424326f9d54c0b192d8505fa54d9ea14191d7d941"
+      },
+      {
+        "label": "resume",
+        "outcome": "miss",
+        "resumed": 1,
+        "workers": 1,
+        "scope": "opengrep-2.1.0-target-inventory-v1",
+        "score_sha256": "2ec6d773aa5ac3ef43e0524db0a7321f890ce4df3d023a4e75a4cc0791a73d20"
+      },
+      {
+        "label": "policy-off",
+        "outcome": "coverage_incomplete",
+        "resumed": 0,
+        "workers": 1,
+        "scope": null,
+        "score_sha256": "20d02e83ad69229f42f0a42414ddc86afe9889378f5eae112ad2593ab0278bae"
+      },
+      {
+        "label": "workers-two",
+        "outcome": "miss",
+        "resumed": 0,
+        "workers": 2,
+        "scope": "opengrep-2.1.0-target-inventory-v1",
+        "score_sha256": "8d6312b1ead5c24a49c01b99f83d8cf0ddd25d968d3ca12634c400215d9069a1"
+      }
+    ]
   }
 }
