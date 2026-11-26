@@ -1,0 +1,30 @@
+{
+  "schema": "factory.recall-runner-retest.v1",
+  "cases": 161,
+  "scored": 156,
+  "outcomes": {
+    "hit": 39,
+    "miss": 117,
+    "timeout": 0,
+    "unknown": 2,
+    "error": 0,
+    "coverage_incomplete": 3
+  },
+  "exact_reference_hunk_hits": 39,
+  "gained": 0,
+  "lost": 0,
+  "cold_score_seconds": 132.8520353,
+  "initial_score_checkpoints": 0,
+  "validated_case_bindings": 161,
+  "checkpointable_cases": 158,
+  "fix_side_residual_alerts": 17,
+  "manifest_sha256": "bb7a28c66c7062256851933a1e746c1fb33327021e53294d3a2e6e10d04deb60",
+  "manifest_cases_sha256": "5f332b159a68e4236215843095a669afe2d150757eaee4c18ece33005f0b0013",
+  "rules_sha256": "7e89cf63c9193d4af9f3089a7e5bec6b2fa7711dcda32b5bda4b836e861eee0d",
+  "profile_sha256": "8ec08b713a3bd64cd272cda054faab0fe206be45d79258d74b1099f1ab326dd6",
+  "scorer_sha256": "8ba17457a66520ea4ed70554181da220ea1d161047c2e08a9ffe236450cadfed",
+  "engine_sha256": "fae553cdfd1badcb30a480ec5c47e3e14355744167bff4303dc45ab436253e7a",
+  "raw_receipt_sha256": "9ea0ba1aaf27597047267fa3d44285ecd141c8316b2eda4e01db8ff1801687cf",
+  "shell_exit_sha256": "e2b9248cba2c8babd824c1503c704bcd9440c0e88cba2ab9bf5729acc4a9c17b",
+  "scorer_commit": "f88cb129eadc91a691a9181a81c20e6d2da37325"
+}
