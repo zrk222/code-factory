@@ -116,6 +116,35 @@ rules:
                       - pattern: $MOD.$LOAD(...)
                   - metavariable-regex: {metavariable: $LOAD, regex: '^(pickle_load|pickle_loads|load_pickle|loads_pickle|unpickle|unpickle_\w+)$'}
           - pattern-not: torch.load(..., weights_only=True, ...)
+          # Reached only when an opt-in environment setting that is off by default is
+          # enabled (FLAG = os.environ.get("X", "0") == "1" ... if FLAG: loads(...)).
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    if $FLAG:
+                      ...
+                - pattern-either:
+                    # With a default that is off ("0", "", "false", None).
+                    - patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $FLAG = $ENV.get($KEY, $OFF) == $ON
+                                ...
+                            - pattern-inside: |
+                                $FLAG = $ENV.getenv($KEY, $OFF) == $ON
+                                ...
+                        - metavariable-regex: {metavariable: $OFF, regex: '^(?:[''"](?i:0|false|no|off)?[''"]|None)$'}
+                    # Without a default: an unset variable is None.
+                    - pattern-inside: |
+                        $FLAG = $ENV.get($KEY) == $ON
+                        ...
+                    - pattern-inside: |
+                        $FLAG = $ENV.getenv($KEY) == $ON
+                        ...
+                - metavariable-regex: {metavariable: $FLAG, regex: '^[A-Za-z_]\w*$'}
+                - metavariable-regex: {metavariable: $ENV, regex: '^(?:os|os\.environ)$'}
+                - metavariable-regex: {metavariable: $KEY, regex: '^[''"][A-Z][A-Z0-9_]*[''"]$'}
+                - metavariable-regex: {metavariable: $ON, regex: '^[''"](?i:1|true|yes|on)[''"]$'}
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
