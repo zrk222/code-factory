@@ -259,3 +259,19 @@ def test_stage_inputs_default_to_the_producers_outputs() -> None:
     assert explicit.app_review == "mine.json"
     assert parser.parse_args(["appforge", "kit", "--candidate", "c", "--design-input", "d", "--out-dir", "o"]).revenue_cmd == "evidence-kit"
     assert set(APPFORGE_SHORT_NAMES.values()) >= {command for command, _ in _STAGE_INPUT_DEFAULTS}
+
+
+def test_status_brief_lines_and_receipt_candidate_filter(tmp_path: Path, monkeypatch, capsys) -> None:
+    from factoryline.appforge_design import appforge_design_projection, appforge_status_brief, appforge_status_lines
+    from factoryline.revenue_evidence import is_receipt_candidate
+
+    assert not is_receipt_candidate(Path("x/oracle-authority-template.json"))
+    assert not is_receipt_candidate(Path("x/submission-assurance-contract.json"))
+    assert not is_receipt_candidate(Path("x/app-review-evidence.json"))
+    assert is_receipt_candidate(Path("x/mobile-evidence.json")) and is_receipt_candidate(Path("x/app-review.json"))
+    _af_workspace(tmp_path, monkeypatch)
+    capsys.readouterr()
+    brief = appforge_status_brief(tmp_path, appforge_design_projection(tmp_path))
+    assert set(brief["stages"]) >= {"init", "design"} and brief["next"]["stage"] == "native-surface"
+    lines = list(appforge_status_lines(brief))
+    assert lines[-1].startswith("next: factory revenue appforge-native-surface")

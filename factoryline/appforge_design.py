@@ -241,21 +241,15 @@ def _next_line(payload: dict[str, Any]) -> Iterator[str]:
         yield "next: every AppForge stage has a current receipt"
 
 
-def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
-    """Render evidence status without treating an inspection as a readiness gate."""
-    if payload.get("schema") in {"factory.appforge.next.v1", "factory.appforge.status-brief.v1"}:
-        for name, row in (payload.get("stages") or {}).items():
-            yield f"{name}  {row['marker']}  {row['path']}"
-        if payload.get("stage") and payload.get("why"):
-            yield f"{payload['stage']}: {payload['why']}"
-        yield from _next_line(payload)
-        return
-    stage = payload.get("stage")
-    if stage is not None:
-        yield from _stage_status_lines(stage, payload["status"])
-        yield from payload.get("repair_messages", [])
-        yield " ".join(payload["help_command"])
-        return
+def _compact_lines(payload: dict[str, Any]) -> Iterator[str]:
+    for name, row in (payload.get("stages") or {}).items():
+        yield f"{name}  {row['marker']}  {row['path']}"
+    if payload.get("stage") and payload.get("why"):
+        yield f"{payload['stage']}: {payload['why']}"
+    yield from _next_line(payload)
+
+
+def _full_status_lines(payload: dict[str, Any]) -> Iterator[str]:
     found = False
     for name in _STAGES:
         status = payload if name == "design" else payload[name]
@@ -266,6 +260,20 @@ def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
     if not found:
         yield "No local AppForge receipts. Start with factory revenue appforge-init --help."
     yield from _next_line(payload)
+
+
+def appforge_status_lines(payload: dict[str, Any]) -> Iterator[str]:
+    """Render evidence status without treating an inspection as a readiness gate."""
+    if payload.get("schema") in {"factory.appforge.next.v1", "factory.appforge.status-brief.v1"}:
+        yield from _compact_lines(payload)
+        return
+    stage = payload.get("stage")
+    if stage is not None:
+        yield from _stage_status_lines(stage, payload["status"])
+        yield from payload.get("repair_messages", [])
+        yield " ".join(payload["help_command"])
+        return
+    yield from _full_status_lines(payload)
 
 
 def _validated_brief(brief: dict[str, Any]) -> set[str]:
@@ -550,37 +558,47 @@ def _candidate_drift(statuses: dict[str, dict[str, Any]], current: object) -> li
     return stale
 
 
+def _next_statuses(workspace: Path, projection: dict[str, Any], inventory: tuple[Path, ...]) -> dict[str, dict]:
+    def status(name: str) -> dict[str, Any]:
+        if name == "design":
+            return projection
+        if name in _RECEIPT_ONLY:
+            return _receipt_only_status(workspace, _RECEIPT_ONLY[name], inventory)
+        return projection.get(name, {})
+
+    return {name: status(name) for name, *_ in _NEXT_CHAIN}
+
+
+def _next_artifacts(workspace: Path, statuses: dict[str, dict]) -> dict[str, dict[str, Any]]:
+    path = (statuses["init"].get("latest") or {}).get("path")
+    receipt = _sealed_receipt(workspace, workspace / path) if path else None
+    return {"init": (receipt or {}).get("artifacts") or {},
+            "kit": (statuses["evidence_kit"].get("latest") or {}).get("artifacts") or {}}
+
+
+def _next_step(name: str, command: str, flags: dict, human: bool, status: dict, artifacts: dict) -> dict:
+    state = _stage_state(status)
+    argv, missing = _next_argv(command, flags, artifacts)
+    findings = "; ".join(_repair_messages((status.get("latest") or {}).get("findings")))[:500]
+    why = f"latest receipt is blocked: {findings}" if state == "blocked" else "no current valid receipt"
+    return {"stage": name.replace("_", "-"), "state": state, "why": why, "argv": argv,
+            "inputs_missing": missing, "human_required": human or bool(missing)}
+
+
 def appforge_next(root: Path, projection: dict[str, Any] | None = None,
                   inventory: tuple[Path, ...] | None = None) -> dict[str, Any]:
     """The first AppForge stage without a current valid receipt, and the command that produces it. Runs nothing."""
     workspace = Path(root).resolve()
-    if inventory is None:
-        inventory = tuple(receipt_paths(workspace, "*.json"))
-    if projection is None:
-        projection = appforge_design_projection(workspace, inventory=inventory)
-    statuses = {name: (projection if name == "design" else
-                       _receipt_only_status(workspace, _RECEIPT_ONLY[name], inventory) if name in _RECEIPT_ONLY else
-                       projection.get(name, {}))
-                for name, *_ in _NEXT_CHAIN}
-    init_latest = statuses["init"].get("latest") or {}
-    init_artifacts = {}
-    if init_latest.get("path"):
-        receipt = _sealed_receipt(workspace, workspace / init_latest["path"])
-        init_artifacts = (receipt or {}).get("artifacts") or {}
-    artifacts = {"init": init_artifacts,
-                 "kit": (statuses["evidence_kit"].get("latest") or {}).get("artifacts") or {}}
-    result: dict[str, Any] = {"schema": "factory.appforge.next.v1", "marker": "APPFORGE_NEXT_READ_ONLY",
-                              "stale_for_candidate": _candidate_drift(statuses, init_latest.get("candidate")),
-                              "authority": "none", "runs_nothing": True}
+    inventory = tuple(receipt_paths(workspace, "*.json")) if inventory is None else inventory
+    projection = projection or appforge_design_projection(workspace, inventory=inventory)
+    statuses = _next_statuses(workspace, projection, inventory)
+    artifacts = _next_artifacts(workspace, statuses)
+    result: dict[str, Any] = {
+        "schema": "factory.appforge.next.v1", "marker": "APPFORGE_NEXT_READ_ONLY",
+        "stale_for_candidate": _candidate_drift(statuses, (statuses["init"].get("latest") or {}).get("candidate")),
+        "authority": "none", "runs_nothing": True}
     for name, command, flags, human in _NEXT_CHAIN:
-        state = _stage_state(statuses[name])
-        if state == "done":
-            continue
-        argv, missing = _next_argv(command, flags, artifacts)
-        why = ("latest receipt is blocked: " + "; ".join(_repair_messages((statuses[name].get("latest") or {})
-                                                                          .get("findings")))[:500]
-               if state == "blocked" else "no current valid receipt")
-        return result | {"stage": name.replace("_", "-"), "state": state, "why": why, "argv": argv,
-                         "inputs_missing": missing, "human_required": human or bool(missing)}
+        if _stage_state(statuses[name]) != "done":
+            return result | _next_step(name, command, flags, human, statuses[name], artifacts)
     return result | {"stage": "complete", "state": "done", "why": "every stage has a current valid receipt",
                      "argv": None, "inputs_missing": [], "human_required": False}
