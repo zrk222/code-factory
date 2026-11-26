@@ -66,10 +66,11 @@ def _declares_ui(
 def _declares_hsf(
     root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]
 ) -> bool:
-    from .assembly import decision_source
-
+    """A legacy decision spec, a compile receipt, or a release contract makes hsf:compile required. A SpecLine
+    decision table alone does not: assembly compiles it when present (and pauses for goldens), but verify does
+    not add a requirement the feature never declared."""
     return (
-        decision_source(root, feature) is not None
+        (root / "specs" / f"{feature}.yaml").is_file()
         or any(row["module"] == "hsf" and row["stage"] == "compile" for row in rows)
         or "hsf:compile" in declared
     )
@@ -86,11 +87,9 @@ def _declares_harness(
 def _declares_evidence(
     root: Path, feature: str, rows: list[dict[str, Any]], declared: set[str]
 ) -> bool:
+    """An evidence receipt or a release contract makes specline:evidence required; the contract file alone does not."""
     return (
-        (root / ".factory" / "workflow-audit-contract.json").is_file()
-        or any(
-            row["module"] == "specline" and row["stage"] == "evidence" for row in rows
-        )
+        any(row["module"] == "specline" and row["stage"] == "evidence" for row in rows)
         or "specline:evidence" in declared
     )
 

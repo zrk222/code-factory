@@ -1954,6 +1954,9 @@ def test_stage_list_has_conditional_evidence_before_ship():
     assert ("specline", "evidence") in CONDITIONAL_STAGE_KEYS
     assert "evidence" not in BASE_REQUIRED["specline"]
     assert "handoff" in REQUIRED_COMMANDS["forgeline"]
+    assert (
+        "evidence" not in REQUIRED_COMMANDS["specline"]
+    )  # published SpecLine 0.5.4 has no evidence command
 
 
 def test_decision_source_prefers_legacy_spec_then_table(tmp_path):
@@ -2079,15 +2082,22 @@ def test_decision_table_makes_compile_and_evidence_contract_makes_evidence_requi
     from factoryline.verification import _required_stages
 
     (tmp_path / "specs").mkdir()
-    assert "hsf" not in _required_stages(tmp_path, "f", [])
     (tmp_path / "specs" / "f.md").write_text(_TABLE_SPEC, encoding="utf-8")
-    assert _required_stages(tmp_path, "f", [])["hsf"] == {"compile"}
-    assert "evidence" not in _required_stages(tmp_path, "f", [])["specline"]
     (tmp_path / ".factory").mkdir()
     (tmp_path / ".factory" / "workflow-audit-contract.json").write_text(
         "{}", encoding="utf-8"
     )
-    assert "evidence" in _required_stages(tmp_path, "f", [])["specline"]
+    required = _required_stages(tmp_path, "f", [])
+    assert (
+        "hsf" not in required and "evidence" not in required["specline"]
+    )  # inputs alone add no requirement
+    rows = [
+        {"module": "hsf", "stage": "compile"},
+        {"module": "specline", "stage": "evidence"},
+    ]
+    required = _required_stages(tmp_path, "f", rows)
+    assert required["hsf"] == {"compile"} and "evidence" in required["specline"]
+    assert _required_stages(tmp_path, "f", [], {"hsf:compile"})["hsf"] == {"compile"}
 
 
 def test_forge_stage_skippable_reports_state_and_prior_receipt(tmp_path):

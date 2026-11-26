@@ -82,7 +82,11 @@ REQUIRED_COMMANDS = {
 
 
 for _module, _args in ASSEMBLY_STAGES:
-    if _module in {"specline", "forgeline"}:
+    # Conditional stages run only when declared, so they must not make an older companion "incompatible".
+    if (
+        _module in {"specline", "forgeline"}
+        and (_module, receipt_stage(_module, _args)) not in CONDITIONAL_STAGE_KEYS
+    ):
         REQUIRED_COMMANDS[_module].add(_args[0])
 
 
