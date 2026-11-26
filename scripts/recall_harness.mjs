@@ -687,9 +687,13 @@ export async function publishPreparedCase(staging, directory, { rename = renameS
   }
 }
 
+function preparedCaseDirectory(workdir, key, scope) {
+  return join(workdir, scope === 'scannable' ? 'cases-v4-scannable' : 'cases-v4', key);
+}
+
 async function prepareCase(workdir, row, scope = 'ecosystem') {
   const key = caseDigest([row]);
-  const cache = join(workdir, scope === 'scannable' ? 'cases-v4-scannable' : 'cases-v4'), directory = join(cache, key);
+  const directory = preparedCaseDirectory(workdir, key, scope), cache = dirname(directory);
   const record = join(directory, 'case.json');
   const read = () => bindPreparedCase(directory, JSON.parse(readFileSync(record, 'utf8')), key, row, scope);
   if (existsSync(record)) return read();
@@ -899,8 +903,12 @@ export function scorerSha256() {
 
 // A saved row is reusable only while the captures and source packets it cites
 // are still present in this work directory with the same bytes.
-function checkpointCaptureIntact(root, capture, notes, packets, checkedSources) {
-  if (!capture) return packets.length === 0;
+function checkpointCaptureIntact(root, capture, notes, packets, checkedSources, initial = false) {
+  if (!capture) {
+    if (notes?.report_sha256 || notes?.coverage_report_sha256) return false;
+    return packets.length === 0 || (initial && notes?.watchdog_timeout === true
+      && notes.failed_exit === true && notes.timeouts > 0);
+  }
   if (!capture.sarif || capture.sarif.sha256 !== notes?.report_sha256
     || capture.native_report?.sha256 !== notes?.coverage_report_sha256) return false;
   const artifacts = [capture.sarif, capture.native_report].filter(Boolean);
@@ -913,17 +921,20 @@ function checkpointCaptureIntact(root, capture, notes, packets, checkedSources) 
   return true;
 }
 
-export function checkpointArtifactsIntact(workdir, row) {
+export function checkpointArtifactsIntact(workdir, row, manifestRow, scope = 'ecosystem') {
   try {
     const root = realpathSync(workdir);
-    const attempts = [[row.captures, row.scan_sides]];
-    if (row.retried_serially) attempts.push([row.initial_captures, row.initial_scan_sides]);
+    if (row.revisions?.fixed !== manifestRow.fix || !/^[0-9a-f]{40}$/.test(row.revisions?.old ?? '')) return false;
+    const prepared = preparedCaseDirectory(root, caseDigest([manifestRow]), scope);
+    const inputs = [['diff.patch', row.diff_sha256], ['changes.z', row.changed_files_sha256]];
+    if (!inputs.every(([name, digest]) =>
+      sha256(readFileSync(reviewCapturePath(root, relative(root, join(prepared, name))))) === digest)) return false;
     for (const side of ['old', 'fixed']) {
       const packets = row.source_packets?.[side] ?? [];
       const checkedSources = new Set();
-      for (const [captures, diagnostics] of attempts) {
-        if (!checkpointCaptureIntact(root, captures?.[side], diagnostics?.[side], packets, checkedSources)) return false;
-      }
+      if (!checkpointCaptureIntact(root, row.captures?.[side], row.scan_sides?.[side], packets, checkedSources)) return false;
+      if (row.retried_serially && !checkpointCaptureIntact(root, row.initial_captures?.[side],
+        row.initial_scan_sides?.[side], packets, checkedSources, true)) return false;
     }
     return true;
   } catch { return false; }
@@ -965,7 +976,7 @@ async function scorePreparedManifest(manifest, opts, context) {
   const checkpointed = async (row, staged) => {
     const inputs = checkpointInputs(row);
     const saved = readCheckpoint(checkpoints, inputs);
-    if (saved && checkpointable(saved) && checkpointArtifactsIntact(context.workdir, saved)) {
+    if (saved && checkpointable(saved) && checkpointArtifactsIntact(context.workdir, saved, row, context.scope)) {
       resumed.push(row.ghsa);
       return saved;
     }
@@ -1000,7 +1011,7 @@ async function scorePreparedManifest(manifest, opts, context) {
     const recovered = { ...(await one(row, serial)), retried_serially: true,
       initial_scan_sides: initial.scan_sides, initial_captures: initial.captures };
     rows[index] = recovered;
-    if (checkpoints && checkpointable(recovered) && checkpointArtifactsIntact(context.workdir, recovered)) {
+    if (checkpoints && checkpointable(recovered) && checkpointArtifactsIntact(context.workdir, recovered, row, context.scope)) {
       await verifyPins('serial case checkpoint');
       writeCheckpoint(checkpoints, checkpointInputs(row), recovered);
     }

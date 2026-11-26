@@ -8,7 +8,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseHunks, ruleFamilies, selectCases, wilson, profileArgv, sarifFindings, scoreCase, summarize, gate, gainRetention, controlFindingDeltas,
   familiesFor, isTestPath, caseDigest, priorExposure, sha256, scoreManifest, validateRecallManifest, checkpointArtifactsIntact,
-  publishPreparedCase, checkpointable, controlGapDelta, controlIssue } from './recall_harness.mjs';
+  publishPreparedCase, checkpointable, controlGapDelta, controlIssue, writeCheckpoint } from './recall_harness.mjs';
 import { changedFiles, coverageGapEntries, coverageGaps, engineCoverage, fileCoverage, sarifPath, scannerPath, summarizeCoverage } from './recall_coverage.mjs';
 
 const DIFF = `diff --git a/app/files.py b/app/files.py
@@ -1759,9 +1759,29 @@ test('a resumed score reuses only exactly matching completed cases', () => feede
   assert.deepEqual(resumedRetry.resumed_cases, [feederRow.ghsa]);
   assert.deepEqual(resumedRetry.cases, recovered.cases);
   assert.deepEqual(readdirSync(join(fixture.workdir, resumedRetry.scan_directory)), []);
+  const noReports = structuredClone(recoveredCase);
+  const watchdog = { watchdog_timeout: true, failed_exit: true, timeouts: 1 };
+  noReports.initial_captures.old = null;
+  noReports.initial_scan_sides.old = watchdog;
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, noReports, feederRow), true);
+  noReports.initial_scan_sides.old = { ...watchdog, coverage_report_sha256: 'a'.repeat(64) };
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, noReports, feederRow), false);
+  noReports.initial_scan_sides.old = { ...watchdog, watchdog_timeout: false };
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, noReports, feederRow), false);
+  noReports.initial_scan_sides.old = watchdog;
+  const missingFinal = { ...noReports, captures: { ...noReports.captures, old: null } };
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, missingFinal, feederRow), false);
+  const checkpoints = readdirSync(checkpointDir).map(name => JSON.parse(readFileSync(join(checkpointDir, name), 'utf8')));
+  const { inputs } = checkpoints.find(({ result }) => result.retried_serially);
+  writeCheckpoint(checkpointDir, inputs, noReports);
+  const resumedWatchdog = await scoreManifest(manifest, timeouts, retrySettings);
+  assert.deepEqual(resumedWatchdog.resumed_cases, [feederRow.ghsa]);
+  assert.deepEqual(resumedWatchdog.cases, [noReports]);
+  assert.deepEqual(readdirSync(join(fixture.workdir, resumedWatchdog.scan_directory)), []);
+  writeCheckpoint(checkpointDir, inputs, recoveredCase);
   const initialReport = join(fixture.workdir, recoveredCase.initial_captures.old.native_report.path);
   writeFileSync(initialReport, '{}');
-  assert.equal(checkpointArtifactsIntact(fixture.workdir, recoveredCase), false);
+  assert.equal(checkpointArtifactsIntact(fixture.workdir, recoveredCase, feederRow), false);
   const reacquired = await scoreManifest(manifest, timeouts, retrySettings);
   assert.deepEqual(reacquired.resumed_cases, []);
   assert.notEqual(reacquired.cases[0].initial_captures.old.native_report.path,
@@ -1870,10 +1890,22 @@ test('incomplete cases and rows with missing artifacts are rescanned, never resu
   // A completed case resumes only while the SARIF it cites is intact.
   const fresh = await scoreManifest(manifest, baseline, resumable);
   assert.equal(readdirSync(checkpointDir).length, 1);
-  assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0]), true);
+  assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0], feederRow), true);
+  const prepared = join(workdir, 'cases-v4', caseDigest([feederRow]));
+  for (const name of ['diff.patch', 'changes.z']) {
+    const path = join(prepared, name);
+    const original = readFileSync(path);
+    writeFileSync(path, Buffer.concat([original, Buffer.from('tampered')]));
+    const rejected = await scoreManifest(manifest, baseline, resumable);
+    assert.deepEqual(rejected.resumed_cases, []);
+    assert.match(rejected.cases[0].detail, /fingerprint differs/);
+    rmSync(path);
+    assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0], feederRow), false);
+    writeFileSync(path, original);
+  }
   const sarif = join(workdir, fresh.cases[0].captures.old.sarif.path);
   writeFileSync(sarif, '{}');
-  assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0]), false);
+  assert.equal(checkpointArtifactsIntact(workdir, fresh.cases[0], feederRow), false);
   const rescanned = await scoreManifest(manifest, baseline, resumable);
   assert.deepEqual(rescanned.resumed_cases, []);
   assert.deepEqual(rescanned.summary, fresh.summary);
