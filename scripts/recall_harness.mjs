@@ -1963,6 +1963,9 @@ async function controlDeltas_(opts, engine, controlSettings, plan = null) {
         candidate_extra: effectiveCandidate.extra } : null;
       const savedDelta = checkpointInputs && readCheckpoint(resolve(opts['checkpoint-dir']), checkpointInputs);
       if (savedDelta && await controlCheckpointIntact(reportsRoot, savedDelta)) {
+        if (source.plan && (await controlSource(directory, excludedDirs)).evidence.sha256 !== source.evidence.sha256) {
+          throw new RecallInputDrift(`Registered control source fingerprint differs: ${directory}`);
+        }
         verifyInputs();
         deltas.push({ ...savedDelta, resumed_from_checkpoint: true });
         continue;

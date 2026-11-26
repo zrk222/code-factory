@@ -704,6 +704,9 @@ async function feederFixture(run, row = feederRow) {
       "}",
       "if (old && ruleText.includes('# manifest-drift')) appendFileSync(dirname(rules) + '/manifest.json', ' ');",
       "if (control && ruleText.includes('# control-source-drift')) appendFileSync('sample.py', '# drifted during scan\\n');",
+      "if (control && existsSync(dirname(rules) + '/change-registered-peer')) {",
+      "  writeFileSync(dirname(rules) + '/registered-peer/sample.py', 'VALUE = 2\\n');",
+      "}",
       "if (control && ruleText.includes('# control-rules-drift')) appendFileSync(rules, '# drifted during scan\\n');",
       "if (control && ruleText.includes('# require-parallel-controls')) {",
       "  const arm = basename(report).startsWith('before') ? 'before' : 'after';",
@@ -1604,6 +1607,44 @@ test('control checkpoints resume only while the final and retry reports still ma
   rmSync(join(workdir, firstReport));
   assert.equal(run().resumed_from_checkpoint, undefined);
   assert.equal(run().resumed_from_checkpoint, true);
+}));
+
+test('registered control checkpoints reject checkout drift during an earlier scan', () => feederFixture(fixture => {
+  const { root, workdir, profile, baseline, candidate } = fixture;
+  const first = join(root, 'control'), later = join(root, 'registered-peer');
+  const checkpoint = join(root, 'checkpoints'), plan = join(root, 'control-plan.json');
+  const original = 'VALUE = 1\n';
+  for (const dir of [first, later]) {
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'sample.py'), original);
+  }
+  writeFileSync(candidate, readFileSync(baseline));
+  const digest = path => sha256(readFileSync(path));
+  writeFileSync(plan, JSON.stringify({ schema: 'factory.recall-control-plan.v1',
+    baseline_sha256: digest(baseline), candidate_sha256: digest(candidate), profile_sha256: digest(profile),
+    controls: [first, later].map(directory => ({ directory,
+      source_sha256: caseDigest([{ path: 'sample.py', sha256: sha256(original) }]) })) }));
+  const run = out => spawnSync(process.execPath, ['scripts/recall_harness.mjs', 'controls',
+    '--rules', baseline, '--rules', candidate, '--profile', profile, '--workdir', workdir,
+    '--opengrep', process.execPath, '--dir', first, '--dir', later,
+    '--control-plan', plan, '--checkpoint-dir', checkpoint, '--out', out], { encoding: 'utf8', timeout: 30000 });
+  const seeded = run(join(root, 'seeded.json'));
+  assert.equal(seeded.status, 0, seeded.stderr);
+  const warm = join(root, 'warm.json');
+  assert.equal(run(warm).status, 0);
+  assert.ok(JSON.parse(readFileSync(warm, 'utf8')).deltas.every(delta => delta.resumed_from_checkpoint));
+  const records = readdirSync(checkpoint).map(name => join(checkpoint, name));
+  assert.equal(records.length, 2);
+  const firstCheckpoint = records.find(path => JSON.parse(readFileSync(path, 'utf8')).inputs.dir === first);
+  assert.ok(firstCheckpoint);
+  rmSync(firstCheckpoint);
+  writeFileSync(join(root, 'change-registered-peer'), '');
+  const rejected = join(root, 'rejected.json');
+  const stale = run(rejected);
+  assert.equal(readFileSync(join(later, 'sample.py'), 'utf8'), 'VALUE = 2\n');
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.stderr, /Registered control source fingerprint differs/);
+  assert.equal(existsSync(rejected), false);
 }));
 
 test('standalone controls bind the scanner and reject rules changed during scanning', () => feederFixture(fixture => {
