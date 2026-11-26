@@ -138,7 +138,7 @@ test('registered matrix cannot lose alias, safe or provider controls with its ex
   const omitIndex = manifest.findIndex(item => item.rule === pythonPath);
   const balancedReplacement = manifest.filter((_, index) => index !== omitIndex);
   balancedReplacement.push({ ...manifest[omitIndex], rule: phpPath });
-  assert.equal(balancedReplacement.length, 262);
+  assert.equal(balancedReplacement.length, 264);
   assert.equal(new Set(balancedReplacement.map(item => item.rule)).size, 64);
   assert.throws(() => verifyFlowControlMatrix(balancedReplacement, safe, all));
   assert.throws(() => verifyFindingCountMatrix(balancedReplacement, all));
@@ -183,6 +183,7 @@ test('rule-family controls append as one parseable source per language at fixed 
     ['/t/semgrep-pattern-limited.ts', readFileSync(new URL('../deploy/deep-adapters/rules/tests/javascript-controls.js', import.meta.url), 'utf8')],
     ['/t/semgrep-pattern-limited.go', 'package controls\nimport "crypto/tls"\nfunc controls() {}\n'],
     ['/t/semgrep-pattern-limited.java', 'class Controls {}\n'],
+    ['/t/semgrep-pattern-limited.cs', 'class Controls {}\n'],
     ['/t/semgrep-pattern-limited.php', '<?php\n$x = 1;\n'],
     ['/t/semgrep-pattern-limited.py', 'import os\n'],
     ['/t/semgrep-pattern-limited.rb', '# controls\n'],
@@ -194,6 +195,7 @@ test('rule-family controls append as one parseable source per language at fixed 
   assert.ok(go.indexOf('import "archive/zip"') < go.indexOf('func controls'));
   assert.equal(files.get('/t/semgrep-pattern-limited.php').match(/<\?php/g).length, 1);
   assert.ok(!/^package /m.test(files.get('/t/semgrep-pattern-limited.java')));
+  assert.match(files.get('/t/semgrep-pattern-limited.cs'), /class LibrarySqlControls/);
   const ts = files.get('/t/semgrep-pattern-limited.ts').split(/\r?\n/);
   for (const [rule, line] of typescriptExtensionEndpoints) {
     assert.ok(ts[line - 2].includes(`ruleid: javascript.${rule}`), `${rule} at ${line}`);

@@ -1422,7 +1422,7 @@ rules:
       cwe: ["CWE-78"]
       scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
   - id: csharp.request-sql-injection
-    message: Request data reaches a sql operand; review this local source-to-sink candidate.
+    message: A request value or library argument reaches raw SQL text; use binding or dialect quoting.
     severity: INFO
     languages: [csharp]
     mode: taint
@@ -1432,6 +1432,7 @@ rules:
           - pattern-either:
               - pattern: $REQ.Query[...]
               - pattern: $REQ.Form[...]
+        label: REQUEST_INPUT
         exact: true
       - patterns:
           - pattern-inside: |
@@ -1445,6 +1446,34 @@ rules:
               - pattern: Request.Params[...]
               - pattern: Request.Query[...]
               - pattern: Request[...]
+        label: REQUEST_INPUT
+        exact: true
+      - patterns:
+          - pattern: |
+              $BUILDER.Append($PREFIX);
+              $BUILDER.Append($VALUE);
+              $BUILDER.Append("'");
+          - pattern-inside: |
+              public void $METHOD(..., ICommandBuilder $BUILDER, ...) {
+                ...
+              }
+          - metavariable-regex:
+              metavariable: $PREFIX
+              regex: '(?is)^.*\b(select|insert|update|delete)\b.*'
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: >-
+                (?s)^(?!\s*[@$]?"|.*\.Replace\(\s*"'"[ \t]*,[ \t]*"''"\s*\)).+
+          - focus-metavariable: $VALUE
+        label: SQL_BUILDER_VALUE
+        exact: true
+      - patterns:
+          - pattern-inside: |
+              string ObjectToSQLString(object $VALUE, Dialect.Dialect $DIALECT) {
+                ...
+              }
+          - pattern: "\"'\" + (string)$VALUE + \"'\""
+        label: SQL_LITERAL_VALUE
         exact: true
     pattern-sinks:
       - patterns:
@@ -1458,6 +1487,15 @@ rules:
               - pattern: $DB.Database.ExecuteSqlRaw($VALUE, ...)
               - pattern: $SET.FromSqlRaw($VALUE, ...)
           - focus-metavariable: $VALUE
+        requires: REQUEST_INPUT
+      - patterns:
+          - pattern: $BUILDER.Append($VALUE)
+          - focus-metavariable: $VALUE
+        requires: SQL_BUILDER_VALUE
+      - patterns:
+          - pattern: return $VALUE;
+          - focus-metavariable: $VALUE
+        requires: SQL_LITERAL_VALUE
     paths:
       exclude: ["**/test/**", "**/tests/**", "**/__tests__/**", "**/testdata/**", "**/test_data/**", "**/test-data/**", "**/fixtures/**", "**/src/test/**", "**/*_test.go", "**/test_*.py", "**/*_test.py", "**/*.test.js", "**/*.test.ts", "**/*.spec.js", "**/*.spec.ts", "**/*Test.java", "**/*Tests.java", "**/*Test.cs", "**/*Tests.cs", "**/*_test.rs", "**/*_spec.rb", "**/exploits/**", "**/exploit/**", "**/poc/**", "**/pocs/**", "**/CVE-*/**", "**/cve-*/**", "**/*.generated.*", "**/*_generated.*", "**/generated/**", "**/__generated__/**", "**/*_pb2.py", "**/*.pb.go", "**/Lib/site-packages/**", "**/site-packages/**", "**/*venv*/**", "**/node_modules/**", "**/vendor/**", "**/third_party/**", "**/third-party/**", "**/bower_components/**", "**/.history/**", "**/*.min.js", "**/tests.rs", "**/test_utils.rs", "**/test_util.rs", "**/testutil/**", "**/testutils/**", "**/TestUtils/**", "**/Pods/**", "**/Carthage/**"]
     metadata:
@@ -1465,7 +1503,7 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-89"]
-      scope: Typed/framework-constrained local taint candidate; no interprocedural or sanitizer guarantee.
+      scope: Typed HTTP taint and local SQL builder or dialect-literal evidence; no interprocedural guarantee.
   - id: ruby.request-command-injection
     message: Request data reaches a command operand; review this local source-to-sink candidate.
     severity: INFO

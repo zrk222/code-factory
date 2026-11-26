@@ -162,7 +162,7 @@ export const fixedReviewedFindingCounts = Object.freeze({
   'opt.factory.rules.c.unsafe-gets': 2,
   'opt.factory.rules.csharp.disabled-certificate-verification': 1,
   'opt.factory.rules.csharp.request-command-injection': 3,
-  'opt.factory.rules.csharp.request-sql-injection': 3,
+  'opt.factory.rules.csharp.request-sql-injection': 5,
   'opt.factory.rules.go.archive-path-traversal': 4,
   'opt.factory.rules.go.disabled-tls-verification': 1,
   'opt.factory.rules.go.parameter-path-join-without-containment': 1,
@@ -278,9 +278,9 @@ export function verifyJavascriptControlMatrix(manifest) {
   }
 }
 
-// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 262 annotated findings.
+// Reviewed totals: 64 rules (the deep-audit ruleset bound) and 264 annotated findings.
 const REVIEWED_RULES = 64;
-const REVIEWED_FINDINGS = 262;
+const REVIEWED_FINDINGS = 264;
 
 export function verifyFindingCountMatrix(manifest, ruleIds) {
   const expectedRuleIds = Object.keys(fixedReviewedFindingCounts).sort();
@@ -330,6 +330,7 @@ export const extensionControlFiles = Object.freeze([
   ['go', 'go-archive-output-controls.txt'], ['go', 'go-parameter-sink-controls.txt'],
   ['go', 'go-path-join-controls.txt'], ['go', 'go-tls-trust-controls.txt'],
   ['java', 'java-archive-output-controls.txt'], ['java', 'java-sql-text-controls.txt'],
+  ['cs', 'csharp-sql-library-controls.txt'],
   ['ts', 'javascript-archive-output-controls.txt'], ['ts', 'tsx-parameter-sink-controls.txt'],
   ['ts', 'tsx-path-join-controls.txt'], ['ts', 'tsx-html-output-controls.txt'],
   ['ts', 'javascript-tls-trust-controls.txt'], ['ts', 'tsx-path-request-controls.txt'],
